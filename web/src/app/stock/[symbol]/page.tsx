@@ -1,0 +1,899 @@
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { sql, golden } from "@/lib/db";
+import { band, bandColor, fmtPct, fmtRupeesCr, tierLabel } from "@/lib/score";
+import { StrengthBars } from "@/components/StrengthBars";
+import { PriceChart, type PricePoint } from "@/components/PriceChart";
+import type { SparkPoint } from "@/components/Sparkline";
+import { PillarTabs, type PillarTabContent } from "@/components/PillarTabs";
+import { buildSpider } from "@/lib/spider";
+import { buildPillarStory } from "@/lib/explainer";
+import {
+  qualityNarration, valuationNarration, momentumNarration,
+} from "@/lib/companyNarration";
+
+export const revalidate = 1800;
+
+type Stock = {
+  symbol: string;
+  company_name: string;
+  sector: string | null;
+  industry: string | null;
+  listing_date: string | null;
+  years_of_data: number | null;
+  business_summary: string | null;
+  website: string | null;
+  employees: number | null;
+  cluster_id: string;
+  cluster_name: string;
+  meta_cluster_name: string;
+  maturity_tier: string;
+  market_cap_cr: number | null;
+  current_price: number | null;
+  composite_pct: number | null;
+  quality_pct: number | null;
+  valuation_pct: number | null;
+  momentum_pct: number | null;
+  quality_components: Record<string, number>;
+  valuation_components: Record<string, number>;
+  momentum_components: Record<string, number>;
+  score_status: string | null;
+};
+
+type AnnualRow = {
+  period_end: string;
+  sales: number | null;
+  operating_profit: number | null;
+  net_profit: number | null;
+  cash_from_operating: number | null;
+  total_assets: number | null;
+  borrowings: number | null;
+  equity_share_capital: number | null;
+  reserves: number | null;
+  depreciation: number | null;
+  interest: number | null;
+  profit_before_tax: number | null;
+};
+
+type QuarterlyRow = {
+  period_end: string;
+  sales: number | null;
+  operating_profit: number | null;
+  net_profit: number | null;
+};
+
+type Scorecard = {
+  pillar_weights: Record<string, number>;
+  quality: Record<string, number>;
+  valuation: Record<string, number>;
+  momentum: Record<string, number>;
+};
+
+async function loadStock(symbol: string) {
+  const upper = symbol.toUpperCase();
+  const rows = await sql<Stock[]>`
+    SELECT
+      s.symbol, u.company_name, u.sector, u.industry, u.listing_date::text, u.years_of_data,
+      u.business_summary, u.website, u.employees,
+      s.cluster_id, c.name AS cluster_name, mc.name AS meta_cluster_name,
+      s.maturity_tier, sm.market_cap_cr, sm.current_price,
+      s.composite_pct, s.quality_pct, s.valuation_pct, s.momentum_pct,
+      s.quality_components, s.valuation_components, s.momentum_components,
+      s.score_status
+    FROM app.scores s
+    JOIN app.universe u USING (symbol)
+    JOIN app.cluster c ON c.id = s.cluster_id
+    JOIN app.meta_cluster mc ON mc.id = c.meta_cluster_id
+    LEFT JOIN app.screener_meta sm USING (symbol)
+    WHERE s.symbol = ${upper}
+    ORDER BY s.snapshot_date DESC
+    LIMIT 1
+  `;
+  if (rows.length === 0) return null;
+  const stock = rows[0];
+
+  // Last 10 years of annual fundamentals (extended cols for trend graphs)
+  // CAST numeric → float so JS treats them as numbers, not strings
+  const annual = await sql<AnnualRow[]>`
+    SELECT period_end::text,
+           sales::float, operating_profit::float, net_profit::float, cash_from_operating::float,
+           total_assets::float, borrowings::float,
+           equity_share_capital::float, reserves::float,
+           depreciation::float, interest::float, profit_before_tax::float
+    FROM app.fundamentals_annual
+    WHERE symbol = ${upper}
+    ORDER BY period_end DESC
+    LIMIT 10
+  `;
+  // Latest 6 quarters
+  const quarterly = await sql<QuarterlyRow[]>`
+    SELECT period_end::text,
+           sales::float, operating_profit::float, net_profit::float
+    FROM app.fundamentals_quarterly
+    WHERE symbol = ${upper}
+    ORDER BY period_end DESC
+    LIMIT 6
+  `;
+  // Long-term price history (monthly, full history)
+  const priceHistory = await golden<PricePoint[]>`
+    SELECT date::text, close::float
+    FROM golden.price_history
+    WHERE symbol = ${upper + ".NS"} AND interval = '1mo'
+    ORDER BY date ASC
+  `;
+
+  // Cluster median for radar overlay
+  const peerStats = await sql<{ axis: string; median: number }[]>`
+    WITH peers AS (
+      SELECT quality_pct, valuation_pct, momentum_pct, composite_pct
+      FROM app.scores
+      WHERE cluster_id = ${stock.cluster_id} AND maturity_tier = ${stock.maturity_tier}
+        AND snapshot_date = (
+          SELECT MAX(snapshot_date) FROM app.scores
+          WHERE cluster_id = ${stock.cluster_id} AND maturity_tier = ${stock.maturity_tier}
+        )
+    )
+    SELECT 'composite' AS axis, percentile_cont(0.5) WITHIN GROUP (ORDER BY composite_pct)::float AS median FROM peers
+  `;
+
+  // Scorecard for this (cluster, tier) — needed to build the SHAP waterfall weights
+  const scRow = await sql<Scorecard[]>`
+    SELECT pillar_weights, quality, valuation, momentum
+    FROM app.cluster_scorecard_active
+    WHERE cluster_id = ${stock.cluster_id}
+  `;
+  const scorecard = scRow[0] ?? null;
+
+  return { stock, scorecard, annual, quarterly, priceHistory, peerMedianComposite: peerStats[0]?.median ?? 50 };
+}
+
+export default async function StockPage({
+  params,
+}: {
+  params: Promise<{ symbol: string }>;
+}) {
+  const { symbol } = await params;
+  const data = await loadStock(symbol);
+  if (!data) return notFound();
+  const { stock, scorecard, annual, quarterly, priceHistory } = data;
+
+  // Build the 5-axis strength bars from per-component sub-percentiles
+  const strengthRows = buildSpider(
+    stock.quality_components || {},
+    stock.valuation_components || {},
+    stock.momentum_components || {}
+  ).map((s) => ({ axis: s.axis, value: s.value }));
+
+  // Build three pillar stories
+  const pillarStories = [
+    buildPillarStory("Quality",   stock.quality_pct,   stock.quality_components || {}),
+    buildPillarStory("Valuation", stock.valuation_pct, stock.valuation_components || {}),
+    buildPillarStory("Momentum",  stock.momentum_pct,  stock.momentum_components || {}),
+  ];
+
+  const stockMeta = {
+    company_name: stock.company_name,
+    symbol: stock.symbol,
+    market_cap_cr: stock.market_cap_cr,
+    current_price: stock.current_price,
+    cluster_name: stock.cluster_name,
+    composite_pct: stock.composite_pct,
+  };
+
+  const compositeBand = band(stock.composite_pct);
+  const compositeBg = bandColor(compositeBand);
+
+  return (
+    <div className="mx-auto max-w-[1200px] px-6 py-10">
+      <Link
+        href={`/cluster/${stock.cluster_id}`}
+        className="text-[12px] muted-text hover:text-[var(--color-accent-600)]"
+      >
+        ← {stock.cluster_name}
+      </Link>
+
+      {/* Header — name + percentile badge */}
+      <header className="mt-3 flex items-start justify-between gap-8">
+        <div>
+          <div className="text-[12px] muted-text uppercase tracking-wide">
+            {stock.meta_cluster_name} · {stock.cluster_name} · {tierLabel(stock.maturity_tier)}
+          </div>
+          <h1 className="font-display text-[36px] mt-1 tracking-tight leading-tight">
+            {stock.company_name || stock.symbol}
+          </h1>
+          <div className="mt-2 flex flex-wrap items-center gap-3 text-[14px] muted-text">
+            <span className="font-medium ink-text tabular-nums">{stock.symbol}</span>
+            {stock.current_price != null && (
+              <>
+                <span>·</span>
+                <span className="tabular-nums">₹{stock.current_price.toLocaleString("en-IN")}</span>
+              </>
+            )}
+            {stock.market_cap_cr != null && (
+              <>
+                <span>·</span>
+                <span>{fmtRupeesCr(stock.market_cap_cr)}</span>
+              </>
+            )}
+            {stock.listing_date && (
+              <>
+                <span>·</span>
+                <span>
+                  Listed {new Date(stock.listing_date).toLocaleDateString("en-IN", { year: "numeric", month: "short", day: "numeric" })}
+                </span>
+              </>
+            )}
+          </div>
+          {stock.maturity_tier === "new" && stock.listing_date && (
+            <div className="mt-3 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[var(--color-accent-50)] border border-[var(--color-accent-200)]">
+              <span className="text-[11px] uppercase tracking-wide" style={{ color: "var(--color-accent-700)" }}>
+                Recent IPO
+              </span>
+              <span className="text-[12px] muted-text">
+                Listed {(((Date.now() - new Date(stock.listing_date).getTime()) / (365.25 * 24 * 3600 * 1000))).toFixed(1)} years ago
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* Percentile badge */}
+        <div className="text-right shrink-0">
+          <div
+            className="inline-block px-4 py-2 rounded-md"
+            style={{ backgroundColor: compositeBg, color: compositeBand === "neutral" ? "var(--color-ink)" : "white" }}
+          >
+            <div className="text-[11px] uppercase tracking-wide opacity-80">
+              Composite
+            </div>
+            <div className="text-[28px] font-medium tabular-nums leading-none mt-1">
+              {stock.composite_pct == null ? "—" : Math.round(stock.composite_pct)}
+            </div>
+          </div>
+          {stock.composite_pct != null && (
+            <div className="text-[11px] muted-text mt-2 max-w-[220px]">
+              {percentileLabel(stock.composite_pct)} in {stock.cluster_name} ·{" "}
+              {tierLabel(stock.maturity_tier)}
+            </div>
+          )}
+        </div>
+      </header>
+
+
+
+      {/* Business description — only when we have the summary */}
+      {stock.business_summary && (
+        <BusinessDescription
+          summary={stock.business_summary}
+          website={stock.website}
+        />
+      )}
+
+      {/* About + Price chart — full width, immediately after the header */}
+      <div className="mt-8 grid grid-cols-1 lg:grid-cols-[1fr_2fr] gap-6">
+        <AboutCard stock={stock} priceHistoryStart={priceHistory[0]?.date ?? null} />
+        <PriceChartCard symbol={stock.symbol} history={priceHistory} />
+      </div>
+
+      <div className="mt-10 grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-8">
+        {/* Left: Strength bars + pillar stories + metric trends */}
+        <div className="space-y-8">
+          <section className="card p-6">
+            <h2 className="font-display text-[20px] mb-2">Strengths and gaps</h2>
+            <p className="text-[13px] muted-text mb-6">
+              Each bar is this stock&apos;s percentile within {stock.cluster_name} ·{" "}
+              {tierLabel(stock.maturity_tier)} peers. The thin line in the middle is
+              the cluster median — anything to the right of it beats half the cluster.
+            </p>
+            <StrengthBars rows={strengthRows} />
+          </section>
+
+          <section>
+            <h2 className="font-display text-[20px] mb-2">Why this score</h2>
+            <p className="text-[13px] muted-text mb-4">
+              Three pillars. Switch between them to see how this stock specifically
+              scored, with the underlying metric trends.
+            </p>
+            <PillarTabs
+              tabs={[
+                {
+                  pillar: "Quality",
+                  pct: stock.quality_pct,
+                  oneLineSummary: pillarStories[0].summary,
+                  companyNarration: qualityNarration(
+                    stockMeta, annual, stock.quality_components || {}, stock.quality_pct
+                  ),
+                  strength: pillarStories[0].strength,
+                  gap: pillarStories[0].gap,
+                  trends: computePillarTrends("Quality", annual),
+                },
+                {
+                  pillar: "Valuation",
+                  pct: stock.valuation_pct,
+                  oneLineSummary: pillarStories[1].summary,
+                  companyNarration: valuationNarration(
+                    stockMeta, stock.valuation_components || {}, stock.valuation_pct
+                  ),
+                  strength: pillarStories[1].strength,
+                  gap: pillarStories[1].gap,
+                  trends: computePillarTrends("Valuation", annual),
+                },
+                {
+                  pillar: "Momentum",
+                  pct: stock.momentum_pct,
+                  oneLineSummary: pillarStories[2].summary,
+                  companyNarration: momentumNarration(
+                    stockMeta, stock.momentum_components || {}, quarterly, stock.momentum_pct
+                  ),
+                  strength: pillarStories[2].strength,
+                  gap: pillarStories[2].gap,
+                  trends: computePillarTrends("Momentum", annual),
+                },
+              ] satisfies PillarTabContent[]}
+            />
+          </section>
+
+          <FundamentalsTables annual={annual} quarterly={quarterly} />
+        </div>
+
+        {/* Right: pillar breakdown + score status */}
+        <aside className="space-y-6">
+          <PillarBreakdown
+            quality={stock.quality_pct}
+            valuation={stock.valuation_pct}
+            momentum={stock.momentum_pct}
+          />
+          <StatusCard status={stock.score_status} />
+        </aside>
+      </div>
+
+      {/* Footnote — methodology explainer at the very bottom */}
+      <CompositeExplainer
+        composite={stock.composite_pct}
+        cluster={stock.cluster_name}
+        tier={stock.maturity_tier}
+      />
+    </div>
+  );
+}
+
+function PillarBreakdown(props: {
+  quality: number | null;
+  valuation: number | null;
+  momentum: number | null;
+}) {
+  const rows = [
+    { label: "Quality", value: props.quality },
+    { label: "Valuation", value: props.valuation },
+    { label: "Momentum", value: props.momentum },
+  ];
+  return (
+    <div className="card p-5">
+      <div className="text-[12px] uppercase tracking-wide muted-text">Pillars</div>
+      <div className="mt-3 space-y-3">
+        {rows.map((r) => {
+          const b = band(r.value);
+          return (
+            <div key={r.label}>
+              <div className="font-medium text-[14px]">{r.label}</div>
+              <div className="flex items-center gap-3 mt-1">
+                <div className="flex-1 h-1.5 bg-[var(--color-paper)] rounded-full overflow-hidden">
+                  <div
+                    className="h-full rounded-full"
+                    style={{
+                      width: `${r.value ?? 0}%`,
+                      backgroundColor: bandColor(b),
+                    }}
+                  />
+                </div>
+                <span className="text-[14px] tabular-nums w-8 text-right" style={{ color: bandColor(b) }}>
+                  {fmtPct(r.value, "")}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** Phrase a percentile as a peer-relative rank label.
+ * pct=95 → "Top 5%"; pct=50 → "Median"; pct=5 → "Bottom 5%".
+ * Uses round-number bands at the extremes so badges read cleanly.
+ */
+function percentileLabel(pct: number): string {
+  const p = Math.round(pct);
+  if (p >= 90) return `Top ${Math.max(1, 100 - p)}%`;
+  if (p >= 75) return `Top quartile`;
+  if (p >= 60) return `Above median`;
+  if (p >= 40) return `Mid-pack`;
+  if (p >= 25) return `Below median`;
+  if (p >= 10) return `Bottom quartile`;
+  return `Bottom ${Math.max(1, p)}%`;
+}
+
+/* ----------------------------- Business description ---------------- */
+
+function BusinessDescription({
+  summary, website,
+}: { summary: string; website: string | null }) {
+  return (
+    <section className="mt-8 card p-6 max-w-[920px]">
+      <div className="flex items-baseline justify-between gap-4 mb-3">
+        <div className="text-[11px] uppercase tracking-wide muted-text">
+          About the company
+        </div>
+        <div className="flex items-center gap-3 text-[12px] muted-text">
+          {website && (
+            <a
+              href={website.startsWith("http") ? website : `https://${website}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline hover:no-underline"
+              style={{ color: "var(--color-accent-600)" }}
+            >
+              {website.replace(/^https?:\/\//, "").replace(/\/$/, "")} ↗
+            </a>
+          )}
+        </div>
+      </div>
+      <p className="text-[14.5px] leading-[1.7] text-[var(--color-ink)]">
+        {summary}
+      </p>
+      <div className="mt-3 text-[10.5px] muted-text italic">
+        Sourced from public company disclosures.
+      </div>
+    </section>
+  );
+}
+
+/* ----------------------------- About card -------------------------- */
+
+function AboutCard({
+  stock, priceHistoryStart,
+}: { stock: Stock; priceHistoryStart: string | null }) {
+  const facts: { label: string; value: string }[] = [];
+  if (stock.industry) facts.push({ label: "Industry", value: stock.industry });
+  if (stock.sector) facts.push({ label: "Sector", value: stock.sector });
+  facts.push({
+    label: "Cluster",
+    value: `${stock.cluster_name} · ${tierLabel(stock.maturity_tier)}`,
+  });
+  if (stock.market_cap_cr != null) {
+    facts.push({ label: "Market cap", value: fmtRupeesCr(stock.market_cap_cr) });
+  }
+  if (stock.listing_date) {
+    facts.push({
+      label: "Listed",
+      value: new Date(stock.listing_date).toLocaleDateString("en-IN", {
+        year: "numeric", month: "short", day: "numeric",
+      }),
+    });
+  }
+  if (priceHistoryStart) {
+    const yrs = (
+      (Date.now() - new Date(priceHistoryStart).getTime()) /
+      (365.25 * 24 * 3600 * 1000)
+    ).toFixed(0);
+    facts.push({ label: "Price history", value: `${yrs} years available` });
+  }
+  if (stock.years_of_data) {
+    facts.push({ label: "Fundamentals", value: `${stock.years_of_data} years available` });
+  }
+
+  return (
+    <section className="card p-5">
+      <div className="text-[11px] uppercase tracking-wide muted-text mb-3">About</div>
+      <div className="font-display text-[18px] leading-tight tracking-tight mb-4">
+        {stock.company_name || stock.symbol}
+      </div>
+      <div className="space-y-2.5">
+        {facts.map((f) => (
+          <div key={f.label} className="grid grid-cols-[110px_1fr] gap-3 text-[13px]">
+            <span className="muted-text">{f.label}</span>
+            <span>{f.value}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/* ----------------------------- Price chart card -------------------- */
+
+function PriceChartCard({
+  symbol, history,
+}: { symbol: string; history: PricePoint[] }) {
+  const first = history[0];
+  const last = history[history.length - 1];
+  const totalReturn = first && last && first.close > 0
+    ? (last.close / first.close - 1) * 100
+    : null;
+  const years = first
+    ? (Date.now() - new Date(first.date).getTime()) / (365.25 * 24 * 3600 * 1000)
+    : 0;
+  const cagr = totalReturn != null && years > 1
+    ? (Math.pow(last.close / first.close, 1 / years) - 1) * 100
+    : null;
+
+  return (
+    <section className="card p-5">
+      <div className="flex items-baseline justify-between mb-2">
+        <div>
+          <div className="text-[11px] uppercase tracking-wide muted-text">Price history</div>
+          <div className="font-display text-[18px] mt-0.5">
+            {symbol} ·{" "}
+            <span className="muted-text">
+              monthly close, {history.length > 0 ? `${first?.date.slice(0, 4)}–${last?.date.slice(0, 4)}` : "—"}
+            </span>
+          </div>
+        </div>
+        {totalReturn != null && (
+          <div className="text-right">
+            <div
+              className="font-display text-[20px] tabular-nums leading-none"
+              style={{
+                color: totalReturn >= 0 ? "var(--color-score-good)" : "var(--color-score-poor)",
+              }}
+            >
+              {totalReturn >= 0 ? "+" : ""}
+              {totalReturn.toFixed(0)}%
+            </div>
+            <div className="text-[10px] muted-text mt-1">
+              {cagr != null ? `${cagr.toFixed(1)}% CAGR · ${years.toFixed(0)}y` : "Total return"}
+            </div>
+          </div>
+        )}
+      </div>
+      <PriceChart data={history} />
+    </section>
+  );
+}
+
+/* -- Pillar trend computation ---------------------------------- */
+
+type TrendDef = {
+  name: string;
+  data: SparkPoint[];
+  format: import("@/components/Sparkline").FormatId;
+  inverse?: boolean;
+};
+
+function fyLabelFromIso(iso: string): string {
+  return `FY${String(new Date(iso).getFullYear()).slice(-2)}`;
+}
+
+function computePillarTrends(
+  pillar: "Quality" | "Valuation" | "Momentum",
+  annual: AnnualRow[],
+): TrendDef[] {
+  const rowsAsc = [...annual].reverse();
+
+  if (pillar === "Quality") {
+    return [
+      {
+        name: "Return on equity",
+        format: "pct",
+        data: rowsAsc.map((r) => {
+          const eq = (r.equity_share_capital ?? 0) + (r.reserves ?? 0);
+          const v = eq > 0 && r.net_profit != null ? r.net_profit / eq : null;
+          return { label: fyLabelFromIso(r.period_end), value: v };
+        }),
+      },
+      {
+        name: "Return on capital employed",
+        format: "pct",
+        data: rowsAsc.map((r) => {
+          const cap = (r.equity_share_capital ?? 0) + (r.reserves ?? 0) + (r.borrowings ?? 0);
+          const ebit = (r.profit_before_tax ?? 0) + (r.interest ?? 0);
+          const v = cap > 0 && r.profit_before_tax != null ? ebit / cap : null;
+          return { label: fyLabelFromIso(r.period_end), value: v };
+        }),
+      },
+      {
+        name: "Operating margin",
+        format: "pct",
+        data: rowsAsc.map((r) => {
+          const v = r.sales && r.sales > 0 && r.operating_profit != null ? r.operating_profit / r.sales : null;
+          return { label: fyLabelFromIso(r.period_end), value: v };
+        }),
+      },
+      {
+        name: "Net profit margin",
+        format: "pct",
+        data: rowsAsc.map((r) => {
+          const v = r.sales && r.sales > 0 && r.net_profit != null ? r.net_profit / r.sales : null;
+          return { label: fyLabelFromIso(r.period_end), value: v };
+        }),
+      },
+      {
+        name: "Debt / Equity",
+        format: "ratio",
+        inverse: true,
+        data: rowsAsc.map((r) => {
+          const eq = (r.equity_share_capital ?? 0) + (r.reserves ?? 0);
+          const v = eq > 0 && r.borrowings != null ? r.borrowings / eq : null;
+          return { label: fyLabelFromIso(r.period_end), value: v };
+        }),
+      },
+      {
+        name: "CFO ÷ Net profit",
+        format: "ratio",
+        data: rowsAsc.map((r) => {
+          const v = r.cash_from_operating != null && r.net_profit != null && r.net_profit > 0
+            ? r.cash_from_operating / r.net_profit : null;
+          return { label: fyLabelFromIso(r.period_end), value: v };
+        }),
+      },
+    ];
+  }
+
+  if (pillar === "Valuation") {
+    // Valuation is harder to chart historically — P/E needs annual mc which we don't store.
+    // For now, show two trends derivable from raw fundamentals: book value and earnings yield trend.
+    return [
+      {
+        name: "Book value (₹ Cr)",
+        format: "cr",
+        data: rowsAsc.map((r) => ({
+          label: fyLabelFromIso(r.period_end),
+          value: (r.equity_share_capital ?? 0) + (r.reserves ?? 0) || null,
+        })),
+      },
+      {
+        name: "Net profit (₹ Cr)",
+        format: "cr",
+        data: rowsAsc.map((r) => ({
+          label: fyLabelFromIso(r.period_end),
+          value: r.net_profit,
+        })),
+      },
+      {
+        name: "Sales (₹ Cr)",
+        format: "cr",
+        data: rowsAsc.map((r) => ({
+          label: fyLabelFromIso(r.period_end),
+          value: r.sales,
+        })),
+      },
+    ];
+  }
+
+  // Momentum — show YoY growth rates derived from annuals
+  return [
+    {
+      name: "Sales YoY growth",
+      format: "pct",
+      data: rowsAsc.map((r, i) => {
+        if (i === 0) return { label: fyLabelFromIso(r.period_end), value: null };
+        const prev = rowsAsc[i - 1].sales;
+        const v = prev && prev > 0 && r.sales != null ? (r.sales - prev) / prev : null;
+        return { label: fyLabelFromIso(r.period_end), value: v };
+      }),
+    },
+    {
+      name: "Net profit YoY growth",
+      format: "pct",
+      data: rowsAsc.map((r, i) => {
+        if (i === 0) return { label: fyLabelFromIso(r.period_end), value: null };
+        const prev = rowsAsc[i - 1].net_profit;
+        const v = prev && prev !== 0 && r.net_profit != null ? (r.net_profit - prev) / Math.abs(prev) : null;
+        return { label: fyLabelFromIso(r.period_end), value: v };
+      }),
+    },
+    {
+      name: "Operating profit YoY growth",
+      format: "pct",
+      data: rowsAsc.map((r, i) => {
+        if (i === 0) return { label: fyLabelFromIso(r.period_end), value: null };
+        const prev = rowsAsc[i - 1].operating_profit;
+        const v = prev && prev !== 0 && r.operating_profit != null
+          ? (r.operating_profit - prev) / Math.abs(prev)
+          : null;
+        return { label: fyLabelFromIso(r.period_end), value: v };
+      }),
+    },
+  ];
+}
+
+function CompositeExplainer(props: {
+  composite: number | null;
+  cluster: string;
+  tier: string;
+}) {
+  return (
+    <footer className="mt-12 pt-6 border-t hairline">
+      <div className="text-[11px] uppercase tracking-wide muted-text mb-2">
+        Note · How the score works
+      </div>
+      <p className="text-[12.5px] leading-relaxed muted-text max-w-[820px]">
+        The <strong className="ink-text">Composite</strong> is this stock&apos;s overall
+        percentile (0&ndash;100) within its peer group: <em>{props.cluster}</em>,{" "}
+        {tierLabel(props.tier)}. It is a weighted blend of three pillars — Quality,
+        Valuation, Momentum — using sector-tuned weights, then re-ranked against the
+        same peers so the final number is itself a percentile. Higher = better.{" "}
+        <Link href="/about" className="underline hover:no-underline">
+          Read the methodology
+        </Link>.
+      </p>
+    </footer>
+  );
+}
+
+type AnnualLite = {
+  period_end: string;
+  sales: number | null;
+  operating_profit: number | null;
+  net_profit: number | null;
+  cash_from_operating: number | null;
+  total_assets: number | null;
+  borrowings: number | null;
+  equity_share_capital: number | null;
+  reserves: number | null;
+};
+
+type QuarterlyLite = {
+  period_end: string;
+  sales: number | null;
+  operating_profit: number | null;
+  net_profit: number | null;
+};
+
+function FundamentalsTables({
+  annual, quarterly,
+}: { annual: AnnualLite[]; quarterly: QuarterlyLite[] }) {
+  const annualOldFirst = [...annual].reverse();
+  const qOldFirst = [...quarterly].reverse();
+
+  // Derived ratios per year
+  const derived = annualOldFirst.map((r) => {
+    const equity = (r.equity_share_capital ?? 0) + (r.reserves ?? 0);
+    const op_margin = r.sales && r.sales > 0 && r.operating_profit != null
+      ? (r.operating_profit / r.sales) : null;
+    const np_margin = r.sales && r.sales > 0 && r.net_profit != null
+      ? (r.net_profit / r.sales) : null;
+    const roe = equity > 0 && r.net_profit != null ? r.net_profit / equity : null;
+    const debt_equity = equity > 0 && r.borrowings != null ? r.borrowings / equity : null;
+    return { period_end: r.period_end, op_margin, np_margin, roe, debt_equity };
+  });
+
+  return (
+    <section className="card p-6">
+      <h2 className="font-display text-[20px] mb-1">The numbers</h2>
+      <p className="text-[13px] muted-text mb-5">
+        Source data behind the score. All ₹ figures in crores; ratios as percentages.
+      </p>
+
+      <div className="space-y-8">
+        <FundamentalsBlock
+          title="Annual P&amp;L (last 10 fiscal years)"
+          rows={[
+            { label: "Sales",                cells: annualOldFirst.map((r) => fmtCr(r.sales)) },
+            { label: "Operating profit",     cells: annualOldFirst.map((r) => fmtCr(r.operating_profit)) },
+            { label: "Net profit",           cells: annualOldFirst.map((r) => fmtCr(r.net_profit)) },
+            { label: "Cash from operations", cells: annualOldFirst.map((r) => fmtCr(r.cash_from_operating)) },
+            { label: "Total assets",         cells: annualOldFirst.map((r) => fmtCr(r.total_assets)) },
+            { label: "Borrowings",           cells: annualOldFirst.map((r) => fmtCr(r.borrowings)) },
+          ]}
+          headers={annualOldFirst.map((r) => fyLabel(r.period_end))}
+        />
+
+        <FundamentalsBlock
+          title="Derived ratios"
+          rows={[
+            { label: "Operating margin", cells: derived.map((r) => fmtPctRatio(r.op_margin)) },
+            { label: "Net profit margin", cells: derived.map((r) => fmtPctRatio(r.np_margin)) },
+            { label: "Return on equity",  cells: derived.map((r) => fmtPctRatio(r.roe)) },
+            { label: "Debt / Equity",     cells: derived.map((r) => fmtRatio(r.debt_equity)) },
+          ]}
+          headers={derived.map((r) => fyLabel(r.period_end))}
+        />
+
+        <FundamentalsBlock
+          title={`Quarterly results (latest ${qOldFirst.length} quarters)`}
+          rows={[
+            { label: "Sales",            cells: qOldFirst.map((r) => fmtCr(r.sales)) },
+            { label: "Operating profit", cells: qOldFirst.map((r) => fmtCr(r.operating_profit)) },
+            { label: "Net profit",       cells: qOldFirst.map((r) => fmtCr(r.net_profit)) },
+          ]}
+          headers={qOldFirst.map((r) => qLabel(r.period_end))}
+        />
+      </div>
+    </section>
+  );
+}
+
+function FundamentalsBlock(props: {
+  title: string;
+  rows: { label: string; cells: string[] }[];
+  headers: string[];
+}) {
+  // Drop rows where every cell is "—" (blank). Keeps tables tight for stocks
+  // where the source feed doesn't report some line items (e.g. brokerages have no
+  // separate Operating Profit row in their P&L).
+  const rows = props.rows.filter((r) => r.cells.some((c) => c !== "—"));
+  if (rows.length === 0) {
+    return null;
+  }
+  return (
+    <div>
+      <div className="text-[12px] uppercase tracking-wide muted-text mb-2">{props.title}</div>
+      <div className="overflow-x-auto -mx-2">
+        <table className="w-full text-[13px] min-w-[480px]">
+          <thead>
+            <tr className="border-b hairline">
+              <th className="text-left font-normal muted-text py-2 px-2 text-[11px] uppercase">Item</th>
+              {props.headers.map((h) => (
+                <th key={h} className="text-right font-normal muted-text py-2 px-2 text-[11px] uppercase">
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.label} className="border-b hairline last:border-b-0">
+                <td className="py-2 px-2 text-[13px]">{r.label}</td>
+                {r.cells.map((c, i) => (
+                  <td
+                    key={i}
+                    className={`py-2 px-2 text-right tabular-nums ${c === "—" ? "muted-text" : ""}`}
+                  >
+                    {c}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function fmtCr(n: number | null): string {
+  if (n == null) return "—";
+  if (Math.abs(n) >= 100_000) return `₹${(n / 1000).toLocaleString("en-IN", { maximumFractionDigits: 1 })}K`;
+  if (Math.abs(n) >= 10_000)  return `₹${(n / 1000).toLocaleString("en-IN", { maximumFractionDigits: 2 })}K`;
+  return `₹${n.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
+}
+
+function fmtPctRatio(r: number | null): string {
+  if (r == null) return "—";
+  return `${(r * 100).toFixed(1)}%`;
+}
+
+function fmtRatio(r: number | null): string {
+  if (r == null) return "—";
+  return r.toFixed(2);
+}
+
+function fyLabel(iso: string): string {
+  const d = new Date(iso);
+  return `FY${String(d.getFullYear()).slice(-2)}`;
+}
+
+function qLabel(iso: string): string {
+  const d = new Date(iso);
+  const m = d.getMonth() + 1;
+  const q = m <= 3 ? "Q4" : m <= 6 ? "Q1" : m <= 9 ? "Q2" : "Q3";
+  const fy = m <= 3 ? d.getFullYear() : d.getFullYear() + 1;
+  return `${q} FY${String(fy).slice(-2)}`;
+}
+
+function StatusCard({ status }: { status: string | null }) {
+  if (!status || status === "full") return null;
+  const labels: Record<string, string> = {
+    "partial-cluster-mixed-tiers": "Cluster has few same-tier peers — percentile uses adjacent tiers as fallback.",
+    "partial-meta-cluster": "Cluster has very few peers — percentile uses meta-cluster as fallback.",
+    "partial-data": "Some metrics unavailable for this stock.",
+    "partial-balance-sheet": "Balance-sheet figure (book value) is null — valuation pillar partial.",
+    "insufficient_data": "Too little history to compute scores.",
+  };
+  return (
+    <div className="card p-4 text-[12px]">
+      <div className="font-medium mb-1">Score status</div>
+      <div className="muted-text">{labels[status] || status}</div>
+    </div>
+  );
+}

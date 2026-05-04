@@ -1,0 +1,72 @@
+@import "tailwindcss";
+
+/* ----- Claude design tokens ------------------------------------------ */
+@theme {
+  /* Surfaces */
+  --color-paper: #faf9f5;
+  --color-card: #ffffff;
+  --color-ink: #191919;
+  --color-muted: #5a584f;
+  --color-border-default: #e8e4d9;
+
+  /* Accent — Claude tan-orange family */
+  --color-accent-50:  #fbf2ed;
+  --color-accent-100: #f5e0d3;
+  --color-accent-200: #ecc4ad;
+  --color-accent-300: #dc9a7a;
+  --color-accent-400: #cc785c;
+  --color-accent-500: #b86a50;
+  --color-accent-600: #a05a42;
+  --color-accent-700: #7e4733;
+
+  /* Score palette — earthy, no neon */
+  --color-score-excellent: #3f7d4a;
+  --color-score-good:      #7ea874;
+  --color-score-neutral:   #c9b876;
+  --color-score-weak:      #cc8a5c;
+  --color-score-poor:      #a8543c;
+
+  /* Typography */
+  --font-serif: "Source Serif 4", "Iowan Old Style", "Apple Garamond", Georgia, serif;
+  --font-sans:  "Inter", ui-sans-serif, system-ui, -apple-system, "Helvetica Neue", sans-serif;
+  --font-mono:  ui-monospace, "SF Mono", "Menlo", monospace;
+
+  /* Radii */
+  --radius-card: 12px;
+  --radius-pill: 9999px;
+}
+
+/* ----- Base ----------------------------------------------------------- */
+html, body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-feature-settings: "tnum", "cv11";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, .font-display {
+  font-family: var(--font-serif);
+  font-weight: 400;
+  letter-spacing: -0.015em;
+}
+
+td, th { font-variant-numeric: tabular-nums; }
+
+/* ----- Utilities ------------------------------------------------------ */
+.card {
+  background: var(--color-card);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-card);
+}
+
+.muted-text { color: var(--color-muted); }
+
+.score-bg-excellent { background-color: var(--color-score-excellent); color: white; }
+.score-bg-good      { background-color: var(--color-score-good); color: white; }
+.score-bg-neutral   { background-color: var(--color-score-neutral); color: var(--color-ink); }
+.score-bg-weak      { background-color: var(--color-score-weak); color: white; }
+.score-bg-poor      { background-color: var(--color-score-poor); color: white; }
+
+.hairline { border-color: var(--color-border-default); }
