@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # scripts/sync-neon.sh
 #
-# Incremental sync: pushes the LATEST snapshot's worth of Nifty 50 data
+# Incremental sync: pushes the LATEST snapshot's worth of Nifty 200 data
 # from local Postgres → Neon. Run after ./snap to publish fresh scores.
 #
 # What it syncs:
-#   - app.metrics_snapshot   (latest snapshot only, Nifty 50 only)
-#   - app.scores             (latest snapshot only, Nifty 50 only)
-#   - app.universe           (full Nifty 50 row update — picks up CEO,
+#   - app.metrics_snapshot   (latest snapshot only, Nifty 200 only)
+#   - app.scores             (latest snapshot only, Nifty 200 only)
+#   - app.universe           (full Nifty 200 row update — picks up CEO,
 #                             shareholding, business_summary changes)
-#   - app.shareholding_pattern (full Nifty 50 — quarterly cadence so cheap)
-#   - app.screener_meta      (Nifty 50 — refreshed LTPs, market cap)
+#   - app.shareholding_pattern (full Nifty 200 — quarterly cadence so cheap)
+#   - app.screener_meta      (Nifty 200 — refreshed LTPs, market cap)
 #   - golden.price_history   (incremental: only rows newer than max(date) on Neon)
 #
 # What it does NOT sync (by design):
@@ -49,13 +49,13 @@ if [[ "$LATEST_SNAP" == "$NEON_LATEST" ]]; then
   echo "  ⚠ Neon already has snapshot $LATEST_SNAP. Pushing anyway (idempotent upsert)."
 fi
 
-NIFTY_FILTER="symbol IN (SELECT symbol FROM app.universe WHERE is_nifty50)"
+NIFTY_FILTER="symbol IN (SELECT symbol FROM app.universe WHERE is_nifty200)"
 
-# ----- universe (full upsert for Nifty 50) -------------------------------
+# ----- universe (full upsert for Nifty 200) -------------------------------
 # Universe rarely changes shape but field values do (CEO refresh, business
 # summary refresh, etc.). UPSERT every row to capture any tiny update.
-echo "▶ syncing app.universe (Nifty 50)..."
-psql "$LOCAL_APP" -c "\COPY (SELECT * FROM app.universe WHERE is_nifty50) TO STDOUT" \
+echo "▶ syncing app.universe (Nifty 200)..."
+psql "$LOCAL_APP" -c "\COPY (SELECT * FROM app.universe WHERE is_nifty200) TO STDOUT" \
   | psql "$NEON_APP_URL" -c "
     CREATE TEMP TABLE _u (LIKE app.universe INCLUDING ALL);
     \COPY _u FROM STDIN;
@@ -79,10 +79,11 @@ psql "$LOCAL_APP" -c "\COPY (SELECT * FROM app.universe WHERE is_nifty50) TO STD
         key_officers             = EXCLUDED.key_officers,
         officers_fetched_at      = EXCLUDED.officers_fetched_at,
         is_nifty500              = EXCLUDED.is_nifty500,
-        is_nifty50               = EXCLUDED.is_nifty50;
+        is_nifty50               = EXCLUDED.is_nifty50,
+        is_nifty200              = EXCLUDED.is_nifty200;
   "
 
-# ----- screener_meta (Nifty 50, full upsert) -----------------------------
+# ----- screener_meta (Nifty 200, full upsert) -----------------------------
 echo "▶ syncing app.screener_meta..."
 psql "$LOCAL_APP" -c "\COPY (SELECT * FROM app.screener_meta WHERE $NIFTY_FILTER) TO STDOUT" \
   | psql "$NEON_APP_URL" -c "
@@ -115,7 +116,7 @@ psql "$LOCAL_APP" -c "
   INSERT INTO app.scores SELECT * FROM _s;
 "
 
-# ----- shareholding (full Nifty 50 — quarterly so cheap) -----------------
+# ----- shareholding (full Nifty 200 — quarterly so cheap) -----------------
 echo "▶ syncing app.shareholding_pattern..."
 psql "$LOCAL_APP" -c "\COPY (SELECT * FROM app.shareholding_pattern WHERE $NIFTY_FILTER) TO STDOUT" \
   | psql "$NEON_APP_URL" -c "
@@ -129,7 +130,7 @@ psql "$LOCAL_APP" -c "\COPY (SELECT * FROM app.shareholding_pattern WHERE $NIFTY
 echo "▶ syncing golden.price_history (incremental)..."
 GOLDEN_FILTER=$(psql "$LOCAL_APP" -tAc "
   SELECT string_agg('''' || symbol || '.NS''', ',')
-  FROM app.universe WHERE is_nifty50
+  FROM app.universe WHERE is_nifty200
 ")
 GOLDEN_LAST=$(psql "$NEON_GOLDEN_URL" -tAc "SELECT MAX(date) FROM golden.price_history" 2>/dev/null || echo "")
 if [[ -z "$GOLDEN_LAST" ]]; then

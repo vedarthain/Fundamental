@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/migrate-nifty50-to-neon.sh
 #
-# One-shot migration: pushes Nifty 50 (+ tata-motors variants) data from local
+# One-shot migration: pushes Nifty 200 (+ tata-motors variants) data from local
 # Postgres → Neon. Filters every symbol-keyed table to is_nifty50 stocks.
 # Reference tables (cluster, meta_cluster, scorecards) are copied in full.
 #
@@ -77,10 +77,10 @@ copy_full app.meta_cluster       "$NEON_APP_URL"
 copy_full app.cluster            "$NEON_APP_URL"
 copy_full app.cluster_scorecard  "$NEON_APP_URL"
 
-# ----- step 3: copy symbol-keyed tables (filtered to Nifty 50) ------------
-echo "▶ [3/4] copying Nifty 50 data (filtered)..."
+# ----- step 3: copy symbol-keyed tables (filtered to Nifty 200) ------------
+echo "▶ [3/4] copying Nifty 200 data (filtered)..."
 
-NIFTY_FILTER="symbol IN (SELECT symbol FROM app.universe WHERE is_nifty50)"
+NIFTY_FILTER="symbol IN (SELECT symbol FROM app.universe WHERE is_nifty200)"
 
 # Each entry: "table  filter-expr"
 copy_filtered() {
@@ -94,7 +94,7 @@ copy_filtered() {
 }
 
 # Universe must come first — every other table foreign-keys to it
-copy_filtered app.universe                "is_nifty50"                       "$NEON_APP_URL"
+copy_filtered app.universe                "is_nifty200"                      "$NEON_APP_URL"
 copy_filtered app.cluster_assignment      "$NIFTY_FILTER"                     "$NEON_APP_URL"
 copy_filtered app.fundamentals_annual     "$NIFTY_FILTER"                     "$NEON_APP_URL"
 copy_filtered app.fundamentals_quarterly  "$NIFTY_FILTER"                     "$NEON_APP_URL"
@@ -111,10 +111,10 @@ copy_full app.user_scorecard_override     "$NEON_APP_URL"
 # Order matters: golden.price_history (partitioned by interval) has an FK to
 # golden.stocks. Parent rows must exist before child inserts, so we load
 # golden.stocks first.
-echo "▶ [4/4] copying golden_db (stocks + daily prices) for Nifty 50..."
+echo "▶ [4/4] copying golden_db (stocks + daily prices) for Nifty 200..."
 GOLDEN_FILTER=$(psql "$LOCAL_APP" -tAc "
   SELECT string_agg('''' || symbol || '.NS''', ',')
-  FROM app.universe WHERE is_nifty50
+  FROM app.universe WHERE is_nifty200
 ")
 
 echo "    golden.stocks"
@@ -134,7 +134,7 @@ psql "$LOCAL_GOLDEN" -c "\COPY (SELECT * FROM golden.price_history WHERE symbol 
 echo
 echo "▶ verification:"
 psql "$NEON_APP_URL" -c "
-  SELECT 'universe (Nifty50)'   AS tbl, COUNT(*) AS rows FROM app.universe WHERE is_nifty50
+  SELECT 'universe (Nifty200)'  AS tbl, COUNT(*) AS rows FROM app.universe WHERE is_nifty200
   UNION ALL SELECT 'fund. annual',       COUNT(*) FROM app.fundamentals_annual
   UNION ALL SELECT 'fund. quarterly',    COUNT(*) FROM app.fundamentals_quarterly
   UNION ALL SELECT 'metrics_snapshot',   COUNT(*) FROM app.metrics_snapshot

@@ -29,6 +29,16 @@ type Row = {
   blend: number | null;
 };
 
+async function loadCoverage(): Promise<{ stocks: number }> {
+  // Count of stocks visible to the screener — i.e. anything actively tracked
+  // in app.universe. This is what users want to see surfaced as the scope of
+  // coverage ("we track N stocks") rather than the filtered match count.
+  const rows = await sql<{ stocks: number }[]>`
+    SELECT COUNT(*)::int AS stocks FROM app.universe WHERE is_active
+  `;
+  return rows[0] ?? { stocks: 0 };
+}
+
 async function loadMetas(): Promise<MetaOption[]> {
   return sql<MetaOption[]>`
     SELECT mc.id, mc.name, COUNT(c.id)::int AS cluster_count
@@ -122,10 +132,11 @@ export default async function ScreenerPage({
 }) {
   const sp = await searchParams;
   const params = parseParams(sp);
-  const [metas, clusters, { rows, total }] = await Promise.all([
+  const [metas, clusters, { rows, total }, coverage] = await Promise.all([
     loadMetas(),
     loadClusters(),
     loadRows(params),
+    loadCoverage(),
   ]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -147,7 +158,23 @@ export default async function ScreenerPage({
   return (
     <div className="mx-auto max-w-[1300px] px-6 py-10">
       <header className="max-w-[760px]">
-        <div className="text-[12px] uppercase tracking-wide muted-text">Discover</div>
+        <div className="text-[12px] uppercase tracking-wide muted-text flex items-center gap-2 flex-wrap">
+          <span>Discover</span>
+          <span aria-hidden style={{ color: "var(--color-border-default)" }}>·</span>
+          <span
+            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border hairline normal-case tracking-normal"
+            style={{ backgroundColor: "var(--color-card)" }}
+          >
+            <span
+              className="w-1.5 h-1.5 rounded-full animate-livepulse"
+              style={{ backgroundColor: "var(--color-score-excellent)" }}
+            />
+            <span className="tabular-nums font-medium" style={{ color: "var(--color-ink)" }}>
+              {coverage.stocks.toLocaleString("en-IN")}
+            </span>
+            <span>stocks tracked</span>
+          </span>
+        </div>
         <h1 className="font-display text-[36px] tracking-tight leading-tight mt-1">
           Find stocks by <em className="accent">your priorities</em>
         </h1>
