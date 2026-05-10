@@ -29,12 +29,12 @@ export function MetaChips({ metas }: { metas: MetaOption[] }) {
       ? initial.metas.filter((x) => x !== id)
       : [...initial.metas, id];
     const q = paramsToQuery({ ...initial, metas: next, page: 1 });
-    startTransition(() => router.replace("/screener" + q, { scroll: false }));
+    startTransition(() => router.replace("/discover" + q, { scroll: false }));
   };
 
   const clearAll = () => {
     const q = paramsToQuery({ ...initial, metas: [], page: 1 });
-    startTransition(() => router.replace("/screener" + q, { scroll: false }));
+    startTransition(() => router.replace("/discover" + q, { scroll: false }));
   };
 
   const allActive = selected.size === 0;

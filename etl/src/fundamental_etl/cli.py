@@ -31,11 +31,14 @@ app = typer.Typer(no_args_is_help=True, add_completion=False)
 def fetch(
     symbol: str = typer.Argument(..., help="NSE symbol, e.g. RELIANCE"),
     save: bool = typer.Option(True, help="Persist to fundamental_app DB"),
+    standalone: bool = typer.Option(False, "--standalone",
+        help="Force the standalone variant (denser data for some stocks like SOTL, KHAITAN)"),
 ):
     """Fetch + parse a single ticker. Useful for manual testing."""
     configure_logging()
-    log.info("fetch_start", symbol=symbol)
-    info, data = fetch_company_export(symbol)
+    log.info("fetch_start", symbol=symbol, standalone=standalone)
+    prefer = "standalone" if standalone else "consolidated"
+    info, data = fetch_company_export(symbol, prefer=prefer)
     log.info("fetched", symbol=symbol, variant=info.variant, bytes=len(data))
     parsed = parse_export(data)
     log.info("parsed", symbol=symbol, annual_periods=len(parsed.annual),
@@ -147,6 +150,114 @@ def fetch_many(
     log.info("backfill_done", ok=ok, failed=fail, total=len(symbols))
 
 
+@app.command("repair")
+def repair_cmd(
+    min_years: int = typer.Option(8, help="Stocks with fewer years of data in the last 10 years are candidates"),
+    min_age_years: int = typer.Option(5, help="Skip stocks listed more recently than this (likely real new listings)"),
+    limit: int = typer.Option(0, help="Cap candidates processed (0 = all)"),
+    dry_run: bool = typer.Option(False, help="Print candidates without re-fetching"),
+    throttle: float = typer.Option(2.0, help="Seconds between requests"),
+):
+    """Detect stocks with sparse/gappy fundamentals data despite being listed for years,
+    re-fetch them using Screener's STANDALONE view (often denser than consolidated for
+    older Indian companies), then re-compute metrics + score.
+    """
+    configure_logging()
+    log.info("repair_start", min_years=min_years, min_age_years=min_age_years, dry_run=dry_run)
+
+    with app_conn() as ac:
+        with ac.cursor() as cur:
+            cur.execute("""
+                SELECT u.symbol, u.company_name,
+                       EXTRACT(YEAR FROM age(CURRENT_DATE, u.listing_date))::int AS years_listed,
+                       COUNT(DISTINCT fa.period_end) FILTER (
+                         WHERE fa.period_end >= CURRENT_DATE - INTERVAL '10 years'
+                       )::int AS recent_years
+                FROM app.universe u
+                LEFT JOIN app.fundamentals_annual fa USING (symbol)
+                WHERE u.is_active AND u.listing_date IS NOT NULL
+                GROUP BY u.symbol, u.company_name, u.listing_date
+                HAVING EXTRACT(YEAR FROM age(CURRENT_DATE, u.listing_date)) >= %s
+                   AND COUNT(DISTINCT fa.period_end) FILTER (
+                         WHERE fa.period_end >= CURRENT_DATE - INTERVAL '10 years'
+                       ) < %s
+                ORDER BY 4 ASC, 3 DESC
+            """, (min_age_years, min_years))
+            candidates = cur.fetchall()
+
+    if limit > 0:
+        candidates = candidates[:limit]
+
+    log.info("candidates_identified", count=len(candidates))
+    if dry_run:
+        for c in candidates[:30]:
+            log.info("candidate", symbol=c["symbol"], years_listed=c["years_listed"], recent_years=c["recent_years"])
+        return
+
+    if not candidates:
+        log.info("nothing_to_repair")
+        return
+
+    counts = {"ok": 0, "still_sparse": 0, "no_data": 0, "error": 0, "improved": 0}
+    syms_improved: list[str] = []
+
+    client = make_client()
+    try:
+        for i, c in enumerate(candidates, 1):
+            sym = c["symbol"]
+            try:
+                info, data = fetch_company_export(sym, client=client, prefer="standalone")
+                parsed = parse_export(data)
+                with app_conn() as conn:
+                    fetched_at = save_raw_export(conn, sym, data)
+                    ann_n, qtr_n = save_parsed(conn, sym, parsed, fetched_at)
+                    update_meta_success(conn, sym, info.export_id, len(data))
+                    conn.commit()
+                # Did it actually fix anything?
+                with app_conn() as conn, conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT COUNT(DISTINCT period_end)::int AS n
+                        FROM app.fundamentals_annual
+                        WHERE symbol = %s AND period_end >= CURRENT_DATE - INTERVAL '10 years'
+                    """, (sym,))
+                    new_recent = cur.fetchone()["n"]
+                if new_recent >= min_years:
+                    counts["improved"] += 1
+                    syms_improved.append(sym)
+                elif new_recent == 0:
+                    counts["no_data"] += 1
+                else:
+                    counts["still_sparse"] += 1
+                counts["ok"] += 1
+                log.info("repaired",
+                         i=i, n=len(candidates), symbol=sym,
+                         was=c["recent_years"], now=new_recent)
+            except (AuthFailed,) as e:
+                log.error("auth_failed_halt", symbol=sym, error=str(e)[:120])
+                break
+            except Exception as e:
+                counts["error"] += 1
+                log.error("error", symbol=sym, error=str(e)[:120])
+
+            if i < len(candidates):
+                time.sleep(throttle)
+    finally:
+        client.close()
+
+    log.info("repair_done", **counts)
+    log.info("improved_symbols_sample", sample=syms_improved[:20])
+
+    if syms_improved:
+        log.info("running_compute_metrics_for_improved", count=len(syms_improved))
+        only_csv = ",".join(syms_improved)
+        # Re-use the existing compute-metrics and score commands by invoking their internals
+        # Lightweight: shell out via a fresh CLI run to keep code reuse trivial.
+        import subprocess, sys as _sys
+        subprocess.run([_sys.executable, "-m", "fundamental_etl.cli", "compute-metrics", "--only", only_csv], check=False)
+        subprocess.run([_sys.executable, "-m", "fundamental_etl.cli", "score"], check=False)
+        log.info("rescore_done")
+
+
 @app.command("assign-clusters")
 def assign_clusters_cmd():
     """Assign cluster_id + maturity_tier for every active stock."""
@@ -231,6 +342,34 @@ def fetch_business_info_cmd(
 ):
     """Pull company business summary + website from public disclosures via yfinance."""
     from .business_info import fetch_many
+    configure_logging()
+    syms = [s.strip().upper() for s in only.split(",")] if only else None
+    counts = fetch_many(only=syms, skip_existing=not refresh, throttle_s=throttle)
+    log.info("done", **counts)
+
+
+@app.command("fetch-officers")
+def fetch_officers_cmd(
+    only: str = typer.Option(None, help="Comma-separated symbols to limit to"),
+    refresh: bool = typer.Option(False, help="Re-fetch even if already populated"),
+    throttle: float = typer.Option(1.5, help="Seconds between yfinance calls"),
+):
+    """Pull CEO / MD + key officers list from yfinance companyOfficers."""
+    from .officers import fetch_many
+    configure_logging()
+    syms = [s.strip().upper() for s in only.split(",")] if only else None
+    counts = fetch_many(only=syms, skip_existing=not refresh, throttle_s=throttle)
+    log.info("done", **counts)
+
+
+@app.command("fetch-shareholding")
+def fetch_shareholding_cmd(
+    only: str = typer.Option(None, help="Comma-separated symbols to limit to"),
+    refresh: bool = typer.Option(False, help="Re-fetch even if already populated"),
+    throttle: float = typer.Option(1.5, help="Seconds between Screener page GETs"),
+):
+    """Scrape quarterly shareholding pattern from Screener company page HTML."""
+    from .shareholding import fetch_many
     configure_logging()
     syms = [s.strip().upper() for s in only.split(",")] if only else None
     counts = fetch_many(only=syms, skip_existing=not refresh, throttle_s=throttle)

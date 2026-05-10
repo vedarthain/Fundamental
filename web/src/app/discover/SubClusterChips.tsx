@@ -43,13 +43,13 @@ export function SubClusterChips({ clusters }: { clusters: ClusterRow[] }) {
       ? initial.clusters.filter((x) => x !== id)
       : [...initial.clusters, id];
     const q = paramsToQuery({ ...initial, clusters: next, page: 1 });
-    startTransition(() => router.replace("/screener" + q, { scroll: false }));
+    startTransition(() => router.replace("/discover" + q, { scroll: false }));
   };
 
   const clearAll = () => {
     if (selectedClusters.size === 0) return;
     const q = paramsToQuery({ ...initial, clusters: [], page: 1 });
-    startTransition(() => router.replace("/screener" + q, { scroll: false }));
+    startTransition(() => router.replace("/discover" + q, { scroll: false }));
   };
 
   return (

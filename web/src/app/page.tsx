@@ -2,6 +2,7 @@ import Link from "next/link";
 import { sql } from "@/lib/db";
 import { ArrowRight } from "lucide-react";
 import { band, bandColor } from "@/lib/score";
+import { RevealOnScroll } from "@/components/RevealOnScroll";
 
 export const revalidate = 1800;
 
@@ -9,40 +10,59 @@ type Snapshot = {
   stocks: number;
   clusters: number;
   veterans: number;
+  weeks: number;
   snapshot_date: string | null;
 };
 
-type TilePreview = {
+type ClusterTile = {
   cluster_id: string;
   cluster_name: string;
-  meta_cluster_id: string;
-  meta_display_order: number;
   avg_composite: number | null;
 };
 
+type TrendingRow = {
+  symbol: string;
+  composite_pct: number;
+  cluster_short: string;
+};
+
+
 async function loadHero() {
-  const [snap, tiles] = await Promise.all([
-    sql<Snapshot[]>`
-      SELECT
-        (SELECT COUNT(*)::int FROM app.universe WHERE is_active) AS stocks,
-        (SELECT COUNT(*)::int FROM app.cluster WHERE id <> 'unclassified') AS clusters,
-        (SELECT COUNT(*)::int FROM app.universe WHERE is_active AND maturity_tier='veteran') AS veterans,
-        (SELECT MAX(snapshot_date)::text FROM app.scores) AS snapshot_date
-    `,
-    sql<TilePreview[]>`
-      SELECT c.id AS cluster_id, c.name AS cluster_name,
-             c.meta_cluster_id, mc.display_order AS meta_display_order,
-             AVG(s.composite_pct)::float AS avg_composite
-      FROM app.cluster c
-      JOIN app.meta_cluster mc ON mc.id = c.meta_cluster_id
-      LEFT JOIN app.scores s ON s.cluster_id = c.id
-        AND s.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
-      WHERE c.id <> 'unclassified'
-      GROUP BY c.id, c.name, c.meta_cluster_id, mc.display_order
-      ORDER BY mc.display_order, c.name
-    `,
-  ]);
-  return { snap: snap[0], tiles };
+  const snapPromise = sql<Snapshot[]>`
+    SELECT
+      (SELECT COUNT(*)::int FROM app.universe WHERE is_active) AS stocks,
+      (SELECT COUNT(*)::int FROM app.cluster WHERE id <> 'unclassified') AS clusters,
+      (SELECT COUNT(*)::int FROM app.universe WHERE is_active AND maturity_tier='veteran') AS veterans,
+      (SELECT COUNT(DISTINCT snapshot_date)::int FROM app.scores) AS weeks,
+      (SELECT MAX(snapshot_date)::text FROM app.scores) AS snapshot_date
+  `;
+  const tilesPromise = sql<ClusterTile[]>`
+    SELECT c.id AS cluster_id, c.name AS cluster_name,
+           AVG(s.composite_pct)::float AS avg_composite
+    FROM app.cluster c
+    LEFT JOIN app.scores s ON s.cluster_id = c.id
+      AND s.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
+    WHERE c.id <> 'unclassified'
+    GROUP BY c.id, c.name
+    ORDER BY AVG(s.composite_pct) DESC NULLS LAST
+  `;
+  // Top + bottom marquee items — proxy for "trending" until we have a 2nd snapshot
+  const trendingPromise = sql<TrendingRow[]>`
+    (SELECT s.symbol, s.composite_pct, c.name AS cluster_short
+     FROM app.scores s JOIN app.cluster c ON c.id = s.cluster_id
+     WHERE s.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
+       AND s.maturity_tier = 'veteran'
+     ORDER BY s.composite_pct DESC NULLS LAST LIMIT 8)
+    UNION ALL
+    (SELECT s.symbol, s.composite_pct, c.name AS cluster_short
+     FROM app.scores s JOIN app.cluster c ON c.id = s.cluster_id
+     WHERE s.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
+       AND s.maturity_tier = 'veteran' AND s.composite_pct < 30
+     ORDER BY s.composite_pct ASC NULLS LAST LIMIT 4)
+  `;
+  const [snapRows, tiles] = await Promise.all([snapPromise, tilesPromise]);
+  void trendingPromise; // marquee removed; data fetch retained for cheap revalidation tracking
+  return { snap: snapRows[0], tiles };
 }
 
 export default async function Landing() {
@@ -50,350 +70,88 @@ export default async function Landing() {
   return (
     <>
       <Hero snap={snap} />
-      <ByTheNumbers snap={snap} />
-      <WhatWeDo />
-      <ThreePillars />
-      <SpiderMoment />
-      <MoatStrip />
+      <PolaroidBanner snap={snap} />
+      <RevealOnScroll><HeatMapTear tiles={tiles} /></RevealOnScroll>
+      <RevealOnScroll><PerIndustryCards /></RevealOnScroll>
+      <RevealOnScroll><ThreePillars /></RevealOnScroll>
+      <RevealOnScroll><StrengthsAndGaps /></RevealOnScroll>
+      <RevealOnScroll><BuiltToCompound snap={snap} /></RevealOnScroll>
       <FooterCTA />
     </>
   );
 }
 
-/* -------------------------------------------------------------- Hero --- */
+/* =============================================================== PER-INDUSTRY === */
 
-function Hero({ snap }: { snap: Snapshot }) {
-  return (
-    <section className="relative">
-      <div className="mx-auto max-w-[1200px] px-6 pt-20 md:pt-28 pb-12 text-center">
-        <h1 className="font-display text-[52px] sm:text-[72px] md:text-[96px] leading-[0.98] tracking-[-0.02em] mx-auto max-w-[920px]">
-          Where India&apos;s market{" "}
-          <em className="not-italic" style={{ color: "var(--color-accent-600)" }}>
-            really
-          </em>{" "}
-          stands.
-        </h1>
-        <p className="mt-7 text-[16px] md:text-[18px] muted-text max-w-[520px] mx-auto">
-          Every NSE stock, scored against its true peers.{" "}
-          <span className="tabular-nums">{snap.stocks.toLocaleString("en-IN")}</span>{" "}
-          companies. {snap.clusters} clusters. Updated weekly.
-        </p>
-        <div className="mt-9 flex items-center justify-center gap-3">
-          <Link
-            href="/clusters"
-            className="inline-flex items-center gap-2 px-6 py-3 rounded-full text-[14px] font-medium text-white transition-transform hover:scale-[1.03]"
-            style={{ backgroundColor: "var(--color-accent-500)" }}
-          >
-            Open the heat map
-            <ArrowRight size={14} />
-          </Link>
-          <Link
-            href="/about"
-            className="text-[14px] underline underline-offset-4 hover:no-underline muted-text"
-          >
-            How it works
-          </Link>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/* ------------------------------------------- By the numbers --------- */
-
-function ByTheNumbers({ snap }: { snap: Snapshot }) {
+function PerIndustryCards() {
   const items = [
-    { value: snap.stocks.toLocaleString("en-IN"), label: "stocks scored" },
-    { value: String(snap.clusters), label: "peer clusters" },
-    { value: snap.veterans.toLocaleString("en-IN"), label: "long-term compounders" },
-  ];
-  return (
-    <section className="border-t hairline" style={{ backgroundColor: "var(--color-paper)" }}>
-      <div className="mx-auto max-w-[1100px] px-6 py-24 md:py-32">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-10 md:gap-6 items-end">
-          {items.map((it, i) => (
-            <div
-              key={it.label}
-              className={`text-center ${
-                i < items.length - 1
-                  ? "md:border-r md:hairline md:border-r-[var(--color-border-default)]"
-                  : ""
-              } md:px-4`}
-            >
-              <div
-                className="font-display tabular-nums leading-[0.9]"
-                style={{
-                  fontSize: "clamp(72px, 12vw, 132px)",
-                  letterSpacing: "-0.03em",
-                }}
-              >
-                {it.value}
-              </div>
-              <div className="mt-4 text-[12px] uppercase tracking-[0.18em] muted-text">
-                {it.label}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/* ------------------------------------------- (legacy) heat map ------- */
-
-// Kept temporarily — not rendered. Can delete once design lands.
-function _HeatMapShowcase({ tiles }: { tiles: TilePreview[] }) {
-  // All 41 tiles, sorted by avg_composite descending so the colour
-  // gradient itself tells the story — green at top, red at bottom.
-  const sorted = [...tiles].sort((a, b) => {
-    const av = a.avg_composite ?? -1;
-    const bv = b.avg_composite ?? -1;
-    return bv - av;
-  });
-
-  return (
-    <section className="border-t hairline" style={{ backgroundColor: "var(--color-paper)" }}>
-      <div className="mx-auto max-w-[1200px] px-6 py-20 md:py-28">
-        <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-7 lg:grid-cols-8 gap-2 max-w-[1000px] mx-auto">
-          {sorted.map((t) => {
-            const b = band(t.avg_composite);
-            const bg = bandColor(b);
-            const numColor = b === "neutral" ? "var(--color-ink)" : "white";
-            return (
-              <Link
-                key={t.cluster_id}
-                href={`/cluster/${t.cluster_id}`}
-                className="aspect-square rounded-md flex flex-col items-center justify-center p-2 transition-transform hover:scale-[1.05]"
-                style={{ backgroundColor: bg }}
-                title={t.cluster_name}
-              >
-                <span
-                  className="font-display text-[20px] md:text-[24px] tabular-nums leading-none"
-                  style={{ color: numColor }}
-                >
-                  {t.avg_composite == null ? "—" : Math.round(t.avg_composite)}
-                </span>
-                <span
-                  className="text-[8.5px] md:text-[9.5px] mt-1 text-center leading-tight line-clamp-2"
-                  style={{ color: numColor, opacity: 0.85 }}
-                >
-                  {t.cluster_name}
-                </span>
-              </Link>
-            );
-          })}
-        </div>
-
-        <div className="mt-10 text-center text-[12px] muted-text">
-          Every peer cluster, today. Click any tile.
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/* ------------------------------------------- What we do ------------- */
-
-function WhatWeDo() {
-  return (
-    <section className="mx-auto max-w-[1100px] px-6 py-24 md:py-32">
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.1fr] gap-14 items-center">
-        <div>
-          <div className="text-[11px] uppercase tracking-[0.22em] muted-text mb-4">
-            What we do
-          </div>
-          <h2 className="font-display text-[36px] md:text-[44px] leading-[1.05] tracking-tight">
-            Stock analysis, the way an{" "}
-            <em className="not-italic" style={{ color: "var(--color-accent-600)" }}>
-              analyst
-            </em>{" "}
-            actually thinks.
-          </h2>
-          <div className="mt-6 space-y-4 text-[15.5px] leading-[1.65] muted-text max-w-[480px]">
-            <p>
-              Indian retail investors get one of two things today: raw fundamentals
-              tables, or someone else&apos;s buy/sell call. Neither tells you how a
-              business actually stacks up against its real peers.
-            </p>
-            <p>
-              We score every actively-traded NSE stock against the companies it should
-              be compared to — not the whole market — across three dimensions an analyst
-              would use: <strong className="ink-text">does it compound</strong>,{" "}
-              <strong className="ink-text">is it fairly priced</strong>,{" "}
-              <strong className="ink-text">is the market noticing yet</strong>.
-            </p>
-            <p>
-              The result: a single 0–100 ranking that means the same thing everywhere on
-              the site, with the strengths and gaps spelled out in plain English.
-            </p>
-          </div>
-        </div>
-
-        <ProductMosaic />
-      </div>
-    </section>
-  );
-}
-
-/** Stylized "product moment" — three nested cards as a glimpse. */
-function ProductMosaic() {
-  return (
-    <div className="relative h-[360px] md:h-[420px]">
-      {/* Back card — fundamentals snippet */}
-      <div
-        className="absolute right-0 top-0 w-[260px] card p-4 rotate-[3deg] origin-bottom-right"
-        style={{ backgroundColor: "var(--color-card)" }}
-      >
-        <div className="text-[10px] uppercase tracking-wide muted-text">
-          Annual P&amp;L · last 5 years
-        </div>
-        <div className="mt-2 space-y-1.5">
-          {[
-            ["FY22", "₹254K"],
-            ["FY23", "₹289K"],
-            ["FY24", "₹322K"],
-            ["FY25", "₹358K"],
-            ["FY26", "₹401K"],
-          ].map(([y, v]) => (
-            <div key={y} className="flex justify-between text-[12px]">
-              <span className="muted-text">{y}</span>
-              <span className="tabular-nums">{v}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Middle card — strength bars */}
-      <div
-        className="absolute left-0 top-[60px] w-[260px] card p-4 -rotate-[2deg]"
-        style={{ backgroundColor: "var(--color-card)" }}
-      >
-        <div className="text-[10px] uppercase tracking-wide muted-text mb-2">
-          Strengths &amp; gaps
-        </div>
-        {[
-          { name: "Momentum", v: 91 },
-          { name: "Growth", v: 84 },
-          { name: "Profitability", v: 78 },
-          { name: "Cash & BS", v: 62 },
-          { name: "Valuation", v: 47 },
-        ].map((r) => (
-          <div key={r.name} className="grid grid-cols-[80px_1fr_24px] items-center gap-2 mb-1.5 text-[10.5px]">
-            <span className="muted-text">{r.name}</span>
-            <div className="relative h-1.5 rounded-full bg-[var(--color-paper)]">
-              <div
-                className="absolute inset-y-0 left-0 rounded-full"
-                style={{
-                  width: `${r.v}%`,
-                  backgroundColor: bandColor(band(r.v)),
-                  opacity: 0.9,
-                }}
-              />
-              <div
-                className="absolute top-0 bottom-0 w-px bg-[var(--color-muted)]/40"
-                style={{ left: "50%" }}
-              />
-            </div>
-            <span className="text-right tabular-nums" style={{ color: bandColor(band(r.v)) }}>
-              {r.v}
-            </span>
-          </div>
-        ))}
-      </div>
-
-      {/* Front card — composite badge */}
-      <div
-        className="absolute right-[20px] bottom-0 w-[200px] card p-5 rotate-[-2deg] shadow-sm"
-        style={{ backgroundColor: "var(--color-card)" }}
-      >
-        <div className="text-[10px] uppercase tracking-wide muted-text">
-          Composite
-        </div>
-        <div
-          className="font-display text-[64px] tabular-nums leading-none mt-1"
-          style={{ color: "var(--color-score-excellent)" }}
-        >
-          82
-        </div>
-        <div className="mt-2 text-[10.5px] muted-text">
-          Top 18% in Pharmaceuticals · Established
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ------------------------------------------- Three pillars ---------- */
-
-function ThreePillars() {
-  const pillars = [
     {
-      name: "Quality",
-      color: "var(--color-accent-600)",
-      tagline: "Does this business compound?",
-      body: "Returns on capital, top- and bottom-line growth across multiple windows, growth consistency, cash conversion, balance-sheet discipline, and margin trends. The question we&apos;re answering is whether the business has built durable economics — or just had a good year.",
-      examples: ["Returns on equity & capital", "5y, 7y, 10y CAGR", "Cash flow vs reported profit", "Debt discipline"],
-      graphic: <RoeBars />,
+      meta: "Banks",
+      headline: "Capital, not capex.",
+      body: "Banks score on return on assets, book-value compounding, and capital cushion — the things that actually matter when revenue is interest income and inventory is loans.",
+      pills: [
+        { k: "RoA", colour: "var(--color-accent-600)" },
+        { k: "Book CAGR", colour: "var(--color-accent-500)" },
+        { k: "Capital cushion", colour: "var(--color-accent-400)" },
+      ],
     },
     {
-      name: "Valuation",
-      color: "var(--color-accent-400)",
-      tagline: "Are we paying a fair price?",
-      body: "Earnings yield, book value, EBITDA multiples, dividend yield, free cash flow yield. But always relative to peers in the same industry, never the broader market — because a 25 P/E in pharma means something very different from a 25 P/E in cement.",
-      examples: ["P/E, P/B, EV/EBITDA", "PEG, FCF yield, dividend yield", "Earnings-yield trend", "Peer-median anchored"],
-      graphic: <PeBars />,
+      meta: "Cement",
+      headline: "Tonnes, not P/E.",
+      body: "EBITDA margin and capacity utilization tell you whether prices are firm and whether new plants are paying off. P/E for cement is mostly noise.",
+      pills: [
+        { k: "EBITDA margin", colour: "var(--color-accent-600)" },
+        { k: "Capacity", colour: "var(--color-accent-500)" },
+        { k: "Capex intensity", colour: "var(--color-accent-400)" },
+      ],
     },
     {
-      name: "Momentum",
-      color: "var(--color-accent-300)",
-      tagline: "Is the market noticing yet?",
-      body: "We blend price momentum across multiple horizons (3, 6, 12 months relative to the broader market) with earnings momentum at the latest quarter. The two together separate stocks moving on hype from stocks moving because the fundamentals are turning.",
-      examples: ["3M, 6M, 12M relative returns", "Position vs 200-day EMA", "Latest-quarter sales YoY", "Latest-quarter profit YoY"],
-      graphic: <MomentumLine />,
+      meta: "IT Services",
+      headline: "Margin, not breadth.",
+      body: "Operating-margin trend and cash conversion separate the compounders from the deal-grabbers. Revenue growth alone is a trap.",
+      pills: [
+        { k: "Op margin trend", colour: "var(--color-accent-600)" },
+        { k: "CFO/EBITDA", colour: "var(--color-accent-500)" },
+        { k: "DSO", colour: "var(--color-accent-400)" },
+      ],
     },
   ];
   return (
     <section className="border-t hairline" style={{ backgroundColor: "var(--color-paper)" }}>
-      <div className="mx-auto max-w-[1200px] px-6 py-24 md:py-32">
-        <div className="text-center max-w-[680px] mx-auto mb-16">
-          <div className="text-[11px] uppercase tracking-[0.22em] muted-text mb-3">
-            How we score
-          </div>
-          <h2 className="font-display text-[40px] md:text-[52px] leading-[1.02] tracking-tight">
-            Three pillars.{" "}
-            <em className="not-italic" style={{ color: "var(--color-accent-600)" }}>
-              One ranking.
-            </em>
+      <div className="max-w-[1200px] mx-auto px-6 py-12 md:py-14">
+        <div className="text-center max-w-[640px] mx-auto mb-10">
+          <div className="eyebrow mb-3">Different sectors, different recipes</div>
+          <h2 className="font-display" style={{ fontSize: "clamp(28px, 3.5vw, 42px)", lineHeight: 1.05 }}>
+            One scorecard <em className="accent">per industry.</em>
           </h2>
+          <p className="muted-text mt-3.5 text-[14.5px] leading-[1.55] max-w-[540px] mx-auto">
+            We don&apos;t score a bank the way we score a paint company. Each cluster has its own
+            recipe — tuned for what an analyst in that space would actually look at.
+          </p>
         </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-          {pillars.map((p) => (
+        <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+          {items.map((it) => (
             <article
-              key={p.name}
-              className="card p-6 flex flex-col"
-              style={{ borderTop: `3px solid ${p.color}` }}
+              key={it.meta}
+              className="card p-5 flex flex-col"
+              style={{ borderTop: "3px solid var(--color-accent-300)" }}
             >
-              <div className="h-[140px] flex items-center justify-center mb-5">
-                {p.graphic}
-              </div>
-              <h3 className="font-display text-[24px] leading-tight" style={{ color: p.color }}>
-                {p.name}
+              <div className="eyebrow">{it.meta}</div>
+              <h3 className="font-display mt-2.5" style={{ fontSize: 22, lineHeight: 1.15 }}>
+                {it.headline}
               </h3>
-              <div className="text-[12.5px] muted-text mt-1 italic">{p.tagline}</div>
-              <p
-                className="mt-4 text-[14px] leading-[1.6] muted-text"
-                dangerouslySetInnerHTML={{ __html: p.body }}
-              />
-              <ul className="mt-5 space-y-1.5 text-[12.5px] muted-text">
-                {p.examples.map((e) => (
-                  <li key={e} className="flex items-start gap-2">
-                    <span style={{ color: p.color }} className="mt-[3px]">●</span>
-                    <span>{e}</span>
-                  </li>
+              <p className="muted-text mt-3 text-[13px] leading-[1.6] flex-1">{it.body}</p>
+              <div className="mt-4 flex flex-wrap gap-1.5">
+                {it.pills.map((p) => (
+                  <span
+                    key={p.k}
+                    className="inline-flex items-center px-2 py-0.5 rounded-sm border hairline text-[11px]"
+                    style={{ borderColor: p.colour, color: p.colour }}
+                  >
+                    {p.k}
+                  </span>
                 ))}
-              </ul>
+              </div>
             </article>
           ))}
         </div>
@@ -402,158 +160,331 @@ function ThreePillars() {
   );
 }
 
-/* -- Pillar graphics ----------------------------------------------- */
+/* =============================================================== HERO === */
 
-function RoeBars() {
-  // 8 years of RoE — gentle improvement, illustrating "does it compound"
-  const data = [12, 13, 11, 14, 16, 17, 18, 21];
-  const max = 25;
+function Hero({ snap }: { snap: Snapshot }) {
   return (
-    <svg width="240" height="120" viewBox="0 0 240 120">
-      {data.map((v, i) => {
-        const w = 22, gap = 6;
-        const x = i * (w + gap) + 4;
-        const h = (v / max) * 90;
-        const y = 100 - h;
-        return (
-          <rect
-            key={i}
-            x={x}
-            y={y}
-            width={w}
-            height={h}
-            rx={2}
-            fill="var(--color-accent-600)"
-            opacity={0.35 + (i / data.length) * 0.6}
+    <section className="grain relative overflow-hidden">
+      <div className="relative max-w-[1200px] mx-auto px-6 pt-12 pb-10 md:pt-14 md:pb-12">
+        <div
+          className="inline-flex items-center gap-2 px-3 py-1 rounded-full border hairline mb-6 text-[11.5px] muted-text"
+          style={{ backgroundColor: "var(--color-card)" }}
+        >
+          <span
+            className="w-1.5 h-1.5 rounded-full animate-livepulse"
+            style={{ backgroundColor: "var(--color-score-excellent)" }}
           />
-        );
-      })}
-      <line x1="0" y1="100" x2="232" y2="100" stroke="var(--color-border-default)" />
-      <text x="0" y="115" fontSize="9" fill="var(--color-muted)">FY18</text>
-      <text x="232" y="115" fontSize="9" fill="var(--color-muted)" textAnchor="end">FY26</text>
-      <text x="116" y="20" fontSize="9" fill="var(--color-muted)" textAnchor="middle">
-        Return on equity
-      </text>
-    </svg>
+          Live · weekly snapshot · ledger week {snap.weeks}
+        </div>
+
+        <h1
+          className="font-display"
+          style={{
+            fontSize: "clamp(36px, 5.2vw, 68px)",
+            lineHeight: 1.02,
+            letterSpacing: "-0.022em",
+            maxWidth: 820,
+            textWrap: "balance",
+          }}
+        >
+          Where India&apos;s market{" "}
+          <em className="accent">really</em> stands —{" "}
+          and what&apos;s <em className="accent">moving</em>.
+        </h1>
+
+        <p className="muted-text mt-5 text-[15.5px] leading-[1.55] max-w-[540px]">
+          Every actively-traded NSE stock, scored against its true peers.{" "}
+          <span className="tabular-nums font-medium" style={{ color: "var(--color-ink)" }}>
+            {snap.stocks.toLocaleString("en-IN")}
+          </span>{" "}
+          companies.{" "}
+          <span className="font-medium" style={{ color: "var(--color-ink)" }}>{snap.clusters} clusters.</span>{" "}
+          One number, recomputed weekly — and never edited.
+        </p>
+
+        <div className="mt-7 flex gap-3 items-center flex-wrap">
+          <Link href="/clusters" className="btn-primary">
+            Open the Clusters
+            <ArrowRight size={14} />
+          </Link>
+        </div>
+
+        <HeroMosaic />
+      </div>
+    </section>
   );
 }
 
-function PeBars() {
-  // Two horizontal bars: this stock vs peer median P/E
+function HeroMosaic() {
   return (
-    <svg width="240" height="120" viewBox="0 0 240 120">
-      <text x="0" y="20" fontSize="10" fill="var(--color-ink)">Peer median P/E</text>
-      <rect x="0" y="28" width="160" height="14" rx="3" fill="var(--color-muted)" opacity="0.35" />
-      <text x="166" y="40" fontSize="11" fill="var(--color-muted)" className="tabular-nums">28×</text>
+    <div className="mt-10 relative h-[340px] hidden md:block">
+      {/* Back card: P&L */}
+      <div
+        className="card absolute right-[3%] top-0 w-[210px] p-4"
+        style={{
+          transform: "rotate(3deg)",
+          transformOrigin: "bottom right",
+          boxShadow: "0 1px 0 rgba(255,255,255,.7) inset, 0 12px 32px -8px rgba(25,25,25,0.08)",
+        }}
+      >
+        <div className="eyebrow mb-3">Annual P&amp;L · 5y</div>
+        <div className="flex flex-col gap-2">
+          {[
+            ["FY22", "₹254 Cr", false],
+            ["FY23", "₹289 Cr", false],
+            ["FY24", "₹322 Cr", false],
+            ["FY25", "₹358 Cr", false],
+            ["FY26", "₹401 Cr ▲", true],
+          ].map(([y, v, up]) => (
+            <div key={y as string} className="flex justify-between text-[13px]">
+              <span className="muted-text">{y as string}</span>
+              <span
+                className="tabular-nums"
+                style={
+                  up
+                    ? { color: "var(--color-score-excellent)", fontWeight: 600 }
+                    : undefined
+                }
+              >
+                {v as string}
+              </span>
+            </div>
+          ))}
+        </div>
+        <svg viewBox="0 0 240 40" className="mt-3 w-full block">
+          <rect x="0"   y="22" width="36" height="16" fill="var(--color-accent-200)" rx="2" className="svg-bar" style={{ animationDelay: "0.05s" }} />
+          <rect x="44"  y="18" width="36" height="20" fill="var(--color-accent-300)" rx="2" className="svg-bar" style={{ animationDelay: "0.15s" }} />
+          <rect x="88"  y="13" width="36" height="25" fill="var(--color-accent-400)" rx="2" className="svg-bar" style={{ animationDelay: "0.25s" }} />
+          <rect x="132" y="9"  width="36" height="29" fill="var(--color-accent-500)" rx="2" className="svg-bar" style={{ animationDelay: "0.35s" }} />
+          <rect x="176" y="3"  width="36" height="35" fill="var(--color-accent-600)" rx="2" className="svg-bar" style={{ animationDelay: "0.45s" }} />
+        </svg>
+      </div>
 
-      <text x="0" y="68" fontSize="10" fill="var(--color-ink)">This stock</text>
-      <rect x="0" y="76" width="120" height="14" rx="3" fill="var(--color-accent-400)" />
-      <text x="126" y="88" fontSize="11" fill="var(--color-accent-600)" className="tabular-nums">21×</text>
-
-      <text x="0" y="112" fontSize="9" fill="var(--color-muted)">
-        25% cheaper than the cluster median
-      </text>
-    </svg>
-  );
-}
-
-function MomentumLine() {
-  // Two lines: stock vs market over 12 months
-  const market = [50, 52, 51, 53, 55, 54, 56, 58, 57, 59, 60, 58];
-  const stock = [50, 53, 55, 58, 62, 64, 68, 72, 75, 78, 82, 85];
-  const w = 240, h = 120, pad = 12;
-  const max = 90, min = 45;
-  const x = (i: number) => pad + (i * (w - 2 * pad)) / (market.length - 1);
-  const y = (v: number) => pad + (1 - (v - min) / (max - min)) * (h - 2 * pad - 12);
-  const path = (data: number[]) =>
-    data.map((v, i) => `${i === 0 ? "M" : "L"} ${x(i)} ${y(v)}`).join(" ");
-
-  return (
-    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}>
-      <path d={path(market)} fill="none" stroke="var(--color-muted)" strokeOpacity="0.45" strokeWidth="1.5" strokeDasharray="3 3" />
-      <path d={path(stock)} fill="none" stroke="var(--color-accent-300)" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
-      <circle cx={x(stock.length - 1)} cy={y(stock[stock.length - 1])} r="3" fill="var(--color-accent-500)" />
-      <text x={pad} y={h - 4} fontSize="9" fill="var(--color-muted)">12 months ago</text>
-      <text x={w - pad} y={h - 4} fontSize="9" fill="var(--color-muted)" textAnchor="end">today</text>
-      <text x={pad + 6} y={pad + 8} fontSize="9" fill="var(--color-accent-600)">stock</text>
-      <text x={pad + 50} y={pad + 8} fontSize="9" fill="var(--color-muted)">vs market</text>
-    </svg>
-  );
-}
-
-/* ------------------------------------------- Spider moment ----------- */
-
-function SpiderMoment() {
-  const rows = [
-    { axis: "Profitability", value: 78 },
-    { axis: "Growth",        value: 84 },
-    { axis: "Cash & Balance Sheet", value: 62 },
-    { axis: "Valuation",     value: 47 },
-    { axis: "Momentum",      value: 91 },
-  ].sort((a, b) => b.value - a.value);
-
-  return (
-    <section className="border-t hairline" style={{ backgroundColor: "var(--color-paper)" }}>
-      <div className="mx-auto max-w-[1100px] px-6 py-24 md:py-28">
-        <div className="grid grid-cols-1 md:grid-cols-[1fr_1.2fr] gap-12 md:gap-20 items-center">
-          <div className="text-center md:text-left">
-            <h2 className="font-display text-[40px] md:text-[56px] leading-[0.98] tracking-tight">
-              Strengths.
-              <br />
-              <em className="not-italic" style={{ color: "var(--color-accent-600)" }}>
-                And gaps.
-              </em>
-            </h2>
-            <p className="mt-5 text-[15px] muted-text max-w-[400px] mx-auto md:mx-0">
-              Five axes, sorted. The strongest dimensions rise to the top — without
-              you having to read.
-            </p>
+      {/* Middle card: strength bars */}
+      <div
+        className="card absolute left-[1%] top-[20px] w-[250px] p-4"
+        style={{
+          transform: "rotate(-2deg)",
+          boxShadow: "0 1px 0 rgba(255,255,255,.7) inset, 0 12px 32px -8px rgba(25,25,25,0.10)",
+        }}
+      >
+        <div className="mb-3.5">
+          <div className="flex justify-between items-center">
+            <div className="eyebrow">Strengths &amp; gaps</div>
           </div>
+          <div className="muted-text text-[11px] mt-1">5 axes vs cluster median</div>
+        </div>
+        {[
+          ["Momentum",     91, "var(--color-score-excellent)", 0],
+          ["Growth",       84, "var(--color-score-good)",      0.15],
+          ["Profitability",78, "var(--color-score-good)",      0.3],
+          ["Cash & BS",    62, "var(--color-score-neutral)",   0.45],
+          ["Valuation",    47, "var(--color-score-weak)",      0.6],
+        ].map(([label, value, color, delay]) => (
+          <div
+            key={label as string}
+            className="grid items-center gap-2.5 text-[12px] mb-2.5"
+            style={{ gridTemplateColumns: "100px 1fr 28px" }}
+          >
+            <span className="muted-text">{label as string}</span>
+            <div className="relative h-1.5 rounded-full overflow-hidden" style={{ background: "var(--color-paper)" }}>
+              <div
+                className="absolute inset-y-0 left-0 rounded-full"
+                style={{
+                  width: `${value}%`,
+                  background: color as string,
+                  transformOrigin: "left",
+                  animation: `growbar 1.4s cubic-bezier(.4,.7,.3,1) ${delay}s both`,
+                }}
+              />
+            </div>
+            <span className="tabular-nums font-semibold text-right" style={{ color: color as string }}>
+              {value as number}
+            </span>
+          </div>
+        ))}
+      </div>
 
-          <div className="space-y-3">
-            {rows.map((r) => {
-              const b = band(r.value);
-              const fillColor = bandColor(b);
-              const delta = r.value - 50;
+      {/* Front card: composite score (generic peer cluster, no specific stock) */}
+      <div
+        className="card absolute right-[34%] bottom-0 w-[190px] p-5"
+        style={{
+          transform: "rotate(-2deg)",
+          boxShadow: "0 1px 0 rgba(255,255,255,.7) inset, 0 18px 48px -8px rgba(25,25,25,0.18)",
+        }}
+      >
+        <div className="eyebrow">Composite</div>
+        <div
+          className="font-display tabular-nums mt-1"
+          style={{
+            fontSize: 64,
+            lineHeight: 0.9,
+            color: "var(--color-score-excellent)",
+            letterSpacing: "-0.04em",
+          }}
+        >
+          82
+        </div>
+        <div className="muted-text text-[12px] mt-2.5">
+          Top <span className="font-semibold" style={{ color: "var(--color-ink)" }}>18%</span> in its peer cluster
+        </div>
+        <svg viewBox="0 0 220 40" className="w-full mt-3.5 block">
+          <path
+            d="M0,30 L20,28 L40,26 L60,29 L80,24 L100,22 L120,18 L140,16 L160,14 L180,12 L200,10 L220,8"
+            fill="none"
+            stroke="var(--color-score-excellent)"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeDasharray="500"
+            strokeDashoffset="500"
+            style={{ animation: "drawline 1.6s ease forwards .6s" }}
+          />
+          <circle
+            cx="220" cy="8" r="3"
+            fill="var(--color-score-excellent)"
+            opacity="0"
+            style={{ animation: "fadein .3s ease forwards 1.8s" }}
+          />
+        </svg>
+        <div className="muted-text text-[10px] mt-1.5 flex justify-between">
+          <span>12 weeks ago · 71</span>
+          <span style={{ color: "var(--color-score-excellent)" }}>+11 ▲</span>
+        </div>
+      </div>
+
+      {/* NEW small graph card — sales sparkline */}
+      <div
+        className="card absolute left-[20%] bottom-[10px] w-[195px] p-4"
+        style={{
+          transform: "rotate(1.4deg)",
+          boxShadow: "0 1px 0 rgba(255,255,255,.7) inset, 0 12px 28px -8px rgba(25,25,25,0.10)",
+        }}
+      >
+        <div className="flex items-baseline justify-between mb-2">
+          <div className="eyebrow">Sales · 10y</div>
+          <span
+            className="text-[11px] tabular-nums font-semibold"
+            style={{ color: "var(--color-score-good)" }}
+          >
+            +14% CAGR
+          </span>
+        </div>
+        <svg viewBox="0 0 200 70" className="w-full block">
+          <defs>
+            <linearGradient id="hgrowfill" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stopColor="var(--color-accent-400)" stopOpacity=".24" />
+              <stop offset="100%" stopColor="var(--color-accent-400)" stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          <path
+            d="M4,58 L24,55 L44,53 L64,48 L84,46 L104,40 L124,36 L144,28 L164,22 L184,16 L196,10 L196,64 L4,64 Z"
+            fill="url(#hgrowfill)"
+            className="svg-fill-in"
+          />
+          <path
+            d="M4,58 L24,55 L44,53 L64,48 L84,46 L104,40 L124,36 L144,28 L164,22 L184,16 L196,10"
+            fill="none"
+            stroke="var(--color-accent-500)"
+            strokeWidth="2"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            className="svg-line"
+          />
+          <circle cx="196" cy="10" r="2.5" fill="var(--color-accent-600)" className="svg-dot" style={{ animationDelay: "1.5s" }} />
+        </svg>
+        <div className="muted-text text-[10px] mt-1 flex justify-between">
+          <span>FY16</span><span>FY26</span>
+        </div>
+      </div>
+
+      {/* NEW RoCE numbers card — top centre, sits directly above the Composite badge */}
+      <div
+        className="card absolute left-[35%] top-[5px] w-[175px] p-3.5"
+        style={{
+          transform: "rotate(-1.5deg)",
+          boxShadow: "0 1px 0 rgba(255,255,255,.7) inset, 0 12px 28px -8px rgba(25,25,25,0.10)",
+        }}
+      >
+        <div className="flex items-baseline justify-between mb-2">
+          <div className="eyebrow">RoCE</div>
+          <span
+            className="text-[11px] tabular-nums font-semibold"
+            style={{ color: "var(--color-score-excellent)" }}
+          >
+            28.2%
+          </span>
+        </div>
+        <div className="flex flex-col gap-1">
+          {[
+            ["FY24", "23.7%"],
+            ["FY25", "25.6%"],
+            ["FY26", "28.2%"],
+          ].map(([y, v]) => (
+            <div key={y} className="flex justify-between text-[11.5px]">
+              <span className="muted-text">{y}</span>
+              <span className="tabular-nums">{v}</span>
+            </div>
+          ))}
+        </div>
+        <div className="muted-text text-[10px] mt-2 pt-2 border-t hairline">
+          5y avg <span className="font-semibold" style={{ color: "var(--color-ink)" }}>23.4%</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================ MARQUEE === */
+
+function TickerMarquee({ items }: { items: TrendingRow[] }) {
+  if (!items.length) return null;
+  // Two copies for seamless loop
+  const repeated = [...items, ...items];
+
+  return (
+    <section
+      className="border-y hairline overflow-hidden"
+      style={{ backgroundColor: "var(--color-card)" }}
+    >
+      <div className="flex items-center h-14 gap-6 px-6">
+        <div className="flex items-center gap-2 shrink-0">
+          <span
+            className="w-2 h-2 rounded-full animate-livepulse"
+            style={{ backgroundColor: "var(--color-score-excellent)" }}
+          />
+          <span className="eyebrow" style={{ color: "var(--color-ink)" }}>Top of cluster</span>
+        </div>
+        <div
+          className="flex-1 overflow-hidden"
+          style={{
+            maskImage: "linear-gradient(90deg, transparent 0, #000 8%, #000 92%, transparent 100%)",
+            WebkitMaskImage: "linear-gradient(90deg, transparent 0, #000 8%, #000 92%, transparent 100%)",
+          }}
+        >
+          <div
+            className="flex w-max font-mono text-[13px] gap-9 animate-marquee"
+            style={{ animation: "marquee 60s linear infinite" }}
+          >
+            {repeated.map((it, i) => {
+              const colour =
+                it.composite_pct >= 80 ? "var(--color-score-excellent)" :
+                it.composite_pct >= 60 ? "var(--color-score-good)" :
+                it.composite_pct >= 40 ? "var(--color-score-neutral)" :
+                                          "var(--color-score-poor)";
+              const symbol = (
+                <Link href={`/stock/${it.symbol}`} className="hover:underline">
+                  <strong>{it.symbol}</strong>
+                </Link>
+              );
               return (
-                <div key={r.axis}>
-                  <div className="flex justify-between items-baseline mb-1.5">
-                    <span className="text-[13px]">{r.axis}</span>
-                    <span
-                      className="text-[13px] tabular-nums font-medium"
-                      style={{ color: fillColor }}
-                    >
-                      {r.value}
-                    </span>
-                  </div>
-                  <div className="relative h-3 rounded-full bg-[var(--color-card)] border hairline">
-                    <div
-                      className="absolute top-0 bottom-0 w-px bg-[var(--color-muted)]/40"
-                      style={{ left: "50%" }}
-                    />
-                    <div
-                      className="absolute inset-y-0 left-0 rounded-full"
-                      style={{
-                        width: `${r.value}%`,
-                        backgroundColor: fillColor,
-                        opacity: 0.92,
-                      }}
-                    />
-                    {delta > 0 && (
-                      <span
-                        className="absolute top-1/2 -translate-y-1/2 text-[9px] muted-text"
-                        style={{ left: "calc(50% + 2px)" }}
-                      >
-                        +{delta}
-                      </span>
-                    )}
-                  </div>
-                </div>
+                <span key={`${it.symbol}-${i}`} className="whitespace-nowrap">
+                  {symbol}{" "}
+                  <span style={{ color: colour }}>● {Math.round(it.composite_pct)}</span>{" "}
+                  <span className="muted-text">→ {it.cluster_short}</span>
+                </span>
               );
             })}
-            <div className="pt-1 text-[10px] muted-text text-center">
-              ↑ above peer median &nbsp; · &nbsp; ↓ below
-            </div>
           </div>
         </div>
       </div>
@@ -561,171 +492,667 @@ function SpiderMoment() {
   );
 }
 
-/* ------------------------------------------- The MOAT (visual) ------- */
+/* ====================================================== POLAROID BANNER === */
 
-function MoatStrip() {
+function PolaroidBanner({ snap }: { snap: Snapshot }) {
   return (
-    <section className="mx-auto max-w-[1200px] px-6 py-24 md:py-32">
-      <div className="text-center max-w-[680px] mx-auto mb-16">
-        <div className="text-[11px] uppercase tracking-[0.22em] muted-text mb-3">
-          What compounds
+    <section className="border-b hairline" style={{ backgroundColor: "var(--color-paper)" }}>
+      <div className="max-w-[1100px] mx-auto px-6 py-8 md:py-10 flex justify-center">
+        <div
+          className="relative inline-block px-8 py-7 swing-banner"
+          style={{
+            backgroundColor: "var(--color-card)",
+            border: "1px solid var(--color-border-default)",
+            boxShadow:
+              "0 22px 40px -20px rgba(25,25,25,0.28), 0 6px 14px -8px rgba(25,25,25,0.18)",
+          }}
+        >
+          {/* Pushpin head */}
+          <div
+            aria-hidden
+            className="absolute"
+            style={{
+              top: -14,
+              left: "50%",
+              transform: "translateX(-50%)",
+              width: 24,
+              height: 24,
+              borderRadius: "50%",
+              background:
+                "radial-gradient(circle at 35% 30%, #d97757 0%, #b04a2c 55%, #7a2f18 100%)",
+              boxShadow:
+                "0 4px 8px rgba(0,0,0,0.28), inset -2px -3px 4px rgba(0,0,0,0.35), inset 2px 2px 3px rgba(255,255,255,0.35)",
+              zIndex: 2,
+            }}
+          />
+          {/* Pushpin shaft */}
+          <div
+            aria-hidden
+            className="absolute"
+            style={{
+              top: 6,
+              left: "50%",
+              transform: "translateX(-50%)",
+              width: 2,
+              height: 8,
+              background:
+                "linear-gradient(to bottom, rgba(0,0,0,0.35), rgba(0,0,0,0.05))",
+              zIndex: 1,
+            }}
+          />
+          <div className="flex gap-9 items-baseline">
+            <BannerStat value={snap.stocks.toLocaleString("en-IN")} label="stocks" />
+            <Divider />
+            <BannerStat value={String(snap.clusters)} label="clusters" />
+            <Divider />
+            <BannerStat value={String(snap.weeks)} label={snap.weeks === 1 ? "weekly snapshot" : "weekly snapshots"} />
+          </div>
         </div>
-        <h2 className="font-display text-[40px] md:text-[56px] leading-[1.02] tracking-tight">
-          Built to{" "}
-          <em className="not-italic" style={{ color: "var(--color-accent-600)" }}>
-            compound.
-          </em>
-        </h2>
-      </div>
-
-      <div className="space-y-24">
-        <MoatItem
-          n="01"
-          title="A score history that can't be backdated."
-          graphic={<SparklineGraphic />}
-          align="right"
-        />
-        <MoatItem
-          n="02"
-          title="Plain language. Not a wall of ratios."
-          graphic={<NarrativeGraphic />}
-          align="left"
-        />
-        <MoatItem
-          n="03"
-          title="What everyone's watching."
-          graphic={<TrendingGraphic />}
-          align="right"
-        />
       </div>
     </section>
   );
 }
 
-function MoatItem({
-  n, title, graphic, align,
-}: { n: string; title: string; graphic: React.ReactNode; align: "left" | "right" }) {
-  const order = align === "right" ? "md:order-1" : "md:order-2";
-  const orderText = align === "right" ? "md:order-2" : "md:order-1";
+function BannerStat({ value, label }: { value: string; label: string }) {
   return (
-    <article className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-16 items-center">
-      <div className={`flex justify-center ${order}`}>
-        {graphic}
+    <div className="text-center">
+      <div className="font-display tabular-nums" style={{ fontSize: 48, lineHeight: 1, letterSpacing: "-0.02em" }}>
+        {value}
       </div>
-      <div className={`${orderText}`}>
-        <div
-          className="font-display text-[40px] tabular-nums leading-none mb-3"
-          style={{ color: "var(--color-accent-300)" }}
-        >
-          {n}
+      <div className="eyebrow mt-2" style={{ fontSize: 10 }}>{label}</div>
+    </div>
+  );
+}
+
+function Divider() {
+  return <div className="self-stretch w-px" style={{ backgroundColor: "var(--color-border-default)" }} />;
+}
+
+/* ====================================================== HEAT-MAP TEAR === */
+
+function HeatMapTear({ tiles }: { tiles: ClusterTile[] }) {
+  // Show top 15 tiles (sorted by avg composite desc); rest fades vertically below
+  const SHOW = 15;
+  const visible = tiles.slice(0, SHOW);
+  return (
+    <section style={{ backgroundColor: "var(--color-paper)", position: "relative", overflow: "hidden" }}>
+      <div className="max-w-[1200px] mx-auto px-6 py-12 md:py-14">
+        <div className="grid gap-10 items-center" style={{ gridTemplateColumns: "1.15fr 0.85fr" }}>
+          {/* LEFT: writing */}
+          <div>
+            <div className="eyebrow mb-3">The map</div>
+            <h2
+              className="font-display"
+              style={{ fontSize: "clamp(28px, 3.5vw, 42px)", lineHeight: 1.05, letterSpacing: "-0.022em" }}
+            >
+              The whole market,<br />
+              <em className="accent">torn open.</em>
+            </h2>
+            <p className="muted-text mt-4 text-[14.5px] leading-[1.6] max-w-[420px]">
+              Forty-one peer clusters — every one scored and ranked, every week. Greens compound.
+              Reds need a closer look. Open the map to see the rest.
+            </p>
+            <div className="mt-6 flex items-center gap-3 flex-wrap">
+              <Link href="/clusters" className="btn-primary">
+                Open the Clusters
+                <ArrowRight size={14} />
+              </Link>
+              <span className="muted-text text-[13px]">
+                <span className="tabular-nums font-semibold" style={{ color: "var(--color-ink)" }}>
+                  +{Math.max(0, tiles.length - SHOW)} clusters
+                </span>{" "}
+                behind the tear
+              </span>
+            </div>
+            <div className="muted-text mt-5 text-[11px] flex items-center gap-2.5">
+              <span>weak</span>
+              <span
+                style={{
+                  width: 110,
+                  height: 8,
+                  borderRadius: 2,
+                  background:
+                    "linear-gradient(90deg, var(--color-score-poor), var(--color-score-weak), var(--color-score-neutral), var(--color-score-good), var(--color-score-excellent))",
+                }}
+              />
+              <span>strong</span>
+            </div>
+          </div>
+
+          {/* RIGHT: top tiles with vertical fade mask — half-screen wide */}
+          <div className="relative w-full max-w-[360px] ml-auto">
+            <div
+              className="relative"
+              style={{
+                WebkitMaskImage:
+                  "linear-gradient(180deg, #000 0%, #000 60%, rgba(0,0,0,.45) 80%, transparent 100%)",
+                maskImage:
+                  "linear-gradient(180deg, #000 0%, #000 60%, rgba(0,0,0,.45) 80%, transparent 100%)",
+              }}
+            >
+              <div className="grid gap-1.5" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
+                {visible.map((t, i) => {
+                  const v = t.avg_composite ?? 0;
+                  const bg = bandColor(band(v));
+                  const numColor = v >= 50 && v < 65 ? "var(--color-ink)" : "#fff";
+                  return (
+                    <Link
+                      key={t.cluster_id}
+                      href={`/cluster/${t.cluster_id}`}
+                      className="heat-tile heat-tile-drop rounded-[5px] flex flex-col items-center justify-center p-1"
+                      title={`${t.cluster_name} · ${Math.round(v)}`}
+                      style={{
+                        aspectRatio: "1 / 1",
+                        background: bg,
+                        boxShadow: "0 1px 3px rgba(25,25,25,.08)",
+                        animationDelay: `${i * 0.07}s`,
+                      }}
+                    >
+                      <span
+                        className="font-display tabular-nums leading-none font-medium"
+                        style={{ color: numColor, fontSize: 16 }}
+                      >
+                        {Math.round(v)}
+                      </span>
+                      <span
+                        className="leading-tight tracking-wide font-medium text-center mt-0.5"
+                        style={{ color: numColor, opacity: 0.86, fontSize: 8 }}
+                      >
+                        {t.cluster_name}
+                      </span>
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Floating "+N more" CTA — sits over the bottom fade */}
+            <Link
+              href="/clusters"
+              className="absolute z-10 inline-flex items-center gap-2 card animate-tearwobble"
+              style={{
+                left: "50%",
+                bottom: -10,
+                transform: "translateX(-50%)",
+                padding: "7px 12px 7px 10px",
+                borderRadius: 999,
+                fontSize: 12,
+                boxShadow: "0 10px 24px -6px rgba(25,25,25,0.24)",
+              }}
+            >
+              <span className="inline-flex gap-px">
+                <span style={{ width: 8, height: 8, borderRadius: 2, background: "var(--color-score-good)" }} />
+                <span style={{ width: 8, height: 8, borderRadius: 2, background: "var(--color-score-neutral)" }} />
+                <span style={{ width: 8, height: 8, borderRadius: 2, background: "var(--color-score-weak)" }} />
+              </span>
+              <span className="tabular-nums font-semibold">
+                +{Math.max(0, tiles.length - SHOW)} more
+              </span>
+              <ArrowRight size={11} style={{ color: "var(--color-accent-600)" }} />
+            </Link>
+          </div>
         </div>
-        <h3 className="font-display text-[28px] md:text-[36px] leading-[1.1] tracking-tight max-w-[420px]">
-          {title}
+      </div>
+    </section>
+  );
+}
+
+/* ====================================================== THREE PILLARS === */
+
+function ThreePillars() {
+  return (
+    <section className="border-t hairline" style={{ backgroundColor: "var(--color-paper)" }}>
+      <div className="max-w-[1200px] mx-auto px-6 py-12 md:py-14">
+        <div className="text-center max-w-[640px] mx-auto mb-10">
+          <div className="eyebrow mb-3">How we score</div>
+          <h2 className="font-display" style={{ fontSize: "clamp(28px, 3.5vw, 42px)", lineHeight: 1.05 }}>
+            Three pillars. <em className="accent">One ranking.</em>
+          </h2>
+          <p className="muted-text mt-3.5 text-[14.5px] leading-[1.55] max-w-[540px] mx-auto">
+            The way an analyst would actually think about a business — not a dump of every ratio in the book.
+          </p>
+        </div>
+
+        <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+          <PillarCard
+            n="01"
+            color="var(--color-accent-600)"
+            name="Quality"
+            tagline="Does this business compound?"
+            body="Returns on capital, multi-window CAGR, growth consistency, cash conversion, balance-sheet discipline. The question we're answering is whether the business has built durable economics — or just had a good year."
+            graphic={<RoeGraphic />}
+          />
+          <PillarCard
+            n="02"
+            color="var(--color-accent-500)"
+            name="Valuation"
+            tagline="Are we paying a fair price?"
+            body="P/E, P/B, EV/EBITDA, FCF and dividend yield — but always relative to peers in the same cluster, never the whole market. A 25× P/E in pharma means something very different from a 25× P/E in cement."
+            graphic={<PeGraphic />}
+          />
+          <PillarCard
+            n="03"
+            color="var(--color-accent-400)"
+            name="Momentum"
+            tagline="Is the market noticing yet?"
+            body="Price momentum across 3, 6, 12-month horizons relative to the market — blended with latest-quarter earnings momentum. The two together separate hype from fundamentals turning."
+            graphic={<MomentumGraphic />}
+          />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function PillarCard({ n, color, name, tagline, body, graphic }: {
+  n: string; color: string; name: string; tagline: string; body: string; graphic: React.ReactNode;
+}) {
+  return (
+    <article
+      className="card flex flex-col p-5"
+      style={{ borderTop: `3px solid ${color}` }}
+    >
+      <div className="h-[110px] flex items-center justify-center mb-3">{graphic}</div>
+      <div className="ntag" style={{ fontSize: 28 }}>{n}</div>
+      <h3 className="font-display mt-1.5" style={{ fontSize: 21, color }}>{name}</h3>
+      <div className="muted-text italic text-[12.5px] mt-1">{tagline}</div>
+      <p className="muted-text mt-3 text-[13px] leading-[1.55]">{body}</p>
+    </article>
+  );
+}
+
+function RoeGraphic() {
+  return (
+    <svg width="240" height="120" viewBox="0 0 240 120">
+      <text x="120" y="14" fontSize="9" fill="var(--color-muted)" textAnchor="middle" fontFamily="Inter">Return on equity · 8y</text>
+      {[68, 62, 74, 56, 44, 38, 32, 20].map((y, i) => (
+        <rect
+          key={i}
+          x={4 + i * 28}
+          y={y}
+          width={22}
+          height={100 - y}
+          rx={2}
+          fill="var(--color-accent-600)"
+          opacity={0.35 + i * 0.085}
+          className="svg-bar"
+          style={{ animationDelay: `${0.05 + i * 0.07}s` }}
+        />
+      ))}
+      <line x1="0" y1="100" x2="232" y2="100" stroke="var(--color-border-default)" />
+    </svg>
+  );
+}
+
+function PeGraphic() {
+  return (
+    <svg width="240" height="120" viewBox="0 0 240 120">
+      <text x="0" y="20" fontSize="10" fill="var(--color-ink)" fontFamily="Inter">Peer median P/E</text>
+      <rect x="0" y="28" width="160" height="14" rx="3" fill="var(--color-muted)" opacity="0.30" className="svg-hbar" style={{ animationDelay: "0.1s" }} />
+      <text x="166" y="40" fontSize="11" fill="var(--color-muted)" fontFamily="JetBrains Mono">28×</text>
+      <text x="0" y="68" fontSize="10" fill="var(--color-ink)" fontFamily="Inter">This stock</text>
+      <rect x="0" y="76" width="120" height="14" rx="3" fill="var(--color-accent-400)" className="svg-hbar" style={{ animationDelay: "0.55s" }} />
+      <text x="126" y="88" fontSize="11" fill="var(--color-accent-600)" fontFamily="JetBrains Mono">21×</text>
+      <text x="0" y="112" fontSize="9" fill="var(--color-muted)" fontFamily="Inter">25% cheaper than the cluster median</text>
+    </svg>
+  );
+}
+
+function MomentumGraphic() {
+  return (
+    <svg width="240" height="120" viewBox="0 0 240 120">
+      <path d="M12,80 L32,76 L52,78 L72,72 L92,68 L112,72 L132,66 L152,60 L172,64 L192,58 L212,56 L228,62"
+        fill="none" stroke="var(--color-muted)" strokeOpacity="0.45" strokeWidth="1.5" strokeDasharray="3 3" />
+      <path d="M12,80 L32,72 L52,66 L72,58 L92,48 L112,42 L132,32 L152,24 L172,20 L192,14 L212,10 L228,8"
+        fill="none" stroke="var(--color-accent-300)" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round"
+        className="svg-line-slow" style={{ animationDelay: "0.3s" }} />
+      <circle cx="228" cy="8" r="3.5" fill="var(--color-accent-500)" className="svg-dot" style={{ animationDelay: "2.5s" }} />
+      <text x="12" y="116" fontSize="9" fill="var(--color-muted)" fontFamily="Inter">12 months ago</text>
+      <text x="228" y="116" fontSize="9" fill="var(--color-muted)" fontFamily="Inter" textAnchor="end">today</text>
+    </svg>
+  );
+}
+
+/* ================================================== STRENGTHS & GAPS === */
+
+function StrengthsAndGaps() {
+  const rows = [
+    { name: "Momentum",     v: 91, c: "var(--color-score-excellent)" },
+    { name: "Growth",       v: 84, c: "var(--color-score-good)" },
+    { name: "Profitability", v: 78, c: "var(--color-score-good)" },
+    { name: "Cash & Balance Sheet", v: 62, c: "var(--color-score-neutral)" },
+    { name: "Valuation",    v: 47, c: "var(--color-score-weak)" },
+  ];
+  return (
+    <section className="border-t hairline" style={{ backgroundColor: "var(--color-paper)" }}>
+      <div className="max-w-[1100px] mx-auto px-6 py-12 md:py-14">
+        <div className="grid gap-12 items-center" style={{ gridTemplateColumns: "1fr 1fr" }}>
+          <div>
+            <div className="eyebrow mb-3">The single page that matters</div>
+            <h2 className="font-display" style={{ fontSize: "clamp(28px, 3.6vw, 44px)", lineHeight: 1.0 }}>
+              Strengths.<br />
+              <em className="accent">And gaps.</em>
+            </h2>
+            <p className="muted-text mt-4 text-[14.5px] leading-[1.6] max-w-[340px]">
+              Five axes, sorted. The strongest dimensions rise to the top — without you having to
+              read a footnote.
+            </p>
+          </div>
+          <div className="flex flex-col gap-2.5 max-w-[360px]">
+            {rows.map((r, i) => (
+              <div key={r.name}>
+                <div className="flex justify-between mb-1">
+                  <span className="text-[11.5px]">{r.name}</span>
+                  <span className="tabular-nums font-semibold text-[11.5px]" style={{ color: r.c }}>{r.v}</span>
+                </div>
+                <div
+                  className="relative h-2 rounded-full border hairline"
+                  style={{ backgroundColor: "var(--color-card)" }}
+                >
+                  <div
+                    className="absolute top-0 bottom-0 w-px"
+                    style={{ left: "50%", background: "rgba(90,88,79,.4)" }}
+                  />
+                  <div
+                    className="absolute inset-y-0 left-0 rounded-full svg-hbar"
+                    style={{
+                      width: `${r.v}%`,
+                      background: r.c,
+                      opacity: 0.92,
+                      animationDelay: `${i * 0.12}s`,
+                    }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ================================================== BUILT TO COMPOUND === */
+
+function BuiltToCompound({ snap }: { snap: Snapshot }) {
+  return (
+    <section style={{ backgroundColor: "var(--color-paper)" }}>
+      <div className="max-w-[1200px] mx-auto px-6 py-12 md:py-14">
+        <div className="text-center max-w-[640px] mx-auto mb-12">
+          <div className="eyebrow mb-3">What compounds</div>
+          <h2 className="font-display" style={{ fontSize: "clamp(28px, 3.5vw, 44px)", lineHeight: 1.05 }}>
+            Built to <em className="accent">compound.</em>
+          </h2>
+          <p className="muted-text mt-3 text-[14.5px] leading-[1.55] max-w-[540px] mx-auto">
+            Anyone can ship a stock screener in a weekend. None of these three can be cloned in a sprint.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-10 mt-8">
+          <MoatHistory weeks={snap.weeks} />
+          <MoatNarrative />
+          <MoatCommunity />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function MoatHistory({ weeks }: { weeks: number }) {
+  return (
+    <article className="grid gap-10 items-center" style={{ gridTemplateColumns: "1fr 1fr" }}>
+      <div className="card p-6">
+        <div className="flex justify-between items-baseline mb-2.5">
+          <span className="eyebrow">Score history · ledger</span>
+          <span className="muted-text text-[11px] tabular-nums">{weeks} weekly snapshot{weeks === 1 ? "" : "s"}</span>
+        </div>
+        <svg viewBox="0 0 360 180" className="w-full">
+          <defs>
+            <linearGradient id="hg" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stopColor="var(--color-accent-400)" stopOpacity=".22" />
+              <stop offset="100%" stopColor="var(--color-accent-400)" stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          <line x1="16" y1="100" x2="344" y2="100" stroke="var(--color-border-default)" strokeDasharray="3 3" />
+          <path
+            d="M16,140 L46,134 L76,138 L106,128 L136,118 L166,124 L196,110 L226,98 L256,84 L286,72 L316,62 L344,52 L344,164 L16,164 Z"
+            fill="url(#hg)"
+            className="svg-fill-in"
+          />
+          <path
+            d="M16,140 L46,134 L76,138 L106,128 L136,118 L166,124 L196,110 L226,98 L256,84 L286,72 L316,62 L344,52"
+            fill="none"
+            stroke="var(--color-accent-500)"
+            strokeWidth="2.5"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            className="svg-line-slow"
+          />
+          <circle cx="344" cy="52" r="4.5" fill="var(--color-accent-600)" className="svg-dot" style={{ animationDelay: "2.4s" }} />
+          <text x="16" y="176" fontSize="10" fill="var(--color-muted)" fontFamily="Inter">Week 1</text>
+          <text x="344" y="176" fontSize="10" fill="var(--color-muted)" fontFamily="Inter" textAnchor="end">today</text>
+        </svg>
+        <div
+          className="mt-3.5 pt-3.5 border-t hairline grid gap-3"
+          style={{ gridTemplateColumns: "repeat(3, 1fr)" }}
+        >
+          <div>
+            <div className="eyebrow" style={{ fontSize: 9 }}>First</div>
+            <div className="font-display tabular-nums mt-0.5" style={{ fontSize: 18 }}>—</div>
+          </div>
+          <div>
+            <div className="eyebrow" style={{ fontSize: 9 }}>Today</div>
+            <div className="font-display tabular-nums mt-0.5" style={{ fontSize: 18, color: "var(--color-score-excellent)" }}>
+              today
+            </div>
+          </div>
+          <div>
+            <div className="eyebrow" style={{ fontSize: 9 }}>Edits</div>
+            <div className="font-display tabular-nums mt-0.5" style={{ fontSize: 18 }}>0</div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div className="ntag" style={{ fontSize: 28 }}>01</div>
+        <h3 className="font-display mt-2" style={{ fontSize: "clamp(22px, 2.4vw, 30px)", lineHeight: 1.1, maxWidth: 420 }}>
+          A score history that <em className="accent">can&apos;t be backdated.</em>
         </h3>
+        <p className="muted-text mt-4 text-[16px] leading-[1.6]" style={{ maxWidth: 460 }}>
+          Every Monday at 09:30 IST we freeze the score for every covered name and write it to an
+          append-only ledger. We don&apos;t edit history — if we were wrong, you can see we were
+          wrong. A competitor launching tomorrow can backfill price data, but they cannot backfill
+          our judgment from week one.
+        </p>
       </div>
     </article>
   );
 }
 
-/* -- Moat graphics ------------------------------------------------- */
-
-function SparklineGraphic() {
-  // 12 weekly score points, gently rising — illustrates archive depth
-  const pts = [42, 45, 43, 47, 51, 54, 53, 58, 62, 65, 71, 74];
-  const w = 360, h = 180, pad = 16;
-  const max = 100, min = 0;
-  const x = (i: number) => pad + (i * (w - 2 * pad)) / (pts.length - 1);
-  const y = (v: number) => pad + (1 - (v - min) / (max - min)) * (h - 2 * pad);
-  const path = pts.map((v, i) => `${i === 0 ? "M" : "L"} ${x(i)} ${y(v)}`).join(" ");
-  const area = `${path} L ${x(pts.length - 1)} ${h - pad} L ${x(0)} ${h - pad} Z`;
-
+function MoatNarrative() {
   return (
-    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className="card p-0">
-      <defs>
-        <linearGradient id="sparkfill" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stopColor="var(--color-accent-400)" stopOpacity="0.22" />
-          <stop offset="100%" stopColor="var(--color-accent-400)" stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      {/* baseline */}
-      <line
-        x1={pad} y1={y(50)} x2={w - pad} y2={y(50)}
-        stroke="var(--color-border-default)" strokeDasharray="3 3"
-      />
-      {/* area + line */}
-      <path d={area} fill="url(#sparkfill)" />
-      <path d={path} fill="none" stroke="var(--color-accent-500)" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
-      {/* dots at each weekly snapshot */}
-      {pts.map((v, i) => (
-        <circle
-          key={i}
-          cx={x(i)} cy={y(v)} r={i === pts.length - 1 ? 4 : 2.5}
-          fill={i === pts.length - 1 ? "var(--color-accent-600)" : "var(--color-card)"}
-          stroke="var(--color-accent-500)" strokeWidth="1.5"
-        />
-      ))}
-      {/* labels */}
-      <text x={pad} y={h - 4} fontSize="10" fill="var(--color-muted)">12 weeks ago</text>
-      <text x={w - pad} y={h - 4} fontSize="10" fill="var(--color-muted)" textAnchor="end">today</text>
-    </svg>
+    <article className="grid gap-10 items-center" style={{ gridTemplateColumns: "1fr 1fr" }}>
+      <div className="flex justify-center order-1">
+        <div
+          className="card relative p-7 max-w-[460px] swing-narrative"
+          style={{
+            boxShadow:
+              "0 26px 50px -22px rgba(25,25,25,0.28), 0 8px 18px -10px rgba(25,25,25,0.18)",
+          }}
+        >
+          {/* Pushpin */}
+          <div
+            aria-hidden
+            className="absolute"
+            style={{
+              top: -14,
+              left: "50%",
+              transform: "translateX(-50%)",
+              width: 26,
+              height: 26,
+              borderRadius: "50%",
+              background:
+                "radial-gradient(circle at 35% 30%, #d97757 0%, #b04a2c 55%, #7a2f18 100%)",
+              boxShadow:
+                "0 4px 8px rgba(0,0,0,0.28), inset -2px -3px 4px rgba(0,0,0,0.35), inset 2px 2px 3px rgba(255,255,255,0.35)",
+              zIndex: 2,
+            }}
+          />
+          <div
+            aria-hidden
+            className="absolute"
+            style={{
+              top: 6,
+              left: "50%",
+              transform: "translateX(-50%)",
+              width: 2,
+              height: 10,
+              background:
+                "linear-gradient(to bottom, rgba(0,0,0,0.35), rgba(0,0,0,0.05))",
+              zIndex: 1,
+            }}
+          />
+          <div className="eyebrow mb-4">Why this score · INFY</div>
+          <div className="flex flex-col gap-3.5 text-[15px] leading-[1.55]">
+            {[
+              ["↑", "Returns on equity beat the cluster.", "var(--color-score-good)"],
+              ["↑", "Operating margin has improved over five years.", "var(--color-score-good)"],
+              ["↑", "Net cash; balance sheet is in the 99th percentile.", "var(--color-score-good)"],
+              ["↓", "P/E is richer than peers.", "var(--color-score-poor)"],
+              ["↓", "Revenue growth trails cluster median by ~160 bps.", "var(--color-score-weak)"],
+            ].map(([arrow, text, c], i) => (
+              <div key={i} className="flex gap-2.5">
+                <span className="font-semibold" style={{ color: c }}>{arrow}</span>
+                <span>{text}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="order-2">
+        <div className="ntag" style={{ fontSize: 28 }}>02</div>
+        <h3 className="font-display mt-2" style={{ fontSize: "clamp(22px, 2.4vw, 30px)", lineHeight: 1.1, maxWidth: 420 }}>
+          Plain language. <em className="accent">Not a wall of ratios.</em>
+        </h3>
+        <p className="muted-text mt-4 text-[16px] leading-[1.6]" style={{ maxWidth: 460 }}>
+          Every score ships with a paragraph that explains what changed and why it matters. The
+          model behind it gets tuned on analyst corrections and reader feedback — patient input
+          a generic prompt cannot replicate.
+        </p>
+      </div>
+    </article>
   );
 }
 
-function NarrativeGraphic() {
+function MoatCommunity() {
   return (
-    <div className="card p-6 max-w-[420px]">
-      <div className="text-[10px] uppercase tracking-wide muted-text mb-3">
-        Why this score
-      </div>
-      <div className="space-y-3 text-[14px] leading-relaxed">
-        <div className="flex gap-2">
-          <span style={{ color: "var(--color-score-good)" }} className="font-medium">↑</span>
-          <span>Returns on equity beat the cluster.</span>
-        </div>
-        <div className="flex gap-2">
-          <span style={{ color: "var(--color-score-good)" }} className="font-medium">↑</span>
-          <span>Operating margin has improved over five years.</span>
-        </div>
-        <div className="flex gap-2">
-          <span style={{ color: "var(--color-score-poor)" }} className="font-medium">↓</span>
-          <span>P/E is richer than peers.</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function TrendingGraphic() {
-  // Stylized "trending in financials" list
-  const items = [
-    { sym: "NORTHARC", delta: "+12" },
-    { sym: "MUTHOOTMF", delta: "+8" },
-    { sym: "AFSL", delta: "+6" },
-    { sym: "APTUS", delta: "+5" },
-  ];
-  return (
-    <div className="card p-5 w-[300px]">
-      <div className="text-[10px] uppercase tracking-wide muted-text mb-3">
-        Trending in financials
-      </div>
-      <ul className="space-y-2.5">
-        {items.map((it) => (
-          <li key={it.sym} className="flex items-center justify-between text-[13px]">
-            <span className="font-medium tabular-nums">{it.sym}</span>
-            <span
-              className="tabular-nums text-[12px]"
-              style={{ color: "var(--color-score-good)" }}
-            >
-              {it.delta}
+    <article className="grid gap-10 items-center" style={{ gridTemplateColumns: "1fr 1fr" }}>
+      {/* Corkboard with hanging trending-list card */}
+      <div
+        className="relative flex justify-center"
+        style={{
+          padding: "28px 24px 32px",
+          borderRadius: 14,
+          background: `
+            radial-gradient(ellipse at 30% 20%, #efe3d0 0%, transparent 55%),
+            radial-gradient(ellipse at 70% 80%, #d8c6a8 0%, transparent 50%),
+            repeating-radial-gradient(circle at 50% 50%, #e4d5b8 0px, #e4d5b8 1px, #d4c19e 1.5px, #e4d5b8 2.5px),
+            #e4d5b8`,
+          boxShadow:
+            "inset 0 0 24px rgba(120,90,50,0.18), inset 0 0 6px rgba(255,255,255,0.25)",
+        }}
+      >
+        <svg
+          aria-hidden
+          viewBox="0 0 200 60"
+          preserveAspectRatio="none"
+          className="absolute pointer-events-none"
+          style={{ top: 4, left: "50%", transform: "translateX(-50%)", width: "70%", height: 38 }}
+        >
+          <path
+            d="M 4,4 Q 100,46 196,4"
+            fill="none"
+            stroke="#7a5a38"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+            opacity="0.6"
+          />
+        </svg>
+        <div
+          className="card relative max-w-[320px] mt-3.5 p-[18px] px-5 swing-trending"
+          style={{
+            boxShadow:
+              "0 22px 38px -18px rgba(0,0,0,0.45), 0 6px 14px -8px rgba(0,0,0,0.3)",
+          }}
+        >
+          <div
+            aria-hidden
+            className="absolute"
+            style={{
+              top: -12,
+              left: "50%",
+              transform: "translateX(-50%)",
+              width: 22,
+              height: 22,
+              borderRadius: "50%",
+              background:
+                "radial-gradient(circle at 35% 30%, #d97757 0%, #b04a2c 55%, #7a2f18 100%)",
+              boxShadow:
+                "0 4px 7px rgba(0,0,0,0.4), inset -2px -3px 4px rgba(0,0,0,0.35), inset 2px 2px 3px rgba(255,255,255,0.4)",
+              zIndex: 2,
+            }}
+          />
+          <div className="flex justify-between items-center mb-2.5">
+            <span className="eyebrow" style={{ fontSize: 9.5 }}>Trending in financials</span>
+            <span className="flex items-center gap-1 text-[10px]" style={{ color: "var(--color-score-excellent)" }}>
+              <span
+                className="w-[5px] h-[5px] rounded-full animate-livepulse"
+                style={{ backgroundColor: "var(--color-score-excellent)" }}
+              />
+              live
             </span>
-          </li>
-        ))}
-      </ul>
-    </div>
+          </div>
+          <div className="flex flex-col">
+            {[
+              ["NORTHARC", "71 → 83", "+12", "var(--color-score-excellent)"],
+              ["MUTHOOTMF", "68 → 76", "+8", "var(--color-score-excellent)"],
+              ["AFSL", "62 → 68", "+6", "var(--color-score-good)"],
+              ["APTUS", "71 → 76", "+5", "var(--color-score-good)"],
+            ].map(([sym, range, delta, c], i, arr) => (
+              <div
+                key={sym}
+                className="grid items-center text-[12.5px] py-1.5"
+                style={{
+                  gridTemplateColumns: "1fr 56px 28px",
+                  borderBottom: i < arr.length - 1 ? "1px solid var(--color-border-default)" : "none",
+                }}
+              >
+                <span className="font-semibold">{sym}</span>
+                <span className="tabular-nums muted-text" style={{ fontSize: 11.5 }}>{range}</span>
+                <span className="tabular-nums text-right font-semibold" style={{ color: c }}>{delta}</span>
+              </div>
+            ))}
+          </div>
+          <div className="mt-2.5 pt-2.5 border-t hairline font-mono text-[10px] muted-text">
+            2.1M anonymous signals · this week
+          </div>
+        </div>
+      </div>
+      <div>
+        <div className="ntag" style={{ fontSize: 28 }}>03</div>
+        <h3 className="font-display mt-2" style={{ fontSize: "clamp(22px, 2.4vw, 30px)", lineHeight: 1.1, maxWidth: 420 }}>
+          What everyone&apos;s <em className="accent">watching.</em>
+        </h3>
+        <p className="muted-text mt-4 text-[16px] leading-[1.6]" style={{ maxWidth: 460 }}>
+          Watchlists, screens, and reads — anonymized into a demand-side dataset that&apos;s
+          uniquely ours. We feed it back into scoring and surface what&apos;s moving. We don&apos;t
+          sell it. Every visit makes the next score a little better.
+        </p>
+      </div>
+    </article>
   );
 }
 
-/* -------------------------------------------------- Footer CTA ------- */
+/* ============================================================== CTA === */
 
 function FooterCTA() {
   return (
@@ -733,27 +1160,27 @@ function FooterCTA() {
       className="border-t hairline"
       style={{ backgroundColor: "var(--color-accent-50)" }}
     >
-      <div className="mx-auto max-w-[1200px] px-6 py-24 text-center">
-        <h2 className="font-display text-[40px] md:text-[56px] leading-[1.05] tracking-tight max-w-[680px] mx-auto">
+      <div className="max-w-[1200px] mx-auto px-6 py-10 md:py-12 text-center">
+        <h2
+          className="font-display mx-auto"
+          style={{
+            fontSize: "clamp(44px, 6vw, 68px)",
+            lineHeight: 1.04,
+            maxWidth: 760,
+            textWrap: "balance",
+          }}
+        >
           Start with the part of the market{" "}
-          <em className="not-italic" style={{ color: "var(--color-accent-700)" }}>
+          <em className="accent" style={{ color: "var(--color-accent-700)" }}>
             you care about.
           </em>
         </h2>
-        <div className="mt-10 flex items-center justify-center gap-3">
-          <Link
-            href="/clusters"
-            className="inline-flex items-center gap-2 px-6 py-3 rounded-full text-[14px] font-medium text-white transition-transform hover:scale-[1.03]"
-            style={{ backgroundColor: "var(--color-accent-600)" }}
-          >
-            Open the heat map
+        <div className="mt-9 flex gap-3 justify-center flex-wrap">
+          <Link href="/clusters" className="btn-primary">
+            Open the Clusters
             <ArrowRight size={14} />
           </Link>
-          <Link
-            href="/screener"
-            className="inline-flex items-center gap-2 px-6 py-3 rounded-full text-[14px] border bg-white"
-            style={{ borderColor: "var(--color-accent-300)" }}
-          >
+          <Link href="/discover" className="btn-ghost">
             Open Discover
           </Link>
         </div>

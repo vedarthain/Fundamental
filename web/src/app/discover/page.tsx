@@ -17,8 +17,11 @@ type Row = {
   company_name: string;
   cluster_id: string;
   cluster_name: string;
+  meta_cluster_name: string;
   maturity_tier: string;
   market_cap_cr: number | null;
+  current_price: number | null;
+  price_fetched_at: string | null;
   quality_pct: number | null;
   valuation_pct: number | null;
   momentum_pct: number | null;
@@ -81,8 +84,11 @@ async function loadRows(p: ScreenerParams): Promise<{ rows: Row[]; total: number
            u.company_name,
            s.cluster_id,
            c.name AS cluster_name,
+           mc.name AS meta_cluster_name,
            s.maturity_tier,
            sm.market_cap_cr,
+           sm.current_price::float AS current_price,
+           sm.last_scraped_at::text AS price_fetched_at,
            s.quality_pct,
            s.valuation_pct,
            s.momentum_pct,
@@ -95,6 +101,7 @@ async function loadRows(p: ScreenerParams): Promise<{ rows: Row[]; total: number
     FROM app.scores s
     JOIN app.universe u USING (symbol)
     JOIN app.cluster c ON c.id = s.cluster_id
+    JOIN app.meta_cluster mc ON mc.id = c.meta_cluster_id
     LEFT JOIN app.screener_meta sm USING (symbol)
     WHERE s.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
       ${clusterFilter} ${metaFilter} ${tierFilter} ${capFilter}
@@ -123,11 +130,26 @@ export default async function ScreenerPage({
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
+  // Newest + oldest price-fetch timestamps across the rows on this page.
+  // We surface this so the user knows whether the LTPs they're seeing are
+  // hours old or weeks old. Some stocks get re-fetched more often than others.
+  let latestPrice: Date | null = null;
+  let oldestPrice: Date | null = null;
+  for (const r of rows) {
+    if (!r.price_fetched_at) continue;
+    const d = new Date(r.price_fetched_at);
+    if (!latestPrice || d > latestPrice) latestPrice = d;
+    if (!oldestPrice || d < oldestPrice) oldestPrice = d;
+  }
+  const fmtDate = (d: Date) =>
+    d.toLocaleDateString("en-IN", { year: "numeric", month: "short", day: "numeric" });
+
   return (
     <div className="mx-auto max-w-[1300px] px-6 py-10">
       <header className="max-w-[760px]">
-        <h1 className="font-display text-[36px] tracking-tight leading-tight">
-          Screen the universe by your weights
+        <div className="text-[12px] uppercase tracking-wide muted-text">Discover</div>
+        <h1 className="font-display text-[36px] tracking-tight leading-tight mt-1">
+          Find stocks by <em className="accent">your priorities</em>
         </h1>
         <p className="mt-3 text-[15px] muted-text">
           Pick a preset or set your own Quality / Valuation / Momentum weights — every stock
@@ -141,6 +163,23 @@ export default async function ScreenerPage({
           </span>{" "}
           ({params.preset === "custom" ? "Custom" : params.preset[0].toUpperCase() + params.preset.slice(1)}){" "}
           · {total.toLocaleString("en-IN")} matches
+          {latestPrice && (
+            <>
+              {" "}·{" "}
+              <span
+                title={
+                  oldestPrice && oldestPrice.getTime() !== latestPrice.getTime()
+                    ? `Prices on this page were fetched between ${fmtDate(oldestPrice)} and ${fmtDate(latestPrice)}.`
+                    : `Prices fetched ${fmtDate(latestPrice)}.`
+                }
+              >
+                LTP as of <span className="ink-text tabular-nums">{fmtDate(latestPrice)}</span>
+                {oldestPrice && oldestPrice.getTime() !== latestPrice.getTime() && (
+                  <span className="muted-text"> · oldest {fmtDate(oldestPrice)}</span>
+                )}
+              </span>
+            </>
+          )}
         </div>
       </header>
 
@@ -173,6 +212,15 @@ export default async function ScreenerPage({
   );
 }
 
+/** Compact crore-units formatter, no ₹ / Cr suffix (the column header carries
+ *  the unit). 150,000 Cr → "1.50L"; 3,900 Cr → "3.9K"; 850 Cr → "850". */
+function fmtMktCapBare(n: number | null): string {
+  if (n == null) return "—";
+  if (n >= 100_000) return `${(n / 100_000).toFixed(2)}L`;
+  if (n >= 1_000)   return `${(n / 1_000).toFixed(1)}K`;
+  return Math.round(n).toLocaleString("en-IN");
+}
+
 function ResultsTable({ rows, weights }: { rows: Row[]; weights: { q: number; v: number; m: number } }) {
   if (rows.length === 0) {
     return (
@@ -192,8 +240,15 @@ function ResultsTable({ rows, weights }: { rows: Row[]; weights: { q: number; v:
           <tr className="text-left muted-text text-[11px] uppercase tracking-wide">
             <th className="px-4 py-3 w-[34px]">#</th>
             <th className="px-4 py-3">Stock</th>
-            <th className="px-4 py-3">Cluster · Tier</th>
-            <th className="px-4 py-3 text-right">Mkt cap</th>
+            <th className="px-4 py-3">Sector · Cluster · Tier</th>
+            <th className="px-4 py-3 text-right">
+              Mkt cap
+              <div className="text-[9px] muted-text font-normal normal-case mt-0.5">(₹ Cr)</div>
+            </th>
+            <th className="px-3 py-3 text-right" title="Last traded price (from latest Screener fetch)">
+              LTP
+              <div className="text-[9px] muted-text font-normal normal-case mt-0.5">(₹)</div>
+            </th>
             <th className="px-3 py-3 text-right" title={`Quality (weight ${weights.q}%)`}>
               Q <span className="text-[9px] muted-text">{weights.q}%</span>
             </th>
@@ -230,13 +285,28 @@ function ResultsTable({ rows, weights }: { rows: Row[]; weights: { q: number; v:
                 </div>
               </td>
               <td className="px-4 py-3 text-[12px]">
+                <div className="text-[10px] uppercase tracking-wide muted-text mb-0.5">
+                  {r.meta_cluster_name}
+                </div>
                 <Link href={`/cluster/${r.cluster_id}`} className="hover:text-[var(--color-accent-600)]">
                   {r.cluster_name}
                 </Link>
                 <div className="muted-text">{tierLabel(r.maturity_tier)}</div>
               </td>
               <td className="px-4 py-3 text-right tabular-nums text-[12px] muted-text">
-                {fmtRupeesCr(r.market_cap_cr)}
+                {fmtMktCapBare(r.market_cap_cr)}
+              </td>
+              <td
+                className="px-3 py-3 text-right tabular-nums text-[12.5px]"
+                title={
+                  r.price_fetched_at
+                    ? `Fetched ${new Date(r.price_fetched_at).toLocaleDateString("en-IN", { year: "numeric", month: "short", day: "numeric" })}`
+                    : "No price data"
+                }
+              >
+                {r.current_price != null
+                  ? r.current_price.toLocaleString("en-IN", { maximumFractionDigits: 2 })
+                  : <span className="muted-text">—</span>}
               </td>
               <PillarCell value={r.quality_pct} />
               <PillarCell value={r.valuation_pct} />
@@ -302,7 +372,7 @@ function Pagination({
   if (totalPages <= 1) return null;
   const page = params.page;
   const buildHref = (p: number) =>
-    "/screener" + paramsToQuery({ ...params, page: p });
+    "/discover" + paramsToQuery({ ...params, page: p });
 
   const pages: number[] = [];
   const window = 2;

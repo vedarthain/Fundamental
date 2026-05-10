@@ -26,6 +26,14 @@
   --color-score-weak:      #cc8a5c;
   --color-score-poor:      #a8543c;
 
+  /* Tab tints — very subtle per-tab tinting so the long stock page
+     stops feeling monotone-cream. Each is within 4% lightness of paper
+     so it reads as variety, not as a different page. */
+  --color-tab-tint-about:    #fbf2ed;  /* warm tan, kin of accent-50 */
+  --color-tab-tint-strength: #f1f5ec;  /* faintest sage */
+  --color-tab-tint-numbers:  #ecf1f5;  /* faintest cool slate */
+  --color-tab-numbers-stripe:#5d7a96;  /* slate accent for "Numbers" tab */
+
   /* Typography */
   --font-serif: "Source Serif 4", "Iowan Old Style", "Apple Garamond", Georgia, serif;
   --font-sans:  "Inter", ui-sans-serif, system-ui, -apple-system, "Helvetica Neue", sans-serif;
@@ -70,3 +78,230 @@ td, th { font-variant-numeric: tabular-nums; }
 .score-bg-poor      { background-color: var(--color-score-poor); color: white; }
 
 .hairline { border-color: var(--color-border-default); }
+
+/* ----- Landing-page utilities + animations -------------------------- */
+
+/* Eyebrow label — uppercase tiny accent label above headlines */
+.eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  font-weight: 500;
+}
+
+/* Italic accent emphasis — used inside h1/h2 */
+em.accent {
+  font-style: italic;
+  color: var(--color-accent-600);
+  font-weight: 400;
+}
+
+/* Numbered pill / large numeral tag (01, 02, 03 ...) */
+.ntag {
+  font-family: var(--font-serif);
+  font-style: italic;
+  color: var(--color-accent-300);
+  font-size: 38px;
+  line-height: 1;
+}
+
+/* Subtle warm-grain background gradient for hero */
+.grain {
+  background-image:
+    radial-gradient(circle at 12% 18%, rgba(204,120,92,0.08), transparent 28%),
+    radial-gradient(circle at 88% 8%, rgba(220,154,122,0.10), transparent 32%),
+    radial-gradient(circle at 50% 96%, rgba(245,224,211,0.55), transparent 50%);
+}
+
+/* Pill primary button (brand accent) */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--color-accent-500);
+  color: #fff;
+  border: 0;
+  padding: 13px 22px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  cursor: pointer;
+  transition: transform .15s ease, background .15s ease;
+}
+.btn-primary:hover { background: var(--color-accent-600); transform: scale(1.03); }
+
+/* Pill ghost button */
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  color: var(--color-ink);
+  border: 1px solid var(--color-border-default);
+  padding: 13px 22px;
+  border-radius: 999px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.btn-ghost:hover { background: var(--color-card); }
+
+/* Animations */
+@keyframes marquee   { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+@keyframes drift     { 0% { transform: translateY(0); } 50% { transform: translateY(-4px); } 100% { transform: translateY(0); } }
+@keyframes livepulse {
+  0%   { box-shadow: 0 0 0 0 rgba(63,125,74,.45); }
+  70%  { box-shadow: 0 0 0 8px rgba(63,125,74,0); }
+  100% { box-shadow: 0 0 0 0 rgba(63,125,74,0); }
+}
+@keyframes drawline { to { stroke-dashoffset: 0; } }
+@keyframes fadein   { to { opacity: 1; } }
+@keyframes growbar  { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes growbar-y { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+/* Heat-map tile drop — falls in from above, settles with a tiny bounce */
+@keyframes drop-in {
+  0%   { transform: translateY(-44px) rotate(-3deg); opacity: 0; }
+  55%  { transform: translateY(6px)   rotate(0.6deg); opacity: 1; }
+  78%  { transform: translateY(-2px)  rotate(-0.2deg); }
+  100% { transform: translateY(0)     rotate(0); opacity: 1; }
+}
+@keyframes tearWobble {
+  0%, 100% { transform: translate(-1px, 0); }
+  50%      { transform: translate(1px, 1px); }
+}
+
+/* Faster, wider pendulum swing for pinned cards.
+ * Baseline rotation is built into the keyframe so they replace the
+ * static inline transform. transform-origin set at the pin point. */
+@keyframes pin-swing-narrative {
+  0%   { transform: rotate(-3.6deg); }
+  50%  { transform: rotate(0.4deg); }
+  100% { transform: rotate(-3.6deg); }
+}
+@keyframes pin-swing-trending {
+  0%   { transform: rotate(-4.4deg); }
+  50%  { transform: rotate(-0.4deg); }
+  100% { transform: rotate(-4.4deg); }
+}
+@keyframes pin-swing-banner {
+  0%   { transform: rotate(-3.4deg); }
+  50%  { transform: rotate(1.0deg); }
+  100% { transform: rotate(-3.4deg); }
+}
+
+.animate-livepulse { animation: livepulse 2s infinite; }
+.animate-marquee   { animation: marquee 60s linear infinite; }
+.animate-tearwobble { animation: tearWobble 3s ease-in-out infinite; }
+
+.swing-narrative {
+  transform-origin: 50% -8px;
+  animation: pin-swing-narrative 3s ease-in-out infinite;
+}
+.swing-trending {
+  transform-origin: 50% -10px;
+  animation: pin-swing-trending 2.8s ease-in-out infinite;
+}
+.swing-banner {
+  transform-origin: 50% -8px;
+  animation: pin-swing-banner 3.4s ease-in-out infinite;
+}
+
+/* SVG vertical bar — grows up from the bottom edge.
+ * `both` fill mode keeps the from-state (scaleY 0) when animation is
+ * paused — so bars are flat until they're meant to rise. */
+.svg-bar {
+  transform-origin: bottom;
+  transform-box: fill-box;
+  animation: growbar-y 2.2s cubic-bezier(.22,.7,.25,1) both;
+}
+/* SVG horizontal bar — grows left-to-right */
+.svg-hbar {
+  transform-origin: left center;
+  transform-box: fill-box;
+  animation: growbar 2.2s cubic-bezier(.22,.7,.25,1) both;
+}
+/* SVG line draw */
+.svg-line {
+  stroke-dasharray: 1000;
+  stroke-dashoffset: 1000;
+  animation: drawline 3s ease-out forwards;
+}
+.svg-line-slow {
+  stroke-dasharray: 2000;
+  stroke-dashoffset: 2000;
+  animation: drawline 4.2s ease-out forwards;
+}
+/* SVG fill fade-in (e.g. area below a sparkline) */
+.svg-fill-in {
+  opacity: 0;
+  animation: fadein 1.2s ease-out forwards;
+  animation-delay: 1.2s;
+}
+/* SVG end-dot reveal */
+.svg-dot {
+  opacity: 0;
+  animation: fadein 0.4s ease-out forwards;
+}
+
+/* Heat-map tile drop animation. Stagger via inline animationDelay. */
+.heat-tile-drop {
+  animation: drop-in 0.85s cubic-bezier(.18, .76, .35, 1) both;
+}
+
+/* ----- Scroll-reveal gating ------------------------------------------
+ * Wrap a section in <RevealOnScroll>. Its descendants reset to their
+ * pre-animation state when the section is OFF-screen, then run the
+ * animation when .is-visible appears. This means animations replay
+ * every time the user scrolls back into the section, not just once.
+ *
+ * Pinned-card swings (.swing-*) intentionally run continuously regardless.
+ */
+
+/* OFF-screen: cancel any running animation; show the from-state directly. */
+.reveal-anim .svg-bar    { animation: none; transform: scaleY(0); }
+.reveal-anim .svg-hbar   { animation: none; transform: scaleX(0); }
+.reveal-anim .svg-line   { animation: none; stroke-dashoffset: 1000; }
+.reveal-anim .svg-line-slow { animation: none; stroke-dashoffset: 2000; }
+.reveal-anim .svg-fill-in { animation: none; opacity: 0; }
+.reveal-anim .svg-dot    { animation: none; opacity: 0; }
+.reveal-anim .heat-tile-drop {
+  animation: none;
+  transform: translateY(-44px) rotate(-3deg);
+  opacity: 0;
+}
+
+/* IN view: re-apply the animations so they play from scratch. */
+.reveal-anim.is-visible .svg-bar {
+  animation: growbar-y 2.2s cubic-bezier(.22,.7,.25,1) both;
+}
+.reveal-anim.is-visible .svg-hbar {
+  animation: growbar 2.2s cubic-bezier(.22,.7,.25,1) both;
+}
+.reveal-anim.is-visible .svg-line {
+  animation: drawline 3s ease-out forwards;
+}
+.reveal-anim.is-visible .svg-line-slow {
+  animation: drawline 4.2s ease-out forwards;
+}
+.reveal-anim.is-visible .svg-fill-in {
+  animation: fadein 1.2s ease-out forwards;
+  animation-delay: 1.2s;
+}
+.reveal-anim.is-visible .svg-dot {
+  animation: fadein 0.4s ease-out forwards;
+}
+.reveal-anim.is-visible .heat-tile-drop {
+  animation: drop-in 0.85s cubic-bezier(.18, .76, .35, 1) both;
+}
+
+/* Heat-map tile hover lift */
+.heat-tile { transition: transform .25s cubic-bezier(.4,.7,.3,1); }
+.heat-tile:hover { transform: translateY(-3px); z-index: 5; }
+
+/* Tab content fade-in. Plays when a panel mounts (via React key change). */
+@keyframes tab-fade {
+  0%   { opacity: 0; transform: translateY(4px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.animate-tab-fade { animation: tab-fade 0.32s ease-out both; }

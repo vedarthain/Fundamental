@@ -42,7 +42,7 @@ export function Controls() {
         minC: override.minC ?? minC,
         page: 1,
       });
-      startTransition(() => router.replace("/screener" + q, { scroll: false }));
+      startTransition(() => router.replace("/discover" + q, { scroll: false }));
     },
     [router, sp, weights, preset, tiersSel, capsSel, minQ, minV, minM, minC]
   );

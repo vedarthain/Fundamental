@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# ./snap — take a fresh weekly score snapshot.
+# Recomputes metrics for every active NSE stock, then scores them.
+# Defaults to today's date. Pass an ISO date to force a different snapshot.
+#   ./snap                 # snapshot for today
+#   ./snap 2026-05-12      # snapshot for a specific date
+set -eo pipefail
+
+cd "$(dirname "$0")"
+
+PY=etl/.venv/bin/python
+SNAP="${1:-}"
+
+run() {
+  local step="$1"; shift
+  echo "▶ $step ${SNAP:-(today)}"
+  if [ -n "$SNAP" ]; then
+    "$PY" -m fundamental_etl.cli "$step" --snapshot "$SNAP"
+  else
+    "$PY" -m fundamental_etl.cli "$step"
+  fi
+}
+
+run compute-metrics
+echo
+run score
+echo
+echo "✓ snapshot complete"

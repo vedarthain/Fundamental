@@ -11,8 +11,20 @@ import { buildPillarStory } from "@/lib/explainer";
 import {
   qualityNarration, valuationNarration, momentumNarration,
 } from "@/lib/companyNarration";
+import { BusinessVisual } from "@/components/BusinessVisual";
+import { StockPageTabs } from "@/components/StockPageTabs";
 
 export const revalidate = 1800;
+
+type ShareholdingRow = {
+  period_end: string;
+  promoter_pct: number | null;
+  fii_pct: number | null;
+  dii_pct: number | null;
+  government_pct: number | null;
+  public_pct: number | null;
+  shareholders: number | null;
+};
 
 type Stock = {
   symbol: string;
@@ -24,6 +36,8 @@ type Stock = {
   business_summary: string | null;
   website: string | null;
   employees: number | null;
+  ceo_name: string | null;
+  ceo_title: string | null;
   cluster_id: string;
   cluster_name: string;
   meta_cluster_name: string;
@@ -75,6 +89,7 @@ async function loadStock(symbol: string) {
     SELECT
       s.symbol, u.company_name, u.sector, u.industry, u.listing_date::text, u.years_of_data,
       u.business_summary, u.website, u.employees,
+      u.ceo_name, u.ceo_title,
       s.cluster_id, c.name AS cluster_name, mc.name AS meta_cluster_name,
       s.maturity_tier, sm.market_cap_cr, sm.current_price,
       s.composite_pct, s.quality_pct, s.valuation_pct, s.momentum_pct,
@@ -92,8 +107,10 @@ async function loadStock(symbol: string) {
   if (rows.length === 0) return null;
   const stock = rows[0];
 
-  // Last 10 years of annual fundamentals (extended cols for trend graphs)
-  // CAST numeric → float so JS treats them as numbers, not strings
+  // Last 10 fiscal years of annual fundamentals (extended cols for trend graphs).
+  // Using a date filter (not LIMIT 10) so stocks with reporting gaps don't
+  // pull in orphan blocks of older data e.g. SOTL whose source has a 12-year
+  // gap from FY10–FY20. CAST numeric → float so JS treats them as numbers.
   const annual = await sql<AnnualRow[]>`
     SELECT period_end::text,
            sales::float, operating_profit::float, net_profit::float, cash_from_operating::float,
@@ -102,6 +119,7 @@ async function loadStock(symbol: string) {
            depreciation::float, interest::float, profit_before_tax::float
     FROM app.fundamentals_annual
     WHERE symbol = ${upper}
+      AND period_end >= (CURRENT_DATE - INTERVAL '10 years')
     ORDER BY period_end DESC
     LIMIT 10
   `;
@@ -114,11 +132,13 @@ async function loadStock(symbol: string) {
     ORDER BY period_end DESC
     LIMIT 6
   `;
-  // Long-term price history (monthly, full history)
+  // Daily price history — full available range. golden_db keeps daily back to
+  // ~1996 for most NSE stocks. ~7K rows × 30 bytes ≈ 50KB gzipped, fine to
+  // ship to the client so the chart can support 1D/1W/1M zoom client-side.
   const priceHistory = await golden<PricePoint[]>`
     SELECT date::text, close::float
     FROM golden.price_history
-    WHERE symbol = ${upper + ".NS"} AND interval = '1mo'
+    WHERE symbol = ${upper + ".NS"} AND interval = '1d'
     ORDER BY date ASC
   `;
 
@@ -144,7 +164,24 @@ async function loadStock(symbol: string) {
   `;
   const scorecard = scRow[0] ?? null;
 
-  return { stock, scorecard, annual, quarterly, priceHistory, peerMedianComposite: peerStats[0]?.median ?? 50 };
+  // Latest 4 quarters of shareholding pattern. Latest one drives the chart;
+  // the previous one provides delta arrows so the user sees movement, not just
+  // a static breakdown.
+  const shareholding = await sql<ShareholdingRow[]>`
+    SELECT period_end::text,
+           promoter_pct::float    AS promoter_pct,
+           fii_pct::float         AS fii_pct,
+           dii_pct::float         AS dii_pct,
+           government_pct::float  AS government_pct,
+           public_pct::float      AS public_pct,
+           shareholders::bigint   AS shareholders
+    FROM app.shareholding_pattern
+    WHERE symbol = ${upper}
+    ORDER BY period_end DESC
+    LIMIT 4
+  `;
+
+  return { stock, scorecard, annual, quarterly, priceHistory, shareholding, peerMedianComposite: peerStats[0]?.median ?? 50 };
 }
 
 export default async function StockPage({
@@ -155,7 +192,7 @@ export default async function StockPage({
   const { symbol } = await params;
   const data = await loadStock(symbol);
   if (!data) return notFound();
-  const { stock, scorecard, annual, quarterly, priceHistory } = data;
+  const { stock, scorecard, annual, quarterly, priceHistory, shareholding } = data;
 
   // Build the 5-axis strength bars from per-component sub-percentiles
   const strengthRows = buildSpider(
@@ -260,97 +297,104 @@ export default async function StockPage({
 
 
 
-      {/* Business description — only when we have the summary */}
-      {stock.business_summary && (
-        <BusinessDescription
-          summary={stock.business_summary}
-          website={stock.website}
-        />
-      )}
+      <StockPageTabs
+        about={
+          <>
+            {stock.business_summary && (
+              <BusinessVisual
+                companyName={stock.company_name}
+                symbol={stock.symbol}
+                sector={stock.sector}
+                industry={stock.industry}
+                summary={stock.business_summary}
+                website={stock.website}
+                employees={stock.employees}
+                ceoName={stock.ceo_name}
+                ceoTitle={stock.ceo_title}
+                shareholding={shareholding}
+              />
+            )}
+            <div className="mt-8 grid grid-cols-1 lg:grid-cols-[1fr_2fr] gap-6">
+              <AboutCard stock={stock} priceHistoryStart={priceHistory[0]?.date ?? null} />
+              <PriceChartCard symbol={stock.symbol} history={priceHistory} />
+            </div>
+          </>
+        }
+        strengths={
+          <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-8">
+            <div className="space-y-8">
+              <section className="card p-6">
+                <h2 className="font-display text-[20px] mb-2">Strengths and gaps</h2>
+                <p className="text-[13px] muted-text mb-6">
+                  Each bar is this stock&apos;s percentile within {stock.cluster_name} ·{" "}
+                  {tierLabel(stock.maturity_tier)} peers. The thin line in the middle is
+                  the cluster median — anything to the right of it beats half the cluster.
+                </p>
+                <StrengthBars rows={strengthRows} />
+              </section>
 
-      {/* About + Price chart — full width, immediately after the header */}
-      <div className="mt-8 grid grid-cols-1 lg:grid-cols-[1fr_2fr] gap-6">
-        <AboutCard stock={stock} priceHistoryStart={priceHistory[0]?.date ?? null} />
-        <PriceChartCard symbol={stock.symbol} history={priceHistory} />
-      </div>
+              <section>
+                <h2 className="font-display text-[20px] mb-2">Why this score</h2>
+                <p className="text-[13px] muted-text mb-4">
+                  Three pillars. Switch between them to see how this stock specifically
+                  scored, with the underlying metric trends.
+                </p>
+                <PillarTabs
+                  tabs={[
+                    {
+                      pillar: "Quality",
+                      pct: stock.quality_pct,
+                      oneLineSummary: pillarStories[0].summary,
+                      companyNarration: qualityNarration(
+                        stockMeta, annual, stock.quality_components || {}, stock.quality_pct
+                      ),
+                      strength: pillarStories[0].strength,
+                      gap: pillarStories[0].gap,
+                      trends: computePillarTrends("Quality", annual),
+                    },
+                    {
+                      pillar: "Valuation",
+                      pct: stock.valuation_pct,
+                      oneLineSummary: pillarStories[1].summary,
+                      companyNarration: valuationNarration(
+                        stockMeta, stock.valuation_components || {}, stock.valuation_pct
+                      ),
+                      strength: pillarStories[1].strength,
+                      gap: pillarStories[1].gap,
+                      trends: computePillarTrends("Valuation", annual),
+                    },
+                    {
+                      pillar: "Momentum",
+                      pct: stock.momentum_pct,
+                      oneLineSummary: pillarStories[2].summary,
+                      companyNarration: momentumNarration(
+                        stockMeta, stock.momentum_components || {}, quarterly, stock.momentum_pct
+                      ),
+                      strength: pillarStories[2].strength,
+                      gap: pillarStories[2].gap,
+                      trends: computePillarTrends("Momentum", annual),
+                    },
+                  ] satisfies PillarTabContent[]}
+                />
+              </section>
+            </div>
 
-      <div className="mt-10 grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-8">
-        {/* Left: Strength bars + pillar stories + metric trends */}
-        <div className="space-y-8">
-          <section className="card p-6">
-            <h2 className="font-display text-[20px] mb-2">Strengths and gaps</h2>
-            <p className="text-[13px] muted-text mb-6">
-              Each bar is this stock&apos;s percentile within {stock.cluster_name} ·{" "}
-              {tierLabel(stock.maturity_tier)} peers. The thin line in the middle is
-              the cluster median — anything to the right of it beats half the cluster.
-            </p>
-            <StrengthBars rows={strengthRows} />
-          </section>
-
-          <section>
-            <h2 className="font-display text-[20px] mb-2">Why this score</h2>
-            <p className="text-[13px] muted-text mb-4">
-              Three pillars. Switch between them to see how this stock specifically
-              scored, with the underlying metric trends.
-            </p>
-            <PillarTabs
-              tabs={[
-                {
-                  pillar: "Quality",
-                  pct: stock.quality_pct,
-                  oneLineSummary: pillarStories[0].summary,
-                  companyNarration: qualityNarration(
-                    stockMeta, annual, stock.quality_components || {}, stock.quality_pct
-                  ),
-                  strength: pillarStories[0].strength,
-                  gap: pillarStories[0].gap,
-                  trends: computePillarTrends("Quality", annual),
-                },
-                {
-                  pillar: "Valuation",
-                  pct: stock.valuation_pct,
-                  oneLineSummary: pillarStories[1].summary,
-                  companyNarration: valuationNarration(
-                    stockMeta, stock.valuation_components || {}, stock.valuation_pct
-                  ),
-                  strength: pillarStories[1].strength,
-                  gap: pillarStories[1].gap,
-                  trends: computePillarTrends("Valuation", annual),
-                },
-                {
-                  pillar: "Momentum",
-                  pct: stock.momentum_pct,
-                  oneLineSummary: pillarStories[2].summary,
-                  companyNarration: momentumNarration(
-                    stockMeta, stock.momentum_components || {}, quarterly, stock.momentum_pct
-                  ),
-                  strength: pillarStories[2].strength,
-                  gap: pillarStories[2].gap,
-                  trends: computePillarTrends("Momentum", annual),
-                },
-              ] satisfies PillarTabContent[]}
-            />
-          </section>
-
-          <FundamentalsTables annual={annual} quarterly={quarterly} />
-        </div>
-
-        {/* Right: pillar breakdown + score status */}
-        <aside className="space-y-6">
-          <PillarBreakdown
-            quality={stock.quality_pct}
-            valuation={stock.valuation_pct}
-            momentum={stock.momentum_pct}
-          />
-          <StatusCard status={stock.score_status} />
-        </aside>
-      </div>
-
-      {/* Footnote — methodology explainer at the very bottom */}
-      <CompositeExplainer
-        composite={stock.composite_pct}
-        cluster={stock.cluster_name}
-        tier={stock.maturity_tier}
+            <aside className="space-y-6">
+              <PillarBreakdown
+                quality={stock.quality_pct}
+                valuation={stock.valuation_pct}
+                momentum={stock.momentum_pct}
+              />
+              <StatusCard status={stock.score_status} />
+              <CompositeExplainer
+                composite={stock.composite_pct}
+                cluster={stock.cluster_name}
+                tier={stock.maturity_tier}
+              />
+            </aside>
+          </div>
+        }
+        numbers={<FundamentalsTables annual={annual} quarterly={quarterly} />}
       />
     </div>
   );

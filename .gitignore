@@ -13,3 +13,11 @@ venv/
 .vscode/
 data/cache/
 *.log
+
+# Local backups + archive zips (don't ship to GitHub)
+Fundamental app.zip
+*.dump
+~/Backups/
+
+# Migration script staging dirs
+/tmp/migrate-*/

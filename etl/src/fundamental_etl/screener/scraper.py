@@ -68,14 +68,25 @@ def _is_login_redirect(resp: httpx.Response) -> bool:
     retry=retry_if_exception_type(httpx.TransportError),
     reraise=True,
 )
-def discover_export(client: httpx.Client, symbol: str) -> CompanyExportInfo:
+def discover_export(
+    client: httpx.Client,
+    symbol: str,
+    prefer: str = "consolidated",
+) -> CompanyExportInfo:
     """Fetch the company page and extract export_id + CSRF token.
 
-    Tries /consolidated/ first, falls back to standalone /.
+    `prefer="consolidated"` (default): try /consolidated/ first, fall back to standalone.
+    `prefer="standalone"`: only try standalone (Screener's older/denser view for many stocks).
     """
     last_seen_status: str | None = None
-    for variant, path in (("consolidated", f"/company/{symbol}/consolidated/"),
-                          ("standalone", f"/company/{symbol}/")):
+    if prefer == "standalone":
+        attempts = (("standalone", f"/company/{symbol}/"),)
+    else:
+        attempts = (
+            ("consolidated", f"/company/{symbol}/consolidated/"),
+            ("standalone",   f"/company/{symbol}/"),
+        )
+    for variant, path in attempts:
         url = BASE + path
         resp = client.get(url)
         if _is_login_redirect(resp):
@@ -144,12 +155,16 @@ def download_export(client: httpx.Client, info: CompanyExportInfo) -> bytes:
     return resp.content
 
 
-def fetch_company_export(symbol: str, client: Optional[httpx.Client] = None) -> tuple[CompanyExportInfo, bytes]:
+def fetch_company_export(
+    symbol: str,
+    client: Optional[httpx.Client] = None,
+    prefer: str = "consolidated",
+) -> tuple[CompanyExportInfo, bytes]:
     """End-to-end: discover export_id, download xlsx. Returns (info, bytes)."""
     own_client = client is None
     cli = client or _client()
     try:
-        info = discover_export(cli, symbol)
+        info = discover_export(cli, symbol, prefer=prefer)
         log.debug("discovered_export", symbol=symbol, variant=info.variant, export_id=info.export_id)
         data = download_export(cli, info)
         log.debug("downloaded_export", symbol=symbol, bytes=len(data))

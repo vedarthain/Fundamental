@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# ./dev — start the Next.js dev server. Run from the project root.
+set -eo pipefail
+cd "$(dirname "$0")/web"
+exec npm run dev
