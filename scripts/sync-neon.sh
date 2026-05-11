@@ -20,6 +20,14 @@
 #   - Reference tables (clusters, scorecards) — change rarely; re-run
 #     migrate-nifty50-to-neon.sh if scorecards are tuned
 #
+# Implementation note: psql's `-c` flag forbids mixing \COPY meta-command
+# with SQL. Workaround — stage each table's rows to a tmpfile, then run a
+# single psql script via heredoc that does CREATE TEMP + \COPY FROM file +
+# DELETE + INSERT in one connection so the temp table is visible. Also,
+# Neon's pgbouncer can leak session state across psql invocations (temp
+# table reuse), so each heredoc starts with DROP TABLE IF EXISTS.
+# Tmpfiles cleaned by the EXIT trap.
+#
 # Required env (export before running OR source from etl/.env.local):
 #   NEON_APP_URL    = postgres URL for fundamental_app on Neon
 #   NEON_GOLDEN_URL = postgres URL for golden_db on Neon
@@ -35,7 +43,11 @@ cd "$ROOT"
 LOCAL_APP="fundamental_app"
 LOCAL_GOLDEN="golden_db"
 
+TMP_DIR="$(mktemp -d)"
+trap "rm -rf $TMP_DIR" EXIT
+
 echo "▶ sync starting at $(date -Iseconds)"
+echo "  staging: $TMP_DIR"
 
 # ----- discover latest snapshot date locally ------------------------------
 LATEST_SNAP=$(psql "$LOCAL_APP" -tAc "SELECT MAX(snapshot_date) FROM app.scores")
@@ -55,76 +67,82 @@ NIFTY_FILTER="symbol IN (SELECT symbol FROM app.universe WHERE is_nifty200)"
 # Universe rarely changes shape but field values do (CEO refresh, business
 # summary refresh, etc.). UPSERT every row to capture any tiny update.
 echo "▶ syncing app.universe (Nifty 200)..."
-psql "$LOCAL_APP" -c "\COPY (SELECT * FROM app.universe WHERE is_nifty200) TO STDOUT" \
-  | psql "$NEON_APP_URL" -c "
-    CREATE TEMP TABLE _u (LIKE app.universe INCLUDING ALL);
-    \COPY _u FROM STDIN;
-    INSERT INTO app.universe SELECT * FROM _u
-      ON CONFLICT (symbol) DO UPDATE SET
-        company_name             = EXCLUDED.company_name,
-        sector                   = EXCLUDED.sector,
-        industry                 = EXCLUDED.industry,
-        market_cap_category      = EXCLUDED.market_cap_category,
-        is_active                = EXCLUDED.is_active,
-        synced_at                = EXCLUDED.synced_at,
-        business_summary         = EXCLUDED.business_summary,
-        website                  = EXCLUDED.website,
-        employees                = EXCLUDED.employees,
-        business_info_fetched_at = EXCLUDED.business_info_fetched_at,
-        maturity_tier            = EXCLUDED.maturity_tier,
-        years_of_data            = EXCLUDED.years_of_data,
-        maturity_tier_at         = EXCLUDED.maturity_tier_at,
-        ceo_name                 = EXCLUDED.ceo_name,
-        ceo_title                = EXCLUDED.ceo_title,
-        key_officers             = EXCLUDED.key_officers,
-        officers_fetched_at      = EXCLUDED.officers_fetched_at,
-        is_nifty500              = EXCLUDED.is_nifty500,
-        is_nifty50               = EXCLUDED.is_nifty50,
-        is_nifty200              = EXCLUDED.is_nifty200;
-  "
+UNIV_TMP="$TMP_DIR/universe.tsv"
+psql "$LOCAL_APP" -c "\COPY (SELECT * FROM app.universe WHERE is_nifty200) TO STDOUT" > "$UNIV_TMP"
+psql "$NEON_APP_URL" -v ON_ERROR_STOP=1 <<SQL
+DROP TABLE IF EXISTS _u;
+CREATE TEMP TABLE _u (LIKE app.universe INCLUDING ALL);
+\COPY _u FROM '$UNIV_TMP';
+INSERT INTO app.universe SELECT * FROM _u
+  ON CONFLICT (symbol) DO UPDATE SET
+    company_name             = EXCLUDED.company_name,
+    sector                   = EXCLUDED.sector,
+    industry                 = EXCLUDED.industry,
+    market_cap_category      = EXCLUDED.market_cap_category,
+    is_active                = EXCLUDED.is_active,
+    synced_at                = EXCLUDED.synced_at,
+    business_summary         = EXCLUDED.business_summary,
+    website                  = EXCLUDED.website,
+    employees                = EXCLUDED.employees,
+    business_info_fetched_at = EXCLUDED.business_info_fetched_at,
+    maturity_tier            = EXCLUDED.maturity_tier,
+    years_of_data            = EXCLUDED.years_of_data,
+    maturity_tier_at         = EXCLUDED.maturity_tier_at,
+    ceo_name                 = EXCLUDED.ceo_name,
+    ceo_title                = EXCLUDED.ceo_title,
+    key_officers             = EXCLUDED.key_officers,
+    officers_fetched_at      = EXCLUDED.officers_fetched_at,
+    is_nifty500              = EXCLUDED.is_nifty500,
+    is_nifty50               = EXCLUDED.is_nifty50,
+    is_nifty200              = EXCLUDED.is_nifty200;
+SQL
+
+# ----- helper: stage rows + DELETE-then-INSERT semantics ------------------
+# For tables where we want a "replace the entire filtered slice" effect.
+# delete_where: SQL predicate used in BOTH the stage filter (against local)
+# and the DELETE (against Neon). Keeps both sides in lockstep.
+copy_replace() {
+  local table="$1"
+  local target_url="$2"
+  local source_db="$3"
+  local stage_where="$4"
+  local delete_where="$5"
+  local tag="${table//./_}"
+  local tmpfile="$TMP_DIR/${tag}.tsv"
+
+  echo "▶ syncing $table..."
+  psql "$source_db" -c "\COPY (SELECT * FROM $table WHERE $stage_where) TO STDOUT" > "$tmpfile"
+
+  if [[ ! -s "$tmpfile" ]]; then
+    echo "    (no rows — skipping)"
+    return 0
+  fi
+
+  psql "$target_url" -v ON_ERROR_STOP=1 <<SQL
+DROP TABLE IF EXISTS _t;
+CREATE TEMP TABLE _t (LIKE $table INCLUDING ALL);
+\COPY _t FROM '$tmpfile';
+DELETE FROM $table WHERE $delete_where;
+INSERT INTO $table SELECT * FROM _t;
+SQL
+}
 
 # ----- screener_meta (Nifty 200, full upsert) -----------------------------
-echo "▶ syncing app.screener_meta..."
-psql "$LOCAL_APP" -c "\COPY (SELECT * FROM app.screener_meta WHERE $NIFTY_FILTER) TO STDOUT" \
-  | psql "$NEON_APP_URL" -c "
-    CREATE TEMP TABLE _sm (LIKE app.screener_meta INCLUDING ALL);
-    \COPY _sm FROM STDIN;
-    DELETE FROM app.screener_meta WHERE $NIFTY_FILTER;
-    INSERT INTO app.screener_meta SELECT * FROM _sm;
-  "
+copy_replace app.screener_meta "$NEON_APP_URL" "$LOCAL_APP" \
+  "$NIFTY_FILTER" "$NIFTY_FILTER"
 
 # ----- latest snapshot only: metrics + scores ----------------------------
-echo "▶ syncing app.metrics_snapshot for $LATEST_SNAP..."
-psql "$LOCAL_APP" -c "
-  \COPY (SELECT * FROM app.metrics_snapshot
-         WHERE snapshot_date = '$LATEST_SNAP' AND $NIFTY_FILTER) TO STDOUT
-" | psql "$NEON_APP_URL" -c "
-  CREATE TEMP TABLE _ms (LIKE app.metrics_snapshot INCLUDING ALL);
-  \COPY _ms FROM STDIN;
-  DELETE FROM app.metrics_snapshot WHERE snapshot_date = '$LATEST_SNAP';
-  INSERT INTO app.metrics_snapshot SELECT * FROM _ms;
-"
+copy_replace app.metrics_snapshot "$NEON_APP_URL" "$LOCAL_APP" \
+  "snapshot_date = '$LATEST_SNAP' AND $NIFTY_FILTER" \
+  "snapshot_date = '$LATEST_SNAP'"
 
-echo "▶ syncing app.scores for $LATEST_SNAP..."
-psql "$LOCAL_APP" -c "
-  \COPY (SELECT * FROM app.scores
-         WHERE snapshot_date = '$LATEST_SNAP' AND $NIFTY_FILTER) TO STDOUT
-" | psql "$NEON_APP_URL" -c "
-  CREATE TEMP TABLE _s (LIKE app.scores INCLUDING ALL);
-  \COPY _s FROM STDIN;
-  DELETE FROM app.scores WHERE snapshot_date = '$LATEST_SNAP';
-  INSERT INTO app.scores SELECT * FROM _s;
-"
+copy_replace app.scores "$NEON_APP_URL" "$LOCAL_APP" \
+  "snapshot_date = '$LATEST_SNAP' AND $NIFTY_FILTER" \
+  "snapshot_date = '$LATEST_SNAP'"
 
 # ----- shareholding (full Nifty 200 — quarterly so cheap) -----------------
-echo "▶ syncing app.shareholding_pattern..."
-psql "$LOCAL_APP" -c "\COPY (SELECT * FROM app.shareholding_pattern WHERE $NIFTY_FILTER) TO STDOUT" \
-  | psql "$NEON_APP_URL" -c "
-    CREATE TEMP TABLE _sh (LIKE app.shareholding_pattern INCLUDING ALL);
-    \COPY _sh FROM STDIN;
-    DELETE FROM app.shareholding_pattern WHERE $NIFTY_FILTER;
-    INSERT INTO app.shareholding_pattern SELECT * FROM _sh;
-  "
+copy_replace app.shareholding_pattern "$NEON_APP_URL" "$LOCAL_APP" \
+  "$NIFTY_FILTER" "$NIFTY_FILTER"
 
 # ----- golden price history: incremental ---------------------------------
 echo "▶ syncing golden.price_history (incremental)..."
@@ -139,21 +157,30 @@ else
   GOLDEN_DATE_FILTER="date > '$GOLDEN_LAST'"
 fi
 echo "  pulling rows after: ${GOLDEN_LAST:-<beginning>}"
+
+PH_TMP="$TMP_DIR/price_history.tsv"
 psql "$LOCAL_GOLDEN" -c "
   \COPY (SELECT * FROM golden.price_history
          WHERE symbol IN ($GOLDEN_FILTER) AND interval = '1d'
            AND $GOLDEN_DATE_FILTER) TO STDOUT
-" | psql "$NEON_GOLDEN_URL" -c "
-  CREATE TEMP TABLE _ph (LIKE golden.price_history INCLUDING ALL);
-  \COPY _ph FROM STDIN;
-  INSERT INTO golden.price_history SELECT * FROM _ph
-    ON CONFLICT (symbol, date, interval) DO UPDATE SET
-      open  = EXCLUDED.open,
-      high  = EXCLUDED.high,
-      low   = EXCLUDED.low,
-      close = EXCLUDED.close,
-      volume = EXCLUDED.volume;
-"
+" > "$PH_TMP"
+
+if [[ ! -s "$PH_TMP" ]]; then
+  echo "    (no new price rows — Neon already current)"
+else
+  psql "$NEON_GOLDEN_URL" -v ON_ERROR_STOP=1 <<SQL
+DROP TABLE IF EXISTS _ph;
+CREATE TEMP TABLE _ph (LIKE golden.price_history INCLUDING ALL);
+\COPY _ph FROM '$PH_TMP';
+INSERT INTO golden.price_history SELECT * FROM _ph
+  ON CONFLICT (symbol, date, interval) DO UPDATE SET
+    open   = EXCLUDED.open,
+    high   = EXCLUDED.high,
+    low    = EXCLUDED.low,
+    close  = EXCLUDED.close,
+    volume = EXCLUDED.volume;
+SQL
+fi
 
 echo
 echo "✓ sync complete at $(date -Iseconds)"

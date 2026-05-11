@@ -12,6 +12,7 @@ import {
   qualityNarration, valuationNarration, momentumNarration,
 } from "@/lib/companyNarration";
 import { BusinessVisual } from "@/components/BusinessVisual";
+import { ShareholdingTrend } from "@/components/ShareholdingTrend";
 import { StockPageTabs } from "@/components/StockPageTabs";
 
 export const revalidate = 1800;
@@ -142,10 +143,15 @@ async function loadStock(symbol: string) {
     ORDER BY date ASC
   `;
 
-  // Cluster median for radar overlay
-  const peerStats = await sql<{ axis: string; median: number }[]>`
+  // Peer-cluster stats for the header — cluster median (radar baseline) AND
+  // this stock's rank within its (cluster, tier) peer group at the latest
+  // snapshot. Rank is computed as
+  //     1 + (peers strictly above on composite_pct)
+  // so ties share the higher rank, and NULL composites sink to the bottom.
+  // Returns a single row.
+  const peerStats = await sql<{ median: number; rank: number; peer_count: number }[]>`
     WITH peers AS (
-      SELECT quality_pct, valuation_pct, momentum_pct, composite_pct
+      SELECT symbol, composite_pct
       FROM app.scores
       WHERE cluster_id = ${stock.cluster_id} AND maturity_tier = ${stock.maturity_tier}
         AND snapshot_date = (
@@ -153,7 +159,14 @@ async function loadStock(symbol: string) {
           WHERE cluster_id = ${stock.cluster_id} AND maturity_tier = ${stock.maturity_tier}
         )
     )
-    SELECT 'composite' AS axis, percentile_cont(0.5) WITHIN GROUP (ORDER BY composite_pct)::float AS median FROM peers
+    SELECT
+      percentile_cont(0.5) WITHIN GROUP (ORDER BY composite_pct)::float AS median,
+      ((SELECT COUNT(*) FROM peers
+        WHERE COALESCE(composite_pct, -1) >
+              COALESCE((SELECT composite_pct FROM peers WHERE symbol = ${upper}), -1)
+       ) + 1)::int AS rank,
+      (SELECT COUNT(*) FROM peers)::int AS peer_count
+    FROM peers
   `;
 
   // Scorecard for this (cluster, tier) — needed to build the SHAP waterfall weights
@@ -181,7 +194,12 @@ async function loadStock(symbol: string) {
     LIMIT 4
   `;
 
-  return { stock, scorecard, annual, quarterly, priceHistory, shareholding, peerMedianComposite: peerStats[0]?.median ?? 50 };
+  return {
+    stock, scorecard, annual, quarterly, priceHistory, shareholding,
+    peerMedianComposite: peerStats[0]?.median ?? 50,
+    rankInCluster: peerStats[0]?.rank ?? null,
+    clusterPeerCount: peerStats[0]?.peer_count ?? null,
+  };
 }
 
 export default async function StockPage({
@@ -192,7 +210,7 @@ export default async function StockPage({
   const { symbol } = await params;
   const data = await loadStock(symbol);
   if (!data) return notFound();
-  const { stock, scorecard, annual, quarterly, priceHistory, shareholding } = data;
+  const { stock, scorecard, annual, quarterly, priceHistory, shareholding, rankInCluster, clusterPeerCount } = data;
 
   // Build the 5-axis strength bars from per-component sub-percentiles
   const strengthRows = buildSpider(
@@ -292,6 +310,20 @@ export default async function StockPage({
               {tierLabel(stock.maturity_tier)}
             </div>
           )}
+          {/* Rank-in-cluster pill — explicit position within the peer group,
+              complementing the abstract percentile. "Rank 3 of 12" reads
+              more concretely than "Top 18%". */}
+          {rankInCluster != null && clusterPeerCount != null && clusterPeerCount > 1 && (
+            <div
+              className="inline-flex items-center gap-1.5 mt-2 px-2 py-0.5 rounded-full border hairline text-[11px] tabular-nums"
+              style={{ backgroundColor: "var(--color-card)" }}
+              title={`Position within ${stock.cluster_name} · ${tierLabel(stock.maturity_tier)} at this snapshot`}
+            >
+              <span className="muted-text">Rank</span>
+              <span className="font-medium ink-text">{rankInCluster}</span>
+              <span className="muted-text">of {clusterPeerCount}</span>
+            </div>
+          )}
         </div>
       </header>
 
@@ -318,6 +350,11 @@ export default async function StockPage({
               <AboutCard stock={stock} priceHistoryStart={priceHistory[0]?.date ?? null} />
               <PriceChartCard symbol={stock.symbol} history={priceHistory} />
             </div>
+            {shareholding && shareholding.length >= 2 && (
+              <div className="mt-8">
+                <ShareholdingTrend shareholding={shareholding} />
+              </div>
+            )}
           </>
         }
         strengths={
