@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { sql, golden } from "@/lib/db";
-import { band, bandColor } from "@/lib/score";
+import { band, bandColor, tierLabel } from "@/lib/score";
 
 export const revalidate = 3600;
 
@@ -472,10 +472,32 @@ function IndustryRow({
 }
 
 /**
- * Right-hand panel — stocks in the selected industry, each with its
- * own 1W / 1M / 1Y returns and composite badge.
+ * Right-hand panel — stocks in the selected industry, segregated by maturity
+ * tier. Each tier is its own sub-section so visitors can spot "compounders"
+ * vs "newly listed" at a glance.
+ *
+ * Composite badge intentionally absent — Composite is the Discover surface's
+ * anchor metric. Here we surface the three pillars (Q/V/M) directly so
+ * visitors can see *why* a stock scores well, not just the headline.
  */
+const TIER_ORDER = ["veteran", "mature", "mid", "new"] as const;
+
 function StocksPanel({ industry, stocks }: { industry: ClusterTile; stocks: StockRow[] }) {
+  // Bucket stocks by maturity tier preserving the score-desc order from the
+  // SQL query (so each bucket is internally ranked).
+  const byTier = new Map<string, StockRow[]>();
+  for (const s of stocks) {
+    const t = s.maturity_tier || "—";
+    if (!byTier.has(t)) byTier.set(t, []);
+    byTier.get(t)!.push(s);
+  }
+  // Tier display order: veterans (compounders) first, then established,
+  // emerging, new listings. Any unknown tiers tacked on at the end.
+  const orderedTiers = [
+    ...TIER_ORDER.filter((t) => byTier.has(t)),
+    ...Array.from(byTier.keys()).filter((t) => !(TIER_ORDER as readonly string[]).includes(t)),
+  ];
+
   return (
     <section className="card overflow-hidden">
       <header className="px-4 md:px-5 py-3 border-b hairline flex items-center justify-between gap-3 flex-wrap">
@@ -484,10 +506,7 @@ function StocksPanel({ industry, stocks }: { industry: ClusterTile; stocks: Stoc
           <h2 className="font-display text-[18px] leading-tight mt-0.5">{industry.cluster_name}</h2>
         </div>
         <div className="muted-text text-[11px] tabular-nums">
-          {industry.stock_count} stock{industry.stock_count === 1 ? "" : "s"} · avg{" "}
-          <span className="ink-text font-medium">
-            {industry.avg_composite == null ? "—" : Math.round(industry.avg_composite)}
-          </span>
+          {industry.stock_count} stock{industry.stock_count === 1 ? "" : "s"}
         </div>
       </header>
 
@@ -496,36 +515,60 @@ function StocksPanel({ industry, stocks }: { industry: ClusterTile; stocks: Stoc
           No stocks in this industry at the latest snapshot.
         </div>
       ) : (
-        <div className="divide-y hairline">
-          {stocks.map((s) => (
-            <StockRowItem key={s.symbol} stock={s} />
-          ))}
+        <div>
+          {orderedTiers.map((tier) => {
+            const bucket = byTier.get(tier)!;
+            return (
+              <div key={tier}>
+                <TierHeader tier={tier} count={bucket.length} />
+                <div className="divide-y hairline">
+                  {bucket.map((s) => (
+                    <StockRowItem key={s.symbol} stock={s} />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </section>
   );
 }
 
+/**
+ * Tier divider — sticky sub-header so the user always knows which bucket
+ * they're reading as they scroll down a long industry. Color-coded by tier:
+ * green for veterans (signal of longevity), amber for emerging, neutral
+ * grey for newly listed.
+ */
+function TierHeader({ tier, count }: { tier: string; count: number }) {
+  const color =
+    tier === "veteran" ? "var(--color-score-good)" :
+    tier === "mature"  ? "var(--color-accent-500)" :
+    tier === "mid"     ? "var(--color-score-neutral)" :
+    tier === "new"     ? "var(--color-muted)" :
+                         "var(--color-muted)";
+  return (
+    <div
+      className="px-4 md:px-5 py-2 flex items-center gap-2 border-b hairline"
+      style={{ backgroundColor: "var(--color-paper)" }}
+    >
+      <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: color }} />
+      <span className="text-[11px] uppercase tracking-wide font-medium" style={{ color: "var(--color-ink)" }}>
+        {tierLabel(tier) + "s"}
+      </span>
+      <span className="tabular-nums text-[11px] muted-text">{count}</span>
+    </div>
+  );
+}
+
 function StockRowItem({ stock }: { stock: StockRow }) {
-  const compositeBand = band(stock.composite_pct);
-  const compositeColor = bandColor(compositeBand);
-  const numColor = compositeBand === "neutral" ? "var(--color-ink)" : "#fff";
   return (
     <Link
       href={`/stock/${stock.symbol}`}
-      className="grid grid-cols-[44px_1fr_auto] md:grid-cols-[44px_1fr_240px] items-center gap-3 px-4 md:px-5 py-3 hover:bg-[var(--color-paper)]/60 transition-colors"
+      className="grid grid-cols-[1fr_auto] md:grid-cols-[1fr_180px_180px] items-center gap-3 md:gap-4 px-4 md:px-5 py-3 hover:bg-[var(--color-paper)]/60 transition-colors"
     >
-      {/* Composite badge */}
-      <div
-        className="w-10 h-10 rounded-md flex items-center justify-center"
-        style={{ backgroundColor: compositeColor }}
-      >
-        <span className="text-[14px] font-medium tabular-nums leading-none" style={{ color: numColor }}>
-          {stock.composite_pct == null ? "—" : Math.round(stock.composite_pct)}
-        </span>
-      </div>
-
-      {/* Symbol + name */}
+      {/* Symbol + name + price/mcap */}
       <div className="min-w-0">
         <div className="flex items-baseline gap-2 flex-wrap">
           <span className="font-medium text-[14px] tabular-nums">{stock.symbol}</span>
@@ -542,15 +585,87 @@ function StockRowItem({ stock }: { stock: StockRow }) {
             </span>
           )}
         </div>
+        {/* Mobile: pillars + returns stack below on narrow screens */}
+        <div className="md:hidden mt-2 flex flex-col gap-1.5">
+          <PillarBadges
+            q={stock.quality_pct}
+            v={stock.valuation_pct}
+            m={stock.momentum_pct}
+          />
+          <div className="grid grid-cols-3 gap-1.5 text-[10.5px]">
+            <ReturnMini label="1W" value={stock.ret_1w} />
+            <ReturnMini label="1M" value={stock.ret_1m} />
+            <ReturnMini label="1Y" value={stock.ret_1y} />
+          </div>
+        </div>
       </div>
 
-      {/* Returns row — colored, tabular */}
-      <div className="grid grid-cols-3 gap-1.5 md:gap-2 text-[10.5px] md:text-[11px]">
+      {/* Pillars (desktop) */}
+      <div className="hidden md:block">
+        <PillarBadges
+          q={stock.quality_pct}
+          v={stock.valuation_pct}
+          m={stock.momentum_pct}
+        />
+      </div>
+
+      {/* Returns (desktop) */}
+      <div className="hidden md:grid grid-cols-3 gap-2 text-[11px]">
         <ReturnMini label="1W" value={stock.ret_1w} />
         <ReturnMini label="1M" value={stock.ret_1m} />
         <ReturnMini label="1Y" value={stock.ret_1y} />
       </div>
     </Link>
+  );
+}
+
+/**
+ * Quality / Valuation / Momentum pillar badges. Each shown as a labeled
+ * mini-cell with score number, colored by the score band. Replaces the
+ * single Composite badge — surfaces the three components directly so the
+ * reader sees the *shape* of a stock's strength, not just the average.
+ */
+function PillarBadges({
+  q, v, m,
+}: {
+  q: number | null;
+  v: number | null;
+  m: number | null;
+}) {
+  return (
+    <div className="grid grid-cols-3 gap-1 text-[10.5px]">
+      <PillarCell label="Q" value={q} title="Quality" />
+      <PillarCell label="V" value={v} title="Valuation" />
+      <PillarCell label="M" value={m} title="Momentum" />
+    </div>
+  );
+}
+
+function PillarCell({ label, value, title }: { label: string; value: number | null; title: string }) {
+  if (value == null) {
+    return (
+      <div
+        className="flex items-center justify-between rounded-sm px-1.5 py-0.5 hairline border opacity-50"
+        title={title}
+      >
+        <span className="muted-text">{label}</span>
+        <span className="tabular-nums muted-text">—</span>
+      </div>
+    );
+  }
+  const b = band(value);
+  const color = bandColor(b);
+  return (
+    <div
+      className="flex items-center justify-between rounded-sm px-1.5 py-0.5 hairline border"
+      title={`${title} · ${Math.round(value)}/100`}
+      style={{ borderColor: color }}
+    >
+      <span className="muted-text">{label}</span>
+      <span className="tabular-nums font-medium" style={{ color }}>
+        {Math.round(value)}
+      </span>
+    </div>
   );
 }
 
