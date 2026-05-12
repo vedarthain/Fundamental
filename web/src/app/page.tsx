@@ -129,7 +129,7 @@ function PerIndustryCards() {
             One scorecard <em className="accent">per industry.</em>
           </h2>
           <p className="muted-text mt-3.5 text-[14.5px] leading-[1.55] max-w-[540px] mx-auto">
-            We don&apos;t score a bank the way we score a paint company. Each cluster has its own
+            We don&apos;t score a bank the way we score a paint company. Each sector has its own
             recipe — tuned for what an analyst in that space would actually look at.
           </p>
         </div>
@@ -202,7 +202,7 @@ function Hero({ snap }: { snap: Snapshot }) {
         </h1>
 
         <p className="muted-text mt-4 text-[15.5px] leading-[1.55] max-w-[560px]">
-          Quality, Valuation, and Momentum percentiles within every peer cluster —
+          Quality, Valuation, and Momentum percentiles within every peer sector —
           recomputed weekly, never edited. Stop comparing a small-cap bank to HDFC.
         </p>
 
@@ -214,7 +214,7 @@ function Hero({ snap }: { snap: Snapshot }) {
           <BenefitPill
             icon="🔍"
             label="Find compounders"
-            sub="Quality + value, in cluster"
+            sub="Quality + value, in sector"
             href="/ideas?bucket=compounder"
           />
           <BenefitPill
@@ -233,7 +233,7 @@ function Hero({ snap }: { snap: Snapshot }) {
 
         <div className="mt-7 flex gap-3 items-center flex-wrap">
           <Link href="/clusters" className="btn-primary">
-            Browse all clusters
+            Browse all sectors
             <ArrowRight size={14} />
           </Link>
           <Link href="/discover" className="btn-ghost">
@@ -523,17 +523,17 @@ function HeatMapTear({ tiles }: { tiles: ClusterTile[] }) {
               <em className="accent">torn open.</em>
             </h2>
             <p className="muted-text mt-4 text-[14.5px] leading-[1.6] max-w-[420px]">
-              Forty-one peer clusters — every one scored and ranked, every week. Greens compound.
+              Forty-one peer sectors — every one scored and ranked, every week. Greens compound.
               Reds need a closer look. Open the map to see the rest.
             </p>
             <div className="mt-6 flex items-center gap-3 flex-wrap">
               <Link href="/clusters" className="btn-primary">
-                Open the Clusters
+                Open all sectors
                 <ArrowRight size={14} />
               </Link>
               <span className="muted-text text-[13px]">
                 <span className="tabular-nums font-semibold" style={{ color: "var(--color-ink)" }}>
-                  +{Math.max(0, tiles.length - SHOW)} clusters
+                  +{Math.max(0, tiles.length - SHOW)} sectors
                 </span>{" "}
                 behind the tear
               </span>
@@ -662,7 +662,7 @@ function ThreePillars() {
             color="var(--color-accent-500)"
             name="Valuation"
             tagline="Are we paying a fair price?"
-            body="P/E, P/B, EV/EBITDA, FCF, dividend yield — always relative to peers in the same cluster. A 25× P/E in pharma means nothing like a 25× P/E in cement."
+            body="P/E, P/B, EV/EBITDA, FCF, dividend yield — always relative to peers in the same sector. A 25× P/E in pharma means nothing like a 25× P/E in cement."
             graphic={<PeGraphic />}
           />
           <PillarCard
@@ -728,7 +728,7 @@ function PeGraphic() {
       <text x="0" y="68" fontSize="10" fill="var(--color-ink)" fontFamily="Inter">This stock</text>
       <rect x="0" y="76" width="120" height="14" rx="3" fill="var(--color-accent-400)" className="svg-hbar" style={{ animationDelay: "0.55s" }} />
       <text x="126" y="88" fontSize="11" fill="var(--color-accent-600)" fontFamily="JetBrains Mono">21×</text>
-      <text x="0" y="112" fontSize="9" fill="var(--color-muted)" fontFamily="Inter">25% cheaper than the cluster median</text>
+      <text x="0" y="112" fontSize="9" fill="var(--color-muted)" fontFamily="Inter">25% cheaper than the sector median</text>
     </svg>
   );
 }
@@ -1112,7 +1112,7 @@ function FooterCTA() {
         </h2>
         <div className="mt-9 flex gap-3 justify-center flex-wrap">
           <Link href="/clusters" className="btn-primary">
-            Open the Clusters
+            Open all sectors
             <ArrowRight size={14} />
           </Link>
           <Link href="/discover" className="btn-ghost">

@@ -100,8 +100,8 @@ export default async function ClusterPage({
 
   return (
     <div className="mx-auto max-w-[1200px] px-6 py-10">
-      <Link href="/" className="text-[12px] muted-text hover:text-[var(--color-accent-600)]">
-        ← All clusters
+      <Link href="/clusters" className="text-[12px] muted-text hover:text-[var(--color-accent-600)]">
+        ← All sectors
       </Link>
       <header className="mt-3 flex items-start justify-between gap-8">
         <div className="max-w-[760px]">

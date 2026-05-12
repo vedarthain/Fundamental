@@ -69,7 +69,7 @@ function SiteHeader() {
             mobile to fit comfortably alongside the logo. */}
         <nav className="flex items-center gap-3 md:gap-6 text-[13px] md:text-[14px] shrink-0 ml-auto">
           <Link href="/clusters" className="hover:text-[var(--color-accent-600)]">
-            Clusters
+            Sectors
           </Link>
           <Link href="/discover" className="hover:text-[var(--color-accent-600)]">
             Discover
@@ -140,7 +140,7 @@ function SiteFooter() {
           <FooterColumn
             title="Product"
             links={[
-              { href: "/clusters", label: "Clusters" },
+              { href: "/clusters", label: "Sectors" },
               { href: "/discover", label: "Discover" },
               { href: "/compare",  label: "Peer comparison" },
               { href: "/feed",     label: "Feed" },

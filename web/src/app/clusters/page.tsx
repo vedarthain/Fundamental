@@ -347,13 +347,13 @@ function Hero(props: { snapshotDate: string | null; clusterCount: number; stockC
       </h1>
       <p className="mt-5 text-[16px] leading-[1.6] muted-text max-w-[600px]">
         Every actively traded NSE stock, scored on quality, valuation, and momentum within
-        its <em>peer cluster</em> — not the whole market. Click any tile to see what&apos;s
+        its <em>peer sector</em> — not the whole market. Click any tile to see what&apos;s
         moving inside it.
       </p>
       <div className="mt-6 flex items-center gap-6 text-[12px] muted-text">
         <span>{props.stockCount.toLocaleString("en-IN")} stocks</span>
         <span>•</span>
-        <span>{props.clusterCount} peer clusters</span>
+        <span>{props.clusterCount} peer sectors</span>
         {props.snapshotDate && (
           <>
             <span>•</span>
@@ -375,7 +375,7 @@ function ScoreBandsLegend() {
   ];
   return (
     <div className="mt-8 flex flex-wrap items-center gap-x-4 gap-y-2 text-[12px] muted-text">
-      <span>Cluster strength:</span>
+      <span>Sector strength:</span>
       {bands.map((bb) => (
         <span key={bb.b} className="flex items-center gap-1.5">
           <span
@@ -420,16 +420,19 @@ function ClusterTileCard({ tile }: { tile: ClusterTile }) {
           <div className="text-[10px] muted-text mt-0.5">{tile.stock_count} stocks</div>
         </div>
       </div>
-      {(tile.ret_1w != null || tile.ret_1m != null || tile.ret_1y != null) && (
-        <div
-          className="mt-2 grid grid-cols-3 gap-1 text-[10px]"
-          title="Market-cap-weighted total return across the stocks in this cluster"
-        >
-          <ReturnMini label="1W" value={tile.ret_1w} />
-          <ReturnMini label="1M" value={tile.ret_1m} />
-          <ReturnMini label="1Y" value={tile.ret_1y} />
-        </div>
-      )}
+      {/* Always render the returns row — previously hid the whole strip if all
+          three values were null, which left some tiles (Fintech/Insurance)
+          looking shorter than their neighbours and gave no signal as to WHY
+          (data missing vs no movement). Now each cell shows "—" when null
+          so the layout stays consistent and the user understands the gap. */}
+      <div
+        className="mt-2 grid grid-cols-3 gap-1 text-[10px]"
+        title="Market-cap-weighted total return across the stocks in this sector"
+      >
+        <ReturnMini label="1W" value={tile.ret_1w} />
+        <ReturnMini label="1M" value={tile.ret_1m} />
+        <ReturnMini label="1Y" value={tile.ret_1y} />
+      </div>
     </Link>
   );
 }
