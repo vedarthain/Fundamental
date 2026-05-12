@@ -239,9 +239,6 @@ function Hero({ snap }: { snap: Snapshot }) {
             Discover by filter
           </Link>
         </div>
-
-        <HeroMosaic />
-        <MobileHeroStats />
       </div>
     </section>
   );
@@ -268,54 +265,13 @@ function BenefitPill({ icon, label, sub, href }: { icon: string; label: string; 
   );
 }
 
-/** Lightweight stand-in for the desktop mosaic. On mobile, the 5 floating
- *  cards become a single horizontally-scrolling row of compact stat cards
- *  so the hero still has visual weight without taxing narrow viewports. */
-function MobileHeroStats() {
-  const stats = [
-    { eyebrow: "Composite", value: "82", sub: "Top 18% in cluster", color: "var(--color-score-excellent)" },
-    { eyebrow: "RoCE · 5y avg", value: "23.4%", sub: "Quality compounder", color: "var(--color-accent-600)" },
-    { eyebrow: "Sales · 10y", value: "+14%", sub: "CAGR", color: "var(--color-score-good)" },
-    { eyebrow: "P/E vs peers", value: "25% ↓", sub: "Cheaper than median", color: "var(--color-accent-500)" },
-  ];
-  return (
-    <div className="mt-8 md:hidden">
-      <div className="flex gap-3 overflow-x-auto -mx-6 px-6 pb-2" style={{ scrollSnapType: "x mandatory" }}>
-        {stats.map((s) => (
-          <div
-            key={s.eyebrow}
-            className="card p-4 shrink-0 w-[180px]"
-            style={{ borderTop: `3px solid ${s.color}`, scrollSnapAlign: "start" }}
-          >
-            <div className="eyebrow text-[10px]">{s.eyebrow}</div>
-            <div
-              className="font-display tabular-nums mt-1.5"
-              style={{ fontSize: 32, lineHeight: 1, color: s.color, letterSpacing: "-0.02em" }}
-            >
-              {s.value}
-            </div>
-            <div className="muted-text text-[11px] mt-2">{s.sub}</div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 /**
- * HeroMosaic — desktop-only visual showing a single illustrative scorecard.
- *
- * Cut from 5 floating cards to 2 based on user feedback ("too much going
- * on"). Kept:
- *   1. Composite score badge — the actual product output, the single most
- *      "this is what you'll see on the platform" card.
- *   2. Strengths & gaps — shows the analytical depth behind the badge.
- *
- * Dropped: Annual P&L, Sales 10y sparkline, RoCE table. These were all
- * generic "look, fundamentals!" cards that didn't add to the value prop
- * the rest of the hero is already making.
+ * @deprecated HeroMosaic + MobileHeroStats were removed from the landing
+ * hero entirely (user feedback: floating cards felt cluttered, distracted
+ * from the benefit-pill flow). Function bodies kept below as dead code in
+ * case we want to revive a scaled-down version later; safe to delete.
  */
-function HeroMosaic() {
+function _UnusedHeroMosaic() {
   return (
     <div className="mt-10 relative h-[280px] hidden md:block">
       {/* Composite score — the centerpiece, slightly rotated, deeper shadow */}
