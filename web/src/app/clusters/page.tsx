@@ -346,13 +346,12 @@ export default async function Home({
     : [];
 
   return (
-    <div className="theme-teal mx-auto max-w-[1200px] px-4 md:px-6 py-8 md:py-12">
+    <div className="theme-teal mx-auto max-w-[1200px] px-4 md:px-6 py-6 md:py-8">
       <Hero
         snapshotDate={snapshotDate}
         clusterCount={tiles.length}
         stockCount={tiles.reduce((a, b) => a + b.stock_count, 0)}
       />
-      <ScoreBandsLegend />
 
       {groups.length > 0 && (
         <>
@@ -794,27 +793,23 @@ function SectorTilesGrid({ tiles }: { tiles: ClusterTile[] }) {
 
 function Hero(props: { snapshotDate: string | null; clusterCount: number; stockCount: number }) {
   return (
-    <section className="max-w-[720px]">
-      <h1 className="font-display text-[44px] leading-[1.05] tracking-tight">
+    <section className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2">
+      <h1 className="font-display text-[26px] md:text-[30px] leading-[1.1] tracking-tight">
         Where the Indian market is{" "}
         <em className="text-[var(--color-accent-600)] not-italic">strong</em>,
         and where it isn&apos;t.
       </h1>
-      <p className="mt-5 text-[16px] leading-[1.6] muted-text max-w-[600px]">
-        Every actively traded NSE stock, scored on quality, valuation, and momentum within
-        its <em>peer sector</em> — not the whole market. Click any tile to see what&apos;s
-        moving inside it.
-      </p>
-      <div className="mt-6 flex items-center gap-6 text-[12px] muted-text">
+      <div className="flex items-center gap-x-3 text-[12px] muted-text tabular-nums flex-wrap">
         <span>{props.stockCount.toLocaleString("en-IN")} stocks</span>
-        <span>•</span>
+        <span>·</span>
         <span>{props.clusterCount} peer sectors</span>
         {props.snapshotDate && (
           <>
-            <span>•</span>
+            <span>·</span>
             <span>Snapshot {props.snapshotDate}</span>
           </>
         )}
+        <ScoreBandsLegend />
       </div>
     </section>
   );
@@ -829,18 +824,23 @@ function ScoreBandsLegend() {
     { label: "Bottom 20%", b: "poor" as const },
   ];
   return (
-    <div className="mt-8 flex flex-wrap items-center gap-x-4 gap-y-2 text-[12px] muted-text">
-      <span>Sector strength:</span>
-      {bands.map((bb) => (
-        <span key={bb.b} className="flex items-center gap-1.5">
-          <span
-            className="inline-block h-3 w-5 rounded-sm"
-            style={{ backgroundColor: bandColor(bb.b) }}
-          />
-          {bb.label}
-        </span>
-      ))}
-    </div>
+    <details className="group">
+      <summary className="cursor-pointer hover:text-[var(--color-ink)] inline-flex items-center gap-1 list-none select-none">
+        <span className="inline-block transition-transform group-open:rotate-90">›</span>
+        Score colors
+      </summary>
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 basis-full">
+        {bands.map((bb) => (
+          <span key={bb.b} className="flex items-center gap-1.5">
+            <span
+              className="inline-block h-3 w-5 rounded-sm"
+              style={{ backgroundColor: bandColor(bb.b) }}
+            />
+            {bb.label}
+          </span>
+        ))}
+      </div>
+    </details>
   );
 }
 
