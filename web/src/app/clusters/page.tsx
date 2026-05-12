@@ -86,44 +86,81 @@ async function loadClusterReturns(snapshotDate: string): Promise<Map<string, { w
   const priceBy = new Map<string, PriceRow>();
   for (const p of prices) priceBy.set(p.symbol, p);
 
-  // For each cluster, accumulate numerator (sum of mcap × return) and
-  // denominator (sum of mcap whose stock had enough history for that horizon).
-  // We track denominator per horizon separately because some new stocks have
-  // 1W history but not 1Y.
+  // For each cluster, maintain TWO parallel accumulators:
+  //   - mcap_*: market-cap-weighted (preferred — heavyweights drive the number)
+  //   - eq_*:   equal-weighted fallback (each stock contributes 1.0)
+  //
+  // We prefer market-cap-weighted but fall back to equal-weighted when no
+  // stock in the cluster has a market_cap_cr on Neon — without this
+  // fallback, small clusters (Fintech: 2 stocks, Insurance: 4 stocks) end
+  // up with null returns whenever even one stock's screener_meta row hasn't
+  // been synced. The fallback ensures tiles always show a number when
+  // price history exists, regardless of market-cap completeness.
   type Accum = {
-    num_w1: number; den_w1: number;
-    num_m1: number; den_m1: number;
-    num_y1: number; den_y1: number;
+    mcap_num_w1: number; mcap_den_w1: number;
+    mcap_num_m1: number; mcap_den_m1: number;
+    mcap_num_y1: number; mcap_den_y1: number;
+    eq_num_w1: number;   eq_den_w1: number;
+    eq_num_m1: number;   eq_den_m1: number;
+    eq_num_y1: number;   eq_den_y1: number;
   };
   const acc = new Map<string, Accum>();
   for (const a of assignments) {
     const p = priceBy.get(a.symbol);
-    const w = a.market_cap_cr ?? 0;
-    if (!p || w <= 0 || p.p_now == null) continue;
+    if (!p || p.p_now == null) continue;
     let bucket = acc.get(a.cluster_id);
     if (!bucket) {
-      bucket = { num_w1: 0, den_w1: 0, num_m1: 0, den_m1: 0, num_y1: 0, den_y1: 0 };
+      bucket = {
+        mcap_num_w1: 0, mcap_den_w1: 0, mcap_num_m1: 0, mcap_den_m1: 0, mcap_num_y1: 0, mcap_den_y1: 0,
+        eq_num_w1: 0,   eq_den_w1: 0,   eq_num_m1: 0,   eq_den_m1: 0,   eq_num_y1: 0,   eq_den_y1: 0,
+      };
       acc.set(a.cluster_id, bucket);
     }
+    const mcap = a.market_cap_cr && a.market_cap_cr > 0 ? a.market_cap_cr : 0;
+    // 1W
     if (p.p_w1 != null && p.p_w1 > 0) {
-      bucket.num_w1 += w * (p.p_now / p.p_w1 - 1);
-      bucket.den_w1 += w;
+      const r = p.p_now / p.p_w1 - 1;
+      bucket.eq_num_w1 += r;
+      bucket.eq_den_w1 += 1;
+      if (mcap > 0) {
+        bucket.mcap_num_w1 += mcap * r;
+        bucket.mcap_den_w1 += mcap;
+      }
     }
+    // 1M
     if (p.p_m1 != null && p.p_m1 > 0) {
-      bucket.num_m1 += w * (p.p_now / p.p_m1 - 1);
-      bucket.den_m1 += w;
+      const r = p.p_now / p.p_m1 - 1;
+      bucket.eq_num_m1 += r;
+      bucket.eq_den_m1 += 1;
+      if (mcap > 0) {
+        bucket.mcap_num_m1 += mcap * r;
+        bucket.mcap_den_m1 += mcap;
+      }
     }
+    // 1Y
     if (p.p_y1 != null && p.p_y1 > 0) {
-      bucket.num_y1 += w * (p.p_now / p.p_y1 - 1);
-      bucket.den_y1 += w;
+      const r = p.p_now / p.p_y1 - 1;
+      bucket.eq_num_y1 += r;
+      bucket.eq_den_y1 += 1;
+      if (mcap > 0) {
+        bucket.mcap_num_y1 += mcap * r;
+        bucket.mcap_den_y1 += mcap;
+      }
     }
   }
+  // Prefer market-cap-weighted; fall back to equal-weighted; null only if
+  // no stock in the cluster had price history for that horizon at all.
+  const pick = (mNum: number, mDen: number, eNum: number, eDen: number): number | null => {
+    if (mDen > 0) return mNum / mDen;
+    if (eDen > 0) return eNum / eDen;
+    return null;
+  };
   const out = new Map<string, { w1: number | null; m1: number | null; y1: number | null }>();
   for (const [cid, b] of acc) {
     out.set(cid, {
-      w1: b.den_w1 > 0 ? b.num_w1 / b.den_w1 : null,
-      m1: b.den_m1 > 0 ? b.num_m1 / b.den_m1 : null,
-      y1: b.den_y1 > 0 ? b.num_y1 / b.den_y1 : null,
+      w1: pick(b.mcap_num_w1, b.mcap_den_w1, b.eq_num_w1, b.eq_den_w1),
+      m1: pick(b.mcap_num_m1, b.mcap_den_m1, b.eq_num_m1, b.eq_den_m1),
+      y1: pick(b.mcap_num_y1, b.mcap_den_y1, b.eq_num_y1, b.eq_den_y1),
     });
   }
   return out;
