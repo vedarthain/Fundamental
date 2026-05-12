@@ -302,63 +302,80 @@ function MobileHeroStats() {
   );
 }
 
+/**
+ * HeroMosaic — desktop-only visual showing a single illustrative scorecard.
+ *
+ * Cut from 5 floating cards to 2 based on user feedback ("too much going
+ * on"). Kept:
+ *   1. Composite score badge — the actual product output, the single most
+ *      "this is what you'll see on the platform" card.
+ *   2. Strengths & gaps — shows the analytical depth behind the badge.
+ *
+ * Dropped: Annual P&L, Sales 10y sparkline, RoCE table. These were all
+ * generic "look, fundamentals!" cards that didn't add to the value prop
+ * the rest of the hero is already making.
+ */
 function HeroMosaic() {
   return (
-    <div className="mt-10 relative h-[340px] hidden md:block">
-      {/* Back card: P&L */}
+    <div className="mt-10 relative h-[280px] hidden md:block">
+      {/* Composite score — the centerpiece, slightly rotated, deeper shadow */}
       <div
-        className="card absolute right-[3%] top-0 w-[210px] p-4"
-        style={{
-          transform: "rotate(3deg)",
-          transformOrigin: "bottom right",
-          boxShadow: "0 1px 0 rgba(255,255,255,.7) inset, 0 12px 32px -8px rgba(25,25,25,0.08)",
-        }}
-      >
-        <div className="eyebrow mb-3">Annual P&amp;L · 5y</div>
-        <div className="flex flex-col gap-2">
-          {[
-            ["FY22", "₹254 Cr", false],
-            ["FY23", "₹289 Cr", false],
-            ["FY24", "₹322 Cr", false],
-            ["FY25", "₹358 Cr", false],
-            ["FY26", "₹401 Cr ▲", true],
-          ].map(([y, v, up]) => (
-            <div key={y as string} className="flex justify-between text-[13px]">
-              <span className="muted-text">{y as string}</span>
-              <span
-                className="tabular-nums"
-                style={
-                  up
-                    ? { color: "var(--color-score-excellent)", fontWeight: 600 }
-                    : undefined
-                }
-              >
-                {v as string}
-              </span>
-            </div>
-          ))}
-        </div>
-        <svg viewBox="0 0 240 40" className="mt-3 w-full block">
-          <rect x="0"   y="22" width="36" height="16" fill="var(--color-accent-200)" rx="2" className="svg-bar" style={{ animationDelay: "0.05s" }} />
-          <rect x="44"  y="18" width="36" height="20" fill="var(--color-accent-300)" rx="2" className="svg-bar" style={{ animationDelay: "0.15s" }} />
-          <rect x="88"  y="13" width="36" height="25" fill="var(--color-accent-400)" rx="2" className="svg-bar" style={{ animationDelay: "0.25s" }} />
-          <rect x="132" y="9"  width="36" height="29" fill="var(--color-accent-500)" rx="2" className="svg-bar" style={{ animationDelay: "0.35s" }} />
-          <rect x="176" y="3"  width="36" height="35" fill="var(--color-accent-600)" rx="2" className="svg-bar" style={{ animationDelay: "0.45s" }} />
-        </svg>
-      </div>
-
-      {/* Middle card: strength bars */}
-      <div
-        className="card absolute left-[1%] top-[20px] w-[250px] p-4"
+        className="card absolute right-[6%] bottom-[10px] w-[220px] p-5"
         style={{
           transform: "rotate(-2deg)",
-          boxShadow: "0 1px 0 rgba(255,255,255,.7) inset, 0 12px 32px -8px rgba(25,25,25,0.10)",
+          boxShadow: "0 1px 0 rgba(255,255,255,.7) inset, 0 22px 48px -10px rgba(25,25,25,0.20)",
+        }}
+      >
+        <div className="eyebrow">Composite</div>
+        <div
+          className="font-display tabular-nums mt-1"
+          style={{
+            fontSize: 76,
+            lineHeight: 0.9,
+            color: "var(--color-score-excellent)",
+            letterSpacing: "-0.04em",
+          }}
+        >
+          82
+        </div>
+        <div className="muted-text text-[13px] mt-3">
+          Top <span className="font-semibold" style={{ color: "var(--color-ink)" }}>18%</span> in its peer cluster
+        </div>
+        <svg viewBox="0 0 220 40" className="w-full mt-4 block">
+          <path
+            d="M0,30 L20,28 L40,26 L60,29 L80,24 L100,22 L120,18 L140,16 L160,14 L180,12 L200,10 L220,8"
+            fill="none"
+            stroke="var(--color-score-excellent)"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeDasharray="500"
+            strokeDashoffset="500"
+            style={{ animation: "drawline 1.6s ease forwards .6s" }}
+          />
+          <circle
+            cx="220" cy="8" r="3.5"
+            fill="var(--color-score-excellent)"
+            opacity="0"
+            style={{ animation: "fadein .3s ease forwards 1.8s" }}
+          />
+        </svg>
+        <div className="muted-text text-[11px] mt-2 flex justify-between">
+          <span>12 weeks ago · 71</span>
+          <span className="font-semibold" style={{ color: "var(--color-score-excellent)" }}>+11 ▲</span>
+        </div>
+      </div>
+
+      {/* Strengths & gaps — left side, slight counter-rotation, lighter shadow */}
+      <div
+        className="card absolute left-[4%] top-[10px] w-[280px] p-5"
+        style={{
+          transform: "rotate(-1.5deg)",
+          boxShadow: "0 1px 0 rgba(255,255,255,.7) inset, 0 14px 34px -10px rgba(25,25,25,0.12)",
         }}
       >
         <div className="mb-3.5">
-          <div className="flex justify-between items-center">
-            <div className="eyebrow">Strengths &amp; gaps</div>
-          </div>
+          <div className="eyebrow">Strengths &amp; gaps</div>
           <div className="muted-text text-[11px] mt-1">5 axes vs cluster median</div>
         </div>
         {[
@@ -390,133 +407,6 @@ function HeroMosaic() {
             </span>
           </div>
         ))}
-      </div>
-
-      {/* Front card: composite score (generic peer cluster, no specific stock) */}
-      <div
-        className="card absolute right-[34%] bottom-0 w-[190px] p-5"
-        style={{
-          transform: "rotate(-2deg)",
-          boxShadow: "0 1px 0 rgba(255,255,255,.7) inset, 0 18px 48px -8px rgba(25,25,25,0.18)",
-        }}
-      >
-        <div className="eyebrow">Composite</div>
-        <div
-          className="font-display tabular-nums mt-1"
-          style={{
-            fontSize: 64,
-            lineHeight: 0.9,
-            color: "var(--color-score-excellent)",
-            letterSpacing: "-0.04em",
-          }}
-        >
-          82
-        </div>
-        <div className="muted-text text-[12px] mt-2.5">
-          Top <span className="font-semibold" style={{ color: "var(--color-ink)" }}>18%</span> in its peer cluster
-        </div>
-        <svg viewBox="0 0 220 40" className="w-full mt-3.5 block">
-          <path
-            d="M0,30 L20,28 L40,26 L60,29 L80,24 L100,22 L120,18 L140,16 L160,14 L180,12 L200,10 L220,8"
-            fill="none"
-            stroke="var(--color-score-excellent)"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeDasharray="500"
-            strokeDashoffset="500"
-            style={{ animation: "drawline 1.6s ease forwards .6s" }}
-          />
-          <circle
-            cx="220" cy="8" r="3"
-            fill="var(--color-score-excellent)"
-            opacity="0"
-            style={{ animation: "fadein .3s ease forwards 1.8s" }}
-          />
-        </svg>
-        <div className="muted-text text-[10px] mt-1.5 flex justify-between">
-          <span>12 weeks ago · 71</span>
-          <span style={{ color: "var(--color-score-excellent)" }}>+11 ▲</span>
-        </div>
-      </div>
-
-      {/* NEW small graph card — sales sparkline */}
-      <div
-        className="card absolute left-[20%] bottom-[10px] w-[195px] p-4"
-        style={{
-          transform: "rotate(1.4deg)",
-          boxShadow: "0 1px 0 rgba(255,255,255,.7) inset, 0 12px 28px -8px rgba(25,25,25,0.10)",
-        }}
-      >
-        <div className="flex items-baseline justify-between mb-2">
-          <div className="eyebrow">Sales · 10y</div>
-          <span
-            className="text-[11px] tabular-nums font-semibold"
-            style={{ color: "var(--color-score-good)" }}
-          >
-            +14% CAGR
-          </span>
-        </div>
-        <svg viewBox="0 0 200 70" className="w-full block">
-          <defs>
-            <linearGradient id="hgrowfill" x1="0" x2="0" y1="0" y2="1">
-              <stop offset="0%" stopColor="var(--color-accent-400)" stopOpacity=".24" />
-              <stop offset="100%" stopColor="var(--color-accent-400)" stopOpacity="0" />
-            </linearGradient>
-          </defs>
-          <path
-            d="M4,58 L24,55 L44,53 L64,48 L84,46 L104,40 L124,36 L144,28 L164,22 L184,16 L196,10 L196,64 L4,64 Z"
-            fill="url(#hgrowfill)"
-            className="svg-fill-in"
-          />
-          <path
-            d="M4,58 L24,55 L44,53 L64,48 L84,46 L104,40 L124,36 L144,28 L164,22 L184,16 L196,10"
-            fill="none"
-            stroke="var(--color-accent-500)"
-            strokeWidth="2"
-            strokeLinejoin="round"
-            strokeLinecap="round"
-            className="svg-line"
-          />
-          <circle cx="196" cy="10" r="2.5" fill="var(--color-accent-600)" className="svg-dot" style={{ animationDelay: "1.5s" }} />
-        </svg>
-        <div className="muted-text text-[10px] mt-1 flex justify-between">
-          <span>FY16</span><span>FY26</span>
-        </div>
-      </div>
-
-      {/* NEW RoCE numbers card — top centre, sits directly above the Composite badge */}
-      <div
-        className="card absolute left-[35%] top-[5px] w-[175px] p-3.5"
-        style={{
-          transform: "rotate(-1.5deg)",
-          boxShadow: "0 1px 0 rgba(255,255,255,.7) inset, 0 12px 28px -8px rgba(25,25,25,0.10)",
-        }}
-      >
-        <div className="flex items-baseline justify-between mb-2">
-          <div className="eyebrow">RoCE</div>
-          <span
-            className="text-[11px] tabular-nums font-semibold"
-            style={{ color: "var(--color-score-excellent)" }}
-          >
-            28.2%
-          </span>
-        </div>
-        <div className="flex flex-col gap-1">
-          {[
-            ["FY24", "23.7%"],
-            ["FY25", "25.6%"],
-            ["FY26", "28.2%"],
-          ].map(([y, v]) => (
-            <div key={y} className="flex justify-between text-[11.5px]">
-              <span className="muted-text">{y}</span>
-              <span className="tabular-nums">{v}</span>
-            </div>
-          ))}
-        </div>
-        <div className="muted-text text-[10px] mt-2 pt-2 border-t hairline">
-          5y avg <span className="font-semibold" style={{ color: "var(--color-ink)" }}>23.4%</span>
-        </div>
       </div>
     </div>
   );
