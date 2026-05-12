@@ -25,6 +25,96 @@ type ClusterTile = {
 
 type LatestSnapshot = { snapshot_date: string };
 
+/** Per-stock row for the right-hand stocks panel. */
+type StockRow = {
+  symbol: string;
+  company_name: string;
+  market_cap_cr: number | null;
+  current_price: number | null;
+  composite_pct: number | null;
+  quality_pct: number | null;
+  valuation_pct: number | null;
+  momentum_pct: number | null;
+  maturity_tier: string;
+  ret_1w: number | null;
+  ret_1m: number | null;
+  ret_1y: number | null;
+};
+
+/**
+ * Load stocks for a single industry (cluster_id), each annotated with its own
+ * 1W / 1M / 1Y price return. Used by the right-hand stocks panel on /clusters
+ * once an industry is selected from the sidebar.
+ *
+ * Two-step approach: app DB for score + identity rows, golden DB for prices,
+ * merge in memory. We never join across DBs (they're separate Neon projects).
+ */
+async function loadIndustryStocks(
+  clusterId: string,
+  snapshotDate: string,
+): Promise<StockRow[]> {
+  const rows = await sql<Omit<StockRow, "ret_1w" | "ret_1m" | "ret_1y">[]>`
+    SELECT
+      s.symbol,
+      u.company_name,
+      sm.market_cap_cr::float AS market_cap_cr,
+      sm.current_price::float AS current_price,
+      s.composite_pct, s.quality_pct, s.valuation_pct, s.momentum_pct,
+      s.maturity_tier
+    FROM app.scores s
+    JOIN app.universe u USING (symbol)
+    LEFT JOIN app.screener_meta sm USING (symbol)
+    WHERE s.snapshot_date = ${snapshotDate}
+      AND s.cluster_id = ${clusterId}
+    ORDER BY s.composite_pct DESC NULLS LAST
+  `;
+  if (rows.length === 0) return [];
+
+  // Fetch prices for just these stocks rather than the whole universe — much
+  // smaller payload, and golden_db doesn't have to scan rows we'll drop.
+  const symbolsNS = rows.map((r) => `${r.symbol}.NS`);
+  type PriceRow = { symbol: string; p_now: number | null; p_w1: number | null; p_m1: number | null; p_y1: number | null };
+  const prices = await golden<PriceRow[]>`
+    WITH latest_d AS (
+      SELECT MAX(date) AS d FROM golden.price_history WHERE interval = '1d'
+    ),
+    syms AS (SELECT unnest(${symbolsNS}::text[]) AS symbol)
+    SELECT
+      REPLACE(s.symbol, '.NS', '') AS symbol,
+      (SELECT close::float FROM golden.price_history p
+        WHERE p.symbol = s.symbol AND p.interval = '1d'
+          AND p.date = (SELECT d FROM latest_d)
+        LIMIT 1) AS p_now,
+      (SELECT close::float FROM golden.price_history p
+        WHERE p.symbol = s.symbol AND p.interval = '1d'
+          AND p.date <= (SELECT d FROM latest_d) - INTERVAL '7 days'
+        ORDER BY p.date DESC LIMIT 1) AS p_w1,
+      (SELECT close::float FROM golden.price_history p
+        WHERE p.symbol = s.symbol AND p.interval = '1d'
+          AND p.date <= (SELECT d FROM latest_d) - INTERVAL '30 days'
+        ORDER BY p.date DESC LIMIT 1) AS p_m1,
+      (SELECT close::float FROM golden.price_history p
+        WHERE p.symbol = s.symbol AND p.interval = '1d'
+          AND p.date <= (SELECT d FROM latest_d) - INTERVAL '365 days'
+        ORDER BY p.date DESC LIMIT 1) AS p_y1
+    FROM syms s
+  `;
+  const priceBy = new Map<string, PriceRow>();
+  for (const p of prices) priceBy.set(p.symbol, p);
+
+  return rows.map((r) => {
+    const p = priceBy.get(r.symbol);
+    const ret = (now: number | null | undefined, past: number | null | undefined): number | null =>
+      now != null && past != null && past > 0 ? now / past - 1 : null;
+    return {
+      ...r,
+      ret_1w: ret(p?.p_now, p?.p_w1),
+      ret_1m: ret(p?.p_now, p?.p_m1),
+      ret_1y: ret(p?.p_now, p?.p_y1),
+    };
+  });
+}
+
 /**
  * Compute cluster-weighted price returns at 1W / 1M / 1Y horizons. We weight
  * by market cap so a cluster's headline number reflects the heavyweights
@@ -232,12 +322,28 @@ export default async function Home({
   }
   const groups = Array.from(groupedMap.values()).sort((a, b) => a.order - b.order);
 
-  // Active sector — from ?sector=<id> param. Defaults to first sector so the
-  // page never renders empty. Falls back gracefully if URL has stale id.
-  const activeId =
+  // Active sector — from ?sector=<id>. Defaults to first sector.
+  const activeSectorId =
     (sp.sector && groups.find((g) => g.id === sp.sector)?.id) ||
     groups[0]?.id;
-  const activeGroup = groups.find((g) => g.id === activeId);
+  const activeGroup = groups.find((g) => g.id === activeSectorId);
+
+  // Active industry — from ?industry=<id>. Must belong to the active sector,
+  // else we fall back to the first industry in that sector. Sorted by avg
+  // composite desc so the "strongest" industry leads.
+  const sectorIndustries = activeGroup
+    ? [...activeGroup.tiles].sort((a, b) => (b.avg_composite ?? 0) - (a.avg_composite ?? 0))
+    : [];
+  const activeIndustryId =
+    (sp.industry && sectorIndustries.find((t) => t.cluster_id === sp.industry)?.cluster_id) ||
+    sectorIndustries[0]?.cluster_id;
+  const activeIndustry = sectorIndustries.find((t) => t.cluster_id === activeIndustryId);
+
+  // Load stocks for the active industry. Server-side fetch so we render the
+  // populated panel on first paint — no client loading state.
+  const industryStocks: StockRow[] = activeIndustry && snapshotDate
+    ? await loadIndustryStocks(activeIndustry.cluster_id, snapshotDate)
+    : [];
 
   return (
     <div className="theme-teal mx-auto max-w-[1200px] px-4 md:px-6 py-8 md:py-12">
@@ -248,22 +354,203 @@ export default async function Home({
       />
       <ScoreBandsLegend />
 
-      {/* Sector tabs — one sector at a time. URL-driven (?sector=<id>) so
-          deep links survive page refresh + history. Active tab gets a teal
-          underline that matches the page theme; the dot color is the sector's
-          live average composite band so collapsed sectors still telegraph
-          strength at a glance. */}
       {groups.length > 0 && (
         <>
-          <SectorTabs groups={groups} activeId={activeId!} />
-          {activeGroup && (
-            <div className="mt-6">
-              <SectorTilesGrid tiles={activeGroup.tiles} />
+          <SectorTabs groups={groups} activeId={activeSectorId!} />
+
+          {/* Sidebar + stocks panel. Sidebar lists every industry in the
+              active sector with inline 1W/1M/1Y returns; stocks panel shows
+              the per-stock breakdown for whichever industry is selected.
+              On mobile the sidebar collapses to a chip strip above the
+              stocks list — the grid switches to a single column. */}
+          {activeGroup && activeIndustry && (
+            <div className="mt-6 grid grid-cols-1 md:grid-cols-[260px_1fr] gap-4 md:gap-6">
+              <IndustrySidebar
+                sectorId={activeGroup.id}
+                industries={sectorIndustries}
+                activeIndustryId={activeIndustry.cluster_id}
+              />
+              <StocksPanel industry={activeIndustry} stocks={industryStocks} />
             </div>
           )}
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * Industry sidebar. Lists every industry (cluster) in the active sector.
+ * Each entry shows the composite score badge + name + stock count + inline
+ * 1W / 1M / 1Y returns. Active row gets a tinted background + bold name.
+ *
+ * On mobile (<md) it switches to a horizontally-scrolling chip strip so
+ * the user can still pick an industry without losing space to a sidebar.
+ */
+function IndustrySidebar({
+  sectorId, industries, activeIndustryId,
+}: {
+  sectorId: string;
+  industries: ClusterTile[];
+  activeIndustryId: string;
+}) {
+  return (
+    <aside className="md:sticky md:top-32 md:self-start md:max-h-[calc(100vh-9rem)] md:overflow-y-auto">
+      <div className="text-[10.5px] uppercase tracking-wide muted-text px-1 mb-2 hidden md:block">
+        Industries · {industries.length}
+      </div>
+      {/* Mobile: horizontal scroll. Desktop: vertical stack. */}
+      <div className="flex md:flex-col gap-1.5 md:gap-1 overflow-x-auto md:overflow-x-visible -mx-1 px-1">
+        {industries.map((ind) => (
+          <IndustryRow
+            key={ind.cluster_id}
+            sectorId={sectorId}
+            industry={ind}
+            active={ind.cluster_id === activeIndustryId}
+          />
+        ))}
+      </div>
+    </aside>
+  );
+}
+
+function IndustryRow({
+  sectorId, industry, active,
+}: {
+  sectorId: string;
+  industry: ClusterTile;
+  active: boolean;
+}) {
+  const compositeBand = band(industry.avg_composite);
+  const compositeColor = bandColor(compositeBand);
+  const numColor = compositeBand === "neutral" ? "var(--color-ink)" : "#fff";
+  return (
+    <Link
+      href={`/clusters?sector=${encodeURIComponent(sectorId)}&industry=${encodeURIComponent(industry.cluster_id)}`}
+      scroll={false}
+      className="block shrink-0 md:shrink rounded-md border transition-colors hover:bg-[var(--color-paper)]/60"
+      style={
+        active
+          ? {
+              borderColor: "var(--color-accent-500)",
+              backgroundColor: "var(--color-card)",
+              boxShadow: "inset 0 0 0 1px var(--color-accent-500)",
+            }
+          : {
+              borderColor: "var(--color-border-default)",
+              backgroundColor: "transparent",
+            }
+      }
+    >
+      <div className="flex items-center gap-2.5 px-2.5 py-2 min-w-[180px] md:min-w-0">
+        <div
+          className="w-9 h-9 rounded-md flex items-center justify-center shrink-0"
+          style={{ backgroundColor: compositeColor }}
+        >
+          <span className="text-[14px] font-medium tabular-nums leading-none" style={{ color: numColor }}>
+            {industry.avg_composite == null ? "—" : Math.round(industry.avg_composite)}
+          </span>
+        </div>
+        <div className="min-w-0 flex-1">
+          <div
+            className={`text-[12.5px] leading-tight truncate ${active ? "font-semibold" : "font-medium"}`}
+            style={{ color: "var(--color-ink)" }}
+          >
+            {industry.cluster_name}
+          </div>
+          <div className="text-[10.5px] muted-text">{industry.stock_count} stock{industry.stock_count === 1 ? "" : "s"}</div>
+        </div>
+      </div>
+      {/* Returns row at the bottom of each industry entry */}
+      <div className="grid grid-cols-3 gap-1 px-2.5 pb-2 text-[10px]">
+        <ReturnMini label="1W" value={industry.ret_1w} />
+        <ReturnMini label="1M" value={industry.ret_1m} />
+        <ReturnMini label="1Y" value={industry.ret_1y} />
+      </div>
+    </Link>
+  );
+}
+
+/**
+ * Right-hand panel — stocks in the selected industry, each with its
+ * own 1W / 1M / 1Y returns and composite badge.
+ */
+function StocksPanel({ industry, stocks }: { industry: ClusterTile; stocks: StockRow[] }) {
+  return (
+    <section className="card overflow-hidden">
+      <header className="px-4 md:px-5 py-3 border-b hairline flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <div className="text-[10.5px] uppercase tracking-wide muted-text">{industry.meta_cluster_name}</div>
+          <h2 className="font-display text-[18px] leading-tight mt-0.5">{industry.cluster_name}</h2>
+        </div>
+        <div className="muted-text text-[11px] tabular-nums">
+          {industry.stock_count} stock{industry.stock_count === 1 ? "" : "s"} · avg{" "}
+          <span className="ink-text font-medium">
+            {industry.avg_composite == null ? "—" : Math.round(industry.avg_composite)}
+          </span>
+        </div>
+      </header>
+
+      {stocks.length === 0 ? (
+        <div className="px-5 py-10 text-center muted-text text-[13px]">
+          No stocks in this industry at the latest snapshot.
+        </div>
+      ) : (
+        <div className="divide-y hairline">
+          {stocks.map((s) => (
+            <StockRowItem key={s.symbol} stock={s} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function StockRowItem({ stock }: { stock: StockRow }) {
+  const compositeBand = band(stock.composite_pct);
+  const compositeColor = bandColor(compositeBand);
+  const numColor = compositeBand === "neutral" ? "var(--color-ink)" : "#fff";
+  return (
+    <Link
+      href={`/stock/${stock.symbol}`}
+      className="grid grid-cols-[44px_1fr_auto] md:grid-cols-[44px_1fr_240px] items-center gap-3 px-4 md:px-5 py-3 hover:bg-[var(--color-paper)]/60 transition-colors"
+    >
+      {/* Composite badge */}
+      <div
+        className="w-10 h-10 rounded-md flex items-center justify-center"
+        style={{ backgroundColor: compositeColor }}
+      >
+        <span className="text-[14px] font-medium tabular-nums leading-none" style={{ color: numColor }}>
+          {stock.composite_pct == null ? "—" : Math.round(stock.composite_pct)}
+        </span>
+      </div>
+
+      {/* Symbol + name */}
+      <div className="min-w-0">
+        <div className="flex items-baseline gap-2 flex-wrap">
+          <span className="font-medium text-[14px] tabular-nums">{stock.symbol}</span>
+          <span className="muted-text text-[11.5px] truncate">{stock.company_name}</span>
+        </div>
+        <div className="muted-text text-[11px] mt-0.5 tabular-nums flex flex-wrap gap-x-3 gap-y-0.5">
+          {stock.current_price != null && <span>₹{stock.current_price.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</span>}
+          {stock.market_cap_cr != null && (
+            <span>
+              <span className="muted-text">mcap </span>
+              ₹{stock.market_cap_cr >= 1_00_000
+                ? `${(stock.market_cap_cr / 1_00_000).toFixed(1)}L Cr`
+                : `${Math.round(stock.market_cap_cr).toLocaleString("en-IN")} Cr`}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Returns row — colored, tabular */}
+      <div className="grid grid-cols-3 gap-1.5 md:gap-2 text-[10.5px] md:text-[11px]">
+        <ReturnMini label="1W" value={stock.ret_1w} />
+        <ReturnMini label="1M" value={stock.ret_1m} />
+        <ReturnMini label="1Y" value={stock.ret_1y} />
+      </div>
+    </Link>
   );
 }
 
