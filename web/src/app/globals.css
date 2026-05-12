@@ -10,21 +10,27 @@
   --color-border-default: #e8e4d9;
 
   /* Accent — Claude tan-orange family */
-  --color-accent-50:  #fbf2ed;
-  --color-accent-100: #f5e0d3;
-  --color-accent-200: #ecc4ad;
-  --color-accent-300: #dc9a7a;
-  --color-accent-400: #cc785c;
-  --color-accent-500: #b86a50;
-  --color-accent-600: #a05a42;
-  --color-accent-700: #7e4733;
+  /* Brand accent — more saturated terracotta. Previous palette read as
+     muted/dull on small mobile cards. Bumped saturation +10–15% across
+     the ramp; hue stays in the same warm-clay family. */
+  --color-accent-50:  #fdf0e7;
+  --color-accent-100: #f8dac8;
+  --color-accent-200: #f2b691;
+  --color-accent-300: #e8915d;
+  --color-accent-400: #db7140;
+  --color-accent-500: #c5602f;
+  --color-accent-600: #a84d22;
+  --color-accent-700: #823a18;
 
   /* Score palette — earthy, no neon */
-  --color-score-excellent: #3f7d4a;
-  --color-score-good:      #7ea874;
-  --color-score-neutral:   #c9b876;
-  --color-score-weak:      #cc8a5c;
-  --color-score-poor:      #a8543c;
+  /* Score band palette — brightened. Old palette had muted forest greens
+     and sage that read as "olive" on score badges; new palette pops more
+     while staying editorial (not neon). */
+  --color-score-excellent: #2e9a47; /* vivid forest green */
+  --color-score-good:      #6abf5d; /* fresh leaf green */
+  --color-score-neutral:   #d9b755; /* warm gold */
+  --color-score-weak:      #e08855; /* orange peach */
+  --color-score-poor:      #c63f23; /* vivid rust red */
 
   /* Tab tints — very subtle per-tab tinting so the long stock page
      stops feeling monotone-cream. Each is within 4% lightness of paper

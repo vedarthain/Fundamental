@@ -17,9 +17,11 @@ const sourceSerif = Source_Serif_4({
 });
 
 export const metadata: Metadata = {
-  title: "NSE Equity Intelligence",
+  // Title pattern: brand — benefit. Front-loads the benefit so the OG card
+  // and browser tab read as a value proposition, not just a name.
+  title: "EquityRoots — Indian stocks, scored against their real peers",
   description:
-    "Score-driven analysis of NSE-listed equities — sector-relative quality, valuation, and momentum scores with AI-generated narratives.",
+    "Every NSE stock ranked on Quality, Valuation, and Momentum — within its true peer cluster. Find compounders, cheap-in-cluster names, and weekly movers without comparing apples to oranges.",
 };
 
 export default function RootLayout({
@@ -52,7 +54,7 @@ function SiteHeader() {
         <Link href="/" className="flex items-center gap-2 md:gap-2.5 shrink-0">
           <BanyanLogo />
           <span className="font-display text-[17px] md:text-[19px] tracking-tight leading-none">
-            Fundamental
+            EquityRoots
           </span>
           <span className="muted-text text-[10px] md:text-[11px] tracking-[0.1em] uppercase leading-none hidden sm:inline">
             NSE
@@ -122,16 +124,16 @@ function SiteFooter() {
             <Link href="/" className="flex items-center gap-2.5 mb-4">
               <BanyanLogo />
               <span className="font-display text-[18px] tracking-tight leading-none">
-                Fundamental
+                EquityRoots
               </span>
             </Link>
             <p className="text-[12px] muted-text leading-relaxed max-w-[260px]">
-              Score-driven NSE equity intelligence. Quality, Valuation, and
-              Momentum percentiles within each peer cluster — recomputed
-              weekly, never edited.
+              Indian stocks, scored against their real peers. Quality,
+              Valuation, and Momentum percentiles — recomputed weekly,
+              never edited.
             </p>
             <p className="text-[11px] muted-text mt-4 leading-relaxed">
-              © 2026, Fundamental.<br />Information surface only — not investment advice.
+              © 2026, EquityRoots.<br />Information surface only — not investment advice.
             </p>
           </div>
 

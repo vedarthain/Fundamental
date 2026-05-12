@@ -69,13 +69,18 @@ export default async function Landing() {
   const { snap, tiles } = await loadHero();
   return (
     <>
+      {/* Landing flow — re-sequenced based on user feedback ("too much
+          writing"): hero with benefit pills first, then the visual heat
+          map (most compelling proof), three pillars (how scoring works),
+          per-industry cards (proof of nuance). The Moat / "Built to
+          compound" section is dropped from the landing — it was a long
+          philosophical block users were skipping. The same trust signals
+          live on /about (Methodology page) for users who want depth. */}
       <Hero snap={snap} />
       <PolaroidBanner snap={snap} />
       <RevealOnScroll><HeatMapTear tiles={tiles} /></RevealOnScroll>
-      <RevealOnScroll><PerIndustryCards /></RevealOnScroll>
       <RevealOnScroll><ThreePillars /></RevealOnScroll>
-      <RevealOnScroll><StrengthsAndGaps /></RevealOnScroll>
-      <RevealOnScroll><BuiltToCompound snap={snap} /></RevealOnScroll>
+      <RevealOnScroll><PerIndustryCards /></RevealOnScroll>
       <FooterCTA />
     </>
   );
@@ -88,7 +93,7 @@ function PerIndustryCards() {
     {
       meta: "Banks",
       headline: "Capital, not capex.",
-      body: "Banks score on return on assets, book-value compounding, and capital cushion — the things that actually matter when revenue is interest income and inventory is loans.",
+      body: "Return on assets, book-value compounding, capital cushion — what matters when revenue is interest income.",
       pills: [
         { k: "RoA", colour: "var(--color-accent-600)" },
         { k: "Book CAGR", colour: "var(--color-accent-500)" },
@@ -98,7 +103,7 @@ function PerIndustryCards() {
     {
       meta: "Cement",
       headline: "Tonnes, not P/E.",
-      body: "EBITDA margin and capacity utilization tell you whether prices are firm and whether new plants are paying off. P/E for cement is mostly noise.",
+      body: "EBITDA margin and capacity utilization say whether prices are firm and new plants are paying off. P/E for cement is noise.",
       pills: [
         { k: "EBITDA margin", colour: "var(--color-accent-600)" },
         { k: "Capacity", colour: "var(--color-accent-500)" },
@@ -108,7 +113,7 @@ function PerIndustryCards() {
     {
       meta: "IT Services",
       headline: "Margin, not breadth.",
-      body: "Operating-margin trend and cash conversion separate the compounders from the deal-grabbers. Revenue growth alone is a trap.",
+      body: "Operating-margin trend and cash conversion separate compounders from deal-grabbers. Revenue growth alone is a trap.",
       pills: [
         { k: "Op margin trend", colour: "var(--color-accent-600)" },
         { k: "CFO/EBITDA", colour: "var(--color-accent-500)" },
@@ -165,47 +170,73 @@ function PerIndustryCards() {
 function Hero({ snap }: { snap: Snapshot }) {
   return (
     <section className="grain relative overflow-hidden">
-      <div className="relative max-w-[1200px] mx-auto px-6 pt-12 pb-10 md:pt-14 md:pb-12">
+      <div className="relative max-w-[1200px] mx-auto px-6 pt-10 pb-8 md:pt-14 md:pb-12">
         <div
-          className="inline-flex items-center gap-2 px-3 py-1 rounded-full border hairline mb-6 text-[11.5px] muted-text"
+          className="inline-flex items-center gap-2 px-3 py-1 rounded-full border hairline mb-5 text-[11.5px] muted-text"
           style={{ backgroundColor: "var(--color-card)" }}
         >
           <span
             className="w-1.5 h-1.5 rounded-full animate-livepulse"
             style={{ backgroundColor: "var(--color-score-excellent)" }}
           />
-          Live · weekly snapshot · ledger week {snap.weeks}
+          Live · {snap.stocks.toLocaleString("en-IN")} NSE stocks · week {snap.weeks}
         </div>
 
+        {/* H1 — benefit-forward. Old line was poetic ("where India's market
+            really stands") but didn't tell visitors what they GET. New line
+            is shorter, names the audience (Indian stocks) and the core
+            differentiator (real peers). */}
         <h1
           className="font-display"
           style={{
-            fontSize: "clamp(36px, 5.2vw, 68px)",
+            fontSize: "clamp(34px, 5vw, 64px)",
             lineHeight: 1.02,
             letterSpacing: "-0.022em",
-            maxWidth: 820,
+            maxWidth: 880,
             textWrap: "balance",
           }}
         >
-          Where India&apos;s market{" "}
-          <em className="accent">really</em> stands —{" "}
-          and what&apos;s <em className="accent">moving</em>.
+          Indian stocks, scored against their{" "}
+          <em className="accent">real peers</em>.
         </h1>
 
-        <p className="muted-text mt-5 text-[15.5px] leading-[1.55] max-w-[540px]">
-          Every actively-traded NSE stock, scored against its true peers.{" "}
-          <span className="tabular-nums font-medium" style={{ color: "var(--color-ink)" }}>
-            {snap.stocks.toLocaleString("en-IN")}
-          </span>{" "}
-          companies.{" "}
-          <span className="font-medium" style={{ color: "var(--color-ink)" }}>{snap.clusters} clusters.</span>{" "}
-          One number, recomputed weekly — and never edited.
+        <p className="muted-text mt-4 text-[15.5px] leading-[1.55] max-w-[560px]">
+          Quality, Valuation, and Momentum percentiles within every peer cluster —
+          recomputed weekly, never edited. Stop comparing a small-cap bank to HDFC.
         </p>
+
+        {/* What you can do — 3 concrete benefit pills. This is the section
+            users were missing: previously the hero said WHAT we do, never
+            what they could DO with it. Each pill links directly to the
+            surface that delivers that benefit. */}
+        <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-2 max-w-[760px]">
+          <BenefitPill
+            icon="🔍"
+            label="Find compounders"
+            sub="Quality + value, in cluster"
+            href="/ideas?bucket=compounder"
+          />
+          <BenefitPill
+            icon="⚖️"
+            label="Compare 2–5 stocks"
+            sub="Apples-to-apples scorecards"
+            href="/compare"
+          />
+          <BenefitPill
+            icon="📈"
+            label="See weekly movers"
+            sub="What's strengthening / slipping"
+            href="/feed"
+          />
+        </div>
 
         <div className="mt-7 flex gap-3 items-center flex-wrap">
           <Link href="/clusters" className="btn-primary">
-            Open the Clusters
+            Browse all clusters
             <ArrowRight size={14} />
+          </Link>
+          <Link href="/discover" className="btn-ghost">
+            Discover by filter
           </Link>
         </div>
 
@@ -213,6 +244,27 @@ function Hero({ snap }: { snap: Snapshot }) {
         <MobileHeroStats />
       </div>
     </section>
+  );
+}
+
+/** Benefit pill — quick visual link from the hero to a specific surface that
+ *  delivers that benefit. Solves the "what does this give me?" question
+ *  users were asking after only seeing the prose. */
+function BenefitPill({ icon, label, sub, href }: { icon: string; label: string; sub: string; href: string }) {
+  return (
+    <Link
+      href={href}
+      className="card px-3.5 py-2.5 flex items-center gap-3 hover:border-[var(--color-accent-400)] transition-colors group"
+    >
+      <span className="text-[20px] leading-none">{icon}</span>
+      <span className="flex flex-col">
+        <span className="font-medium text-[13.5px]" style={{ color: "var(--color-ink)" }}>
+          {label}
+        </span>
+        <span className="text-[11px] muted-text">{sub}</span>
+      </span>
+      <ArrowRight size={12} className="ml-auto shrink-0 opacity-60 group-hover:opacity-100 transition-opacity" style={{ color: "var(--color-accent-600)" }} />
+    </Link>
   );
 }
 
@@ -754,7 +806,7 @@ function ThreePillars() {
             color="var(--color-accent-600)"
             name="Quality"
             tagline="Does this business compound?"
-            body="Returns on capital, multi-window CAGR, growth consistency, cash conversion, balance-sheet discipline. The question we're answering is whether the business has built durable economics — or just had a good year."
+            body="Returns on capital, multi-year growth, cash conversion, balance-sheet discipline — built to spot durable economics over a single good year."
             graphic={<RoeGraphic />}
           />
           <PillarCard
@@ -762,7 +814,7 @@ function ThreePillars() {
             color="var(--color-accent-500)"
             name="Valuation"
             tagline="Are we paying a fair price?"
-            body="P/E, P/B, EV/EBITDA, FCF and dividend yield — but always relative to peers in the same cluster, never the whole market. A 25× P/E in pharma means something very different from a 25× P/E in cement."
+            body="P/E, P/B, EV/EBITDA, FCF, dividend yield — always relative to peers in the same cluster. A 25× P/E in pharma means nothing like a 25× P/E in cement."
             graphic={<PeGraphic />}
           />
           <PillarCard
@@ -770,7 +822,7 @@ function ThreePillars() {
             color="var(--color-accent-400)"
             name="Momentum"
             tagline="Is the market noticing yet?"
-            body="Price momentum across 3, 6, 12-month horizons relative to the market — blended with latest-quarter earnings momentum. The two together separate hype from fundamentals turning."
+            body="3, 6, 12-month relative price returns blended with latest-quarter earnings momentum — separates hype from fundamentals turning."
             graphic={<MomentumGraphic />}
           />
         </div>
