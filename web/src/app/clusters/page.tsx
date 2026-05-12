@@ -244,8 +244,13 @@ function SectorTabs({
   const row1 = groups.slice(0, half);
   const row2 = groups.slice(half);
 
+  // Sticky on scroll so the user can pick a sector without bouncing back
+  // to the top. backdrop-blur keeps tiles below readable through the strip.
   return (
-    <div className="mt-8 flex flex-col gap-1.5">
+    <div
+      className="mt-8 flex flex-col gap-1.5 sticky top-14 z-20 -mx-6 px-6 py-2 backdrop-blur-md"
+      style={{ backgroundColor: "color-mix(in srgb, var(--color-paper) 92%, transparent)" }}
+    >
       <SectorTabRow groups={row1} activeId={activeId} />
       {row2.length > 0 && <SectorTabRow groups={row2} activeId={activeId} />}
     </div>
@@ -307,8 +312,11 @@ function SectorTabRow({
 }
 
 function SectorTilesGrid({ tiles }: { tiles: ClusterTile[] }) {
+  // Single column on the narrowest phones (<400px) so labels don't truncate
+  // into "Capital Mar..." 2 cols at 400px+, scales up from there. Slightly
+  // larger gap on mobile so the tiles breathe.
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+    <div className="grid grid-cols-1 min-[420px]:grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
       {tiles.map((t) => (
         <ClusterTileCard key={t.cluster_id} tile={t} />
       ))}

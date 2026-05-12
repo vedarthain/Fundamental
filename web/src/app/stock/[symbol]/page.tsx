@@ -246,8 +246,11 @@ export default async function StockPage({
         ← {stock.cluster_name}
       </Link>
 
-      {/* Header — name + percentile badge */}
-      <header className="mt-3 flex items-start justify-between gap-8">
+      {/* Header — name + percentile badge.
+          On mobile, stack vertically so the badge sits BELOW the name
+          instead of crammed into a tall narrow column on the right.
+          Desktop keeps the side-by-side layout. */}
+      <header className="mt-3 flex flex-col md:flex-row items-start md:justify-between gap-4 md:gap-8">
         <div>
           <div className="text-[12px] muted-text uppercase tracking-wide">
             {stock.meta_cluster_name} · {stock.cluster_name} · {tierLabel(stock.maturity_tier)}
@@ -290,8 +293,9 @@ export default async function StockPage({
           )}
         </div>
 
-        {/* Percentile badge */}
-        <div className="text-right shrink-0">
+        {/* Percentile badge — right-aligned on desktop, left-aligned on mobile
+            (so it follows the stacked name block flush-left). */}
+        <div className="text-left md:text-right shrink-0">
           <div
             className="inline-block px-4 py-2 rounded-md"
             style={{ backgroundColor: compositeBg, color: compositeBand === "neutral" ? "var(--color-ink)" : "white" }}

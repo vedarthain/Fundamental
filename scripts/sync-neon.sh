@@ -159,11 +159,10 @@ fi
 echo "  pulling rows after: ${GOLDEN_LAST:-<beginning>}"
 
 PH_TMP="$TMP_DIR/price_history.tsv"
-psql "$LOCAL_GOLDEN" -c "
-  \COPY (SELECT * FROM golden.price_history
-         WHERE symbol IN ($GOLDEN_FILTER) AND interval = '1d'
-           AND $GOLDEN_DATE_FILTER) TO STDOUT
-" > "$PH_TMP"
+# \COPY meta-command must be on a single line when passed via -c (psql
+# parses it as a single meta-statement, not a multi-line block). The
+# original multi-line form errors with "syntax error at or near \".
+psql "$LOCAL_GOLDEN" -c "\COPY (SELECT * FROM golden.price_history WHERE symbol IN ($GOLDEN_FILTER) AND interval = '1d' AND $GOLDEN_DATE_FILTER) TO STDOUT" > "$PH_TMP"
 
 if [[ ! -s "$PH_TMP" ]]; then
   echo "    (no new price rows — Neon already current)"

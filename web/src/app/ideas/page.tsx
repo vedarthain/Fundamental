@@ -694,8 +694,15 @@ function BucketTabs({
     { key: "fii_up"      as TabKey, label: "FII accumulation",      dot: "var(--color-score-good)", n: counts.fii_up },
   ];
 
+  // Sticky on mobile so the tab strip stays reachable while you scroll
+  // through a long board. Desktop also sticks but at a lower position
+  // (below the global header). Backdrop-blur keeps the underlying content
+  // legible through the sticky strip.
   return (
-    <div className="mt-6 flex flex-col gap-2">
+    <div
+      className="mt-6 flex flex-col gap-2 sticky top-14 z-20 -mx-6 px-6 py-2 backdrop-blur-md"
+      style={{ backgroundColor: "color-mix(in srgb, var(--color-paper) 92%, transparent)" }}
+    >
       <BucketTabRow eyebrow="Trend"  items={trendItems}  active={active} scopeQuery={scopeQuery} />
       <BucketTabRow eyebrow="Themed" items={themedItems} active={active} scopeQuery={scopeQuery} />
     </div>

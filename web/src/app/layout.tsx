@@ -42,33 +42,40 @@ function SiteHeader() {
       className="border-b hairline sticky top-0 z-30 backdrop-blur-md"
       style={{ backgroundColor: "color-mix(in srgb, var(--color-paper) 90%, transparent)" }}
     >
-      <div className="mx-auto max-w-[1300px] px-6 h-14 flex items-center gap-6">
-        <Link href="/" className="flex items-center gap-2.5 shrink-0">
+      {/* Desktop layout: logo + centered search + nav.
+          Mobile layout: logo + nav inline (no search to save space). The
+          search is reachable from /discover and stock cards, so dropping
+          it from mobile chrome is fine. Without this fix the search bar
+          eats all the horizontal space and pushes Clusters/Discover off
+          the right edge. */}
+      <div className="mx-auto max-w-[1300px] px-4 md:px-6 h-14 flex items-center gap-3 md:gap-6">
+        <Link href="/" className="flex items-center gap-2 md:gap-2.5 shrink-0">
           <BanyanLogo />
-          <span className="font-display text-[19px] tracking-tight leading-none">
+          <span className="font-display text-[17px] md:text-[19px] tracking-tight leading-none">
             Fundamental
           </span>
-          <span className="muted-text text-[11px] tracking-[0.1em] uppercase leading-none">
+          <span className="muted-text text-[10px] md:text-[11px] tracking-[0.1em] uppercase leading-none hidden sm:inline">
             NSE
           </span>
         </Link>
-        <div className="flex-1 flex justify-center">
+        {/* Search hides on mobile — it dominates the bar on narrow widths.
+            Users open /discover for search-as-they-type instead. */}
+        <div className="flex-1 justify-center hidden md:flex">
           <StockSearch />
         </div>
-        {/* Top nav — core product surfaces only. Methodology, Glossary, and
-            Peer Comparison live in the footer / inline entry points to keep
-            this strip tight. */}
-        <nav className="flex items-center gap-6 text-[14px] shrink-0">
+        {/* Top nav — all 4 surfaces visible on mobile now. Smaller font + gap on
+            mobile to fit comfortably alongside the logo. */}
+        <nav className="flex items-center gap-3 md:gap-6 text-[13px] md:text-[14px] shrink-0 ml-auto">
           <Link href="/clusters" className="hover:text-[var(--color-accent-600)]">
             Clusters
           </Link>
           <Link href="/discover" className="hover:text-[var(--color-accent-600)]">
             Discover
           </Link>
-          <Link href="/feed" className="hover:text-[var(--color-accent-600)] hidden md:inline">
+          <Link href="/feed" className="hover:text-[var(--color-accent-600)]">
             Feed
           </Link>
-          <Link href="/ideas" className="hover:text-[var(--color-accent-600)] hidden md:inline">
+          <Link href="/ideas" className="hover:text-[var(--color-accent-600)]">
             Ideas
           </Link>
         </nav>
