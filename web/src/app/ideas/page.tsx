@@ -40,7 +40,7 @@ type RawScoreRow = {
   maturity_tier: string | null;
   cluster_id: string;
   company_name: string;
-  is_nifty500: boolean;
+  is_nifty200: boolean;
   cluster_name: string;
 };
 
@@ -62,7 +62,7 @@ type Stock = {
   cluster_id: string;
   cluster_name: string;
   maturity_tier: string | null;
-  is_nifty500: boolean;
+  is_nifty200: boolean;
   // Current snapshot
   curr: { c: number; q: number; v: number; m: number };
   // Comparison snapshot (windowBack ago)
@@ -86,7 +86,7 @@ type SectionKey = TrendSectionKey | ThemedSectionKey;
 // Data loading
 // ---------------------------------------------------------------------------
 
-async function loadIdeas(nifty500Only: boolean) {
+async function loadIdeas(nifty200Only: boolean) {
   // Step 1 — distinct snapshot dates, newest first, up to 12.
   const dates = await sql<{ snapshot_date: string }[]>`
     SELECT DISTINCT snapshot_date::text
@@ -124,12 +124,12 @@ async function loadIdeas(nifty500Only: boolean) {
       r.composite_pct, r.quality_pct, r.valuation_pct, r.momentum_pct,
       r.maturity_tier, r.cluster_id,
       u.company_name,
-      u.is_nifty500,
+      u.is_nifty200,
       c.name AS cluster_name
     FROM recent r
     JOIN app.universe u USING (symbol)
     JOIN app.cluster c ON c.id = r.cluster_id
-    ${nifty500Only ? sql`WHERE u.is_nifty500 = TRUE` : sql``}
+    ${nifty200Only ? sql`WHERE u.is_nifty200 = TRUE` : sql``}
     ORDER BY r.symbol, r.snapshot_date DESC
   `;
 
@@ -222,7 +222,7 @@ async function loadIdeas(nifty500Only: boolean) {
       cluster_id: curr.cluster_id,
       cluster_name: curr.cluster_name,
       maturity_tier: curr.maturity_tier,
-      is_nifty500: curr.is_nifty500,
+      is_nifty200: curr.is_nifty200,
       curr: {
         c: curr.composite_pct!,
         q: curr.quality_pct!,
@@ -366,16 +366,35 @@ function whyLine(s: Stock, section?: SectionKey): string {
 // Page
 // ---------------------------------------------------------------------------
 
+// Tab keys for the 8 buckets. URL: /ideas?bucket=<key>. Defaults to the
+// first bucket so the page is never blank.
+const TAB_KEYS = [
+  "strength", "losing", "breakout", "breakdown",
+  "compounder", "cheap", "promoter_up", "fii_up",
+] as const;
+type TabKey = (typeof TAB_KEYS)[number];
+
+function isTabKey(s: string | undefined): s is TabKey {
+  return !!s && (TAB_KEYS as readonly string[]).includes(s);
+}
+
 export default async function IdeasPage({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const sp = await searchParams;
-  const showAll = sp.scope === "all";
-  const nifty500Only = !showAll;
+  // Default scope: ALL stocks. The Nifty 200 toggle is opt-in via ?scope=nifty200
+  // because (a) on Neon we only have Nifty 200 in the DB anyway so both modes
+  // look identical there, and (b) local dev has 2,000+ stocks and the unfiltered
+  // view shows more interesting signal across the full universe.
+  const nifty200Only = sp.scope === "nifty200";
+  const showAll = !nifty200Only;
+  // Active tab — one bucket at a time. Defaults to "strength" so first load
+  // shows the biggest positive-trend stocks.
+  const activeTab: TabKey = isTabKey(sp.bucket) ? sp.bucket : "strength";
 
-  const { stocks, snapshots, windowBack } = await loadIdeas(nifty500Only);
+  const { stocks, snapshots, windowBack } = await loadIdeas(nifty200Only);
 
   // Assign each qualifying stock to exactly one trend section.
   const sectioned: Record<TrendSectionKey, Stock[]> = {
@@ -454,7 +473,7 @@ export default async function IdeasPage({
     SECTION_ORDER.reduce((n, k) => n + sectioned[k].length, 0) +
     compounders.length + cheap.length + promoterUp.length + fiiUp.length;
   const earlyArchive = windowBack < 5; // Less than ~4 weeks of history.
-  const nifty500Empty = nifty500Only && stocks.length === 0 && snapshots.length > 0;
+  const nifty200Empty = nifty200Only && stocks.length === 0 && snapshots.length > 0;
 
   return (
     <div className="mx-auto max-w-[1200px] px-6 py-10">
@@ -497,112 +516,128 @@ export default async function IdeasPage({
 
       {/* Scope toggle */}
       <nav className="mt-6 flex flex-wrap gap-1.5">
-        <ScopePill href="/ideas" label="Nifty 500" active={nifty500Only} hint="Recognizable names only" />
-        <ScopePill href="/ideas?scope=all" label="All stocks" active={showAll} hint="Includes small-caps" />
+        <ScopePill href="/ideas" label="All stocks" active={showAll} hint="Everything in the universe" />
+        <ScopePill href="/ideas?scope=nifty200" label="Nifty 200" active={nifty200Only} hint="Curated large/mid-cap set" />
       </nav>
 
       {/* Banners */}
       {snapshots.length === 0 && <FirstSnapshotBanner />}
-      {nifty500Empty && <Nifty500EmptyBanner />}
-      {earlyArchive && snapshots.length > 0 && !nifty500Empty && (
+      {nifty200Empty && <Nifty200EmptyBanner />}
+      {earlyArchive && snapshots.length > 0 && !nifty200Empty && (
         <ConvictionFilterBanner snapshotsHave={snapshots.length} />
       )}
 
-      {/* Boards */}
-      {snapshots.length > 0 && !nifty500Empty && (
-        <div className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Board
-            title="Building strength"
-            subtitle="Sustained climb across the last few weeks"
-            color="var(--color-score-good)"
-            icon={<TrendingUp size={15} strokeWidth={2.2} />}
-            stocks={sectioned.strength}
-            section="strength"
-            emptyHint="No stocks meeting the 4-week sustained-climb threshold."
-          />
-          <Board
-            title="Losing ground"
-            subtitle="Score has weakened consistently"
-            color="var(--color-score-poor)"
-            icon={<TrendingDown size={15} strokeWidth={2.2} />}
-            stocks={sectioned.losing}
-            section="losing"
-            emptyHint="No stocks meeting the 4-week sustained-decline threshold."
-          />
-          <Board
-            title="Recent breakouts"
-            subtitle="Just entered top-quartile of its cluster"
-            color="var(--color-score-excellent)"
-            icon={<Sparkles size={15} strokeWidth={2.2} />}
-            stocks={sectioned.breakout}
-            section="breakout"
-            emptyHint="No new top-quartile entrants this week."
-          />
-          <Board
-            title="Recent breakdowns"
-            subtitle="Just fell below median this week"
-            color="var(--color-score-weak)"
-            icon={<AlertTriangle size={15} strokeWidth={2.2} />}
-            stocks={sectioned.breakdown}
-            section="breakdown"
-            emptyHint="No fresh breakdowns this week."
-          />
-        </div>
-      )}
-
-      {/* Themed buckets — quality / value / ownership flow */}
-      {snapshots.length > 0 && !nifty500Empty && (
+      {/* Tab strip — one bucket at a time. URL-driven so each tab is shareable.
+          The dot color matches the section's accent so the eye finds the
+          active tab fast. Counts give an at-a-glance overview of where the
+          action is this week. */}
+      {snapshots.length > 0 && !nifty200Empty && (
         <>
-          <div className="mt-10 mb-3">
-            <div className="text-[11px] uppercase tracking-wide muted-text">
-              Always-relevant themes
-            </div>
-            <h2 className="font-display text-[22px] tracking-tight leading-tight mt-1">
-              Quality, value, and flow.
-            </h2>
-            <p className="muted-text text-[12.5px] leading-[1.55] mt-2 max-w-[640px]">
-              These boards filter on absolute signals — top-quartile quality, cheapness,
-              or fresh institutional / promoter accumulation — independent of weekly
-              score deltas. A stock can sit here AND in one of the trend boards above.
-            </p>
-          </div>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Board
-              title="Quality compounders"
-              subtitle="High quality, veteran tier, score stable over the window"
-              color="var(--color-accent-600)"
-              icon={<Award size={15} strokeWidth={2.2} />}
-              stocks={compounders}
-              section="compounder"
-              emptyHint="No stocks pass the quality-≥75 + veteran + stable filter."
-            />
-            <Board
-              title="Cheap in cluster"
-              subtitle="Top-quartile valuation, composite still respectable"
-              color="var(--color-accent-500)"
-              icon={<Tag size={15} strokeWidth={2.2} />}
-              stocks={cheap}
-              section="cheap"
-              emptyHint="No stocks pass the value-≥75 + composite-≥50 filter."
-            />
-            <Board
-              title="Promoter accumulation"
-              subtitle="Promoter stake up ≥1pp QoQ — insiders adding"
-              color="var(--color-accent-400)"
-              icon={<Users size={15} strokeWidth={2.2} />}
-              stocks={promoterUp}
-              section="promoter_up"
-              emptyHint="No promoter-accumulation signals in the latest quarter."
-            />
-            <Board
-              title="FII accumulation"
-              subtitle="Foreign institutional stake up ≥1pp QoQ"
-              color="var(--color-score-good)"
-              icon={<Globe2 size={15} strokeWidth={2.2} />}
-              stocks={fiiUp}
-              section="fii_up"
-              emptyHint="No FII-accumulation signals in the latest quarter."
-            />
+          <BucketTabs
+            active={activeTab}
+            scopeQuery={nifty200Only ? "&scope=nifty200" : ""}
+            counts={{
+              strength: sectioned.strength.length,
+              losing: sectioned.losing.length,
+              breakout: sectioned.breakout.length,
+              breakdown: sectioned.breakdown.length,
+              compounder: compounders.length,
+              cheap: cheap.length,
+              promoter_up: promoterUp.length,
+              fii_up: fiiUp.length,
+            }}
+          />
+
+          {/* Single active board — keeps the page short and scroll-free. */}
+          <div className="mt-6">
+            {activeTab === "strength" && (
+              <Board
+                title="Building strength"
+                subtitle="Sustained climb across the last few weeks"
+                color="var(--color-score-good)"
+                icon={<TrendingUp size={15} strokeWidth={2.2} />}
+                stocks={sectioned.strength}
+                section="strength"
+                emptyHint="No stocks meeting the 4-week sustained-climb threshold."
+              />
+            )}
+            {activeTab === "losing" && (
+              <Board
+                title="Losing ground"
+                subtitle="Score has weakened consistently"
+                color="var(--color-score-poor)"
+                icon={<TrendingDown size={15} strokeWidth={2.2} />}
+                stocks={sectioned.losing}
+                section="losing"
+                emptyHint="No stocks meeting the 4-week sustained-decline threshold."
+              />
+            )}
+            {activeTab === "breakout" && (
+              <Board
+                title="Recent breakouts"
+                subtitle="Just entered top-quartile of its cluster"
+                color="var(--color-score-excellent)"
+                icon={<Sparkles size={15} strokeWidth={2.2} />}
+                stocks={sectioned.breakout}
+                section="breakout"
+                emptyHint="No new top-quartile entrants this week."
+              />
+            )}
+            {activeTab === "breakdown" && (
+              <Board
+                title="Recent breakdowns"
+                subtitle="Just fell below median this week"
+                color="var(--color-score-weak)"
+                icon={<AlertTriangle size={15} strokeWidth={2.2} />}
+                stocks={sectioned.breakdown}
+                section="breakdown"
+                emptyHint="No fresh breakdowns this week."
+              />
+            )}
+            {activeTab === "compounder" && (
+              <Board
+                title="Quality compounders"
+                subtitle="High quality, veteran tier, score stable over the window"
+                color="var(--color-accent-600)"
+                icon={<Award size={15} strokeWidth={2.2} />}
+                stocks={compounders}
+                section="compounder"
+                emptyHint="No stocks pass the quality-≥75 + veteran + stable filter."
+              />
+            )}
+            {activeTab === "cheap" && (
+              <Board
+                title="Cheap in cluster"
+                subtitle="Top-quartile valuation, composite still respectable"
+                color="var(--color-accent-500)"
+                icon={<Tag size={15} strokeWidth={2.2} />}
+                stocks={cheap}
+                section="cheap"
+                emptyHint="No stocks pass the value-≥75 + composite-≥50 filter."
+              />
+            )}
+            {activeTab === "promoter_up" && (
+              <Board
+                title="Promoter accumulation"
+                subtitle="Promoter stake up ≥1pp QoQ — insiders adding"
+                color="var(--color-accent-400)"
+                icon={<Users size={15} strokeWidth={2.2} />}
+                stocks={promoterUp}
+                section="promoter_up"
+                emptyHint="No promoter-accumulation signals in the latest quarter."
+              />
+            )}
+            {activeTab === "fii_up" && (
+              <Board
+                title="FII accumulation"
+                subtitle="Foreign institutional stake up ≥1pp QoQ"
+                color="var(--color-score-good)"
+                icon={<Globe2 size={15} strokeWidth={2.2} />}
+                stocks={fiiUp}
+                section="fii_up"
+                emptyHint="No FII-accumulation signals in the latest quarter."
+              />
+            )}
           </div>
         </>
       )}
@@ -620,6 +655,115 @@ export default async function IdeasPage({
 // ---------------------------------------------------------------------------
 // UI components
 // ---------------------------------------------------------------------------
+
+/**
+ * Tab strip for /ideas — two rows, fully visible at first paint.
+ *   Row 1: Trend buckets (Building strength / Losing ground / Breakouts / Breakdowns)
+ *   Row 2: Themed buckets (Quality compounders / Cheap / Promoter / FII)
+ *
+ * Each row has a tiny eyebrow on the left so the user knows what the row
+ * means without reading every tab. The previous single-row + scroll-overflow
+ * version buried the themed buckets unless the user noticed the scrollbar.
+ *
+ * Tabs use scroll={false} so clicking a tab doesn't reset scroll position —
+ * a long stock list stays where it was. The selected tab gets a tinted
+ * background + colored border + bold label so it stands apart from the rest.
+ *
+ * URL: /ideas?bucket=<key>[&scope=nifty200]. Scope is preserved.
+ */
+function BucketTabs({
+  active, counts, scopeQuery,
+}: {
+  active: TabKey;
+  scopeQuery: string;
+  counts: {
+    strength: number; losing: number; breakout: number; breakdown: number;
+    compounder: number; cheap: number; promoter_up: number; fii_up: number;
+  };
+}) {
+  const trendItems = [
+    { key: "strength"   as TabKey, label: "Building strength",  dot: "var(--color-score-good)",      n: counts.strength },
+    { key: "losing"     as TabKey, label: "Losing ground",      dot: "var(--color-score-poor)",      n: counts.losing },
+    { key: "breakout"   as TabKey, label: "Recent breakouts",   dot: "var(--color-score-excellent)", n: counts.breakout },
+    { key: "breakdown"  as TabKey, label: "Recent breakdowns",  dot: "var(--color-score-weak)",      n: counts.breakdown },
+  ];
+  const themedItems = [
+    { key: "compounder"  as TabKey, label: "Quality compounders",   dot: "var(--color-accent-600)", n: counts.compounder },
+    { key: "cheap"       as TabKey, label: "Cheap in cluster",      dot: "var(--color-accent-500)", n: counts.cheap },
+    { key: "promoter_up" as TabKey, label: "Promoter accumulation", dot: "var(--color-accent-400)", n: counts.promoter_up },
+    { key: "fii_up"      as TabKey, label: "FII accumulation",      dot: "var(--color-score-good)", n: counts.fii_up },
+  ];
+
+  return (
+    <div className="mt-6 flex flex-col gap-2">
+      <BucketTabRow eyebrow="Trend"  items={trendItems}  active={active} scopeQuery={scopeQuery} />
+      <BucketTabRow eyebrow="Themed" items={themedItems} active={active} scopeQuery={scopeQuery} />
+    </div>
+  );
+}
+
+function BucketTabRow({
+  eyebrow, items, active, scopeQuery,
+}: {
+  eyebrow: string;
+  items: { key: TabKey; label: string; dot: string; n: number }[];
+  active: TabKey;
+  scopeQuery: string;
+}) {
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <span
+        className="text-[10px] uppercase tracking-wide muted-text shrink-0"
+        style={{ minWidth: 48 }}
+      >
+        {eyebrow}
+      </span>
+      <div className="flex flex-wrap gap-1.5">
+        {items.map((it) => (
+          <BucketTab key={it.key} item={it} active={it.key === active} scopeQuery={scopeQuery} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BucketTab({
+  item, active, scopeQuery,
+}: {
+  item: { key: TabKey; label: string; dot: string; n: number };
+  active: boolean;
+  scopeQuery: string;
+}) {
+  const href = `/ideas?bucket=${item.key}${scopeQuery}`;
+  return (
+    <Link
+      href={href}
+      scroll={false}
+      className="px-3 py-1.5 rounded-md text-[12.5px] inline-flex items-center gap-2 transition-colors whitespace-nowrap border"
+      style={
+        active
+          ? {
+              borderColor: item.dot,
+              backgroundColor: "var(--color-card)",
+              color: "var(--color-ink)",
+              boxShadow: `inset 0 0 0 1px ${item.dot}`,
+            }
+          : {
+              borderColor: "var(--color-border-default)",
+              backgroundColor: "transparent",
+              color: "var(--color-muted)",
+            }
+      }
+    >
+      <span
+        className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
+        style={{ background: item.dot }}
+      />
+      <span className={active ? "font-semibold" : "font-medium"}>{item.label}</span>
+      <span className="tabular-nums text-[11px] muted-text">{item.n}</span>
+    </Link>
+  );
+}
 
 function ScopePill({
   href,
@@ -659,15 +803,14 @@ function FirstSnapshotBanner() {
   );
 }
 
-function Nifty500EmptyBanner() {
+function Nifty200EmptyBanner() {
   return (
     <div className="card p-8 mt-8 text-[13px] leading-[1.6]">
-      <div className="font-display text-[17px] mb-2">Nifty 500 filter not yet seeded</div>
+      <div className="font-display text-[17px] mb-2">Nifty 200 filter not yet seeded</div>
       <p className="muted-text">
-        No stocks are currently flagged as Nifty 500 in <code className="font-mono">app.universe.is_nifty500</code>.
-        Either populate the flag (see <code className="font-mono">docs/IDEAS_DESIGN.md</code> for the SQL),
-        or switch to <Link href="/ideas?scope=all" className="text-[var(--color-accent-700)] underline">All stocks</Link>{" "}
-        for now.
+        No stocks are currently flagged as Nifty 200 in <code className="font-mono">app.universe.is_nifty200</code>.
+        Apply <code className="font-mono">db/migrations/0010_nifty200.sql</code> to populate it, or switch back to{" "}
+        <Link href="/ideas" className="text-[var(--color-accent-700)] underline">All stocks</Link>.
       </p>
     </div>
   );

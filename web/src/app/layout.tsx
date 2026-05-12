@@ -55,6 +55,9 @@ function SiteHeader() {
         <div className="flex-1 flex justify-center">
           <StockSearch />
         </div>
+        {/* Top nav — core product surfaces only. Methodology, Glossary, and
+            Peer Comparison live in the footer / inline entry points to keep
+            this strip tight. */}
         <nav className="flex items-center gap-6 text-[14px] shrink-0">
           <Link href="/clusters" className="hover:text-[var(--color-accent-600)]">
             Clusters
@@ -67,9 +70,6 @@ function SiteHeader() {
           </Link>
           <Link href="/ideas" className="hover:text-[var(--color-accent-600)] hidden md:inline">
             Ideas
-          </Link>
-          <Link href="/about" className="hover:text-[var(--color-accent-600)] hidden lg:inline">
-            Methodology
           </Link>
         </nav>
       </div>
@@ -102,16 +102,101 @@ function BanyanLogo() {
 }
 
 function SiteFooter() {
+  // Four-column footer in the Zerodha mould: brand block on the left, then
+  // Product / Learn / Surfaces / About. The "Surfaces" column deep-links into
+  // pre-filtered Ideas buckets — saves the user a click and exposes that the
+  // platform has multiple analytical lenses on the same data.
   return (
-    <footer className="mt-16 border-t hairline">
-      <div className="mx-auto max-w-[1200px] px-6 py-6 text-[12px] muted-text flex justify-between">
-        <span>
-          Fundamental — score-driven NSE equity intelligence
-        </span>
-        <span>
-          Scores recompute weekly. Not investment advice.
-        </span>
+    <footer className="mt-20 border-t hairline" style={{ backgroundColor: "var(--color-paper)" }}>
+      <div className="mx-auto max-w-[1300px] px-6 py-10">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-8">
+          {/* Brand */}
+          <div className="col-span-2 md:col-span-1">
+            <Link href="/" className="flex items-center gap-2.5 mb-4">
+              <BanyanLogo />
+              <span className="font-display text-[18px] tracking-tight leading-none">
+                Fundamental
+              </span>
+            </Link>
+            <p className="text-[12px] muted-text leading-relaxed max-w-[260px]">
+              Score-driven NSE equity intelligence. Quality, Valuation, and
+              Momentum percentiles within each peer cluster — recomputed
+              weekly, never edited.
+            </p>
+            <p className="text-[11px] muted-text mt-4 leading-relaxed">
+              © 2026, Fundamental.<br />Information surface only — not investment advice.
+            </p>
+          </div>
+
+          <FooterColumn
+            title="Product"
+            links={[
+              { href: "/clusters", label: "Clusters" },
+              { href: "/discover", label: "Discover" },
+              { href: "/compare",  label: "Peer comparison" },
+              { href: "/feed",     label: "Feed" },
+              { href: "/ideas",    label: "Ideas" },
+            ]}
+          />
+
+          <FooterColumn
+            title="Learn"
+            links={[
+              { href: "/about",    label: "Methodology" },
+              { href: "/glossary", label: "Glossary of ratios" },
+              { href: "/about#pipeline",        label: "How scores are built" },
+              { href: "/about#why-peer-relative", label: "Why peer-relative" },
+            ]}
+          />
+
+          <FooterColumn
+            title="Surfaces"
+            links={[
+              { href: "/ideas?bucket=compounder",  label: "Quality compounders" },
+              { href: "/ideas?bucket=cheap",       label: "Cheap in cluster" },
+              { href: "/ideas?bucket=promoter_up", label: "Promoter accumulation" },
+              { href: "/ideas?bucket=fii_up",      label: "FII accumulation" },
+              { href: "/feed?dir=down",            label: "Biggest losers" },
+            ]}
+          />
+
+          <FooterColumn
+            title="About"
+            links={[
+              { href: "/about",                       label: "About the platform" },
+              { href: "/about#data-sources",          label: "Data sources" },
+              { href: "/about#what-we-dont-publish",  label: "What we don't publish" },
+            ]}
+          />
+        </div>
+
+        <div className="mt-10 pt-6 border-t hairline flex flex-wrap items-center justify-between gap-3 text-[11px] muted-text">
+          <span>Snapshots recompute every Friday after market close · Coverage: NSE actively-traded universe</span>
+          <span>Built for thinking, not trading.</span>
+        </div>
       </div>
     </footer>
+  );
+}
+
+function FooterColumn({ title, links }: { title: string; links: { href: string; label: string }[] }) {
+  return (
+    <div>
+      <div className="text-[13px] font-medium mb-3" style={{ color: "var(--color-ink)" }}>
+        {title}
+      </div>
+      <ul className="space-y-2">
+        {links.map((l) => (
+          <li key={l.href + l.label}>
+            <Link
+              href={l.href}
+              className="text-[12.5px] muted-text hover:text-[var(--color-accent-600)] transition-colors"
+            >
+              {l.label}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

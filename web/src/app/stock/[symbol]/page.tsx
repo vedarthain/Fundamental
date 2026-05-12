@@ -12,7 +12,6 @@ import {
   qualityNarration, valuationNarration, momentumNarration,
 } from "@/lib/companyNarration";
 import { BusinessVisual } from "@/components/BusinessVisual";
-import { ShareholdingTrend } from "@/components/ShareholdingTrend";
 import { StockPageTabs } from "@/components/StockPageTabs";
 
 export const revalidate = 1800;
@@ -350,11 +349,6 @@ export default async function StockPage({
               <AboutCard stock={stock} priceHistoryStart={priceHistory[0]?.date ?? null} />
               <PriceChartCard symbol={stock.symbol} history={priceHistory} />
             </div>
-            {shareholding && shareholding.length >= 2 && (
-              <div className="mt-8">
-                <ShareholdingTrend shareholding={shareholding} />
-              </div>
-            )}
           </>
         }
         strengths={

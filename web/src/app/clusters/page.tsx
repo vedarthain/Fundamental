@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { sql, golden } from "@/lib/db";
-import { band, bandColor, fmtPct } from "@/lib/score";
+import { band, bandColor } from "@/lib/score";
 
 export const revalidate = 3600;
 
@@ -174,32 +174,144 @@ async function loadHeatMap(): Promise<{ tiles: ClusterTile[]; snapshotDate: stri
   return { tiles, snapshotDate };
 }
 
-export default async function Home() {
+export default async function Home({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | undefined>>;
+}) {
+  const sp = await searchParams;
   const { tiles, snapshotDate } = await loadHeatMap();
 
-  const grouped = new Map<string, { name: string; order: number; tiles: ClusterTile[] }>();
+  // Group by meta_cluster (sector), preserving the curated display_order
+  // so financials always lead, frontier-tech lands last, etc.
+  type Group = { id: string; name: string; order: number; tiles: ClusterTile[] };
+  const groupedMap = new Map<string, Group>();
   for (const t of tiles) {
     const k = t.meta_cluster_id;
-    if (!grouped.has(k)) {
-      grouped.set(k, { name: t.meta_cluster_name, order: t.meta_display_order, tiles: [] });
+    if (!groupedMap.has(k)) {
+      groupedMap.set(k, { id: t.meta_cluster_id, name: t.meta_cluster_name, order: t.meta_display_order, tiles: [] });
     }
-    grouped.get(k)!.tiles.push(t);
+    groupedMap.get(k)!.tiles.push(t);
   }
-  const groups = Array.from(grouped.values()).sort((a, b) => a.order - b.order);
+  const groups = Array.from(groupedMap.values()).sort((a, b) => a.order - b.order);
+
+  // Active sector — from ?sector=<id> param. Defaults to first sector so the
+  // page never renders empty. Falls back gracefully if URL has stale id.
+  const activeId =
+    (sp.sector && groups.find((g) => g.id === sp.sector)?.id) ||
+    groups[0]?.id;
+  const activeGroup = groups.find((g) => g.id === activeId);
 
   return (
-    <div className="mx-auto max-w-[1200px] px-6 py-12">
+    <div className="theme-teal mx-auto max-w-[1200px] px-6 py-12">
       <Hero
         snapshotDate={snapshotDate}
         clusterCount={tiles.length}
         stockCount={tiles.reduce((a, b) => a + b.stock_count, 0)}
       />
       <ScoreBandsLegend />
-      <div className="mt-10 space-y-12">
-        {groups.map((g) => (
-          <MetaClusterRow key={g.name} name={g.name} tiles={g.tiles} />
-        ))}
-      </div>
+
+      {/* Sector tabs — one sector at a time. URL-driven (?sector=<id>) so
+          deep links survive page refresh + history. Active tab gets a teal
+          underline that matches the page theme; the dot color is the sector's
+          live average composite band so collapsed sectors still telegraph
+          strength at a glance. */}
+      {groups.length > 0 && (
+        <>
+          <SectorTabs groups={groups} activeId={activeId!} />
+          {activeGroup && (
+            <div className="mt-6">
+              <SectorTilesGrid tiles={activeGroup.tiles} />
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function SectorTabs({
+  groups, activeId,
+}: {
+  groups: { id: string; name: string; tiles: ClusterTile[] }[];
+  activeId: string;
+}) {
+  // Sectors are split into TWO ROWS so every label is visible at first paint.
+  // The previous single-row + horizontal-scroll layout buried right-edge
+  // tabs unless the user noticed the scrollbar. Two rows fit ~5 tabs each
+  // on a 1200px container, no scroll, no hidden tabs.
+  const half = Math.ceil(groups.length / 2);
+  const row1 = groups.slice(0, half);
+  const row2 = groups.slice(half);
+
+  return (
+    <div className="mt-8 flex flex-col gap-1.5">
+      <SectorTabRow groups={row1} activeId={activeId} />
+      {row2.length > 0 && <SectorTabRow groups={row2} activeId={activeId} />}
+    </div>
+  );
+}
+
+function SectorTabRow({
+  groups, activeId,
+}: {
+  groups: { id: string; name: string; tiles: ClusterTile[] }[];
+  activeId: string;
+}) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {groups.map((g) => {
+        const avg =
+          g.tiles.reduce((a, t) => a + (t.avg_composite ?? 0), 0) /
+          Math.max(1, g.tiles.filter((t) => t.avg_composite != null).length);
+        const dot = bandColor(band(avg));
+        const active = g.id === activeId;
+        const stockTotal = g.tiles.reduce((a, t) => a + t.stock_count, 0);
+        return (
+          <Link
+            key={g.id}
+            href={`/clusters?sector=${encodeURIComponent(g.id)}`}
+            scroll={false}
+            className="px-3 py-1.5 rounded-md text-[12.5px] inline-flex items-center gap-2 transition-colors whitespace-nowrap border"
+            style={
+              active
+                ? {
+                    // Selected tab: tinted background + colored border + bold
+                    // label — three reinforcing signals so it doesn't read as
+                    // "just another chip" in a row of similar pills.
+                    borderColor: dot,
+                    backgroundColor: "var(--color-card)",
+                    color: "var(--color-ink)",
+                    boxShadow: `inset 0 0 0 1px ${dot}`,
+                  }
+                : {
+                    borderColor: "var(--color-border-default)",
+                    backgroundColor: "transparent",
+                    color: "var(--color-muted)",
+                  }
+            }
+          >
+            <span
+              className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
+              style={{ background: dot }}
+            />
+            <span className={active ? "font-semibold" : "font-medium"}>{g.name}</span>
+            <span className="tabular-nums text-[11px] muted-text">
+              {g.tiles.length}·{stockTotal}
+            </span>
+          </Link>
+        );
+      })}
+    </div>
+  );
+}
+
+function SectorTilesGrid({ tiles }: { tiles: ClusterTile[] }) {
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+      {tiles.map((t) => (
+        <ClusterTileCard key={t.cluster_id} tile={t} />
+      ))}
     </div>
   );
 }
@@ -256,19 +368,12 @@ function ScoreBandsLegend() {
   );
 }
 
-function MetaClusterRow({ name, tiles }: { name: string; tiles: ClusterTile[] }) {
-  return (
-    <section>
-      <h2 className="font-display text-[22px] mb-4 tracking-tight">{name}</h2>
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-        {tiles.map((t) => (
-          <ClusterTileCard key={t.cluster_id} tile={t} />
-        ))}
-      </div>
-    </section>
-  );
-}
-
+/**
+ * Tile — denser layout. Composite badge + name + stock count on one row,
+ * pill-style 1W/1M/1Y returns below. The Q/V/M average pillars were dropped
+ * from the visible tile (still on the cluster detail page) because they
+ * doubled the height and the composite already aggregates them.
+ */
 function ClusterTileCard({ tile }: { tile: ClusterTile }) {
   const b = band(tile.avg_composite);
   const bg = bandColor(b);
@@ -276,32 +381,27 @@ function ClusterTileCard({ tile }: { tile: ClusterTile }) {
   return (
     <Link
       href={`/cluster/${tile.cluster_id}`}
-      className="card p-4 group hover:border-[var(--color-accent-300)] transition-colors block"
+      className="card p-2.5 group hover:border-[var(--color-accent-300)] transition-colors block"
     >
-      <div className="flex items-start gap-3">
+      <div className="flex items-center gap-2.5">
         <div
-          className="w-12 h-12 rounded-md flex items-center justify-center shrink-0"
+          className="w-9 h-9 rounded-md flex items-center justify-center shrink-0"
           style={{ backgroundColor: bg }}
         >
-          <span className="text-[18px] font-medium tabular-nums" style={{ color: numColor }}>
+          <span className="text-[15px] font-medium tabular-nums leading-none" style={{ color: numColor }}>
             {tile.avg_composite == null ? "—" : Math.round(tile.avg_composite)}
           </span>
         </div>
         <div className="min-w-0">
-          <div className="text-[14px] font-medium leading-tight truncate">
+          <div className="text-[12.5px] font-medium leading-tight truncate">
             {tile.cluster_name}
           </div>
-          <div className="text-[11px] muted-text mt-0.5">{tile.stock_count} stocks</div>
+          <div className="text-[10px] muted-text mt-0.5">{tile.stock_count} stocks</div>
         </div>
-      </div>
-      <div className="mt-3 grid grid-cols-3 gap-1 text-[11px]">
-        <PillarMini label="Q" value={tile.avg_quality} />
-        <PillarMini label="V" value={tile.avg_valuation} />
-        <PillarMini label="M" value={tile.avg_momentum} />
       </div>
       {(tile.ret_1w != null || tile.ret_1m != null || tile.ret_1y != null) && (
         <div
-          className="mt-1.5 grid grid-cols-3 gap-1 text-[10.5px]"
+          className="mt-2 grid grid-cols-3 gap-1 text-[10px]"
           title="Market-cap-weighted total return across the stocks in this cluster"
         >
           <ReturnMini label="1W" value={tile.ret_1w} />
@@ -310,15 +410,6 @@ function ClusterTileCard({ tile }: { tile: ClusterTile }) {
         </div>
       )}
     </Link>
-  );
-}
-
-function PillarMini({ label, value }: { label: string; value: number | null }) {
-  return (
-    <div className="flex items-center justify-between rounded-sm px-1.5 py-0.5 hairline border">
-      <span className="muted-text">{label}</span>
-      <span className="tabular-nums">{fmtPct(value, "")}</span>
-    </div>
   );
 }
 

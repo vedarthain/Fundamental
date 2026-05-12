@@ -46,16 +46,19 @@ export function ShareholdingTrend({
   // so the chart reads left→right as time advances.
   const ordered = [...shareholding].reverse();
 
-  // SVG geometry — viewBox is responsive via CSS width:100%
-  const W = 560;
-  const H = 220;
-  const PAD_L = 36;
-  const PAD_R = 16;
-  const PAD_T = 12;
-  const PAD_B = 36;
+  // SVG geometry — sized to feel like a "callout" not a "section".
+  // Aspect ratio ~3.5:1 so the chart reads as a slim horizontal strip rather
+  // than dominating the viewport. Bars stay narrow which keeps tiny segments
+  // (FII at 0.3% etc.) visible as thin slivers instead of one giant block.
+  const W = 480;
+  const H = 130;
+  const PAD_L = 28;
+  const PAD_R = 12;
+  const PAD_T = 8;
+  const PAD_B = 22;
   const innerW = W - PAD_L - PAD_R;
   const innerH = H - PAD_T - PAD_B;
-  const gap = 14;
+  const gap = 10;
   const barW = (innerW - gap * (ordered.length - 1)) / ordered.length;
 
   // Latest values for the legend's "current %" + delta vs previous quarter.
@@ -63,22 +66,17 @@ export function ShareholdingTrend({
   const prev = ordered[ordered.length - 2];
 
   return (
-    <section className="card p-6">
-      <div className="flex items-baseline justify-between mb-1">
-        <h2 className="font-display text-[18px]">Shareholding pattern</h2>
-        <div className="muted-text text-[11px]">
-          Last {ordered.length} quarter{ordered.length === 1 ? "" : "s"}
+    <section className="card p-4">
+      <div className="flex items-baseline justify-between gap-3 mb-2">
+        <h2 className="font-display text-[15px]">Shareholding</h2>
+        <div className="muted-text text-[10.5px]">
+          {ordered.length} quarter{ordered.length === 1 ? "" : "s"} · latest {fmtPeriod(latest.period_end)}
         </div>
       </div>
-      <p className="muted-text text-[12.5px] leading-[1.5] mt-1 mb-4 max-w-[640px]">
-        Stacked composition of ownership at each quarter end. Watch the
-        promoter band for accumulation/dilution, and the FII / DII bands for
-        institutional flow.
-      </p>
 
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full block">
-        {/* y-axis gridlines at 25/50/75/100 */}
-        {[0, 25, 50, 75, 100].map((p) => {
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full block" preserveAspectRatio="xMidYMid meet">
+        {/* y-axis gridlines at 50/100 only — fewer numbers, less noise */}
+        {[0, 50, 100].map((p) => {
           const y = PAD_T + innerH * (1 - p / 100);
           return (
             <g key={p}>
@@ -88,18 +86,18 @@ export function ShareholdingTrend({
                 y1={y}
                 y2={y}
                 stroke="var(--color-border-default)"
-                strokeOpacity={p === 0 || p === 100 ? 0.5 : 0.25}
+                strokeOpacity={p === 0 || p === 100 ? 0.4 : 0.2}
                 strokeDasharray={p === 0 || p === 100 ? "" : "2 3"}
               />
               <text
-                x={PAD_L - 6}
+                x={PAD_L - 4}
                 y={y + 3}
                 textAnchor="end"
-                fontSize={9}
+                fontSize={8}
                 fill="var(--color-muted)"
                 fontFamily="Inter"
               >
-                {p}%
+                {p}
               </text>
             </g>
           );
@@ -136,9 +134,9 @@ export function ShareholdingTrend({
               })}
               <text
                 x={x + barW / 2}
-                y={H - PAD_B + 14}
+                y={H - PAD_B + 13}
                 textAnchor="middle"
-                fontSize={10}
+                fontSize={9.5}
                 fill="var(--color-muted)"
                 fontFamily="Inter"
               >
@@ -149,8 +147,10 @@ export function ShareholdingTrend({
         })}
       </svg>
 
-      {/* Legend — current % + delta vs previous quarter */}
-      <div className="mt-4 grid gap-x-5 gap-y-2 text-[12px]" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}>
+      {/* Inline legend — single row, label · pct · delta. Drops categories
+          that are zero in both current and previous quarters (e.g. Government
+          for most private companies). */}
+      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
         {CATEGORIES.map((c) => {
           const curr = (latest[c.key as CatKey] as number | null) ?? 0;
           const past = prev ? ((prev[c.key as CatKey] as number | null) ?? 0) : null;
@@ -162,23 +162,23 @@ export function ShareholdingTrend({
               ? "var(--color-score-good)"
               : "var(--color-score-poor)";
           return (
-            <div key={c.key} className="flex items-center gap-2">
+            <span key={c.key} className="inline-flex items-baseline gap-1.5">
               <span
-                className="inline-block w-2.5 h-2.5 rounded-sm shrink-0"
+                className="inline-block w-2 h-2 rounded-sm shrink-0 translate-y-[1px]"
                 style={{ background: c.color }}
               />
               <span className="muted-text">{c.label}</span>
-              <span className="tabular-nums ink-text ml-auto">{curr.toFixed(1)}%</span>
+              <span className="tabular-nums ink-text font-medium">{curr.toFixed(1)}%</span>
               {showDelta && (
                 <span
-                  className="tabular-nums shrink-0"
-                  style={{ color: deltaColor, fontSize: 10.5 }}
+                  className="tabular-nums"
+                  style={{ color: deltaColor, fontSize: 10 }}
                   title={`Δ vs ${fmtPeriod(prev!.period_end)}`}
                 >
                   {delta! >= 0 ? "+" : ""}{delta!.toFixed(1)}
                 </span>
               )}
-            </div>
+            </span>
           );
         })}
       </div>

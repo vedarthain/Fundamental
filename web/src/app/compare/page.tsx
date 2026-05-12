@@ -1,23 +1,22 @@
 /**
  * /compare — side-by-side stock comparison.
  *
- * Usage: /compare?a=INFY&b=TCS&c=WIPRO
+ * Usage: /compare?a=INFY&b=TCS&c=HCLTECH&d=WIPRO&e=TECHM[&view=raw]
  *
- * Up to 3 symbols compared in parallel columns. Each row of the table renders
- * the same metric for each stock, with the winner highlighted (highest
- * composite, lowest valuation %ile = cheapest, etc.). Same scorecard,
- * apples-to-apples.
+ * Two views, toggled by ?view=:
+ *   - "fundamental" (default) — peer-cluster scorecards (Composite, Q/V/M,
+ *     rank, market cap). Apples-to-apples ranking within a cluster.
+ *   - "raw" — actual financial numbers from the latest annual filing
+ *     (Revenue, Net Profit, margins, RoE, debt). Read the absolute scale,
+ *     not the relative percentile.
  *
  * Design choices:
- *   - Server-rendered: search params drive the page, no client interactivity
- *     beyond the symbol-input form at the top.
- *   - Up to 3 columns: more than that and rows become unreadable on mobile;
- *     /discover is the right surface if you want N-way ranking.
- *   - Highlight "best in row" with a subtle accent border-left on the cell;
- *     avoids a noisy color grid.
- *   - If two stocks aren't in the same cluster, we still compare them — but
- *     surface a banner noting that peer-relative scores aren't directly
- *     comparable across clusters.
+ *   - Server-rendered: all params drive rendering; no client state.
+ *   - Up to 5 columns: enough to compare a small cluster end-to-end; the
+ *     metric column shrinks on wider grids; horizontal scroll past that.
+ *   - Winner-in-row gets an accent stripe (only for rows where "better" is
+ *     well-defined; cluster/sector cells have no winner).
+ *   - Cross-cluster comparison gets a warning banner.
  */
 import Link from "next/link";
 import { sql } from "@/lib/db";
@@ -26,6 +25,8 @@ import { ArrowLeftRight } from "lucide-react";
 
 export const revalidate = 1800;
 export const dynamic = "force-dynamic";
+
+type ViewMode = "fundamental" | "raw";
 
 type CompareRow = {
   symbol: string;
@@ -45,17 +46,29 @@ type CompareRow = {
   momentum_pct: number | null;
   rank_in_cluster: number | null;
   cluster_peer_count: number | null;
+  // Raw-data fields — latest + previous annual filing
+  fy_latest: string | null;        // period_end of latest annual
+  fy_prev: string | null;          // period_end of one-year prior
+  sales: number | null;            // ₹ Cr
+  sales_prev: number | null;
+  operating_profit: number | null;
+  operating_profit_prev: number | null;
+  net_profit: number | null;
+  net_profit_prev: number | null;
+  cash_from_operating: number | null;
+  total_assets: number | null;
+  borrowings: number | null;
+  equity_book: number | null;      // equity_share_capital + reserves
 };
 
 async function loadOne(symbol: string): Promise<CompareRow | null> {
   const upper = symbol.toUpperCase();
-  // One round-trip per stock; up to 3 in parallel via Promise.all in the page.
-  // Cheaper than a giant CTE and clearer to debug. Rank computed via the same
-  // pattern used on /stock/[symbol].
+  // Single round-trip: score row + rank + 2 latest annual rows attached via
+  // LATERAL joins. The LATERAL keeps the per-symbol annual lookup separate
+  // from the score join — annual_latest is "most recent FY", annual_prev is
+  // "the FY before that". This works even when reporting gaps exist.
   const rows = await sql<CompareRow[]>`
-    WITH latest AS (
-      SELECT MAX(snapshot_date) AS d FROM app.scores
-    ),
+    WITH latest AS (SELECT MAX(snapshot_date) AS d FROM app.scores),
     me AS (
       SELECT s.* FROM app.scores s
       WHERE s.symbol = ${upper} AND s.snapshot_date = (SELECT d FROM latest)
@@ -78,12 +91,34 @@ async function loadOne(symbol: string): Promise<CompareRow | null> {
       ((SELECT COUNT(*) FROM peers
          WHERE COALESCE(composite_pct, -1) > COALESCE(me.composite_pct, -1)
        ) + 1)::int AS rank_in_cluster,
-      (SELECT COUNT(*) FROM peers)::int AS cluster_peer_count
+      (SELECT COUNT(*) FROM peers)::int AS cluster_peer_count,
+      al.period_end::text  AS fy_latest,
+      ap.period_end::text  AS fy_prev,
+      al.sales::float                AS sales,
+      ap.sales::float                AS sales_prev,
+      al.operating_profit::float     AS operating_profit,
+      ap.operating_profit::float     AS operating_profit_prev,
+      al.net_profit::float           AS net_profit,
+      ap.net_profit::float           AS net_profit_prev,
+      al.cash_from_operating::float  AS cash_from_operating,
+      al.total_assets::float         AS total_assets,
+      al.borrowings::float           AS borrowings,
+      (COALESCE(al.equity_share_capital, 0) + COALESCE(al.reserves, 0))::float AS equity_book
     FROM me
     JOIN app.universe u USING (symbol)
     JOIN app.cluster c ON c.id = me.cluster_id
     JOIN app.meta_cluster mc ON mc.id = c.meta_cluster_id
     LEFT JOIN app.screener_meta sm USING (symbol)
+    LEFT JOIN LATERAL (
+      SELECT * FROM app.fundamentals_annual a
+      WHERE a.symbol = me.symbol
+      ORDER BY a.period_end DESC LIMIT 1
+    ) al ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT * FROM app.fundamentals_annual a
+      WHERE a.symbol = me.symbol AND a.period_end < al.period_end
+      ORDER BY a.period_end DESC LIMIT 1
+    ) ap ON TRUE
   `;
   return rows[0] ?? null;
 }
@@ -94,14 +129,14 @@ export default async function ComparePage({
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const sp = await searchParams;
-  const raw = [sp.a, sp.b, sp.c]
+  const view: ViewMode = sp.view === "raw" ? "raw" : "fundamental";
+  // Up to 5 slots — a/b/c/d/e. Missing slots are filtered out.
+  const raw = [sp.a, sp.b, sp.c, sp.d, sp.e]
     .map((s) => (s ?? "").trim().toUpperCase())
     .filter((s) => s.length > 0)
-    .slice(0, 3);
+    .slice(0, 5);
 
   const loaded = await Promise.all(raw.map((s) => loadOne(s)));
-  // Drop misses but preserve order. Mismatches get logged via the empty-slot
-  // banner below; here we just compare what we have.
   const found = loaded.filter((r): r is CompareRow => r != null);
   const missing = raw.filter((s, i) => loaded[i] == null);
 
@@ -109,25 +144,36 @@ export default async function ComparePage({
     found.length >= 2 &&
     found.every((r) => r.cluster_id === found[0].cluster_id);
 
+  // Preserve current symbols + view in tab URLs so a tab switch doesn't reset selection.
+  const baseParams = new URLSearchParams();
+  const slotKeys = ["a", "b", "c", "d", "e"] as const;
+  raw.forEach((s, i) => { if (s) baseParams.set(slotKeys[i], s); });
+  const hrefFundamental = `/compare?${baseParams.toString()}`;
+  baseParams.set("view", "raw");
+  const hrefRaw = `/compare?${baseParams.toString()}`;
+
   return (
-    <div className="mx-auto max-w-[1200px] px-6 py-10">
+    <div className="theme-amber mx-auto max-w-[1200px] px-6 py-10">
       <header className="max-w-[820px]">
         <div className="text-[12px] uppercase tracking-wide muted-text flex items-center gap-2">
           <ArrowLeftRight size={13} />
-          <span>Compare</span>
+          <span>Peer comparison</span>
         </div>
         <h1 className="font-display text-[36px] tracking-tight leading-tight mt-1">
           Stocks <em className="accent">side by side</em>.
         </h1>
         <p className="mt-3 text-[14.5px] muted-text leading-[1.6] max-w-[640px]">
-          Pick up to three NSE symbols. We render the same scorecard for each,
-          with the row winner highlighted. Most useful when the stocks share a
-          peer cluster — scores are peer-relative, so cross-cluster comparisons
-          are directional, not exact.
+          Pick up to five NSE symbols. Switch between the peer-relative
+          scorecard and the raw financial filings.
         </p>
+        <div className="mt-2 text-[12px] muted-text">
+          <Link href="/discover" className="hover:text-[var(--color-accent-700)]">
+            ← Back to Discover
+          </Link>
+        </div>
       </header>
 
-      <CompareForm initial={raw} />
+      <CompareForm initial={raw} view={view} />
 
       {missing.length > 0 && (
         <div
@@ -144,7 +190,7 @@ export default async function ComparePage({
               {m}{i < missing.length - 1 ? "," : ""}
             </span>
           ))}
-          . Check spelling — symbols are case-insensitive but must match NSE ticker.
+          . Symbols are case-insensitive but must match the NSE ticker.
         </div>
       )}
 
@@ -152,9 +198,15 @@ export default async function ComparePage({
 
       {found.length > 0 && (
         <>
-          {!allSameCluster && found.length >= 2 && (
+          {/* Tab strip */}
+          <div className="mt-7 mb-4 border-b hairline flex gap-1">
+            <TabLink href={hrefFundamental} active={view === "fundamental"} label="Fundamental comparison" sub="Peer-relative scorecard" />
+            <TabLink href={hrefRaw}        active={view === "raw"}         label="Raw data comparison"   sub="Latest annual filing" />
+          </div>
+
+          {!allSameCluster && found.length >= 2 && view === "fundamental" && (
             <div
-              className="mt-6 px-4 py-3 rounded-md text-[12.5px] leading-[1.55]"
+              className="mb-4 px-4 py-3 rounded-md text-[12.5px] leading-[1.55]"
               style={{
                 background: "var(--color-paper)",
                 border: "1px solid var(--color-border-default)",
@@ -163,33 +215,64 @@ export default async function ComparePage({
               <strong>Different clusters.</strong> {found.map((r) => r.symbol).join(", ")} sit
               in different peer groups, so percentile scores aren&apos;t directly comparable
               (Quality 80 in IT Services ≠ Quality 80 in Cement). Treat the comparison as
-              directional.
+              directional. The <em>Raw data</em> tab compares absolute numbers, which IS
+              meaningful across clusters.
             </div>
           )}
 
-          <div className="mt-8">
-            <CompareTable rows={found} />
-          </div>
+          {view === "fundamental" ? (
+            <FundamentalTable rows={found} />
+          ) : (
+            <RawTable rows={found} />
+          )}
         </>
       )}
     </div>
   );
 }
 
-/** Quick-pick form: 3 symbol inputs + Go button, GET-submitted. */
-function CompareForm({ initial }: { initial: string[] }) {
-  const a = initial[0] ?? "";
-  const b = initial[1] ?? "";
-  const c = initial[2] ?? "";
+function TabLink({ href, active, label, sub }: { href: string; active: boolean; label: string; sub?: string }) {
+  return (
+    <Link
+      href={href}
+      className="px-4 py-2.5 text-[13.5px] -mb-px border-b-2 transition-colors"
+      style={
+        active
+          ? { borderColor: "var(--color-accent-500)", color: "var(--color-ink)" }
+          : { borderColor: "transparent", color: "var(--color-muted)" }
+      }
+    >
+      <div className="font-medium">{label}</div>
+      {sub && <div className="text-[10.5px] muted-text font-normal mt-0.5">{sub}</div>}
+    </Link>
+  );
+}
+
+/** Quick-pick form: up to 5 symbol inputs + Go button, GET-submitted. */
+function CompareForm({ initial, view }: { initial: string[]; view: ViewMode }) {
+  const slots: { name: "a" | "b" | "c" | "d" | "e"; placeholder: string }[] = [
+    { name: "a", placeholder: "e.g. INFY" },
+    { name: "b", placeholder: "e.g. TCS" },
+    { name: "c", placeholder: "e.g. HCLTECH" },
+    { name: "d", placeholder: "+ optional" },
+    { name: "e", placeholder: "+ optional" },
+  ];
   return (
     <form
       action="/compare"
       method="get"
       className="mt-6 flex flex-wrap gap-2 items-center"
     >
-      <SymbolInput name="a" placeholder="e.g. INFY"      defaultValue={a} />
-      <SymbolInput name="b" placeholder="e.g. TCS"       defaultValue={b} />
-      <SymbolInput name="c" placeholder="e.g. HCLTECH"   defaultValue={c} />
+      {slots.map((s, i) => (
+        <SymbolInput
+          key={s.name}
+          name={s.name}
+          placeholder={s.placeholder}
+          defaultValue={initial[i] ?? ""}
+        />
+      ))}
+      {/* Carry the view through the form so submit doesn't reset to default */}
+      {view !== "fundamental" && <input type="hidden" name="view" value={view} />}
       <button type="submit" className="btn-primary">Compare</button>
     </form>
   );
@@ -229,115 +312,33 @@ function EmptyState() {
   );
 }
 
-/** Row-by-row scorecard. Each row computes its winner (best value); winner gets
- * a small accent stripe. Sort direction is per-row (some "lower is better"). */
-function CompareTable({ rows }: { rows: CompareRow[] }) {
-  // Define rows once with a value extractor + "better" comparator.
-  // higherIsBetter: true → max wins; false → min wins; null → no winner highlight.
-  type RowDef = {
-    label: string;
-    sub?: string;
-    extract: (r: CompareRow) => number | null;
-    higherIsBetter: boolean | null;
-    render: (r: CompareRow) => React.ReactNode;
-  };
+// ---------------------------------------------------------------------------
+// Shared row-table primitive — used by both fundamental + raw views
+// ---------------------------------------------------------------------------
 
-  const defs: RowDef[] = [
-    {
-      label: "Composite",
-      sub: "Platform-default cluster-tuned blend",
-      extract: (r) => r.composite_pct,
-      higherIsBetter: true,
-      render: (r) => <ScoreCell value={r.composite_pct} highlight />,
-    },
-    {
-      label: "Quality",
-      extract: (r) => r.quality_pct,
-      higherIsBetter: true,
-      render: (r) => <ScoreCell value={r.quality_pct} />,
-    },
-    {
-      label: "Valuation",
-      sub: "Higher = cheaper vs peers",
-      extract: (r) => r.valuation_pct,
-      higherIsBetter: true,
-      render: (r) => <ScoreCell value={r.valuation_pct} />,
-    },
-    {
-      label: "Momentum",
-      extract: (r) => r.momentum_pct,
-      higherIsBetter: true,
-      render: (r) => <ScoreCell value={r.momentum_pct} />,
-    },
-    {
-      label: "Rank in cluster",
-      extract: (r) => (r.rank_in_cluster != null ? -r.rank_in_cluster : null), // lower rank = better, so negate
-      higherIsBetter: true,
-      render: (r) =>
-        r.rank_in_cluster != null && r.cluster_peer_count != null ? (
-          <span className="tabular-nums">
-            {r.rank_in_cluster} <span className="muted-text">of {r.cluster_peer_count}</span>
-          </span>
-        ) : (
-          <span className="muted-text">—</span>
-        ),
-    },
-    {
-      label: "Cluster",
-      extract: () => null,
-      higherIsBetter: null,
-      render: (r) => (
-        <span className="text-[12.5px]">
-          <div className="muted-text text-[10.5px] uppercase tracking-wide">{r.meta_cluster_name}</div>
-          {r.cluster_name}
-        </span>
-      ),
-    },
-    {
-      label: "Maturity tier",
-      extract: () => null,
-      higherIsBetter: null,
-      render: (r) => <span>{tierLabel(r.maturity_tier)}</span>,
-    },
-    {
-      label: "Market cap",
-      extract: (r) => r.market_cap_cr,
-      higherIsBetter: true,
-      render: (r) =>
-        r.market_cap_cr != null ? (
-          <span className="tabular-nums">{fmtRupeesCr(r.market_cap_cr)}</span>
-        ) : (
-          <span className="muted-text">—</span>
-        ),
-    },
-    {
-      label: "Current price",
-      extract: () => null, // price comparison across companies isn't meaningful
-      higherIsBetter: null,
-      render: (r) =>
-        r.current_price != null ? (
-          <span className="tabular-nums">
-            ₹{r.current_price.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
-          </span>
-        ) : (
-          <span className="muted-text">—</span>
-        ),
-    },
-  ];
+type RowDef<R> = {
+  label: string;
+  sub?: string;
+  extract: (r: R) => number | null;
+  // true = max wins, false = min wins, null = no winner highlight
+  higherIsBetter: boolean | null;
+  render: (r: R) => React.ReactNode;
+};
 
-  // Pre-compute winner index per row.
+function ScorecardTable<R extends { symbol: string; company_name: string }>({
+  rows, defs,
+}: {
+  rows: R[];
+  defs: RowDef<R>[];
+}) {
   const winners: (number | null)[] = defs.map((d) => {
     if (d.higherIsBetter === null) return null;
-    const vals = rows.map((r) => d.extract(r));
     let bestIdx: number | null = null;
     let bestVal: number | null = null;
-    for (let i = 0; i < vals.length; i++) {
-      const v = vals[i];
+    for (let i = 0; i < rows.length; i++) {
+      const v = d.extract(rows[i]);
       if (v == null) continue;
-      if (
-        bestVal == null ||
-        (d.higherIsBetter ? v > bestVal : v < bestVal)
-      ) {
+      if (bestVal == null || (d.higherIsBetter ? v > bestVal : v < bestVal)) {
         bestVal = v;
         bestIdx = i;
       }
@@ -345,15 +346,19 @@ function CompareTable({ rows }: { rows: CompareRow[] }) {
     return bestIdx;
   });
 
-  const colW = `minmax(200px, 1fr)`;
-  const gridCols = `200px ${rows.map(() => colW).join(" ")}`;
+  // Metric column fixed at 180px; each stock column gets a min of 150px so
+  // 5 columns still fit on a typical laptop without truncation. Horizontal
+  // scroll kicks in past that.
+  const colW = `minmax(150px, 1fr)`;
+  const gridCols = `180px ${rows.map(() => colW).join(" ")}`;
+  const minWidth = 180 + rows.length * 160;
 
   return (
     <div className="card overflow-x-auto">
       {/* Header row — stock identity */}
       <div
         className="grid items-end gap-3 px-4 py-4 border-b hairline"
-        style={{ gridTemplateColumns: gridCols, minWidth: 600 }}
+        style={{ gridTemplateColumns: gridCols, minWidth }}
       >
         <div className="text-[11px] uppercase tracking-wide muted-text">Metric</div>
         {rows.map((r) => (
@@ -369,12 +374,11 @@ function CompareTable({ rows }: { rows: CompareRow[] }) {
         ))}
       </div>
 
-      {/* Data rows */}
       {defs.map((d, i) => (
         <div
           key={d.label}
           className="grid gap-3 px-4 py-3 border-b hairline last:border-b-0"
-          style={{ gridTemplateColumns: gridCols, minWidth: 600 }}
+          style={{ gridTemplateColumns: gridCols, minWidth }}
         >
           <div>
             <div className="text-[13px] font-medium">{d.label}</div>
@@ -404,6 +408,146 @@ function CompareTable({ rows }: { rows: CompareRow[] }) {
       ))}
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Fundamental view — peer-relative scorecard
+// ---------------------------------------------------------------------------
+
+function FundamentalTable({ rows }: { rows: CompareRow[] }) {
+  const defs: RowDef<CompareRow>[] = [
+    {
+      label: "Composite",
+      sub: "Cluster-tuned blend (0–100)",
+      extract: (r) => r.composite_pct,
+      higherIsBetter: true,
+      render: (r) => <ScoreCell value={r.composite_pct} highlight />,
+    },
+    { label: "Quality",   extract: (r) => r.quality_pct,   higherIsBetter: true, render: (r) => <ScoreCell value={r.quality_pct} /> },
+    { label: "Valuation", sub: "Higher = cheaper", extract: (r) => r.valuation_pct, higherIsBetter: true, render: (r) => <ScoreCell value={r.valuation_pct} /> },
+    { label: "Momentum",  extract: (r) => r.momentum_pct,  higherIsBetter: true, render: (r) => <ScoreCell value={r.momentum_pct} /> },
+    {
+      label: "Rank in cluster",
+      extract: (r) => (r.rank_in_cluster != null ? -r.rank_in_cluster : null),
+      higherIsBetter: true,
+      render: (r) =>
+        r.rank_in_cluster != null && r.cluster_peer_count != null ? (
+          <span className="tabular-nums">
+            {r.rank_in_cluster} <span className="muted-text">of {r.cluster_peer_count}</span>
+          </span>
+        ) : (
+          <span className="muted-text">—</span>
+        ),
+    },
+    {
+      label: "Cluster",
+      extract: () => null,
+      higherIsBetter: null,
+      render: (r) => (
+        <span className="text-[12.5px]">
+          <div className="muted-text text-[10.5px] uppercase tracking-wide">{r.meta_cluster_name}</div>
+          {r.cluster_name}
+        </span>
+      ),
+    },
+    { label: "Maturity tier", extract: () => null, higherIsBetter: null, render: (r) => <span>{tierLabel(r.maturity_tier)}</span> },
+    {
+      label: "Market cap",
+      extract: (r) => r.market_cap_cr,
+      higherIsBetter: true,
+      render: (r) => r.market_cap_cr != null
+        ? <span className="tabular-nums">{fmtRupeesCr(r.market_cap_cr)}</span>
+        : <span className="muted-text">—</span>,
+    },
+  ];
+  return <ScorecardTable rows={rows} defs={defs} />;
+}
+
+// ---------------------------------------------------------------------------
+// Raw-data view — actual financial numbers
+// ---------------------------------------------------------------------------
+
+function FmtCr({ v }: { v: number | null }) {
+  if (v == null) return <span className="muted-text">—</span>;
+  return <span className="tabular-nums">{v.toLocaleString("en-IN", { maximumFractionDigits: 0 })}<span className="muted-text text-[10.5px]"> Cr</span></span>;
+}
+
+function FmtPctSigned({ v, suffix = "%" }: { v: number | null; suffix?: string }) {
+  if (v == null || !isFinite(v)) return <span className="muted-text">—</span>;
+  const color = v >= 0 ? "var(--color-score-good)" : "var(--color-score-poor)";
+  return (
+    <span className="tabular-nums font-medium" style={{ color }}>
+      {v >= 0 ? "+" : ""}{v.toFixed(1)}{suffix}
+    </span>
+  );
+}
+
+function FmtPctAbs({ v }: { v: number | null }) {
+  if (v == null || !isFinite(v)) return <span className="muted-text">—</span>;
+  return <span className="tabular-nums">{v.toFixed(1)}%</span>;
+}
+
+function RawTable({ rows }: { rows: CompareRow[] }) {
+  // Derived metric helpers — all percentages so winner ordering is direct.
+  // Guard divisions: return null on null/zero denominator rather than NaN/Infinity.
+  const salesGrowth = (r: CompareRow) =>
+    r.sales != null && r.sales_prev != null && r.sales_prev !== 0
+      ? ((r.sales / r.sales_prev) - 1) * 100
+      : null;
+  const npGrowth = (r: CompareRow) =>
+    r.net_profit != null && r.net_profit_prev != null && r.net_profit_prev !== 0
+      ? ((r.net_profit / r.net_profit_prev) - 1) * 100
+      : null;
+  const opMargin = (r: CompareRow) =>
+    r.sales && r.operating_profit != null ? (r.operating_profit / r.sales) * 100 : null;
+  const npMargin = (r: CompareRow) =>
+    r.sales && r.net_profit != null ? (r.net_profit / r.sales) * 100 : null;
+  const roe = (r: CompareRow) =>
+    r.equity_book && r.net_profit != null && r.equity_book > 0
+      ? (r.net_profit / r.equity_book) * 100
+      : null;
+  const de = (r: CompareRow) =>
+    r.equity_book && r.borrowings != null && r.equity_book > 0
+      ? r.borrowings / r.equity_book
+      : null;
+
+  const defs: RowDef<CompareRow>[] = [
+    {
+      label: "Reporting year",
+      sub: "Latest filed FY end",
+      extract: () => null,
+      higherIsBetter: null,
+      render: (r) => r.fy_latest
+        ? <span className="tabular-nums text-[12.5px]">{r.fy_latest}</span>
+        : <span className="muted-text">—</span>,
+    },
+    { label: "Revenue",          extract: (r) => r.sales,             higherIsBetter: true,  render: (r) => <FmtCr v={r.sales} /> },
+    { label: "Revenue growth YoY", sub: "vs prior FY", extract: salesGrowth, higherIsBetter: true, render: (r) => <FmtPctSigned v={salesGrowth(r)} /> },
+    { label: "Operating profit", extract: (r) => r.operating_profit,  higherIsBetter: true,  render: (r) => <FmtCr v={r.operating_profit} /> },
+    { label: "Operating margin", sub: "OP / Revenue", extract: opMargin, higherIsBetter: true, render: (r) => <FmtPctAbs v={opMargin(r)} /> },
+    { label: "Net profit",       extract: (r) => r.net_profit,        higherIsBetter: true,  render: (r) => <FmtCr v={r.net_profit} /> },
+    { label: "Net profit growth YoY", sub: "vs prior FY", extract: npGrowth, higherIsBetter: true, render: (r) => <FmtPctSigned v={npGrowth(r)} /> },
+    { label: "Net margin",       sub: "NP / Revenue", extract: npMargin, higherIsBetter: true, render: (r) => <FmtPctAbs v={npMargin(r)} /> },
+    { label: "Return on equity", sub: "NP / book equity", extract: roe, higherIsBetter: true, render: (r) => <FmtPctAbs v={roe(r)} /> },
+    { label: "Cash from operations", extract: (r) => r.cash_from_operating, higherIsBetter: true, render: (r) => <FmtCr v={r.cash_from_operating} /> },
+    { label: "Total assets",     extract: (r) => r.total_assets,      higherIsBetter: true,  render: (r) => <FmtCr v={r.total_assets} /> },
+    { label: "Borrowings",       extract: (r) => r.borrowings,        higherIsBetter: false, render: (r) => <FmtCr v={r.borrowings} /> },
+    { label: "Debt / Equity",    sub: "Borrowings / book equity", extract: de, higherIsBetter: false, render: (r) => {
+        const v = de(r);
+        return v == null
+          ? <span className="muted-text">—</span>
+          : <span className="tabular-nums">{v.toFixed(2)}×</span>;
+      }
+    },
+    {
+      label: "Book equity",
+      sub: "Share capital + reserves",
+      extract: (r) => r.equity_book,
+      higherIsBetter: true,
+      render: (r) => <FmtCr v={r.equity_book} />,
+    },
+  ];
+  return <ScorecardTable rows={rows} defs={defs} />;
 }
 
 function ScoreCell({ value, highlight }: { value: number | null; highlight?: boolean }) {

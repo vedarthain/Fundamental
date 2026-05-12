@@ -97,6 +97,55 @@ em.accent {
   font-weight: 400;
 }
 
+/* ---------------------------------------------------------------------------
+ * Page-level accent themes.
+ *
+ * The default accent palette is terracotta — used on the landing page, stock
+ * detail, and /ideas (which gets enough color variety from section dots).
+ * Other surfaces get a different hue so the app doesn't read as a wall of
+ * red. Each theme overrides the same --color-accent-* CSS variables, so any
+ * descendant component (em.accent, .btn-primary, hover states, badges) picks
+ * up the new palette automatically — no per-component changes needed.
+ *
+ * Apply by wrapping a page's root <div> with className="theme-<name>".
+ *
+ *   theme-teal   — used on /clusters (data/exploration)
+ *   theme-indigo — used on /discover (filtering)
+ *   theme-amber  — used on /compare  (decision)
+ * --------------------------------------------------------------------------- */
+.theme-teal {
+  --color-accent-50:  #e7f1f1;
+  --color-accent-100: #c8e1e0;
+  --color-accent-200: #95c8c6;
+  --color-accent-300: #5cabaa;
+  --color-accent-400: #3a9290;
+  --color-accent-500: #2c8082;
+  --color-accent-600: #1f6a6c;
+  --color-accent-700: #15555a;
+}
+
+.theme-indigo {
+  --color-accent-50:  #ecedf6;
+  --color-accent-100: #d4d6ec;
+  --color-accent-200: #a7accf;
+  --color-accent-300: #7882b8;
+  --color-accent-400: #5862a3;
+  --color-accent-500: #46518e;
+  --color-accent-600: #364074;
+  --color-accent-700: #28315b;
+}
+
+.theme-amber {
+  --color-accent-50:  #fbf2dd;
+  --color-accent-100: #f5e2b5;
+  --color-accent-200: #e8c581;
+  --color-accent-300: #d6a64b;
+  --color-accent-400: #c08e2c;
+  --color-accent-500: #a87a1f;
+  --color-accent-600: #8a6116;
+  --color-accent-700: #6c4a0f;
+}
+
 /* Numbered pill / large numeral tag (01, 02, 03 ...) */
 .ntag {
   font-family: var(--font-serif);

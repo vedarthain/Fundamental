@@ -156,66 +156,93 @@ export default async function ScreenerPage({
     d.toLocaleDateString("en-IN", { year: "numeric", month: "short", day: "numeric" });
 
   return (
-    <div className="mx-auto max-w-[1300px] px-6 py-10">
-      <header className="max-w-[760px]">
-        <div className="text-[12px] uppercase tracking-wide muted-text flex items-center gap-2 flex-wrap">
-          <span>Discover</span>
-          <span aria-hidden style={{ color: "var(--color-border-default)" }}>·</span>
-          <span
-            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border hairline normal-case tracking-normal"
-            style={{ backgroundColor: "var(--color-card)" }}
-          >
+    <div className="theme-indigo mx-auto max-w-[1300px] px-6 py-10">
+      {/* Header row — title block on the left, secondary "tool" CTAs on
+          the right (Peer comparison). The Peer Comparison entry point used
+          to live in the top nav; it lives here now because the natural flow
+          is browse → narrow → compare 2-5 finalists. */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <header className="max-w-[760px]">
+          <div className="text-[12px] uppercase tracking-wide muted-text flex items-center gap-2 flex-wrap">
+            <span>Discover</span>
+            <span aria-hidden style={{ color: "var(--color-border-default)" }}>·</span>
             <span
-              className="w-1.5 h-1.5 rounded-full animate-livepulse"
-              style={{ backgroundColor: "var(--color-score-excellent)" }}
-            />
-            <span className="tabular-nums font-medium" style={{ color: "var(--color-ink)" }}>
-              {coverage.stocks.toLocaleString("en-IN")}
-            </span>
-            <span>stocks tracked</span>
-          </span>
-        </div>
-        <h1 className="font-display text-[36px] tracking-tight leading-tight mt-1">
-          Find stocks by <em className="accent">your priorities</em>
-        </h1>
-        <p className="mt-3 text-[15px] muted-text">
-          Pick a preset or set your own Quality / Valuation / Momentum weights — every stock
-          is re-ranked by your blend within its peer cluster. Filter by sector, industry,
-          maturity, or market cap to narrow further.
-        </p>
-        <div className="mt-3 text-[12px] muted-text">
-          Active blend:{" "}
-          <span className="tabular-nums">
-            {params.weights.q} / {params.weights.v} / {params.weights.m}
-          </span>{" "}
-          ({params.preset === "custom" ? "Custom" : params.preset[0].toUpperCase() + params.preset.slice(1)}){" "}
-          · {total.toLocaleString("en-IN")} matches
-          {latestPrice && (
-            <>
-              {" "}·{" "}
+              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border hairline normal-case tracking-normal"
+              style={{ backgroundColor: "var(--color-card)" }}
+            >
               <span
-                title={
-                  oldestPrice && oldestPrice.getTime() !== latestPrice.getTime()
-                    ? `Prices on this page were fetched between ${fmtDate(oldestPrice)} and ${fmtDate(latestPrice)}.`
-                    : `Prices fetched ${fmtDate(latestPrice)}.`
-                }
-              >
-                LTP as of <span className="ink-text tabular-nums">{fmtDate(latestPrice)}</span>
-                {oldestPrice && oldestPrice.getTime() !== latestPrice.getTime() && (
-                  <span className="muted-text"> · oldest {fmtDate(oldestPrice)}</span>
-                )}
+                className="w-1.5 h-1.5 rounded-full animate-livepulse"
+                style={{ backgroundColor: "var(--color-score-excellent)" }}
+              />
+              <span className="tabular-nums font-medium" style={{ color: "var(--color-ink)" }}>
+                {coverage.stocks.toLocaleString("en-IN")}
               </span>
-            </>
-          )}
-        </div>
-      </header>
+              <span>stocks tracked</span>
+            </span>
+          </div>
+          <h1 className="font-display text-[36px] tracking-tight leading-tight mt-1">
+            Find stocks by <em className="accent">your priorities</em>
+          </h1>
+          <p className="mt-3 text-[15px] muted-text">
+            Pick a preset or set your own Quality / Valuation / Momentum weights — every stock
+            is re-ranked by your blend within its peer cluster. Filter by sector, industry,
+            maturity, or market cap to narrow further.
+          </p>
+          <div className="mt-3 text-[12px] muted-text">
+            Active blend:{" "}
+            <span className="tabular-nums">
+              {params.weights.q} / {params.weights.v} / {params.weights.m}
+            </span>{" "}
+            ({params.preset === "custom" ? "Custom" : params.preset[0].toUpperCase() + params.preset.slice(1)}){" "}
+            · {total.toLocaleString("en-IN")} matches
+            {latestPrice && (
+              <>
+                {" "}·{" "}
+                <span
+                  title={
+                    oldestPrice && oldestPrice.getTime() !== latestPrice.getTime()
+                      ? `Prices on this page were fetched between ${fmtDate(oldestPrice)} and ${fmtDate(latestPrice)}.`
+                      : `Prices fetched ${fmtDate(latestPrice)}.`
+                  }
+                >
+                  LTP as of <span className="ink-text tabular-nums">{fmtDate(latestPrice)}</span>
+                  {oldestPrice && oldestPrice.getTime() !== latestPrice.getTime() && (
+                    <span className="muted-text"> · oldest {fmtDate(oldestPrice)}</span>
+                  )}
+                </span>
+              </>
+            )}
+          </div>
+        </header>
+
+        <Link
+          href="/compare"
+          className="inline-flex items-center gap-2.5 card px-4 py-3 hover:border-[var(--color-accent-400)] transition-colors group shrink-0"
+          style={{ borderTop: "3px solid var(--color-accent-500)" }}
+        >
+          <span className="text-[11px] uppercase tracking-wide muted-text">Tool</span>
+          <span className="border-l hairline pl-3">
+            <div className="text-[13.5px] font-medium" style={{ color: "var(--color-ink)" }}>
+              Peer comparison →
+            </div>
+            <div className="text-[11px] muted-text mt-0.5 max-w-[180px] leading-snug">
+              Stack 2–5 stocks side by side on the same scorecard.
+            </div>
+          </span>
+        </Link>
+      </div>
 
       <div className="mt-6 max-w-[820px]">
         <AboutCard />
       </div>
 
       <div className="mt-8 grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-8">
-        <aside className="card p-5 self-start lg:sticky lg:top-20">
+        {/* Sticky sidebar: pinned to top-20 on desktop, with its own internal
+            scroll so tall filter panels don't get clipped below the viewport.
+            max-h subtracts the 5rem top offset + a small gutter. */}
+        <aside
+          className="card p-5 self-start lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto"
+        >
           <Controls />
         </aside>
 
