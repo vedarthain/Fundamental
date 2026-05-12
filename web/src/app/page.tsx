@@ -77,7 +77,6 @@ export default async function Landing() {
           philosophical block users were skipping. The same trust signals
           live on /about (Methodology page) for users who want depth. */}
       <Hero snap={snap} />
-      <PolaroidBanner snap={snap} />
       <RevealOnScroll><HeatMapTear tiles={tiles} /></RevealOnScroll>
       <RevealOnScroll><ThreePillars /></RevealOnScroll>
       <RevealOnScroll><PerIndustryCards /></RevealOnScroll>
@@ -134,7 +133,9 @@ function PerIndustryCards() {
             recipe — tuned for what an analyst in that space would actually look at.
           </p>
         </div>
-        <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+        {/* 1 col on phones, 3 on desktop. Forced 3-col was squishing
+            cards on mobile into unreadable slivers. */}
+        <div className="grid gap-4 grid-cols-1 md:grid-cols-3">
           {items.map((it) => (
             <article
               key={it.meta}
@@ -646,7 +647,8 @@ function ThreePillars() {
           </p>
         </div>
 
-        <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+        {/* 1 col on phones, 3 on desktop — pillars stack on narrow screens. */}
+        <div className="grid gap-4 grid-cols-1 md:grid-cols-3">
           <PillarCard
             n="01"
             color="var(--color-accent-600)"

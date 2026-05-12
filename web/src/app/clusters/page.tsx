@@ -203,7 +203,7 @@ export default async function Home({
   const activeGroup = groups.find((g) => g.id === activeId);
 
   return (
-    <div className="theme-teal mx-auto max-w-[1200px] px-6 py-12">
+    <div className="theme-teal mx-auto max-w-[1200px] px-4 md:px-6 py-8 md:py-12">
       <Hero
         snapshotDate={snapshotDate}
         clusterCount={tiles.length}
@@ -246,13 +246,26 @@ function SectorTabs({
 
   // Sticky on scroll so the user can pick a sector without bouncing back
   // to the top. backdrop-blur keeps tiles below readable through the strip.
+  //
+  // Mobile (<md): all tabs flow as a single wrapping group — splitting into
+  // 2 rows on narrow viewports just produces 4-6 messy visual rows scattered
+  // into 2 logical groups. On md+ we restore the 2-row visual hierarchy.
+  // -mx-4 md:-mx-6 matches the outer page padding so the sticky bleed
+  // reaches the viewport edge cleanly on both phones and desktops.
   return (
     <div
-      className="mt-8 flex flex-col gap-1.5 sticky top-14 z-20 -mx-6 px-6 py-2 backdrop-blur-md"
+      className="mt-6 md:mt-8 flex flex-col gap-1 md:gap-1.5 sticky top-14 z-20 -mx-4 md:-mx-6 px-4 md:px-6 py-2 backdrop-blur-md"
       style={{ backgroundColor: "color-mix(in srgb, var(--color-paper) 92%, transparent)" }}
     >
-      <SectorTabRow groups={row1} activeId={activeId} />
-      {row2.length > 0 && <SectorTabRow groups={row2} activeId={activeId} />}
+      {/* Mobile: single wrapping group of all sectors */}
+      <div className="md:hidden">
+        <SectorTabRow groups={groups} activeId={activeId} />
+      </div>
+      {/* Desktop: 2-row visual hierarchy */}
+      <div className="hidden md:contents">
+        <SectorTabRow groups={row1} activeId={activeId} />
+        {row2.length > 0 && <SectorTabRow groups={row2} activeId={activeId} />}
+      </div>
     </div>
   );
 }
@@ -264,7 +277,7 @@ function SectorTabRow({
   activeId: string;
 }) {
   return (
-    <div className="flex flex-wrap gap-1.5">
+    <div className="flex flex-wrap gap-1 md:gap-1.5">
       {groups.map((g) => {
         const avg =
           g.tiles.reduce((a, t) => a + (t.avg_composite ?? 0), 0) /
@@ -277,7 +290,7 @@ function SectorTabRow({
             key={g.id}
             href={`/clusters?sector=${encodeURIComponent(g.id)}`}
             scroll={false}
-            className="px-3 py-1.5 rounded-md text-[12.5px] inline-flex items-center gap-2 transition-colors whitespace-nowrap border"
+            className="px-2.5 md:px-3 py-1 md:py-1.5 rounded-md text-[12px] md:text-[12.5px] inline-flex items-center gap-1.5 md:gap-2 transition-colors whitespace-nowrap border"
             style={
               active
                 ? {
