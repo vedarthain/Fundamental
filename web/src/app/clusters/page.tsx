@@ -536,39 +536,66 @@ function StocksPanel({ industry, stocks }: { industry: ClusterTile; stocks: Stoc
 }
 
 /**
- * Tier divider — sticky sub-header so the user always knows which bucket
- * they're reading as they scroll down a long industry. Color-coded by tier:
- * green for veterans (signal of longevity), amber for emerging, neutral
- * grey for newly listed.
+ * Tier color map — four distinct accent hues so each maturity bucket reads
+ * as visually separate. The same color is used in three places per tier:
+ *   1. The tier-header strip (background tint + dot + label tint)
+ *   2. The left-border stripe on every stock row in that tier
+ *   3. The optional badge if we ever surface tier on the stock card
+ */
+function tierColors(tier: string): { stripe: string; bg: string; label: string } {
+  switch (tier) {
+    case "veteran": return { stripe: "#2e9a47", bg: "rgba(46,154,71,0.10)",  label: "#206b32" };
+    case "mature":  return { stripe: "#3a9290", bg: "rgba(58,146,144,0.10)", label: "#236663" };
+    case "mid":     return { stripe: "#c08e2c", bg: "rgba(192,142,44,0.12)", label: "#8a6116" };
+    case "new":     return { stripe: "#7882b8", bg: "rgba(120,130,184,0.12)", label: "#3f4978" };
+    default:        return { stripe: "var(--color-muted)", bg: "var(--color-paper)", label: "var(--color-muted)" };
+  }
+}
+
+/**
+ * Tier divider strip. Tinted background in the tier's signature color +
+ * a stronger pill containing the tier label so the boundary between
+ * "Compounders" and "Emerging" is immediately visible as you scroll.
  */
 function TierHeader({ tier, count }: { tier: string; count: number }) {
-  const color =
-    tier === "veteran" ? "var(--color-score-good)" :
-    tier === "mature"  ? "var(--color-accent-500)" :
-    tier === "mid"     ? "var(--color-score-neutral)" :
-    tier === "new"     ? "var(--color-muted)" :
-                         "var(--color-muted)";
+  const c = tierColors(tier);
   return (
     <div
-      className="px-4 md:px-5 py-2 flex items-center gap-2 border-b hairline"
-      style={{ backgroundColor: "var(--color-paper)" }}
+      className="px-4 md:px-5 py-2.5 flex items-center gap-2.5 border-b hairline"
+      style={{ backgroundColor: c.bg }}
     >
-      <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: color }} />
-      <span className="text-[11px] uppercase tracking-wide font-medium" style={{ color: "var(--color-ink)" }}>
+      <span className="inline-block w-2 h-2 rounded-full" style={{ background: c.stripe }} />
+      <span className="text-[11px] uppercase tracking-wide font-semibold" style={{ color: c.label }}>
         {tierLabel(tier) + "s"}
       </span>
-      <span className="tabular-nums text-[11px] muted-text">{count}</span>
+      <span className="tabular-nums text-[11px] muted-text">· {count}</span>
     </div>
   );
 }
 
+/**
+ * Stock row — vertical 3-band layout:
+ *   1. Identity (symbol + company + LTP + mcap)
+ *   2. 1W / 1M / 1Y returns (price action)
+ *   3. Q / V / M pillar percentiles (analytical breakdown)
+ *
+ * Returns precede pillars because returns are the "what happened" (concrete,
+ * tangible) and pillars are the "why it scored that way" (interpretive).
+ * Reader can scan the headline returns first, then drop down to scoring.
+ *
+ * A 3px colored left stripe matches the tier color so each stock visually
+ * inherits its bucket identity — useful when scrolling through a long
+ * industry mixing compounders + emerging names.
+ */
 function StockRowItem({ stock }: { stock: StockRow }) {
+  const tc = tierColors(stock.maturity_tier);
   return (
     <Link
       href={`/stock/${stock.symbol}`}
-      className="grid grid-cols-[1fr_auto] md:grid-cols-[1fr_180px_180px] items-center gap-3 md:gap-4 px-4 md:px-5 py-3 hover:bg-[var(--color-paper)]/60 transition-colors"
+      className="block px-4 md:px-5 py-3 hover:bg-[var(--color-paper)]/60 transition-colors relative"
+      style={{ borderLeft: `3px solid ${tc.stripe}` }}
     >
-      {/* Symbol + name + price/mcap */}
+      {/* Identity */}
       <div className="min-w-0">
         <div className="flex items-baseline gap-2 flex-wrap">
           <span className="font-medium text-[14px] tabular-nums">{stock.symbol}</span>
@@ -585,62 +612,30 @@ function StockRowItem({ stock }: { stock: StockRow }) {
             </span>
           )}
         </div>
-        {/* Mobile: pillars + returns stack below on narrow screens */}
-        <div className="md:hidden mt-2 flex flex-col gap-1.5">
-          <PillarBadges
-            q={stock.quality_pct}
-            v={stock.valuation_pct}
-            m={stock.momentum_pct}
-          />
-          <div className="grid grid-cols-3 gap-1.5 text-[10.5px]">
-            <ReturnMini label="1W" value={stock.ret_1w} />
-            <ReturnMini label="1M" value={stock.ret_1m} />
-            <ReturnMini label="1Y" value={stock.ret_1y} />
-          </div>
-        </div>
       </div>
 
-      {/* Pillars (desktop) */}
-      <div className="hidden md:block">
-        <PillarBadges
-          q={stock.quality_pct}
-          v={stock.valuation_pct}
-          m={stock.momentum_pct}
-        />
-      </div>
-
-      {/* Returns (desktop) */}
-      <div className="hidden md:grid grid-cols-3 gap-2 text-[11px]">
+      {/* Returns row */}
+      <div className="mt-2.5 grid grid-cols-3 gap-1.5 md:gap-2 text-[11px] max-w-[420px]">
         <ReturnMini label="1W" value={stock.ret_1w} />
         <ReturnMini label="1M" value={stock.ret_1m} />
         <ReturnMini label="1Y" value={stock.ret_1y} />
+      </div>
+
+      {/* Pillars row */}
+      <div className="mt-1.5 grid grid-cols-3 gap-1.5 md:gap-2 text-[11px] max-w-[420px]">
+        <PillarCell label="Q" value={stock.quality_pct}   title="Quality" />
+        <PillarCell label="V" value={stock.valuation_pct} title="Valuation" />
+        <PillarCell label="M" value={stock.momentum_pct}  title="Momentum" />
       </div>
     </Link>
   );
 }
 
 /**
- * Quality / Valuation / Momentum pillar badges. Each shown as a labeled
- * mini-cell with score number, colored by the score band. Replaces the
- * single Composite badge — surfaces the three components directly so the
- * reader sees the *shape* of a stock's strength, not just the average.
+ * Single pillar score cell (Q / V / M). Labeled mini-badge, score number
+ * tinted by the band palette so 80 reads green, 40 reads red. Lives inside
+ * StockRowItem's vertical pillars row.
  */
-function PillarBadges({
-  q, v, m,
-}: {
-  q: number | null;
-  v: number | null;
-  m: number | null;
-}) {
-  return (
-    <div className="grid grid-cols-3 gap-1 text-[10.5px]">
-      <PillarCell label="Q" value={q} title="Quality" />
-      <PillarCell label="V" value={v} title="Valuation" />
-      <PillarCell label="M" value={m} title="Momentum" />
-    </div>
-  );
-}
-
 function PillarCell({ label, value, title }: { label: string; value: number | null; title: string }) {
   if (value == null) {
     return (
