@@ -574,60 +574,81 @@ function TierHeader({ tier, count }: { tier: string; count: number }) {
 }
 
 /**
- * Stock row — vertical 3-band layout:
- *   1. Identity (symbol + company + LTP + mcap)
- *   2. 1W / 1M / 1Y returns (price action)
- *   3. Q / V / M pillar percentiles (analytical breakdown)
+ * Stock row — single-line horizontal layout (compact, scales to 40+ stocks
+ * per industry without forcing endless scroll).
  *
- * Returns precede pillars because returns are the "what happened" (concrete,
- * tangible) and pillars are the "why it scored that way" (interpretive).
- * Reader can scan the headline returns first, then drop down to scoring.
+ *   Desktop:  [Identity 1fr]  [Returns 168px]  [Pillars 168px]
+ *   Mobile:   [Identity]  +  [Returns + Pillars on second line, side-by-side]
  *
- * A 3px colored left stripe matches the tier color so each stock visually
- * inherits its bucket identity — useful when scrolling through a long
- * industry mixing compounders + emerging names.
+ * 3px colored left stripe still carries the tier identity through the list.
+ * Each cell is the same compact pill so the row reads as a uniform strip
+ * rather than a stacked card.
  */
 function StockRowItem({ stock }: { stock: StockRow }) {
   const tc = tierColors(stock.maturity_tier);
   return (
     <Link
       href={`/stock/${stock.symbol}`}
-      className="block px-4 md:px-5 py-3 hover:bg-[var(--color-paper)]/60 transition-colors relative"
+      className="block hover:bg-[var(--color-paper)]/60 transition-colors"
       style={{ borderLeft: `3px solid ${tc.stripe}` }}
     >
-      {/* Identity */}
-      <div className="min-w-0">
-        <div className="flex items-baseline gap-2 flex-wrap">
-          <span className="font-medium text-[14px] tabular-nums">{stock.symbol}</span>
-          <span className="muted-text text-[11.5px] truncate">{stock.company_name}</span>
+      {/* Desktop: 3-column strip */}
+      <div className="hidden md:grid items-center gap-4 px-5 py-2.5"
+        style={{ gridTemplateColumns: "1fr 168px 168px" }}
+      >
+        <StockIdentity stock={stock} />
+        <div className="grid grid-cols-3 gap-1.5 text-[10.5px]">
+          <ReturnMini label="1W" value={stock.ret_1w} />
+          <ReturnMini label="1M" value={stock.ret_1m} />
+          <ReturnMini label="1Y" value={stock.ret_1y} />
         </div>
-        <div className="muted-text text-[11px] mt-0.5 tabular-nums flex flex-wrap gap-x-3 gap-y-0.5">
-          {stock.current_price != null && <span>₹{stock.current_price.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</span>}
-          {stock.market_cap_cr != null && (
-            <span>
-              <span className="muted-text">mcap </span>
-              ₹{stock.market_cap_cr >= 1_00_000
-                ? `${(stock.market_cap_cr / 1_00_000).toFixed(1)}L Cr`
-                : `${Math.round(stock.market_cap_cr).toLocaleString("en-IN")} Cr`}
-            </span>
-          )}
+        <div className="grid grid-cols-3 gap-1.5 text-[10.5px]">
+          <PillarCell label="Q" value={stock.quality_pct}   title="Quality" />
+          <PillarCell label="V" value={stock.valuation_pct} title="Valuation" />
+          <PillarCell label="M" value={stock.momentum_pct}  title="Momentum" />
         </div>
       </div>
 
-      {/* Returns row */}
-      <div className="mt-2.5 grid grid-cols-3 gap-1.5 md:gap-2 text-[11px] max-w-[420px]">
-        <ReturnMini label="1W" value={stock.ret_1w} />
-        <ReturnMini label="1M" value={stock.ret_1m} />
-        <ReturnMini label="1Y" value={stock.ret_1y} />
-      </div>
-
-      {/* Pillars row */}
-      <div className="mt-1.5 grid grid-cols-3 gap-1.5 md:gap-2 text-[11px] max-w-[420px]">
-        <PillarCell label="Q" value={stock.quality_pct}   title="Quality" />
-        <PillarCell label="V" value={stock.valuation_pct} title="Valuation" />
-        <PillarCell label="M" value={stock.momentum_pct}  title="Momentum" />
+      {/* Mobile: 2-line stack (identity on top, returns + pillars on second line) */}
+      <div className="md:hidden px-4 py-2.5">
+        <StockIdentity stock={stock} />
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-3 gap-1 text-[10px]">
+            <ReturnMini label="1W" value={stock.ret_1w} />
+            <ReturnMini label="1M" value={stock.ret_1m} />
+            <ReturnMini label="1Y" value={stock.ret_1y} />
+          </div>
+          <div className="grid grid-cols-3 gap-1 text-[10px]">
+            <PillarCell label="Q" value={stock.quality_pct}   title="Quality" />
+            <PillarCell label="V" value={stock.valuation_pct} title="Valuation" />
+            <PillarCell label="M" value={stock.momentum_pct}  title="Momentum" />
+          </div>
+        </div>
       </div>
     </Link>
+  );
+}
+
+/** Shared identity block — symbol + company + LTP + mcap on a single line. */
+function StockIdentity({ stock }: { stock: StockRow }) {
+  return (
+    <div className="min-w-0">
+      <div className="flex items-baseline gap-2 flex-wrap">
+        <span className="font-medium text-[13.5px] tabular-nums shrink-0">{stock.symbol}</span>
+        <span className="muted-text text-[11.5px] truncate">{stock.company_name}</span>
+      </div>
+      <div className="muted-text text-[10.5px] mt-0.5 tabular-nums flex flex-wrap gap-x-2.5 gap-y-0">
+        {stock.current_price != null && <span>₹{stock.current_price.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</span>}
+        {stock.market_cap_cr != null && (
+          <span>
+            <span className="muted-text">mcap </span>
+            ₹{stock.market_cap_cr >= 1_00_000
+              ? `${(stock.market_cap_cr / 1_00_000).toFixed(1)}L Cr`
+              : `${Math.round(stock.market_cap_cr).toLocaleString("en-IN")} Cr`}
+          </span>
+        )}
+      </div>
+    </div>
   );
 }
 
