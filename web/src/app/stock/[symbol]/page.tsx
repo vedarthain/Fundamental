@@ -40,6 +40,7 @@ type Stock = {
   ceo_title: string | null;
   cluster_id: string;
   cluster_name: string;
+  meta_cluster_id: string;
   meta_cluster_name: string;
   maturity_tier: string;
   market_cap_cr: number | null;
@@ -90,7 +91,7 @@ async function loadStock(symbol: string) {
       s.symbol, u.company_name, u.sector, u.industry, u.listing_date::text, u.years_of_data,
       u.business_summary, u.website, u.employees,
       u.ceo_name, u.ceo_title,
-      s.cluster_id, c.name AS cluster_name, mc.name AS meta_cluster_name,
+      s.cluster_id, c.name AS cluster_name, mc.id AS meta_cluster_id, mc.name AS meta_cluster_name,
       s.maturity_tier, sm.market_cap_cr, sm.current_price,
       s.composite_pct, s.quality_pct, s.valuation_pct, s.momentum_pct,
       s.quality_components, s.valuation_components, s.momentum_components,
@@ -239,11 +240,15 @@ export default async function StockPage({
 
   return (
     <div className="mx-auto max-w-[1200px] px-6 py-10">
+      {/* Back link: returns to the sector page with the right sector +
+          industry pre-selected, so the user lands on the same list of stocks
+          they were just browsing. Falls back to /clusters root if either
+          identifier is missing. */}
       <Link
-        href={`/cluster/${stock.cluster_id}`}
+        href={`/clusters?sector=${encodeURIComponent(stock.meta_cluster_id)}&industry=${encodeURIComponent(stock.cluster_id)}`}
         className="text-[12px] muted-text hover:text-[var(--color-accent-600)]"
       >
-        ← {stock.cluster_name}
+        ← {stock.meta_cluster_name} · {stock.cluster_name}
       </Link>
 
       {/* Header — name + percentile badge.
