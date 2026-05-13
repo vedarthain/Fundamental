@@ -56,33 +56,14 @@
   --radius-pill: 9999px;
 }
 
-/* ----- Dark mode -----------------------------------------------------
- * Follows the OS preference via prefers-color-scheme. We only flip the
- * surface tokens (paper / card / ink / muted / border) — the accent and
- * score palettes are already saturated enough to read on a dark page,
- * and inline component colors thread through these vars.
- *
- * Tab tints get re-toned to warm-dark equivalents so per-tab tinting
- * stays subtle instead of becoming bright washes on black.
- */
-@media (prefers-color-scheme: dark) {
-  @theme {
-    --color-paper: #17171a;
-    --color-card:  #222227;
-    --color-ink:   #ecebe6;
-    --color-muted: #9b9890;
-    --color-border-default: #34322c;
-
-    --color-tab-tint-about:    #221c18;
-    --color-tab-tint-strength: #1c211c;
-    --color-tab-tint-numbers:  #1c1f24;
-    --color-tab-numbers-stripe:#7e96b0;
-  }
-
-  html { color-scheme: dark; }
-}
-
 /* ----- Base ----------------------------------------------------------- */
+/* Force light scheme regardless of OS preference. Some inline-styled
+   components (score badges, tier strips, header backdrop) use fixed
+   colors that don't thread through tokens, so an auto-dark mode would
+   leave parts of the page unreadable. Lock to light until we do a
+   proper component-by-component dark audit. */
+html { color-scheme: light; }
+
 html, body {
   background: var(--color-paper);
   color: var(--color-ink);
