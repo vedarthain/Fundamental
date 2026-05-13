@@ -823,6 +823,21 @@ type QuarterlyLite = {
   net_profit: number | null;
 };
 
+// One cell in a fundamentals row — keeps the formatted display string and
+// the raw numeric value so the table can color period-over-period direction.
+type NumCell = { text: string; value: number | null };
+
+// Per-row polarity: most P&L lines (sales, profit, margins) want UP = green.
+// Balance-sheet liability rows (borrowings, debt/equity) flip: UP = red.
+type Polarity = "up-good" | "up-bad";
+
+type NumRow = { label: string; cells: NumCell[]; polarity?: Polarity };
+
+// Helper: build a NumCell from a raw number + a formatter.
+function cell(n: number | null, fmt: (x: number | null) => string): NumCell {
+  return { text: fmt(n), value: n };
+}
+
 function FundamentalsTables({
   annual, quarterly,
 }: { annual: AnnualLite[]; quarterly: QuarterlyLite[] }) {
@@ -846,18 +861,21 @@ function FundamentalsTables({
       <h2 className="font-display text-[20px] mb-1">The numbers</h2>
       <p className="text-[13px] muted-text mb-5">
         Source data behind the score. All ₹ figures in crores; ratios as percentages.
+        Cells color green when the metric moved in a favourable direction vs the
+        prior period, red when it moved unfavourably.
       </p>
 
       <div className="space-y-8">
         <FundamentalsBlock
           title="Annual P&amp;L (last 10 fiscal years)"
           rows={[
-            { label: "Sales",                cells: annualOldFirst.map((r) => fmtCr(r.sales)) },
-            { label: "Operating profit",     cells: annualOldFirst.map((r) => fmtCr(r.operating_profit)) },
-            { label: "Net profit",           cells: annualOldFirst.map((r) => fmtCr(r.net_profit)) },
-            { label: "Cash from operations", cells: annualOldFirst.map((r) => fmtCr(r.cash_from_operating)) },
-            { label: "Total assets",         cells: annualOldFirst.map((r) => fmtCr(r.total_assets)) },
-            { label: "Borrowings",           cells: annualOldFirst.map((r) => fmtCr(r.borrowings)) },
+            { label: "Sales",                cells: annualOldFirst.map((r) => cell(r.sales,               fmtCr)) },
+            { label: "Operating profit",     cells: annualOldFirst.map((r) => cell(r.operating_profit,    fmtCr)) },
+            { label: "Net profit",           cells: annualOldFirst.map((r) => cell(r.net_profit,          fmtCr)) },
+            { label: "Cash from operations", cells: annualOldFirst.map((r) => cell(r.cash_from_operating, fmtCr)) },
+            { label: "Total assets",         cells: annualOldFirst.map((r) => cell(r.total_assets,        fmtCr)) },
+            // Borrowings up = bad — flip the polarity so rising debt reads red.
+            { label: "Borrowings",           cells: annualOldFirst.map((r) => cell(r.borrowings,          fmtCr)), polarity: "up-bad" },
           ]}
           headers={annualOldFirst.map((r) => fyLabel(r.period_end))}
         />
@@ -865,10 +883,11 @@ function FundamentalsTables({
         <FundamentalsBlock
           title="Derived ratios"
           rows={[
-            { label: "Operating margin", cells: derived.map((r) => fmtPctRatio(r.op_margin)) },
-            { label: "Net profit margin", cells: derived.map((r) => fmtPctRatio(r.np_margin)) },
-            { label: "Return on equity",  cells: derived.map((r) => fmtPctRatio(r.roe)) },
-            { label: "Debt / Equity",     cells: derived.map((r) => fmtRatio(r.debt_equity)) },
+            { label: "Operating margin",  cells: derived.map((r) => cell(r.op_margin,    fmtPctRatio)) },
+            { label: "Net profit margin", cells: derived.map((r) => cell(r.np_margin,    fmtPctRatio)) },
+            { label: "Return on equity",  cells: derived.map((r) => cell(r.roe,          fmtPctRatio)) },
+            // Higher debt/equity is unfavourable.
+            { label: "Debt / Equity",     cells: derived.map((r) => cell(r.debt_equity,  fmtRatio)), polarity: "up-bad" },
           ]}
           headers={derived.map((r) => fyLabel(r.period_end))}
         />
@@ -876,9 +895,9 @@ function FundamentalsTables({
         <FundamentalsBlock
           title={`Quarterly results (latest ${qOldFirst.length} quarters)`}
           rows={[
-            { label: "Sales",            cells: qOldFirst.map((r) => fmtCr(r.sales)) },
-            { label: "Operating profit", cells: qOldFirst.map((r) => fmtCr(r.operating_profit)) },
-            { label: "Net profit",       cells: qOldFirst.map((r) => fmtCr(r.net_profit)) },
+            { label: "Sales",            cells: qOldFirst.map((r) => cell(r.sales,            fmtCr)) },
+            { label: "Operating profit", cells: qOldFirst.map((r) => cell(r.operating_profit, fmtCr)) },
+            { label: "Net profit",       cells: qOldFirst.map((r) => cell(r.net_profit,       fmtCr)) },
           ]}
           headers={qOldFirst.map((r) => qLabel(r.period_end))}
         />
@@ -889,13 +908,13 @@ function FundamentalsTables({
 
 function FundamentalsBlock(props: {
   title: string;
-  rows: { label: string; cells: string[] }[];
+  rows: NumRow[];
   headers: string[];
 }) {
   // Drop rows where every cell is "—" (blank). Keeps tables tight for stocks
   // where the source feed doesn't report some line items (e.g. brokerages have no
   // separate Operating Profit row in their P&L).
-  const rows = props.rows.filter((r) => r.cells.some((c) => c !== "—"));
+  const rows = props.rows.filter((r) => r.cells.some((c) => c.text !== "—"));
   if (rows.length === 0) {
     return null;
   }
@@ -915,19 +934,42 @@ function FundamentalsBlock(props: {
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
-              <tr key={r.label} className="border-b hairline last:border-b-0">
-                <td className="py-2 px-2 text-[13px]">{r.label}</td>
-                {r.cells.map((c, i) => (
-                  <td
-                    key={i}
-                    className={`py-2 px-2 text-right tabular-nums ${c === "—" ? "muted-text" : ""}`}
-                  >
-                    {c}
-                  </td>
-                ))}
-              </tr>
-            ))}
+            {rows.map((r) => {
+              const polarity = r.polarity ?? "up-good";
+              return (
+                <tr key={r.label} className="border-b hairline last:border-b-0">
+                  <td className="py-2 px-2 text-[13px]">{r.label}</td>
+                  {r.cells.map((c, i) => {
+                    // Find the most recent prior cell with a numeric value —
+                    // skipping nulls lets us color FY24 against FY22 if FY23
+                    // is missing, instead of going neutral.
+                    let prev: number | null = null;
+                    for (let j = i - 1; j >= 0; j--) {
+                      if (r.cells[j].value != null) {
+                        prev = r.cells[j].value;
+                        break;
+                      }
+                    }
+                    let cls = "";
+                    if (c.text === "—") {
+                      cls = "muted-text";
+                    } else if (c.value != null && prev != null && c.value !== prev) {
+                      const up = c.value > prev;
+                      const favourable = polarity === "up-good" ? up : !up;
+                      cls = favourable ? "delta-up" : "delta-down";
+                    }
+                    return (
+                      <td
+                        key={i}
+                        className={`py-2 px-2 text-right tabular-nums font-medium ${cls}`}
+                      >
+                        {c.text}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
