@@ -4,11 +4,11 @@ import { band, bandColor, tierLabel } from "@/lib/score";
 
 export const revalidate = 3600;
 
-type ClusterTile = {
-  cluster_id: string;
-  cluster_name: string;
-  meta_cluster_id: string;
-  meta_cluster_name: string;
+type IndustryTile = {
+  industry_id: string;
+  industry_name: string;
+  sector_id: string;
+  sector_name: string;
   meta_display_order: number;
   stock_count: number;
   avg_composite: number | null;
@@ -50,7 +50,7 @@ type StockRow = {
  * merge in memory. We never join across DBs (they're separate Neon projects).
  */
 async function loadIndustryStocks(
-  clusterId: string,
+  industryId: string,
   snapshotDate: string,
 ): Promise<StockRow[]> {
   const rows = await sql<Omit<StockRow, "ret_1w" | "ret_1m" | "ret_1y">[]>`
@@ -65,7 +65,7 @@ async function loadIndustryStocks(
     JOIN app.universe u USING (symbol)
     LEFT JOIN app.screener_meta sm USING (symbol)
     WHERE s.snapshot_date = ${snapshotDate}
-      AND s.cluster_id = ${clusterId}
+      AND s.cluster_id = ${industryId}
     ORDER BY s.composite_pct DESC NULLS LAST
   `;
   if (rows.length === 0) return [];
@@ -123,7 +123,7 @@ async function loadIndustryStocks(
  *
  * Returns Map<cluster_id, {w1, m1, y1}> for downstream merging onto tiles.
  */
-async function loadClusterReturns(snapshotDate: string): Promise<Map<string, { w1: number | null; m1: number | null; y1: number | null }>> {
+async function loadIndustryReturns(snapshotDate: string): Promise<Map<string, { w1: number | null; m1: number | null; y1: number | null }>> {
   // Per-symbol close prices: today's + nearest close ≤ 7d / 30d / 365d ago.
   // Correlated subqueries are O(log n) each on the (symbol, date) index,
   // and we run them across ~200 symbols — well within budget.
@@ -165,9 +165,9 @@ async function loadClusterReturns(snapshotDate: string): Promise<Map<string, { w
 
   // Per-symbol cluster + market cap at the latest score snapshot. The .NS
   // suffix only exists in golden_db; app DB stores bare tickers.
-  type AssignRow = { symbol: string; cluster_id: string; market_cap_cr: number | null };
+  type AssignRow = { symbol: string; industry_id: string; market_cap_cr: number | null };
   const assignments = await sql<AssignRow[]>`
-    SELECT s.symbol, s.cluster_id, sm.market_cap_cr::float AS market_cap_cr
+    SELECT s.symbol, s.cluster_id AS industry_id, sm.market_cap_cr::float AS market_cap_cr
     FROM app.scores s
     LEFT JOIN app.screener_meta sm USING (symbol)
     WHERE s.snapshot_date = ${snapshotDate}
@@ -198,13 +198,13 @@ async function loadClusterReturns(snapshotDate: string): Promise<Map<string, { w
   for (const a of assignments) {
     const p = priceBy.get(a.symbol);
     if (!p || p.p_now == null) continue;
-    let bucket = acc.get(a.cluster_id);
+    let bucket = acc.get(a.industry_id);
     if (!bucket) {
       bucket = {
         mcap_num_w1: 0, mcap_den_w1: 0, mcap_num_m1: 0, mcap_den_m1: 0, mcap_num_y1: 0, mcap_den_y1: 0,
         eq_num_w1: 0,   eq_den_w1: 0,   eq_num_m1: 0,   eq_den_m1: 0,   eq_num_y1: 0,   eq_den_y1: 0,
       };
-      acc.set(a.cluster_id, bucket);
+      acc.set(a.industry_id, bucket);
     }
     const mcap = a.market_cap_cr && a.market_cap_cr > 0 ? a.market_cap_cr : 0;
     // 1W
@@ -256,7 +256,7 @@ async function loadClusterReturns(snapshotDate: string): Promise<Map<string, { w
   return out;
 }
 
-async function loadHeatMap(): Promise<{ tiles: ClusterTile[]; snapshotDate: string | null }> {
+async function loadHeatMap(): Promise<{ tiles: IndustryTile[]; snapshotDate: string | null }> {
   const latest = await sql<LatestSnapshot[]>`
     SELECT MAX(snapshot_date)::text AS snapshot_date FROM app.scores
   `;
@@ -266,12 +266,12 @@ async function loadHeatMap(): Promise<{ tiles: ClusterTile[]; snapshotDate: stri
   // Pull cluster stats + returns in parallel — returns query touches golden_db
   // (separate Postgres) so it doesn't contend with the app DB query.
   const [rawTiles, returns] = await Promise.all([
-    sql<Omit<ClusterTile, "ret_1w" | "ret_1m" | "ret_1y">[]>`
+    sql<Omit<IndustryTile, "ret_1w" | "ret_1m" | "ret_1y">[]>`
       SELECT
-        c.id   AS cluster_id,
-        c.name AS cluster_name,
-        mc.id  AS meta_cluster_id,
-        mc.name AS meta_cluster_name,
+        c.id   AS industry_id,
+        c.name AS industry_name,
+        mc.id  AS sector_id,
+        mc.name AS sector_name,
         mc.display_order AS meta_display_order,
         COUNT(s.symbol)::int AS stock_count,
         AVG(s.composite_pct)::float AS avg_composite,
@@ -287,10 +287,10 @@ async function loadHeatMap(): Promise<{ tiles: ClusterTile[]; snapshotDate: stri
       GROUP BY c.id, c.name, mc.id, mc.name, mc.display_order
       ORDER BY mc.display_order, c.name
     `,
-    loadClusterReturns(snapshotDate),
+    loadIndustryReturns(snapshotDate),
   ]);
-  const tiles: ClusterTile[] = rawTiles.map((t) => {
-    const r = returns.get(t.cluster_id);
+  const tiles: IndustryTile[] = rawTiles.map((t) => {
+    const r = returns.get(t.industry_id);
     return {
       ...t,
       ret_1w: r?.w1 ?? null,
@@ -311,12 +311,12 @@ export default async function Home({
 
   // Group by meta_cluster (sector), preserving the curated display_order
   // so financials always lead, frontier-tech lands last, etc.
-  type Group = { id: string; name: string; order: number; tiles: ClusterTile[] };
+  type Group = { id: string; name: string; order: number; tiles: IndustryTile[] };
   const groupedMap = new Map<string, Group>();
   for (const t of tiles) {
-    const k = t.meta_cluster_id;
+    const k = t.sector_id;
     if (!groupedMap.has(k)) {
-      groupedMap.set(k, { id: t.meta_cluster_id, name: t.meta_cluster_name, order: t.meta_display_order, tiles: [] });
+      groupedMap.set(k, { id: t.sector_id, name: t.sector_name, order: t.meta_display_order, tiles: [] });
     }
     groupedMap.get(k)!.tiles.push(t);
   }
@@ -335,14 +335,14 @@ export default async function Home({
     ? [...activeGroup.tiles].sort((a, b) => (b.avg_composite ?? 0) - (a.avg_composite ?? 0))
     : [];
   const activeIndustryId =
-    (sp.industry && sectorIndustries.find((t) => t.cluster_id === sp.industry)?.cluster_id) ||
-    sectorIndustries[0]?.cluster_id;
-  const activeIndustry = sectorIndustries.find((t) => t.cluster_id === activeIndustryId);
+    (sp.industry && sectorIndustries.find((t) => t.industry_id === sp.industry)?.industry_id) ||
+    sectorIndustries[0]?.industry_id;
+  const activeIndustry = sectorIndustries.find((t) => t.industry_id === activeIndustryId);
 
   // Load stocks for the active industry. Server-side fetch so we render the
   // populated panel on first paint — no client loading state.
   const industryStocks: StockRow[] = activeIndustry && snapshotDate
-    ? await loadIndustryStocks(activeIndustry.cluster_id, snapshotDate)
+    ? await loadIndustryStocks(activeIndustry.industry_id, snapshotDate)
     : [];
 
   return (
@@ -367,7 +367,7 @@ export default async function Home({
               <IndustrySidebar
                 sectorId={activeGroup.id}
                 industries={sectorIndustries}
-                activeIndustryId={activeIndustry.cluster_id}
+                activeIndustryId={activeIndustry.industry_id}
               />
               <StocksPanel industry={activeIndustry} stocks={industryStocks} />
             </div>
@@ -390,7 +390,7 @@ function IndustrySidebar({
   sectorId, industries, activeIndustryId,
 }: {
   sectorId: string;
-  industries: ClusterTile[];
+  industries: IndustryTile[];
   activeIndustryId: string;
 }) {
   return (
@@ -411,10 +411,10 @@ function IndustrySidebar({
         <div className="flex md:flex-col gap-1.5 md:gap-1 overflow-x-auto md:overflow-x-visible md:overflow-y-auto p-2">
           {industries.map((ind) => (
             <IndustryRow
-              key={ind.cluster_id}
+              key={ind.industry_id}
               sectorId={sectorId}
               industry={ind}
-              active={ind.cluster_id === activeIndustryId}
+              active={ind.industry_id === activeIndustryId}
             />
           ))}
         </div>
@@ -427,7 +427,7 @@ function IndustryRow({
   sectorId, industry, active,
 }: {
   sectorId: string;
-  industry: ClusterTile;
+  industry: IndustryTile;
   active: boolean;
 }) {
   const compositeBand = band(industry.avg_composite);
@@ -435,7 +435,7 @@ function IndustryRow({
   const numColor = compositeBand === "neutral" ? "var(--color-ink)" : "#fff";
   return (
     <Link
-      href={`/sectors?sector=${encodeURIComponent(sectorId)}&industry=${encodeURIComponent(industry.cluster_id)}`}
+      href={`/sectors?sector=${encodeURIComponent(sectorId)}&industry=${encodeURIComponent(industry.industry_id)}`}
       scroll={false}
       className="block shrink-0 md:shrink rounded-md border transition-colors hover:bg-[var(--color-paper)]/60"
       style={
@@ -465,7 +465,7 @@ function IndustryRow({
             className={`text-[12.5px] leading-tight truncate ${active ? "font-semibold" : "font-medium"}`}
             style={{ color: "var(--color-ink)" }}
           >
-            {industry.cluster_name}
+            {industry.industry_name}
           </div>
           <div className="text-[10.5px] muted-text">{industry.stock_count} stock{industry.stock_count === 1 ? "" : "s"}</div>
         </div>
@@ -491,7 +491,7 @@ function IndustryRow({
  */
 const TIER_ORDER = ["veteran", "mature", "mid", "new"] as const;
 
-function StocksPanel({ industry, stocks }: { industry: ClusterTile; stocks: StockRow[] }) {
+function StocksPanel({ industry, stocks }: { industry: IndustryTile; stocks: StockRow[] }) {
   // Bucket stocks by maturity tier preserving the score-desc order from the
   // SQL query (so each bucket is internally ranked).
   const byTier = new Map<string, StockRow[]>();
@@ -511,8 +511,8 @@ function StocksPanel({ industry, stocks }: { industry: ClusterTile; stocks: Stoc
     <section className="card overflow-hidden">
       <header className="px-4 md:px-5 py-3 border-b hairline flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <div className="text-[10.5px] uppercase tracking-wide muted-text">{industry.meta_cluster_name}</div>
-          <h2 className="font-display text-[18px] leading-tight mt-0.5">{industry.cluster_name}</h2>
+          <div className="text-[10.5px] uppercase tracking-wide muted-text">{industry.sector_name}</div>
+          <h2 className="font-display text-[18px] leading-tight mt-0.5">{industry.industry_name}</h2>
         </div>
         <div className="muted-text text-[11px] tabular-nums">
           {industry.stock_count} stock{industry.stock_count === 1 ? "" : "s"}
@@ -697,7 +697,7 @@ function PillarCell({ label, value, title }: { label: string; value: number | nu
 function SectorTabs({
   groups, activeId,
 }: {
-  groups: { id: string; name: string; tiles: ClusterTile[] }[];
+  groups: { id: string; name: string; tiles: IndustryTile[] }[];
   activeId: string;
 }) {
   // Sectors are split into TWO ROWS so every label is visible at first paint.
@@ -737,7 +737,7 @@ function SectorTabs({
 function SectorTabRow({
   groups, activeId,
 }: {
-  groups: { id: string; name: string; tiles: ClusterTile[] }[];
+  groups: { id: string; name: string; tiles: IndustryTile[] }[];
   activeId: string;
 }) {
   return (
@@ -788,14 +788,14 @@ function SectorTabRow({
   );
 }
 
-function SectorTilesGrid({ tiles }: { tiles: ClusterTile[] }) {
+function SectorTilesGrid({ tiles }: { tiles: IndustryTile[] }) {
   // Single column on the narrowest phones (<400px) so labels don't truncate
   // into "Capital Mar..." 2 cols at 400px+, scales up from there. Slightly
   // larger gap on mobile so the tiles breathe.
   return (
     <div className="grid grid-cols-1 min-[420px]:grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
       {tiles.map((t) => (
-        <ClusterTileCard key={t.cluster_id} tile={t} />
+        <IndustryTileCard key={t.industry_id} tile={t} />
       ))}
     </div>
   );
@@ -860,13 +860,13 @@ function ScoreBandsLegend() {
  * from the visible tile (still on the cluster detail page) because they
  * doubled the height and the composite already aggregates them.
  */
-function ClusterTileCard({ tile }: { tile: ClusterTile }) {
+function IndustryTileCard({ tile }: { tile: IndustryTile }) {
   const b = band(tile.avg_composite);
   const bg = bandColor(b);
   const numColor = b === "neutral" ? "var(--color-ink)" : "white";
   return (
     <Link
-      href={`/industry/${tile.cluster_id}`}
+      href={`/industry/${tile.industry_id}`}
       className="card p-2.5 group hover:border-[var(--color-accent-300)] transition-colors block"
     >
       <div className="flex items-center gap-2.5">
@@ -880,7 +880,7 @@ function ClusterTileCard({ tile }: { tile: ClusterTile }) {
         </div>
         <div className="min-w-0">
           <div className="text-[12.5px] font-medium leading-tight truncate">
-            {tile.cluster_name}
+            {tile.industry_name}
           </div>
           <div className="text-[10px] muted-text mt-0.5">{tile.stock_count} stocks</div>
         </div>

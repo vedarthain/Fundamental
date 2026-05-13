@@ -38,10 +38,10 @@ type RawScoreRow = {
   valuation_pct: number | null;
   momentum_pct: number | null;
   maturity_tier: string | null;
-  cluster_id: string;
+  industry_id: string;
   company_name: string;
   is_nifty200: boolean;
-  cluster_name: string;
+  industry_name: string;
 };
 
 type ShareSnap = {
@@ -59,8 +59,8 @@ type ShareSnap = {
 type Stock = {
   symbol: string;
   company_name: string;
-  cluster_id: string;
-  cluster_name: string;
+  industry_id: string;
+  industry_name: string;
   maturity_tier: string | null;
   is_nifty200: boolean;
   // Current snapshot
@@ -122,10 +122,10 @@ async function loadIdeas(nifty200Only: boolean) {
       r.snapshot_date::text AS snapshot_date,
       r.rn::int AS rn,
       r.composite_pct, r.quality_pct, r.valuation_pct, r.momentum_pct,
-      r.maturity_tier, r.cluster_id,
+      r.maturity_tier, r.cluster_id AS industry_id,
       u.company_name,
       u.is_nifty200,
-      c.name AS cluster_name
+      c.name AS industry_name
     FROM recent r
     JOIN app.universe u USING (symbol)
     JOIN app.cluster c ON c.id = r.cluster_id
@@ -219,8 +219,8 @@ async function loadIdeas(nifty200Only: boolean) {
     stocks.push({
       symbol,
       company_name: curr.company_name,
-      cluster_id: curr.cluster_id,
-      cluster_name: curr.cluster_name,
+      industry_id: curr.industry_id,
+      industry_name: curr.industry_name,
       maturity_tier: curr.maturity_tier,
       is_nifty200: curr.is_nifty200,
       curr: {
@@ -919,7 +919,7 @@ function Row({ stock, rank, section }: { stock: Stock; rank: number; section: Se
             </span>
             <span className="font-medium text-[13.5px] tabular-nums">{stock.symbol}</span>
             <span className="muted-text text-[11px] truncate">
-              {stock.cluster_name} · {tierLabel(stock.maturity_tier)}
+              {stock.industry_name} · {tierLabel(stock.maturity_tier)}
             </span>
           </div>
           <div className="muted-text text-[11.5px] truncate ml-[22px]">

@@ -7,9 +7,9 @@ export const revalidate = 1800;
 export const dynamic = "force-dynamic";
 
 type ClusterMeta = {
-  cluster_id: string;
-  cluster_name: string;
-  meta_cluster_name: string;
+  industry_id: string;
+  industry_name: string;
+  sector_name: string;
   description: string | null;
 };
 
@@ -29,8 +29,8 @@ type TierOpt = (typeof TIER_OPTS)[number];
 
 async function loadCluster(id: string): Promise<ClusterMeta | null> {
   const rows = await sql<ClusterMeta[]>`
-    SELECT c.id AS cluster_id, c.name AS cluster_name,
-           mc.name AS meta_cluster_name, c.description
+    SELECT c.id AS industry_id, c.name AS industry_name,
+           mc.name AS sector_name, c.description
     FROM app.cluster c
     JOIN app.meta_cluster mc ON mc.id = c.meta_cluster_id
     WHERE c.id = ${id}
@@ -78,7 +78,7 @@ export default async function LeadersPage({
     return (
       <div className="mx-auto max-w-[1200px] px-6 py-10">
         <Breadcrumb cluster={cluster} />
-        <h1 className="font-display text-[36px] mt-3 tracking-tight">{cluster.cluster_name} · Leaders</h1>
+        <h1 className="font-display text-[36px] mt-3 tracking-tight">{cluster.industry_name} · Leaders</h1>
         <div className="card p-12 mt-8 text-center muted-text">
           No stocks scored in this {tier === "all" ? "cluster" : `cluster's ${tierLabel(tier)} tier`} yet.
         </div>
@@ -97,10 +97,10 @@ export default async function LeadersPage({
 
       <header className="mt-3 max-w-[760px]">
         <div className="text-[12px] uppercase tracking-wide muted-text">
-          {cluster.meta_cluster_name}
+          {cluster.sector_name}
         </div>
         <h1 className="font-display text-[36px] mt-1 tracking-tight leading-tight">
-          {cluster.cluster_name} · Leaders
+          {cluster.industry_name} · Leaders
         </h1>
         <p className="mt-3 text-[14.5px] muted-text">
           Top 10 within this peer cluster across each pillar plus overall Composite.
@@ -133,8 +133,8 @@ function Breadcrumb({ cluster }: { cluster: ClusterMeta }) {
     <nav className="text-[12px] muted-text">
       <Link href="/" className="hover:text-[var(--color-accent-600)]">All clusters</Link>
       <span className="mx-1.5">/</span>
-      <Link href={`/industry/${cluster.cluster_id}`} className="hover:text-[var(--color-accent-600)]">
-        {cluster.cluster_name}
+      <Link href={`/industry/${cluster.industry_id}`} className="hover:text-[var(--color-accent-600)]">
+        {cluster.industry_name}
       </Link>
       <span className="mx-1.5">/</span>
       <span>Leaders</span>

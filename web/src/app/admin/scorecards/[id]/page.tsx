@@ -6,9 +6,9 @@ import { ScorecardEditor } from "./EditForm";
 export const dynamic = "force-dynamic";
 
 type ClusterMeta = {
-  cluster_id: string;
-  cluster_name: string;
-  meta_cluster_name: string;
+  industry_id: string;
+  industry_name: string;
+  sector_name: string;
 };
 
 type Active = {
@@ -32,7 +32,7 @@ type HistoryRow = {
 
 async function load(id: string) {
   const meta = await sql<ClusterMeta[]>`
-    SELECT c.id AS cluster_id, c.name AS cluster_name, mc.name AS meta_cluster_name
+    SELECT c.id AS industry_id, c.name AS industry_name, mc.name AS sector_name
     FROM app.cluster c
     JOIN app.meta_cluster mc ON mc.id = c.meta_cluster_id
     WHERE c.id = ${id}
@@ -76,10 +76,10 @@ export default async function ScorecardEditPage({
 
       <header className="mt-3 max-w-[760px]">
         <div className="text-[12px] uppercase tracking-wide muted-text">
-          {meta.meta_cluster_name}
+          {meta.sector_name}
         </div>
         <h1 className="font-display text-[36px] tracking-tight leading-tight mt-1">
-          {meta.cluster_name}
+          {meta.industry_name}
         </h1>
         <p className="mt-3 text-[13px] muted-text">
           Edit weights below and save. A new versioned row is written to{" "}
@@ -90,7 +90,7 @@ export default async function ScorecardEditPage({
 
       <div className="mt-8 grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-8">
         <ScorecardEditor
-          clusterId={meta.cluster_id}
+          industryId={meta.industry_id}
           initial={active}
         />
         <HistoryPane history={history} activeId={active?.id ?? null} />

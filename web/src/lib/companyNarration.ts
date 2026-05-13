@@ -28,7 +28,7 @@ type StockMeta = {
   symbol: string;
   market_cap_cr: number | null;
   current_price: number | null;
-  cluster_name: string;
+  industry_name: string;
   composite_pct: number | null;
 };
 
@@ -92,7 +92,7 @@ export function qualityNarration(
   // Closing note from cluster percentile
   if (pct != null) {
     const where = pct >= 75 ? `top quartile` : pct >= 50 ? `above-median` : pct >= 25 ? `below-median` : `bottom quartile`;
-    pieces.push(`On the cluster scorecard the business sits in the ${where} for quality (${Math.round(pct)} pct in ${stock.cluster_name}).`);
+    pieces.push(`On the cluster scorecard the business sits in the ${where} for quality (${Math.round(pct)} pct in ${stock.industry_name}).`);
   }
 
   return pieces.join(" ") || defaultLine("Quality", stock, pct);
@@ -120,12 +120,12 @@ export function valuationNarration(
                   pe >= 50 ? "reasonably priced for the cluster" :
                   pe >= 30 ? "richer than the cluster median" :
                               "expensive vs peers";
-    pieces.push(`Its earnings multiple is ${where} (P/E percentile ${Math.round(pe)} within ${stock.cluster_name}).`);
+    pieces.push(`Its earnings multiple is ${where} (P/E percentile ${Math.round(pe)} within ${stock.industry_name}).`);
   } else if (pb != null) {
     const where = pb >= 70 ? "cheap on book value vs peers" :
                   pb >= 50 ? "fairly valued on book vs peers" :
                               "richer on book than the cluster median";
-    pieces.push(`On book value, the stock is ${where} (P/B percentile ${Math.round(pb)} within ${stock.cluster_name}).`);
+    pieces.push(`On book value, the stock is ${where} (P/B percentile ${Math.round(pb)} within ${stock.industry_name}).`);
   }
 
   // Bottom line: pillar percentile
@@ -134,7 +134,7 @@ export function valuationNarration(
                   pct >= 50 ? "better-than-average value" :
                   pct >= 25 ? "fairly priced to slightly expensive" :
                               "expensive vs the cluster";
-    pieces.push(`Overall, the valuation pillar puts it as ${where} in ${stock.cluster_name} (${Math.round(pct)} pct).`);
+    pieces.push(`Overall, the valuation pillar puts it as ${where} in ${stock.industry_name} (${Math.round(pct)} pct).`);
   }
 
   return pieces.join(" ") || defaultLine("Valuation", stock, pct);
@@ -191,7 +191,7 @@ export function momentumNarration(
                     pct >= 50 ? "the market is broadly with this stock" :
                     pct >= 25 ? "the market is unconvinced" :
                                  "the market is actively against this stock";
-    pieces.push(`On the momentum pillar, ${verdict} (${Math.round(pct)} pct in ${stock.cluster_name}).`);
+    pieces.push(`On the momentum pillar, ${verdict} (${Math.round(pct)} pct in ${stock.industry_name}).`);
   }
 
   return pieces.join(" ") || defaultLine("Momentum", stock, pct);
@@ -199,5 +199,5 @@ export function momentumNarration(
 
 function defaultLine(pillar: string, stock: StockMeta, pct: number | null): string {
   if (pct == null) return `Insufficient data to score ${pillar.toLowerCase()} for ${stock.company_name || stock.symbol}.`;
-  return `${stock.company_name || stock.symbol} scores ${Math.round(pct)} on the ${pillar.toLowerCase()} pillar within ${stock.cluster_name}.`;
+  return `${stock.company_name || stock.symbol} scores ${Math.round(pct)} on the ${pillar.toLowerCase()} pillar within ${stock.industry_name}.`;
 }

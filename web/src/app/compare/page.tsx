@@ -34,9 +34,9 @@ type CompareRow = {
   sector: string | null;
   industry: string | null;
   maturity_tier: string;
-  cluster_id: string;
-  cluster_name: string;
-  meta_cluster_name: string;
+  industry_id: string;
+  industry_name: string;
+  sector_name: string;
   market_cap_cr: number | null;
   current_price: number | null;
   listing_date: string | null;
@@ -44,8 +44,8 @@ type CompareRow = {
   quality_pct: number | null;
   valuation_pct: number | null;
   momentum_pct: number | null;
-  rank_in_cluster: number | null;
-  cluster_peer_count: number | null;
+  rank_in_industry: number | null;
+  industry_peer_count: number | null;
   // Raw-data fields — latest + previous annual filing
   fy_latest: string | null;        // period_end of latest annual
   fy_prev: string | null;          // period_end of one-year prior
@@ -84,14 +84,14 @@ async function loadOne(symbol: string): Promise<CompareRow | null> {
       me.symbol,
       u.company_name, u.sector, u.industry, u.listing_date::text,
       me.maturity_tier,
-      me.cluster_id, c.name AS cluster_name, mc.name AS meta_cluster_name,
+      me.cluster_id AS industry_id, c.name AS industry_name, mc.name AS sector_name,
       sm.market_cap_cr::float AS market_cap_cr,
       sm.current_price::float AS current_price,
       me.composite_pct, me.quality_pct, me.valuation_pct, me.momentum_pct,
       ((SELECT COUNT(*) FROM peers
          WHERE COALESCE(composite_pct, -1) > COALESCE(me.composite_pct, -1)
-       ) + 1)::int AS rank_in_cluster,
-      (SELECT COUNT(*) FROM peers)::int AS cluster_peer_count,
+       ) + 1)::int AS rank_in_industry,
+      (SELECT COUNT(*) FROM peers)::int AS industry_peer_count,
       al.period_end::text  AS fy_latest,
       ap.period_end::text  AS fy_prev,
       al.sales::float                AS sales,
@@ -142,7 +142,7 @@ export default async function ComparePage({
 
   const allSameCluster =
     found.length >= 2 &&
-    found.every((r) => r.cluster_id === found[0].cluster_id);
+    found.every((r) => r.industry_id === found[0].industry_id);
 
   // Preserve current symbols + view in tab URLs so a tab switch doesn't reset selection.
   const baseParams = new URLSearchParams();
@@ -428,12 +428,12 @@ function FundamentalTable({ rows }: { rows: CompareRow[] }) {
     { label: "Momentum",  extract: (r) => r.momentum_pct,  higherIsBetter: true, render: (r) => <ScoreCell value={r.momentum_pct} /> },
     {
       label: "Rank in cluster",
-      extract: (r) => (r.rank_in_cluster != null ? -r.rank_in_cluster : null),
+      extract: (r) => (r.rank_in_industry != null ? -r.rank_in_industry : null),
       higherIsBetter: true,
       render: (r) =>
-        r.rank_in_cluster != null && r.cluster_peer_count != null ? (
+        r.rank_in_industry != null && r.industry_peer_count != null ? (
           <span className="tabular-nums">
-            {r.rank_in_cluster} <span className="muted-text">of {r.cluster_peer_count}</span>
+            {r.rank_in_industry} <span className="muted-text">of {r.industry_peer_count}</span>
           </span>
         ) : (
           <span className="muted-text">—</span>
@@ -445,8 +445,8 @@ function FundamentalTable({ rows }: { rows: CompareRow[] }) {
       higherIsBetter: null,
       render: (r) => (
         <span className="text-[12.5px]">
-          <div className="muted-text text-[10.5px] uppercase tracking-wide">{r.meta_cluster_name}</div>
-          {r.cluster_name}
+          <div className="muted-text text-[10.5px] uppercase tracking-wide">{r.sector_name}</div>
+          {r.industry_name}
         </span>
       ),
     },

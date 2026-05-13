@@ -4,9 +4,9 @@ import { sql } from "@/lib/db";
 export const dynamic = "force-dynamic";
 
 type Row = {
-  cluster_id: string;
-  cluster_name: string;
-  meta_cluster_name: string;
+  industry_id: string;
+  industry_name: string;
+  sector_name: string;
   meta_display_order: number;
   pillar_weights: Record<string, number>;
   effective_from: string;
@@ -19,8 +19,8 @@ type Row = {
 async function load(): Promise<Row[]> {
   return sql<Row[]>`
     SELECT
-      c.id AS cluster_id, c.name AS cluster_name,
-      mc.name AS meta_cluster_name, mc.display_order AS meta_display_order,
+      c.id AS industry_id, c.name AS industry_name,
+      mc.name AS sector_name, mc.display_order AS meta_display_order,
       csa.pillar_weights, csa.effective_from::text,
       (SELECT COUNT(*)::int FROM jsonb_object_keys(COALESCE(csa.quality,   '{}'::jsonb))) AS q_components,
       (SELECT COUNT(*)::int FROM jsonb_object_keys(COALESCE(csa.valuation, '{}'::jsonb))) AS v_components,
@@ -40,8 +40,8 @@ export default async function ScorecardListPage() {
   // Group by meta-cluster for readability
   const grouped = new Map<string, Row[]>();
   for (const r of rows) {
-    if (!grouped.has(r.meta_cluster_name)) grouped.set(r.meta_cluster_name, []);
-    grouped.get(r.meta_cluster_name)!.push(r);
+    if (!grouped.has(r.sector_name)) grouped.set(r.sector_name, []);
+    grouped.get(r.sector_name)!.push(r);
   }
 
   return (
@@ -66,11 +66,11 @@ export default async function ScorecardListPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {items.map((r) => (
               <Link
-                key={r.cluster_id}
-                href={`/admin/scorecards/${r.cluster_id}`}
+                key={r.industry_id}
+                href={`/admin/scorecards/${r.industry_id}`}
                 className="card p-4 hover:border-[var(--color-accent-300)] transition-colors block"
               >
-                <div className="font-medium text-[14px]">{r.cluster_name}</div>
+                <div className="font-medium text-[14px]">{r.industry_name}</div>
                 {r.pillar_weights ? (
                   <div className="mt-3 flex items-center gap-1.5 text-[11px] tabular-nums">
                     <Pill color="var(--color-accent-600)">Q {r.pillar_weights.q}</Pill>

@@ -14,9 +14,9 @@ type Snapshot = {
   snapshot_date: string | null;
 };
 
-type ClusterTile = {
-  cluster_id: string;
-  cluster_name: string;
+type IndustryTile = {
+  industry_id: string;
+  industry_name: string;
   avg_composite: number | null;
 };
 
@@ -36,8 +36,8 @@ async function loadHero() {
       (SELECT COUNT(DISTINCT snapshot_date)::int FROM app.scores) AS weeks,
       (SELECT MAX(snapshot_date)::text FROM app.scores) AS snapshot_date
   `;
-  const tilesPromise = sql<ClusterTile[]>`
-    SELECT c.id AS cluster_id, c.name AS cluster_name,
+  const tilesPromise = sql<IndustryTile[]>`
+    SELECT c.id AS industry_id, c.name AS industry_name,
            AVG(s.composite_pct)::float AS avg_composite
     FROM app.cluster c
     LEFT JOIN app.scores s ON s.cluster_id = c.id
@@ -504,7 +504,7 @@ function Divider() {
 
 /* ====================================================== HEAT-MAP TEAR === */
 
-function HeatMapTear({ tiles }: { tiles: ClusterTile[] }) {
+function HeatMapTear({ tiles }: { tiles: IndustryTile[] }) {
   // Show top 15 tiles (sorted by avg composite desc); rest fades vertically below
   const SHOW = 15;
   const visible = tiles.slice(0, SHOW);
@@ -571,10 +571,10 @@ function HeatMapTear({ tiles }: { tiles: ClusterTile[] }) {
                   const numColor = v >= 50 && v < 65 ? "var(--color-ink)" : "#fff";
                   return (
                     <Link
-                      key={t.cluster_id}
-                      href={`/industry/${t.cluster_id}`}
+                      key={t.industry_id}
+                      href={`/industry/${t.industry_id}`}
                       className="heat-tile heat-tile-drop rounded-[5px] flex flex-col items-center justify-center p-1"
-                      title={`${t.cluster_name} · ${Math.round(v)}`}
+                      title={`${t.industry_name} · ${Math.round(v)}`}
                       style={{
                         aspectRatio: "1 / 1",
                         background: bg,
@@ -592,7 +592,7 @@ function HeatMapTear({ tiles }: { tiles: ClusterTile[] }) {
                         className="leading-tight tracking-wide font-medium text-center mt-0.5"
                         style={{ color: numColor, opacity: 0.86, fontSize: 8 }}
                       >
-                        {t.cluster_name}
+                        {t.industry_name}
                       </span>
                     </Link>
                   );

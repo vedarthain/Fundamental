@@ -9,8 +9,8 @@ export const dynamic = "force-dynamic";
 type DeltaRow = {
   symbol: string;
   company_name: string;
-  cluster_id: string;
-  cluster_name: string;
+  industry_id: string;
+  industry_name: string;
   maturity_tier: string;
   prev_composite: number | null;
   curr_composite: number | null;
@@ -60,7 +60,7 @@ async function loadDeltas(pillar: PillarKey) {
     SELECT
       cur.symbol,
       u.company_name,
-      cur.cluster_id, c.name AS cluster_name, cur.maturity_tier,
+      cur.cluster_id AS industry_id, c.name AS industry_name, cur.maturity_tier,
       prv.composite_pct AS prev_composite, cur.composite_pct AS curr_composite,
       prv.quality_pct   AS prev_quality,   cur.quality_pct   AS curr_quality,
       prv.valuation_pct AS prev_valuation, cur.valuation_pct AS curr_valuation,
@@ -214,7 +214,7 @@ function Board({
                 <div className="flex items-baseline gap-2">
                   <span className="font-medium text-[13px] tabular-nums">{r.row.symbol}</span>
                   <span className="muted-text text-[11px] truncate">
-                    {r.row.cluster_name} · {tierLabel(r.row.maturity_tier)}
+                    {r.row.industry_name} · {tierLabel(r.row.maturity_tier)}
                   </span>
                 </div>
                 <div className="muted-text text-[11.5px] truncate">

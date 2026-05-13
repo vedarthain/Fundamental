@@ -8,8 +8,8 @@ import { band, bandColor } from "@/lib/score";
 type Hit = {
   symbol: string;
   company_name: string;
-  cluster_name: string | null;
-  cluster_id: string | null;
+  industry_name: string | null;
+  industry_id: string | null;
   composite_pct: number | null;
 };
 
@@ -157,9 +157,9 @@ export function StockSearch() {
                   <div className="text-[12px] muted-text truncate">
                     {h.company_name}
                   </div>
-                  {h.cluster_name && (
+                  {h.industry_name && (
                     <div className="text-[10px] muted-text mt-0.5 uppercase tracking-wide truncate">
-                      {h.cluster_name}
+                      {h.industry_name}
                     </div>
                   )}
                 </div>

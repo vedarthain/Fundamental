@@ -20,8 +20,8 @@ type Active = {
 };
 
 export function ScorecardEditor({
-  clusterId, initial,
-}: { clusterId: string; initial: Active | null }) {
+  industryId, initial,
+}: { industryId: string; initial: Active | null }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -90,7 +90,7 @@ export function ScorecardEditor({
         notes: notes || null,
       };
       try {
-        const r = await fetch(`/api/admin/scorecards/${clusterId}`, {
+        const r = await fetch(`/api/admin/scorecards/${industryId}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),

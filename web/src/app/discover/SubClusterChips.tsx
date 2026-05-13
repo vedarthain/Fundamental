@@ -11,7 +11,7 @@ import { paramsToQuery, parseParams } from "./types";
 export type ClusterRow = {
   id: string;
   name: string;
-  meta_cluster_id: string;
+  sector_id: string;
 };
 
 export function SubClusterChips({ clusters }: { clusters: ClusterRow[] }) {
@@ -27,7 +27,7 @@ export function SubClusterChips({ clusters }: { clusters: ClusterRow[] }) {
   // is selected, hint the user to pick one first.
   const visible = useMemo(() => {
     if (selectedMetas.size === 0) return [];
-    return clusters.filter((c) => selectedMetas.has(c.meta_cluster_id));
+    return clusters.filter((c) => selectedMetas.has(c.sector_id));
   }, [clusters, selectedMetas]);
 
   if (selectedMetas.size === 0) {

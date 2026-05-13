@@ -6,9 +6,9 @@ import { band, bandColor, fmtPct, tierLabel } from "@/lib/score";
 export const revalidate = 3600;
 
 type ClusterMeta = {
-  cluster_id: string;
-  cluster_name: string;
-  meta_cluster_name: string;
+  industry_id: string;
+  industry_name: string;
+  sector_name: string;
   description: string | null;
 };
 
@@ -26,8 +26,8 @@ type StockRow = {
 
 async function loadCluster(id: string) {
   const meta = await sql<ClusterMeta[]>`
-    SELECT c.id AS cluster_id, c.name AS cluster_name,
-           mc.name AS meta_cluster_name, c.description
+    SELECT c.id AS industry_id, c.name AS industry_name,
+           mc.name AS sector_name, c.description
     FROM app.cluster c
     JOIN app.meta_cluster mc ON mc.id = c.meta_cluster_id
     WHERE c.id = ${id}
@@ -106,10 +106,10 @@ export default async function ClusterPage({
       <header className="mt-3 flex items-start justify-between gap-8">
         <div className="max-w-[760px]">
           <div className="text-[12px] muted-text uppercase tracking-wide">
-            {meta.meta_cluster_name}
+            {meta.sector_name}
           </div>
           <h1 className="font-display text-[36px] mt-1 leading-tight tracking-tight">
-            {meta.cluster_name}
+            {meta.industry_name}
           </h1>
           {meta.description && (
             <p className="mt-3 text-[15px] muted-text">{meta.description}</p>
@@ -120,7 +120,7 @@ export default async function ClusterPage({
           </div>
         </div>
         <Link
-          href={`/industry/${meta.cluster_id}/leaders`}
+          href={`/industry/${meta.industry_id}/leaders`}
           className="shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-md text-[13px] border hairline bg-[var(--color-card)] hover:bg-[var(--color-paper)] hover:border-[var(--color-accent-300)] transition-colors"
         >
           <span>View Leaders</span>

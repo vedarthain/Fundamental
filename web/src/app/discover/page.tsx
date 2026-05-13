@@ -15,9 +15,9 @@ export const dynamic = "force-dynamic"; // search-param driven
 type Row = {
   symbol: string;
   company_name: string;
-  cluster_id: string;
-  cluster_name: string;
-  meta_cluster_name: string;
+  industry_id: string;
+  industry_name: string;
+  sector_name: string;
   maturity_tier: string;
   market_cap_cr: number | null;
   current_price: number | null;
@@ -51,7 +51,7 @@ async function loadMetas(): Promise<MetaOption[]> {
 
 async function loadClusters(): Promise<ClusterRow[]> {
   return sql<ClusterRow[]>`
-    SELECT c.id, c.name, c.meta_cluster_id
+    SELECT c.id, c.name, c.meta_cluster_id AS sector_id
     FROM app.cluster c
     WHERE c.id <> 'unclassified'
     ORDER BY c.name
@@ -92,9 +92,9 @@ async function loadRows(p: ScreenerParams): Promise<{ rows: Row[]; total: number
   const rows = await sql<Row[]>`
     SELECT s.symbol,
            u.company_name,
-           s.cluster_id,
-           c.name AS cluster_name,
-           mc.name AS meta_cluster_name,
+           s.cluster_id AS industry_id,
+           c.name AS industry_name,
+           mc.name AS sector_name,
            s.maturity_tier,
            sm.market_cap_cr,
            sm.current_price::float AS current_price,
@@ -340,10 +340,10 @@ function ResultsTable({ rows, weights }: { rows: Row[]; weights: { q: number; v:
               </td>
               <td className="px-4 py-3 text-[12px]">
                 <div className="text-[10px] uppercase tracking-wide muted-text mb-0.5">
-                  {r.meta_cluster_name}
+                  {r.sector_name}
                 </div>
-                <Link href={`/industry/${r.cluster_id}`} className="hover:text-[var(--color-accent-600)]">
-                  {r.cluster_name}
+                <Link href={`/industry/${r.industry_id}`} className="hover:text-[var(--color-accent-600)]">
+                  {r.industry_name}
                 </Link>
                 <div className="muted-text">{tierLabel(r.maturity_tier)}</div>
               </td>

@@ -38,10 +38,10 @@ type Stock = {
   employees: number | null;
   ceo_name: string | null;
   ceo_title: string | null;
-  cluster_id: string;
-  cluster_name: string;
-  meta_cluster_id: string;
-  meta_cluster_name: string;
+  industry_id: string;
+  industry_name: string;
+  sector_id: string;
+  meta_industry_name: string;
   maturity_tier: string;
   market_cap_cr: number | null;
   current_price: number | null;
@@ -91,7 +91,7 @@ async function loadStock(symbol: string) {
       s.symbol, u.company_name, u.sector, u.industry, u.listing_date::text, u.years_of_data,
       u.business_summary, u.website, u.employees,
       u.ceo_name, u.ceo_title,
-      s.cluster_id, c.name AS cluster_name, mc.id AS meta_cluster_id, mc.name AS meta_cluster_name,
+      s.cluster_id AS industry_id, c.name AS industry_name, mc.id AS sector_id, mc.name AS sector_name,
       s.maturity_tier, sm.market_cap_cr, sm.current_price,
       s.composite_pct, s.quality_pct, s.valuation_pct, s.momentum_pct,
       s.quality_components, s.valuation_components, s.momentum_components,
@@ -153,10 +153,10 @@ async function loadStock(symbol: string) {
     WITH peers AS (
       SELECT symbol, composite_pct
       FROM app.scores
-      WHERE cluster_id = ${stock.cluster_id} AND maturity_tier = ${stock.maturity_tier}
+      WHERE cluster_id = ${stock.industry_id} AND maturity_tier = ${stock.maturity_tier}
         AND snapshot_date = (
           SELECT MAX(snapshot_date) FROM app.scores
-          WHERE cluster_id = ${stock.cluster_id} AND maturity_tier = ${stock.maturity_tier}
+          WHERE cluster_id = ${stock.industry_id} AND maturity_tier = ${stock.maturity_tier}
         )
     )
     SELECT
@@ -173,7 +173,7 @@ async function loadStock(symbol: string) {
   const scRow = await sql<Scorecard[]>`
     SELECT pillar_weights, quality, valuation, momentum
     FROM app.cluster_scorecard_active
-    WHERE cluster_id = ${stock.cluster_id}
+    WHERE cluster_id = ${stock.industry_id}
   `;
   const scorecard = scRow[0] ?? null;
 
@@ -197,8 +197,8 @@ async function loadStock(symbol: string) {
   return {
     stock, scorecard, annual, quarterly, priceHistory, shareholding,
     peerMedianComposite: peerStats[0]?.median ?? 50,
-    rankInCluster: peerStats[0]?.rank ?? null,
-    clusterPeerCount: peerStats[0]?.peer_count ?? null,
+    rankInIndustry: peerStats[0]?.rank ?? null,
+    industryPeerCount: peerStats[0]?.peer_count ?? null,
   };
 }
 
@@ -210,7 +210,7 @@ export default async function StockPage({
   const { symbol } = await params;
   const data = await loadStock(symbol);
   if (!data) return notFound();
-  const { stock, scorecard, annual, quarterly, priceHistory, shareholding, rankInCluster, clusterPeerCount } = data;
+  const { stock, scorecard, annual, quarterly, priceHistory, shareholding, rankInIndustry, industryPeerCount } = data;
 
   // Build the 5-axis strength bars from per-component sub-percentiles
   const strengthRows = buildSpider(
@@ -231,7 +231,7 @@ export default async function StockPage({
     symbol: stock.symbol,
     market_cap_cr: stock.market_cap_cr,
     current_price: stock.current_price,
-    cluster_name: stock.cluster_name,
+    industry_name: stock.industry_name,
     composite_pct: stock.composite_pct,
   };
 
@@ -245,10 +245,10 @@ export default async function StockPage({
           they were just browsing. Falls back to /sectors root if either
           identifier is missing. */}
       <Link
-        href={`/sectors?sector=${encodeURIComponent(stock.meta_cluster_id)}&industry=${encodeURIComponent(stock.cluster_id)}`}
+        href={`/sectors?sector=${encodeURIComponent(stock.sector_id)}&industry=${encodeURIComponent(stock.industry_id)}`}
         className="text-[12px] muted-text hover:text-[var(--color-accent-600)]"
       >
-        ← {stock.meta_cluster_name} · {stock.cluster_name}
+        ← {stock.meta_industry_name} · {stock.industry_name}
       </Link>
 
       {/* Header — name + percentile badge.
@@ -258,7 +258,7 @@ export default async function StockPage({
       <header className="mt-3 flex flex-col md:flex-row items-start md:justify-between gap-4 md:gap-8">
         <div>
           <div className="text-[12px] muted-text uppercase tracking-wide">
-            {stock.meta_cluster_name} · {stock.cluster_name} · {tierLabel(stock.maturity_tier)}
+            {stock.meta_industry_name} · {stock.industry_name} · {tierLabel(stock.maturity_tier)}
           </div>
           <h1 className="font-display text-[36px] mt-1 tracking-tight leading-tight">
             {stock.company_name || stock.symbol}
@@ -314,22 +314,22 @@ export default async function StockPage({
           </div>
           {stock.composite_pct != null && (
             <div className="text-[11px] muted-text mt-2 max-w-[220px]">
-              {percentileLabel(stock.composite_pct)} in {stock.cluster_name} ·{" "}
+              {percentileLabel(stock.composite_pct)} in {stock.industry_name} ·{" "}
               {tierLabel(stock.maturity_tier)}
             </div>
           )}
           {/* Rank-in-cluster pill — explicit position within the peer group,
               complementing the abstract percentile. "Rank 3 of 12" reads
               more concretely than "Top 18%". */}
-          {rankInCluster != null && clusterPeerCount != null && clusterPeerCount > 1 && (
+          {rankInIndustry != null && industryPeerCount != null && industryPeerCount > 1 && (
             <div
               className="inline-flex items-center gap-1.5 mt-2 px-2 py-0.5 rounded-full border hairline text-[11px] tabular-nums"
               style={{ backgroundColor: "var(--color-card)" }}
-              title={`Position within ${stock.cluster_name} · ${tierLabel(stock.maturity_tier)} at this snapshot`}
+              title={`Position within ${stock.industry_name} · ${tierLabel(stock.maturity_tier)} at this snapshot`}
             >
               <span className="muted-text">Rank</span>
-              <span className="font-medium ink-text">{rankInCluster}</span>
-              <span className="muted-text">of {clusterPeerCount}</span>
+              <span className="font-medium ink-text">{rankInIndustry}</span>
+              <span className="muted-text">of {industryPeerCount}</span>
             </div>
           )}
         </div>
@@ -366,7 +366,7 @@ export default async function StockPage({
               <section className="card p-6">
                 <h2 className="font-display text-[20px] mb-2">Strengths and gaps</h2>
                 <p className="text-[13px] muted-text mb-6">
-                  Each bar is this stock&apos;s percentile within {stock.cluster_name} ·{" "}
+                  Each bar is this stock&apos;s percentile within {stock.industry_name} ·{" "}
                   {tierLabel(stock.maturity_tier)} peers. The thin line in the middle is
                   the cluster median — anything to the right of it beats half the cluster.
                 </p>
@@ -428,7 +428,7 @@ export default async function StockPage({
               <StatusCard status={stock.score_status} />
               <CompositeExplainer
                 composite={stock.composite_pct}
-                cluster={stock.cluster_name}
+                cluster={stock.industry_name}
                 tier={stock.maturity_tier}
               />
             </aside>
@@ -541,7 +541,7 @@ function AboutCard({
   if (stock.sector) facts.push({ label: "Sector", value: stock.sector });
   facts.push({
     label: "Cluster",
-    value: `${stock.cluster_name} · ${tierLabel(stock.maturity_tier)}`,
+    value: `${stock.industry_name} · ${tierLabel(stock.maturity_tier)}`,
   });
   if (stock.market_cap_cr != null) {
     facts.push({ label: "Market cap", value: fmtRupeesCr(stock.market_cap_cr) });

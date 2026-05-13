@@ -8,8 +8,8 @@ export const revalidate = 60; // Cache for 1 min — universe changes slowly
 type Hit = {
   symbol: string;
   company_name: string;
-  cluster_name: string | null;
-  cluster_id: string | null;
+  industry_name: string | null;
+  industry_id: string | null;
   composite_pct: number | null;
 };
 
@@ -26,8 +26,8 @@ export async function GET(req: NextRequest) {
   const hits = await sql<Hit[]>`
     SELECT u.symbol,
            u.company_name,
-           c.name AS cluster_name,
-           c.id   AS cluster_id,
+           c.name AS industry_name,
+           c.id   AS industry_id,
            s.composite_pct
     FROM app.universe u
     LEFT JOIN app.cluster_assignment ca USING (symbol)
