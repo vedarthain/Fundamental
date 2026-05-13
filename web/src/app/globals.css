@@ -2,25 +2,31 @@
 
 /* ----- Claude design tokens ------------------------------------------ */
 @theme {
-  /* Surfaces */
-  --color-paper: #faf9f5;
-  --color-card: #ffffff;
-  --color-ink: #191919;
-  --color-muted: #5a584f;
-  --color-border-default: #e8e4d9;
+  /* Surfaces — cool neutrals.
+     Earlier palette was warm cream (#faf9f5) + tan border (#e8e4d9) +
+     brown-gray muted (#5a584f), which read as "editorial magazine"
+     rather than "analytics tool". Cool near-white + slate borders +
+     slate muted pull the register toward financial-research without
+     going full Bloomberg gray-on-gray. */
+  --color-paper: #f7f8fa;
+  --color-card:  #ffffff;
+  --color-ink:   #15171c;
+  --color-muted: #5b6470;
+  --color-border-default: #e2e5eb;
 
-  /* Accent — Claude tan-orange family */
-  /* Brand accent — more saturated terracotta. Previous palette read as
-     muted/dull on small mobile cards. Bumped saturation +10–15% across
-     the ramp; hue stays in the same warm-clay family. */
-  --color-accent-50:  #fdf0e7;
-  --color-accent-100: #f8dac8;
-  --color-accent-200: #f2b691;
-  --color-accent-300: #e8915d;
-  --color-accent-400: #db7140;
-  --color-accent-500: #c5602f;
-  --color-accent-600: #a84d22;
-  --color-accent-700: #823a18;
+  /* Accent — slate-blue. Default brand accent moved off terracotta
+     (now still available via per-page themes if needed) toward a
+     calmer navy/slate that reads trustworthy on a financial surface.
+     Per-page themes (.theme-teal, .theme-indigo, .theme-amber) still
+     override this ramp on /clusters, /discover, /compare. */
+  --color-accent-50:  #eef2f7;
+  --color-accent-100: #d6dee9;
+  --color-accent-200: #adbed1;
+  --color-accent-300: #7d95b3;
+  --color-accent-400: #557090;
+  --color-accent-500: #3d5778;
+  --color-accent-600: #2c4361;
+  --color-accent-700: #1d324b;
 
   /* Score palette — earthy, no neon */
   /* Score band palette — brightened. Old palette had muted forest greens
@@ -187,12 +193,14 @@ em.accent {
   line-height: 1;
 }
 
-/* Subtle warm-grain background gradient for hero */
+/* Subtle cool-tone background gradient for hero. Earlier blobs were
+   warm peach (rgba 204,120,92) which fought the new cool surface. Now
+   slate-blue at low opacity — adds depth without leaking warmth. */
 .grain {
   background-image:
-    radial-gradient(circle at 12% 18%, rgba(204,120,92,0.08), transparent 28%),
-    radial-gradient(circle at 88% 8%, rgba(220,154,122,0.10), transparent 32%),
-    radial-gradient(circle at 50% 96%, rgba(245,224,211,0.55), transparent 50%);
+    radial-gradient(circle at 12% 18%, rgba(61,87,120,0.06), transparent 28%),
+    radial-gradient(circle at 88% 8%, rgba(125,149,179,0.07), transparent 32%),
+    radial-gradient(circle at 50% 96%, rgba(226,229,235,0.55), transparent 50%);
 }
 
 /* Pill primary button (brand accent) */
