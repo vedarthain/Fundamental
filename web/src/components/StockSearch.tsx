@@ -1,9 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Search } from "lucide-react";
-import { band, bandColor } from "@/lib/score";
 
 type Hit = {
   symbol: string;
@@ -100,11 +99,6 @@ export function StockSearch() {
 
   const showDropdown = open && q.trim().length > 0;
 
-  const platform = useMemo(() => {
-    if (typeof navigator === "undefined") return "ctrl";
-    return navigator.platform.toLowerCase().includes("mac") ? "cmd" : "ctrl";
-  }, []);
-
   return (
     <div ref={containerRef} className="relative w-[260px] sm:w-[320px]">
       <div className="flex items-center gap-2 px-3 h-9 rounded-md border hairline bg-[var(--color-card)] focus-within:border-[var(--color-accent-300)]">
@@ -124,9 +118,6 @@ export function StockSearch() {
           aria-label="Search stocks"
           autoComplete="off"
         />
-        <kbd className="hidden sm:inline-flex items-center gap-0.5 text-[10px] muted-text font-mono">
-          {platform === "cmd" ? "⌘" : "Ctrl"} K
-        </kbd>
       </div>
 
       {showDropdown && (
@@ -140,7 +131,6 @@ export function StockSearch() {
             </div>
           )}
           {hits.map((h, i) => {
-            const b = band(h.composite_pct);
             const isActive = i === active;
             return (
               <button
@@ -148,7 +138,7 @@ export function StockSearch() {
                 type="button"
                 onMouseEnter={() => setActive(i)}
                 onClick={() => go(h)}
-                className={`w-full text-left grid grid-cols-[1fr_44px] gap-3 px-4 py-2.5 border-b hairline last:border-b-0 transition-colors ${
+                className={`w-full text-left px-4 py-2.5 border-b hairline last:border-b-0 transition-colors ${
                   isActive ? "bg-[var(--color-accent-50)]" : "hover:bg-[var(--color-paper)]"
                 }`}
               >
@@ -163,17 +153,6 @@ export function StockSearch() {
                     </div>
                   )}
                 </div>
-                {h.composite_pct != null && (
-                  <span
-                    className="self-center inline-flex items-center justify-center px-2 py-0.5 rounded-md tabular-nums text-[12px] font-medium"
-                    style={{
-                      backgroundColor: bandColor(b),
-                      color: b === "neutral" ? "var(--color-ink)" : "white",
-                    }}
-                  >
-                    {Math.round(h.composite_pct)}
-                  </span>
-                )}
               </button>
             );
           })}

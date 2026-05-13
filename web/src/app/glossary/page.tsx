@@ -23,6 +23,7 @@
  * surfaces) to keep the page distinct from the terracotta brand pages.
  */
 import Link from "next/link";
+import { MetricViz, type MetricExample } from "@/components/MetricViz";
 
 export const revalidate = 86400; // static-ish; only changes when we add ratios
 
@@ -34,6 +35,11 @@ type Entry = {
   high: string;
   low: string;
   caveats?: string;
+  // Optional worked numerical example. When present, renders an animated
+  // formula plug-in + a 5-tier band gauge below the meaning block so
+  // readers see what the ratio looks like for a real Indian stock and
+  // where the value lands on the scoring scale.
+  example?: MetricExample;
 };
 
 type Category = {
@@ -62,6 +68,22 @@ const CATEGORIES: Category[] = [
         low: "< 10% suggests the business is destroying or barely preserving capital.",
         caveats:
           "RoE can be inflated by debt (more leverage → higher RoE without better operations). Always read alongside RoCE and Debt/Equity.",
+        example: {
+          context: "TITAN FY24",
+          parts: [
+            { label: "Net Profit",  display: "₹3,496 cr" },
+            { label: "Equity",      display: "₹11,520 cr" },
+          ],
+          result: { display: "30.3%", numeric: 30.3 },
+          bands: [
+            { upTo: 10, label: "Poor",      tone: "poor" },
+            { upTo: 15, label: "Weak",      tone: "weak" },
+            { upTo: 18, label: "OK",        tone: "neutral" },
+            { upTo: 25, label: "Good",      tone: "good" },
+            { upTo: 40, label: "Excellent", tone: "excellent" },
+          ],
+          note: "Well above the 18% compounder threshold — TITAN earns ₹0.30 of profit per ₹1 of shareholder equity each year.",
+        },
       },
       {
         name: "Return on Capital Employed (RoCE)",
@@ -179,6 +201,25 @@ const CATEGORIES: Category[] = [
           "Low P/E = market is skeptical. Could be cheap; could be earning a real warning.",
         caveats:
           "Compare only within an industry. A bank's natural P/E (10–18) is nothing like a software company's natural P/E (25–60). And avoid trailing P/E on cyclical businesses — peak earnings make them look cheaper than they are.",
+        example: {
+          context: "TCS FY24",
+          parts: [
+            { label: "Share Price", display: "₹3,940" },
+            { label: "EPS",         display: "₹124" },
+          ],
+          result: { display: "31.8×", numeric: 31.8 },
+          bands: [
+            // For P/E, lower = cheaper. Bands inverted: low band is "excellent value",
+            // high band is "expensive". Compared against the IT services industry norm
+            // (~25–35×) — not the broad market.
+            { upTo: 15, label: "Cheap",     tone: "excellent" },
+            { upTo: 22, label: "Reasonable",tone: "good" },
+            { upTo: 30, label: "Fair",      tone: "neutral" },
+            { upTo: 40, label: "Rich",      tone: "weak" },
+            { upTo: 60, label: "Frothy",    tone: "poor" },
+          ],
+          note: "Around the upper end of fair for Indian IT services — investors are pricing in continued earnings growth. Pricier than HCLTECH (~24×), cheaper than INFY (~28×).",
+        },
       },
       {
         name: "P/B Ratio (Price to Book)",
@@ -247,6 +288,24 @@ const CATEGORIES: Category[] = [
         low: "Net cash (D/E < 0 after netting cash) is a fortress balance sheet.",
         caveats:
           "Banks and NBFCs run on D/E of 8–12 by design — comparing them to manufacturers is meaningless.",
+        example: {
+          context: "ASIANPAINT FY24",
+          parts: [
+            { label: "Total Debt", display: "₹2,580 cr" },
+            { label: "Equity",     display: "₹17,400 cr" },
+          ],
+          result: { display: "0.15×", numeric: 0.15 },
+          bands: [
+            // Lower = safer. Bands inverted (low value = excellent).
+            // Tuned for non-financial manufacturing / consumer firms.
+            { upTo: 0.3, label: "Fortress",   tone: "excellent" },
+            { upTo: 0.6, label: "Healthy",    tone: "good" },
+            { upTo: 1.0, label: "Moderate",   tone: "neutral" },
+            { upTo: 1.5, label: "Stretched",  tone: "weak" },
+            { upTo: 3.0, label: "Risky",      tone: "poor" },
+          ],
+          note: "Near-zero leverage — Asian Paints funds growth almost entirely from internal cash. Survives any downturn without a forced equity raise.",
+        },
       },
       {
         name: "Debt to EBITDA",
@@ -518,6 +577,8 @@ function RatioCard({ entry, color }: { entry: Entry; color: string }) {
       <p className="mt-3 text-[13.5px] leading-relaxed">
         <span className="muted-text">{entry.meaning}</span>
       </p>
+
+      {entry.example && <MetricViz ex={entry.example} />}
 
       <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
         <Interp label="When it's high" tone="good">
