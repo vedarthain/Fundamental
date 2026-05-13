@@ -394,20 +394,30 @@ function IndustrySidebar({
   activeIndustryId: string;
 }) {
   return (
-    <aside className="md:sticky md:top-32 md:self-start md:max-h-[calc(100vh-9rem)] md:overflow-y-auto">
-      <div className="text-[10.5px] uppercase tracking-wide muted-text px-1 mb-2 hidden md:block">
-        Industries · {industries.length}
-      </div>
-      {/* Mobile: horizontal scroll. Desktop: vertical stack. */}
-      <div className="flex md:flex-col gap-1.5 md:gap-1 overflow-x-auto md:overflow-x-visible -mx-1 px-1">
-        {industries.map((ind) => (
-          <IndustryRow
-            key={ind.cluster_id}
-            sectorId={sectorId}
-            industry={ind}
-            active={ind.cluster_id === activeIndustryId}
-          />
-        ))}
+    <aside className="md:sticky md:top-32 md:self-start">
+      {/* Desktop: a contained card with its own internal scroll, so users
+          can flip industries without the page scrolling. Mobile keeps the
+          card visually but switches to a horizontal chip strip inside. */}
+      <div className="card overflow-hidden md:max-h-[calc(100vh-10rem)] md:flex md:flex-col">
+        <div className="flex items-center justify-between px-3 pt-3 pb-2 border-b hairline">
+          <span className="text-[10.5px] uppercase tracking-wide muted-text font-medium">
+            Industries
+          </span>
+          <span className="text-[10.5px] tabular-nums muted-text">
+            {industries.length}
+          </span>
+        </div>
+        {/* Scroll container — horizontal on mobile, vertical on desktop. */}
+        <div className="flex md:flex-col gap-1.5 md:gap-1 overflow-x-auto md:overflow-x-visible md:overflow-y-auto p-2">
+          {industries.map((ind) => (
+            <IndustryRow
+              key={ind.cluster_id}
+              sectorId={sectorId}
+              industry={ind}
+              active={ind.cluster_id === activeIndustryId}
+            />
+          ))}
+        </div>
       </div>
     </aside>
   );
@@ -660,11 +670,11 @@ function PillarCell({ label, value, title }: { label: string; value: number | nu
   if (value == null) {
     return (
       <div
-        className="flex items-center justify-between rounded-sm px-1.5 py-0.5 hairline border opacity-50"
+        className="flex flex-col items-center rounded-sm px-2 py-1 hairline border opacity-50"
         title={title}
       >
-        <span className="muted-text">{label}</span>
-        <span className="tabular-nums muted-text">—</span>
+        <span className="text-[9.5px] font-semibold tracking-wider leading-tight" style={{ color: "var(--color-muted)" }}>{label}</span>
+        <span className="tabular-nums font-semibold text-[12px] leading-tight muted-text">—</span>
       </div>
     );
   }
@@ -672,12 +682,12 @@ function PillarCell({ label, value, title }: { label: string; value: number | nu
   const color = bandColor(b);
   return (
     <div
-      className="flex items-center justify-between rounded-sm px-1.5 py-0.5 hairline border"
+      className="flex flex-col items-center rounded-sm px-2 py-1 hairline border"
       title={`${title} · ${Math.round(value)}/100`}
       style={{ borderColor: color }}
     >
-      <span className="muted-text">{label}</span>
-      <span className="tabular-nums font-medium" style={{ color }}>
+      <span className="text-[9.5px] font-semibold tracking-wider leading-tight" style={{ color: "var(--color-muted)" }}>{label}</span>
+      <span className="tabular-nums font-semibold text-[12px] leading-tight" style={{ color }}>
         {Math.round(value)}
       </span>
     </div>
@@ -898,23 +908,39 @@ function ClusterTileCard({ tile }: { tile: ClusterTile }) {
  */
 function ReturnMini({ label, value }: { label: string; value: number | null }) {
   if (value == null) {
+    // Common cause for empty 1Y: stock is a recent listing or carved out
+    // via corporate action (e.g. CCAVENUE listed Jan 2026), so there's no
+    // close price ≥365 days ago to compute against. Tooltip explains so
+    // users don't read "—" as a bug.
+    const reason =
+      label === "1Y"
+        ? "1Y return unavailable — less than 1 year of price history"
+        : label === "1M"
+          ? "1M return unavailable — less than 1 month of price history"
+          : "Return unavailable — insufficient price history";
     return (
-      <div className="flex items-center justify-between rounded-sm px-1.5 py-0.5 hairline border opacity-50">
-        <span className="muted-text">{label}</span>
-        <span className="tabular-nums muted-text">—</span>
+      <div
+        className="flex flex-col items-center rounded-sm px-2 py-1 hairline border opacity-50"
+        title={reason}
+      >
+        <span className="text-[9.5px] font-semibold tracking-wider leading-tight" style={{ color: "var(--color-muted)" }}>{label}</span>
+        <span className="tabular-nums font-semibold text-[12px] leading-tight muted-text">—</span>
       </div>
     );
   }
   const pct = value * 100;
+  // Use the direction-of-movement delta tokens (theme-immune, more saturated
+  // than the score-band palette) so +0.3% reads as a confident green / red
+  // rather than the washed sage/peach the band ramp produces at small values.
   const color =
-    pct >= 0 ? "var(--color-score-good)" : "var(--color-score-poor)";
+    pct >= 0 ? "var(--color-delta-up)" : "var(--color-delta-down)";
   const sign = pct >= 0 ? "+" : "";
   // Single decimal for sub-10% moves; no decimal once we cross +/-10%.
   const txt = Math.abs(pct) >= 10 ? Math.round(pct).toString() : pct.toFixed(1);
   return (
-    <div className="flex items-center justify-between rounded-sm px-1.5 py-0.5 hairline border">
-      <span className="muted-text">{label}</span>
-      <span className="tabular-nums font-medium" style={{ color }}>
+    <div className="flex flex-col items-center rounded-sm px-2 py-1 hairline border">
+      <span className="text-[9.5px] font-semibold tracking-wider leading-tight" style={{ color: "var(--color-muted)" }}>{label}</span>
+      <span className="tabular-nums font-semibold text-[12px] leading-tight" style={{ color }}>
         {sign}{txt}%
       </span>
     </div>

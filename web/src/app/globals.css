@@ -2,17 +2,20 @@
 
 /* ----- Claude design tokens ------------------------------------------ */
 @theme {
-  /* Surfaces — cool neutrals.
-     Earlier palette was warm cream (#faf9f5) + tan border (#e8e4d9) +
-     brown-gray muted (#5a584f), which read as "editorial magazine"
-     rather than "analytics tool". Cool near-white + slate borders +
-     slate muted pull the register toward financial-research without
-     going full Bloomberg gray-on-gray. */
-  --color-paper: #f7f8fa;
+  /* Surfaces — pearl white, Apple-style.
+     Progression:
+       1. Original warm cream (#faf9f5) — too "editorial magazine"
+       2. Cool slate (#f7f8fa) — analytical but visibly dull/gray
+       3. Pearl white (#fbfbfd) — apple.com canonical surface, reads
+          near-white but holds a faint cool luminance that keeps it from
+          feeling sterile. Card stays pure white, so card-on-paper still
+          separates with a quiet 2-step lift. Border lightened in step
+          so 1px hairlines don't look heavy against the lighter paper. */
+  --color-paper: #fbfbfd;
   --color-card:  #ffffff;
   --color-ink:   #15171c;
   --color-muted: #5b6470;
-  --color-border-default: #e2e5eb;
+  --color-border-default: #eaecf0;
 
   /* Accent — slate-blue. Default brand accent moved off terracotta
      (now still available via per-page themes if needed) toward a
@@ -49,7 +52,23 @@
   /* Typography */
   --font-serif: "Source Serif 4", "Iowan Old Style", "Apple Garamond", Georgia, serif;
   --font-sans:  "Inter", ui-sans-serif, system-ui, -apple-system, "Helvetica Neue", sans-serif;
-  --font-mono:  ui-monospace, "SF Mono", "Menlo", monospace;
+  --font-mono:  "IBM Plex Mono", ui-monospace, "SF Mono", "Menlo", monospace;
+
+  /* Delta colors — direction-of-movement (up/down/flat). Kept separate from
+     the score-band palette so a "price up" reads consistently green regardless
+     of which page-level accent theme (.theme-teal, .theme-indigo, etc.) is
+     active. These are intentionally NOT overridden by themes. */
+  --color-delta-up:   #1f8a3e;
+  --color-delta-down: #c63f23;
+  --color-delta-flat: #5b6470;
+
+  /* Terminal strip surface — used by the snapshot ribbon (Step 2). Defined
+     here so any component that wants the "Bloomberg dark strip" look pulls
+     from the same token rather than hardcoding hex. */
+  --color-strip-bg:    #15171c;
+  --color-strip-fg:    #e8eaf0;
+  --color-strip-muted: #8a93a3;
+  --color-strip-rule:  #2a2e38;
 
   /* Radii */
   --radius-card: 12px;
@@ -97,6 +116,53 @@ td, th { font-variant-numeric: tabular-nums; }
 .score-bg-poor      { background-color: var(--color-score-poor); color: white; }
 
 .hairline { border-color: var(--color-border-default); }
+
+/* ----- Bloomberg-light primitives -----------------------------------------
+ * Building blocks for the data-density pass: monospace numerics, delta
+ * coloring, eyebrow labels, and thin rule dividers. Nothing here is wired
+ * up to a component yet — Step 2 (snapshot ribbon) and the stock-page pass
+ * are the first consumers. Drop these classes onto existing markup to
+ * gradually tighten the data feel without touching layout.
+ */
+
+/* Numeric cell — tabular monospace, tight tracking. Use on prices, ratios,
+   percentiles — anywhere a column of numbers should line up by decimal.
+   Size scale matches our existing 12/14/16 type ramp. */
+.num {
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum", "zero";
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  font-size: 13px;
+  line-height: 1.3;
+}
+.num-sm { font-size: 11.5px; }
+.num-lg { font-size: 15px; }
+.num-xl { font-size: 22px; letter-spacing: -0.02em; font-weight: 500; }
+
+/* Delta — direction-of-movement coloring. Pairs with .num for "+1.2%" cells.
+   The optional ▲ / ▼ glyph goes inside, not as a pseudo-element, so
+   screen readers read "up 1.2 percent" naturally. */
+.delta-up   { color: var(--color-delta-up); }
+.delta-down { color: var(--color-delta-down); }
+.delta-flat { color: var(--color-delta-flat); }
+
+/* Field label — tiny uppercase eyebrow for labeled numbers (P/E, MCAP, RoCE).
+   Sits above or beside a .num cell. Different from .eyebrow (which is for
+   editorial section headings) — kbd-label is denser and unstyled-looking. */
+.kbd-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  font-weight: 500;
+}
+
+/* Thin row divider — the Bloomberg "1px slate line between every row" look.
+   Use as border-top or border-bottom on a row. Lighter than .hairline so
+   stacks of them don't compete with card borders. */
+.rule { border-color: #ebedf1; }
 
 /* ----- Landing-page utilities + animations -------------------------- */
 

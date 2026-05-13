@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
-import { Inter, Source_Serif_4 } from "next/font/google";
+import { Inter, Source_Serif_4, IBM_Plex_Mono } from "next/font/google";
 import Link from "next/link";
 import { StockSearch } from "@/components/StockSearch";
+import { SnapshotRibbon } from "@/components/SnapshotRibbon";
 import "./globals.css";
 
 const inter = Inter({
@@ -13,6 +14,16 @@ const inter = Inter({
 const sourceSerif = Source_Serif_4({
   variable: "--font-serif",
   subsets: ["latin"],
+  display: "swap",
+});
+
+// IBM Plex Mono — used by .num / .delta-* utilities for numeric cells.
+// Pairs cleanly with Inter; reads as financial-data without the trader-terminal
+// vibe of JetBrains Mono. Loaded via next/font so it's self-hosted, not a CDN.
+const plexMono = IBM_Plex_Mono({
+  variable: "--font-mono",
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
   display: "swap",
 });
 
@@ -28,8 +39,9 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${inter.variable} ${sourceSerif.variable}`}>
+    <html lang="en" className={`${inter.variable} ${sourceSerif.variable} ${plexMono.variable}`}>
       <body className="min-h-screen flex flex-col">
+        <SnapshotRibbon />
         <SiteHeader />
         <main className="flex-1">{children}</main>
         <SiteFooter />
@@ -41,7 +53,7 @@ export default function RootLayout({
 function SiteHeader() {
   return (
     <header
-      className="border-b hairline sticky top-0 z-30 backdrop-blur-md"
+      className="border-b hairline sticky top-7 z-30 backdrop-blur-md"
       style={{ backgroundColor: "color-mix(in srgb, var(--color-paper) 90%, transparent)" }}
     >
       {/* Desktop layout: logo + centered search + nav.
