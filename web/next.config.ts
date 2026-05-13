@@ -1,9 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Permanent redirect from the old /screener route to /discover.
-  // Renamed to match the nav label and avoid leaking the
-  // "screener" terminology of competing tools.
+  // Permanent redirects for renamed routes so external links and old
+  // bookmarks keep working:
+  //   /screener  → /discover  (older rename — match nav label)
+  //   /clusters  → /sectors   (matches the UI's "Sectors" terminology)
+  //   /cluster/* → /industry/* (a single cluster is an "industry" in the UI)
   async redirects() {
     return [
       {
@@ -14,6 +16,21 @@ const nextConfig: NextConfig = {
       {
         source: "/screener/:path*",
         destination: "/discover/:path*",
+        permanent: true,
+      },
+      {
+        source: "/clusters",
+        destination: "/sectors",
+        permanent: true,
+      },
+      {
+        source: "/clusters/:path*",
+        destination: "/sectors/:path*",
+        permanent: true,
+      },
+      {
+        source: "/cluster/:path*",
+        destination: "/industry/:path*",
         permanent: true,
       },
     ];

@@ -342,7 +342,7 @@ function ResultsTable({ rows, weights }: { rows: Row[]; weights: { q: number; v:
                 <div className="text-[10px] uppercase tracking-wide muted-text mb-0.5">
                   {r.meta_cluster_name}
                 </div>
-                <Link href={`/cluster/${r.cluster_id}`} className="hover:text-[var(--color-accent-600)]">
+                <Link href={`/industry/${r.cluster_id}`} className="hover:text-[var(--color-accent-600)]">
                   {r.cluster_name}
                 </Link>
                 <div className="muted-text">{tierLabel(r.maturity_tier)}</div>

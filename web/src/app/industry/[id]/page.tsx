@@ -100,7 +100,7 @@ export default async function ClusterPage({
 
   return (
     <div className="mx-auto max-w-[1200px] px-6 py-10">
-      <Link href="/clusters" className="text-[12px] muted-text hover:text-[var(--color-accent-600)]">
+      <Link href="/sectors" className="text-[12px] muted-text hover:text-[var(--color-accent-600)]">
         ← All sectors
       </Link>
       <header className="mt-3 flex items-start justify-between gap-8">
@@ -120,7 +120,7 @@ export default async function ClusterPage({
           </div>
         </div>
         <Link
-          href={`/cluster/${meta.cluster_id}/leaders`}
+          href={`/industry/${meta.cluster_id}/leaders`}
           className="shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-md text-[13px] border hairline bg-[var(--color-card)] hover:bg-[var(--color-paper)] hover:border-[var(--color-accent-300)] transition-colors"
         >
           <span>View Leaders</span>

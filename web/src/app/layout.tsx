@@ -82,7 +82,7 @@ function SiteHeader() {
         {/* Top nav — all 4 surfaces visible on mobile now. Smaller font + gap on
             mobile to fit comfortably alongside the logo. */}
         <nav className="flex items-center gap-3 md:gap-6 text-[13px] md:text-[14px] shrink-0 ml-auto">
-          <Link href="/clusters" className="hover:text-[var(--color-accent-600)]">
+          <Link href="/sectors" className="hover:text-[var(--color-accent-600)]">
             Sectors
           </Link>
           <Link href="/discover" className="hover:text-[var(--color-accent-600)]">
@@ -154,7 +154,7 @@ function SiteFooter() {
           <FooterColumn
             title="Product"
             links={[
-              { href: "/clusters", label: "Sectors" },
+              { href: "/sectors", label: "Sectors" },
               { href: "/discover", label: "Discover" },
               { href: "/compare",  label: "Peer comparison" },
               { href: "/feed",     label: "Feed" },

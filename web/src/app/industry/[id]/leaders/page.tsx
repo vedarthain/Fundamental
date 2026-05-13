@@ -120,7 +120,7 @@ export default async function LeadersPage({
       </div>
 
       <div className="mt-8 text-[12px]">
-        <Link href={`/cluster/${id}`} className="muted-text hover:text-[var(--color-accent-600)]">
+        <Link href={`/industry/${id}`} className="muted-text hover:text-[var(--color-accent-600)]">
           ← See all {all.length} stocks in this cluster
         </Link>
       </div>
@@ -133,7 +133,7 @@ function Breadcrumb({ cluster }: { cluster: ClusterMeta }) {
     <nav className="text-[12px] muted-text">
       <Link href="/" className="hover:text-[var(--color-accent-600)]">All clusters</Link>
       <span className="mx-1.5">/</span>
-      <Link href={`/cluster/${cluster.cluster_id}`} className="hover:text-[var(--color-accent-600)]">
+      <Link href={`/industry/${cluster.cluster_id}`} className="hover:text-[var(--color-accent-600)]">
         {cluster.cluster_name}
       </Link>
       <span className="mx-1.5">/</span>
@@ -156,8 +156,8 @@ function TierBar({ id, tier }: { id: string; tier: TierOpt }) {
       {opts.map((o) => {
         const active = o.value === tier;
         const href = o.value === "all"
-          ? `/cluster/${id}/leaders`
-          : `/cluster/${id}/leaders?tier=${o.value}`;
+          ? `/industry/${id}/leaders`
+          : `/industry/${id}/leaders?tier=${o.value}`;
         const cls = `inline-flex items-center px-2.5 py-1 rounded-full text-[12px] border transition-colors ${
           active
             ? "bg-[var(--color-accent-50)] border-[var(--color-accent-300)] text-[var(--color-accent-700)]"

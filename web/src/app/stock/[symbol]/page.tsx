@@ -242,10 +242,10 @@ export default async function StockPage({
     <div className="mx-auto max-w-[1200px] px-6 py-10">
       {/* Back link: returns to the sector page with the right sector +
           industry pre-selected, so the user lands on the same list of stocks
-          they were just browsing. Falls back to /clusters root if either
+          they were just browsing. Falls back to /sectors root if either
           identifier is missing. */}
       <Link
-        href={`/clusters?sector=${encodeURIComponent(stock.meta_cluster_id)}&industry=${encodeURIComponent(stock.cluster_id)}`}
+        href={`/sectors?sector=${encodeURIComponent(stock.meta_cluster_id)}&industry=${encodeURIComponent(stock.cluster_id)}`}
         className="text-[12px] muted-text hover:text-[var(--color-accent-600)]"
       >
         ← {stock.meta_cluster_name} · {stock.cluster_name}

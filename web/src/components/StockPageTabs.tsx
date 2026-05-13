@@ -71,9 +71,11 @@ export function StockPageTabs({
       <div
         role="tablist"
         aria-label="Stock page sections"
-        className="sticky top-0 z-20 -mx-6 px-6 py-3 backdrop-blur"
+        className="sticky top-[84px] z-20 -mx-6 px-6 py-3 backdrop-blur"
         style={{
-          background: "rgba(250,249,245,0.85)",
+          // Pearl paper at 90% — matches the rest of the site's sticky bars.
+          // (Old value referenced the warm cream palette retired earlier.)
+          background: "color-mix(in srgb, var(--color-paper) 90%, transparent)",
           borderBottom: "1px solid var(--color-border-default)",
         }}
       >

@@ -43,7 +43,7 @@ type StockRow = {
 
 /**
  * Load stocks for a single industry (cluster_id), each annotated with its own
- * 1W / 1M / 1Y price return. Used by the right-hand stocks panel on /clusters
+ * 1W / 1M / 1Y price return. Used by the right-hand stocks panel on /sectors
  * once an industry is selected from the sidebar.
  *
  * Two-step approach: app DB for score + identity rows, golden DB for prices,
@@ -435,7 +435,7 @@ function IndustryRow({
   const numColor = compositeBand === "neutral" ? "var(--color-ink)" : "#fff";
   return (
     <Link
-      href={`/clusters?sector=${encodeURIComponent(sectorId)}&industry=${encodeURIComponent(industry.cluster_id)}`}
+      href={`/sectors?sector=${encodeURIComponent(sectorId)}&industry=${encodeURIComponent(industry.cluster_id)}`}
       scroll={false}
       className="block shrink-0 md:shrink rounded-md border transition-colors hover:bg-[var(--color-paper)]/60"
       style={
@@ -718,7 +718,7 @@ function SectorTabs({
   // reaches the viewport edge cleanly on both phones and desktops.
   return (
     <div
-      className="mt-6 md:mt-8 flex flex-col gap-1 md:gap-1.5 sticky top-14 z-20 -mx-4 md:-mx-6 px-4 md:px-6 py-2 backdrop-blur-md"
+      className="mt-6 md:mt-8 flex flex-col gap-1 md:gap-1.5 sticky top-[84px] z-20 -mx-4 md:-mx-6 px-4 md:px-6 py-2 backdrop-blur-md"
       style={{ backgroundColor: "color-mix(in srgb, var(--color-paper) 92%, transparent)" }}
     >
       {/* Mobile: single wrapping group of all sectors */}
@@ -752,7 +752,7 @@ function SectorTabRow({
         return (
           <Link
             key={g.id}
-            href={`/clusters?sector=${encodeURIComponent(g.id)}`}
+            href={`/sectors?sector=${encodeURIComponent(g.id)}`}
             scroll={false}
             className="px-2.5 md:px-3 py-1 md:py-1.5 rounded-md text-[12px] md:text-[12.5px] inline-flex items-center gap-1.5 md:gap-2 transition-colors whitespace-nowrap border"
             style={
@@ -866,7 +866,7 @@ function ClusterTileCard({ tile }: { tile: ClusterTile }) {
   const numColor = b === "neutral" ? "var(--color-ink)" : "white";
   return (
     <Link
-      href={`/cluster/${tile.cluster_id}`}
+      href={`/industry/${tile.cluster_id}`}
       className="card p-2.5 group hover:border-[var(--color-accent-300)] transition-colors block"
     >
       <div className="flex items-center gap-2.5">

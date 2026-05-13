@@ -700,7 +700,7 @@ function BucketTabs({
   // legible through the sticky strip.
   return (
     <div
-      className="mt-6 flex flex-col gap-2 sticky top-14 z-20 -mx-6 px-6 py-2 backdrop-blur-md"
+      className="mt-6 flex flex-col gap-2 sticky top-[84px] z-20 -mx-6 px-6 py-2 backdrop-blur-md"
       style={{ backgroundColor: "color-mix(in srgb, var(--color-paper) 92%, transparent)" }}
     >
       <BucketTabRow eyebrow="Trend"  items={trendItems}  active={active} scopeQuery={scopeQuery} />

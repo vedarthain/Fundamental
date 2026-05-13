@@ -232,7 +232,7 @@ function Hero({ snap }: { snap: Snapshot }) {
         </div>
 
         <div className="mt-7 flex gap-3 items-center flex-wrap">
-          <Link href="/clusters" className="btn-primary">
+          <Link href="/sectors" className="btn-primary">
             Browse all sectors
             <ArrowRight size={14} />
           </Link>
@@ -527,7 +527,7 @@ function HeatMapTear({ tiles }: { tiles: ClusterTile[] }) {
               Reds need a closer look. Open the map to see the rest.
             </p>
             <div className="mt-6 flex items-center gap-3 flex-wrap">
-              <Link href="/clusters" className="btn-primary">
+              <Link href="/sectors" className="btn-primary">
                 Open all sectors
                 <ArrowRight size={14} />
               </Link>
@@ -572,7 +572,7 @@ function HeatMapTear({ tiles }: { tiles: ClusterTile[] }) {
                   return (
                     <Link
                       key={t.cluster_id}
-                      href={`/cluster/${t.cluster_id}`}
+                      href={`/industry/${t.cluster_id}`}
                       className="heat-tile heat-tile-drop rounded-[5px] flex flex-col items-center justify-center p-1"
                       title={`${t.cluster_name} · ${Math.round(v)}`}
                       style={{
@@ -602,7 +602,7 @@ function HeatMapTear({ tiles }: { tiles: ClusterTile[] }) {
 
             {/* Floating "+N more" CTA — sits over the bottom fade */}
             <Link
-              href="/clusters"
+              href="/sectors"
               className="absolute z-10 inline-flex items-center gap-2 card animate-tearwobble"
               style={{
                 left: "50%",
@@ -1111,7 +1111,7 @@ function FooterCTA() {
           </em>
         </h2>
         <div className="mt-9 flex gap-3 justify-center flex-wrap">
-          <Link href="/clusters" className="btn-primary">
+          <Link href="/sectors" className="btn-primary">
             Open all sectors
             <ArrowRight size={14} />
           </Link>
