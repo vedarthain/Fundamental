@@ -3,6 +3,7 @@ import { Inter, Source_Serif_4, IBM_Plex_Mono } from "next/font/google";
 import Link from "next/link";
 import { StockSearch } from "@/components/StockSearch";
 import { SnapshotRibbon } from "@/components/SnapshotRibbon";
+import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 
 const inter = Inter({
@@ -45,6 +46,7 @@ export default function RootLayout({
         <SiteHeader />
         <main className="flex-1">{children}</main>
         <SiteFooter />
+        <Analytics />
       </body>
     </html>
   );
