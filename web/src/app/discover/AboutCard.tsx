@@ -35,12 +35,12 @@ export function AboutCard() {
             </NumberedItem>
             <NumberedItem n={2}>
               <strong>The two score columns.</strong>{" "}
-              <em>Composite</em> is the platform default — a sector-tuned blend our scoring engine
-              uses for that industry.
+              <em>Industry Score</em> is the platform default — a sector-tuned blend our scoring engine
+              uses for that industry. A 75 here means top 25% within its peer group.
               <br />
-              <em>Custom Score</em> is the same pillar components re-weighted by{" "}
-              <strong>your</strong> sliders above. A stock can have a low Composite but a high{" "}
-              <em>Custom Score</em> if your weights happen to favour what it&apos;s good at —
+              <em>Your Score</em> is the same three pillars re-weighted by{" "}
+              <strong>your</strong> sliders above. A stock can have a low <em>Industry Score</em> but a high{" "}
+              <em>Your Score</em> if your weights happen to favour what it&apos;s good at —
               and vice versa.
             </NumberedItem>
             <NumberedItem n={3}>

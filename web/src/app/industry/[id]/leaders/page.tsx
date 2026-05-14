@@ -103,7 +103,7 @@ export default async function LeadersPage({
           {cluster.industry_name} · Leaders
         </h1>
         <p className="mt-3 text-[14.5px] muted-text">
-          Top 10 within this peer cluster across each pillar plus overall Composite.
+          Top 10 within this peer cluster across each pillar plus overall Industry Score.
           {tier !== "all" && (
             <> Filtered to <strong className="ink-text">{tierLabel(tier)}</strong>.</>
           )}
@@ -116,7 +116,7 @@ export default async function LeadersPage({
         <Board title="Top Quality"   accent="var(--color-accent-600)" pillar="quality_pct"   rows={topQuality} />
         <Board title="Top Valuation" accent="var(--color-accent-400)" pillar="valuation_pct" rows={topValuation} />
         <Board title="Top Momentum"  accent="var(--color-accent-300)" pillar="momentum_pct"  rows={topMomentum} />
-        <Board title="Top Composite" accent="var(--color-score-excellent)" pillar="composite_pct" rows={topComposite} />
+        <Board title="Top Industry Score" accent="var(--color-score-excellent)" pillar="composite_pct" rows={topComposite} />
       </div>
 
       <div className="mt-8 text-[12px]">

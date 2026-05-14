@@ -123,7 +123,7 @@ export function Controls() {
           <MinSlider label="Min Quality"   value={minQ} onChange={setMinQ} onCommit={() => push({ minQ })} />
           <MinSlider label="Min Valuation" value={minV} onChange={setMinV} onCommit={() => push({ minV })} />
           <MinSlider label="Min Momentum"  value={minM} onChange={setMinM} onCommit={() => push({ minM })} />
-          <MinSlider label="Min Composite" value={minC} onChange={setMinC} onCommit={() => push({ minC })} />
+          <MinSlider label="Min Industry Score" value={minC} onChange={setMinC} onCommit={() => push({ minC })} />
         </div>
       </section>
 

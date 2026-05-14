@@ -155,7 +155,7 @@ export default async function ClusterPage({
                     <th className="px-4 py-3 text-right">Quality</th>
                     <th className="px-4 py-3 text-right">Valuation</th>
                     <th className="px-4 py-3 text-right">Momentum</th>
-                    <th className="px-4 py-3 text-right">Composite</th>
+                    <th className="px-4 py-3 text-right">Industry Score</th>
                   </tr>
                 </thead>
                 <tbody>

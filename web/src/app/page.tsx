@@ -283,7 +283,7 @@ function _UnusedHeroMosaic() {
           boxShadow: "0 1px 0 rgba(255,255,255,.7) inset, 0 22px 48px -10px rgba(25,25,25,0.20)",
         }}
       >
-        <div className="eyebrow">Composite</div>
+        <div className="eyebrow">Industry Score</div>
         <div
           className="font-display tabular-nums mt-1"
           style={{

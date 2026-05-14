@@ -417,7 +417,7 @@ function ScorecardTable<R extends { symbol: string; company_name: string }>({
 function FundamentalTable({ rows }: { rows: CompareRow[] }) {
   const defs: RowDef<CompareRow>[] = [
     {
-      label: "Composite",
+      label: "Industry Score",
       sub: "Cluster-tuned blend (0–100)",
       extract: (r) => r.composite_pct,
       higherIsBetter: true,

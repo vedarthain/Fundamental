@@ -41,7 +41,7 @@ type Stock = {
   industry_id: string;
   industry_name: string;
   sector_id: string;
-  meta_industry_name: string;
+  sector_name: string;
   maturity_tier: string;
   market_cap_cr: number | null;
   current_price: number | null;
@@ -248,7 +248,7 @@ export default async function StockPage({
         href={`/sectors?sector=${encodeURIComponent(stock.sector_id)}&industry=${encodeURIComponent(stock.industry_id)}`}
         className="text-[12px] muted-text hover:text-[var(--color-accent-600)]"
       >
-        ← {stock.meta_industry_name} · {stock.industry_name}
+        ← {stock.sector_name} · {stock.industry_name}
       </Link>
 
       {/* Header — name + percentile badge.
@@ -258,7 +258,7 @@ export default async function StockPage({
       <header className="mt-3 flex flex-col md:flex-row items-start md:justify-between gap-4 md:gap-8">
         <div>
           <div className="text-[12px] muted-text uppercase tracking-wide">
-            {stock.meta_industry_name} · {stock.industry_name} · {tierLabel(stock.maturity_tier)}
+            {stock.sector_name} · {stock.industry_name} · {tierLabel(stock.maturity_tier)}
           </div>
           <div className="mt-1 flex items-baseline gap-3 flex-wrap">
             <h1 className="font-display text-[36px] tracking-tight leading-tight">
@@ -309,17 +309,22 @@ export default async function StockPage({
             style={{ backgroundColor: compositeBg, color: compositeBand === "neutral" ? "var(--color-ink)" : "white" }}
           >
             <div className="text-[11px] uppercase tracking-wide opacity-80">
-              Composite
+              Industry Score
             </div>
             <div className="text-[28px] font-medium tabular-nums leading-none mt-1">
               {stock.composite_pct == null ? "—" : Math.round(stock.composite_pct)}
             </div>
           </div>
           {stock.composite_pct != null && (
-            <div className="text-[11px] muted-text mt-2 max-w-[220px]">
-              {percentileLabel(stock.composite_pct)} in {stock.industry_name} ·{" "}
-              {tierLabel(stock.maturity_tier)}
-            </div>
+            <>
+              <div className="text-[11px] muted-text mt-2 max-w-[220px]">
+                {percentileLabel(stock.composite_pct)} in {stock.industry_name} ·{" "}
+                {tierLabel(stock.maturity_tier)}
+              </div>
+              <div className="text-[11px] muted-text italic mt-1 max-w-[240px]">
+                Where this stock ranks within its industry — not the whole market.
+              </div>
+            </>
           )}
           {/* Rank-in-cluster pill — explicit position within the peer group,
               complementing the abstract percentile. "Rank 3 of 12" reads
@@ -799,7 +804,7 @@ function CompositeExplainer(props: {
         Note · How the score works
       </div>
       <p className="text-[12.5px] leading-relaxed muted-text max-w-[820px]">
-        The <strong className="ink-text">Composite</strong> is this stock&apos;s overall
+        The <strong className="ink-text">Industry Score</strong> is this stock&apos;s overall
         percentile (0&ndash;100) within its peer group: <em>{props.cluster}</em>,{" "}
         {tierLabel(props.tier)}. It is a weighted blend of three pillars — Quality,
         Valuation, Momentum — using sector-tuned weights, then re-ranked against the

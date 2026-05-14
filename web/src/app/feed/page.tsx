@@ -29,7 +29,7 @@ type SnapshotPair = {
 };
 
 const PILLARS = [
-  { key: "composite", label: "Composite" },
+  { key: "composite", label: "Industry Score" },
   { key: "quality", label: "Quality" },
   { key: "valuation", label: "Valuation" },
   { key: "momentum", label: "Momentum" },

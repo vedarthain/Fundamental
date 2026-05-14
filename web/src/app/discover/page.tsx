@@ -312,14 +312,14 @@ function ResultsTable({ rows, weights }: { rows: Row[]; weights: { q: number; v:
             <th className="px-3 py-3 text-right" title={`Momentum (weight ${weights.m}%)`}>
               M <span className="text-[9px] muted-text">{weights.m}%</span>
             </th>
-            <th className="px-4 py-3 text-right" title="Platform-default cluster-tuned blend">
-              Composite
+            <th className="px-4 py-3 text-right" title="Where each stock ranks within its industry — not the whole market.">
+              Industry Score
               <div className="text-[9px] muted-text font-normal normal-case mt-0.5">
                 cluster default
               </div>
             </th>
-            <th className="px-4 py-3 text-right">
-              Custom Score
+            <th className="px-4 py-3 text-right" title="Re-weight Quality, Value, Momentum with the sliders below to match how you actually invest.">
+              Your Score
               <div className="text-[9px] muted-text font-normal normal-case mt-0.5 tabular-nums">
                 Q {weights.q} · V {weights.v} · M {weights.m}
               </div>
@@ -484,7 +484,7 @@ function MethodologyFooter({ weights }: { weights: { q: number; v: number; m: nu
       </h2>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-6">
-        <Section title="Composite — the platform default">
+        <Section title="Industry Score — the platform default">
           <p>
             The platform&apos;s default ranking, computed once per snapshot. For each
             <em> (cluster, tier)</em> peer group we percentile every stock against its
@@ -494,12 +494,12 @@ function MethodologyFooter({ weights }: { weights: { q: number; v: number; m: nu
             using <em>sector-tuned weights</em> and re-percentile the result.
           </p>
           <p className="mt-2">
-            Composite = 100 means &quot;best in this peer group on the platform&apos;s
+            Industry Score = 100 means &quot;best in this peer group on the platform&apos;s
             standard scorecard&quot;.
           </p>
         </Section>
 
-        <Section title="Custom Score — your weighted blend">
+        <Section title="Your Score — your weighted blend">
           <p>
             The same Quality / Valuation / Momentum percentiles, but blended using
             <strong className="ink-text"> your</strong> slider weights — currently{" "}
@@ -509,8 +509,8 @@ function MethodologyFooter({ weights }: { weights: { q: number; v: number; m: nu
             growth-tilt, momentum-tilt, or any custom mix.
           </p>
           <p className="mt-2">
-            A stock can score low on Composite (under-rated by the platform default)
-            but high on Custom Score if your weights favour what it&apos;s good at — and
+            A stock can score low on Industry Score (under-rated by the platform default)
+            but high on Your Score if your weights favour what it&apos;s good at — and
             vice versa.
           </p>
         </Section>

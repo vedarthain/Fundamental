@@ -65,7 +65,7 @@ function PipelineSection() {
     { icon: Filter,   label: "Peer cluster",      sub: "Industry × business model"        },
     { icon: Layers,   label: "Pillar percentiles", sub: "Quality · Valuation · Momentum"  },
     { icon: GitBranch,label: "Cluster-tuned blend", sub: "Weights vary by industry"       },
-    { icon: ArrowRight, label: "Composite 0–100", sub: "Re-percentiled within bucket"     },
+    { icon: ArrowRight, label: "Industry Score 0–100", sub: "Re-percentiled within bucket"     },
   ];
 
   return (
@@ -437,8 +437,8 @@ function PeerRelativeSection() {
             means &quot;top 25% within its bucket&quot; — same meaning across the site.
           </p>
           <p className="muted-text text-[13px] leading-relaxed mt-3">
-            That&apos;s why a small Pharma stock with a 70 composite is genuinely
-            ranked above its peers, even if a Bank with a 70 composite looks
+            That&apos;s why a small Pharma stock with a 70 Industry Score is genuinely
+            ranked above its peers, even if a Bank with a 70 Industry Score looks
             completely different on the absolute numbers. Same percentile, same
             relative position.
           </p>
