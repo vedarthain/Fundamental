@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# ./scorecards — regenerate docs/SCORECARDS_BY_INDUSTRY.md from the current
+# DB state. Run after tuning weights via /admin/scorecards or any direct
+# SQL change to app.cluster_scorecard.
+# Thin alias for `etl/.venv/bin/python scripts/generate-scorecards-doc.py`.
+set -eo pipefail
+cd "$(dirname "$0")"
+exec etl/.venv/bin/python scripts/generate-scorecards-doc.py
