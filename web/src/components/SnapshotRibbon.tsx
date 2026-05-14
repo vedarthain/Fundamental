@@ -202,6 +202,16 @@ export async function SnapshotRibbon() {
         <Cell label="ARCHIVE">
           {s.archiveCount} {s.archiveCount === 1 ? "snapshot" : "snapshots"}
         </Cell>
+        <Sep />
+        {/* Persistent disclaimer — sits in the dark ribbon so it's visible
+            on every page without taking up dedicated UI real estate. */}
+        <span
+          className="kbd-label whitespace-nowrap shrink-0"
+          style={{ color: "var(--color-strip-muted)" }}
+          title="EquityRoots is not a SEBI-registered investment adviser. Information only."
+        >
+          INFO ONLY · NOT ADVICE
+        </span>
       </div>
     </div>
   );

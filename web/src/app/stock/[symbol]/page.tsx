@@ -324,6 +324,9 @@ export default async function StockPage({
               <div className="text-[11px] muted-text italic mt-1 max-w-[240px]">
                 Where this stock ranks within its industry — not the whole market.
               </div>
+              <div className="text-[10.5px] muted-text italic mt-1 max-w-[240px]" style={{ opacity: 0.85 }}>
+                Not a buy/sell recommendation.
+              </div>
             </>
           )}
           {/* Rank-in-cluster pill — explicit position within the peer group,

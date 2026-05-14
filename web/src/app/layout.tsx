@@ -67,12 +67,21 @@ function SiteHeader() {
       <div className="mx-auto max-w-[1300px] px-4 md:px-6 h-14 flex items-center gap-3 md:gap-6">
         <Link href="/" className="flex items-center gap-2 md:gap-2.5 shrink-0">
           <BanyanLogo />
-          <span className="font-display text-[17px] md:text-[19px] tracking-tight leading-none">
-            EquityRoots
-          </span>
-          <span className="muted-text text-[10px] md:text-[11px] tracking-[0.1em] uppercase leading-none hidden sm:inline">
-            NSE
-          </span>
+          <div className="flex flex-col leading-none gap-0.5">
+            <div className="flex items-baseline gap-2">
+              <span className="font-display text-[17px] md:text-[19px] tracking-tight">
+                EquityRoots
+              </span>
+              <span className="muted-text text-[10px] md:text-[11px] tracking-[0.1em] uppercase hidden sm:inline">
+                NSE
+              </span>
+            </div>
+            {/* Tagline — desktop only. Header is already tight with nav on
+                mobile, so we drop the second line below md. */}
+            <span className="hidden md:inline muted-text text-[10.5px] tracking-tight italic">
+              Fundamentals made easy — with a sharper view.
+            </span>
+          </div>
         </Link>
         {/* Search hides on mobile — it dominates the bar on narrow widths.
             Users open /discover for search-as-they-type instead. */}
@@ -147,7 +156,11 @@ function SiteFooter() {
               never edited.
             </p>
             <p className="text-[11px] muted-text mt-4 leading-relaxed">
-              © 2026, EquityRoots.<br />Information surface only — not investment advice.
+              © 2026, EquityRoots.
+              <br />
+              For information and education only. EquityRoots is not a
+              SEBI-registered investment adviser. Nothing here is a
+              recommendation to buy or sell.
             </p>
           </div>
 
