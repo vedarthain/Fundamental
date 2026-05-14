@@ -995,9 +995,14 @@ function FundamentalsBlock(props: {
 
 function fmtCr(n: number | null): string {
   if (n == null) return "—";
-  if (Math.abs(n) >= 100_000) return `₹${(n / 1000).toLocaleString("en-IN", { maximumFractionDigits: 1 })}K`;
-  if (Math.abs(n) >= 10_000)  return `₹${(n / 1000).toLocaleString("en-IN", { maximumFractionDigits: 2 })}K`;
-  return `₹${n.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
+  // Always suffix the unit so the value is unambiguous outside a labeled
+  // table. Big numbers compact to "L Cr" (lakh crore) to stay readable.
+  //   < 100,000 cr  → "₹X,XXX Cr"   (Indian comma grouping)
+  //   ≥ 100,000 cr  → "₹X.XL Cr"   (e.g. ₹2.5L Cr = 2.5 lakh crore)
+  if (Math.abs(n) >= 100_000) {
+    return `₹${(n / 100_000).toLocaleString("en-IN", { maximumFractionDigits: 1 })}L Cr`;
+  }
+  return `₹${n.toLocaleString("en-IN", { maximumFractionDigits: 0 })} Cr`;
 }
 
 function fmtPctRatio(r: number | null): string {
