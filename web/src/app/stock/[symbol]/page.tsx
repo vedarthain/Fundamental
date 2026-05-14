@@ -260,9 +260,12 @@ export default async function StockPage({
           <div className="text-[12px] muted-text uppercase tracking-wide">
             {stock.meta_industry_name} · {stock.industry_name} · {tierLabel(stock.maturity_tier)}
           </div>
-          <h1 className="font-display text-[36px] mt-1 tracking-tight leading-tight">
-            {stock.company_name || stock.symbol}
-          </h1>
+          <div className="mt-1 flex items-baseline gap-3 flex-wrap">
+            <h1 className="font-display text-[36px] tracking-tight leading-tight">
+              {stock.company_name || stock.symbol}
+            </h1>
+            {quarterly[0] && <ResultFlashChip latest={quarterly[0]} />}
+          </div>
           <div className="mt-2 flex flex-wrap items-center gap-3 text-[14px] muted-text">
             <span className="font-medium ink-text tabular-nums">{stock.symbol}</span>
             {stock.current_price != null && (
@@ -335,7 +338,12 @@ export default async function StockPage({
         </div>
       </header>
 
-
+      <LatestResultCard
+        quarterly={quarterly}
+        annual={annual}
+        marketCapCr={stock.market_cap_cr}
+        currentPrice={stock.current_price}
+      />
 
       <StockPageTabs
         about={
@@ -1005,6 +1013,457 @@ function qLabel(iso: string): string {
   const q = m <= 3 ? "Q4" : m <= 6 ? "Q1" : m <= 9 ? "Q2" : "Q3";
   const fy = m <= 3 ? d.getFullYear() : d.getFullYear() + 1;
   return `${q} FY${String(fy).slice(-2)}`;
+}
+
+// ---------------------------------------------------------------------------
+// Latest result card
+// ---------------------------------------------------------------------------
+//
+// A compact "result flash" panel that sits above the StockPageTabs. Surfaces
+// the headline P&L lines (Revenue / OP / NP / Op margin) for the most recent
+// quarter alongside YoY and QoQ deltas. Reuses the quarterly data already
+// loaded on the stock page — no extra DB roundtrip.
+//
+// Why no estimate-vs-actual block (which the reference infographic showed):
+// we don't have analyst consensus estimates in golden_db or app, and adding
+// a paid feed for that one box isn't on-brand for the platform.
+//
+// Why no Buy/Hold/Sell verdict box: the site explicitly disclaims advisory.
+
+type QuarterLite = {
+  period_end: string;
+  sales: number | null;
+  operating_profit: number | null;
+  net_profit: number | null;
+};
+
+type AnnualLiteForRatios = {
+  period_end: string;
+  total_assets: number | null;
+  borrowings: number | null;
+  equity_share_capital: number | null;
+  reserves: number | null;
+};
+
+// Small "result flash" pill that sits beside the company name in the page
+// header. Shows just the period and end date — no editorial wording. The
+// freshness signal is carried by color + pulse instead:
+//
+//   ≤ 45 days old  → green pill with pulsing dot
+//   ≤ 120 days old → muted accent pill, no pulse
+//   older          → don't render at all
+//
+// We don't have actual filing dates, so we use period_end as a proxy
+// (results typically file within ~60 days of period end).
+function ResultFlashChip({ latest }: { latest: QuarterLite }) {
+  const periodEnd = new Date(latest.period_end);
+  const daysSince = Math.floor(
+    (Date.now() - periodEnd.getTime()) / (24 * 3600 * 1000),
+  );
+  if (daysSince > 120) return null;
+
+  const fresh = daysSince <= 45;
+  const styles = fresh
+    ? {
+        backgroundColor: "var(--color-delta-up)",
+        color: "#fff",
+        borderColor: "var(--color-delta-up)",
+      }
+    : {
+        backgroundColor: "var(--color-accent-50)",
+        color: "var(--color-accent-700)",
+        borderColor: "var(--color-accent-200)",
+      };
+
+  return (
+    <a
+      href="#latest-result"
+      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-semibold tracking-wide whitespace-nowrap shrink-0 transition-transform hover:scale-105"
+      style={styles}
+      title="Click to scroll to the result panel"
+    >
+      {fresh && (
+        <span
+          className="inline-block w-1.5 h-1.5 rounded-full bg-white animate-livepulse shrink-0"
+          aria-hidden
+        />
+      )}
+      <span>{qLabel(latest.period_end)}</span>
+      <span style={{ opacity: 0.85 }}>
+        ·{" "}
+        {periodEnd.toLocaleDateString("en-GB", {
+          day: "numeric",
+          month: "short",
+          year: "numeric",
+        })}
+      </span>
+    </a>
+  );
+}
+
+function LatestResultCard({
+  quarterly, annual, marketCapCr, currentPrice,
+}: {
+  quarterly: QuarterLite[];
+  annual: AnnualLiteForRatios[];
+  marketCapCr: number | null;
+  currentPrice: number | null;
+}) {
+  if (!quarterly || quarterly.length === 0) return null;
+
+  // Quarterly rows arrive newest-first; index 1 is the previous quarter (QoQ)
+  // and index 4 is the same quarter a year ago (YoY). Either may be missing
+  // when there's less than 5 quarters of history.
+  const cur = quarterly[0];
+  const qoq = quarterly[1] ?? null;
+  const yoy = quarterly[4] ?? null;
+
+  const revYoY = pctChange(cur.sales, yoy?.sales);
+  const revQoQ = pctChange(cur.sales, qoq?.sales);
+  const opYoY = pctChange(cur.operating_profit, yoy?.operating_profit);
+  const opQoQ = pctChange(cur.operating_profit, qoq?.operating_profit);
+  const npYoY = pctChange(cur.net_profit, yoy?.net_profit);
+  const npQoQ = pctChange(cur.net_profit, qoq?.net_profit);
+
+  // Operating margin in pct points; delta vs YoY-ago quarter in basis points.
+  const opmCur =
+    cur.sales && cur.sales > 0 && cur.operating_profit != null
+      ? (cur.operating_profit / cur.sales) * 100
+      : null;
+  const opmYoy =
+    yoy && yoy.sales && yoy.sales > 0 && yoy.operating_profit != null
+      ? (yoy.operating_profit / yoy.sales) * 100
+      : null;
+  const opmDeltaBps =
+    opmCur != null && opmYoy != null ? Math.round((opmCur - opmYoy) * 100) : null;
+
+  // ---- Trailing-12-month ratios -------------------------------------------
+  // TTM = sum of the four most-recent quarters. Need at least 4 to be honest;
+  // otherwise we skip the ratio rather than display a partial-TTM number.
+  const hasTTM = quarterly.length >= 4;
+  const ttmNetProfit = hasTTM ? sumQ(quarterly, 0, 4, "net_profit") : null;
+  const ttmOpProfit = hasTTM ? sumQ(quarterly, 0, 4, "operating_profit") : null;
+
+  // Equity + Debt from the latest annual balance sheet. Most platforms call
+  // this "Capital Employed" (a simpler definition than Total Assets minus
+  // Current Liabilities, which we don't store). Standard practical form used
+  // by Screener and most Indian retail tools.
+  const latestAnnual = annual && annual.length > 0 ? annual[0] : null;
+  const equityCr =
+    latestAnnual && (latestAnnual.equity_share_capital != null || latestAnnual.reserves != null)
+      ? (latestAnnual.equity_share_capital ?? 0) + (latestAnnual.reserves ?? 0)
+      : null;
+  const borrowingsCr = latestAnnual?.borrowings ?? null;
+  const capitalEmployedCr =
+    equityCr != null ? equityCr + (borrowingsCr ?? 0) : null;
+
+  // EPS in ₹/share. Derive shares from market_cap and current_price (both
+  // INR, units cancel) → shares = market_cap_cr / current_price. Then
+  // EPS = TTM_NP_cr × current_price / market_cap_cr.
+  const epsTTM =
+    ttmNetProfit != null && currentPrice != null && marketCapCr != null && marketCapCr > 0
+      ? (ttmNetProfit * currentPrice) / marketCapCr
+      : null;
+
+  // P/E (TTM) — algebraically just market_cap_cr / TTM_net_profit_cr.
+  const peTTM =
+    ttmNetProfit != null && ttmNetProfit > 0 && marketCapCr != null && marketCapCr > 0
+      ? marketCapCr / ttmNetProfit
+      : null;
+
+  // RoE (TTM) — TTM net profit on latest annual equity.
+  const roeTTM =
+    ttmNetProfit != null && equityCr != null && equityCr > 0
+      ? (ttmNetProfit / equityCr) * 100
+      : null;
+
+  // RoCE (TTM) — TTM operating profit on capital employed (Equity + Debt).
+  const roceTTM =
+    ttmOpProfit != null && capitalEmployedCr != null && capitalEmployedCr > 0
+      ? (ttmOpProfit / capitalEmployedCr) * 100
+      : null;
+
+  const hasAnyRatio = epsTTM != null || peTTM != null || roeTTM != null || roceTTM != null;
+
+  return (
+    <section id="latest-result" className="card p-4 mt-4 scroll-mt-24">
+      <div className="flex items-baseline justify-between gap-3 mb-2.5 flex-wrap">
+        <div className="flex items-baseline gap-2">
+          <h2 className="font-display text-[16px] leading-none">
+            Latest result · {qLabel(cur.period_end)}
+          </h2>
+          <span className="text-[9.5px] uppercase tracking-[0.12em] muted-text font-semibold">
+            Quarterly
+          </span>
+        </div>
+        <span className="text-[10.5px] muted-text tabular-nums">
+          Period ended {fmtResultDate(cur.period_end)}
+        </span>
+      </div>
+
+      {/* Single bordered box containing 4 internal cells. The container's
+          background is the border colour; gap-px reveals it through the grid,
+          producing clean 1px dividers between cells in both axes (works even
+          when the grid wraps to 2 columns on mobile). */}
+      <div
+        className="rounded-md overflow-hidden p-px"
+        style={{ backgroundColor: "var(--color-border-default)" }}
+      >
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-px">
+          <StatTile label="Revenue"          value={fmtCr(cur.sales)}            yoy={revYoY} qoq={revQoQ} />
+          <StatTile label="Operating profit" value={fmtCr(cur.operating_profit)} yoy={opYoY}  qoq={opQoQ} />
+          <StatTile label="Net profit"       value={fmtCr(cur.net_profit)}       yoy={npYoY}  qoq={npQoQ} />
+          <MarginTile margin={opmCur} deltaBps={opmDeltaBps} />
+        </div>
+      </div>
+
+      <p className="mt-2.5 text-[12.5px] leading-relaxed muted-text">
+        {interpretQuarter({ revYoY, opYoY, npYoY, opmDeltaBps })}
+      </p>
+
+      {/* Row 2 — TTM ratios, same single-bordered-box pattern as row 1. */}
+      {hasAnyRatio && (
+        <div
+          className="rounded-md overflow-hidden p-px mt-2"
+          style={{ backgroundColor: "var(--color-border-default)" }}
+        >
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-px">
+            <RatioTile
+              label="EPS"
+              value={epsTTM == null ? "—" : `₹${epsTTM.toFixed(1)}`}
+              hint="TTM · per share"
+            />
+            <RatioTile
+              label="P/E"
+              value={peTTM == null ? "—" : `${peTTM.toFixed(1)}×`}
+              hint="TTM"
+            />
+            <RatioTile
+              label="RoE"
+              value={roeTTM == null ? "—" : `${roeTTM.toFixed(1)}%`}
+              hint="TTM"
+              threshold={{ value: roeTTM, good: 15, excellent: 18 }}
+            />
+            <RatioTile
+              label="RoCE"
+              value={roceTTM == null ? "—" : `${roceTTM.toFixed(1)}%`}
+              hint="TTM"
+              threshold={{ value: roceTTM, good: 15, excellent: 20 }}
+            />
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// Sum the last `count` quarters' values for a given P&L field. Returns null
+// if any required quarter is missing the field — we don't want half-TTM
+// numbers leaking out as if they were full TTM.
+function sumQ(
+  rows: QuarterLite[],
+  start: number,
+  count: number,
+  field: "sales" | "operating_profit" | "net_profit",
+): number | null {
+  let total = 0;
+  for (let i = start; i < start + count; i++) {
+    const v = rows[i]?.[field];
+    if (v == null) return null;
+    total += v;
+  }
+  return total;
+}
+
+function RatioTile({
+  label, value, hint, threshold,
+}: {
+  label: string;
+  value: string;
+  hint: string;
+  // Optional value-band coloring. When provided and value >= excellent, the
+  // tile's number turns vivid green; >= good turns leaf green; otherwise
+  // stays ink color. Used for RoE / RoCE where there's a universal threshold.
+  threshold?: { value: number | null; good: number; excellent: number };
+}) {
+  let valueColor: string | undefined = undefined;
+  if (threshold && threshold.value != null) {
+    if (threshold.value >= threshold.excellent) valueColor = "var(--color-score-excellent)";
+    else if (threshold.value >= threshold.good) valueColor = "var(--color-score-good)";
+  }
+  return (
+    <div
+      className="px-3 py-2.5"
+      style={{ backgroundColor: "var(--color-paper)" }}
+    >
+      <div className="text-[9.5px] uppercase tracking-[0.1em] muted-text font-semibold truncate">
+        {label}
+      </div>
+      <div
+        className="num font-semibold leading-none mt-0.5"
+        style={{ color: valueColor ?? "var(--color-ink)", fontSize: 15 }}
+      >
+        {value}
+      </div>
+      <div className="mt-1.5 text-[9.5px] muted-text uppercase tracking-[0.08em] truncate">
+        {hint}
+      </div>
+    </div>
+  );
+}
+
+function StatTile({
+  label, value, yoy, qoq,
+}: {
+  label: string;
+  value: string;
+  yoy: number | null;
+  qoq: number | null;
+}) {
+  return (
+    <div
+      className="px-3 py-2.5"
+      style={{ backgroundColor: "var(--color-paper)" }}
+    >
+      <div className="text-[9.5px] uppercase tracking-[0.1em] muted-text font-semibold truncate">
+        {label}
+      </div>
+      <div
+        className="num font-semibold leading-none mt-0.5"
+        style={{ color: "var(--color-ink)", fontSize: 15 }}
+      >
+        {value}
+      </div>
+      <div className="mt-1.5 flex items-baseline gap-2 text-[10.5px] tabular-nums">
+        <DeltaPair label="YoY" pct={yoy} />
+        <DeltaPair label="QoQ" pct={qoq} />
+      </div>
+    </div>
+  );
+}
+
+function MarginTile({
+  margin, deltaBps,
+}: {
+  margin: number | null;
+  deltaBps: number | null;
+}) {
+  const display = margin == null ? "—" : `${margin.toFixed(1)}%`;
+  return (
+    <div
+      className="px-3 py-2.5"
+      style={{ backgroundColor: "var(--color-paper)" }}
+    >
+      <div className="text-[9.5px] uppercase tracking-[0.1em] muted-text font-semibold truncate">
+        Op margin
+      </div>
+      <div
+        className="num font-semibold leading-none mt-0.5"
+        style={{ color: "var(--color-ink)", fontSize: 15 }}
+      >
+        {display}
+      </div>
+      <div className="mt-1.5 flex items-baseline gap-2 text-[10.5px] tabular-nums">
+        <span>
+          <span className="text-[9px] uppercase tracking-[0.08em] muted-text mr-1 font-semibold">
+            YoY Δ
+          </span>
+          {deltaBps == null ? (
+            <span className="muted-text">—</span>
+          ) : (
+            <span
+              className={`num font-semibold ${
+                deltaBps > 0 ? "delta-up" : deltaBps < 0 ? "delta-down" : "muted-text"
+              }`}
+            >
+              {deltaBps > 0 ? "+" : ""}
+              {deltaBps} bps
+            </span>
+          )}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function DeltaPair({ label, pct }: { label: string; pct: number | null }) {
+  return (
+    <span className="inline-flex items-baseline gap-1">
+      <span className="text-[9px] uppercase tracking-[0.06em] muted-text font-semibold">
+        {label}
+      </span>
+      {pct == null ? (
+        <span className="muted-text">—</span>
+      ) : (
+        <span
+          className={`num font-semibold ${
+            pct > 0 ? "delta-up" : pct < 0 ? "delta-down" : "muted-text"
+          }`}
+        >
+          {pct > 0 ? "+" : ""}
+          {Math.abs(pct) >= 100 ? Math.round(pct) : pct.toFixed(1)}%
+        </span>
+      )}
+    </span>
+  );
+}
+
+function pctChange(now: number | null, then: number | null | undefined): number | null {
+  if (now == null || then == null || then === 0) return null;
+  return (now / then - 1) * 100;
+}
+
+function fmtResultDate(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
+// Rule-based one-liner. No LLM — just a decision tree over the four headline
+// deltas. We deliberately phrase observations, not recommendations, to stay
+// aligned with the "information surface, not advisory" disclaimer.
+function interpretQuarter({
+  revYoY, opYoY, npYoY, opmDeltaBps,
+}: {
+  revYoY: number | null;
+  opYoY: number | null;
+  npYoY: number | null;
+  opmDeltaBps: number | null;
+}): string {
+  // No YoY anchor available — fall back to a coverage note rather than
+  // inventing direction.
+  if (revYoY == null && opYoY == null && npYoY == null) {
+    return "Year-on-year comparison unavailable — this is the first full quarter we have on record.";
+  }
+
+  const revUp = (revYoY ?? 0) > 1;
+  const revDown = (revYoY ?? 0) < -1;
+  const opUp = (opYoY ?? 0) > 1;
+  const opDown = (opYoY ?? 0) < -1;
+  const npUp = (npYoY ?? 0) > 1;
+  const npDown = (npYoY ?? 0) < -1;
+  const marginUp = (opmDeltaBps ?? 0) > 25;
+  const marginDown = (opmDeltaBps ?? 0) < -25;
+
+  if (revUp && opUp && npUp && !marginDown) {
+    return "Broad-based growth — sales, operating profit, and net profit all rose year-on-year, with margins holding or expanding.";
+  }
+  if (revUp && (opDown || npDown || marginDown)) {
+    return "Top-line grew but profitability slipped — operating costs are rising faster than revenue this quarter.";
+  }
+  if (revDown && opDown) {
+    return "Revenue and operating profit both declined year-on-year — this is a weak quarter on the headline numbers.";
+  }
+  if (revDown && marginUp) {
+    return "Revenue fell but margins expanded — cost discipline cushioned the topline weakness this quarter.";
+  }
+  if (!revUp && !revDown && opUp && marginUp) {
+    return "Flat revenue but stronger operating profit — margin gains are doing the heavy lifting this quarter.";
+  }
+  if (revUp && opUp && marginUp) {
+    return "Sales, operating profit, and margins all expanded year-on-year — a quality growth quarter.";
+  }
+  // Fallback — neutral description.
+  return "Mixed quarter — see the deltas above for the precise direction on each line.";
 }
 
 function StatusCard({ status }: { status: string | null }) {

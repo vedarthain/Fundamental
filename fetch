@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# ./fetch — scrape Screener.in for fresh fundamentals across the universe.
+# Thin alias for `etl/.venv/bin/python -m fundamental_etl.cli fetch-many`.
+# All arguments are forwarded, so:
+#   ./fetch                       # full universe
+#   ./fetch --limit 100           # first 100 from the queue (smoke test)
+#   ./fetch --only TCS,INFY       # specific symbols
+# Pairs with ./snap (score) and scripts/sync-neon.sh (publish).
+set -eo pipefail
+cd "$(dirname "$0")"
+exec etl/.venv/bin/python -m fundamental_etl.cli fetch-many "$@"
