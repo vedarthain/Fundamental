@@ -113,7 +113,7 @@ export function StockSearch() {
           }}
           onFocus={() => setOpen(true)}
           onKeyDown={onKeyDown}
-          placeholder="Find a stock…"
+          placeholder="Find an Indian stock…"
           className="flex-1 bg-transparent outline-none text-[13px] placeholder:text-[var(--color-muted)]"
           aria-label="Search stocks"
           autoComplete="off"

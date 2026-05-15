@@ -73,13 +73,13 @@ function SiteHeader() {
                 EquityRoots
               </span>
               <span className="muted-text text-[10px] md:text-[11px] tracking-[0.1em] uppercase hidden sm:inline">
-                NSE
+                NSE India
               </span>
             </div>
             {/* Tagline — desktop only. Header is already tight with nav on
                 mobile, so we drop the second line below md. */}
             <span className="hidden md:inline muted-text text-[10.5px] tracking-tight italic">
-              Fundamentals made easy — with a sharper view.
+              Indian fundamentals, made easy — with a sharper view.
             </span>
           </div>
         </Link>
