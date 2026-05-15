@@ -1,7 +1,8 @@
 "use client";
 
 /**
- * Stock-page tab switcher. Three tabs:
+ * Stock-page tab switcher. Four tabs:
+ *   • Latest result    — quarterly flash + TTM ratios (the default landing)
  *   • About            — company description, basics, price chart
  *   • Strengths & gaps — peer-cluster percentile bars + pillar stories
  *   • The Numbers      — annual + quarterly fundamentals tables
@@ -15,10 +16,10 @@
  * want eye-catching, not eye-straining.
  */
 
-import { useState, type ReactNode } from "react";
-import { Info, Layers, BarChart3 } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { Activity, Info, Layers, BarChart3 } from "lucide-react";
 
-type TabKey = "about" | "strengths" | "numbers";
+type TabKey = "results" | "about" | "strengths" | "numbers";
 
 type TabDef = {
   key: TabKey;
@@ -30,6 +31,15 @@ type TabDef = {
 };
 
 const TABS: TabDef[] = [
+  {
+    key: "results",
+    label: "Latest result",
+    icon: <Activity size={14} strokeWidth={1.8} />,
+    // Green stripe to echo the "JUST OUT" chip beside the company name —
+    // visually links the badge in the header to its expanded content here.
+    stripe: "var(--color-delta-up)",
+    tint: "var(--color-tab-tint-strength)",
+  },
   {
     key: "about",
     label: "About",
@@ -54,15 +64,24 @@ const TABS: TabDef[] = [
 ];
 
 export function StockPageTabs({
+  results,
   about,
   strengths,
   numbers,
 }: {
+  results: ReactNode;
   about: ReactNode;
   strengths: ReactNode;
   numbers: ReactNode;
 }) {
-  const [active, setActive] = useState<TabKey>("about");
+  // Default to "results" so visitors land on the freshest signal first.
+  // If the URL has #latest-result (chip click from a different tab), open
+  // the results tab too — and let the browser handle the scroll naturally.
+  const [active, setActive] = useState<TabKey>("results");
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.location.hash === "#latest-result") setActive("results");
+  }, []);
   const activeDef = TABS.find((t) => t.key === active)!;
 
   return (
@@ -131,6 +150,7 @@ export function StockPageTabs({
             background: `linear-gradient(180deg, ${activeDef.tint} 0%, transparent 320px)`,
           }}
         >
+          <Panel show={active === "results"}   keyName="results">   {results}   </Panel>
           <Panel show={active === "about"}     keyName="about">     {about}     </Panel>
           <Panel show={active === "strengths"} keyName="strengths"> {strengths} </Panel>
           <Panel show={active === "numbers"}   keyName="numbers">   {numbers}   </Panel>

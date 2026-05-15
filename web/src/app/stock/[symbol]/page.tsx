@@ -346,14 +346,15 @@ export default async function StockPage({
         </div>
       </header>
 
-      <LatestResultCard
-        quarterly={quarterly}
-        annual={annual}
-        marketCapCr={stock.market_cap_cr}
-        currentPrice={stock.current_price}
-      />
-
       <StockPageTabs
+        results={
+          <LatestResultCard
+            quarterly={quarterly}
+            annual={annual}
+            marketCapCr={stock.market_cap_cr}
+            currentPrice={stock.current_price}
+          />
+        }
         about={
           <>
             {stock.business_summary && (
@@ -1199,7 +1200,7 @@ function LatestResultCard({
   const hasAnyRatio = epsTTM != null || peTTM != null || roeTTM != null || roceTTM != null;
 
   return (
-    <section id="latest-result" className="card p-4 mt-4 scroll-mt-24">
+    <section id="latest-result" className="card p-4 scroll-mt-24">
       <div className="flex items-baseline justify-between gap-3 mb-2.5 flex-wrap">
         <div className="flex items-baseline gap-2">
           <h2 className="font-display text-[16px] leading-none">
