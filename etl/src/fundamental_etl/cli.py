@@ -1,7 +1,11 @@
 """ETL CLI entrypoint."""
 from __future__ import annotations
 
+import os
+import signal
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 
 import typer
@@ -58,6 +62,9 @@ def fetch_many(
     only: Optional[str] = typer.Option(None, help="Comma-separated list of symbols (overrides queue)"),
     skip_recent_hours: int = typer.Option(20, help="Skip symbols scraped within this many hours"),
     stop_on_auth_fail: bool = typer.Option(True, help="Halt the run if Screener cookies expire"),
+    workers: int = typer.Option(3, help="Concurrent worker threads (3 = 3x sequential)"),
+    batch_size: int = typer.Option(50, help="Stocks per batch before the cool-down pause"),
+    batch_pause: float = typer.Option(5.0, help="Seconds to pause between batches"),
 ):
     """Backfill / refresh fundamentals for many symbols.
 
@@ -88,66 +95,222 @@ def fetch_many(
     if limit:
         symbols = symbols[:limit]
 
-    log.info("backfill_plan", total=len(symbols), throttle_s=settings.screener_throttle_seconds)
+    log.info(
+        "backfill_plan",
+        total=len(symbols),
+        workers=workers,
+        throttle_s=settings.screener_throttle_seconds,
+        batch_size=batch_size,
+        batch_pause_s=batch_pause,
+    )
     if not symbols:
         log.info("nothing_to_do")
         return
 
-    client = make_client()
-    ok = fail = 0
+    # Per-worker httpx.Client via threading.local so each worker thread has
+    # its own connection pool + cookie jar. Sharing a client across threads
+    # is technically supported by httpx but in practice corrupts state when
+    # one worker's cookies invalidate or one path closes the client — any
+    # other in-flight worker then sees "Cannot send a request, as the
+    # client has been closed". Per-worker clients eliminate that class of
+    # error at the cost of slightly more connection setup (negligible vs
+    # the 1s throttle).
+    tls = threading.local()
+
+    def worker_client() -> "object":
+        cli = getattr(tls, "client", None)
+        if cli is None:
+            cli = make_client()
+            tls.client = cli
+        return cli
+
+    # Halt flag — flipped by any worker that hits an auth failure (cookie
+    # expiry). threading.Event is the cleanest cross-thread signal; further
+    # batches are skipped once it's set.
+    halt = threading.Event()
+    counter_lock = threading.Lock()
+    # Track per-status counts so the final summary can show a breakdown
+    # like "ok=2102 http_error=37 not_found=12 auth_failed=0". The legacy
+    # roll-up keys (ok / fail / warn / done) are kept for the per-batch
+    # summary line which uses cumulative deltas.
+    counter = {
+        "ok": 0, "fail": 0, "warn": 0, "done": 0,
+        "by_status": {
+            "ok": 0,
+            "auth_failed": 0,
+            "not_found": 0,
+            "parse_error": 0,
+            "http_error": 0,
+            "unknown": 0,
+        },
+    }
+
+    def _bump_status(name: str) -> None:
+        # Always called inside counter_lock by the caller.
+        counter["by_status"][name] = counter["by_status"].get(name, 0) + 1
+
+    def process(symbol: str, n_total: int) -> None:
+        """Fetch + parse + save one symbol. Each worker sleeps the per-call
+        throttle AFTER each fetch so its next pickup is naturally spaced.
+        With 3 workers @ 1s throttle each, effective rate is ~3 req/s."""
+        if halt.is_set():
+            return
+        client = worker_client()
+        try:
+            info, data = fetch_company_export(symbol, client=client)
+            parsed = parse_export(data)
+            with app_conn() as conn:
+                fetched_at = save_raw_export(conn, symbol, data)
+                ann, qtr = save_parsed(conn, symbol, parsed, fetched_at)
+                update_meta_success(conn, symbol, info.export_id, len(data))
+                conn.commit()
+            with counter_lock:
+                counter["ok"] += 1
+                counter["done"] += 1
+                _bump_status("ok")
+            # One concise line per stock — symbol + status. Lets the operator
+            # see which names are flowing through without the structured-row
+            # verbosity we had earlier (annual=10 quarterly=6 bytes=12345).
+            log.info("ok", symbol=symbol)
+        except AuthFailed as e:
+            with counter_lock:
+                counter["fail"] += 1
+                counter["done"] += 1
+                _bump_status("auth_failed")
+            with app_conn() as conn:
+                update_meta_failure(conn, symbol, "auth_failed", str(e))
+                conn.commit()
+            log.error("auth_failed", symbol=symbol, error=str(e))
+            if stop_on_auth_fail:
+                log.error("halting_run", reason="screener cookies expired — re-extract them")
+                halt.set()
+        except NotFound:
+            # NotFound is "we couldn't reach a company page for this symbol"
+            # — usually a delisting / ticker change. Treated as a warning,
+            # not a hard failure, since the data simply doesn't exist.
+            with counter_lock:
+                counter["warn"] += 1
+                counter["done"] += 1
+                _bump_status("not_found")
+            with app_conn() as conn:
+                update_meta_failure(conn, symbol, "not_found", "no company page")
+                conn.commit()
+            log.warning("not_found", symbol=symbol)
+        except ParseError as e:
+            with counter_lock:
+                counter["fail"] += 1
+                counter["done"] += 1
+                _bump_status("parse_error")
+            with app_conn() as conn:
+                update_meta_failure(conn, symbol, "parse_error", str(e))
+                conn.commit()
+            log.error("parse_error", symbol=symbol, error=str(e))
+        except ScrapeError as e:
+            with counter_lock:
+                counter["fail"] += 1
+                counter["done"] += 1
+                _bump_status("http_error")
+            with app_conn() as conn:
+                update_meta_failure(conn, symbol, "http_error", str(e))
+                conn.commit()
+            log.error("scrape_error", symbol=symbol, error=str(e))
+        except Exception as e:  # pragma: no cover — surface unexpected
+            with counter_lock:
+                counter["fail"] += 1
+                counter["done"] += 1
+                _bump_status("unknown")
+            with app_conn() as conn:
+                # Persist the actual exception text so we can diagnose later
+                # without needing the live terminal output. The full traceback
+                # still goes to the structured log via log.exception().
+                update_meta_failure(conn, symbol, "unknown", repr(e))
+                conn.commit()
+            log.exception("unexpected", symbol=symbol)
+        finally:
+            # Per-worker pacing — sleeps before the executor frees this thread
+            # to pick up its next task. Effective rate per worker = 1/throttle.
+            time.sleep(settings.screener_throttle_seconds)
+
+    # Second-Ctrl+C escape hatch — workers can be deep in a 60s back-off
+    # sleep when the user gives up. First Ctrl+C raises KeyboardInterrupt
+    # naturally (handled below); second Ctrl+C calls os._exit so we don't
+    # have to wait for the sleep to finish.
+    _sigint_count = {"n": 0}
+    _prev_handler = signal.getsignal(signal.SIGINT)
+
+    def _sigint_handler(signum, frame):
+        _sigint_count["n"] += 1
+        if _sigint_count["n"] >= 2:
+            log.error("force_exit", reason="second Ctrl+C — bypassing thread join")
+            os._exit(130)
+        # First press — fall through to the default handler so Python
+        # raises KeyboardInterrupt at the next checkpoint.
+        if callable(_prev_handler):
+            _prev_handler(signum, frame)
+
+    signal.signal(signal.SIGINT, _sigint_handler)
+
+    n_total = len(symbols)
     try:
-        for i, symbol in enumerate(symbols, start=1):
-            try:
-                info, data = fetch_company_export(symbol, client=client)
-                parsed = parse_export(data)
-                with app_conn() as conn:
-                    fetched_at = save_raw_export(conn, symbol, data)
-                    ann, qtr = save_parsed(conn, symbol, parsed, fetched_at)
-                    update_meta_success(conn, symbol, info.export_id, len(data))
-                    conn.commit()
-                ok += 1
-                log.info("ok", i=i, n=len(symbols), symbol=symbol,
-                         annual=ann, quarterly=qtr, bytes=len(data))
-            except AuthFailed as e:
-                fail += 1
-                with app_conn() as conn:
-                    update_meta_failure(conn, symbol, "auth_failed", str(e))
-                    conn.commit()
-                log.error("auth_failed", symbol=symbol, error=str(e))
-                if stop_on_auth_fail:
-                    log.error("halting_run", reason="screener cookies expired — re-extract them")
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            # Process in batches so we can pause between them. The cool-down
+            # keeps the rolling average request rate well below the
+            # workers/throttle peak — a defensive layer in case Screener
+            # rate-limits on sustained bursts.
+            batch_no = 0
+            for batch_start in range(0, n_total, batch_size):
+                if halt.is_set():
+                    log.warning("skipping_remaining_batches", reason="halt_set")
                     break
-            except NotFound as e:
-                fail += 1
-                with app_conn() as conn:
-                    update_meta_failure(conn, symbol, "not_found", str(e))
-                    conn.commit()
-                log.warning("not_found", symbol=symbol)
-            except ParseError as e:
-                fail += 1
-                with app_conn() as conn:
-                    update_meta_failure(conn, symbol, "parse_error", str(e))
-                    conn.commit()
-                log.error("parse_error", symbol=symbol, error=str(e))
-            except ScrapeError as e:
-                fail += 1
-                with app_conn() as conn:
-                    update_meta_failure(conn, symbol, "http_error", str(e))
-                    conn.commit()
-                log.error("scrape_error", symbol=symbol, error=str(e))
-            except Exception as e:  # pragma: no cover — surface unexpected
-                fail += 1
-                with app_conn() as conn:
-                    update_meta_failure(conn, symbol, "unknown", repr(e))
-                    conn.commit()
-                log.exception("unexpected", symbol=symbol)
+                batch_no += 1
+                # Snapshot counters *before* the batch so we can show the
+                # per-batch deltas (not just the cumulative totals).
+                with counter_lock:
+                    before = dict(counter)
+                batch = symbols[batch_start:batch_start + batch_size]
+                futures = [executor.submit(process, s, n_total) for s in batch]
+                # Drain the batch fully before moving to the next — keeps the
+                # batch-pause meaningful (no overlapping rounds in flight).
+                for fut in as_completed(futures):
+                    fut.result()
+                # Per-batch summary line: "batch N — 47 ok, 2 failed, 1 warning"
+                with counter_lock:
+                    delta_ok = counter["ok"] - before["ok"]
+                    delta_fail = counter["fail"] - before["fail"]
+                    delta_warn = counter["warn"] - before["warn"]
+                    done = counter["done"]
+                log.info(
+                    "batch_done",
+                    batch=batch_no,
+                    ok=delta_ok,
+                    failed=delta_fail,
+                    warnings=delta_warn,
+                    done=done,
+                    total=n_total,
+                )
+                if halt.is_set():
+                    break
+                # Cool-down between batches (not after the final one).
+                if batch_start + batch_size < n_total:
+                    time.sleep(batch_pause)
+    except KeyboardInterrupt:
+        log.warning("interrupted_by_user")
+        halt.set()
+        # ThreadPoolExecutor's __exit__ has already been entered; it'll
+        # drain workers before this except block returns. Workers see
+        # halt.is_set() at the start of process() and bail out quickly.
 
-            if i < len(symbols):
-                time.sleep(settings.screener_throttle_seconds)
-    finally:
-        client.close()
-
-    log.info("backfill_done", ok=ok, failed=fail, total=len(symbols))
+    log.info(
+        "backfill_done",
+        ok=counter["ok"],
+        failed=counter["fail"],
+        warnings=counter["warn"],
+        total=n_total,
+        # Per-status breakdown so you can see *what kind* of failures happened
+        # without querying screener_meta. Includes the zero-count categories
+        # so a clean run still shows e.g. auth_failed=0 explicitly.
+        **{f"status_{k}": v for k, v in counter["by_status"].items()},
+    )
 
 
 @app.command("repair")

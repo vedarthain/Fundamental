@@ -1,11 +1,25 @@
 #!/usr/bin/env bash
 # ./fetch — scrape Screener.in for fresh fundamentals across the universe.
-# Thin alias for `etl/.venv/bin/python -m fundamental_etl.cli fetch-many`.
-# All arguments are forwarded, so:
-#   ./fetch                       # full universe
+#
+# Defaults baked in (override by passing the same flag again):
+#   --workers 1        sequential, no concurrency (Screener flags 2+ workers
+#                      as bot-like within minutes even with fresh cookies)
+#   --batch-pause 30   30-second cool-down after every 50 stocks
+#
+# Plus from etl/.../config.py: 1.0s throttle between successive calls.
+# Effective rate: ~1 req/s with a long pause every 50, well within
+# Screener's tolerance for a logged-in session.
+#
+# Expected full-universe time: ~50-60 min for ~2,150 stocks.
+#
+# Examples:
+#   ./fetch                       # full universe with safe sequential defaults
 #   ./fetch --limit 100           # first 100 from the queue (smoke test)
 #   ./fetch --only TCS,INFY       # specific symbols
+#   ./fetch --workers 2 --batch-pause 60  # try concurrency if Screener cooperates
+#
 # Pairs with ./snap (score) and scripts/sync-neon.sh (publish).
 set -eo pipefail
 cd "$(dirname "$0")"
-exec etl/.venv/bin/python -m fundamental_etl.cli fetch-many "$@"
+exec etl/.venv/bin/python -m fundamental_etl.cli fetch-many \
+  --workers 1 --batch-pause 30 "$@"

@@ -222,3 +222,5 @@ Volatility Ratio	Risk measure
 Beta	Market sensitivity
 
 ⸻
+
+

@@ -13,6 +13,10 @@ def configure_logging(level: str = "INFO") -> None:
         stream=sys.stdout,
         level=getattr(logging, level.upper()),
     )
+    # Silence noisy third-party loggers — httpx and httpcore log every
+    # request/response at INFO which buries our own structured output.
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(logging.WARNING)
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,

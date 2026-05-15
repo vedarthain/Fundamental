@@ -25,6 +25,17 @@ _RE_EXPORT_ID = re.compile(r'formaction="/user/company/export/(\d+)/"')
 _RE_CSRF = re.compile(r'name="csrfmiddlewaretoken" value="([^"]+)"')
 
 
+class RateLimited(Exception):
+    """Screener returned HTTP 429. Carries the requested back-off seconds
+    so the retry decorator can sleep the right amount before the next try.
+    Subclass of plain Exception (not ScrapeError) so the caller's `except
+    ScrapeError:` doesn't accidentally swallow it before the retry runs."""
+
+    def __init__(self, retry_after: float, message: str):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
 class ScrapeError(Exception):
     """Generic scrape failure."""
 
@@ -47,12 +58,28 @@ class CompanyExportInfo:
 
 
 def _client() -> httpx.Client:
+    # Browser-like default headers. Bot detectors usually look at the full
+    # combination (UA + Accept + Accept-Language), not just User-Agent —
+    # so we mirror what a real Chrome request would send.
     return httpx.Client(
         cookies={
             "sessionid": settings.screener_sessionid,
             "csrftoken": settings.screener_csrftoken,
         },
-        headers={"User-Agent": settings.screener_user_agent},
+        headers={
+            "User-Agent": settings.screener_user_agent,
+            "Accept": (
+                "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                "image/avif,image/webp,*/*;q=0.8"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+            "Upgrade-Insecure-Requests": "1",
+        },
         timeout=30.0,
         follow_redirects=False,
     )
@@ -62,10 +89,41 @@ def _is_login_redirect(resp: httpx.Response) -> bool:
     return resp.status_code in (301, 302) and "/login" in resp.headers.get("location", "")
 
 
+def _maybe_raise_429(resp: httpx.Response, url: str) -> None:
+    """If the response is HTTP 429, log + raise RateLimited with the
+    Retry-After header. Default backoff: 60s when the header is absent."""
+    if resp.status_code != 429:
+        return
+    raw = resp.headers.get("Retry-After", "60")
+    try:
+        retry_after = float(raw)
+    except (TypeError, ValueError):
+        retry_after = 60.0
+    # Cap at 5 minutes — Screener's 429 windows are typically short; a
+    # longer reported value usually means our IP has been deeper-throttled
+    # and we'd rather give up than block the run for ages.
+    retry_after = min(retry_after, 300.0)
+    log.warning("rate_limited", url=url, retry_after=retry_after)
+    raise RateLimited(retry_after, f"GET {url} returned HTTP 429 (sleeping {retry_after}s)")
+
+
+# Smart wait policy used by both @retry decorators below. On a RateLimited
+# exception we sleep the exact retry-after the server told us. On any other
+# retryable error (httpx.TransportError) we fall back to exponential backoff.
+_EXP_WAIT = wait_exponential(multiplier=1, min=2, max=10)
+
+def _smart_wait(retry_state) -> float:
+    outcome = retry_state.outcome
+    exc = outcome.exception() if outcome else None
+    if isinstance(exc, RateLimited):
+        return exc.retry_after
+    return _EXP_WAIT(retry_state)
+
+
 @retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=10),
-    retry=retry_if_exception_type(httpx.TransportError),
+    stop=stop_after_attempt(5),
+    wait=_smart_wait,
+    retry=retry_if_exception_type((httpx.TransportError, RateLimited)),
     reraise=True,
 )
 def discover_export(
@@ -91,6 +149,7 @@ def discover_export(
         resp = client.get(url)
         if _is_login_redirect(resp):
             raise AuthFailed(f"Login redirect on {url} — Screener cookies expired")
+        _maybe_raise_429(resp, url)
         if resp.status_code == 404:
             last_seen_status = "404"
             continue
@@ -125,9 +184,9 @@ def discover_export(
 
 
 @retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=10),
-    retry=retry_if_exception_type(httpx.TransportError),
+    stop=stop_after_attempt(5),
+    wait=_smart_wait,
+    retry=retry_if_exception_type((httpx.TransportError, RateLimited)),
     reraise=True,
 )
 def download_export(client: httpx.Client, info: CompanyExportInfo) -> bytes:
@@ -147,6 +206,7 @@ def download_export(client: httpx.Client, info: CompanyExportInfo) -> bytes:
     )
     if _is_login_redirect(resp):
         raise AuthFailed(f"Login redirect on POST {url} — Screener cookies expired")
+    _maybe_raise_429(resp, url)
     if resp.status_code != 200:
         raise ScrapeError(f"POST {url} returned HTTP {resp.status_code}")
     ct = resp.headers.get("content-type", "")
