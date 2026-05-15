@@ -1,0 +1,49 @@
+# Refresh LTP (Last Traded Price) every weekday after market close.
+#
+# What this does:
+#   1. Picks the most recent NSE bhavcopy (walks back from today)
+#   2. Parses it for equity scrips (EQ / BE / BZ / BL series)
+#   3. UPDATEs app.screener_meta.current_price on Neon for every symbol
+#      we already track
+#
+# Why a GitHub Action (not local launchd):
+#   - NSE bhavcopy is daily; you don't want to remember to refresh prices
+#   - The action runs in GitHub's cloud, no laptop dependency
+#   - 30 lines of YAML — minimal new infra
+#
+# Required secret (set once, manually):
+#   NEON_APP_URL — Postgres URL for fundamental_app on Neon (the production
+#   database). Add via Repo Settings → Secrets and variables → Actions.
+
+name: Refresh LTP
+
+on:
+  # 13:00 UTC = 18:30 IST. Bhavcopy usually publishes by 18:00 IST, so this
+  # leaves a 30-minute buffer. Mon-Fri only — NSE doesn't trade on weekends.
+  schedule:
+    - cron: '0 13 * * 1-5'
+
+  # Manual trigger — useful for backfilling after a missed run or testing
+  # workflow changes. Visible in the Actions UI under "Run workflow".
+  workflow_dispatch: {}
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install psycopg
+        run: pip install 'psycopg[binary]==3.2.*'
+
+      - name: Refresh LTP
+        env:
+          APP_DB_URL: ${{ secrets.NEON_APP_URL }}
+        run: python scripts/refresh-ltp.py
