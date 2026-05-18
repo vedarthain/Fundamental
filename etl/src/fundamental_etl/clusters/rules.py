@@ -44,6 +44,27 @@ BFSI_RTA_RATING = {
     "ICRA", "CARERATING",
 }
 
+# Private banks split: large-cap top tier vs Small Finance Banks vs the rest.
+# Comparing HDFCBANK (₹11.8L Cr) against an SFB like UJJIVANSFB (₹10K Cr)
+# on the same scorecard treats them as peers — but their business models
+# (universal franchise vs microfinance-heavy recovering book) and ROE math
+# (12-17% steady vs 8% inflecting to 15%) make peer comparison meaningless.
+# Anything in "banks" industry but not PSU and not in either of these two
+# whitelists falls to the mid/small private banks bucket.
+
+BFSI_PVT_BANKS_LARGE = {
+    # Top tier private banks — universal franchise, large-cap, structurally
+    # different from regional banks. Membership intentionally narrow.
+    "HDFCBANK", "ICICIBANK", "AXISBANK", "KOTAKBANK", "INDUSINDBK",
+}
+
+BFSI_SFB = {
+    # Small Finance Banks + listed Payments Banks. Microfinance-heavy books
+    # with mostly post-2017 listing history. Recovering from MFI cycle lows.
+    "UJJIVANSFB", "AUBANK", "EQUITASBNK", "JSFB", "ESAFSFB",
+    "SURYODAY", "UTKARSHBNK", "CAPITALSFB", "FINOPB",
+}
+
 
 @dataclass(frozen=True)
 class StockMeta:
@@ -90,9 +111,16 @@ RULES: list[Rule] = [
     Rule("bfsi_psu_banks",
          lambda s: _industry(s) == "banks" and s.symbol in PSU_BANKS,
          "Banks industry AND symbol in PSU list"),
-    Rule("bfsi_pvt_banks",
+    # Private banks split: top-tier large-cap > SFBs > mid/small fallback.
+    Rule("bfsi_pvt_banks_large",
+         lambda s: _industry(s) == "banks" and s.symbol in BFSI_PVT_BANKS_LARGE,
+         "Banks industry AND symbol in large private banks list"),
+    Rule("bfsi_sfb",
+         lambda s: _industry(s) == "banks" and s.symbol in BFSI_SFB,
+         "Banks industry AND symbol in Small Finance Bank list"),
+    Rule("bfsi_pvt_banks_mid_small",
          lambda s: _industry(s) == "banks",
-         "Banks industry (rest)"),
+         "Banks industry (fallback — mid/small private banks)"),
     Rule("bfsi_nbfc",
          lambda s: _industry(s) == "finance",
          "Finance industry"),

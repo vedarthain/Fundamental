@@ -82,10 +82,43 @@ def _bank_momentum() -> dict[str, float]:
 SCORECARDS_MATURE: dict[str, Scorecard] = {
 
     # ===== A. LENDERS ========================================================
+    # Legacy cluster — kept for back-compat with old snapshots. New
+    # assignments go to bfsi_pvt_banks_large / _mid_small / _sfb.
     "bfsi_pvt_banks": Scorecard(
         pillar_weights={"q": 50, "v": 30, "m": 20},
         quality=_lender_quality(roa=25, roe=18, bvc=18, lbg=14, npc=12, nps=8, e2a=5),
         valuation={"pb": 50, "pe_ttm": 25, "earnings_yield_trend": 15, "div_yield": 10},
+        momentum=_bank_momentum(),
+        loss_maker_val_fallback=[("pb", 1.0)],
+    ),
+    # Top-tier private banks. Steady-state high-ROE compounders with deep
+    # deposit franchises. Heavy on track-record metrics (via _lender_quality
+    # graduated windows + make_veteran bank-threshold bonus). Valuation
+    # tilted toward P/B and dividend yield since these trade at premiums
+    # that earnings yield doesn't fully capture.
+    "bfsi_pvt_banks_large": Scorecard(
+        pillar_weights={"q": 52, "v": 28, "m": 20},
+        quality=_lender_quality(roa=22, roe=22, bvc=20, lbg=10, npc=12, nps=10, e2a=4),
+        valuation={"pb": 45, "pe_ttm": 25, "earnings_yield_trend": 15, "div_yield": 15},
+        momentum=_bank_momentum(),
+        loss_maker_val_fallback=[("pb", 1.0)],
+    ),
+    # Mid / small private banks. More cyclical, ROE more variable.
+    # Slightly heavier on near-term growth (loan book CAGR) and momentum.
+    "bfsi_pvt_banks_mid_small": Scorecard(
+        pillar_weights={"q": 48, "v": 30, "m": 22},
+        quality=_lender_quality(roa=22, roe=18, bvc=15, lbg=16, npc=14, nps=10, e2a=5),
+        valuation={"pb": 50, "pe_ttm": 25, "earnings_yield_trend": 15, "div_yield": 10},
+        momentum=_bank_momentum(),
+        loss_maker_val_fallback=[("pb", 1.0)],
+    ),
+    # Small Finance Banks (+ Fino Payments). MFI-heavy books, recovering
+    # from cycle. Track-record weight is lighter (most have < 7y of
+    # listed history), recent growth + momentum weighted more.
+    "bfsi_sfb": Scorecard(
+        pillar_weights={"q": 45, "v": 30, "m": 25},
+        quality=_lender_quality(roa=22, roe=14, bvc=12, lbg=22, npc=14, nps=8, e2a=8),
+        valuation={"pb": 55, "pe_ttm": 20, "earnings_yield_trend": 15, "div_yield": 10},
         momentum=_bank_momentum(),
         loss_maker_val_fallback=[("pb", 1.0)],
     ),
@@ -680,6 +713,7 @@ _NEW_DROP = {
     "loan_book_cagr_3y",
     "earnings_yield_trend", "capex_intensity_3y",
     "roe_avg_above_threshold_5y", "roe_avg_above_threshold_7y", "roe_avg_above_threshold_10y",
+    "roe_excess_13_5y", "roe_excess_13_7y", "roe_excess_13_10y",
     "np_growth_above_inflation_5y", "np_growth_above_inflation_7y", "np_growth_above_inflation_10y",
 }
 _NEW_REPLACE_LATEST = {
@@ -709,7 +743,19 @@ def _shift_pillars(pw: dict[str, float], delta_q: int) -> dict[str, float]:
     return out
 
 
-def make_veteran(card: Scorecard) -> Scorecard:
+# Bank clusters use a 13% graduated ROE-excess metric instead of the binary
+# 15% threshold (see _roe_excess_above in formulas.py). The graduated metric
+# gives partial credit for ROE-just-below-threshold banks like Kotak (14%),
+# which previously scored 4/100 on the binary test despite being a top-tier
+# private bank with rock-solid risk discipline.
+_BANK_CLUSTERS = {
+    "bfsi_pvt_banks",
+    "bfsi_pvt_banks_large", "bfsi_pvt_banks_mid_small", "bfsi_sfb",
+    "bfsi_psu_banks", "bfsi_nbfc",
+}
+
+
+def make_veteran(card: Scorecard, bank_threshold: bool = False) -> Scorecard:
     new_q = {}
     for k, v in card.quality.items():
         new_q[_VET_REPLACE.get(k, k)] = new_q.get(_VET_REPLACE.get(k, k), 0) + v
@@ -724,9 +770,15 @@ def make_veteran(card: Scorecard) -> Scorecard:
     bonus_total = 10
     factor = (sum(new_q.values()) - bonus_total) / sum(new_q.values())
     new_q = {k: round(v * factor, 4) for k, v in new_q.items()}
-    new_q["roe_avg_above_threshold_5y"] = 1.0
-    new_q["roe_avg_above_threshold_7y"] = 1.5
-    new_q["roe_avg_above_threshold_10y"] = 2.5
+    if bank_threshold:
+        # Banks: graduated 13% ROE-excess instead of binary 15% threshold.
+        new_q["roe_excess_13_5y"] = 1.0
+        new_q["roe_excess_13_7y"] = 1.5
+        new_q["roe_excess_13_10y"] = 2.5
+    else:
+        new_q["roe_avg_above_threshold_5y"] = 1.0
+        new_q["roe_avg_above_threshold_7y"] = 1.5
+        new_q["roe_avg_above_threshold_10y"] = 2.5
     new_q["np_growth_above_inflation_5y"] = 1.0
     new_q["np_growth_above_inflation_7y"] = 1.5
     new_q["np_growth_above_inflation_10y"] = 2.5
@@ -774,7 +826,7 @@ def get_scorecard(cluster_id: str, tier: str) -> Scorecard:
     if tier == "mature":
         return base
     if tier == "veteran":
-        return make_veteran(base)
+        return make_veteran(base, bank_threshold=(cluster_id in _BANK_CLUSTERS))
     if tier == "mid":
         return make_mid(base)
     if tier == "new":
@@ -820,7 +872,7 @@ def get_scorecard_from(overrides: dict[str, Scorecard], cluster_id: str, tier: s
     if tier == "mature":
         return base
     if tier == "veteran":
-        return make_veteran(base)
+        return make_veteran(base, bank_threshold=(cluster_id in _BANK_CLUSTERS))
     if tier == "mid":
         return make_mid(base)
     if tier == "new":

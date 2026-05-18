@@ -466,6 +466,55 @@ def roe_avg_above_threshold_7y(annual, *_):
     return out / 7
 
 
+# -----------------------------------------------------------------------
+# Bank-specific durability: 13% ROE threshold, graduated (not binary)
+# -----------------------------------------------------------------------
+# Why: the universal 15% ROE bar is too strict for banks. Their leverage
+# math is different (capital adequacy regs cap leverage), so even
+# best-in-class banks like Kotak run at 13-14% ROE structurally. The
+# binary 15% test gives Kotak a 4/100 percentile despite a rock-solid
+# balance sheet, while penalizing ICICI's pre-cycle stress years equally
+# to "always-failed". These formulas:
+#   - Drop the threshold to 13% (a realistic bank bar)
+#   - Return the AVERAGE excess over 13% (continuous, not binary), so
+#     Kotak's 14% gets +0.01 credit instead of zero, and HDFC's 17.5%
+#     gets +0.045 credit. Higher is better.
+# Banks use these in place of the binary roe_avg_above_threshold_*.
+
+def _roe_excess_above(annual: list[dict], window: int, threshold: float) -> float | None:
+    rows = annual[-window:]
+    if len(rows) < window:
+        return None
+    excesses = []
+    for r in rows:
+        eq = (r.get("equity_share_capital") or 0) + (r.get("reserves") or 0)
+        if eq <= 0:
+            continue
+        np_ = r.get("net_profit")
+        if np_ is None:
+            continue
+        excesses.append((np_ / eq) - threshold)
+    # Need at least window - 2 valid years to avoid scoring on stubs
+    if len(excesses) < max(2, window - 2):
+        return None
+    return mean(excesses)
+
+
+@_higher
+def roe_excess_13_5y(annual, *_):
+    return _roe_excess_above(annual, 5, 0.13)
+
+
+@_higher
+def roe_excess_13_7y(annual, *_):
+    return _roe_excess_above(annual, 7, 0.13)
+
+
+@_higher
+def roe_excess_13_10y(annual, *_):
+    return _roe_excess_above(annual, 10, 0.13)
+
+
 @_higher
 def roe_avg_above_threshold_10y(annual, *_):
     rows = annual[-10:]
