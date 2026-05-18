@@ -36,15 +36,19 @@ async function loadHero() {
       (SELECT COUNT(DISTINCT snapshot_date)::int FROM app.scores) AS weeks,
       (SELECT MAX(snapshot_date)::text FROM app.scores) AS snapshot_date
   `;
+  // Industry tiles use app.cluster_composite, which scores each cluster by
+  // its cluster-aggregate fundamentals (avg ROE, avg P/E, etc.) percent-
+  // ranked across all clusters. We can't use AVG(scores.composite_pct) here
+  // because that's a within-cluster percentile rank — its mean is always ~50
+  // for every cluster by construction, so it can't distinguish strong from
+  // weak industries.
   const tilesPromise = sql<IndustryTile[]>`
-    SELECT c.id AS industry_id, c.name AS industry_name,
-           AVG(s.composite_pct)::float AS avg_composite
-    FROM app.cluster c
-    LEFT JOIN app.scores s ON s.cluster_id = c.id
-      AND s.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
-    WHERE c.id <> 'unclassified'
-    GROUP BY c.id, c.name
-    ORDER BY AVG(s.composite_pct) DESC NULLS LAST
+    SELECT cluster_id AS industry_id,
+           industry_name,
+           composite_aggr_pct::float AS avg_composite
+    FROM app.cluster_composite
+    WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM app.metrics_snapshot)
+    ORDER BY composite_aggr_pct DESC NULLS LAST
   `;
   // Top + bottom marquee items — proxy for "trending" until we have a 2nd snapshot
   const trendingPromise = sql<TrendingRow[]>`
