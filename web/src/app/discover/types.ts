@@ -3,8 +3,6 @@
 export type Weights = { q: number; v: number; m: number };
 
 export type ScreenerParams = {
-  weights: Weights;
-  preset: string;
   clusters: string[];
   metas: string[];
   tiers: string[];
@@ -47,21 +45,7 @@ export function parseParams(sp: URLSearchParams | Record<string, string | undefi
     const v = sp[k];
     return v == null ? null : v;
   };
-  const presetKey = (get("preset") || "balanced") as keyof typeof PRESETS;
-  const preset = PRESETS[presetKey] ? presetKey : "balanced";
-  const wq = clampInt(get("q"), 0, 100, PRESETS[preset].q);
-  const wv = clampInt(get("v"), 0, 100, PRESETS[preset].v);
-  const wm = clampInt(get("m"), 0, 100, PRESETS[preset].m);
-  // Renormalize so weights sum to 100 (in case of stale URL)
-  const sum = wq + wv + wm;
-  const norm: Weights =
-    sum > 0
-      ? { q: Math.round((wq / sum) * 100), v: Math.round((wv / sum) * 100), m: 100 - Math.round((wq / sum) * 100) - Math.round((wv / sum) * 100) }
-      : { q: 40, v: 30, m: 30 };
-
   return {
-    weights: norm,
-    preset,
     clusters: splitList(get("clusters")),
     metas: splitList(get("metas")),
     tiers: splitList(get("tiers")),
@@ -88,12 +72,6 @@ function clampInt(v: string | null, min: number, max: number, fallback: number):
 
 export function paramsToQuery(p: Partial<ScreenerParams>): string {
   const q = new URLSearchParams();
-  if (p.preset && p.preset !== "balanced") q.set("preset", p.preset);
-  if (p.weights) {
-    q.set("q", String(p.weights.q));
-    q.set("v", String(p.weights.v));
-    q.set("m", String(p.weights.m));
-  }
   if (p.clusters?.length) q.set("clusters", p.clusters.join(","));
   if (p.metas?.length) q.set("metas", p.metas.join(","));
   if (p.tiers?.length) q.set("tiers", p.tiers.join(","));

@@ -4,8 +4,8 @@ import * as Slider from "@radix-ui/react-slider";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useState, useTransition } from "react";
 import {
-  MKT_CAPS, MKT_CAP_LABELS, PRESETS, TIERS, TIER_LABELS,
-  type Weights, parseParams, paramsToQuery,
+  MKT_CAPS, MKT_CAP_LABELS, TIERS, TIER_LABELS,
+  parseParams, paramsToQuery,
 } from "./types";
 
 export function Controls() {
@@ -14,8 +14,6 @@ export function Controls() {
   const initial = parseParams(sp);
   const [, startTransition] = useTransition();
 
-  const [weights, setWeights] = useState<Weights>(initial.weights);
-  const [preset, setPreset] = useState<string>(initial.preset);
   const [tiersSel, setTiersSel] = useState<string[]>(initial.tiers);
   const [capsSel, setCapsSel] = useState<string[]>(initial.caps);
   const [minQ, setMinQ] = useState(initial.minQ);
@@ -25,15 +23,18 @@ export function Controls() {
 
   const push = useCallback(
     (override: Partial<{
-      weights: Weights; preset: string; tiers: string[];
-      caps: string[]; minQ: number; minV: number; minM: number; minC: number;
+      tiers: string[]; caps: string[];
+      minQ: number; minV: number; minM: number; minC: number;
     }>) => {
-      // Preserve metas (managed by MetaChips above the table)
+      // Preserve sector and industry from the URL — they're owned by the
+      // MetaChips / SubClusterChips components, not by this control panel,
+      // and dropping them here was clearing the industry every time the user
+      // adjusted a slider or cap chip.
       const currentMetas = sp.get("metas")?.split(",").filter(Boolean) ?? [];
+      const currentClusters = sp.get("clusters")?.split(",").filter(Boolean) ?? [];
       const q = paramsToQuery({
-        weights: override.weights ?? weights,
-        preset: override.preset ?? preset,
         metas: currentMetas,
+        clusters: currentClusters,
         tiers: override.tiers ?? tiersSel,
         caps: override.caps ?? capsSel,
         minQ: override.minQ ?? minQ,
@@ -44,39 +45,8 @@ export function Controls() {
       });
       startTransition(() => router.replace("/discover" + q, { scroll: false }));
     },
-    [router, sp, weights, preset, tiersSel, capsSel, minQ, minV, minM, minC]
+    [router, sp, tiersSel, capsSel, minQ, minV, minM, minC]
   );
-
-  // Slider helpers — auto-renormalize so total stays 100
-  const setWeight = (key: keyof Weights, val: number) => {
-    const others = (Object.keys(weights) as (keyof Weights)[]).filter((k) => k !== key);
-    const otherSum = others.reduce((s, k) => s + weights[k], 0);
-    const newOtherSum = 100 - val;
-    let next: Weights;
-    if (otherSum === 0) {
-      next = { q: 0, v: 0, m: 0 } as Weights;
-      next[key] = val;
-      const split = Math.round((100 - val) / 2);
-      next[others[0]] = split;
-      next[others[1]] = 100 - val - split;
-    } else {
-      next = { ...weights, [key]: val } as Weights;
-      next[others[0]] = Math.round((weights[others[0]] / otherSum) * newOtherSum);
-      next[others[1]] = 100 - val - next[others[0]];
-    }
-    setWeights(next);
-    setPreset("custom");
-    push({ weights: next, preset: "custom" });
-  };
-
-  const applyPreset = (key: string) => {
-    const p = PRESETS[key];
-    if (!p) return;
-    const w = { q: p.q, v: p.v, m: p.m };
-    setWeights(w);
-    setPreset(key);
-    push({ weights: w, preset: key });
-  };
 
   const toggle = (
     list: string[],
@@ -91,30 +61,6 @@ export function Controls() {
 
   return (
     <div className="space-y-7">
-      {/* Weight blender */}
-      <section>
-        <Label>Score weighting</Label>
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {Object.entries(PRESETS).map(([k, p]) => (
-            <Chip
-              key={k}
-              active={preset === k}
-              onClick={() => applyPreset(k)}
-            >
-              {p.label}
-            </Chip>
-          ))}
-          <Chip active={preset === "custom"}>Custom</Chip>
-        </div>
-
-        <div className="mt-4 space-y-3">
-          <WeightSlider label="Quality"   value={weights.q} onChange={(v) => setWeight("q", v)} />
-          <WeightSlider label="Valuation" value={weights.v} onChange={(v) => setWeight("v", v)} />
-          <WeightSlider label="Momentum"  value={weights.m} onChange={(v) => setWeight("m", v)} />
-        </div>
-      </section>
-
-      <Divider />
 
       {/* Min pillar scores */}
       <section>
@@ -180,34 +126,6 @@ function Chip({
     <button type="button" className={base + " " + cls} onClick={onClick}>
       {children}
     </button>
-  );
-}
-
-function WeightSlider({
-  label, value, onChange,
-}: { label: string; value: number; onChange: (v: number) => void }) {
-  return (
-    <div>
-      <div className="flex justify-between text-[12px]">
-        <span>{label}</span>
-        <span className="tabular-nums muted-text">{value}%</span>
-      </div>
-      <Slider.Root
-        className="relative flex items-center select-none touch-none w-full h-5"
-        value={[value]}
-        max={100}
-        step={5}
-        onValueChange={(vals) => onChange(vals[0])}
-      >
-        <Slider.Track className="bg-[var(--color-paper)] relative flex-1 rounded-full h-1.5">
-          <Slider.Range className="absolute bg-[var(--color-accent-400)] rounded-full h-full" />
-        </Slider.Track>
-        <Slider.Thumb
-          className="block w-4 h-4 bg-white border border-[var(--color-accent-500)] rounded-full shadow-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-300)] hover:scale-105 transition-transform"
-          aria-label={label}
-        />
-      </Slider.Root>
-    </div>
   );
 }
 

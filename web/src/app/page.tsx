@@ -659,7 +659,7 @@ function ThreePillars() {
           />
           <PillarCard
             n="02"
-            color="var(--color-accent-500)"
+            color="var(--color-score-excellent)"
             name="Valuation"
             tagline="Are we paying a fair price?"
             body="P/E, P/B, EV/EBITDA, FCF, dividend yield — always relative to peers in the same sector. A 25× P/E in pharma means nothing like a 25× P/E in cement."
@@ -667,7 +667,7 @@ function ThreePillars() {
           />
           <PillarCard
             n="03"
-            color="var(--color-accent-400)"
+            color="var(--color-score-weak)"
             name="Momentum"
             tagline="Is the market noticing yet?"
             body="3, 6, 12-month relative price returns blended with latest-quarter earnings momentum — separates hype from fundamentals turning."
@@ -726,8 +726,8 @@ function PeGraphic() {
       <rect x="0" y="28" width="160" height="14" rx="3" fill="var(--color-muted)" opacity="0.30" className="svg-hbar" style={{ animationDelay: "0.1s" }} />
       <text x="166" y="40" fontSize="11" fill="var(--color-muted)" fontFamily="JetBrains Mono">28×</text>
       <text x="0" y="68" fontSize="10" fill="var(--color-ink)" fontFamily="Inter">This stock</text>
-      <rect x="0" y="76" width="120" height="14" rx="3" fill="var(--color-accent-400)" className="svg-hbar" style={{ animationDelay: "0.55s" }} />
-      <text x="126" y="88" fontSize="11" fill="var(--color-accent-600)" fontFamily="JetBrains Mono">21×</text>
+      <rect x="0" y="76" width="120" height="14" rx="3" fill="var(--color-score-excellent)" className="svg-hbar" style={{ animationDelay: "0.55s" }} />
+      <text x="126" y="88" fontSize="11" fill="var(--color-score-excellent)" fontFamily="JetBrains Mono">21×</text>
       <text x="0" y="112" fontSize="9" fill="var(--color-muted)" fontFamily="Inter">25% cheaper than the sector median</text>
     </svg>
   );
@@ -739,9 +739,9 @@ function MomentumGraphic() {
       <path d="M12,80 L32,76 L52,78 L72,72 L92,68 L112,72 L132,66 L152,60 L172,64 L192,58 L212,56 L228,62"
         fill="none" stroke="var(--color-muted)" strokeOpacity="0.45" strokeWidth="1.5" strokeDasharray="3 3" />
       <path d="M12,80 L32,72 L52,66 L72,58 L92,48 L112,42 L132,32 L152,24 L172,20 L192,14 L212,10 L228,8"
-        fill="none" stroke="var(--color-accent-300)" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round"
+        fill="none" stroke="var(--color-score-weak)" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round"
         className="svg-line-slow" style={{ animationDelay: "0.3s" }} />
-      <circle cx="228" cy="8" r="3.5" fill="var(--color-accent-500)" className="svg-dot" style={{ animationDelay: "2.5s" }} />
+      <circle cx="228" cy="8" r="3.5" fill="var(--color-score-poor)" className="svg-dot" style={{ animationDelay: "2.5s" }} />
       <text x="12" y="116" fontSize="9" fill="var(--color-muted)" fontFamily="Inter">12 months ago</text>
       <text x="228" y="116" fontSize="9" fill="var(--color-muted)" fontFamily="Inter" textAnchor="end">today</text>
     </svg>

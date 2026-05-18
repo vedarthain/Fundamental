@@ -1,7 +1,10 @@
 "use client";
 
-/** Sector filter — 8 meta-cluster chips above the results table.
- * Multi-select, glance-able. URL-syncs via the `metas` query param.
+/** Sector filter — meta-cluster chips above the results table.
+ * Single-select: each sector has its own peer pool, so combining sectors
+ * yields apples-to-oranges results. URL-syncs via the `metas` query param.
+ * Picking a sector also clears any industry selection (clusters), since
+ * industries belong to a single sector.
  */
 
 import { useRouter, useSearchParams } from "next/navigation";
@@ -24,16 +27,17 @@ export function MetaChips({ metas }: { metas: MetaOption[] }) {
   // Don't show the "diversified_meta" if it has very few clusters (it's the catch-all)
   const visible = metas.filter((m) => m.cluster_count > 0);
 
-  const toggle = (id: string) => {
-    const next = selected.has(id)
-      ? initial.metas.filter((x) => x !== id)
-      : [...initial.metas, id];
-    const q = paramsToQuery({ ...initial, metas: next, page: 1 });
+  // Single-select: clicking a sector replaces the selection. Clicking the
+  // currently-selected one clears it. Also clears any industry filter, since
+  // industries are scoped to a single sector.
+  const pick = (id: string) => {
+    const next = selected.has(id) ? [] : [id];
+    const q = paramsToQuery({ ...initial, metas: next, clusters: [], page: 1 });
     startTransition(() => router.replace("/discover" + q, { scroll: false }));
   };
 
   const clearAll = () => {
-    const q = paramsToQuery({ ...initial, metas: [], page: 1 });
+    const q = paramsToQuery({ ...initial, metas: [], clusters: [], page: 1 });
     startTransition(() => router.replace("/discover" + q, { scroll: false }));
   };
 
@@ -58,7 +62,7 @@ export function MetaChips({ metas }: { metas: MetaOption[] }) {
           <button
             key={m.id}
             type="button"
-            onClick={() => toggle(m.id)}
+            onClick={() => pick(m.id)}
             className={`inline-flex items-center px-3 py-1.5 rounded-full text-[12px] border transition-colors cursor-pointer select-none ${
               active
                 ? "bg-[var(--color-accent-50)] border-[var(--color-accent-300)] text-[var(--color-accent-700)]"
