@@ -116,6 +116,17 @@ def roe_5y(annual, *_):
 
 
 @_higher
+def roe_7y(annual, *_):
+    rows = annual[-7:] if len(annual) >= 7 else None
+    if not rows:
+        return None
+    pairs = [(r.get("net_profit"), (r.get("equity_share_capital") or 0) + (r.get("reserves") or 0))
+             for r in rows]
+    pairs = [(np_, eq) for np_, eq in pairs if np_ is not None and eq and eq > 0]
+    return mean(np_ / eq for np_, eq in pairs) if pairs else None
+
+
+@_higher
 def roe_latest(annual, *_):
     if not annual:
         return None
@@ -167,6 +178,22 @@ def roce_5y(annual, *_):
 
 
 @_higher
+def roce_7y(annual, *_):
+    rows = annual[-7:]
+    if len(rows) < 7:
+        return None
+    out = []
+    for r in rows:
+        eq = (r.get("equity_share_capital") or 0) + (r.get("reserves") or 0)
+        cap = eq + (r.get("borrowings") or 0)
+        if cap <= 0:
+            continue
+        ebit = (r.get("profit_before_tax") or 0) + (r.get("interest") or 0)
+        out.append(ebit / cap)
+    return mean(out) if len(out) >= 5 else None
+
+
+@_higher
 def roce_latest(annual, *_):
     if not annual:
         return None
@@ -197,6 +224,16 @@ def op_margin_5y(annual, *_):
     pairs = [(r.get("operating_profit"), r.get("sales")) for r in rows]
     pairs = [(op, s) for op, s in pairs if op is not None and s and s > 0]
     return mean(op / s for op, s in pairs) if len(pairs) >= 3 else None
+
+
+@_higher
+def op_margin_7y(annual, *_):
+    rows = annual[-7:]
+    if len(rows) < 7:
+        return None
+    pairs = [(r.get("operating_profit"), r.get("sales")) for r in rows]
+    pairs = [(op, s) for op, s in pairs if op is not None and s and s > 0]
+    return mean(op / s for op, s in pairs) if len(pairs) >= 5 else None
 
 
 @_higher
@@ -411,6 +448,25 @@ def roe_avg_above_threshold_5y(annual, *_):
 
 
 @_higher
+def roe_avg_above_threshold_7y(annual, *_):
+    """Share of last 7y where ROE > 15%."""
+    rows = annual[-7:]
+    if len(rows) < 7:
+        return None
+    out = 0
+    for r in rows:
+        eq = (r.get("equity_share_capital") or 0) + (r.get("reserves") or 0)
+        if eq <= 0:
+            continue
+        np_ = r.get("net_profit")
+        if np_ is None:
+            continue
+        if (np_ / eq) > 0.15:
+            out += 1
+    return out / 7
+
+
+@_higher
 def roe_avg_above_threshold_10y(annual, *_):
     rows = annual[-10:]
     if len(rows) < 10:
@@ -428,11 +484,10 @@ def roe_avg_above_threshold_10y(annual, *_):
     return out / 10
 
 
-@_higher
-def np_growth_above_inflation_10y(annual, *_):
-    """Share of YoY periods (last 9-10 years of data) where NP grew > 6%."""
-    rows = annual[-10:]  # 10 data points = 9 YoY comparisons (Veteran threshold metric)
-    if len(rows) < 10:
+def _np_growth_above_inflation(annual: list[dict], window: int) -> float | None:
+    """Share of YoY periods in last `window` years where NP grew > 6%."""
+    rows = annual[-window:]
+    if len(rows) < window:
         return None
     growths = []
     for i in range(1, len(rows)):
@@ -440,9 +495,26 @@ def np_growth_above_inflation_10y(annual, *_):
         if a is None or b is None or abs(a) < 1e-6:
             continue
         growths.append((b - a) / abs(a))
-    if len(growths) < 7:
+    # Need at least window-3 valid YoY comparisons to avoid noise
+    min_valid = max(2, window - 3)
+    if len(growths) < min_valid:
         return None
     return sum(1 for g in growths if g > 0.06) / len(growths)
+
+
+@_higher
+def np_growth_above_inflation_5y(annual, *_):
+    return _np_growth_above_inflation(annual, 5)
+
+
+@_higher
+def np_growth_above_inflation_7y(annual, *_):
+    return _np_growth_above_inflation(annual, 7)
+
+
+@_higher
+def np_growth_above_inflation_10y(annual, *_):
+    return _np_growth_above_inflation(annual, 10)
 
 
 # ---------- BOOK VALUE ----------------------------------------------------

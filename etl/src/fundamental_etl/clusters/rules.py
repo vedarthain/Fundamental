@@ -17,6 +17,33 @@ PSU_BANKS = {
     "CENTRALBK", "MAHABANK", "UNIONBANK", "IOB", "PSB", "JKBANK",
 }
 
+# Capital-markets split: NSE's industry classification dumps AMCs, brokers,
+# exchanges, depositories, RTAs, and rating agencies all under "Capital Markets"
+# — but their unit economics differ wildly. We segregate via symbol whitelists
+# so peer percentiles compare like-for-like. Whitelists are intentionally
+# explicit (no fuzzy name match) to avoid silent reclassification when listings
+# change. Anything in "capital markets" industry but not in a whitelist falls
+# to the broker bucket.
+
+BFSI_AMC_WEALTH = {
+    # Pure-play AMCs
+    "HDFCAMC", "ICICIAMC", "UTIAMC", "ABSLAMC", "NAM-INDIA", "CRAMC",
+    # Wealth managers / advisory
+    "360ONE", "NUVAMA", "ANANDRATHI", "PRUDENT", "DAMCAPITAL",
+}
+
+BFSI_EXCHANGE = {
+    # Stock + commodity + energy exchanges, and central depositories
+    "BSE", "MCX", "IEX", "CDSL",
+}
+
+BFSI_RTA_RATING = {
+    # Registrar/transfer agents
+    "CAMS", "KFINTECH",
+    # Credit rating agencies
+    "ICRA", "CARERATING",
+}
+
 
 @dataclass(frozen=True)
 class StockMeta:
@@ -72,9 +99,21 @@ RULES: list[Rule] = [
     Rule("bfsi_insurance",
          lambda s: _industry(s) == "insurance",
          "Insurance industry"),
-    Rule("bfsi_capmarkets",
+    # Capital Markets is split via symbol whitelists, in priority order.
+    # The broker rule is the fallback — anything in the industry that didn't
+    # match a more specific bucket lands here.
+    Rule("bfsi_amc_wealth",
+         lambda s: _industry(s) == "capital markets" and s.symbol in BFSI_AMC_WEALTH,
+         "Capital Markets AND symbol in AMC/wealth list"),
+    Rule("bfsi_exchange",
+         lambda s: _industry(s) == "capital markets" and s.symbol in BFSI_EXCHANGE,
+         "Capital Markets AND symbol in exchange/depository list"),
+    Rule("bfsi_rta_rating",
+         lambda s: _industry(s) == "capital markets" and s.symbol in BFSI_RTA_RATING,
+         "Capital Markets AND symbol in RTA/rating list"),
+    Rule("bfsi_broker",
          lambda s: _industry(s) == "capital markets",
-         "Capital Markets industry"),
+         "Capital Markets industry (fallback — brokers)"),
     Rule("bfsi_fintech",
          lambda s: _industry(s) == "financial technology (fintech)",
          "Fintech industry"),

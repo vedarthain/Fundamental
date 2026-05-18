@@ -51,12 +51,23 @@ def _val_fallback_industrials() -> list[tuple[str, float]]:
     return [("ev_sales_ttm", 0.6), ("pb", 0.4)]
 
 
-# Lender base (banks/NBFCs) — most components shared
+# Lender base (banks/NBFCs) — most components shared.
+# ROE and NP CAGR are now graduated across 3y/5y/7y so a long, steady ROE record
+# is rewarded distinctly from a recent jump off a low base. (Previously roe_3y
+# absorbed 100% of the ROE weight, which over-rewarded inflection stories like
+# small-finance banks recovering from cycle lows. Same logic for NP CAGR.)
 def _lender_quality(roa, roe, bvc, lbg, npc, nps, e2a):
     return {
-        "roa_3y": roa, "roe_3y": roe, "book_value_cagr_5y": bvc,
-        "loan_book_cagr_3y": lbg, "np_cagr_5y": npc,
-        "np_consistency_5y": nps, "equity_to_assets": e2a,
+        "roa_3y": roa,
+        "roe_3y": roe * 0.5,   # recent
+        "roe_5y": roe * 0.3,   # medium
+        "roe_7y": roe * 0.2,   # long (vet sub for the longest window via make_veteran)
+        "book_value_cagr_5y": bvc,    # vet sub → 10y
+        "loan_book_cagr_3y": lbg,
+        "np_cagr_5y": npc * 0.6,
+        "np_cagr_7y": npc * 0.4,
+        "np_consistency_5y": nps,     # vet sub → 10y
+        "equity_to_assets": e2a,
     }
 
 
@@ -102,13 +113,52 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
         momentum=UNIVERSAL_MOMENTUM,
         loss_maker_val_fallback=[("p_premium", 1.0)],
     ),
-    "bfsi_capmarkets": Scorecard(
-        pillar_weights={"q": 45, "v": 30, "m": 25},
+    # ----- Capital Markets split (was bfsi_capmarkets) ----------------------
+    # AMC/wealth: AUM-fee compounders. Heavy on quality; valuation leans on P/E
+    # since these are highly cash-generative and don't trade on book value.
+    "bfsi_amc_wealth": Scorecard(
+        pillar_weights={"q": 50, "v": 30, "m": 20},
         quality={
-            "roe_3y": 20, "roce_3y": 18, "op_margin_3y": 15, "op_margin_trend": 10,
-            "np_cagr_5y": 15, "cfo_pat_3y": 12, "np_consistency_5y": 10,
+            "roe_3y": 20, "roce_3y": 18, "op_margin_3y": 18, "op_margin_trend": 10,
+            "np_cagr_5y": 15, "cfo_pat_3y": 10, "np_consistency_5y": 9,
         },
-        valuation={"pe_ttm": 35, "pb": 20, "earnings_yield_trend": 15, "div_yield": 10, "fcf_yield": 20},
+        valuation={"pe_ttm": 40, "earnings_yield_trend": 20, "div_yield": 15, "fcf_yield": 25},
+        momentum=UNIVERSAL_MOMENTUM,
+        loss_maker_val_fallback=_val_fallback_ev_sales(),
+    ),
+    # Exchanges/depositories: regulated near-monopolies, very stable margins.
+    # Quality dominates; pricier on traditional metrics because of moat.
+    "bfsi_exchange": Scorecard(
+        pillar_weights={"q": 55, "v": 25, "m": 20},
+        quality={
+            "op_margin_3y": 22, "op_margin_trend": 12, "roce_3y": 20, "roe_3y": 16,
+            "cfo_pat_3y": 12, "np_cagr_5y": 10, "np_consistency_5y": 8,
+        },
+        valuation={"pe_ttm": 35, "earnings_yield_trend": 15, "div_yield": 20, "fcf_yield": 30},
+        momentum=UNIVERSAL_MOMENTUM,
+        loss_maker_val_fallback=_val_fallback_ev_sales(),
+    ),
+    # RTAs/Rating: service-fee oligopolies. Similar to AMCs but lower margins.
+    "bfsi_rta_rating": Scorecard(
+        pillar_weights={"q": 48, "v": 30, "m": 22},
+        quality={
+            "roe_3y": 20, "roce_3y": 18, "op_margin_3y": 18, "op_margin_trend": 12,
+            "np_cagr_5y": 12, "cfo_pat_3y": 10, "np_consistency_5y": 10,
+        },
+        valuation={"pe_ttm": 40, "earnings_yield_trend": 20, "div_yield": 15, "fcf_yield": 25},
+        momentum=UNIVERSAL_MOMENTUM,
+        loss_maker_val_fallback=_val_fallback_ev_sales(),
+    ),
+    # Brokers: cyclical, transaction-driven, rate-sensitive. Lighter on quality
+    # weight, heavier on momentum since the cycle matters more than steady-state
+    # economics. P/B is more meaningful for broker balance sheets than P/E.
+    "bfsi_broker": Scorecard(
+        pillar_weights={"q": 40, "v": 30, "m": 30},
+        quality={
+            "roe_3y": 22, "roce_3y": 18, "op_margin_3y": 14, "op_margin_trend": 8,
+            "np_cagr_5y": 14, "cfo_pat_3y": 12, "np_consistency_5y": 12,
+        },
+        valuation={"pe_ttm": 30, "pb": 30, "earnings_yield_trend": 15, "div_yield": 10, "fcf_yield": 15},
         momentum=UNIVERSAL_MOMENTUM,
         loss_maker_val_fallback=_val_fallback_ev_sales(),
     ),
@@ -599,19 +649,26 @@ def validate_all() -> list[str]:
 # Tier-variant generator — applies the rules from docs/scorecards.md
 # -------------------------------------------------------------------------
 
-# Substitutions for VETERAN tier
+# Substitutions for VETERAN tier — every 5y/7y window goes one level deeper
+# so a long-tenured stock's score reflects its longest available history.
 _VET_REPLACE = {
     "np_consistency_5y": "np_consistency_10y",
+    "np_consistency_7y": "np_consistency_10y",
     "book_value_cagr_5y": "book_value_cagr_10y",
+    "book_value_cagr_7y": "book_value_cagr_10y",
     "op_margin_trend": "op_margin_trend_7y",
 }
-# Substitutions for MID tier
+# Substitutions for MID tier — longer windows fall back to whatever the
+# company actually has history for (typically 3y, occasionally 5y).
 _MID_REPLACE = {
-    "rev_cagr_5y": "rev_cagr_3y",
-    "np_cagr_5y": "np_cagr_3y",
-    "book_value_cagr_5y": "book_value_cagr_3y",
-    "np_consistency_5y": "np_consistency_3y",
+    "rev_cagr_5y": "rev_cagr_3y", "rev_cagr_7y": "rev_cagr_3y",
+    "np_cagr_5y": "np_cagr_3y", "np_cagr_7y": "np_cagr_3y",
+    "book_value_cagr_5y": "book_value_cagr_3y", "book_value_cagr_7y": "book_value_cagr_3y",
+    "np_consistency_5y": "np_consistency_3y", "np_consistency_7y": "np_consistency_3y",
     "op_margin_trend": "op_margin_trend_3y",
+    "roe_5y": "roe_3y", "roe_7y": "roe_3y",
+    "roce_5y": "roce_3y", "roce_7y": "roce_3y",
+    "op_margin_5y": "op_margin_3y", "op_margin_7y": "op_margin_3y",
 }
 # Substitutions for NEW tier (drop CAGR & trend & consistency; latest substitutes)
 _NEW_DROP = {
@@ -622,13 +679,14 @@ _NEW_DROP = {
     "op_margin_trend", "op_margin_trend_3y", "op_margin_trend_7y",
     "loan_book_cagr_3y",
     "earnings_yield_trend", "capex_intensity_3y",
-    "roe_avg_above_threshold_5y", "roe_avg_above_threshold_10y",
-    "np_growth_above_inflation_10y",
+    "roe_avg_above_threshold_5y", "roe_avg_above_threshold_7y", "roe_avg_above_threshold_10y",
+    "np_growth_above_inflation_5y", "np_growth_above_inflation_7y", "np_growth_above_inflation_10y",
 }
 _NEW_REPLACE_LATEST = {
-    "roe_3y": "roe_latest", "roe_5y": "roe_latest",
-    "roce_3y": "roce_latest", "roce_5y": "roce_latest",
-    "op_margin_3y": "op_margin_latest", "op_margin_5y": "op_margin_latest",
+    "roe_3y": "roe_latest", "roe_5y": "roe_latest", "roe_7y": "roe_latest",
+    "roce_3y": "roce_latest", "roce_5y": "roce_latest", "roce_7y": "roce_latest",
+    "op_margin_3y": "op_margin_latest",
+    "op_margin_5y": "op_margin_latest", "op_margin_7y": "op_margin_latest",
     "cfo_pat_3y": "cfo_pat_latest",
     "rev_cagr_5y": "rev_yoy_latest", "rev_cagr_3y": "rev_yoy_latest",
     "np_cagr_5y": "np_yoy_latest", "np_cagr_3y": "np_yoy_latest",
@@ -655,14 +713,23 @@ def make_veteran(card: Scorecard) -> Scorecard:
     new_q = {}
     for k, v in card.quality.items():
         new_q[_VET_REPLACE.get(k, k)] = new_q.get(_VET_REPLACE.get(k, k), 0) + v
-    # Add the two killer threshold metrics (5% each), pulling from existing components proportionally
+    # Add graduated track-record bonuses. Two threshold metrics × 3 windows
+    # (5y / 7y / 10y), each adding to a total bonus of 10 — same overall budget
+    # as before but spread across windows. The 10y window still carries the
+    # most weight (2.5 each) because a decade of consistent ROE/NP growth is
+    # the strongest signal; 7y is 1.5 each; 5y is 1.0 each. This rewards
+    # graduated durability without making 10-yr-old companies dominate scoring.
     if not new_q:
         return card
     bonus_total = 10
     factor = (sum(new_q.values()) - bonus_total) / sum(new_q.values())
     new_q = {k: round(v * factor, 4) for k, v in new_q.items()}
-    new_q["roe_avg_above_threshold_10y"] = 5
-    new_q["np_growth_above_inflation_10y"] = 5
+    new_q["roe_avg_above_threshold_5y"] = 1.0
+    new_q["roe_avg_above_threshold_7y"] = 1.5
+    new_q["roe_avg_above_threshold_10y"] = 2.5
+    new_q["np_growth_above_inflation_5y"] = 1.0
+    new_q["np_growth_above_inflation_7y"] = 1.5
+    new_q["np_growth_above_inflation_10y"] = 2.5
 
     return Scorecard(
         pillar_weights=_shift_pillars(card.pillar_weights, +5),

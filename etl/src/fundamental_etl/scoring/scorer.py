@@ -3,14 +3,36 @@
 For each (cluster_id, maturity_tier) bucket on a snapshot_date:
   1. Pull every stock's metrics from app.metrics_snapshot
   2. For each formula in the cluster's tier-variant scorecard, compute percentile rank
-     within the bucket (direction-aware: lower-better metrics are inverted)
+     against the appropriate pool (see "Two-pool strategy" below)
   3. Loss-maker handling: if pe_ttm is null, splice in fallback formulas at pe_ttm's weight
   4. Weighted blend per pillar → quality_pct, valuation_pct, momentum_pct
-  5. composite = pillar-weighted blend → re-percentile within bucket → composite_pct
+     - Quality + Valuation pillars are shrunk toward 50 for thin peer pools (see SHRINK_N)
+  5. composite = pillar-weighted blend → re-percentile within target bucket → composite_pct
+     - composite_pct is also shrunk toward 50 when the target bucket is thin
   6. Persist sub-percentiles for explainability
 
-Fallback for thin (cluster, tier) buckets (<10 peers): percentile against (meta_cluster, tier);
-flag score_status='partial-meta-cluster'.
+Two-pool strategy
+-----------------
+- Quality and Valuation are peer-relative concepts. A P/E of 25 means different things
+  in pharma vs cement; ROE of 18% lands differently in banks vs FMCG. These pillars
+  use the peer bucket (cluster, tier) with fallback to mixed-tiers when thin.
+- Momentum is absolute. A 25% trailing return is 25% regardless of who the peers are.
+  Percentiling momentum within a 4-stock cluster amplifies noise: a single 5% rally
+  flips ranks and shifts the momentum pillar by ~33pts. So momentum formulas are
+  percentiled against the **entire scored universe**, not the peer bucket.
+
+Shrinkage
+---------
+For Q/V pillar scores and for the composite re-percentile, we shrink toward 50
+when the relevant peer count is below SHRINK_N. This preserves rank ordering but
+compresses the magnitude so a 4-stock cluster doesn't claim "100 vs 0" precision.
+At n >= SHRINK_N the shrinkage factor is 1.0 (no effect).
+
+Fallback for thin (cluster, tier) buckets (<MIN_PEERS): percentile against
+(cluster, all-tiers); flag score_status='partial-cluster-mixed-tiers'. The
+historical 'partial-meta-cluster' fallback was removed — comparing a stock to
+incomparable businesses in the same sector produced false-precision scores worse
+than the alternative of "ranked against 4 actual peers, badge as thin bucket".
 """
 from __future__ import annotations
 
@@ -24,6 +46,31 @@ from .formulas import REGISTRY as FORMULAS
 from .scorecards import Scorecard, get_scorecard, get_scorecard_from, load_db_overrides
 
 MIN_PEERS = 10
+# Below this peer count, Q/V pillar scores and composite_pct are shrunk toward
+# 50 — the closer n is to 1, the more aggressive the pull. At n >= SHRINK_N the
+# shrinkage factor is 1.0 (no effect).
+SHRINK_N = 10
+
+
+def _shrink_toward_50(pct: Optional[int], n: int) -> Optional[int]:
+    """Damp a percentile toward 50 when the peer pool is small.
+
+    Shrinkage factor: λ = max(0, min(1, (n - 1) / (SHRINK_N - 1))).
+    - n >= SHRINK_N → λ = 1 → no change.
+    - n = SHRINK_N // 2 → λ ≈ 0.5 → magnitudes halved.
+    - n <= 1 → λ = 0 → all scores collapse to 50 (no peer information).
+
+    Rank ordering is preserved (linear in pct). What changes is magnitude:
+    a 4-stock cluster outputs roughly [33, 44, 56, 67] instead of [0, 33, 67, 100].
+    """
+    if pct is None:
+        return None
+    if n >= SHRINK_N:
+        return pct
+    if n <= 1:
+        return 50
+    lam = (n - 1) / (SHRINK_N - 1)
+    return int(round(50 + (pct - 50) * lam))
 
 
 def _percentile_rank(values: list[Optional[float]], higher_is_better: bool) -> list[Optional[int]]:
@@ -127,26 +174,48 @@ def score_snapshot(conn: psycopg.Connection, snapshot_date: date) -> dict[str, i
     # Load DB-backed scorecard overrides once (loader takes ~ms)
     overrides = load_db_overrides(conn)
 
-    # Step 2-5: score each bucket
+    # Build the universe-wide momentum percentile pool. Momentum formulas are
+    # the same set across (nearly) every scorecard (UNIVERSAL_MOMENTUM), but
+    # we collect from each scorecard to be safe in case a cluster overrides.
+    momentum_formulas: set[str] = set()
+    for r in rows:
+        sc = get_scorecard_from(overrides, r["cluster_id"], r["maturity_tier"])
+        momentum_formulas.update(sc.momentum.keys())
+
+    universe_metrics = [(r["symbol"], r["cluster_metrics"] or {}) for r in rows]
+    universe_momentum_pcts: dict[str, dict[str, Optional[int]]] = {}
+    for fname in momentum_formulas:
+        fn = FORMULAS.get(fname)
+        if fn is None:
+            continue
+        higher = bool(getattr(fn, "higher_is_better", True))
+        vals = [m.get(fname) for _, m in universe_metrics]
+        pcts = _percentile_rank(vals, higher_is_better=higher)
+        universe_momentum_pcts[fname] = {
+            universe_metrics[i][0]: pcts[i] for i in range(len(universe_metrics))
+        }
+
+    # Step 2-5: score each bucket. Fallback chain is now only (cluster, tier) →
+    # (cluster, all-tiers). Meta-cluster fallback was removed — comparing a
+    # stock to incomparable businesses in the same sector produced false-
+    # precision scores. Thin buckets now rank within their actual peer set and
+    # carry the "partial-cluster-mixed-tiers" status (badged in the UI).
     counts = {"scored": 0, "partial_cluster_all": 0, "partial_meta": 0, "buckets": 0}
     for bkey, bucket_rows in buckets.items():
         cluster_id, tier = bkey.split("|")
         sc = get_scorecard_from(overrides, cluster_id, tier)
-        # Tiered fallback: (cluster, tier) → (cluster, all-tiers) → (meta_cluster, tier)
         if len(bucket_rows) >= MIN_PEERS:
             peer_rows = bucket_rows
             partial_status = None
-        elif len(cluster_all_tiers[cluster_id]) >= MIN_PEERS:
+        else:
             peer_rows = cluster_all_tiers[cluster_id]
             partial_status = "partial-cluster-mixed-tiers"
             counts["partial_cluster_all"] += len(bucket_rows)
-        else:
-            meta_id = bucket_rows[0]["meta_cluster_id"]
-            peer_rows = meta_buckets[_bucket_key(meta_id, tier)]
-            partial_status = "partial-meta-cluster"
-            counts["partial_meta"] += len(bucket_rows)
 
-        _score_bucket(conn, snapshot_date, cluster_id, tier, sc, bucket_rows, peer_rows, partial_status)
+        _score_bucket(
+            conn, snapshot_date, cluster_id, tier, sc,
+            bucket_rows, peer_rows, partial_status, universe_momentum_pcts,
+        )
         counts["scored"] += len(bucket_rows)
         counts["buckets"] += 1
 
@@ -159,45 +228,39 @@ def _score_bucket(
     cluster_id: str,
     tier: str,
     sc: Scorecard,
-    target_rows: list[dict],   # the stocks we score
-    peer_rows: list[dict],      # the peer set used for percentile (= target_rows usually)
-) -> None:
-    raise NotImplementedError  # placeholder so test-import doesn't blow up
-
-
-def _score_bucket(  # noqa: F811 — single real definition
-    conn: psycopg.Connection,
-    snapshot_date: date,
-    cluster_id: str,
-    tier: str,
-    sc: Scorecard,
     target_rows: list[dict],
     peer_rows: list[dict],
     partial_status: Optional[str],
+    universe_momentum_pcts: dict[str, dict[str, Optional[int]]],
 ) -> None:
-    # All formulas needed (before splicing loss-maker fallback)
-    all_formulas = set(sc.quality) | set(sc.valuation) | set(sc.momentum)
-    # Also compute fallbacks so we can splice them
-    all_formulas |= {fname for fname, _ in sc.loss_maker_val_fallback}
+    # Quality + valuation formulas are percentiled within the peer bucket
+    # (cluster, tier) with fallback to mixed-tier cluster. Momentum formulas
+    # come from the pre-computed universe-wide pool. Loss-maker fallback only
+    # ever applies to valuation, so include those names too.
+    qv_formulas = set(sc.quality) | set(sc.valuation)
+    qv_formulas |= {fname for fname, _ in sc.loss_maker_val_fallback}
+    momentum_set = set(sc.momentum)
 
-    # Materialize peer values per formula
+    # Materialize peer values for the Q+V percentile pool
     peer_metrics_list: list[dict] = [r["cluster_metrics"] or {} for r in peer_rows]
     target_metrics_list: list[dict] = [r["cluster_metrics"] or {} for r in target_rows]
 
-    # Build a percentile map: formula -> {symbol: pct}
+    # Build per-formula percentile map.
+    # - Q/V: rank within peer_rows (cluster pool)
+    # - M: look up from universe_momentum_pcts (universe pool)
     formula_pcts: dict[str, dict[str, Optional[int]]] = {}
-    for fname in all_formulas:
+    for fname in qv_formulas:
         fn = FORMULAS.get(fname)
         if fn is None:
             continue
         higher = bool(getattr(fn, "higher_is_better", True))
         peer_vals = [m.get(fname) for m in peer_metrics_list]
         peer_pcts = _percentile_rank(peer_vals, higher_is_better=higher)
-        # Map peer percentiles by symbol (for target lookup)
-        peer_lookup = {peer_rows[i]["symbol"]: peer_pcts[i] for i in range(len(peer_rows))}
-        # Targets that aren't in peer set need their value inserted; for now, when bucket==peer,
-        # target_rows is a subset of peer_rows so this is just a lookup.
-        formula_pcts[fname] = peer_lookup
+        formula_pcts[fname] = {
+            peer_rows[i]["symbol"]: peer_pcts[i] for i in range(len(peer_rows))
+        }
+    for fname in momentum_set:
+        formula_pcts[fname] = universe_momentum_pcts.get(fname, {})
 
     # Pre-compute splicing for valuation per target stock
     val_weights_per_target = _splice_loss_maker_fallback(
@@ -207,6 +270,11 @@ def _score_bucket(  # noqa: F811 — single real definition
     # For composite re-percentile, collect all targets' composite raw scores first
     composite_raw: list[Optional[float]] = []
     persisted_rows: list[dict[str, Any]] = []
+
+    # Shrinkage applies to Q + V because they rely on the peer pool.
+    # Momentum is exempt (its pool is the whole universe; shrinkage isn't needed).
+    qv_pool_n = len(peer_rows)
+    target_n = len(target_rows)  # for composite_pct shrinkage (re-percentile pool)
 
     for idx, r in enumerate(target_rows):
         symbol = r["symbol"]
@@ -218,9 +286,21 @@ def _score_bucket(  # noqa: F811 — single real definition
         v_pcts = _gather(val_weights_per_target[idx])
         m_pcts = _gather(sc.momentum)
 
-        q_score = _weighted_pillar_score(q_pcts, sc.quality)
-        v_score = _weighted_pillar_score(v_pcts, val_weights_per_target[idx])
+        q_score_raw = _weighted_pillar_score(q_pcts, sc.quality)
+        v_score_raw = _weighted_pillar_score(v_pcts, val_weights_per_target[idx])
         m_score = _weighted_pillar_score(m_pcts, sc.momentum)
+
+        # Apply thin-bucket shrinkage to Q and V (M comes from universe pool).
+        # _shrink_toward_50 accepts None and ints; pillar scores are floats here
+        # but the shrinkage math is identical, so round → shrink → store int.
+        q_score = (
+            _shrink_toward_50(int(round(q_score_raw)), qv_pool_n)
+            if q_score_raw is not None else None
+        )
+        v_score = (
+            _shrink_toward_50(int(round(v_score_raw)), qv_pool_n)
+            if v_score_raw is not None else None
+        )
 
         # Composite: weighted by pillar weights, renormalize across non-null pillars
         pillar_weights = {"q": sc.pillar_weights["q"], "v": sc.pillar_weights["v"], "m": sc.pillar_weights["m"]}
@@ -237,8 +317,8 @@ def _score_bucket(  # noqa: F811 — single real definition
             "symbol": symbol,
             "cluster_id": cluster_id,
             "tier": tier,
-            "q": int(round(q_score)) if q_score is not None else None,
-            "v": int(round(v_score)) if v_score is not None else None,
+            "q": q_score,
+            "v": v_score,
             "m": int(round(m_score)) if m_score is not None else None,
             "q_components": q_pcts,
             "v_components": v_pcts,
@@ -246,8 +326,11 @@ def _score_bucket(  # noqa: F811 — single real definition
             "composite_raw": comp,
         })
 
-    # Re-percentile composite within target bucket
-    composite_pcts = _percentile_rank(composite_raw, higher_is_better=True)
+    # Re-percentile composite within target bucket, then shrink if the bucket
+    # is thin. Without shrinkage, a 4-stock bucket would publish (0, 33, 67, 100)
+    # — falsely precise. After shrinkage, roughly (33, 44, 56, 67).
+    composite_pcts_raw = _percentile_rank(composite_raw, higher_is_better=True)
+    composite_pcts = [_shrink_toward_50(p, target_n) for p in composite_pcts_raw]
 
     # Persist
     with conn.cursor() as cur:
