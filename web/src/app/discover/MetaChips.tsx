@@ -10,6 +10,7 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTransition } from "react";
 import { paramsToQuery, parseParams } from "./types";
+import type { ClusterRow } from "./SubClusterChips";
 
 export type MetaOption = {
   id: string;
@@ -17,7 +18,9 @@ export type MetaOption = {
   cluster_count: number;
 };
 
-export function MetaChips({ metas }: { metas: MetaOption[] }) {
+export function MetaChips({
+  metas, clusters,
+}: { metas: MetaOption[]; clusters: ClusterRow[] }) {
   const router = useRouter();
   const sp = useSearchParams();
   const initial = parseParams(sp);
@@ -28,11 +31,21 @@ export function MetaChips({ metas }: { metas: MetaOption[] }) {
   const visible = metas.filter((m) => m.cluster_count > 0);
 
   // Single-select: clicking a sector replaces the selection. Clicking the
-  // currently-selected one clears it. Also clears any industry filter, since
-  // industries are scoped to a single sector.
+  // currently-selected one clears it. Picking a new sector ALSO auto-selects
+  // its first industry (alphabetical, matches loadClusters ORDER BY name) —
+  // landing on "All industries" as the default conveys nothing the "All
+  // sectors" pill doesn't already say, and the user's most likely next step
+  // is to drill into a specific industry anyway.
   const pick = (id: string) => {
-    const next = selected.has(id) ? [] : [id];
-    const q = paramsToQuery({ ...initial, metas: next, clusters: [], page: 1 });
+    if (selected.has(id)) {
+      // Clicking the active sector clears both filters.
+      const q = paramsToQuery({ ...initial, metas: [], clusters: [], page: 1 });
+      startTransition(() => router.replace("/discover" + q, { scroll: false }));
+      return;
+    }
+    const firstIndustry = clusters.find((c) => c.sector_id === id);
+    const next = firstIndustry ? [firstIndustry.id] : [];
+    const q = paramsToQuery({ ...initial, metas: [id], clusters: next, page: 1 });
     startTransition(() => router.replace("/discover" + q, { scroll: false }));
   };
 

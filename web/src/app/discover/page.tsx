@@ -365,7 +365,7 @@ export default async function ScreenerPage({
           <div className="mb-4 space-y-3">
             <div>
               <div className="text-[11px] uppercase tracking-wide muted-text mb-2">Sector</div>
-              <MetaChips metas={metas} />
+              <MetaChips metas={metas} clusters={clusters} />
             </div>
             <div>
               <div className="text-[11px] uppercase tracking-wide muted-text mb-2">Industry</div>

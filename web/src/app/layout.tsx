@@ -3,6 +3,7 @@ import { Inter, Source_Serif_4, IBM_Plex_Mono } from "next/font/google";
 import Link from "next/link";
 import { StockSearch } from "@/components/StockSearch";
 import { SnapshotRibbon } from "@/components/SnapshotRibbon";
+import { TopNavLinks } from "@/components/TopNavLinks";
 import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 
@@ -89,21 +90,10 @@ function SiteHeader() {
           <StockSearch />
         </div>
         {/* Top nav — all 4 surfaces visible on mobile now. Smaller font + gap on
-            mobile to fit comfortably alongside the logo. */}
-        <nav className="flex items-center gap-3 md:gap-6 text-[13px] md:text-[14px] shrink-0 ml-auto">
-          <Link href="/sectors" className="hover:text-[var(--color-accent-600)]">
-            Sectors
-          </Link>
-          <Link href="/discover" className="hover:text-[var(--color-accent-600)]">
-            Discover
-          </Link>
-          <Link href="/feed" className="hover:text-[var(--color-accent-600)]">
-            Feed
-          </Link>
-          <Link href="/ideas" className="hover:text-[var(--color-accent-600)]">
-            Ideas
-          </Link>
-        </nav>
+            mobile to fit comfortably alongside the logo. Active-state styling
+            lives inside the client component so the header layout can stay a
+            server component. */}
+        <TopNavLinks />
       </div>
     </header>
   );
