@@ -72,29 +72,35 @@ async function loadIndustryStocks(
 
   // Fetch prices for just these stocks rather than the whole universe — much
   // smaller payload, and golden_db doesn't have to scan rows we'll drop.
+  //
+  // Resilience note: we filter close IS NOT NULL everywhere because a
+  // broken daily ingest (e.g. 2026-05-15 wrote rows for 2162 symbols but
+  // populated close for only 275) would otherwise blank out every return.
+  // p_now uses per-symbol most-recent non-null close; lookbacks anchor to
+  // the global latest date minus N days.
   const symbolsNS = rows.map((r) => `${r.symbol}.NS`);
   type PriceRow = { symbol: string; p_now: number | null; p_w1: number | null; p_m1: number | null; p_y1: number | null };
   const prices = await golden<PriceRow[]>`
     WITH latest_d AS (
-      SELECT MAX(date) AS d FROM golden.price_history WHERE interval = '1d'
+      SELECT MAX(date) AS d FROM golden.price_history
+       WHERE interval = '1d' AND close IS NOT NULL
     ),
     syms AS (SELECT unnest(${symbolsNS}::text[]) AS symbol)
     SELECT
       REPLACE(s.symbol, '.NS', '') AS symbol,
       (SELECT close::float FROM golden.price_history p
-        WHERE p.symbol = s.symbol AND p.interval = '1d'
-          AND p.date = (SELECT d FROM latest_d)
-        LIMIT 1) AS p_now,
+        WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
+        ORDER BY p.date DESC LIMIT 1) AS p_now,
       (SELECT close::float FROM golden.price_history p
-        WHERE p.symbol = s.symbol AND p.interval = '1d'
+        WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
           AND p.date <= (SELECT d FROM latest_d) - INTERVAL '7 days'
         ORDER BY p.date DESC LIMIT 1) AS p_w1,
       (SELECT close::float FROM golden.price_history p
-        WHERE p.symbol = s.symbol AND p.interval = '1d'
+        WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
           AND p.date <= (SELECT d FROM latest_d) - INTERVAL '30 days'
         ORDER BY p.date DESC LIMIT 1) AS p_m1,
       (SELECT close::float FROM golden.price_history p
-        WHERE p.symbol = s.symbol AND p.interval = '1d'
+        WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
           AND p.date <= (SELECT d FROM latest_d) - INTERVAL '365 days'
         ORDER BY p.date DESC LIMIT 1) AS p_y1
     FROM syms s
@@ -134,30 +140,34 @@ async function loadIndustryReturns(snapshotDate: string): Promise<Map<string, { 
     p_m1:  number | null;
     p_y1:  number | null;
   };
+  // Resilience: filter close IS NOT NULL throughout. A broken ingest day
+  // (rows present, close blank) would otherwise wipe out every return.
+  // syms enumerates symbols with any non-null close so we don't waste work
+  // on symbols missing data outright.
   const prices = await golden<PriceRow[]>`
     WITH latest_d AS (
-      SELECT MAX(date) AS d FROM golden.price_history WHERE interval = '1d'
+      SELECT MAX(date) AS d FROM golden.price_history
+       WHERE interval = '1d' AND close IS NOT NULL
     ),
     syms AS (
       SELECT DISTINCT symbol FROM golden.price_history
-      WHERE interval = '1d' AND date = (SELECT d FROM latest_d)
+       WHERE interval = '1d' AND close IS NOT NULL
     )
     SELECT
       REPLACE(s.symbol, '.NS', '') AS symbol,
       (SELECT close::float FROM golden.price_history p
-        WHERE p.symbol = s.symbol AND p.interval = '1d'
-          AND p.date = (SELECT d FROM latest_d)
-        LIMIT 1) AS p_now,
+        WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
+        ORDER BY p.date DESC LIMIT 1) AS p_now,
       (SELECT close::float FROM golden.price_history p
-        WHERE p.symbol = s.symbol AND p.interval = '1d'
+        WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
           AND p.date <= (SELECT d FROM latest_d) - INTERVAL '7 days'
         ORDER BY p.date DESC LIMIT 1) AS p_w1,
       (SELECT close::float FROM golden.price_history p
-        WHERE p.symbol = s.symbol AND p.interval = '1d'
+        WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
           AND p.date <= (SELECT d FROM latest_d) - INTERVAL '30 days'
         ORDER BY p.date DESC LIMIT 1) AS p_m1,
       (SELECT close::float FROM golden.price_history p
-        WHERE p.symbol = s.symbol AND p.interval = '1d'
+        WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
           AND p.date <= (SELECT d FROM latest_d) - INTERVAL '365 days'
         ORDER BY p.date DESC LIMIT 1) AS p_y1
     FROM syms s
@@ -265,27 +275,30 @@ async function loadHeatMap(): Promise<{ tiles: IndustryTile[]; snapshotDate: str
 
   // Pull cluster stats + returns in parallel — returns query touches golden_db
   // (separate Postgres) so it doesn't contend with the app DB query.
+  //
+  // We read from app.cluster_composite, NOT from AVG(scores.*_pct). The
+  // per-stock percentile columns in scores are rank-within-cluster: their
+  // mean is structurally ~50 for every cluster, so averaging them gives no
+  // industry-vs-industry signal. cluster_composite computes cluster-level
+  // raw aggregates (avg ROE, avg P/E, etc.) and percent-ranks those across
+  // clusters — that's the real cross-industry comparison.
   const [rawTiles, returns] = await Promise.all([
     sql<Omit<IndustryTile, "ret_1w" | "ret_1m" | "ret_1y">[]>`
       SELECT
-        c.id   AS industry_id,
-        c.name AS industry_name,
-        mc.id  AS sector_id,
-        mc.name AS sector_name,
-        mc.display_order AS meta_display_order,
-        COUNT(s.symbol)::int AS stock_count,
-        AVG(s.composite_pct)::float AS avg_composite,
-        AVG(s.quality_pct)::float   AS avg_quality,
-        AVG(s.valuation_pct)::float AS avg_valuation,
-        AVG(s.momentum_pct)::float  AS avg_momentum
-      FROM app.cluster c
-      JOIN app.meta_cluster mc ON mc.id = c.meta_cluster_id
-      LEFT JOIN app.scores s
-        ON s.cluster_id = c.id
-       AND s.snapshot_date = ${snapshotDate}
-      WHERE c.id <> 'unclassified'
-      GROUP BY c.id, c.name, mc.id, mc.name, mc.display_order
-      ORDER BY mc.display_order, c.name
+        cc.cluster_id      AS industry_id,
+        cc.industry_name,
+        cc.meta_cluster_id AS sector_id,
+        cc.sector_name,
+        mc.display_order   AS meta_display_order,
+        cc.n_stocks        AS stock_count,
+        cc.composite_aggr_pct::float AS avg_composite,
+        cc.quality_aggr_pct::float   AS avg_quality,
+        cc.valuation_aggr_pct::float AS avg_valuation,
+        cc.momentum_aggr_pct::float  AS avg_momentum
+      FROM app.cluster_composite cc
+      JOIN app.meta_cluster mc ON mc.id = cc.meta_cluster_id
+      WHERE cc.snapshot_date = ${snapshotDate}
+      ORDER BY mc.display_order, cc.industry_name
     `,
     loadIndustryReturns(snapshotDate),
   ]);
@@ -740,13 +753,14 @@ function SectorTabRow({
   groups: { id: string; name: string; tiles: IndustryTile[] }[];
   activeId: string;
 }) {
+  // Active border switches to the accent color so the "you are here" signal
+  // is consistent across the row (no longer dependent on the sector's band
+  // color — that signal was removed along with the per-tab dot per design
+  // direction "no point in showing cross-industry strength on sector tabs").
+  const accent = "var(--color-accent-600)";
   return (
     <div className="flex flex-wrap gap-1 md:gap-1.5">
       {groups.map((g) => {
-        const avg =
-          g.tiles.reduce((a, t) => a + (t.avg_composite ?? 0), 0) /
-          Math.max(1, g.tiles.filter((t) => t.avg_composite != null).length);
-        const dot = bandColor(band(avg));
         const active = g.id === activeId;
         const stockTotal = g.tiles.reduce((a, t) => a + t.stock_count, 0);
         return (
@@ -758,13 +772,10 @@ function SectorTabRow({
             style={
               active
                 ? {
-                    // Selected tab: tinted background + colored border + bold
-                    // label — three reinforcing signals so it doesn't read as
-                    // "just another chip" in a row of similar pills.
-                    borderColor: dot,
-                    backgroundColor: "var(--color-card)",
-                    color: "var(--color-ink)",
-                    boxShadow: `inset 0 0 0 1px ${dot}`,
+                    borderColor: accent,
+                    backgroundColor: "var(--color-accent-50)",
+                    color: "var(--color-accent-700)",
+                    boxShadow: `inset 0 0 0 1px ${accent}`,
                   }
                 : {
                     borderColor: "var(--color-border-default)",
@@ -773,10 +784,6 @@ function SectorTabRow({
                   }
             }
           >
-            <span
-              className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
-              style={{ background: dot }}
-            />
             <span className={active ? "font-semibold" : "font-medium"}>{g.name}</span>
             <span className="tabular-nums text-[11px] muted-text">
               {g.tiles.length}·{stockTotal}
