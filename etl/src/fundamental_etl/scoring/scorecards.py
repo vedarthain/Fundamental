@@ -152,7 +152,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "bfsi_amc_wealth": Scorecard(
         pillar_weights={"q": 50, "v": 30, "m": 20},
         quality={
-            "roe_3y": 20, "roce_3y": 18, "op_margin_3y": 18, "op_margin_trend": 10,
+            "roe_3y": 20, "roce_3y": 13, "roce_5y": 5, "op_margin_3y": 18, "op_margin_trend": 10,
             "np_cagr_5y": 15, "cfo_pat_3y": 10, "np_consistency_5y": 9,
         },
         valuation={"pe_ttm": 40, "earnings_yield_trend": 20, "div_yield": 15, "fcf_yield": 25},
@@ -164,7 +164,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "bfsi_exchange": Scorecard(
         pillar_weights={"q": 55, "v": 25, "m": 20},
         quality={
-            "op_margin_3y": 22, "op_margin_trend": 12, "roce_3y": 20, "roe_3y": 16,
+            "op_margin_3y": 22, "op_margin_trend": 12, "roce_3y": 14, "roce_5y": 6, "roe_3y": 16,
             "cfo_pat_3y": 12, "np_cagr_5y": 10, "np_consistency_5y": 8,
         },
         valuation={"pe_ttm": 35, "earnings_yield_trend": 15, "div_yield": 20, "fcf_yield": 30},
@@ -175,7 +175,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "bfsi_rta_rating": Scorecard(
         pillar_weights={"q": 48, "v": 30, "m": 22},
         quality={
-            "roe_3y": 20, "roce_3y": 18, "op_margin_3y": 18, "op_margin_trend": 12,
+            "roe_3y": 20, "roce_3y": 13, "roce_5y": 5, "op_margin_3y": 18, "op_margin_trend": 12,
             "np_cagr_5y": 12, "cfo_pat_3y": 10, "np_consistency_5y": 10,
         },
         valuation={"pe_ttm": 40, "earnings_yield_trend": 20, "div_yield": 15, "fcf_yield": 25},
@@ -188,7 +188,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "bfsi_broker": Scorecard(
         pillar_weights={"q": 40, "v": 30, "m": 30},
         quality={
-            "roe_3y": 22, "roce_3y": 18, "op_margin_3y": 14, "op_margin_trend": 8,
+            "roe_3y": 22, "roce_3y": 13, "roce_5y": 5, "op_margin_3y": 14, "op_margin_trend": 8,
             "np_cagr_5y": 14, "cfo_pat_3y": 12, "np_consistency_5y": 12,
         },
         valuation={"pe_ttm": 30, "pb": 30, "earnings_yield_trend": 15, "div_yield": 10, "fcf_yield": 15},
@@ -199,7 +199,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
         # Same as capmarkets but np_consistency dropped, replaced with rev_cagr
         pillar_weights={"q": 45, "v": 30, "m": 25},
         quality={
-            "roe_3y": 20, "roce_3y": 18, "op_margin_3y": 15, "op_margin_trend": 10,
+            "roe_3y": 20, "roce_3y": 13, "roce_5y": 5, "op_margin_3y": 15, "op_margin_trend": 10,
             "np_cagr_5y": 15, "cfo_pat_3y": 10, "rev_cagr_5y": 12,
         },
         valuation={"pe_ttm": 35, "pb": 20, "earnings_yield_trend": 15, "div_yield": 10, "fcf_yield": 20},
@@ -211,8 +211,8 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "it_services_large": Scorecard(
         pillar_weights={"q": 45, "v": 30, "m": 25},
         quality={
-            "op_margin_3y": 22, "op_margin_trend": 12, "roce_3y": 18,
-            "cfo_ebitda_3y": 14, "dso": 8, "rev_cagr_5y": 12,
+            "op_margin_3y": 22, "op_margin_trend": 12, "roce_3y": 13, "roce_5y": 5,
+            "cfo_ebitda_3y": 10, "cfo_ebitda_5y": 4, "dso": 8, "rev_cagr_5y": 12,
             "np_cagr_5y": 8, "np_consistency_5y": 6,
         },
         valuation={"pe_ttm": 35, "ev_ebitda_ttm": 20, "peg": 25, "fcf_yield": 15, "div_yield": 5},
@@ -226,8 +226,8 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "it_services_midsmall": Scorecard(
         pillar_weights={"q": 45, "v": 30, "m": 25},
         quality={
-            "op_margin_3y": 22, "op_margin_trend": 12, "roce_3y": 18,
-            "cfo_ebitda_3y": 14, "dso": 8, "rev_cagr_5y": 12,
+            "op_margin_3y": 22, "op_margin_trend": 12, "roce_3y": 13, "roce_5y": 5,
+            "cfo_ebitda_3y": 10, "cfo_ebitda_5y": 4, "dso": 8, "rev_cagr_5y": 12,
             "np_cagr_5y": 4, "np_consistency_5y": 10,
         },
         valuation={"pe_ttm": 30, "ev_ebitda_ttm": 20, "peg": 30, "fcf_yield": 15, "div_yield": 5},
@@ -237,7 +237,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "it_hardware": Scorecard(
         pillar_weights={"q": 40, "v": 30, "m": 30},
         quality={
-            "op_margin_3y": 18, "roce_3y": 18, "wc_days": 12, "rev_cagr_5y": 12,
+            "op_margin_3y": 18, "roce_3y": 13, "roce_5y": 5, "wc_days": 12, "rev_cagr_5y": 12,
             "np_cagr_5y": 10, "cfo_pat_3y": 10, "np_consistency_5y": 8, "asset_turnover": 12,
         },
         valuation={"pe_ttm": 30, "ev_ebitda_ttm": 25, "pb": 15, "peg": 15, "fcf_yield": 10, "div_yield": 5},
@@ -247,7 +247,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "telecom": Scorecard(
         pillar_weights={"q": 35, "v": 35, "m": 30},
         quality={
-            "ebitda_margin_3y": 25, "roce_3y": 15, "cfo_ebitda_3y": 18,
+            "ebitda_margin_3y": 18, "ebitda_margin_5y": 7, "roce_3y": 10, "roce_5y": 5, "cfo_ebitda_3y": 13, "cfo_ebitda_5y": 5,
             "net_debt_ebitda": 15, "op_margin_trend": 10, "np_consistency_5y": 10,
             "rev_cagr_5y": 7,
         },
@@ -260,7 +260,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "fmcg_food_agri": Scorecard(
         pillar_weights={"q": 50, "v": 30, "m": 20},
         quality={
-            "roce_3y": 22, "op_margin_3y": 14, "wc_days": 10, "rev_cagr_5y": 12,
+            "roce_3y": 15, "roce_5y": 7, "op_margin_3y": 14, "wc_days": 10, "rev_cagr_5y": 12,
             "np_cagr_5y": 12, "cfo_pat_3y": 12, "np_consistency_5y": 8, "debt_equity": 4,
             "op_margin_trend": 6,
         },
@@ -271,7 +271,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "fmcg_personal": Scorecard(
         pillar_weights={"q": 50, "v": 30, "m": 20},
         quality={
-            "roce_3y": 25, "op_margin_3y": 14, "wc_days": 10, "rev_cagr_5y": 10,
+            "roce_3y": 18, "roce_5y": 7, "op_margin_3y": 14, "wc_days": 10, "rev_cagr_5y": 10,
             "np_cagr_5y": 12, "cfo_pat_3y": 12, "np_consistency_5y": 8, "debt_equity": 4,
             "op_margin_trend": 5,
         },
@@ -282,7 +282,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "fmcg_beverages": Scorecard(
         pillar_weights={"q": 50, "v": 30, "m": 20},
         quality={
-            "roce_3y": 22, "op_margin_3y": 16, "wc_days": 10, "rev_cagr_5y": 12,
+            "roce_3y": 15, "roce_5y": 7, "op_margin_3y": 16, "wc_days": 10, "rev_cagr_5y": 12,
             "np_cagr_5y": 12, "cfo_pat_3y": 10, "np_consistency_5y": 8, "debt_equity": 4,
             "op_margin_trend": 6,
         },
@@ -293,7 +293,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "fmcg_diversified": Scorecard(
         pillar_weights={"q": 50, "v": 30, "m": 20},
         quality={
-            "roce_3y": 20, "op_margin_3y": 14, "wc_days": 10, "rev_cagr_5y": 12,
+            "roce_3y": 14, "roce_5y": 6, "op_margin_3y": 14, "wc_days": 10, "rev_cagr_5y": 12,
             "np_cagr_5y": 12, "cfo_pat_3y": 12, "np_consistency_5y": 10, "debt_equity": 4,
             "op_margin_trend": 6,
         },
@@ -304,7 +304,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "consumer_durables": Scorecard(
         pillar_weights={"q": 40, "v": 30, "m": 30},
         quality={
-            "roce_3y": 18, "op_margin_3y": 14, "op_margin_trend": 10, "wc_days": 12,
+            "roce_3y": 13, "roce_5y": 5, "op_margin_3y": 14, "op_margin_trend": 10, "wc_days": 12,
             "inv_days": 8, "rev_cagr_5y": 12, "np_cagr_5y": 10, "cfo_pat_3y": 8, "debt_equity": 8,
         },
         valuation={"pe_ttm": 30, "ev_ebitda_ttm": 22, "peg": 23, "pb": 10, "fcf_yield": 10, "div_yield": 5},
@@ -318,7 +318,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "retail": Scorecard(
         pillar_weights={"q": 40, "v": 30, "m": 30},
         quality={
-            "roce_3y": 18, "op_margin_3y": 12, "wc_days": 12, "inv_days": 12,
+            "roce_3y": 13, "roce_5y": 5, "op_margin_3y": 12, "wc_days": 12, "inv_days": 12,
             "asset_turnover": 14, "rev_cagr_5y": 14, "np_cagr_5y": 10,
             "np_consistency_5y": 6, "debt_equity": 2,
         },
@@ -333,8 +333,8 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "leisure_hospitality": Scorecard(
         pillar_weights={"q": 35, "v": 30, "m": 35},
         quality={
-            "ebitda_margin_3y": 18, "roce_3y": 16, "asset_turnover": 14,
-            "cfo_ebitda_3y": 10, "net_debt_ebitda": 12, "rev_cagr_5y": 12,
+            "ebitda_margin_3y": 13, "ebitda_margin_5y": 5, "roce_3y": 11, "roce_5y": 5, "asset_turnover": 14,
+            "cfo_ebitda_3y": 7, "cfo_ebitda_5y": 3, "net_debt_ebitda": 12, "rev_cagr_5y": 12,
             "np_cagr_5y": 10, "np_consistency_5y": 8,
         },
         valuation={"ev_ebitda_ttm": 32, "pe_ttm": 22, "pb": 18, "fcf_yield": 18, "div_yield": 10},
@@ -344,7 +344,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "media_entertainment": Scorecard(
         pillar_weights={"q": 35, "v": 35, "m": 30},
         quality={
-            "roce_3y": 16, "op_margin_3y": 12, "op_margin_trend": 12, "cfo_pat_3y": 12,
+            "roce_3y": 11, "roce_5y": 5, "op_margin_3y": 12, "op_margin_trend": 12, "cfo_pat_3y": 12,
             "wc_days": 10, "rev_cagr_5y": 12, "np_cagr_5y": 10, "np_consistency_5y": 10,
             "debt_equity": 6,
         },
@@ -357,7 +357,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "pharma": Scorecard(
         pillar_weights={"q": 45, "v": 30, "m": 25},
         quality={
-            "roce_3y": 22, "op_margin_3y": 14, "cfo_ebitda_3y": 12, "wc_days": 10,
+            "roce_3y": 15, "roce_5y": 7, "op_margin_3y": 14, "cfo_ebitda_3y": 8, "cfo_ebitda_5y": 4, "wc_days": 10,
             "rev_cagr_5y": 12, "np_cagr_5y": 12, "np_consistency_5y": 8, "op_margin_trend": 10,
         },
         valuation={"pe_ttm": 32, "ev_ebitda_ttm": 23, "peg": 22, "pb": 8, "fcf_yield": 10, "div_yield": 5},
@@ -367,7 +367,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "health_services": Scorecard(
         pillar_weights={"q": 45, "v": 30, "m": 25},
         quality={
-            "roce_3y": 18, "ebitda_margin_3y": 18, "op_margin_trend": 10, "cfo_ebitda_3y": 12,
+            "roce_3y": 13, "roce_5y": 5, "ebitda_margin_3y": 13, "ebitda_margin_5y": 5, "op_margin_trend": 10, "cfo_ebitda_3y": 8, "cfo_ebitda_5y": 4,
             "asset_turnover": 8, "rev_cagr_5y": 12, "np_cagr_5y": 10,
             "np_consistency_5y": 8, "net_debt_ebitda": 4,
         },
@@ -378,7 +378,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "medtech": Scorecard(
         pillar_weights={"q": 45, "v": 30, "m": 25},
         quality={
-            "roce_3y": 22, "op_margin_3y": 14, "cfo_ebitda_3y": 12, "wc_days": 10,
+            "roce_3y": 15, "roce_5y": 7, "op_margin_3y": 14, "cfo_ebitda_3y": 8, "cfo_ebitda_5y": 4, "wc_days": 10,
             "rev_cagr_5y": 12, "np_cagr_5y": 12, "np_consistency_5y": 8, "op_margin_trend": 10,
         },
         valuation={"pe_ttm": 32, "ev_ebitda_ttm": 23, "peg": 22, "pb": 8, "fcf_yield": 10, "div_yield": 5},
@@ -390,7 +390,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "cement": Scorecard(
         pillar_weights={"q": 35, "v": 30, "m": 35},
         quality={
-            "ebitda_margin_3y": 22, "roce_3y": 18, "net_debt_ebitda": 14,
+            "ebitda_margin_3y": 15, "ebitda_margin_5y": 7, "roce_3y": 13, "roce_5y": 5, "net_debt_ebitda": 14,
             "asset_turnover": 12, "capex_intensity_3y": 10, "op_margin_trend": 8,
             "rev_cagr_5y": 10, "np_consistency_5y": 6,
         },
@@ -405,7 +405,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "metals_ferrous": Scorecard(
         pillar_weights={"q": 35, "v": 30, "m": 35},
         quality={
-            "ebitda_margin_3y": 22, "roce_3y": 18, "net_debt_ebitda": 14,
+            "ebitda_margin_3y": 15, "ebitda_margin_5y": 7, "roce_3y": 13, "roce_5y": 5, "net_debt_ebitda": 14,
             "asset_turnover": 12, "capex_intensity_3y": 10, "op_margin_trend": 12,
             "rev_cagr_5y": 6, "np_cagr_5y": 6,
         },
@@ -420,7 +420,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "metals_nonferrous_mining": Scorecard(
         pillar_weights={"q": 35, "v": 30, "m": 35},
         quality={
-            "ebitda_margin_3y": 22, "roce_3y": 18, "net_debt_ebitda": 14,
+            "ebitda_margin_3y": 15, "ebitda_margin_5y": 7, "roce_3y": 13, "roce_5y": 5, "net_debt_ebitda": 14,
             "asset_turnover": 12, "capex_intensity_3y": 10, "op_margin_trend": 12,
             "rev_cagr_5y": 6, "np_cagr_5y": 6,
         },
@@ -435,7 +435,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "paper_forest": Scorecard(
         pillar_weights={"q": 40, "v": 30, "m": 30},
         quality={
-            "roce_3y": 22, "ebitda_margin_3y": 18, "net_debt_ebitda": 12,
+            "roce_3y": 15, "roce_5y": 7, "ebitda_margin_3y": 13, "ebitda_margin_5y": 5, "net_debt_ebitda": 12,
             "asset_turnover": 10, "capex_intensity_3y": 8, "rev_cagr_5y": 10,
             "np_cagr_5y": 10, "np_consistency_5y": 10,
         },
@@ -446,7 +446,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "textiles": Scorecard(
         pillar_weights={"q": 35, "v": 35, "m": 30},
         quality={
-            "roce_3y": 16, "op_margin_3y": 14, "wc_days": 12, "inv_days": 10,
+            "roce_3y": 11, "roce_5y": 5, "op_margin_3y": 14, "wc_days": 12, "inv_days": 10,
             "debt_equity": 14, "cfo_pat_3y": 10, "rev_cagr_5y": 12, "np_consistency_5y": 12,
         },
         valuation={"pe_ttm": 22, "pb": 25, "ev_ebitda_ttm": 20, "fcf_yield": 18, "div_yield": 15},
@@ -456,8 +456,8 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "oil_refining": Scorecard(
         pillar_weights={"q": 35, "v": 30, "m": 35},
         quality={
-            "roce_3y": 20, "ebitda_margin_3y": 18, "op_margin_trend": 10,
-            "asset_turnover": 12, "net_debt_ebitda": 12, "cfo_ebitda_3y": 10,
+            "roce_3y": 14, "roce_5y": 6, "ebitda_margin_3y": 13, "ebitda_margin_5y": 5, "op_margin_trend": 10,
+            "asset_turnover": 12, "net_debt_ebitda": 12, "cfo_ebitda_3y": 7, "cfo_ebitda_5y": 3,
             "np_consistency_5y": 8, "inv_days": 10,
         },
         valuation={"ev_ebitda_ttm": 32, "pe_ttm": 22, "pb": 18, "fcf_yield": 18, "div_yield": 10},
@@ -471,7 +471,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "gas_distribution": Scorecard(
         pillar_weights={"q": 45, "v": 30, "m": 25},
         quality={
-            "roce_3y": 22, "op_margin_3y": 16, "op_margin_trend": 8, "cfo_ebitda_3y": 12,
+            "roce_3y": 15, "roce_5y": 7, "op_margin_3y": 16, "op_margin_trend": 8, "cfo_ebitda_3y": 8, "cfo_ebitda_5y": 4,
             "asset_turnover": 10, "rev_cagr_5y": 10, "np_consistency_5y": 12, "debt_equity": 10,
         },
         valuation={"pe_ttm": 30, "ev_ebitda_ttm": 28, "pb": 15, "fcf_yield": 17, "div_yield": 10},
@@ -481,8 +481,8 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "power": Scorecard(
         pillar_weights={"q": 40, "v": 30, "m": 30},
         quality={
-            "roce_3y": 20, "ebitda_margin_3y": 14, "dso": 14, "net_debt_ebitda": 12,
-            "asset_turnover": 10, "cfo_ebitda_3y": 10, "rev_cagr_5y": 10, "np_consistency_5y": 10,
+            "roce_3y": 14, "roce_5y": 6, "ebitda_margin_3y": 10, "ebitda_margin_5y": 4, "dso": 14, "net_debt_ebitda": 12,
+            "asset_turnover": 10, "cfo_ebitda_3y": 7, "cfo_ebitda_5y": 3, "rev_cagr_5y": 10, "np_consistency_5y": 10,
         },
         valuation={"ev_ebitda_ttm": 32, "pe_ttm": 22, "pb": 18, "fcf_yield": 18, "div_yield": 10},
         momentum=UNIVERSAL_MOMENTUM,
@@ -493,7 +493,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "cap_goods_industrial": Scorecard(
         pillar_weights={"q": 40, "v": 30, "m": 30},
         quality={
-            "roce_3y": 20, "op_margin_3y": 14, "op_margin_trend": 8, "wc_days": 14,
+            "roce_3y": 14, "roce_5y": 6, "op_margin_3y": 14, "op_margin_trend": 8, "wc_days": 14,
             "inv_days": 8, "cfo_pat_3y": 10, "rev_cagr_5y": 10, "np_cagr_5y": 8,
             "np_consistency_5y": 4, "debt_equity": 4,
         },
@@ -508,7 +508,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "cap_goods_electrical": Scorecard(
         pillar_weights={"q": 40, "v": 30, "m": 30},
         quality={
-            "roce_3y": 20, "op_margin_3y": 14, "op_margin_trend": 12, "wc_days": 12,
+            "roce_3y": 14, "roce_5y": 6, "op_margin_3y": 14, "op_margin_trend": 12, "wc_days": 12,
             "inv_days": 8, "cfo_pat_3y": 10, "rev_cagr_5y": 10, "np_cagr_5y": 8,
             "np_consistency_5y": 4, "debt_equity": 2,
         },
@@ -519,7 +519,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "defense_aero": Scorecard(
         pillar_weights={"q": 40, "v": 25, "m": 35},
         quality={
-            "roce_3y": 20, "op_margin_3y": 14, "op_margin_trend": 8, "wc_days": 18,
+            "roce_3y": 14, "roce_5y": 6, "op_margin_3y": 14, "op_margin_trend": 8, "wc_days": 18,
             "inv_days": 6, "cfo_pat_3y": 12, "rev_cagr_5y": 8, "np_cagr_5y": 8,
             "np_consistency_5y": 6,
         },
@@ -534,7 +534,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "construction": Scorecard(
         pillar_weights={"q": 35, "v": 30, "m": 35},
         quality={
-            "roce_3y": 16, "op_margin_3y": 12, "wc_days": 20, "dso": 10,
+            "roce_3y": 11, "roce_5y": 5, "op_margin_3y": 12, "wc_days": 20, "dso": 10,
             "cfo_sales_3y": 12, "debt_equity": 12, "rev_cagr_5y": 10,
             "np_consistency_5y": 8,
         },
@@ -561,7 +561,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "auto_oem": Scorecard(
         pillar_weights={"q": 40, "v": 30, "m": 30},
         quality={
-            "roce_3y": 20, "op_margin_3y": 14, "op_margin_trend": 12, "asset_turnover": 10,
+            "roce_3y": 14, "roce_5y": 6, "op_margin_3y": 14, "op_margin_trend": 12, "asset_turnover": 10,
             "cfo_pat_3y": 10, "rev_cagr_5y": 12, "np_cagr_5y": 8, "np_consistency_5y": 8,
             "debt_equity": 6,
         },
@@ -576,7 +576,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "auto_components": Scorecard(
         pillar_weights={"q": 40, "v": 30, "m": 30},
         quality={
-            "roce_3y": 18, "op_margin_3y": 14, "op_margin_trend": 10, "wc_days": 14,
+            "roce_3y": 13, "roce_5y": 5, "op_margin_3y": 14, "op_margin_trend": 10, "wc_days": 14,
             "cfo_pat_3y": 10, "rev_cagr_5y": 10, "np_cagr_5y": 8, "np_consistency_5y": 8,
             "debt_equity": 8,
         },
@@ -589,7 +589,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "chemicals_specialty": Scorecard(
         pillar_weights={"q": 45, "v": 30, "m": 25},
         quality={
-            "roce_3y": 18, "op_margin_3y": 14, "cfo_pat_3y": 10, "capex_intensity_3y": 8,
+            "roce_3y": 13, "roce_5y": 5, "op_margin_3y": 14, "cfo_pat_3y": 10, "capex_intensity_3y": 8,
             "asset_turnover": 8, "rev_cagr_5y": 10, "np_cagr_5y": 8, "np_consistency_5y": 6,
             "op_margin_trend": 8, "wc_days": 10,
         },
@@ -600,7 +600,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "chemicals_agro": Scorecard(
         pillar_weights={"q": 40, "v": 30, "m": 30},
         quality={
-            "roce_3y": 18, "op_margin_3y": 14, "cfo_pat_3y": 10, "capex_intensity_3y": 8,
+            "roce_3y": 13, "roce_5y": 5, "op_margin_3y": 14, "cfo_pat_3y": 10, "capex_intensity_3y": 8,
             "asset_turnover": 8, "rev_cagr_5y": 10, "np_cagr_5y": 8, "np_consistency_5y": 12,
             "op_margin_trend": 6, "wc_days": 6,
         },
@@ -613,7 +613,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "services_commercial": Scorecard(
         pillar_weights={"q": 45, "v": 30, "m": 25},
         quality={
-            "roce_3y": 22, "op_margin_3y": 14, "op_margin_trend": 8, "cfo_pat_3y": 14,
+            "roce_3y": 15, "roce_5y": 7, "op_margin_3y": 14, "op_margin_trend": 8, "cfo_pat_3y": 14,
             "wc_days": 10, "rev_cagr_5y": 12, "np_cagr_5y": 10, "np_consistency_5y": 10,
         },
         valuation={"pe_ttm": 32, "ev_ebitda_ttm": 25, "peg": 18, "pb": 10, "fcf_yield": 10, "div_yield": 5},
@@ -623,7 +623,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "transport_logistics": Scorecard(
         pillar_weights={"q": 40, "v": 30, "m": 30},
         quality={
-            "roce_3y": 18, "op_margin_3y": 14, "asset_turnover": 14, "cfo_pat_3y": 12,
+            "roce_3y": 13, "roce_5y": 5, "op_margin_3y": 14, "asset_turnover": 14, "cfo_pat_3y": 12,
             "net_debt_ebitda": 10, "rev_cagr_5y": 12, "np_consistency_5y": 10, "np_cagr_5y": 10,
         },
         valuation={"pe_ttm": 28, "ev_ebitda_ttm": 28, "pb": 14, "fcf_yield": 15, "div_yield": 10, "peg": 5},
@@ -635,7 +635,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     "diversified": Scorecard(
         pillar_weights={"q": 40, "v": 30, "m": 30},
         quality={
-            "roce_3y": 18, "op_margin_3y": 12, "cfo_pat_3y": 12, "rev_cagr_5y": 12,
+            "roce_3y": 13, "roce_5y": 5, "op_margin_3y": 12, "cfo_pat_3y": 12, "rev_cagr_5y": 12,
             "np_cagr_5y": 12, "np_consistency_5y": 12, "debt_equity": 10, "roe_3y": 12,
         },
         valuation={"pe_ttm": 25, "pb": 20, "ev_ebitda_ttm": 20, "fcf_yield": 15, "div_yield": 10, "peg": 10},
@@ -702,6 +702,8 @@ _MID_REPLACE = {
     "roe_5y": "roe_3y", "roe_7y": "roe_3y",
     "roce_5y": "roce_3y", "roce_7y": "roce_3y",
     "op_margin_5y": "op_margin_3y", "op_margin_7y": "op_margin_3y",
+    "ebitda_margin_5y": "ebitda_margin_3y",
+    "cfo_ebitda_5y": "cfo_ebitda_3y",
 }
 # Substitutions for NEW tier (drop CAGR & trend & consistency; latest substitutes)
 _NEW_DROP = {
@@ -721,7 +723,11 @@ _NEW_REPLACE_LATEST = {
     "roce_3y": "roce_latest", "roce_5y": "roce_latest", "roce_7y": "roce_latest",
     "op_margin_3y": "op_margin_latest",
     "op_margin_5y": "op_margin_latest", "op_margin_7y": "op_margin_latest",
+    "ebitda_margin_3y": "op_margin_latest",
+    "ebitda_margin_5y": "op_margin_latest",
     "cfo_pat_3y": "cfo_pat_latest",
+    "cfo_ebitda_3y": "cfo_pat_latest",
+    "cfo_ebitda_5y": "cfo_pat_latest",
     "rev_cagr_5y": "rev_yoy_latest", "rev_cagr_3y": "rev_yoy_latest",
     "np_cagr_5y": "np_yoy_latest", "np_cagr_3y": "np_yoy_latest",
 }

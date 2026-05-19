@@ -316,6 +316,21 @@ def ebitda_margin_3y(annual, *_):
     return mean(pairs) if len(pairs) >= 2 else None
 
 
+@_higher
+def ebitda_margin_5y(annual, *_):
+    rows = annual[-5:]
+    if len(rows) < 5:
+        return None
+    pairs = []
+    for r in rows:
+        s = r.get("sales")
+        if not s or s <= 0:
+            continue
+        ebitda = (r.get("operating_profit") or 0) + (r.get("depreciation") or 0)
+        pairs.append(ebitda / s)
+    return mean(pairs) if len(pairs) >= 3 else None
+
+
 # ---------- GROWTH ------------------------------------------------------
 
 def _cagr_from_window(annual, key, years):
@@ -706,6 +721,21 @@ def cfo_ebitda_3y(annual, *_):
             continue
         out.append(max(0, min(cfo / ebitda, 2)))
     return mean(out) if len(out) >= 2 else None
+
+
+@_higher
+def cfo_ebitda_5y(annual, *_):
+    rows = annual[-5:]
+    if len(rows) < 5:
+        return None
+    out = []
+    for r in rows:
+        cfo = r.get("cash_from_operating")
+        ebitda = (r.get("operating_profit") or 0) + (r.get("depreciation") or 0)
+        if cfo is None or ebitda <= 0:
+            continue
+        out.append(max(0, min(cfo / ebitda, 2)))
+    return mean(out) if len(out) >= 3 else None
 
 
 @_higher

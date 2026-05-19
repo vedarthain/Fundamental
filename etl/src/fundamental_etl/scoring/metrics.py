@@ -81,19 +81,24 @@ def load_signals(conn_golden: psycopg.Connection, symbol: str) -> Optional[dict]
 
 
 def load_price_history(conn_golden: psycopg.Connection, symbol: str) -> list[dict]:
-    """1-year of daily closes for the symbol."""
+    """1-year of daily closes for the symbol.
+
+    Filters close IS NOT NULL — golden.price_history can have rows where the
+    daily ingest wrote the row but failed to populate close (e.g. partial
+    yfinance fetch). Including those would make the most-recent row a NULL,
+    breaking every relative-return formula downstream.
+    """
     g_symbol = f"{symbol}.NS"
     with conn_golden.cursor() as cur:
         cur.execute("""
             SELECT date, close
             FROM golden.price_history
-            WHERE symbol = %s AND interval = '1d'
+            WHERE symbol = %s AND interval = '1d' AND close IS NOT NULL
             ORDER BY date DESC
             LIMIT 260
         """, (g_symbol,))
         rows = cur.fetchall()
-        return [{"date": r["date"], "close": float(r["close"]) if r["close"] is not None else None}
-                for r in rows]
+        return [{"date": r["date"], "close": float(r["close"])} for r in rows]
 
 
 def load_above_200ema(conn_golden: psycopg.Connection, symbol: str) -> Optional[float]:
@@ -120,9 +125,12 @@ def load_nifty_returns(conn_golden: psycopg.Connection) -> dict[str, float]:
     and the median is more robust than the mean to outlier IPOs/penny stocks.
     """
     with conn_golden.cursor() as cur:
+        # close IS NOT NULL throughout — a broken ingest day (rows present,
+        # close blank) would otherwise corrupt every anchor date and median.
         cur.execute("""
             WITH latest AS (
-              SELECT MAX(date) AS d FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS'
+              SELECT MAX(date) AS d FROM golden.price_history
+               WHERE interval='1d' AND symbol LIKE '%.NS' AND close IS NOT NULL
             ),
             windows AS (
               SELECT
@@ -138,20 +146,21 @@ def load_nifty_returns(conn_golden: psycopg.Connection) -> dict[str, float]:
               JOIN golden.stocks s USING (symbol)
               JOIN windows w ON TRUE
               WHERE ph.interval='1d' AND s.exchange='NSE' AND s.is_active
+                AND ph.close IS NOT NULL
                 AND ph.date IN (
                   -- nearest available trading day to each anchor
-                  (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS'),
-                  (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND date <= (SELECT d_3m FROM windows)),
-                  (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND date <= (SELECT d_6m FROM windows)),
-                  (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND date <= (SELECT d_12m FROM windows))
+                  (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND close IS NOT NULL),
+                  (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND close IS NOT NULL AND date <= (SELECT d_3m FROM windows)),
+                  (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND close IS NOT NULL AND date <= (SELECT d_6m FROM windows)),
+                  (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND close IS NOT NULL AND date <= (SELECT d_12m FROM windows))
                 )
             ),
             anchor_dates AS (
               SELECT
-                (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS') AS d_now,
-                (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND date <= (SELECT d_3m FROM windows)) AS d_3m,
-                (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND date <= (SELECT d_6m FROM windows)) AS d_6m,
-                (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND date <= (SELECT d_12m FROM windows)) AS d_12m
+                (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND close IS NOT NULL) AS d_now,
+                (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND close IS NOT NULL AND date <= (SELECT d_3m FROM windows)) AS d_3m,
+                (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND close IS NOT NULL AND date <= (SELECT d_6m FROM windows)) AS d_6m,
+                (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND close IS NOT NULL AND date <= (SELECT d_12m FROM windows)) AS d_12m
             ),
             now AS (SELECT symbol, close FROM base, anchor_dates WHERE base.date = anchor_dates.d_now),
             d3  AS (SELECT symbol, close FROM base, anchor_dates WHERE base.date = anchor_dates.d_3m),
