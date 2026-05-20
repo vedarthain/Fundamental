@@ -147,6 +147,19 @@ copy_replace app.scores "$NEON_APP_URL" "$LOCAL_APP" \
 copy_replace app.shareholding_pattern "$NEON_APP_URL" "$LOCAL_APP" \
   "$UNIVERSE_FILTER" "$UNIVERSE_FILTER"
 
+# ----- fundamentals: annual + quarterly (full active universe) ------------
+# These power the "Latest Results" and "The Numbers" sections on /stock/<sym>.
+# Previously only seeded by migrate-nifty50-to-neon.sh + sync-nifty200-delta.sh,
+# both Nifty-200-scoped — so non-200 stocks like MAHABANK rendered with empty
+# fundamental tables on production. Adding here so the recurring sync
+# refreshes them for every active stock alongside everything else.
+# Volume: ~25K rows each (~10 years × 2,150 stocks); ~10 MB combined.
+copy_replace app.fundamentals_annual "$NEON_APP_URL" "$LOCAL_APP" \
+  "$UNIVERSE_FILTER" "$UNIVERSE_FILTER"
+
+copy_replace app.fundamentals_quarterly "$NEON_APP_URL" "$LOCAL_APP" \
+  "$UNIVERSE_FILTER" "$UNIVERSE_FILTER"
+
 # ----- golden price history: incremental ---------------------------------
 echo "▶ syncing golden.price_history (incremental)..."
 GOLDEN_FILTER=$(psql "$LOCAL_APP" -tAc "
