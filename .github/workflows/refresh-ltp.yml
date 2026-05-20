@@ -1,21 +1,27 @@
-# Refresh LTP (Last Traded Price) every weekday after market close.
+# Refresh LTP + OHLC every weekday after market close.
 #
 # What this does:
 #   1. Picks the most recent NSE bhavcopy (walks back from today)
 #   2. Parses it for equity scrips (EQ / BE / BZ / BL series)
 #   3. UPDATEs app.screener_meta.current_price on Neon for every symbol
-#      we already track
+#      we already track (the LTP shown on cards/headers)
+#   4. INSERTs today's OHLC bar into golden.price_history (interval='1d')
+#      on Neon — powers /sectors 1W/1M/1Y returns and the universe
+#      momentum percentile in the scorer
 #
 # Why a GitHub Action (not local launchd):
 #   - NSE bhavcopy is daily; you don't want to remember to refresh prices
-#   - The action runs in GitHub's cloud, no laptop dependency
-#   - 30 lines of YAML — minimal new infra
+#   - Runs in GitHub's cloud, no laptop dependency
+#   - Single CSV download covers both LTP and OHLC needs — no rate-limit
+#     risk and ~30 second runtime (vs ~30 min for a per-symbol yfinance
+#     approach we tried and rejected)
 #
-# Required secret (set once, manually):
-#   NEON_APP_URL — Postgres URL for fundamental_app on Neon (the production
-#   database). Add via Repo Settings → Secrets and variables → Actions.
+# Required secrets (set once, manually):
+#   NEON_APP_URL    — Postgres URL for fundamental_app on Neon (LTP write)
+#   NEON_GOLDEN_URL — Postgres URL for golden_db on Neon (OHLC write)
+#   Add via Repo Settings → Secrets and variables → Actions.
 
-name: Refresh LTP
+name: Refresh LTP + OHLC
 
 on:
   # 13:00 UTC = 18:30 IST. Bhavcopy usually publishes by 18:00 IST, so this
@@ -43,7 +49,9 @@ jobs:
       - name: Install psycopg
         run: pip install 'psycopg[binary]==3.2.*'
 
-      - name: Refresh LTP
+      - name: Refresh LTP + OHLC
         env:
-          APP_DB_URL: ${{ secrets.NEON_APP_URL }}
+          APP_DB_URL:      ${{ secrets.NEON_APP_URL }}
+          NEON_GOLDEN_URL: ${{ secrets.NEON_GOLDEN_URL }}
+          PYTHONUNBUFFERED: "1"
         run: python scripts/refresh-ltp.py
