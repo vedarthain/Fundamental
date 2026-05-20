@@ -33,6 +33,13 @@ on:
   # workflow changes. Visible in the Actions UI under "Run workflow".
   workflow_dispatch: {}
 
+# Opt the JavaScript-based actions (checkout, setup-python) into Node 24.
+# GitHub is deprecating Node 20 on the runners — forced default June 2026,
+# fully removed September 2026. Setting this env at the workflow level
+# avoids the deprecation warnings now and survives the cutover untouched.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   refresh:
     runs-on: ubuntu-latest
