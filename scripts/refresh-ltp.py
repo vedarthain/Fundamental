@@ -206,7 +206,24 @@ def find_latest_bhavcopy(today: date) -> tuple[date, str] | None:
     return None
 
 
-def update_ltps(conn: psycopg.Connection, bars: dict[str, dict]) -> tuple[int, int]:
+def fetch_known_symbols(conn: psycopg.Connection) -> dict[str, str]:
+    """Return {symbol: company_name} for every tracked active stock.
+
+    Used as the gating filter for both update_ltps and insert_ohlc — we never
+    push data for symbols outside our tracked universe (keeps prod scope tight
+    and prevents bhavcopy from inflating golden.stocks with random tickers).
+    """
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT u.symbol, COALESCE(u.company_name, u.symbol) AS company_name
+              FROM app.universe u
+             WHERE u.is_active
+        """)
+        return {r[0]: r[1] for r in cur.fetchall()}
+
+
+def update_ltps(conn: psycopg.Connection, bars: dict[str, dict],
+                known: dict[str, str]) -> tuple[int, int]:
     """UPDATE app.screener_meta.current_price for symbols we already track.
 
     Returns (rows_updated, symbols_in_bhavcopy_not_in_db). We deliberately
@@ -215,9 +232,6 @@ def update_ltps(conn: psycopg.Connection, bars: dict[str, dict]) -> tuple[int, i
     """
     if not bars:
         return 0, 0
-    with conn.cursor() as cur:
-        cur.execute("SELECT symbol FROM app.screener_meta")
-        known = {r[0] for r in cur.fetchall()}
     rows = [(sym, b["close"]) for sym, b in bars.items() if sym in known]
     missing = sum(1 for sym in bars if sym not in known)
     if not rows:
@@ -231,17 +245,54 @@ def update_ltps(conn: psycopg.Connection, bars: dict[str, dict]) -> tuple[int, i
     return len(rows), missing
 
 
+def upsert_golden_stocks(
+    conn: psycopg.Connection,
+    bars: dict[str, dict],
+    known: dict[str, str],
+) -> int:
+    """Upsert each tracked symbol into golden.stocks before its price row.
+
+    golden.price_history has a FK to golden.stocks(symbol), so we have to
+    ensure the parent row exists. Without this step a brand-new IPO that
+    showed up in today's bhavcopy would fail the FK constraint on the
+    price_history insert.
+
+    Idempotent — ON CONFLICT DO NOTHING means existing rows are unchanged.
+    Only fills the minimum required (NOT NULL) columns: symbol, exchange,
+    company_name, is_active. Richer metadata (ISIN, listing_date, sector)
+    comes via the weekly sync-neon.sh.
+    """
+    rows = [
+        (sym + YF_SUFFIX, "NSE", known.get(sym, sym), True)
+        for sym in bars if sym in known
+    ]
+    if not rows:
+        return 0
+    with conn.cursor() as cur:
+        cur.executemany(
+            """
+            INSERT INTO golden.stocks (symbol, exchange, company_name, is_active)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (symbol) DO NOTHING
+            """,
+            rows,
+        )
+    conn.commit()
+    return len(rows)
+
+
 def insert_ohlc(
     conn: psycopg.Connection,
     bars: dict[str, dict],
+    known: dict[str, str],
     trade_date: date,
 ) -> int:
     """INSERT today's OHLC bar (interval='1d') into golden.price_history.
 
+    Filters to symbols in `known` (the tracked universe) and assumes
+    golden.stocks has been pre-populated for them by upsert_golden_stocks.
     Uses ON CONFLICT DO NOTHING — re-running the script later in the day, or
-    after a missed-day backfill, is harmless. Returns the count of rows
-    submitted (not the count of rows actually new, since psycopg doesn't
-    surface the conflict-skip count without a CTE).
+    after a missed-day backfill, is harmless.
     """
     if not bars:
         return 0
@@ -257,8 +308,10 @@ def insert_ohlc(
             b["open"], b["high"], b["low"], b["close"], b["close"], b["volume"],
             DATA_SOURCE,
         )
-        for sym, b in bars.items()
+        for sym, b in bars.items() if sym in known
     ]
+    if not rows:
+        return 0
     with conn.cursor() as cur:
         cur.executemany(
             """
@@ -289,9 +342,11 @@ def main() -> None:
     print(f"  parsed {len(bars):,} equity rows")
 
     # Step 1: update screener_meta.current_price (always)
+    # Same DB connection produces the `known` filter we'll reuse for OHLC.
     app_url = env_url("APP_DB_URL", required=True)
     with psycopg.connect(app_url) as conn:
-        updated, missing = update_ltps(conn, bars)
+        known = fetch_known_symbols(conn)
+        updated, missing = update_ltps(conn, bars, known)
     print(f"✓ updated current_price for {updated:,} symbols")
     if missing:
         print(f"  {missing:,} bhavcopy symbols not in our universe (ignored)")
@@ -304,7 +359,12 @@ def main() -> None:
         print("  NEON_GOLDEN_URL not set — skipping OHLC INSERT into golden.price_history")
         return
     with psycopg.connect(golden_url) as conn:
-        submitted = insert_ohlc(conn, bars, trade_date)
+        # Pre-step: ensure each tracked symbol exists in golden.stocks. This
+        # auto-registers brand-new IPOs the first time we see them so the
+        # price_history FK doesn't fail. Idempotent.
+        stocks_seen = upsert_golden_stocks(conn, bars, known)
+        print(f"  ensured {stocks_seen:,} symbols in golden.stocks (FK parent)")
+        submitted = insert_ohlc(conn, bars, known, trade_date)
     print(f"✓ submitted {submitted:,} OHLC rows to golden.price_history "
           f"(date={trade_date.isoformat()}, conflicts ignored)")
 
