@@ -61,14 +61,17 @@ if [[ "$LATEST_SNAP" == "$NEON_LATEST" ]]; then
   echo "  ⚠ Neon already has snapshot $LATEST_SNAP. Pushing anyway (idempotent upsert)."
 fi
 
-NIFTY_FILTER="symbol IN (SELECT symbol FROM app.universe WHERE is_nifty200)"
+# Production scope: every active stock in the universe (~2,150) — widened
+# from is_nifty200 once Neon was upgraded to Launch tier so production no
+# longer shows blank columns for non-200 stocks on /sectors and /discover.
+UNIVERSE_FILTER="symbol IN (SELECT symbol FROM app.universe WHERE is_active)"
 
-# ----- universe (full upsert for Nifty 200) -------------------------------
+# ----- universe (full upsert for active stocks) ---------------------------
 # Universe rarely changes shape but field values do (CEO refresh, business
 # summary refresh, etc.). UPSERT every row to capture any tiny update.
-echo "▶ syncing app.universe (Nifty 200)..."
+echo "▶ syncing app.universe (all active stocks)..."
 UNIV_TMP="$TMP_DIR/universe.tsv"
-psql "$LOCAL_APP" -c "\COPY (SELECT * FROM app.universe WHERE is_nifty200) TO STDOUT" > "$UNIV_TMP"
+psql "$LOCAL_APP" -c "\COPY (SELECT * FROM app.universe WHERE is_active) TO STDOUT" > "$UNIV_TMP"
 psql "$NEON_APP_URL" -v ON_ERROR_STOP=1 <<SQL
 DROP TABLE IF EXISTS _u;
 CREATE TEMP TABLE _u (LIKE app.universe INCLUDING ALL);
@@ -127,28 +130,28 @@ INSERT INTO $table SELECT * FROM _t;
 SQL
 }
 
-# ----- screener_meta (Nifty 200, full upsert) -----------------------------
+# ----- screener_meta (all active, full upsert) ----------------------------
 copy_replace app.screener_meta "$NEON_APP_URL" "$LOCAL_APP" \
-  "$NIFTY_FILTER" "$NIFTY_FILTER"
+  "$UNIVERSE_FILTER" "$UNIVERSE_FILTER"
 
 # ----- latest snapshot only: metrics + scores ----------------------------
 copy_replace app.metrics_snapshot "$NEON_APP_URL" "$LOCAL_APP" \
-  "snapshot_date = '$LATEST_SNAP' AND $NIFTY_FILTER" \
+  "snapshot_date = '$LATEST_SNAP' AND $UNIVERSE_FILTER" \
   "snapshot_date = '$LATEST_SNAP'"
 
 copy_replace app.scores "$NEON_APP_URL" "$LOCAL_APP" \
-  "snapshot_date = '$LATEST_SNAP' AND $NIFTY_FILTER" \
+  "snapshot_date = '$LATEST_SNAP' AND $UNIVERSE_FILTER" \
   "snapshot_date = '$LATEST_SNAP'"
 
-# ----- shareholding (full Nifty 200 — quarterly so cheap) -----------------
+# ----- shareholding (full active universe — quarterly so cheap) -----------
 copy_replace app.shareholding_pattern "$NEON_APP_URL" "$LOCAL_APP" \
-  "$NIFTY_FILTER" "$NIFTY_FILTER"
+  "$UNIVERSE_FILTER" "$UNIVERSE_FILTER"
 
 # ----- golden price history: incremental ---------------------------------
 echo "▶ syncing golden.price_history (incremental)..."
 GOLDEN_FILTER=$(psql "$LOCAL_APP" -tAc "
   SELECT string_agg('''' || symbol || '.NS''', ',')
-  FROM app.universe WHERE is_nifty200
+  FROM app.universe WHERE is_active
 ")
 GOLDEN_LAST=$(psql "$NEON_GOLDEN_URL" -tAc "SELECT MAX(date) FROM golden.price_history" 2>/dev/null || echo "")
 if [[ -z "$GOLDEN_LAST" ]]; then

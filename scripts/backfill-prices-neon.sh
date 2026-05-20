@@ -2,8 +2,9 @@
 # scripts/backfill-prices-neon.sh
 #
 # One-shot backfill of golden.price_history (1d interval) on Neon for EVERY
-# Nifty 200 stock — including Nifty 50 names already migrated, plus the 149
-# Nifty 200 delta stocks. Use this when:
+# active stock (~2,150 symbols) — covers the full tracked universe so
+# production no longer shows blank price columns for non-Nifty-200 stocks.
+# (Was Nifty-200-only until we moved to Neon Launch tier.)  Use this when:
 #
 #   - A stock that should have data is showing missing 1W/1M/1Y returns on
 #     /clusters (e.g., SBIN, RELIANCE, HDFCBANK).
@@ -37,15 +38,17 @@ TMP_DIR="$(mktemp -d)"
 trap "rm -rf $TMP_DIR" EXIT
 
 echo "▶ price-history backfill starting at $(date -Iseconds)"
-echo "  scope: ALL Nifty 200 stocks (Nifty 50 included, 1d interval only)"
+echo "  scope: ALL active stocks (~2,150 — full coverage, 1d interval)"
 echo
 
 # Build the IN(...) filter for golden_db queries — symbols stored as 'SBIN.NS'.
+# Scope widened from is_nifty200 to is_active to populate Neon with the full
+# tracked universe. Idempotent ON CONFLICT DO NOTHING — safe to re-run.
 GOLDEN_FILTER=$(psql "$LOCAL_APP" -tAc "
   SELECT string_agg('''' || symbol || '.NS''', ',')
-  FROM app.universe WHERE is_nifty200
+  FROM app.universe WHERE is_active
 ")
-COUNT=$(psql "$LOCAL_APP" -tAc "SELECT COUNT(*) FROM app.universe WHERE is_nifty200")
+COUNT=$(psql "$LOCAL_APP" -tAc "SELECT COUNT(*) FROM app.universe WHERE is_active")
 echo "  symbols in scope: $COUNT"
 
 # ----- step 1: golden.stocks (parent — FK target) -----
@@ -83,29 +86,29 @@ fi
 
 # ----- verify ------------------------------------------------------------
 echo
-echo "▶ verification — Nifty 200 symbols on Neon with price coverage:"
+echo "▶ verification — active symbols on Neon with price coverage:"
 psql "$NEON_GOLDEN_URL" -c "
-WITH n200 AS (SELECT UNNEST(ARRAY[$GOLDEN_FILTER]) AS symbol)
+WITH scope AS (SELECT UNNEST(ARRAY[$GOLDEN_FILTER]) AS symbol)
 SELECT
-  COUNT(*) AS total_n200,
+  COUNT(*) AS total_scope,
   COUNT(DISTINCT ph.symbol) AS with_prices,
   COUNT(*) - COUNT(DISTINCT ph.symbol) AS still_missing
-FROM n200
+FROM scope
 LEFT JOIN golden.price_history ph
-  ON ph.symbol = n200.symbol AND ph.interval = '1d';
+  ON ph.symbol = scope.symbol AND ph.interval = '1d';
 "
 echo
 echo "▶ symbols with <50 price rows (likely incomplete history):"
 psql "$NEON_GOLDEN_URL" -c "
-WITH n200 AS (SELECT UNNEST(ARRAY[$GOLDEN_FILTER]) AS symbol)
-SELECT REPLACE(n200.symbol, '.NS', '') AS symbol, COUNT(ph.date) AS price_rows
-FROM n200
+WITH scope AS (SELECT UNNEST(ARRAY[$GOLDEN_FILTER]) AS symbol)
+SELECT REPLACE(scope.symbol, '.NS', '') AS symbol, COUNT(ph.date) AS price_rows
+FROM scope
 LEFT JOIN golden.price_history ph
-  ON ph.symbol = n200.symbol AND ph.interval = '1d'
+  ON ph.symbol = scope.symbol AND ph.interval = '1d'
 GROUP BY 1 HAVING COUNT(ph.date) < 50
 ORDER BY 2;
 "
 
 echo
 echo "✓ backfill complete at $(date -Iseconds)"
-echo "  refresh /clusters in the browser — SBIN and other heavyweights should now show 1W/1M/1Y returns."
+echo "  refresh /sectors in the browser — small/mid caps should now show 1W/1M/1Y returns too."
