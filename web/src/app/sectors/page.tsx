@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { sql, golden } from "@/lib/db";
 import { band, bandColor, tierLabel } from "@/lib/score";
+import { TierFilter, type TierMeta } from "./TierFilter";
 
 export const revalidate = 3600;
 
@@ -537,21 +538,32 @@ function StocksPanel({ industry, stocks }: { industry: IndustryTile; stocks: Sto
           No stocks in this industry at the latest snapshot.
         </div>
       ) : (
-        <div>
+        <TierFilter
+          tiers={orderedTiers.map<TierMeta>((tier) => ({
+            tier,
+            label: tierLabel(tier) + "s",
+            count: byTier.get(tier)!.length,
+          }))}
+        >
           {orderedTiers.map((tier) => {
             const bucket = byTier.get(tier)!;
             return (
-              <div key={tier}>
-                <TierHeader tier={tier} count={bucket.length} />
+              // data-tier on the section is what TierFilter reads to decide
+              // visibility. data-tier-header on the TierHeader lets the
+              // "specific tier active" mode hide it via CSS.
+              <section key={tier} data-tier={tier}>
+                <div data-tier-header>
+                  <TierHeader tier={tier} count={bucket.length} />
+                </div>
                 <div className="divide-y hairline">
                   {bucket.map((s) => (
                     <StockRowItem key={s.symbol} stock={s} />
                   ))}
                 </div>
-              </div>
+              </section>
             );
           })}
-        </div>
+        </TierFilter>
       )}
     </section>
   );
@@ -614,9 +626,9 @@ function StockRowItem({ stock }: { stock: StockRow }) {
       className="block hover:bg-[var(--color-paper)]/60 transition-colors"
       style={{ borderLeft: `3px solid ${tc.stripe}` }}
     >
-      {/* Desktop: 3-column strip */}
+      {/* Desktop: 4-column strip — identity / returns / pillars / Industry Score */}
       <div className="hidden md:grid items-center gap-4 px-5 py-2.5"
-        style={{ gridTemplateColumns: "1fr 168px 168px" }}
+        style={{ gridTemplateColumns: "1fr 168px 168px 56px" }}
       >
         <StockIdentity stock={stock} />
         <div className="grid grid-cols-3 gap-1.5 text-[10.5px]">
@@ -629,11 +641,19 @@ function StockRowItem({ stock }: { stock: StockRow }) {
           <PillarCell label="V" value={stock.valuation_pct} title="Valuation" />
           <PillarCell label="M" value={stock.momentum_pct}  title="Momentum" />
         </div>
+        <CompositeBadge value={stock.composite_pct} />
       </div>
 
-      {/* Mobile: 2-line stack (identity on top, returns + pillars on second line) */}
+      {/* Mobile: 2-line stack. Industry Score sits next to identity at the
+          top-right so the most-summary number is glanceable without scrolling
+          past returns + pillars first. */}
       <div className="md:hidden px-4 py-2.5">
-        <StockIdentity stock={stock} />
+        <div className="flex items-start gap-3">
+          <div className="flex-1 min-w-0">
+            <StockIdentity stock={stock} />
+          </div>
+          <CompositeBadge value={stock.composite_pct} />
+        </div>
         <div className="mt-2 grid grid-cols-2 gap-2">
           <div className="grid grid-cols-3 gap-1 text-[10px]">
             <ReturnMini label="1W" value={stock.ret_1w} />
@@ -648,6 +668,38 @@ function StockRowItem({ stock }: { stock: StockRow }) {
         </div>
       </div>
     </Link>
+  );
+}
+
+/** Industry Score pill — colored by score band. The number that's most
+ * summary about a stock; deserves prominence (right-most on desktop, top-
+ * right on mobile). Title attribute spells out what the score means since
+ * column headers don't fit alongside variable-width rows.
+ */
+function CompositeBadge({ value }: { value: number | null }) {
+  if (value == null) {
+    return (
+      <span
+        title="Industry Score — peer-relative composite, not available for this stock"
+        className="inline-block min-w-[40px] text-center px-2 py-0.5 rounded-md tabular-nums text-[12px] muted-text"
+        style={{ background: "var(--color-paper)", color: "var(--color-muted)" }}
+      >
+        —
+      </span>
+    );
+  }
+  const b = band(value);
+  return (
+    <span
+      title={`Industry Score: ${Math.round(value)} (peer-relative composite)`}
+      className="inline-block min-w-[40px] text-center px-2 py-0.5 rounded-md tabular-nums font-medium text-[12px]"
+      style={{
+        backgroundColor: bandColor(b),
+        color: b === "neutral" ? "var(--color-ink)" : "white",
+      }}
+    >
+      {Math.round(value)}
+    </span>
   );
 }
 
