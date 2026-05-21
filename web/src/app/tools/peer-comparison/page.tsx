@@ -167,8 +167,8 @@ export default async function ComparePage({
           scorecard and the raw financial filings.
         </p>
         <div className="mt-2 text-[12px] muted-text">
-          <Link href="/discover" className="hover:text-[var(--color-accent-700)]">
-            ← Back to Discover
+          <Link href="/tools" className="hover:text-[var(--color-accent-700)]">
+            ← Back to Tools
           </Link>
         </div>
       </header>
@@ -259,7 +259,7 @@ function CompareForm({ initial, view }: { initial: string[]; view: ViewMode }) {
   ];
   return (
     <form
-      action="/compare"
+      action="/tools/peer-comparison"
       method="get"
       className="mt-6 flex flex-wrap gap-2 items-center"
     >
@@ -299,11 +299,11 @@ function EmptyState() {
       <div className="font-display text-[20px] mb-2">Pick stocks to compare</div>
       <p className="muted-text text-[13.5px] leading-[1.6]">
         Enter up to three NSE symbols above and hit <em>Compare</em>. Try{" "}
-        <Link href="/compare?a=INFY&b=TCS&c=HCLTECH" className="underline">
+        <Link href="/tools/peer-comparison?a=INFY&b=TCS&c=HCLTECH" className="underline">
           INFY / TCS / HCLTECH
         </Link>{" "}
         or{" "}
-        <Link href="/compare?a=HDFCBANK&b=ICICIBANK&c=AXISBANK" className="underline">
+        <Link href="/tools/peer-comparison?a=HDFCBANK&b=ICICIBANK&c=AXISBANK" className="underline">
           HDFCBANK / ICICIBANK / AXISBANK
         </Link>{" "}
         to start.

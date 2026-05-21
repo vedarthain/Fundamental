@@ -40,18 +40,18 @@ export function MetaChips({
     if (selected.has(id)) {
       // Clicking the active sector clears both filters.
       const q = paramsToQuery({ ...initial, metas: [], clusters: [], page: 1 });
-      startTransition(() => router.replace("/discover" + q, { scroll: false }));
+      startTransition(() => router.replace("/tools/screener" + q, { scroll: false }));
       return;
     }
     const firstIndustry = clusters.find((c) => c.sector_id === id);
     const next = firstIndustry ? [firstIndustry.id] : [];
     const q = paramsToQuery({ ...initial, metas: [id], clusters: next, page: 1 });
-    startTransition(() => router.replace("/discover" + q, { scroll: false }));
+    startTransition(() => router.replace("/tools/screener" + q, { scroll: false }));
   };
 
   const clearAll = () => {
     const q = paramsToQuery({ ...initial, metas: [], clusters: [], page: 1 });
-    startTransition(() => router.replace("/discover" + q, { scroll: false }));
+    startTransition(() => router.replace("/tools/screener" + q, { scroll: false }));
   };
 
   const allActive = selected.size === 0;

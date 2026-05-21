@@ -157,11 +157,13 @@ function SiteFooter() {
           <FooterColumn
             title="Product"
             links={[
-              { href: "/sectors", label: "Sectors" },
-              { href: "/discover", label: "Discover" },
-              { href: "/compare",  label: "Peer comparison" },
-              { href: "/feed",     label: "Feed" },
-              { href: "/ideas",    label: "Ideas" },
+              { href: "/sectors",                  label: "Sectors" },
+              { href: "/tools",                    label: "Tools" },
+              { href: "/tools/screener",           label: "Stock Screener" },
+              { href: "/tools/investing-trials",   label: "Investing Trials" },
+              { href: "/tools/peer-comparison",    label: "Peer Comparison" },
+              { href: "/feed",                     label: "Feed" },
+              { href: "/ideas",                    label: "Ideas" },
             ]}
           />
 

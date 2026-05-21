@@ -20,7 +20,7 @@ export function Controls({ weights, preset }: { weights: Weights; preset: string
       q.set("m", String(next.m));
       q.set("preset", p);
       q.set("page", "1");
-      startTransition(() => router.replace("/screen?" + q.toString(), { scroll: false }));
+      startTransition(() => router.replace("/tools/investing-trials?" + q.toString(), { scroll: false }));
     },
     [router, sp]
   );

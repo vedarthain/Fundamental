@@ -278,7 +278,9 @@ export default async function ScreenerPage({
       <div className="flex flex-wrap items-start justify-between gap-4">
         <header className="max-w-[760px]">
           <div className="text-[12px] uppercase tracking-wide muted-text flex items-center gap-2 flex-wrap">
-            <span>Discover</span>
+            <Link href="/tools" className="hover:underline">Tools</Link>
+            <span aria-hidden style={{ color: "var(--color-border-default)" }}>›</span>
+            <span>Stock Screener</span>
             <span aria-hidden style={{ color: "var(--color-border-default)" }}>·</span>
             <span
               className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border hairline normal-case tracking-normal"
@@ -323,38 +325,12 @@ export default async function ScreenerPage({
           </div>
         </header>
 
-        <div className="flex flex-col gap-3 shrink-0">
-          <Link
-            href="/screen"
-            className="inline-flex items-center gap-2.5 card px-4 py-3 hover:border-[var(--color-accent-400)] transition-colors group"
-            style={{ borderTop: "3px solid var(--color-accent-500)" }}
-          >
-            <span className="text-[11px] uppercase tracking-wide muted-text">Tool</span>
-            <span className="border-l hairline pl-3">
-              <div className="text-[13.5px] font-medium" style={{ color: "var(--color-ink)" }}>
-                Investing Trials →
-              </div>
-              <div className="text-[11px] muted-text mt-0.5 max-w-[180px] leading-snug">
-                Re-rank stocks with your own Q / V / M weights.
-              </div>
-            </span>
-          </Link>
-          <Link
-            href="/compare"
-            className="inline-flex items-center gap-2.5 card px-4 py-3 hover:border-[var(--color-accent-400)] transition-colors group"
-            style={{ borderTop: "3px solid var(--color-accent-500)" }}
-          >
-            <span className="text-[11px] uppercase tracking-wide muted-text">Tool</span>
-            <span className="border-l hairline pl-3">
-              <div className="text-[13.5px] font-medium" style={{ color: "var(--color-ink)" }}>
-                Peer comparison →
-              </div>
-              <div className="text-[11px] muted-text mt-0.5 max-w-[180px] leading-snug">
-                Stack 2–5 stocks side by side on the same scorecard.
-              </div>
-            </span>
-          </Link>
-        </div>
+        {/* CTA cards for the sibling tools (Investing Trials, Peer Comparison)
+            used to sit here, but they visually nested those tools under
+            Screener instead of treating them as siblings. The /tools landing
+            page + Tools dropdown in the top nav cover discovery; the contextual
+            link further down the page ("Want your own Q/V/M weights? → Try
+            Investing Trials") covers the educational cross-reference. */}
       </div>
 
       <div className="mt-6 max-w-[820px]">
@@ -671,7 +647,7 @@ function Pagination({
   if (totalPages <= 1) return null;
   const page = params.page;
   const buildHref = (p: number) =>
-    "/discover" + paramsToQuery({ ...params, page: p });
+    "/tools/screener" + paramsToQuery({ ...params, page: p });
 
   const pages: number[] = [];
   const window = 2;
@@ -753,7 +729,7 @@ function MethodologyFooter() {
           </p>
           <p className="mt-2">
             Want to apply your own Q / V / M weights?{" "}
-            <Link href="/screen" className="underline hover:no-underline ink-text">
+            <Link href="/tools/investing-trials" className="underline hover:no-underline ink-text">
               Try Investing Trials →
             </Link>
           </p>

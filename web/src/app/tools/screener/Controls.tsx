@@ -47,7 +47,7 @@ export function Controls() {
         minC: override.minC ?? minC,
         page: 1,
       });
-      startTransition(() => router.replace("/discover" + q, { scroll: false }));
+      startTransition(() => router.replace("/tools/screener" + q, { scroll: false }));
     },
     [router, sp, tiersSel, capsSel, minQ, minV, minM, minC]
   );

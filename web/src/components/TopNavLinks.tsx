@@ -2,29 +2,64 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 
 /**
  * Top-bar navigation links with active-state awareness.
  *
- * Previously the header rendered 4 plain Link tags with only a hover color —
- * no indication of which surface the user was on. usePathname() lets us mark
- * the active link so the user knows "I'm in Sectors" without having to look
- * at the URL.
+ * "Tools" is rendered as a dropdown — clicking opens a panel listing the three
+ * sub-tools. Other entries are plain links. Clicking outside the dropdown
+ * closes it; pressing Escape also closes; navigating closes via path change.
  *
  * Active treatment is intentionally strong (bold + accent color + 2px solid
- * underline) so it reads from the corner of the eye, not just on inspection.
+ * underline) so the current page reads from the corner of the eye. For the
+ * Tools entry, the same active treatment applies whenever the user is on any
+ * /tools/* page or on the /tools landing.
  */
 
-const LINKS = [
-  { href: "/sectors",  label: "Sectors"  },
-  { href: "/discover", label: "Discover" },
-  { href: "/feed",     label: "Feed"     },
-  { href: "/ideas",    label: "Ideas"    },
+type Submenu = { href: string; label: string; description?: string };
+
+type NavLink = {
+  href: string;
+  label: string;
+  submenu?: Submenu[];
+};
+
+// Order matters — left to right in the header. Tools sits last as the
+// "advanced features" umbrella; previously had a flat "Discover" link that
+// pointed at the screener. Now the screener is one of three siblings under
+// Tools, all reachable via this dropdown.
+const LINKS: NavLink[] = [
+  { href: "/sectors", label: "Sectors" },
+  { href: "/feed",    label: "Feed"    },
+  { href: "/ideas",   label: "Ideas"   },
+  {
+    href: "/tools",
+    label: "Tools",
+    submenu: [
+      {
+        href: "/tools/screener",
+        label: "Stock Screener",
+        description: "Filter by criteria, see ranked matches",
+      },
+      {
+        href: "/tools/investing-trials",
+        label: "Investing Trials",
+        description: "Set your own Q/V/M weights",
+      },
+      {
+        href: "/tools/peer-comparison",
+        label: "Peer Comparison",
+        description: "Stack 2-5 stocks side by side",
+      },
+    ],
+  },
 ];
 
 function isActive(pathname: string, href: string): boolean {
   if (href === "/") return pathname === "/";
-  // Match either an exact hit or a child route (e.g. /sectors/<id>)
+  // Match either an exact hit or a child route (e.g. /sectors/<id>,
+  // /tools/screener, etc.)
   return pathname === href || pathname.startsWith(href + "/");
 }
 
@@ -32,29 +67,122 @@ export function TopNavLinks() {
   const pathname = usePathname() ?? "";
   return (
     <nav className="flex items-center gap-3 md:gap-6 text-[13px] md:text-[14px] shrink-0 ml-auto">
-      {LINKS.map((l) => {
-        const active = isActive(pathname, l.href);
-        return (
-          <Link
-            key={l.href}
-            href={l.href}
-            className={`relative pb-[3px] transition-colors ${
-              active
-                ? "font-semibold text-[var(--color-accent-600)]"
-                : "text-[var(--color-ink)] hover:text-[var(--color-accent-600)]"
-            }`}
-          >
-            {l.label}
-            {active && (
-              <span
-                aria-hidden
-                className="absolute left-0 right-0 -bottom-[2px] h-[2px] rounded-full"
-                style={{ background: "var(--color-accent-600)" }}
-              />
-            )}
-          </Link>
-        );
-      })}
+      {LINKS.map((l) =>
+        l.submenu ? (
+          <NavDropdown key={l.href} link={l} active={isActive(pathname, l.href)} />
+        ) : (
+          <NavLink key={l.href} href={l.href} label={l.label} active={isActive(pathname, l.href)} />
+        )
+      )}
     </nav>
+  );
+}
+
+function NavLink({ href, label, active }: { href: string; label: string; active: boolean }) {
+  return (
+    <Link
+      href={href}
+      className={`relative pb-[3px] transition-colors ${
+        active
+          ? "font-semibold text-[var(--color-accent-600)]"
+          : "text-[var(--color-ink)] hover:text-[var(--color-accent-600)]"
+      }`}
+    >
+      {label}
+      {active && (
+        <span
+          aria-hidden
+          className="absolute left-0 right-0 -bottom-[2px] h-[2px] rounded-full"
+          style={{ background: "var(--color-accent-600)" }}
+        />
+      )}
+    </Link>
+  );
+}
+
+function NavDropdown({ link, active }: { link: NavLink; active: boolean }) {
+  const [open, setOpen] = useState(false);
+  const pathname = usePathname();
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Close on outside click. Click handler is attached to document so any
+  // tap/click that lands outside the dropdown closes it. Listener is only
+  // attached while the menu is open to avoid wasted work.
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  // Close on Escape.
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [open]);
+
+  // Close when navigation occurs (pathname changed).
+  useEffect(() => { setOpen(false); }, [pathname]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className={`relative pb-[3px] inline-flex items-center gap-1 transition-colors ${
+          active
+            ? "font-semibold text-[var(--color-accent-600)]"
+            : "text-[var(--color-ink)] hover:text-[var(--color-accent-600)]"
+        }`}
+      >
+        {link.label}
+        <span aria-hidden className="text-[10px] mt-px opacity-70">▾</span>
+        {active && (
+          <span
+            aria-hidden
+            className="absolute left-0 right-[14px] -bottom-[2px] h-[2px] rounded-full"
+            style={{ background: "var(--color-accent-600)" }}
+          />
+        )}
+      </button>
+
+      {open && link.submenu && (
+        <div
+          role="menu"
+          className="absolute right-0 top-full mt-2 w-[280px] rounded-md border hairline shadow-lg z-50 overflow-hidden"
+          style={{ backgroundColor: "var(--color-card)" }}
+        >
+          {link.submenu.map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              role="menuitem"
+              className="block px-4 py-2.5 hover:bg-[var(--color-paper)] transition-colors"
+            >
+              <div className="text-[13.5px] font-medium ink-text">{item.label}</div>
+              {item.description && (
+                <div className="text-[11.5px] muted-text mt-0.5 leading-snug">
+                  {item.description}
+                </div>
+              )}
+            </Link>
+          ))}
+          <Link
+            href={link.href}
+            role="menuitem"
+            className="block px-4 py-2 border-t hairline text-[12px] hover:bg-[var(--color-paper)] transition-colors"
+            style={{ color: "var(--color-accent-600)" }}
+          >
+            See all tools →
+          </Link>
+        </div>
+      )}
+    </div>
   );
 }

@@ -225,7 +225,7 @@ function Hero({ snap }: { snap: Snapshot }) {
             icon="⚖️"
             label="Compare 2–5 stocks"
             sub="Apples-to-apples scorecards"
-            href="/compare"
+            href="/tools/peer-comparison"
           />
           <BenefitPill
             icon="📈"
@@ -240,7 +240,7 @@ function Hero({ snap }: { snap: Snapshot }) {
             Browse all sectors
             <ArrowRight size={14} />
           </Link>
-          <Link href="/discover" className="btn-ghost">
+          <Link href="/tools/screener" className="btn-ghost">
             Discover by filter
           </Link>
         </div>
@@ -1119,7 +1119,7 @@ function FooterCTA() {
             Open all sectors
             <ArrowRight size={14} />
           </Link>
-          <Link href="/discover" className="btn-ghost">
+          <Link href="/tools/screener" className="btn-ghost">
             Open Discover
           </Link>
         </div>

@@ -82,7 +82,7 @@ export default async function ScreenPage({
       <div className="flex flex-wrap items-start justify-between gap-4">
         <header className="max-w-[680px]">
           <div className="text-[12px] uppercase tracking-wide muted-text flex items-center gap-2">
-            <Link href="/discover" className="hover:underline">Discover</Link>
+            <Link href="/tools" className="hover:underline">Tools</Link>
             <span aria-hidden style={{ color: "var(--color-border-default)" }}>›</span>
             <span>Investing Trials</span>
           </div>
@@ -113,8 +113,8 @@ export default async function ScreenPage({
             result. Your blend here uses the same pillar scores but with your weights
             applied uniformly across all sectors — no re-ranking.
           </p>
-          <Link href="/discover" className="mt-2 inline-block underline hover:no-underline ink-text">
-            ← Back to Discover
+          <Link href="/tools" className="mt-2 inline-block underline hover:no-underline ink-text">
+            ← Back to Tools
           </Link>
         </div>
       </div>
@@ -268,7 +268,7 @@ function Pagination({
     q.set("m", String(weights.m));
     q.set("preset", preset);
     q.set("page", String(p));
-    return "/screen?" + q.toString();
+    return "/tools/investing-trials?" + q.toString();
   };
 
   const pages: number[] = [];

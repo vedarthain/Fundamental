@@ -28,7 +28,7 @@ export function IndexChips() {
     // Clicking the active index clears it (=== "All").
     const next = initial.index === k ? "" : k;
     const q = paramsToQuery({ ...initial, index: next, page: 1 });
-    startTransition(() => router.replace("/discover" + q, { scroll: false }));
+    startTransition(() => router.replace("/tools/screener" + q, { scroll: false }));
   };
 
   return (

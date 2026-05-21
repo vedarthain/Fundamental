@@ -262,7 +262,7 @@ function WebLayer() {
             title="Next.js Server" sub="Vercel edge / Node" icon="▲" />
 
           {/* Routes */}
-          <RouteNode x={470} y={30} route="/discover" desc="Screener + custom weights" color="#f0f4ff" border="#7d95b3" />
+          <RouteNode x={470} y={30} route="/tools/screener" desc="Screener + custom weights" color="#f0f4ff" border="#7d95b3" />
           <RouteNode x={470} y={110} route="/sectors" desc="Cluster heatmap + returns" color="#f0f4ff" border="#7d95b3" />
           <RouteNode x={470} y={190} route="/stock/[symbol]" desc="Stock detail + tabs" color="#f0f4ff" border="#7d95b3" />
           <RouteNode x={470} y={270} route="/industry/[id]" desc="Industry peer table" color="#f0f4ff" border="#7d95b3" />
