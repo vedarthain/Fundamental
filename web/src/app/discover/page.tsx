@@ -362,16 +362,17 @@ export default async function ScreenerPage({
       </div>
 
       <div className="mt-8 grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-8">
-        {/* Sticky sidebar: pinned to top-20 on desktop, with its own internal
-            scroll so tall filter panels don't get clipped below the viewport. */}
+        {/* Sticky sidebar: every filter lives here — sector + industry +
+            index membership at the top (the "what universe to look at"
+            filters), then min pillar scores + maturity + market cap below
+            ("what to require of each stock"). Previously the chip rows sat
+            above the results table, which made /discover feel like a
+            navigation surface; now the results are the headline and filters
+            are the lever — true screener-altitude. */}
         <aside
           className="card p-5 self-start lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto"
         >
-          <Controls />
-        </aside>
-
-        <main>
-          <div className="mb-4 space-y-3">
+          <div className="space-y-5">
             <div>
               <div className="text-[11px] uppercase tracking-wide muted-text mb-2">Sector</div>
               <MetaChips metas={metas} clusters={clusters} />
@@ -385,6 +386,12 @@ export default async function ScreenerPage({
               <IndexChips />
             </div>
           </div>
+          <div className="mt-6 pt-5 border-t hairline">
+            <Controls />
+          </div>
+        </aside>
+
+        <main>
           <ResultsTable rows={rows} groupByIndustry={false} />
           <Pagination params={params} totalPages={totalPages} />
           <MethodologyFooter />
