@@ -4,6 +4,8 @@ import { band, bandColor, fmtPct, tierLabel } from "@/lib/score";
 import { Controls } from "./Controls";
 import { MetaChips, type MetaOption } from "./MetaChips";
 import { SubClusterChips, type ClusterRow } from "./SubClusterChips";
+import { IndexChips } from "./IndexChips";
+import { INDEX_COLUMNS } from "./types";
 import { AboutCard } from "./AboutCard";
 import {
   PAGE_SIZE, parseParams, paramsToQuery, type ScreenerParams,
@@ -69,7 +71,7 @@ async function loadClusters(): Promise<ClusterRow[]> {
 const PER_INDUSTRY_LIMIT = 8;
 
 async function loadRows(p: ScreenerParams): Promise<{ rows: Row[]; total: number }> {
-  const { clusters, metas, tiers, caps, minQ, minV, minM, minC, page } = p;
+  const { clusters, metas, tiers, caps, index, minQ, minV, minM, minC, page } = p;
   const offset = (page - 1) * PAGE_SIZE;
 
   // Count query: FROM app.scores s → use s.* for score-derived columns.
@@ -86,12 +88,19 @@ async function loadRows(p: ScreenerParams): Promise<{ rows: Row[]; total: number
   const tierFilterR = tiers.length
     ? sql`AND r.maturity_tier = ANY(${tiers})`
     : sql``;
-  // c.* / u.* aliases exist in both queries, so meta + cap filters are shared.
+  // c.* / u.* aliases exist in both queries, so meta + cap + index filters are shared.
   const metaFilter = metas.length
     ? sql`AND c.meta_cluster_id = ANY(${metas})`
     : sql``;
   const capFilter = caps.length
     ? sql`AND u.market_cap_category = ANY(${caps})`
+    : sql``;
+  // Index filter uses the boolean columns on app.universe (is_nifty50 etc.).
+  // We only render a fixed set of values, so injecting the column name as
+  // a sql.unsafe identifier is safe — but we route through INDEX_COLUMNS
+  // (whitelist map) so a malformed URL param can't reach the raw query.
+  const indexFilter = index && INDEX_COLUMNS[index]
+    ? sql`AND u.${sql(INDEX_COLUMNS[index])} = TRUE`
     : sql``;
 
   // Sort mode: at the all-sectors / sector level, surface by maturity tier
@@ -124,7 +133,7 @@ async function loadRows(p: ScreenerParams): Promise<{ rows: Row[]; total: number
     JOIN app.universe u USING (symbol)
     JOIN app.cluster c ON c.id = s.cluster_id
     WHERE s.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
-      ${clusterFilter} ${metaFilter} ${tierFilter} ${capFilter}
+      ${clusterFilter} ${metaFilter} ${tierFilter} ${capFilter} ${indexFilter}
       AND COALESCE(s.quality_pct, 0)   >= ${minQ}
       AND COALESCE(s.valuation_pct, 0) >= ${minV}
       AND COALESCE(s.momentum_pct, 0)  >= ${minM}
@@ -207,7 +216,7 @@ async function loadRows(p: ScreenerParams): Promise<{ rows: Row[]; total: number
       JOIN app.meta_cluster mc ON mc.id = c.meta_cluster_id
       LEFT JOIN app.screener_meta sm USING (symbol)
       WHERE u.is_active
-        ${clusterFilterR} ${metaFilter} ${tierFilterR} ${capFilter}
+        ${clusterFilterR} ${metaFilter} ${tierFilterR} ${capFilter} ${indexFilter}
         AND COALESCE(r.quality_pct, 0)   >= ${minQ}
         AND COALESCE(r.valuation_pct, 0) >= ${minV}
         AND COALESCE(r.momentum_pct, 0)  >= ${minM}
@@ -370,6 +379,10 @@ export default async function ScreenerPage({
             <div>
               <div className="text-[11px] uppercase tracking-wide muted-text mb-2">Industry</div>
               <SubClusterChips clusters={clusters} />
+            </div>
+            <div>
+              <div className="text-[11px] uppercase tracking-wide muted-text mb-2">Index membership</div>
+              <IndexChips />
             </div>
           </div>
           <ResultsTable rows={rows} groupByIndustry={false} />

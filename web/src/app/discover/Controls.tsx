@@ -26,15 +26,19 @@ export function Controls() {
       tiers: string[]; caps: string[];
       minQ: number; minV: number; minM: number; minC: number;
     }>) => {
-      // Preserve sector and industry from the URL — they're owned by the
-      // MetaChips / SubClusterChips components, not by this control panel,
-      // and dropping them here was clearing the industry every time the user
-      // adjusted a slider or cap chip.
+      // Preserve sector, industry, and index from the URL — they're owned by
+      // the MetaChips / SubClusterChips / IndexChips components, not by this
+      // control panel. Without preserving them, every slider movement would
+      // clear those filters silently.
       const currentMetas = sp.get("metas")?.split(",").filter(Boolean) ?? [];
       const currentClusters = sp.get("clusters")?.split(",").filter(Boolean) ?? [];
+      const rawIndex = (sp.get("index") ?? "").toLowerCase();
+      const currentIndex = (["nifty50", "nifty200", "nifty500"] as const).includes(rawIndex as never)
+        ? (rawIndex as "nifty50" | "nifty200" | "nifty500") : "";
       const q = paramsToQuery({
         metas: currentMetas,
         clusters: currentClusters,
+        index: currentIndex,
         tiers: override.tiers ?? tiersSel,
         caps: override.caps ?? capsSel,
         minQ: override.minQ ?? minQ,

@@ -7,11 +7,30 @@ export type ScreenerParams = {
   metas: string[];
   tiers: string[];
   caps: string[];
+  index: IndexKey;           // single-select; "" means no index filter
   minQ: number;
   minV: number;
   minM: number;
   minC: number;
   page: number;
+};
+
+/** Index membership filter on /discover. "All" = "" (no filter applied). */
+export const INDEX_KEYS = ["", "nifty50", "nifty200", "nifty500"] as const;
+export type IndexKey = (typeof INDEX_KEYS)[number];
+
+export const INDEX_LABELS: Record<IndexKey, string> = {
+  "":         "All",
+  nifty50:    "Nifty 50",
+  nifty200:   "Nifty 200",
+  nifty500:   "Nifty 500",
+};
+
+/** Map an IndexKey to the boolean column on app.universe that flags membership. */
+export const INDEX_COLUMNS: Record<Exclude<IndexKey, "">, string> = {
+  nifty50:  "is_nifty50",
+  nifty200: "is_nifty200",
+  nifty500: "is_nifty500",
 };
 
 export const PRESETS: Record<string, Weights & { label: string }> = {
@@ -45,11 +64,16 @@ export function parseParams(sp: URLSearchParams | Record<string, string | undefi
     const v = sp[k];
     return v == null ? null : v;
   };
+  const rawIndex = (get("index") ?? "").toLowerCase();
+  const index: IndexKey = (INDEX_KEYS as readonly string[]).includes(rawIndex)
+    ? (rawIndex as IndexKey)
+    : "";
   return {
     clusters: splitList(get("clusters")),
     metas: splitList(get("metas")),
     tiers: splitList(get("tiers")),
     caps: splitList(get("caps")),
+    index,
     minQ: clampInt(get("minq"), 0, 100, 0),
     minV: clampInt(get("minv"), 0, 100, 0),
     minM: clampInt(get("minm"), 0, 100, 0),
@@ -76,6 +100,7 @@ export function paramsToQuery(p: Partial<ScreenerParams>): string {
   if (p.metas?.length) q.set("metas", p.metas.join(","));
   if (p.tiers?.length) q.set("tiers", p.tiers.join(","));
   if (p.caps?.length) q.set("caps", p.caps.join(","));
+  if (p.index) q.set("index", p.index);
   if (p.minQ) q.set("minq", String(p.minQ));
   if (p.minV) q.set("minv", String(p.minV));
   if (p.minM) q.set("minm", String(p.minM));
