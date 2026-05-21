@@ -5,7 +5,10 @@ import { Controls } from "./Controls";
 import { MetaChips, type MetaOption } from "./MetaChips";
 import { SubClusterChips, type ClusterRow } from "./SubClusterChips";
 import { IndexChips } from "./IndexChips";
-import { INDEX_COLUMNS } from "./types";
+import {
+  INDEX_COLUMNS, INDEX_LABELS, TIER_LABELS, MKT_CAP_LABELS,
+  type SortParam,
+} from "./types";
 import { AboutCard } from "./AboutCard";
 import {
   PAGE_SIZE, parseParams, paramsToQuery, type ScreenerParams,
@@ -32,6 +35,36 @@ type Row = {
   peer_count: number | null;
   leading_pillar: string | null;
   score_status: string | null;
+  // Raw fundamentals — extracted from metrics_snapshot.cluster_metrics JSONB.
+  // Powers the spreadsheet-style columns (P/E, P/B, ROE, etc.) on the
+  // screener table. Each is nullable because metric availability varies by
+  // cluster's scorecard (e.g., loss-makers have null pe_ttm).
+  pe_ttm: number | null;
+  pb: number | null;
+  roe_3y: number | null;        // stored as decimal (0.18 = 18%)
+  ret_12m_rel: number | null;   // 12-month return vs market (decimal)
+  div_yield: number | null;     // dividend yield (decimal)
+  op_margin_3y: number | null;  // operating margin (decimal)
+};
+
+/** Column-name → SQL expression (against the outer `joined` CTE). Used by
+ * the ORDER BY builder. Keeps the user-supplied sort key safely confined to
+ * this whitelist — a malformed URL param can never reach the raw SQL. The
+ * SortParam type lives in ./types so other components (SortHeader) can use it. */
+const SORT_SQL: Record<SortParam, string> = {
+  score:  "composite_pct",
+  symbol: "symbol",
+  mcap:   "market_cap_cr",
+  ltp:    "current_price",
+  pe:     "pe_ttm",
+  pb:     "pb",
+  roe:    "roe_3y",
+  ret12m: "ret_12m_rel",
+  divyld: "div_yield",
+  opm:    "op_margin_3y",
+  q:      "quality_pct",
+  v:      "valuation_pct",
+  m:      "momentum_pct",
 };
 
 async function loadCoverage(): Promise<{ stocks: number }> {
@@ -113,7 +146,7 @@ async function loadRows(p: ScreenerParams): Promise<{ rows: Row[]; total: number
   // doesn't have to be reconciled across different peer pools. Within each
   // industry block we order by maturity tier (V→M→Mid→New) then peer rank so
   // rank 1 of each tier surfaces before rank 2 of the same tier.
-  const tailOrder = isIndustryView
+  const tailOrderDefault = isIndustryView
     ? sql`peer_rank ASC NULLS LAST, composite_pct DESC NULLS LAST`
     : sql`sector_name ASC,
            industry_name ASC,
@@ -126,6 +159,20 @@ async function loadRows(p: ScreenerParams): Promise<{ rows: Row[]; total: number
            END ASC,
            peer_rank ASC NULLS LAST,
            composite_pct DESC NULLS LAST`;
+  // When the user explicitly clicks a sort column, drop the bucket/pillar
+  // penalty preamble — they asked for this ordering, surface it directly with
+  // composite_pct as a stable tiebreak. SORT_SQL maps the URL param to a
+  // SQL column name (whitelisted in the type, never user input).
+  const userSorting = p.sort !== "score" || p.dir !== "desc";
+  const sortDir = p.dir === "asc" ? sql`ASC NULLS LAST` : sql`DESC NULLS LAST`;
+  const sortCol = SORT_SQL[p.sort];
+  const orderBy = userSorting
+    ? sql`${sql(sortCol)} ${sortDir}, composite_pct DESC NULLS LAST`
+    : sql`(score_status = 'full') DESC,
+           (quality_pct IS NOT NULL
+            AND valuation_pct IS NOT NULL
+            AND momentum_pct IS NOT NULL) DESC,
+           ${tailOrderDefault}`;
 
   const totalRows = await sql<{ n: number }[]>`
     SELECT COUNT(*)::int AS n
@@ -193,6 +240,15 @@ async function loadRows(p: ScreenerParams): Promise<{ rows: Row[]; total: number
              r.peer_count,
              r.leading_pillar,
              r.score_status,
+             -- Raw fundamentals extracted from metrics_snapshot.cluster_metrics JSONB.
+             -- These are the absolute (non-percentile) values used for the
+             -- spreadsheet-style columns and for sorting by P/E, ROE etc.
+             (m.cluster_metrics->>'pe_ttm')::float       AS pe_ttm,
+             (m.cluster_metrics->>'pb')::float           AS pb,
+             (m.cluster_metrics->>'roe_3y')::float       AS roe_3y,
+             (m.cluster_metrics->>'ret_12m_rel')::float  AS ret_12m_rel,
+             (m.cluster_metrics->>'div_yield')::float    AS div_yield,
+             (m.cluster_metrics->>'op_margin_3y')::float AS op_margin_3y,
              ROW_NUMBER() OVER (
                PARTITION BY r.cluster_id
                ORDER BY
@@ -215,6 +271,11 @@ async function loadRows(p: ScreenerParams): Promise<{ rows: Row[]; total: number
       JOIN app.cluster c ON c.id = r.cluster_id
       JOIN app.meta_cluster mc ON mc.id = c.meta_cluster_id
       LEFT JOIN app.screener_meta sm USING (symbol)
+      -- Latest snapshot's raw metrics — same date as the scores so the row's
+      -- score and raw values come from the same compute pass.
+      LEFT JOIN app.metrics_snapshot m
+        ON m.symbol = r.symbol
+       AND m.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
       WHERE u.is_active
         ${clusterFilterR} ${metaFilter} ${tierFilterR} ${capFilter} ${indexFilter}
         AND COALESCE(r.quality_pct, 0)   >= ${minQ}
@@ -225,15 +286,11 @@ async function loadRows(p: ScreenerParams): Promise<{ rows: Row[]; total: number
     SELECT symbol, company_name, industry_id, industry_name, sector_name,
            maturity_tier, market_cap_cr, current_price, price_fetched_at,
            quality_pct, valuation_pct, momentum_pct, composite_pct,
-           peer_rank, peer_count, leading_pillar, score_status
+           peer_rank, peer_count, leading_pillar, score_status,
+           pe_ttm, pb, roe_3y, ret_12m_rel, div_yield, op_margin_3y
     FROM joined
     ${perIndustryClause}
-    ORDER BY
-      (score_status = 'full') DESC,
-      (quality_pct IS NOT NULL
-       AND valuation_pct IS NOT NULL
-       AND momentum_pct IS NOT NULL) DESC,
-      ${tailOrder}
+    ORDER BY ${orderBy}
     ${limitClause}
   `;
   return { rows, total };
@@ -346,34 +403,144 @@ export default async function ScreenerPage({
             navigation surface; now the results are the headline and filters
             are the lever — true screener-altitude. */}
         <aside
-          className="card p-5 self-start lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto"
+          className="card p-4 self-start lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto"
         >
-          <div className="space-y-5">
-            <div>
-              <div className="text-[11px] uppercase tracking-wide muted-text mb-2">Sector</div>
-              <MetaChips metas={metas} clusters={clusters} />
+          {/* Reset-all link — always visible at the top of the sidebar so the
+              user has a single obvious "wipe everything" button regardless of
+              which sections are expanded. Preserves sort/dir/density. */}
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-[11px] uppercase tracking-wide muted-text font-semibold">
+              Filters
             </div>
-            <div>
-              <div className="text-[11px] uppercase tracking-wide muted-text mb-2">Industry</div>
-              <SubClusterChips clusters={clusters} />
-            </div>
-            <div>
-              <div className="text-[11px] uppercase tracking-wide muted-text mb-2">Index membership</div>
-              <IndexChips />
-            </div>
+            <Link
+              href={"/tools/screener" + paramsToQuery({
+                sort: params.sort, dir: params.dir, density: params.density,
+              })}
+              scroll={false}
+              className="text-[11px] underline hover:no-underline text-[var(--color-accent-600)]"
+            >
+              Reset all
+            </Link>
           </div>
-          <div className="mt-6 pt-5 border-t hairline">
-            <Controls />
+
+          {/* Each section is wrapped in <details> so users can collapse the
+              ones they don't currently care about. Default-open state is
+              chosen per-section: universe filters (sector/industry/index)
+              open by default; per-stock criteria open by default too.
+              Switching to <details> instead of React state means zero JS
+              for the collapsing UX and per-section state survives navigation. */}
+          <div className="space-y-3">
+            {/* Universe filters — blue family. "What part of the market am I
+                looking at?" Picks which peer pools we draw stocks from. */}
+            <FilterSection label="Sector" hint="Which industry-group to look at" color="blue">
+              <MetaChips metas={metas} clusters={clusters} />
+            </FilterSection>
+
+            <FilterSection label="Industry" hint="Narrow to a specific peer cluster" color="blue">
+              <SubClusterChips clusters={clusters} />
+            </FilterSection>
+
+            <FilterSection label="Index membership" hint="Limit to Nifty 50 / 200 / 500" color="blue">
+              <IndexChips />
+            </FilterSection>
+
+            {/* Stock-shape filters — green family. "What shape of stock?"
+                Filters by listing tenure and market-cap category. */}
+            <FilterSection label="Maturity" hint="Filter by years of listed history" color="green" defaultOpen>
+              <Controls only="maturity" />
+            </FilterSection>
+
+            <FilterSection label="Market cap" hint="Stock size category" color="green" defaultOpen>
+              <Controls only="cap" />
+            </FilterSection>
+
+            {/* Score filters — purple family. "What threshold must each stock
+                clear?" Applies peer-percentile floors. */}
+            <FilterSection label="Minimum scores" hint="Pillar percentile floors (within peer cluster)" color="purple">
+              <Controls only="minScores" />
+            </FilterSection>
           </div>
         </aside>
 
         <main>
-          <ResultsTable rows={rows} groupByIndustry={false} />
+          <ResultsToolbar
+            params={params}
+            total={total}
+            metas={metas}
+            clusters={clusters}
+          />
+          <ResultsTable rows={rows} groupByIndustry={false} params={params} />
           <Pagination params={params} totalPages={totalPages} />
           <MethodologyFooter />
         </main>
       </div>
     </div>
+  );
+}
+
+/** Section family colors — three accent colors group the filter sections by
+ * what they're filtering. Each family uses a stripe on the left edge + a
+ * dot in the section label so the three groups are visually distinguishable
+ * without being a clown show. Picking a stripe instead of full-section
+ * backgrounds keeps the sidebar readable.
+ *
+ *   blue   — Universe filters  (Sector / Industry / Index — "what to look at")
+ *   green  — Stock-shape filters (Maturity / Market Cap — "what shape of stock")
+ *   purple — Score filters      (Min Q/V/M/Composite — "what threshold to clear")
+ */
+type FamilyColor = "blue" | "green" | "purple";
+
+const FAMILY_COLORS: Record<FamilyColor, { stripe: string; dot: string; label: string }> = {
+  blue:   { stripe: "#7d95b3", dot: "#3d5778", label: "#2c4361" },
+  green:  { stripe: "#6abf5d", dot: "#2e9a47", label: "#206b32" },
+  purple: { stripe: "#a78bfa", dot: "#7c3aed", label: "#5b21b6" },
+};
+
+/** Collapsible filter section. Uses <details> so the collapse state lives
+ *  in the DOM, no React state needed — each section remembers its own
+ *  state across navigation. The hint line under the label explains what the
+ *  filter does. A 2px colored stripe on the left + a small colored dot
+ *  signals the section's family (universe / shape / scores). */
+function FilterSection({
+  label, hint, defaultOpen = true, color, children,
+}: {
+  label: string;
+  hint?: string;
+  defaultOpen?: boolean;
+  color: FamilyColor;
+  children: React.ReactNode;
+}) {
+  const c = FAMILY_COLORS[color];
+  return (
+    <details
+      className="group rounded-md"
+      open={defaultOpen}
+      style={{ borderLeft: `2px solid ${c.stripe}`, paddingLeft: "8px" }}
+    >
+      <summary className="cursor-pointer flex items-baseline justify-between gap-2 py-1 list-none">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5">
+            <span
+              aria-hidden
+              className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
+              style={{ background: c.dot }}
+            />
+            <span className="text-[11px] uppercase tracking-wide font-semibold" style={{ color: c.label }}>
+              {label}
+            </span>
+          </div>
+          {hint && (
+            <div className="text-[10.5px] muted-text mt-0.5 ml-3 leading-snug">
+              {hint}
+            </div>
+          )}
+        </div>
+        <span aria-hidden className="text-[10px] muted-text opacity-70 group-open:rotate-180 transition-transform">
+          ▾
+        </span>
+      </summary>
+      <div className="mt-2 ml-3">{children}</div>
+    </details>
   );
 }
 
@@ -386,7 +553,150 @@ function fmtMktCapBare(n: number | null): string {
   return Math.round(n).toLocaleString("en-IN");
 }
 
-function ResultsTable({ rows, groupByIndustry }: { rows: Row[]; groupByIndustry: boolean }) {
+/**
+ * Toolbar above the results table:
+ *  - Match count ("Showing 234 of 2,150 stocks")
+ *  - Active-filter chips with × buttons (one per applied filter)
+ *  - Density toggle (Compact / Comfortable)
+ * Renders nothing if there are no active filters AND no count to show, but
+ * in practice always renders since we always have a count.
+ */
+function ResultsToolbar({
+  params, total, metas, clusters,
+}: {
+  params: ScreenerParams;
+  total: number;
+  metas: MetaOption[];
+  clusters: ClusterRow[];
+}) {
+  const chips: { label: string; clearTo: Partial<ScreenerParams> }[] = [];
+
+  // Sector chips — one per selected meta. Removing one shrinks the set
+  // (we also prune industries that lose their parent sector to stay
+  // consistent with MetaChips's onApply pruning).
+  for (const metaId of params.metas) {
+    const meta = metas.find((m) => m.id === metaId);
+    if (meta) {
+      const remainingMetas = params.metas.filter((id) => id !== metaId);
+      const allowedIndustryIds = remainingMetas.length === 0
+        ? new Set<string>()
+        : new Set(clusters.filter((c) => remainingMetas.includes(c.sector_id)).map((c) => c.id));
+      const remainingClusters = params.clusters.filter((id) => allowedIndustryIds.has(id));
+      chips.push({
+        label: `Sector: ${meta.name}`,
+        clearTo: { metas: remainingMetas, clusters: remainingClusters },
+      });
+    }
+  }
+  // Industry chips — one per selected cluster.
+  for (const clusterId of params.clusters) {
+    const cluster = clusters.find((c) => c.id === clusterId);
+    if (cluster) chips.push({
+      label: `Industry: ${cluster.name}`,
+      clearTo: { clusters: params.clusters.filter((id) => id !== clusterId) },
+    });
+  }
+  // Index chip.
+  if (params.index) {
+    const lbl = INDEX_LABELS[params.index];
+    if (lbl) chips.push({ label: `Index: ${lbl}`, clearTo: { index: "" } });
+  }
+  // Maturity chips.
+  for (const t of params.tiers) {
+    chips.push({
+      label: `Maturity: ${TIER_LABELS[t] || t}`,
+      clearTo: { tiers: params.tiers.filter((x) => x !== t) },
+    });
+  }
+  // Market-cap chips.
+  for (const c of params.caps) {
+    chips.push({
+      label: `Cap: ${MKT_CAP_LABELS[c] || c}`,
+      clearTo: { caps: params.caps.filter((x) => x !== c) },
+    });
+  }
+  // Min-score chips.
+  if (params.minQ > 0) chips.push({ label: `Min Q ≥ ${params.minQ}`, clearTo: { minQ: 0 } });
+  if (params.minV > 0) chips.push({ label: `Min V ≥ ${params.minV}`, clearTo: { minV: 0 } });
+  if (params.minM > 0) chips.push({ label: `Min M ≥ ${params.minM}`, clearTo: { minM: 0 } });
+  if (params.minC > 0) chips.push({ label: `Min Score ≥ ${params.minC}`, clearTo: { minC: 0 } });
+
+  const clearAllHref = "/tools/screener" + paramsToQuery({
+    sort: params.sort, dir: params.dir, density: params.density,
+  });
+
+  const compactHref     = "/tools/screener" + paramsToQuery({ ...params, density: "compact", page: 1 });
+  const comfortableHref = "/tools/screener" + paramsToQuery({ ...params, density: "comfortable", page: 1 });
+
+  return (
+    <div className="mb-3">
+      <div className="flex items-baseline justify-between gap-3 mb-2 flex-wrap">
+        <div className="text-[13px] muted-text">
+          Showing <span className="ink-text tabular-nums font-medium">{total.toLocaleString("en-IN")}</span> stock{total === 1 ? "" : "s"}
+          {chips.length > 0 && " matching the active filters"}
+        </div>
+        <div className="inline-flex items-center gap-1 text-[11px]">
+          <span className="muted-text mr-1">Density:</span>
+          <Link
+            href={comfortableHref}
+            scroll={false}
+            className={`px-2 py-0.5 rounded border ${
+              params.density === "comfortable"
+                ? "bg-[var(--color-accent-50)] border-[var(--color-accent-300)] text-[var(--color-accent-700)]"
+                : "hairline hover:bg-[var(--color-paper)]"
+            }`}
+          >
+            Comfortable
+          </Link>
+          <Link
+            href={compactHref}
+            scroll={false}
+            className={`px-2 py-0.5 rounded border ${
+              params.density === "compact"
+                ? "bg-[var(--color-accent-50)] border-[var(--color-accent-300)] text-[var(--color-accent-700)]"
+                : "hairline hover:bg-[var(--color-paper)]"
+            }`}
+          >
+            Compact
+          </Link>
+        </div>
+      </div>
+      {chips.length > 0 && (
+        <div className="flex items-center flex-wrap gap-1.5">
+          {chips.map((c, i) => {
+            const href = "/tools/screener" + paramsToQuery({ ...params, ...c.clearTo, page: 1 });
+            return (
+              <Link
+                key={i}
+                href={href}
+                scroll={false}
+                className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border hairline text-[11px] hover:bg-[var(--color-paper)] transition-colors"
+              >
+                <span>{c.label}</span>
+                <span aria-hidden className="muted-text">×</span>
+              </Link>
+            );
+          })}
+          <Link
+            href={clearAllHref}
+            scroll={false}
+            className="text-[11px] muted-text underline hover:no-underline ml-1"
+          >
+            Clear all
+          </Link>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ResultsTable({
+  rows, groupByIndustry, params,
+}: {
+  rows: Row[];
+  groupByIndustry: boolean;
+  params: ScreenerParams;
+}) {
   if (rows.length === 0) {
     return (
       <div className="card p-12 text-center">
@@ -399,7 +709,7 @@ function ResultsTable({ rows, groupByIndustry }: { rows: Row[]; groupByIndustry:
   }
 
   if (!groupByIndustry) {
-    return <IndustryBlock rows={rows} showHeader={false} />;
+    return <IndustryBlock rows={rows} showHeader={false} params={params} />;
   }
 
   // Group rows hierarchically: sector → industries → stocks. The SQL already
@@ -442,6 +752,7 @@ function ResultsTable({ rows, groupByIndustry }: { rows: Row[]; groupByIndustry:
                   sectorName={sec.sectorName}
                   industryId={ig.industryId}
                   industryName={ig.industryName}
+                  params={params}
                 />
               ))}
             </div>
@@ -453,14 +764,21 @@ function ResultsTable({ rows, groupByIndustry }: { rows: Row[]; groupByIndustry:
 }
 
 function IndustryBlock({
-  rows, showHeader, sectorName, industryId, industryName,
+  rows, showHeader, sectorName, industryId, industryName, params,
 }: {
   rows: Row[];
   showHeader: boolean;
   sectorName?: string;
   industryId?: string;
   industryName?: string;
+  params: ScreenerParams;
 }) {
+  // Density toggle — compact mode tightens row padding so ~2× more rows fit
+  // on a screen without scrolling. Driven by the URL `density` param so the
+  // server renders the right class on first paint.
+  const compact = params.density === "compact";
+  const rowPad = compact ? "px-2 py-1" : "px-3 py-2.5";
+  const headerPad = compact ? "px-2 py-2" : "px-3 py-2.5";
   return (
     <div>
       {showHeader && industryId && (
@@ -474,117 +792,183 @@ function IndustryBlock({
         </div>
       )}
       <div className="card overflow-hidden">
-        <table className="w-full text-[14px]">
-          <thead className="bg-[var(--color-paper)]">
-            <tr className="text-left muted-text text-[11px] uppercase tracking-wide">
-              <th className="px-4 py-3 w-[34px]">#</th>
-              <th className="px-4 py-3">Stock</th>
-              <th className="px-4 py-3">Sector · Industry · Tier</th>
-              <th className="px-4 py-3 text-right">
-                Mkt cap
-                <div className="text-[9px] muted-text font-normal normal-case mt-0.5">(₹ Cr)</div>
-              </th>
-              <th className="px-3 py-3 text-right" title="Last traded price">
-                LTP
-                <div className="text-[9px] muted-text font-normal normal-case mt-0.5">(₹)</div>
-              </th>
-              <th className="px-3 py-3 text-right" title="Quality percentile within peer cluster">
-                Q
-                <div className="text-[9px] muted-text font-normal normal-case mt-0.5">quality</div>
-              </th>
-              <th className="px-3 py-3 text-right" title="Valuation percentile within peer cluster">
-                V
-                <div className="text-[9px] muted-text font-normal normal-case mt-0.5">valuation</div>
-              </th>
-              <th className="px-3 py-3 text-right" title="Momentum percentile within peer cluster">
-                M
-                <div className="text-[9px] muted-text font-normal normal-case mt-0.5">momentum</div>
-              </th>
-              <th className="px-4 py-3 text-right" title="Peer-relative composite score using sector-tuned weights. 96 = top 4% of its cluster.">
-                Industry Score
-                <div className="text-[9px] muted-text font-normal normal-case mt-0.5">within cluster</div>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r, i) => (
-              <tr key={r.symbol} className="border-t hairline hover:bg-[var(--color-paper)]/50">
-                <td className="px-4 py-3 muted-text tabular-nums text-[12px]">{i + 1}</td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-2">
-                    <Link href={`/stock/${r.symbol}`} className="font-medium hover:text-[var(--color-accent-600)]">
-                      {r.symbol}
-                    </Link>
-                    {r.score_status && r.score_status !== "full" && (
-                      <span
-                        className="text-[10px] px-1.5 py-0.5 rounded border"
-                        style={{
-                          color: "var(--color-score-weak)",
-                          borderColor: "var(--color-score-weak)",
-                          opacity: 0.8,
-                        }}
-                        title={
-                          r.score_status === "partial-cluster-mixed-tiers"
-                            ? "Thin peer group — maturity tiers were merged to reach 10+ peers. Score is less precise."
-                            : "Very thin peer group — fell back to broader sector comparison. Score is least precise."
-                        }
-                      >
-                        thin bucket
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-[12px] muted-text truncate max-w-[260px]">
-                    {r.company_name}
-                  </div>
-                </td>
-                <td className="px-4 py-3 text-[12px]">
-                  <div className="text-[10px] uppercase tracking-wide muted-text mb-0.5">
-                    {r.sector_name}
-                  </div>
-                  <Link href={`/industry/${r.industry_id}`} className="hover:text-[var(--color-accent-600)]">
-                    {r.industry_name}
-                  </Link>
-                  <div className="muted-text">{tierLabel(r.maturity_tier)}</div>
-                </td>
-                <td className="px-4 py-3 text-right tabular-nums text-[12px] muted-text">
-                  {fmtMktCapBare(r.market_cap_cr)}
-                </td>
-                <td
-                  className="px-3 py-3 text-right tabular-nums text-[12.5px]"
-                  title={
-                    r.price_fetched_at
-                      ? `Fetched ${new Date(r.price_fetched_at).toLocaleDateString("en-IN", { year: "numeric", month: "short", day: "numeric" })}`
-                      : "No price data"
-                  }
-                >
-                  {r.current_price != null
-                    ? r.current_price.toLocaleString("en-IN", { maximumFractionDigits: 2 })
-                    : <span className="muted-text">—</span>}
-                </td>
-                <PillarCell value={r.quality_pct} highlight={r.leading_pillar === "Q"} />
-                <PillarCell value={r.valuation_pct} highlight={r.leading_pillar === "V"} />
-                <PillarCell value={r.momentum_pct} highlight={r.leading_pillar === "M"} />
-                <CompositeCell
-                  value={r.composite_pct}
-                  peerRank={r.peer_rank}
-                  peerCount={r.peer_count}
-                  leadingPillar={r.leading_pillar}
-                />
+        <div className="overflow-x-auto">
+          <table className="w-full text-[12.5px]">
+            <thead className="bg-[var(--color-paper)]">
+              <tr className="text-left muted-text text-[10.5px] uppercase tracking-wide">
+                <th className={`${headerPad} w-[34px]`}>#</th>
+                <SortHeader sortKey="symbol" label="Stock" params={params} align="left" className={headerPad} />
+                <th className={`${headerPad} hidden lg:table-cell`}>Industry · Tier</th>
+                <SortHeader sortKey="mcap"   label="Mcap" sub="₹ Cr" params={params} align="right" className={headerPad} />
+                <SortHeader sortKey="ltp"    label="LTP"  sub="₹"    params={params} align="right" className={headerPad} />
+                <SortHeader sortKey="pe"     label="P/E"  sub="TTM"  params={params} align="right" className={headerPad} />
+                <SortHeader sortKey="pb"     label="P/B"             params={params} align="right" className={headerPad} />
+                <SortHeader sortKey="roe"    label="ROE"  sub="3y"   params={params} align="right" className={headerPad} />
+                <SortHeader sortKey="ret12m" label="1Y Δ" sub="vs market" params={params} align="right" className={headerPad} />
+                <SortHeader sortKey="divyld" label="Div"  sub="yield" params={params} align="right" className={headerPad} />
+                <SortHeader sortKey="opm"    label="Op M" sub="3y"    params={params} align="right" className={headerPad} />
+                <SortHeader sortKey="q"      label="Q"    params={params} align="right" className={headerPad} title="Quality percentile within peer cluster" />
+                <SortHeader sortKey="v"      label="V"    params={params} align="right" className={headerPad} title="Valuation percentile within peer cluster" />
+                <SortHeader sortKey="m"      label="M"    params={params} align="right" className={headerPad} title="Momentum percentile within peer cluster" />
+                <SortHeader sortKey="score"  label="Score" sub="within cluster" params={params} align="right" className={headerPad} title="Peer-relative composite score" />
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={r.symbol} className="border-t hairline hover:bg-[var(--color-paper)]/50">
+                  <td className={`${rowPad} muted-text tabular-nums text-[11px]`}>{i + 1}</td>
+                  <td className={rowPad}>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <Link href={`/stock/${r.symbol}`} className="font-medium hover:text-[var(--color-accent-600)]">
+                        {r.symbol}
+                      </Link>
+                      {r.score_status && r.score_status !== "full" && (
+                        <span
+                          className="text-[9.5px] px-1 py-px rounded border"
+                          style={{
+                            color: "var(--color-score-weak)",
+                            borderColor: "var(--color-score-weak)",
+                            opacity: 0.8,
+                          }}
+                          title={
+                            r.score_status === "partial-cluster-mixed-tiers"
+                              ? "Thin peer group — maturity tiers were merged to reach 10+ peers."
+                              : "Very thin peer group — fell back to broader sector comparison."
+                          }
+                        >
+                          thin
+                        </span>
+                      )}
+                    </div>
+                    {!compact && (
+                      <div className="text-[10.5px] muted-text truncate max-w-[180px]">
+                        {r.company_name}
+                      </div>
+                    )}
+                  </td>
+                  <td className={`${rowPad} text-[11px] hidden lg:table-cell`}>
+                    <Link href={`/industry/${r.industry_id}`} className="hover:text-[var(--color-accent-600)]">
+                      {r.industry_name}
+                    </Link>
+                    {!compact && (
+                      <div className="muted-text text-[10px]">{tierLabel(r.maturity_tier)}</div>
+                    )}
+                  </td>
+                  <td className={`${rowPad} text-right tabular-nums text-[11.5px] muted-text`}>
+                    {fmtMktCapBare(r.market_cap_cr)}
+                  </td>
+                  <td className={`${rowPad} text-right tabular-nums text-[11.5px]`}>
+                    {fmtNum(r.current_price, 2)}
+                  </td>
+                  <td className={`${rowPad} text-right tabular-nums text-[11.5px]`}>
+                    {fmtNum(r.pe_ttm, 1)}
+                  </td>
+                  <td className={`${rowPad} text-right tabular-nums text-[11.5px]`}>
+                    {fmtNum(r.pb, 2)}
+                  </td>
+                  <td className={`${rowPad} text-right tabular-nums text-[11.5px]`}>
+                    {fmtPctVal(r.roe_3y)}
+                  </td>
+                  <td className={`${rowPad} text-right tabular-nums text-[11.5px]`}>
+                    {fmtPctVal(r.ret_12m_rel, true)}
+                  </td>
+                  <td className={`${rowPad} text-right tabular-nums text-[11.5px]`}>
+                    {fmtPctVal(r.div_yield)}
+                  </td>
+                  <td className={`${rowPad} text-right tabular-nums text-[11.5px]`}>
+                    {fmtPctVal(r.op_margin_3y)}
+                  </td>
+                  <PillarCell value={r.quality_pct}   highlight={r.leading_pillar === "Q"} className={rowPad} />
+                  <PillarCell value={r.valuation_pct} highlight={r.leading_pillar === "V"} className={rowPad} />
+                  <PillarCell value={r.momentum_pct}  highlight={r.leading_pillar === "M"} className={rowPad} />
+                  <CompositeCell
+                    value={r.composite_pct}
+                    peerRank={r.peer_rank}
+                    peerCount={r.peer_count}
+                    leadingPillar={r.leading_pillar}
+                    className={rowPad}
+                  />
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
 }
 
-function PillarCell({ value, highlight }: { value: number | null; highlight?: boolean }) {
+/** Sortable column header. Clicking toggles direction; clicking a different
+ * column resets to descending for numeric (typical screener behavior). The
+ * link goes back to /tools/screener with the new sort/dir URL params, and
+ * the server re-renders.
+ */
+function SortHeader({
+  sortKey, label, sub, params, align, className = "", title,
+}: {
+  sortKey: SortParam;
+  label: string;
+  sub?: string;
+  params: ScreenerParams;
+  align: "left" | "right";
+  className?: string;
+  title?: string;
+}) {
+  const isActive = params.sort === sortKey;
+  // Toggle direction if clicking the active column; otherwise default to desc
+  // (descending — the typical "top of the list" expectation for percentile
+  // columns and most fundamentals). Exception: symbol defaults to ascending.
+  const nextDir: "asc" | "desc" = isActive
+    ? (params.dir === "asc" ? "desc" : "asc")
+    : (sortKey === "symbol" ? "asc" : "desc");
+  const href = "/tools/screener" + paramsToQuery({ ...params, sort: sortKey, dir: nextDir, page: 1 });
+  const arrow = isActive ? (params.dir === "asc" ? "▲" : "▼") : "";
+  return (
+    <th className={`${className} ${align === "right" ? "text-right" : "text-left"}`} title={title}>
+      <Link
+        href={href}
+        scroll={false}
+        className={`inline-flex items-${align === "right" ? "end" : "start"} flex-col gap-0 hover:text-[var(--color-ink)] transition-colors ${
+          isActive ? "ink-text" : ""
+        }`}
+      >
+        <span className="inline-flex items-center gap-1">
+          {label}
+          {arrow && <span className="text-[9px]">{arrow}</span>}
+        </span>
+        {sub && <span className="text-[9px] muted-text font-normal normal-case">{sub}</span>}
+      </Link>
+    </th>
+  );
+}
+
+/** Format a number with given decimals, "—" for null. */
+function fmtNum(n: number | null, decimals = 2): React.ReactNode {
+  if (n == null) return <span className="muted-text">—</span>;
+  return n.toLocaleString("en-IN", { maximumFractionDigits: decimals, minimumFractionDigits: 0 });
+}
+
+/** Format a decimal as a percent (0.18 → "18.0%"). When `signed`, prefix +/-
+ * and color positive green / negative red — used for return columns where
+ * sign carries meaning. */
+function fmtPctVal(n: number | null, signed = false): React.ReactNode {
+  if (n == null) return <span className="muted-text">—</span>;
+  const pct = n * 100;
+  const formatted = pct.toLocaleString("en-IN", { maximumFractionDigits: 1, minimumFractionDigits: 0 });
+  if (!signed) return `${formatted}%`;
+  const color = pct >= 0 ? "var(--color-score-good)" : "var(--color-score-poor)";
+  const sign = pct >= 0 ? "+" : "";
+  return <span style={{ color }}>{sign}{formatted}%</span>;
+}
+
+function PillarCell({
+  value, highlight, className = "px-3 py-3",
+}: { value: number | null; highlight?: boolean; className?: string }) {
   const b = band(value);
   const isNull = value == null;
   const showHighlight = highlight && !isNull;
   return (
-    <td className={`px-3 py-3 text-right tabular-nums${showHighlight ? " bg-[var(--color-paper)]" : ""}`}>
+    <td className={`${className} text-right tabular-nums${showHighlight ? " bg-[var(--color-paper)]" : ""}`}>
       <span
         style={{ color: isNull ? "var(--color-muted)" : bandColor(b) }}
         className={`${showHighlight ? "font-bold" : "font-medium"}${isNull ? " opacity-40" : ""}`}
@@ -592,12 +976,6 @@ function PillarCell({ value, highlight }: { value: number | null; highlight?: bo
       >
         {fmtPct(value, "")}
       </span>
-      {showHighlight && (
-        <div className="text-[9px] muted-text mt-0.5">leading</div>
-      )}
-      {isNull && (
-        <div className="text-[9px] mt-0.5" style={{ color: "var(--color-muted)" }}>no data</div>
-      )}
     </td>
   );
 }
@@ -611,23 +989,24 @@ function ordinal(n: number): string {
 }
 
 function CompositeCell({
-  value, peerRank, peerCount, leadingPillar,
+  value, peerRank, peerCount, leadingPillar, className = "px-4 py-3",
 }: {
   value: number | null;
   peerRank: number | null;
   peerCount: number | null;
   leadingPillar: string | null;
+  className?: string;
 }) {
   const b = band(value);
   const rankLabel = peerRank != null && peerCount != null
     ? `${ordinal(peerRank)} of ${peerCount}`
     : null;
-  const pillarLabel = leadingPillar ? PILLAR_LABEL[leadingPillar] : null;
+  void leadingPillar; // pillar label hidden in spreadsheet view (column shows it)
 
   return (
-    <td className="px-4 py-3 text-right">
+    <td className={`${className} text-right`}>
       <span
-        className="inline-block min-w-[36px] text-center px-2 py-0.5 rounded-md tabular-nums text-[12px]"
+        className="inline-block min-w-[36px] text-center px-2 py-0.5 rounded-md tabular-nums text-[11.5px]"
         style={{
           backgroundColor: bandColor(b),
           color: b === "neutral" ? "var(--color-ink)" : "white",
@@ -635,8 +1014,7 @@ function CompositeCell({
       >
         {value == null ? "—" : Math.round(value)}
       </span>
-      {rankLabel && <div className="mt-1 text-[10px] muted-text tabular-nums leading-tight">{rankLabel}</div>}
-      {pillarLabel && <div className="text-[10px] muted-text leading-tight">{pillarLabel}</div>}
+      {rankLabel && <div className="mt-0.5 text-[9.5px] muted-text tabular-nums leading-tight">{rankLabel}</div>}
     </td>
   );
 }

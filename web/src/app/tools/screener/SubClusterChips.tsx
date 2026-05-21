@@ -1,13 +1,18 @@
 "use client";
 
-/** Industry / sub-cluster chips — appear when a Sector is selected.
- * Single-select: each industry has its own peer pool, so combining industries
- * yields apples-to-oranges results. URL-syncs via the `clusters` query param.
+/** Industry / sub-cluster filter — multi-select dropdown for the screener
+ * sidebar. Options are scoped to the currently-selected sector(s).
+ *
+ * Empty/disabled when no sector is picked — an industry filter with no
+ * parent sector is ambiguous (which sector's industries?). Shown as a
+ * disabled dropdown with a hint placeholder.
  */
 
+import { useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useMemo, useTransition } from "react";
+import { useTransition } from "react";
 import { paramsToQuery, parseParams } from "./types";
+import { MultiFilterDropdown } from "./MultiFilterDropdown";
 
 export type ClusterRow = {
   id: string;
@@ -21,74 +26,43 @@ export function SubClusterChips({ clusters }: { clusters: ClusterRow[] }) {
   const initial = parseParams(sp);
   const [, startTransition] = useTransition();
 
-  const selectedClusters = new Set(initial.clusters);
-  const selectedMetas = new Set(initial.metas);
-
-  // Show only clusters within the currently-selected sectors. If no sector
-  // is selected, hint the user to pick one first.
+  // Only show industries whose sector is currently selected. When zero
+  // sectors are picked, show nothing (the disabled state below handles it).
   const visible = useMemo(() => {
-    if (selectedMetas.size === 0) return [];
-    return clusters.filter((c) => selectedMetas.has(c.sector_id));
-  }, [clusters, selectedMetas]);
+    if (initial.metas.length === 0) return [];
+    const selectedSet = new Set(initial.metas);
+    return clusters.filter((c) => selectedSet.has(c.sector_id));
+  }, [clusters, initial.metas]);
 
-  // Single-select: clicking an industry replaces the selection. Clicking the
-  // currently-selected one clears it.
-  const pick = (id: string) => {
-    const next = selectedClusters.has(id) ? [] : [id];
-    const q = paramsToQuery({ ...initial, clusters: next, page: 1 });
-    startTransition(() => router.replace("/tools/screener" + q, { scroll: false }));
-  };
-
-  const clearAll = () => {
-    if (selectedClusters.size === 0) return;
-    const q = paramsToQuery({ ...initial, clusters: [], page: 1 });
-    startTransition(() => router.replace("/tools/screener" + q, { scroll: false }));
-  };
-
-  const allIndActive = selectedClusters.size === 0;
-  const hint = selectedMetas.size === 0;
-
-  // When no sector is selected, "All industries" is redundant with the
-  // "All sectors" pill above — the result set is identical. Skip the pill
-  // and just show the hint inline.
-  if (hint) {
+  if (initial.metas.length === 0) {
     return (
-      <div className="text-[12px] muted-text italic">
-        Pick a sector above to drill into specific industries.
-      </div>
+      <MultiFilterDropdown
+        values={[]}
+        options={[]}
+        onApply={() => {}}
+        placeholder="Pick a sector first"
+        disabled
+      />
     );
   }
 
+  const options = visible.map((c) => ({ value: c.id, label: c.name }));
+
+  const onApply = (newIndustries: string[]) => {
+    const q = paramsToQuery({
+      ...initial,
+      clusters: newIndustries,
+      page: 1,
+    });
+    startTransition(() => router.replace("/tools/screener" + q, { scroll: false }));
+  };
+
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <button
-        type="button"
-        onClick={clearAll}
-        className={`inline-flex items-center px-3 py-1.5 rounded-full text-[12px] border transition-colors cursor-pointer select-none ${
-          allIndActive
-            ? "bg-[var(--color-accent-50)] border-[var(--color-accent-300)] text-[var(--color-accent-700)]"
-            : "bg-[var(--color-card)] hairline hover:bg-[var(--color-paper)]"
-        }`}
-      >
-        All industries
-      </button>
-      {visible.map((c) => {
-        const active = selectedClusters.has(c.id);
-        return (
-          <button
-            key={c.id}
-            type="button"
-            onClick={() => pick(c.id)}
-            className={`inline-flex items-center px-3 py-1.5 rounded-full text-[12px] border transition-colors cursor-pointer select-none ${
-              active
-                ? "bg-[var(--color-accent-50)] border-[var(--color-accent-300)] text-[var(--color-accent-700)]"
-                : "bg-[var(--color-card)] hairline hover:bg-[var(--color-paper)]"
-            }`}
-          >
-            {c.name}
-          </button>
-        );
-      })}
-    </div>
+    <MultiFilterDropdown
+      values={initial.clusters}
+      options={options}
+      onApply={onApply}
+      placeholder="All industries"
+    />
   );
 }

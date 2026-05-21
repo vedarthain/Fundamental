@@ -12,8 +12,23 @@ export type ScreenerParams = {
   minV: number;
   minM: number;
   minC: number;
+  sort: SortParam;           // column to sort by (whitelisted)
+  dir: "asc" | "desc";       // sort direction
+  density: "compact" | "comfortable";  // row spacing toggle
   page: number;
 };
+
+/** Columns the user can sort on. Whitelisted so a malformed URL param can
+ * never reach the raw SQL — page.tsx maps each value to a column expression. */
+export const SORT_KEYS = [
+  "score", "symbol", "mcap", "ltp", "pe", "pb",
+  "roe", "ret12m", "divyld", "opm", "q", "v", "m",
+] as const;
+export type SortParam = (typeof SORT_KEYS)[number];
+
+export const DEFAULT_SORT: SortParam = "score";
+export const DEFAULT_DIR: "asc" | "desc" = "desc";
+export const DEFAULT_DENSITY: "compact" | "comfortable" = "comfortable";
 
 /** Index membership filter on /discover. "All" = "" (no filter applied). */
 export const INDEX_KEYS = ["", "nifty50", "nifty200", "nifty500"] as const;
@@ -68,6 +83,14 @@ export function parseParams(sp: URLSearchParams | Record<string, string | undefi
   const index: IndexKey = (INDEX_KEYS as readonly string[]).includes(rawIndex)
     ? (rawIndex as IndexKey)
     : "";
+  const rawSort = (get("sort") ?? "").toLowerCase();
+  const sort: SortParam = (SORT_KEYS as readonly string[]).includes(rawSort)
+    ? (rawSort as SortParam)
+    : DEFAULT_SORT;
+  const rawDir = (get("dir") ?? "").toLowerCase();
+  const dir: "asc" | "desc" = rawDir === "asc" ? "asc" : DEFAULT_DIR;
+  const rawDensity = (get("density") ?? "").toLowerCase();
+  const density: "compact" | "comfortable" = rawDensity === "compact" ? "compact" : DEFAULT_DENSITY;
   return {
     clusters: splitList(get("clusters")),
     metas: splitList(get("metas")),
@@ -78,6 +101,9 @@ export function parseParams(sp: URLSearchParams | Record<string, string | undefi
     minV: clampInt(get("minv"), 0, 100, 0),
     minM: clampInt(get("minm"), 0, 100, 0),
     minC: clampInt(get("minc"), 0, 100, 0),
+    sort,
+    dir,
+    density,
     page: Math.max(1, Number(get("page")) || 1),
   };
 }
@@ -105,6 +131,9 @@ export function paramsToQuery(p: Partial<ScreenerParams>): string {
   if (p.minV) q.set("minv", String(p.minV));
   if (p.minM) q.set("minm", String(p.minM));
   if (p.minC) q.set("minc", String(p.minC));
+  if (p.sort && p.sort !== DEFAULT_SORT) q.set("sort", p.sort);
+  if (p.dir && p.dir !== DEFAULT_DIR) q.set("dir", p.dir);
+  if (p.density && p.density !== DEFAULT_DENSITY) q.set("density", p.density);
   if (p.page && p.page > 1) q.set("page", String(p.page));
   const s = q.toString();
   return s ? "?" + s : "";

@@ -1,15 +1,24 @@
 "use client";
 
-/** Sector filter — meta-cluster chips above the results table.
- * Single-select: each sector has its own peer pool, so combining sectors
- * yields apples-to-oranges results. URL-syncs via the `metas` query param.
- * Picking a sector also clears any industry selection (clusters), since
- * industries belong to a single sector.
+/** Sector filter — multi-select dropdown for the screener sidebar.
+ *
+ * Multi-select supports the "top compounders across 3 sectors" workflow.
+ * Each stock's Industry Score stays peer-relative within its OWN cluster,
+ * so combining sectors doesn't break score comparability — it just picks
+ * which peer pools to draw the list from.
+ *
+ * When the user changes the sector selection, we PRUNE the industry filter
+ * to only those industries whose sector is still selected. Industries left
+ * orphaned (their sector got de-selected) would yield contradictory filter
+ * combinations.
+ *
+ * Component name kept as MetaChips for git history continuity.
  */
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTransition } from "react";
 import { paramsToQuery, parseParams } from "./types";
+import { MultiFilterDropdown } from "./MultiFilterDropdown";
 import type { ClusterRow } from "./SubClusterChips";
 
 export type MetaOption = {
@@ -26,66 +35,37 @@ export function MetaChips({
   const initial = parseParams(sp);
   const [, startTransition] = useTransition();
 
-  const selected = new Set(initial.metas);
-  // Don't show the "diversified_meta" if it has very few clusters (it's the catch-all)
+  // Hide meta-clusters with zero active clusters (catch-all bucket).
   const visible = metas.filter((m) => m.cluster_count > 0);
 
-  // Single-select: clicking a sector replaces the selection. Clicking the
-  // currently-selected one clears it. Picking a new sector ALSO auto-selects
-  // its first industry (alphabetical, matches loadClusters ORDER BY name) —
-  // landing on "All industries" as the default conveys nothing the "All
-  // sectors" pill doesn't already say, and the user's most likely next step
-  // is to drill into a specific industry anyway.
-  const pick = (id: string) => {
-    if (selected.has(id)) {
-      // Clicking the active sector clears both filters.
-      const q = paramsToQuery({ ...initial, metas: [], clusters: [], page: 1 });
-      startTransition(() => router.replace("/tools/screener" + q, { scroll: false }));
-      return;
-    }
-    const firstIndustry = clusters.find((c) => c.sector_id === id);
-    const next = firstIndustry ? [firstIndustry.id] : [];
-    const q = paramsToQuery({ ...initial, metas: [id], clusters: next, page: 1 });
+  const options = visible.map((m) => ({
+    value: m.id,
+    label: m.name,
+    hint: `${m.cluster_count} ind.`,
+  }));
+
+  const onApply = (newSectors: string[]) => {
+    // Prune industry filter to only those whose sector is still selected.
+    // If no sectors selected, drop industries entirely.
+    const allowedIndustryIds = newSectors.length === 0
+      ? new Set<string>()
+      : new Set(clusters.filter((c) => newSectors.includes(c.sector_id)).map((c) => c.id));
+    const newClusters = initial.clusters.filter((id) => allowedIndustryIds.has(id));
+    const q = paramsToQuery({
+      ...initial,
+      metas: newSectors,
+      clusters: newClusters,
+      page: 1,
+    });
     startTransition(() => router.replace("/tools/screener" + q, { scroll: false }));
   };
-
-  const clearAll = () => {
-    const q = paramsToQuery({ ...initial, metas: [], clusters: [], page: 1 });
-    startTransition(() => router.replace("/tools/screener" + q, { scroll: false }));
-  };
-
-  const allActive = selected.size === 0;
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <button
-        type="button"
-        onClick={clearAll}
-        className={`inline-flex items-center px-3 py-1.5 rounded-full text-[12px] border transition-colors cursor-pointer select-none ${
-          allActive
-            ? "bg-[var(--color-accent-50)] border-[var(--color-accent-300)] text-[var(--color-accent-700)]"
-            : "bg-[var(--color-card)] hairline hover:bg-[var(--color-paper)]"
-        }`}
-      >
-        All sectors
-      </button>
-      {visible.map((m) => {
-        const active = selected.has(m.id);
-        return (
-          <button
-            key={m.id}
-            type="button"
-            onClick={() => pick(m.id)}
-            className={`inline-flex items-center px-3 py-1.5 rounded-full text-[12px] border transition-colors cursor-pointer select-none ${
-              active
-                ? "bg-[var(--color-accent-50)] border-[var(--color-accent-300)] text-[var(--color-accent-700)]"
-                : "bg-[var(--color-card)] hairline hover:bg-[var(--color-paper)]"
-            }`}
-          >
-            {m.name}
-          </button>
-        );
-      })}
-    </div>
+    <MultiFilterDropdown
+      values={initial.metas}
+      options={options}
+      onApply={onApply}
+      placeholder="All sectors"
+    />
   );
 }

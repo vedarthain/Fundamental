@@ -1,55 +1,42 @@
 "use client";
 
-/** Index membership filter — Nifty 50 / 200 / 500 / All.
+/** Index membership filter — single-select dropdown for the screener
+ * sidebar. Nifty 50 ⊂ 200 ⊂ 500, so we never combine; picking one
+ * replaces the previous selection. "All" clears the filter.
  *
- * Single-select (an active stock is in at most one "current scope" at a time —
- * Nifty 50 ⊂ 200 ⊂ 500, so picking the broader one already includes the
- * narrower). URL-syncs via the `index` query param. "All" = empty / no filter.
- *
- * Placed next to Sector + Industry rows on /discover, with the same compact
- * pill style. Index membership is orthogonal to sector — you can combine
- * "Nifty 50" + "Financials" to see only large-cap financials, for example.
+ * Index membership is orthogonal to sector — e.g. /tools/screener?metas=
+ * financials&index=nifty50 narrows to large-cap financials.
  */
 
-import { useRouter, useSearchParams } from "next/navigation";
-import { useTransition } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   paramsToQuery, parseParams,
-  INDEX_KEYS, INDEX_LABELS, type IndexKey,
+  INDEX_KEYS, INDEX_LABELS,
 } from "./types";
+import { FilterDropdown } from "./FilterDropdown";
 
 export function IndexChips() {
-  const router = useRouter();
   const sp = useSearchParams();
   const initial = parseParams(sp);
-  const [, startTransition] = useTransition();
 
-  const pick = (k: IndexKey) => {
-    // Clicking the active index clears it (=== "All").
-    const next = initial.index === k ? "" : k;
-    const q = paramsToQuery({ ...initial, index: next, page: 1 });
-    startTransition(() => router.replace("/tools/screener" + q, { scroll: false }));
-  };
+  const options = INDEX_KEYS.map((k) => ({
+    value: k,
+    label: INDEX_LABELS[k],
+  }));
+
+  const hrefFor = (opt: { value: string }) =>
+    "/tools/screener" + paramsToQuery({
+      ...initial,
+      index: opt.value as typeof initial.index,
+      page: 1,
+    });
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      {INDEX_KEYS.map((k) => {
-        const active = initial.index === k;
-        return (
-          <button
-            key={k || "all"}
-            type="button"
-            onClick={() => pick(k)}
-            className={`inline-flex items-center px-3 py-1.5 rounded-full text-[12px] border transition-colors cursor-pointer select-none ${
-              active
-                ? "bg-[var(--color-accent-50)] border-[var(--color-accent-300)] text-[var(--color-accent-700)]"
-                : "bg-[var(--color-card)] hairline hover:bg-[var(--color-paper)]"
-            }`}
-          >
-            {INDEX_LABELS[k]}
-          </button>
-        );
-      })}
-    </div>
+    <FilterDropdown
+      value={initial.index}
+      options={options}
+      hrefFor={hrefFor}
+      placeholder="All"
+    />
   );
 }
