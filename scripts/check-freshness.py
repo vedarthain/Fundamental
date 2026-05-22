@@ -107,6 +107,35 @@ def check_price_age(conn: psycopg.Connection, max_days: int) -> tuple[bool, str]
     )
 
 
+def check_cookie_health(conn: psycopg.Connection) -> tuple[bool, str]:
+    """Detect Screener cookie expiry.
+
+    When fetch-many runs with dead cookies, every scrape returns 401/403 and
+    we record last_status='auth_failed' in screener_meta.  If we see a burst
+    of those in the last 7 days, cookies are dead and need refreshing.
+
+    Threshold: ≥ 10 recent auth_failed rows. One or two could be transient
+    (e.g. Screener temporarily rate-limiting one symbol); dozens means the
+    whole session is dead.
+    """
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT COUNT(*)::int
+              FROM app.screener_meta
+             WHERE last_status = 'auth_failed'
+               AND last_scraped_at > NOW() - INTERVAL '7 days'
+        """)
+        row = cur.fetchone()
+    n = (row[0] or 0) if row else 0
+    ok = n < 10
+    icon = "✓" if ok else "✗"
+    suffix = "" if ok else " — refresh SCREENER cookies in .env.local"
+    return ok, (
+        f"{icon} cookie_health: {n} auth_failed scrapes in last 7d "
+        f"(threshold < 10){suffix}"
+    )
+
+
 def check_panel_cache_populated(conn: psycopg.Connection) -> tuple[bool, str]:
     """Verify the stocks panel cache has rows for the latest snapshot.
     Detects the case where score_snapshot ran but the panel refresher
@@ -155,6 +184,7 @@ def main() -> int:
         with psycopg.connect(app_url) as conn:
             results.append(check_snapshot_age(conn, args.snapshot_max_days))
             results.append(check_panel_cache_populated(conn))
+            results.append(check_cookie_health(conn))
     except psycopg.OperationalError as e:
         print(f"✗ FATAL: could not connect to app DB — {e}", file=sys.stderr)
         return 2
