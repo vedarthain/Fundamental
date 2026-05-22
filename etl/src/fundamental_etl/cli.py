@@ -689,6 +689,123 @@ def _refresh_cluster_returns(app_c, golden_c, snap: "_date") -> int:
         return cur.rowcount
 
 
+def _refresh_stocks_panel_cache(app_c, golden_c, snap: "_date") -> int:
+    """Populate app.cluster_stocks_panel_cache for the given snapshot.
+
+    One row per (snapshot_date, cluster_id, symbol) — pre-joined identity,
+    score, market cap, current price, maturity tier, and 3-horizon price
+    returns.  The /sectors page reads this entire table in one query and
+    ships it to the client; every interaction (industry switch, tier
+    filter, sector tab) becomes a client-side React state change with
+    zero server round-trips.
+
+    Returns the number of rows written.
+    """
+    # ── 1. All scored stock identity + score + meta rows (app DB) ────────
+    with app_c.cursor() as cur:
+        cur.execute("""
+            SELECT
+                s.symbol,
+                s.cluster_id,
+                u.company_name,
+                sm.market_cap_cr::float                AS market_cap_cr,
+                sm.current_price::float                AS current_price,
+                s.composite_pct::float                 AS composite_pct,
+                s.quality_pct::float                   AS quality_pct,
+                s.valuation_pct::float                 AS valuation_pct,
+                s.momentum_pct::float                  AS momentum_pct,
+                s.maturity_tier
+              FROM app.scores s
+              JOIN app.universe u USING (symbol)
+         LEFT JOIN app.screener_meta sm USING (symbol)
+             WHERE s.snapshot_date = %s
+        """, (snap,))
+        score_rows = cur.fetchall()
+
+    if not score_rows:
+        return 0
+
+    # ── 2. Per-symbol prices at 4 horizons (golden DB) ───────────────────
+    #
+    # Same correlated-subquery shape as _refresh_cluster_returns — slow but
+    # correct under data gaps.  Scoped to the symbols we just pulled so we
+    # don't waste work on the 3,000+ non-universe symbols in golden.
+    sym_ns_list = [f"{r['symbol']}.NS" for r in score_rows]
+    with golden_c.cursor() as cur:
+        cur.execute("""
+            WITH latest_d AS (
+                SELECT MAX(date) AS d FROM golden.price_history
+                 WHERE interval = '1d' AND close IS NOT NULL
+            ),
+            syms AS (SELECT unnest(%s::text[]) AS symbol)
+            SELECT
+                REPLACE(s.symbol, '.NS', '') AS symbol,
+                (SELECT close::float FROM golden.price_history p
+                  WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
+                  ORDER BY p.date DESC LIMIT 1) AS p_now,
+                (SELECT close::float FROM golden.price_history p
+                  WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
+                    AND p.date <= (SELECT d FROM latest_d) - INTERVAL '7 days'
+                  ORDER BY p.date DESC LIMIT 1) AS p_w1,
+                (SELECT close::float FROM golden.price_history p
+                  WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
+                    AND p.date <= (SELECT d FROM latest_d) - INTERVAL '30 days'
+                  ORDER BY p.date DESC LIMIT 1) AS p_m1,
+                (SELECT close::float FROM golden.price_history p
+                  WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
+                    AND p.date <= (SELECT d FROM latest_d) - INTERVAL '365 days'
+                  ORDER BY p.date DESC LIMIT 1) AS p_y1
+            FROM syms s
+        """, (sym_ns_list,))
+        prices = {r["symbol"]: r for r in cur.fetchall()}
+
+    # ── 3. Compute per-stock returns + assemble rows ─────────────────────
+    def _ret(now, past):
+        if now is None or past is None or past <= 0:
+            return None
+        return now / past - 1.0
+
+    rows = []
+    for r in score_rows:
+        p = prices.get(r["symbol"])
+        p_now = p["p_now"] if p else None
+        rows.append((
+            snap, r["cluster_id"], r["symbol"], r["company_name"],
+            r["market_cap_cr"], r["current_price"],
+            r["composite_pct"], r["quality_pct"], r["valuation_pct"], r["momentum_pct"],
+            r["maturity_tier"],
+            _ret(p_now, p["p_w1"]) if p else None,
+            _ret(p_now, p["p_m1"]) if p else None,
+            _ret(p_now, p["p_y1"]) if p else None,
+        ))
+
+    # ── 4. DELETE this snapshot's old rows + bulk INSERT ─────────────────
+    with app_c.cursor() as cur:
+        cur.execute(
+            "DELETE FROM app.cluster_stocks_panel_cache WHERE snapshot_date = %s",
+            (snap,),
+        )
+        cur.executemany(
+            """
+            INSERT INTO app.cluster_stocks_panel_cache (
+                snapshot_date, cluster_id, symbol, company_name,
+                market_cap_cr, current_price,
+                composite_pct, quality_pct, valuation_pct, momentum_pct,
+                maturity_tier,
+                ret_1w, ret_1m, ret_1y
+            ) VALUES (
+                %s, %s, %s, %s,
+                %s, %s,
+                %s, %s, %s, %s,
+                %s,
+                %s, %s, %s
+            )
+            """,
+            rows,
+        )
+        return cur.rowcount
+
+
 @app.command("score")
 def score_cmd(snapshot: str = typer.Option(None, help="YYYY-MM-DD; defaults to today")):
     """Run the percentile + composite scorer for a snapshot date.
@@ -725,6 +842,18 @@ def score_cmd(snapshot: str = typer.Option(None, help="YYYY-MM-DD; defaults to t
             log.info("cluster_returns_refreshed", rows=ret_rows, snapshot=snap.isoformat())
         except Exception as e:
             log.warning("cluster_returns_refresh_failed", error=str(e)[:200])
+            conn.rollback()
+
+        # Populate the per-stock panel cache so /sectors can ship the full
+        # 2,150-row dataset to the client in one fetch and make industry
+        # clicks / tier filters / sector tabs zero-cost client-side state.
+        try:
+            with golden_conn() as gc:
+                panel_rows = _refresh_stocks_panel_cache(conn, gc, snap)
+            conn.commit()
+            log.info("stocks_panel_cache_refreshed", rows=panel_rows, snapshot=snap.isoformat())
+        except Exception as e:
+            log.warning("stocks_panel_cache_refresh_failed", error=str(e)[:200])
             conn.rollback()
     log.info("score_done", **counts)
 

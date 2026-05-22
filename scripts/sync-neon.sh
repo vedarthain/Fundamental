@@ -236,6 +236,43 @@ copy_replace app.cluster_composite_cache "$NEON_APP_URL" "$LOCAL_APP" \
   "snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_composite_cache)" \
   "snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_composite_cache)"
 
+# ----- cluster_stocks_panel_cache (pre-joined /sectors stock list) --------
+# SPA architecture for /sectors: ships ALL industries' stock rows to the
+# client in one go (~2,150 rows ≈ 80KB gzipped) so industry switches,
+# tier filters, and sector tabs are pure client-side state changes with
+# zero server round-trips. See migration 0017 for the full rationale.
+#
+# Idempotent DDL — creates the table on first sync after upgrade.
+echo "▶ ensuring app.cluster_stocks_panel_cache table exists on Neon..."
+psql "$NEON_APP_URL" -v ON_ERROR_STOP=1 <<'DDLSQL'
+CREATE TABLE IF NOT EXISTS app.cluster_stocks_panel_cache (
+    snapshot_date    date    NOT NULL,
+    cluster_id       text    NOT NULL,
+    symbol           text    NOT NULL,
+    company_name     text,
+    market_cap_cr    numeric,
+    current_price    numeric,
+    composite_pct    numeric,
+    quality_pct      numeric,
+    valuation_pct    numeric,
+    momentum_pct     numeric,
+    maturity_tier    text,
+    ret_1w           numeric,
+    ret_1m           numeric,
+    ret_1y           numeric,
+    refreshed_at     timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (snapshot_date, cluster_id, symbol)
+);
+CREATE INDEX IF NOT EXISTS cluster_stocks_panel_cache_snap_idx
+    ON app.cluster_stocks_panel_cache (snapshot_date);
+CREATE INDEX IF NOT EXISTS cluster_stocks_panel_cache_cluster_idx
+    ON app.cluster_stocks_panel_cache (cluster_id, snapshot_date);
+DDLSQL
+
+copy_replace app.cluster_stocks_panel_cache "$NEON_APP_URL" "$LOCAL_APP" \
+  "snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_stocks_panel_cache)" \
+  "snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_stocks_panel_cache)"
+
 # ----- golden price history: incremental ---------------------------------
 echo "▶ syncing golden.price_history (incremental)..."
 GOLDEN_FILTER=$(psql "$LOCAL_APP" -tAc "
