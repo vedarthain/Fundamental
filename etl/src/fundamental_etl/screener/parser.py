@@ -23,10 +23,14 @@ from openpyxl import load_workbook
 
 
 # Map Screener row labels → our column names. Anything not listed is ignored.
+#
+# Note: the annual PROFIT & LOSS section in Screener's "Data Sheet" tab does
+# NOT have aggregate "Expenses" or "Operating Profit" rows — only the
+# expense components listed in PNL_EXPENSE_COMPONENTS below. We derive both
+# aggregates post-parse from those components. (The Quarters section DOES
+# have the aggregate rows directly, so QUARTER_LABELS maps them straight.)
 PNL_LABELS = {
     "Sales": "sales",
-    "Expenses": "expenses",
-    "Operating Profit": "operating_profit",
     "Other Income": "other_income",
     "Depreciation": "depreciation",
     "Interest": "interest",
@@ -34,6 +38,23 @@ PNL_LABELS = {
     "Tax": "tax",
     "Net profit": "net_profit",
     "Dividend Amount": "dividend_amount",
+}
+
+# Annual expense components — Screener decomposes "Expenses" into these in the
+# PROFIT & LOSS section. We sum them per period to derive:
+#   expenses          = sum of these components (None-safe; missing == skip)
+#   operating_profit  = sales - expenses
+# This is Screener's own definition of OP (Interest, Depreciation, and Other
+# Income are NOT subtracted here — they're separate rows). The derivation
+# happens at the end of parse_export(), see below.
+PNL_EXPENSE_COMPONENTS = {
+    "Raw Material Cost",
+    "Change in Inventory",
+    "Power and Fuel",
+    "Other Mfr. Exp",
+    "Employee Cost",
+    "Selling and admin",
+    "Other Expenses",
 }
 
 QUARTER_LABELS = {
@@ -125,6 +146,12 @@ def parse_export(xlsx_bytes: bytes) -> ParsedExport:
     period_dates: list[Optional[date]] = []
     bs_total_seen = 0  # BS has two "Total" rows; first = total liabilities, second = total assets
 
+    # Per-period accumulator for PNL expense components. Mapped {period_end:
+    # [v1, v2, ...]}. Summed at end of parse to derive aggregate Expenses
+    # and Operating Profit (which Screener doesn't emit as standalone rows
+    # in the annual PROFIT & LOSS section).
+    pnl_expense_acc: dict[date, list[float]] = {}
+
     for row in rows:
         if not row:
             continue
@@ -191,6 +218,17 @@ def parse_export(xlsx_bytes: bytes) -> ParsedExport:
                     continue
                 out.annual.setdefault(period_dates[i], {})[col] = v
 
+        elif section == "pnl" and label in PNL_EXPENSE_COMPONENTS:
+            # Accumulate expense components for later aggregation. Sum of
+            # these per period → "expenses"; sales − expenses → "operating_profit".
+            for i, val in enumerate(row[1:], start=0):
+                if i >= len(period_dates) or period_dates[i] is None:
+                    continue
+                v = _to_float(val)
+                if v is None:
+                    continue
+                pnl_expense_acc.setdefault(period_dates[i], []).append(v)
+
         elif section == "quarters" and label in QUARTER_LABELS:
             col = QUARTER_LABELS[label]
             for i, val in enumerate(row[1:], start=0):
@@ -232,6 +270,25 @@ def parse_export(xlsx_bytes: bytes) -> ParsedExport:
                 if v is None:
                     continue
                 out.annual.setdefault(period_dates[i], {})[col] = v
+
+    # Derive aggregate Expenses + Operating Profit per annual period from the
+    # component breakdown. Screener's annual P&L doesn't emit these as their
+    # own rows in the Data Sheet (only Quarters does), so we compute them
+    # from PNL_EXPENSE_COMPONENTS the same way Screener does internally:
+    #   expenses         = sum(components present that period)
+    #   operating_profit = sales - expenses (only if both are known)
+    # Periods with zero present components are left untouched (don't fabricate
+    # zeros — a bank with no manufacturing components shouldn't get
+    # expenses=0 / operating_profit=sales).
+    for d, components in pnl_expense_acc.items():
+        if not components:
+            continue
+        period = out.annual.setdefault(d, {})
+        if "expenses" not in period:
+            period["expenses"] = sum(components)
+        sales = period.get("sales")
+        if sales is not None and period["expenses"] is not None and "operating_profit" not in period:
+            period["operating_profit"] = sales - period["expenses"]
 
     # Merge annual_close_price into annual rows
     for d, p in out.annual_close_price.items():
