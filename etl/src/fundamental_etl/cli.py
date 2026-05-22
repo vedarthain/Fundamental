@@ -855,6 +855,24 @@ def score_cmd(snapshot: str = typer.Option(None, help="YYYY-MM-DD; defaults to t
         except Exception as e:
             log.warning("stocks_panel_cache_refresh_failed", error=str(e)[:200])
             conn.rollback()
+
+        # Data-quality assertions — catch the class of regression we saw with
+        # the operating_profit-NULL bug (parser change silently zeroed a
+        # column across 19,873 rows).  Each failure is logged as a warning
+        # so the operator notices on the next score run.  Doesn't block.
+        try:
+            from .dq import run_assertions, summarize
+            results = run_assertions(conn)
+            passed, failed = summarize(results)
+            for r in results:
+                if not r.passed:
+                    log.warning("dq_check_failed", name=r.name,
+                                actual=r.actual_pct, threshold=r.threshold_pct,
+                                populated=r.populated, total=r.total)
+            log.info("dq_checks_done", passed=passed, failed=failed, total=len(results))
+        except Exception as e:
+            # DQ checks failing to RUN is itself a warning, not a hard error.
+            log.warning("dq_checks_errored", error=str(e)[:200])
     log.info("score_done", **counts)
 
 
