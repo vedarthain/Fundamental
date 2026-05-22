@@ -572,11 +572,16 @@ function AboutCard({
     });
   }
   if (priceHistoryStart) {
-    const yrs = (
-      (Date.now() - new Date(priceHistoryStart).getTime()) /
-      (365.25 * 24 * 3600 * 1000)
-    ).toFixed(0);
-    facts.push({ label: "Price history", value: `${yrs} years available` });
+    const totalMs = Date.now() - new Date(priceHistoryStart).getTime();
+    const yrs = Math.floor(totalMs / (365.25 * 24 * 3600 * 1000));
+    const mos = Math.floor(totalMs / (30.44 * 24 * 3600 * 1000));
+    const phLabel =
+      yrs >= 1
+        ? `${yrs} year${yrs !== 1 ? "s" : ""} available`
+        : mos >= 1
+        ? `${mos} month${mos !== 1 ? "s" : ""} available`
+        : "< 1 month available";
+    facts.push({ label: "Price history", value: phLabel });
   }
   if (stock.years_of_data) {
     facts.push({ label: "Fundamentals", value: `${stock.years_of_data} years available` });
@@ -625,7 +630,12 @@ function PriceChartCard({
           <div className="font-display text-[18px] mt-0.5">
             {symbol} ·{" "}
             <span className="muted-text">
-              monthly close, {history.length > 0 ? `${first?.date.slice(0, 4)}–${last?.date.slice(0, 4)}` : "—"}
+              monthly close,{" "}
+              {history.length > 0
+                ? first?.date.slice(0, 4) === last?.date.slice(0, 4)
+                  ? first?.date.slice(0, 4)                              // single year: "2026"
+                  : `${first?.date.slice(0, 4)}–${last?.date.slice(0, 4)}`  // range: "2019–2026"
+                : "—"}
             </span>
           </div>
         </div>

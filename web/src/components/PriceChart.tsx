@@ -128,13 +128,25 @@ export function PriceChart({ data }: { data: PricePoint[] }) {
             dataKey="date"
             tickFormatter={(d) => {
               const dt = new Date(d);
-              // Short-range views get day-month; long-range views get year only.
-              if (range === "1D" || range === "1W" || range === "1M") {
+              // Determine the actual span of the visible data (not the selected
+              // range button) so we pick a label format that avoids duplicates.
+              // e.g. 3Y selected but stock only has 3 months of data → all ticks
+              // would be "2026" with year-only format. Instead, detect the real
+              // span and fall back to month+year when it's ≤ 18 months.
+              const spanDays =
+                filtered.length >= 2
+                  ? (new Date(filtered[filtered.length - 1].date).getTime() -
+                      new Date(filtered[0].date).getTime()) /
+                    86_400_000
+                  : 0;
+
+              if (range === "1D" || range === "1W" || range === "1M" || spanDays <= 31) {
                 return dt.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
               }
-              if (range === "3M" || range === "1Y") {
+              if (range === "3M" || range === "1Y" || spanDays <= 548 /* ~18 months */) {
                 return dt.toLocaleDateString("en-IN", { month: "short", year: "2-digit" });
               }
+              // True multi-year span: year-only is safe (won't duplicate).
               return String(dt.getFullYear());
             }}
             interval="preserveStartEnd"

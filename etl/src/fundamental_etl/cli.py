@@ -539,15 +539,63 @@ def fetch_shareholding_cmd(
     log.info("done", **counts)
 
 
+def _refresh_cluster_cache(conn, snap: "_date") -> int:
+    """Refresh app.cluster_composite_cache for the given snapshot date.
+
+    Deletes the old rows for that snapshot, re-inserts from the live
+    cluster_composite view, and returns the row count written.  Called
+    automatically at the end of score_cmd so /sectors always reads
+    pre-computed data.
+    """
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM app.cluster_composite_cache WHERE snapshot_date = %s", (snap,))
+        cur.execute("""
+            INSERT INTO app.cluster_composite_cache (
+                cluster_id, snapshot_date, n_stocks, industry_name, meta_cluster_id,
+                sector_name, avg_roe_3y, avg_roce_3y, avg_op_margin_3y, avg_np_cagr_5y,
+                avg_rev_cagr_5y, avg_pe_ttm, avg_pb, avg_ret_12m_rel,
+                roe_pct, roce_pct, opm_pct, np_pct, rev_pct, pe_pct, pb_pct, mom_pct,
+                quality_aggr_pct, valuation_aggr_pct, momentum_aggr_pct, composite_aggr_pct,
+                refreshed_at
+            )
+            SELECT
+                cluster_id, snapshot_date, n_stocks, industry_name, meta_cluster_id,
+                sector_name, avg_roe_3y, avg_roce_3y, avg_op_margin_3y, avg_np_cagr_5y,
+                avg_rev_cagr_5y, avg_pe_ttm, avg_pb, avg_ret_12m_rel,
+                roe_pct, roce_pct, opm_pct, np_pct, rev_pct, pe_pct, pb_pct, mom_pct,
+                quality_aggr_pct, valuation_aggr_pct, momentum_aggr_pct, composite_aggr_pct,
+                now()
+            FROM app.cluster_composite
+            WHERE snapshot_date = %s
+        """, (snap,))
+        return cur.rowcount
+
+
 @app.command("score")
 def score_cmd(snapshot: str = typer.Option(None, help="YYYY-MM-DD; defaults to today")):
-    """Run the percentile + composite scorer for a snapshot date."""
+    """Run the percentile + composite scorer for a snapshot date.
+
+    Also refreshes app.cluster_composite_cache so the /sectors page serves
+    pre-computed data on the next request (avoids recomputing PERCENT_RANK
+    windows on every web hit).
+    """
     configure_logging()
     snap = _date.fromisoformat(snapshot) if snapshot else _date.today()
     log.info("score_start", snapshot=snap.isoformat())
     with app_conn() as conn:
         counts = score_snapshot(conn, snap)
         conn.commit()
+        # Refresh the materialized cache so /sectors never runs the expensive
+        # PERCENT_RANK() view live.  Runs in the same connection, committed
+        # together so a partial failure leaves the cache unchanged.
+        try:
+            cache_rows = _refresh_cluster_cache(conn, snap)
+            conn.commit()
+            log.info("cluster_cache_refreshed", rows=cache_rows, snapshot=snap.isoformat())
+        except Exception as e:
+            log.warning("cluster_cache_refresh_failed", error=str(e)[:200])
+            # Non-fatal: old cache is still valid; /sectors falls back gracefully.
+            conn.rollback()
     log.info("score_done", **counts)
 
 

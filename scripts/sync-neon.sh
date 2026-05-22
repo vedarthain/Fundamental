@@ -180,6 +180,55 @@ copy_replace app.cluster_assignment "$NEON_APP_URL" "$LOCAL_APP" \
 copy_replace app.cluster_scorecard "$NEON_APP_URL" "$LOCAL_APP" \
   "TRUE" "TRUE"
 
+# ----- cluster_composite_cache (pre-computed /sectors tile data) ----------
+# Performance fix: /sectors now reads from this table instead of the live
+# cluster_composite view (which ran PERCENT_RANK() windows on every request,
+# adding 3-4s on Neon cold-start). The ETL score command refreshes this cache
+# locally after each score run; this sync ships the fresh cache to production.
+# Tiny: 46 rows × 1 snapshot ≈ 5 KB.
+#
+# Idempotent DDL: creates the table on Neon on first run (migration 0015 only
+# applies locally; we don't run pg_dump migrations on every sync).
+echo "▶ ensuring app.cluster_composite_cache table exists on Neon..."
+psql "$NEON_APP_URL" -v ON_ERROR_STOP=1 <<'DDLSQL'
+CREATE TABLE IF NOT EXISTS app.cluster_composite_cache (
+    cluster_id          text        NOT NULL,
+    snapshot_date       date        NOT NULL,
+    n_stocks            int,
+    industry_name       text,
+    meta_cluster_id     text,
+    sector_name         text,
+    avg_roe_3y          numeric,
+    avg_roce_3y         numeric,
+    avg_op_margin_3y    numeric,
+    avg_np_cagr_5y      numeric,
+    avg_rev_cagr_5y     numeric,
+    avg_pe_ttm          numeric,
+    avg_pb              numeric,
+    avg_ret_12m_rel     numeric,
+    roe_pct             int,
+    roce_pct            int,
+    opm_pct             int,
+    np_pct              int,
+    rev_pct             int,
+    pe_pct              int,
+    pb_pct              int,
+    mom_pct             int,
+    quality_aggr_pct    int,
+    valuation_aggr_pct  int,
+    momentum_aggr_pct   int,
+    composite_aggr_pct  int,
+    refreshed_at        timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (cluster_id, snapshot_date)
+);
+CREATE INDEX IF NOT EXISTS cluster_composite_cache_snap_idx
+    ON app.cluster_composite_cache (snapshot_date);
+DDLSQL
+
+copy_replace app.cluster_composite_cache "$NEON_APP_URL" "$LOCAL_APP" \
+  "snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_composite_cache)" \
+  "snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_composite_cache)"
+
 # ----- golden price history: incremental ---------------------------------
 echo "▶ syncing golden.price_history (incremental)..."
 GOLDEN_FILTER=$(psql "$LOCAL_APP" -tAc "

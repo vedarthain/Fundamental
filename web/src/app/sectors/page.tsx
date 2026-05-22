@@ -3,7 +3,10 @@ import { sql, golden } from "@/lib/db";
 import { band, bandColor, tierLabel } from "@/lib/score";
 import { TierFilter, type TierMeta } from "./TierFilter";
 
-export const revalidate = 3600;
+// Score runs happen weekly; 24-hour Vercel cache is safe and avoids cold-start
+// hits on every visit. The ETL score command refreshes cluster_composite_cache
+// immediately after scoring — data is always fresh post-run.
+export const revalidate = 86400;
 
 type IndustryTile = {
   industry_id: string;
@@ -277,12 +280,17 @@ async function loadHeatMap(): Promise<{ tiles: IndustryTile[]; snapshotDate: str
   // Pull cluster stats + returns in parallel — returns query touches golden_db
   // (separate Postgres) so it doesn't contend with the app DB query.
   //
-  // We read from app.cluster_composite, NOT from AVG(scores.*_pct). The
-  // per-stock percentile columns in scores are rank-within-cluster: their
-  // mean is structurally ~50 for every cluster, so averaging them gives no
-  // industry-vs-industry signal. cluster_composite computes cluster-level
-  // raw aggregates (avg ROE, avg P/E, etc.) and percent-ranks those across
-  // clusters — that's the real cross-industry comparison.
+  // We read from app.cluster_composite_cache (a pre-computed TABLE), NOT from
+  // the cluster_composite VIEW or from AVG(scores.*_pct).
+  //
+  // Why not AVG(scores.*_pct): per-stock percentile columns are rank-within-cluster,
+  // so their mean is structurally ~50 for every cluster — no cross-industry signal.
+  //
+  // Why not the view: cluster_composite runs 8 PERCENT_RANK() windows + AVG(JSONB)
+  // across ~2,150 rows on every request, adding 3-4 seconds on Neon cold-start.
+  //
+  // cluster_composite_cache holds exactly the same data, written once by the ETL
+  // score command after each weekly score run. This makes /sectors <300ms.
   const [rawTiles, returns] = await Promise.all([
     sql<Omit<IndustryTile, "ret_1w" | "ret_1m" | "ret_1y">[]>`
       SELECT
@@ -296,7 +304,7 @@ async function loadHeatMap(): Promise<{ tiles: IndustryTile[]; snapshotDate: str
         cc.quality_aggr_pct::float   AS avg_quality,
         cc.valuation_aggr_pct::float AS avg_valuation,
         cc.momentum_aggr_pct::float  AS avg_momentum
-      FROM app.cluster_composite cc
+      FROM app.cluster_composite_cache cc
       JOIN app.meta_cluster mc ON mc.id = cc.meta_cluster_id
       WHERE cc.snapshot_date = ${snapshotDate}
       ORDER BY mc.display_order, cc.industry_name
