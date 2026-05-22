@@ -49,6 +49,19 @@ trap "rm -rf $TMP_DIR" EXIT
 echo "▶ sync starting at $(date -Iseconds)"
 echo "  staging: $TMP_DIR"
 
+# ----- apply pending migrations to Neon before data sync ------------------
+# scripts/migrate.py replaces the old pattern of inline DDL heredocs scattered
+# through this file. It tracks state in app.schema_migrations on each DB, so
+# DDL drift between local and Neon is now impossible — every migration that's
+# in db/migrations/ either ran or is queued.
+#
+# Idempotent: if Neon is already up to date, this is a no-op (~100ms).
+# First-time setup on a Neon DB whose schema predates the migration tracker:
+# run `scripts/migrate.py --baseline --url "$NEON_APP_URL"` once by hand.
+PYTHON="${PYTHON:-etl/.venv/bin/python}"
+echo "▶ applying pending migrations to Neon..."
+"$PYTHON" scripts/migrate.py --url "$NEON_APP_URL"
+
 # ----- discover latest snapshot date locally ------------------------------
 LATEST_SNAP=$(psql "$LOCAL_APP" -tAc "SELECT MAX(snapshot_date) FROM app.scores")
 [[ -z "$LATEST_SNAP" ]] && { echo "❌ no snapshots in local app.scores"; exit 1; }
@@ -181,94 +194,17 @@ copy_replace app.cluster_scorecard "$NEON_APP_URL" "$LOCAL_APP" \
   "TRUE" "TRUE"
 
 # ----- cluster_composite_cache (pre-computed /sectors tile data) ----------
-# Performance fix: /sectors now reads from this table instead of the live
-# cluster_composite view (which ran PERCENT_RANK() windows on every request,
-# adding 3-4s on Neon cold-start). The ETL score command refreshes this cache
-# locally after each score run; this sync ships the fresh cache to production.
-# Tiny: 46 rows × 1 snapshot ≈ 5 KB.
-#
-# Idempotent DDL: creates the table on Neon on first run (migration 0015 only
-# applies locally; we don't run pg_dump migrations on every sync).
-echo "▶ ensuring app.cluster_composite_cache table exists on Neon..."
-psql "$NEON_APP_URL" -v ON_ERROR_STOP=1 <<'DDLSQL'
-CREATE TABLE IF NOT EXISTS app.cluster_composite_cache (
-    cluster_id          text        NOT NULL,
-    snapshot_date       date        NOT NULL,
-    n_stocks            int,
-    industry_name       text,
-    meta_cluster_id     text,
-    sector_name         text,
-    avg_roe_3y          numeric,
-    avg_roce_3y         numeric,
-    avg_op_margin_3y    numeric,
-    avg_np_cagr_5y      numeric,
-    avg_rev_cagr_5y     numeric,
-    avg_pe_ttm          numeric,
-    avg_pb              numeric,
-    avg_ret_12m_rel     numeric,
-    roe_pct             int,
-    roce_pct            int,
-    opm_pct             int,
-    np_pct              int,
-    rev_pct             int,
-    pe_pct              int,
-    pb_pct              int,
-    mom_pct             int,
-    quality_aggr_pct    int,
-    valuation_aggr_pct  int,
-    momentum_aggr_pct   int,
-    composite_aggr_pct  int,
-    refreshed_at        timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (cluster_id, snapshot_date)
-);
-CREATE INDEX IF NOT EXISTS cluster_composite_cache_snap_idx
-    ON app.cluster_composite_cache (snapshot_date);
--- Return columns added in migration 0016. ALTER IF NOT EXISTS keeps the
--- DDL idempotent — no-op on a fresh Neon DB, adds the columns on the
--- first sync after upgrading.
-ALTER TABLE app.cluster_composite_cache
-    ADD COLUMN IF NOT EXISTS ret_1w numeric,
-    ADD COLUMN IF NOT EXISTS ret_1m numeric,
-    ADD COLUMN IF NOT EXISTS ret_1y numeric;
-DDLSQL
-
+# Table + schema created by migrations 0015 / 0016 — applied to Neon at the
+# top of this script via migrate.py. Here we only ship the latest snapshot's
+# rows. Tiny: 46 rows × 1 snapshot ≈ 5 KB.
 copy_replace app.cluster_composite_cache "$NEON_APP_URL" "$LOCAL_APP" \
   "snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_composite_cache)" \
   "snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_composite_cache)"
 
 # ----- cluster_stocks_panel_cache (pre-joined /sectors stock list) --------
-# SPA architecture for /sectors: ships ALL industries' stock rows to the
-# client in one go (~2,150 rows ≈ 80KB gzipped) so industry switches,
-# tier filters, and sector tabs are pure client-side state changes with
-# zero server round-trips. See migration 0017 for the full rationale.
-#
-# Idempotent DDL — creates the table on first sync after upgrade.
-echo "▶ ensuring app.cluster_stocks_panel_cache table exists on Neon..."
-psql "$NEON_APP_URL" -v ON_ERROR_STOP=1 <<'DDLSQL'
-CREATE TABLE IF NOT EXISTS app.cluster_stocks_panel_cache (
-    snapshot_date    date    NOT NULL,
-    cluster_id       text    NOT NULL,
-    symbol           text    NOT NULL,
-    company_name     text,
-    market_cap_cr    numeric,
-    current_price    numeric,
-    composite_pct    numeric,
-    quality_pct      numeric,
-    valuation_pct    numeric,
-    momentum_pct     numeric,
-    maturity_tier    text,
-    ret_1w           numeric,
-    ret_1m           numeric,
-    ret_1y           numeric,
-    refreshed_at     timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (snapshot_date, cluster_id, symbol)
-);
-CREATE INDEX IF NOT EXISTS cluster_stocks_panel_cache_snap_idx
-    ON app.cluster_stocks_panel_cache (snapshot_date);
-CREATE INDEX IF NOT EXISTS cluster_stocks_panel_cache_cluster_idx
-    ON app.cluster_stocks_panel_cache (cluster_id, snapshot_date);
-DDLSQL
-
+# Powers the SPA-style /sectors page — all industries' stock rows ship to
+# the client in one fetch (~2,150 rows ≈ 80KB gzipped) so industry switches
+# are pure client-side state. Table created by migration 0017.
 copy_replace app.cluster_stocks_panel_cache "$NEON_APP_URL" "$LOCAL_APP" \
   "snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_stocks_panel_cache)" \
   "snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_stocks_panel_cache)"
