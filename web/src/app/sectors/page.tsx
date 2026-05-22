@@ -127,145 +127,6 @@ async function loadIndustryStocks(
   });
 }
 
-/**
- * Compute cluster-weighted price returns at 1W / 1M / 1Y horizons. We weight
- * by market cap so a cluster's headline number reflects the heavyweights
- * (e.g. RELIANCE dominating Energy), not the simple average across small
- * and large names.
- *
- * Returns Map<cluster_id, {w1, m1, y1}> for downstream merging onto tiles.
- */
-async function loadIndustryReturns(snapshotDate: string): Promise<Map<string, { w1: number | null; m1: number | null; y1: number | null }>> {
-  type PriceRow = {
-    symbol: string;
-    p_now: number | null;
-    p_w1:  number | null;
-    p_m1:  number | null;
-    p_y1:  number | null;
-  };
-  // Single-scan approach: find the 4 key dates globally, then filter the
-  // partition to only those 4 dates and pivot with conditional aggregation.
-  // This replaces 4 correlated subqueries × 2,150 symbols (8,600 index
-  // lookups) with one partition scan across ~4 × 2,150 = 8,600 rows — but
-  // as a single sequential read rather than 8,600 separate seeks.
-  // Result: ~10-20× faster on cold Neon compute.
-  const prices = await golden<PriceRow[]>`
-    WITH key_dates AS (
-      SELECT
-        MAX(date) FILTER (WHERE date <= CURRENT_DATE)          AS d_now,
-        MAX(date) FILTER (WHERE date <= CURRENT_DATE - 7)      AS d_w1,
-        MAX(date) FILTER (WHERE date <= CURRENT_DATE - 30)     AS d_m1,
-        MAX(date) FILTER (WHERE date <= CURRENT_DATE - 365)    AS d_y1
-      FROM golden.price_history
-      WHERE interval = '1d' AND close IS NOT NULL
-    )
-    SELECT
-      REPLACE(ph.symbol, '.NS', '') AS symbol,
-      MAX(ph.close) FILTER (WHERE ph.date = kd.d_now)::float AS p_now,
-      MAX(ph.close) FILTER (WHERE ph.date = kd.d_w1)::float  AS p_w1,
-      MAX(ph.close) FILTER (WHERE ph.date = kd.d_m1)::float  AS p_m1,
-      MAX(ph.close) FILTER (WHERE ph.date = kd.d_y1)::float  AS p_y1
-    FROM golden.price_history ph
-    CROSS JOIN key_dates kd
-    WHERE ph.interval = '1d'
-      AND ph.close IS NOT NULL
-      AND ph.date IN (kd.d_now, kd.d_w1, kd.d_m1, kd.d_y1)
-    GROUP BY ph.symbol
-  `;
-
-  // Per-symbol cluster + market cap at the latest score snapshot. The .NS
-  // suffix only exists in golden_db; app DB stores bare tickers.
-  type AssignRow = { symbol: string; industry_id: string; market_cap_cr: number | null };
-  const assignments = await sql<AssignRow[]>`
-    SELECT s.symbol, s.cluster_id AS industry_id, sm.market_cap_cr::float AS market_cap_cr
-    FROM app.scores s
-    LEFT JOIN app.screener_meta sm USING (symbol)
-    WHERE s.snapshot_date = ${snapshotDate}
-  `;
-
-  const priceBy = new Map<string, PriceRow>();
-  for (const p of prices) priceBy.set(p.symbol, p);
-
-  // For each cluster, maintain TWO parallel accumulators:
-  //   - mcap_*: market-cap-weighted (preferred — heavyweights drive the number)
-  //   - eq_*:   equal-weighted fallback (each stock contributes 1.0)
-  //
-  // We prefer market-cap-weighted but fall back to equal-weighted when no
-  // stock in the cluster has a market_cap_cr on Neon — without this
-  // fallback, small clusters (Fintech: 2 stocks, Insurance: 4 stocks) end
-  // up with null returns whenever even one stock's screener_meta row hasn't
-  // been synced. The fallback ensures tiles always show a number when
-  // price history exists, regardless of market-cap completeness.
-  type Accum = {
-    mcap_num_w1: number; mcap_den_w1: number;
-    mcap_num_m1: number; mcap_den_m1: number;
-    mcap_num_y1: number; mcap_den_y1: number;
-    eq_num_w1: number;   eq_den_w1: number;
-    eq_num_m1: number;   eq_den_m1: number;
-    eq_num_y1: number;   eq_den_y1: number;
-  };
-  const acc = new Map<string, Accum>();
-  for (const a of assignments) {
-    const p = priceBy.get(a.symbol);
-    if (!p || p.p_now == null) continue;
-    let bucket = acc.get(a.industry_id);
-    if (!bucket) {
-      bucket = {
-        mcap_num_w1: 0, mcap_den_w1: 0, mcap_num_m1: 0, mcap_den_m1: 0, mcap_num_y1: 0, mcap_den_y1: 0,
-        eq_num_w1: 0,   eq_den_w1: 0,   eq_num_m1: 0,   eq_den_m1: 0,   eq_num_y1: 0,   eq_den_y1: 0,
-      };
-      acc.set(a.industry_id, bucket);
-    }
-    const mcap = a.market_cap_cr && a.market_cap_cr > 0 ? a.market_cap_cr : 0;
-    // 1W
-    if (p.p_w1 != null && p.p_w1 > 0) {
-      const r = p.p_now / p.p_w1 - 1;
-      bucket.eq_num_w1 += r;
-      bucket.eq_den_w1 += 1;
-      if (mcap > 0) {
-        bucket.mcap_num_w1 += mcap * r;
-        bucket.mcap_den_w1 += mcap;
-      }
-    }
-    // 1M
-    if (p.p_m1 != null && p.p_m1 > 0) {
-      const r = p.p_now / p.p_m1 - 1;
-      bucket.eq_num_m1 += r;
-      bucket.eq_den_m1 += 1;
-      if (mcap > 0) {
-        bucket.mcap_num_m1 += mcap * r;
-        bucket.mcap_den_m1 += mcap;
-      }
-    }
-    // 1Y
-    if (p.p_y1 != null && p.p_y1 > 0) {
-      const r = p.p_now / p.p_y1 - 1;
-      bucket.eq_num_y1 += r;
-      bucket.eq_den_y1 += 1;
-      if (mcap > 0) {
-        bucket.mcap_num_y1 += mcap * r;
-        bucket.mcap_den_y1 += mcap;
-      }
-    }
-  }
-  // Prefer market-cap-weighted; fall back to equal-weighted; null only if
-  // no stock in the cluster had price history for that horizon at all.
-  const pick = (mNum: number, mDen: number, eNum: number, eDen: number): number | null => {
-    if (mDen > 0) return mNum / mDen;
-    if (eDen > 0) return eNum / eDen;
-    return null;
-  };
-  const out = new Map<string, { w1: number | null; m1: number | null; y1: number | null }>();
-  for (const [cid, b] of acc) {
-    out.set(cid, {
-      w1: pick(b.mcap_num_w1, b.mcap_den_w1, b.eq_num_w1, b.eq_den_w1),
-      m1: pick(b.mcap_num_m1, b.mcap_den_m1, b.eq_num_m1, b.eq_den_m1),
-      y1: pick(b.mcap_num_y1, b.mcap_den_y1, b.eq_num_y1, b.eq_den_y1),
-    });
-  }
-  return out;
-}
-
 // Wrap the data fetch in unstable_cache so it's cached at the data layer.
 // Without this, Next.js 15's `await searchParams` in the page component
 // marks the entire page as dynamic, bypassing the revalidate = 86400 ISR
@@ -283,49 +144,31 @@ async function loadHeatMap(): Promise<{ tiles: IndustryTile[]; snapshotDate: str
   const snapshotDate = latest[0]?.snapshot_date ?? null;
   if (!snapshotDate) return { tiles: [], snapshotDate: null };
 
-  // Pull cluster stats + returns in parallel — returns query touches golden_db
-  // (separate Postgres) so it doesn't contend with the app DB query.
-  //
-  // We read from app.cluster_composite_cache (a pre-computed TABLE), NOT from
-  // the cluster_composite VIEW or from AVG(scores.*_pct).
-  //
-  // Why not AVG(scores.*_pct): per-stock percentile columns are rank-within-cluster,
-  // so their mean is structurally ~50 for every cluster — no cross-industry signal.
-  //
-  // Why not the view: cluster_composite runs 8 PERCENT_RANK() windows + AVG(JSONB)
-  // across ~2,150 rows on every request, adding 3-4 seconds on Neon cold-start.
-  //
-  // cluster_composite_cache holds exactly the same data, written once by the ETL
-  // score command after each weekly score run. This makes /sectors <300ms.
-  const [rawTiles, returns] = await Promise.all([
-    sql<Omit<IndustryTile, "ret_1w" | "ret_1m" | "ret_1y">[]>`
-      SELECT
-        cc.cluster_id      AS industry_id,
-        cc.industry_name,
-        cc.meta_cluster_id AS sector_id,
-        cc.sector_name,
-        mc.display_order   AS meta_display_order,
-        cc.n_stocks        AS stock_count,
-        cc.composite_aggr_pct::float AS avg_composite,
-        cc.quality_aggr_pct::float   AS avg_quality,
-        cc.valuation_aggr_pct::float AS avg_valuation,
-        cc.momentum_aggr_pct::float  AS avg_momentum
-      FROM app.cluster_composite_cache cc
-      JOIN app.meta_cluster mc ON mc.id = cc.meta_cluster_id
-      WHERE cc.snapshot_date = ${snapshotDate}
-      ORDER BY mc.display_order, cc.industry_name
-    `,
-    loadIndustryReturns(snapshotDate),
-  ]);
-  const tiles: IndustryTile[] = rawTiles.map((t) => {
-    const r = returns.get(t.industry_id);
-    return {
-      ...t,
-      ret_1w: r?.w1 ?? null,
-      ret_1m: r?.m1 ?? null,
-      ret_1y: r?.y1 ?? null,
-    };
-  });
+  // Everything comes from one table: app.cluster_composite_cache. Returns
+  // (ret_1w / ret_1m / ret_1y) are pre-computed by the ETL `score` command
+  // after each weekly run and stored as numeric columns. /sectors no longer
+  // hits golden_db at all — single 46-row read from app DB makes the page
+  // <300ms even on cold start.
+  const tiles = await sql<IndustryTile[]>`
+    SELECT
+      cc.cluster_id      AS industry_id,
+      cc.industry_name,
+      cc.meta_cluster_id AS sector_id,
+      cc.sector_name,
+      mc.display_order   AS meta_display_order,
+      cc.n_stocks        AS stock_count,
+      cc.composite_aggr_pct::float AS avg_composite,
+      cc.quality_aggr_pct::float   AS avg_quality,
+      cc.valuation_aggr_pct::float AS avg_valuation,
+      cc.momentum_aggr_pct::float  AS avg_momentum,
+      cc.ret_1w::float   AS ret_1w,
+      cc.ret_1m::float   AS ret_1m,
+      cc.ret_1y::float   AS ret_1y
+    FROM app.cluster_composite_cache cc
+    JOIN app.meta_cluster mc ON mc.id = cc.meta_cluster_id
+    WHERE cc.snapshot_date = ${snapshotDate}
+    ORDER BY mc.display_order, cc.industry_name
+  `;
   return { tiles, snapshotDate };
 }
 

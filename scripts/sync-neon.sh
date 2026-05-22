@@ -223,6 +223,13 @@ CREATE TABLE IF NOT EXISTS app.cluster_composite_cache (
 );
 CREATE INDEX IF NOT EXISTS cluster_composite_cache_snap_idx
     ON app.cluster_composite_cache (snapshot_date);
+-- Return columns added in migration 0016. ALTER IF NOT EXISTS keeps the
+-- DDL idempotent — no-op on a fresh Neon DB, adds the columns on the
+-- first sync after upgrading.
+ALTER TABLE app.cluster_composite_cache
+    ADD COLUMN IF NOT EXISTS ret_1w numeric,
+    ADD COLUMN IF NOT EXISTS ret_1m numeric,
+    ADD COLUMN IF NOT EXISTS ret_1y numeric;
 DDLSQL
 
 copy_replace app.cluster_composite_cache "$NEON_APP_URL" "$LOCAL_APP" \

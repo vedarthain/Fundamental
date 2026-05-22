@@ -571,6 +571,124 @@ def _refresh_cluster_cache(conn, snap: "_date") -> int:
         return cur.rowcount
 
 
+def _refresh_cluster_returns(app_c, golden_c, snap: "_date") -> int:
+    """Compute market-cap-weighted 1W / 1M / 1Y cluster returns and write
+    them to app.cluster_composite_cache.
+
+    Cross-DB step: pulls (symbol → cluster, market cap) from app DB and
+    (symbol → prices at 4 horizons) from golden DB, joins in Python.
+    Without this, /sectors had to do the per-symbol price query live on
+    every uncached request — 3-4s on cold golden_db.
+
+    Returns the number of cluster rows updated.
+    """
+    # ── 1. Per-symbol cluster + market cap (app DB) ──────────────────────
+    with app_c.cursor() as cur:
+        cur.execute("""
+            SELECT u.symbol,
+                   ca.cluster_id,
+                   COALESCE(sm.market_cap_cr, 0)::float AS mcap
+              FROM app.universe u
+              JOIN app.cluster_assignment ca USING (symbol)
+         LEFT JOIN app.screener_meta sm USING (symbol)
+             WHERE u.is_active
+        """)
+        sym_meta = {r["symbol"]: (r["cluster_id"], r["mcap"] or 0.0) for r in cur.fetchall()}
+
+    if not sym_meta:
+        return 0
+
+    # ── 2. Per-symbol prices at 4 horizons (golden DB) ───────────────────
+    #
+    # Correlated subqueries: per-symbol "most recent close on or before
+    # X days ago".  Slower than a single-scan version (~5-10s vs ~1s) but
+    # CORRECT in all cases — including when refresh-ltp hasn't filled
+    # today's row for every symbol yet, or when individual symbols have
+    # data gaps around our target dates.  This runs once per week during
+    # the score ETL, so the slower query is fine; the web page reads from
+    # the materialised cache and never sees this cost.
+    #
+    # syms is scoped to universe symbols only (passed in from Python) so
+    # we don't waste work on the 3000+ non-universe symbols in golden.
+    sym_ns_list = [f"{s}.NS" for s in sym_meta]
+    with golden_c.cursor() as cur:
+        cur.execute("""
+            WITH latest_d AS (
+                SELECT MAX(date) AS d FROM golden.price_history
+                 WHERE interval = '1d' AND close IS NOT NULL
+            ),
+            syms AS (SELECT unnest(%s::text[]) AS symbol)
+            SELECT
+                REPLACE(s.symbol, '.NS', '') AS symbol,
+                (SELECT close::float FROM golden.price_history p
+                  WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
+                  ORDER BY p.date DESC LIMIT 1) AS p_now,
+                (SELECT close::float FROM golden.price_history p
+                  WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
+                    AND p.date <= (SELECT d FROM latest_d) - INTERVAL '7 days'
+                  ORDER BY p.date DESC LIMIT 1) AS p_w1,
+                (SELECT close::float FROM golden.price_history p
+                  WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
+                    AND p.date <= (SELECT d FROM latest_d) - INTERVAL '30 days'
+                  ORDER BY p.date DESC LIMIT 1) AS p_m1,
+                (SELECT close::float FROM golden.price_history p
+                  WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
+                    AND p.date <= (SELECT d FROM latest_d) - INTERVAL '365 days'
+                  ORDER BY p.date DESC LIMIT 1) AS p_y1
+            FROM syms s
+        """, (sym_ns_list,))
+        prices = {r["symbol"]: r for r in cur.fetchall()}
+
+    # ── 3. Aggregate per cluster (market-cap-weighted) ───────────────────
+    #
+    # For each horizon h, cluster_ret[h] = Σ(mcap * (p_now/p_h - 1)) / Σ(mcap)
+    # only for symbols where both p_now and p_h are present and p_h > 0.
+    # Clusters with no qualifying symbol at a horizon get NULL — preserves
+    # "we don't know" instead of fabricating zero.
+    cluster_acc: dict[str, dict[str, tuple[float, float]]] = {}
+    # cluster_acc[cluster_id][horizon] = (sum_weighted_returns, sum_mcaps)
+
+    horizons = ("w1", "m1", "y1")
+    for sym, (cluster_id, mcap) in sym_meta.items():
+        row = prices.get(sym)
+        if row is None or row["p_now"] is None or mcap <= 0:
+            continue
+        p_now = row["p_now"]
+        bucket = cluster_acc.setdefault(cluster_id, {h: (0.0, 0.0) for h in horizons})
+        for h in horizons:
+            p_past = row.get(f"p_{h}")
+            if p_past is None or p_past <= 0:
+                continue
+            ret = p_now / p_past - 1.0
+            sw, sm = bucket[h]
+            bucket[h] = (sw + mcap * ret, sm + mcap)
+
+    # ── 4. UPDATE cluster_composite_cache rows ───────────────────────────
+    updates = []
+    for cluster_id, hmap in cluster_acc.items():
+        def _wavg(h: str) -> "float | None":
+            sw, sm = hmap[h]
+            return (sw / sm) if sm > 0 else None
+        updates.append((
+            _wavg("w1"), _wavg("m1"), _wavg("y1"),
+            cluster_id, snap,
+        ))
+
+    if not updates:
+        return 0
+
+    with app_c.cursor() as cur:
+        cur.executemany(
+            """
+            UPDATE app.cluster_composite_cache
+               SET ret_1w = %s, ret_1m = %s, ret_1y = %s
+             WHERE cluster_id = %s AND snapshot_date = %s
+            """,
+            updates,
+        )
+        return cur.rowcount
+
+
 @app.command("score")
 def score_cmd(snapshot: str = typer.Option(None, help="YYYY-MM-DD; defaults to today")):
     """Run the percentile + composite scorer for a snapshot date.
@@ -595,6 +713,18 @@ def score_cmd(snapshot: str = typer.Option(None, help="YYYY-MM-DD; defaults to t
         except Exception as e:
             log.warning("cluster_cache_refresh_failed", error=str(e)[:200])
             # Non-fatal: old cache is still valid; /sectors falls back gracefully.
+            conn.rollback()
+
+        # Populate the price-return columns (cross-DB step — needs golden).
+        # Eliminates the live golden_db query that previously made /sectors
+        # take 3-4s on cold start.
+        try:
+            with golden_conn() as gc:
+                ret_rows = _refresh_cluster_returns(conn, gc, snap)
+            conn.commit()
+            log.info("cluster_returns_refreshed", rows=ret_rows, snapshot=snap.isoformat())
+        except Exception as e:
+            log.warning("cluster_returns_refresh_failed", error=str(e)[:200])
             conn.rollback()
     log.info("score_done", **counts)
 
