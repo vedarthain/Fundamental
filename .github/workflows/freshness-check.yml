@@ -1,0 +1,64 @@
+# Production data freshness alert.
+#
+# What this does:
+#   Connects to Neon (app DB + golden DB) every 4 hours and verifies that
+#   the production data isn't stale. Three checks:
+#     1. app.scores                       — latest snapshot ≤ 8 days old
+#     2. golden.price_history             — latest price ≤ 4 days old
+#     3. app.cluster_stocks_panel_cache  — populated for latest snapshot
+#
+# Why a GitHub Action:
+#   - Free, no infra to manage.
+#   - On failure, GitHub auto-emails repo notification recipients
+#     (configure under Settings → Notifications → Watching).
+#   - Logs are visible in the Actions UI — diagnosis is one click away.
+#
+# Frequency: every 4 hours. The underlying data only changes daily/weekly,
+# so polling more often would just burn Neon compute on the read queries.
+# Each check uses <100ms of compute, so ~6 runs/day × ~0.3s of compute ≈
+# 1 minute/day on Neon. Effectively free.
+#
+# Tuning thresholds: pass --snapshot-max-days / --price-max-days to the
+# script if the defaults need adjusting (e.g. after a long holiday).
+#
+# Required secrets:
+#   NEON_APP_URL    — Postgres URL for fundamental_app on Neon (read)
+#   NEON_GOLDEN_URL — Postgres URL for golden_db on Neon (read)
+#   Same secrets as refresh-ltp.yml; no new setup needed.
+
+name: Production data freshness
+
+on:
+  # Every 4 hours, on the half-hour to avoid colliding with refresh-ltp
+  # (which runs at 13:00 UTC = 18:30 IST).
+  schedule:
+    - cron: '30 */4 * * *'
+
+  # Manual trigger for testing or post-incident verification.
+  workflow_dispatch: {}
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install psycopg
+        run: pip install 'psycopg[binary]==3.2.*'
+
+      - name: Check freshness
+        env:
+          APP_DB_URL:    ${{ secrets.NEON_APP_URL }}
+          GOLDEN_DB_URL: ${{ secrets.NEON_GOLDEN_URL }}
+          PYTHONUNBUFFERED: "1"
+        run: python scripts/check-freshness.py
