@@ -3,8 +3,9 @@ import { notFound } from "next/navigation";
 import { sql } from "@/lib/db";
 import { band, bandColor, fmtPct, tierLabel } from "@/lib/score";
 
-export const revalidate = 1800;
-export const dynamic = "force-dynamic";
+// Score data changes weekly. 6h ISR cache avoids waking Neon on every visit.
+// force-dynamic removed — this page has no per-request searchParams/cookies.
+export const revalidate = 21600;
 
 type ClusterMeta = {
   industry_id: string;

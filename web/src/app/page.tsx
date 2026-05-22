@@ -4,7 +4,8 @@ import { ArrowRight } from "lucide-react";
 import { band, bandColor } from "@/lib/score";
 import { RevealOnScroll } from "@/components/RevealOnScroll";
 
-export const revalidate = 1800;
+// Scores update weekly — 24h cache is safe and dramatically cuts Neon wakes.
+export const revalidate = 86400;
 
 type Snapshot = {
   stocks: number;

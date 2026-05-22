@@ -3,8 +3,9 @@ import { sql } from "@/lib/db";
 import { ArrowUpRight, ArrowDownRight } from "lucide-react";
 import { band, bandColor, tierLabel } from "@/lib/score";
 
-export const revalidate = 1800;
-export const dynamic = "force-dynamic";
+// Score data changes weekly. 6h ISR cache avoids waking Neon on every visit.
+// force-dynamic removed — this page has no per-request searchParams/cookies.
+export const revalidate = 21600;
 
 type DeltaRow = {
   symbol: string;

@@ -3,7 +3,8 @@ import { notFound } from "next/navigation";
 import { sql } from "@/lib/db";
 import { band, bandColor, fmtPct, tierLabel } from "@/lib/score";
 
-export const revalidate = 3600;
+// Industry data changes weekly. 24h cache avoids hourly Neon wakes per cluster.
+export const revalidate = 86400;
 
 type ClusterMeta = {
   industry_id: string;

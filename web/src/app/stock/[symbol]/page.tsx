@@ -14,7 +14,10 @@ import {
 import { BusinessVisual } from "@/components/BusinessVisual";
 import { StockPageTabs } from "@/components/StockPageTabs";
 
-export const revalidate = 1800;
+// Stock fundamentals + scores change weekly at most. 6h cache cuts Neon wakes
+// significantly — with 2,000+ stock pages each revalidating at 30min, the
+// previous setting caused up to 4,000 DB wakes/day from ISR alone.
+export const revalidate = 21600;
 
 type ShareholdingRow = {
   period_end: string;

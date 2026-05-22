@@ -3,7 +3,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 
 export const runtime = "nodejs";
-export const revalidate = 60; // Cache for 1 min — universe changes slowly
+// Symbol list changes only when new stocks are added (rare). 1h cache instead
+// of 1min cuts Neon wakes from search activity by 60x.
+export const revalidate = 3600;
 
 type Hit = {
   symbol: string;
