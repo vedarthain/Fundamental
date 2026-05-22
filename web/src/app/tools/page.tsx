@@ -80,7 +80,7 @@ export default function ToolsLanding() {
           <Link href="/sectors" className="underline hover:no-underline">
             Sectors
           </Link>
-          {" "}instead — that's the navigation surface.
+          {" "}instead — that&apos;s the navigation surface.
         </p>
       </header>
 

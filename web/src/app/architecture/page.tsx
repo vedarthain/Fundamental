@@ -163,7 +163,7 @@ function ScoringEngine() {
             <code className="font-mono text-xs">metrics.py</code> loads annual/quarterly fundamentals
             from <code className="font-mono text-xs">app.fundamentals_*</code> and 252-day price
             history from <code className="font-mono text-xs">golden.price_history</code>. It calls all
-            formulas in the cluster's active scorecard and writes raw values to{" "}
+            formulas in the cluster&apos;s active scorecard and writes raw values to{" "}
             <code className="font-mono text-xs">app.metrics_snapshot</code> as a JSONB dict.
           </p>
           <CodeBlock>{`{
@@ -209,7 +209,7 @@ function ScoringEngine() {
         <StepCard step="4" title="Pillar Scores" color="amber">
           <p className="text-sm text-[var(--color-muted)] leading-relaxed">
             Component percentiles are weighted within each pillar. Weights re-normalize across
-            non-null components so missing data doesn't collapse the pillar.
+            non-null components so missing data doesn&apos;t collapse the pillar.
           </p>
           <CodeBlock>{`quality_pct =
   Σ(component_pct[k] × w[k])
