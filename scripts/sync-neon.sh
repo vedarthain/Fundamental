@@ -160,6 +160,26 @@ copy_replace app.fundamentals_annual "$NEON_APP_URL" "$LOCAL_APP" \
 copy_replace app.fundamentals_quarterly "$NEON_APP_URL" "$LOCAL_APP" \
   "$UNIVERSE_FILTER" "$UNIVERSE_FILTER"
 
+# ----- cluster_assignment (which stock is in which cluster) --------------
+# Critical: previously omitted from the sync. When clusters are reshuffled
+# locally (e.g. splitting bfsi_capmarkets into 4 smaller buckets, or
+# splitting bfsi_pvt_banks into large/mid-small/SFB), Neon's assignments
+# stayed pointing at the old cluster IDs. That made deprecated clusters
+# show "ghost" stocks on the /sectors page and made some active sectors
+# disappear entirely (e.g. Diversified, where the 8 stocks were silently
+# orphaned to a now-empty cluster).
+# Full-replace per sync — cluster_assignment is tiny (~2K rows) and
+# rewriting it is the only way to drop assignments to renamed clusters.
+copy_replace app.cluster_assignment "$NEON_APP_URL" "$LOCAL_APP" \
+  "TRUE" "TRUE"
+
+# ----- cluster_scorecard (per-cluster pillar weights + formula mix) ------
+# Was previously only refreshed via the seed_scorecards.py script run
+# against Neon manually. Adding to the sync so weight tweaks made locally
+# propagate to production on the next sync.
+copy_replace app.cluster_scorecard "$NEON_APP_URL" "$LOCAL_APP" \
+  "TRUE" "TRUE"
+
 # ----- golden price history: incremental ---------------------------------
 echo "▶ syncing golden.price_history (incremental)..."
 GOLDEN_FILTER=$(psql "$LOCAL_APP" -tAc "
