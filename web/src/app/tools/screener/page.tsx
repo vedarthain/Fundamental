@@ -240,11 +240,14 @@ async function loadRows(p: ScreenerParams, opts?: { exportAll?: boolean }): Prom
 
   // Count query joins metrics_snapshot + screener_meta only when needed
   // (range filters active). Saves the join cost on the common no-range path.
+  // Explicit ON instead of USING — `app.universe u USING (symbol)` already
+  // appears in the outer query, so a second USING(symbol) would trigger
+  // "common column name appears more than once in left table".
   const rangeJoinForCount = hasRangeFilters
     ? sql`LEFT JOIN app.metrics_snapshot m
             ON m.symbol = s.symbol
            AND m.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
-          LEFT JOIN app.screener_meta sm USING (symbol)`
+          LEFT JOIN app.screener_meta sm ON sm.symbol = s.symbol`
     : sql``;
   const totalRows = await sql<{ n: number }[]>`
     SELECT COUNT(*)::int AS n
