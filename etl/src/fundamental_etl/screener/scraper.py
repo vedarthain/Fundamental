@@ -90,10 +90,23 @@ def _is_login_redirect(resp: httpx.Response) -> bool:
 
 
 def _maybe_raise_429(resp: httpx.Response, url: str) -> None:
-    """If the response is HTTP 429, log + raise RateLimited with the
-    Retry-After header. Default backoff: 60s when the header is absent."""
-    if resp.status_code != 429:
+    """Treat soft + hard rate-limit signals as RateLimited so the @retry
+    decorator can pause and try again.
+
+    - 429 Too Many Requests: the proper rate-limit code.  Respects the
+      Retry-After header when present; defaults to 60s otherwise.
+    - 405 Method Not Allowed (POST endpoints only): Screener sometimes
+      uses this as a SOFT throttle on the export endpoint when we're
+      pushing too hard.  Observed empirically — symptom is sporadic 405s
+      mixed with 429s during high-volume scrapes.  No Retry-After header,
+      so we use a fixed 60s backoff.
+    """
+    if resp.status_code not in (405, 429):
         return
+    if resp.status_code == 405:
+        retry_after = 60.0
+        log.warning("rate_limited_405", url=url, retry_after=retry_after)
+        raise RateLimited(retry_after, f"{resp.request.method} {url} returned HTTP 405 (treating as throttle, sleeping {retry_after}s)")
     raw = resp.headers.get("Retry-After", "60")
     try:
         retry_after = float(raw)
