@@ -593,11 +593,11 @@ export default async function ScreenerPage({
 
             {/* Stock-shape filters — green family. "What shape of stock?"
                 Filters by listing tenure and market-cap category. */}
-            <FilterSection label="Maturity" hint="Filter by years of listed history" color="green" defaultOpen>
+            <FilterSection label="Maturity" hint="Filter by years of listed history" color="green">
               <Controls only="maturity" />
             </FilterSection>
 
-            <FilterSection label="Market cap" hint="Stock size category" color="green" defaultOpen>
+            <FilterSection label="Market cap" hint="Stock size category" color="green">
               <Controls only="cap" />
             </FilterSection>
 
@@ -662,19 +662,27 @@ const FAMILY_COLORS: Record<FamilyColor, { stripe: string; dot: string; label: s
  *  filter does. A 2px colored stripe on the left + a small colored dot
  *  signals the section's family (universe / shape / scores). */
 function FilterSection({
-  label, hint, defaultOpen = true, color, children,
+  label, hint, defaultOpen = false, color, children, group = "screener-filters",
 }: {
   label: string;
   hint?: string;
   defaultOpen?: boolean;
   color: FamilyColor;
   children: React.ReactNode;
+  /** Native HTML accordion grouping: <details> elements sharing the same
+   *  `name` attribute auto-close each other when one opens. Removes the
+   *  need for any client-side state to drive single-section-open UX.
+   *  Supported in all modern browsers (Chrome 120+, Firefox 130+, Safari
+   *  17.5+); older browsers degrade gracefully to allowing multiple open
+   *  at once. */
+  group?: string;
 }) {
   const c = FAMILY_COLORS[color];
   return (
     <details
       className="group rounded-md"
       open={defaultOpen}
+      name={group}
       style={{ borderLeft: `2px solid ${c.stripe}`, paddingLeft: "8px" }}
     >
       <summary className="cursor-pointer flex items-baseline justify-between gap-2 py-1 list-none">
