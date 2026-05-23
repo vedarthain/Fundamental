@@ -313,21 +313,57 @@ def upsert_golden_stocks(golden_conn: psycopg.Connection, symbols: list[str]) ->
 def insert_ohlc_batch(
     golden_conn: psycopg.Connection,
     rows: list[tuple],
+    repair: bool = False,
 ) -> int:
-    """INSERT rows into golden.price_history ON CONFLICT DO NOTHING.
+    """Write rows into golden.price_history.
     Each row: (symbol_with_suffix, date, open, high, low, close, volume).
-    Returns number of rows inserted (caller must commit)."""
+
+    Modes:
+      repair=False (default) — ON CONFLICT DO NOTHING.  Safe for filling
+        gaps; never overwrites an existing row.
+      repair=True            — ON CONFLICT DO UPDATE SET ... only if the
+        existing close IS NULL.  Heals yfinance's "non-null volume but
+        null OHLC" rows (a known data-quality glitch — see
+        scripts/repair-null-ohlc usage in the README).
+
+    Returns number of rows affected (caller must commit).
+    """
     if not rows:
         return 0
-    with golden_conn.cursor() as cur:
-        cur.executemany(
-            """
+    if repair:
+        # Conditional UPSERT: only overwrite when the existing row's close
+        # is NULL.  Preserves the integrity of rows that have valid data.
+        # SET LOCAL golden.allow_repair = 'on' opts into the append-only
+        # trigger's repair escape hatch (see migration 0019); the LOCAL
+        # ensures the flag dies at COMMIT, so it can't leak.
+        with golden_conn.cursor() as cur:
+            cur.execute("SET LOCAL golden.allow_repair = 'on'")
+        sql = """
+            INSERT INTO golden.price_history
+                (symbol, interval, date, open, high, low, close, adj_close,
+                 volume, data_source)
+            VALUES (%s, '1d', %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (symbol, interval, date) DO UPDATE SET
+                open        = EXCLUDED.open,
+                high        = EXCLUDED.high,
+                low         = EXCLUDED.low,
+                close       = EXCLUDED.close,
+                adj_close   = EXCLUDED.adj_close,
+                volume      = EXCLUDED.volume,
+                data_source = EXCLUDED.data_source
+            WHERE golden.price_history.close IS NULL
+        """
+    else:
+        sql = """
             INSERT INTO golden.price_history
                 (symbol, interval, date, open, high, low, close, adj_close,
                  volume, data_source)
             VALUES (%s, '1d', %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (symbol, interval, date) DO NOTHING
-            """,
+        """
+    with golden_conn.cursor() as cur:
+        cur.executemany(
+            sql,
             [
                 (sym, dt, o, h, l, c, c, vol, DATA_SOURCE)  # adj_close = close (no adj)
                 for sym, dt, o, h, l, c, vol in rows
@@ -359,6 +395,11 @@ def main() -> None:
         help="Seconds to sleep between NSE requests (default 0.4).")
     parser.add_argument("--dry-run", action="store_true",
         help="Parse and count rows but don't write to DB.")
+    parser.add_argument("--repair", action="store_true",
+        help="Repair mode: OVERWRITE existing rows where close IS NULL "
+             "(yfinance occasionally writes volume+null-OHLC rows; this "
+             "heals them from NSE bhavcopy data). Default behaviour skips "
+             "any existing row.")
     args = parser.parse_args()
 
     start = date.fromisoformat(args.start)
@@ -482,7 +523,7 @@ def main() -> None:
             # Flush batch every BATCH_COMMIT dates
             if len(batch_rows) >= BATCH_COMMIT * len(rename_map) or i == n:
                 if not dry and batch_rows:
-                    inserted = insert_ohlc_batch(golden_conn, batch_rows)
+                    inserted = insert_ohlc_batch(golden_conn, batch_rows, repair=args.repair)
                     golden_conn.commit()
                     total_inserted += max(inserted, 0)
                 elif dry:
