@@ -134,6 +134,64 @@ keyed to commits where applicable.
 
 ---
 
+### Diagnostic + repair tooling (afternoon session)
+
+19. **BSE.NS price chart gap diagnosis (May 14-18, 2026).**
+    yfinance wrote 1,887 broken rows (non-NULL volume + NULL OHLC) on
+    2026-05-15 across 1,887 different symbols. Chart filter on NULL
+    close caused visible gaps for users.
+    *Diagnosis: 0 code changes, just SQL.*
+
+20. **Repair tooling for NULL-OHLC rows.**
+    Migration 0019 (golden_db): updated `raise_immutable_error` trigger
+    to honour a session-local `golden.allow_repair='on'` flag. Append-
+    only guarantee preserved for the ETL pipeline; legitimate repair
+    operations can SET LOCAL it inside their transaction.
+    backfill-nse-bhavcopy.py: new `--repair` flag does conditional
+    UPSERT (only overwrites when existing close IS NULL).
+    Result: 1,887 rows fixed in one pass against authoritative NSE
+    bhavcopy.
+    *Commit: `85b3682`*
+
+21. **Universe reconciliation + price coverage audit scripts.**
+    `scripts/recon-universe.py` — compares app.universe vs the NSE-
+    traded set (symbols with valid close in last N trading days).
+    `scripts/audit-price-coverage.py` — finds stocks missing
+    historical price depth. Each active stock's MIN(date) compared
+    against expected = max(listing_date, today-10y). Flags gaps > 1y.
+    Initial audit identified 61 stocks with significant gaps.
+    *Commit: `37634f7`*
+
+22. **Detached launcher for full 10-year backfill.**
+    `scripts/backfill-all-gaps.sh` — wraps backfill-nse-bhavcopy.py in
+    nohup + disown so the long backfill survives terminal close. Bulk
+    mode (no --symbol) — each bhavcopy is downloaded ONCE and applied
+    to all 2,163 stocks at the same time. ON CONFLICT DO NOTHING
+    skips existing rows; only the actual gaps get written. Result:
+    140,662 rows inserted across 2,551 trading days in ~12 hours.
+    *Commit: `43705bd`*
+
+23. **Migration directory split.**
+    `db/migrations/` is now strictly for app-DB migrations. Golden-DB
+    migrations live in `db/migrations-golden/` and are applied manually
+    with psql. This fixed `sync-neon.sh` failing because migrate.py
+    was trying to apply golden-DB migration 0019 against the app DB.
+    *Commit: `bfc5dba`*
+
+### Post-backfill state
+
+- 140,662 rows of historical price data backfilled to local (and
+  pushed to Neon via sync).
+- 3 of original 61 gaps closed naturally during bulk backfill (stocks
+  that traded under their current names in older bhavcopies).
+- 58 gaps remain — categorised as:
+    * 38 likely ticker renames (need per-stock research to identify
+      old NSE symbol; add to SYMBOL_RENAMES + re-backfill with --also)
+    * 1 demerger / recent IPO (legitimate, no fix)
+    * 19 small-cap edge cases (some fixable, mostly not worth chasing)
+- Operational health: 16/16 DQ checks, 4/4 freshness checks, 0 broken
+  NULL-OHLC rows, 0 stocks with zero data.
+
 ## Today's commits (in order)
 
 | SHA | Summary |
@@ -150,6 +208,12 @@ keyed to commits where applicable.
 | `89c1c2a` | Web CI |
 | `cabaa49` | Renamed-ticker audit |
 | `089d4ed` | Cookie expiry alert, runbook, drift check |
+| `d5adb7b` | Worklog file |
+| `18b7146` | Version footer + diagnostic notes |
+| `85b3682` | Repair NULL-OHLC rows + `--repair` mode |
+| `37634f7` | Recon + price-coverage audit scripts |
+| `43705bd` | Detached 10-year backfill launcher |
+| `bfc5dba` | Split golden-DB migrations into separate dir |
 
 ## Production state at end of day
 
