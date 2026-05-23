@@ -10,6 +10,8 @@ import {
   type SortParam,
 } from "./types";
 import { AboutCard } from "./AboutCard";
+import { RangeFilters } from "./RangeFilters";
+import { PresetBar } from "./PresetBar";
 import {
   PAGE_SIZE, parseParams, paramsToQuery, type ScreenerParams,
 } from "./types";
@@ -103,9 +105,56 @@ async function loadClusters(): Promise<ClusterRow[]> {
 // first two or three. Single-industry drill-in keeps the regular pagination.
 const PER_INDUSTRY_LIMIT = 8;
 
-async function loadRows(p: ScreenerParams): Promise<{ rows: Row[]; total: number }> {
+export async function loadRowsForExport(p: ScreenerParams, opts?: { exportAll?: boolean }): Promise<{ rows: Row[]; total: number }> {
+  return loadRows(p, opts);
+}
+
+async function loadRows(p: ScreenerParams, opts?: { exportAll?: boolean }): Promise<{ rows: Row[]; total: number }> {
   const { clusters, metas, tiers, caps, index, minQ, minV, minM, minC, page } = p;
   const offset = (page - 1) * PAGE_SIZE;
+
+  // ── Range filters on raw fundamental metrics ──────────────────────────
+  // These reference columns inside the `joined` CTE (m.cluster_metrics->>...
+  // already cast to float). We build SQL fragments that are no-ops when
+  // their bound is null and active WHERE clauses when it's set.
+  // Percentages are divided by 100 here because the JSONB stores decimals
+  // (e.g. 0.18 = 18%) and the user inputs percent (e.g. 18).
+  const peMaxClause     = p.peMax != null
+    ? sql`AND (m.cluster_metrics->>'pe_ttm')::float <= ${p.peMax}`
+    : sql``;
+  const pbMaxClause     = p.pbMax != null
+    ? sql`AND (m.cluster_metrics->>'pb')::float <= ${p.pbMax}`
+    : sql``;
+  const roeMinClause    = p.roeMin != null
+    ? sql`AND (m.cluster_metrics->>'roe_3y')::float >= ${p.roeMin / 100}`
+    : sql``;
+  const divYldMinClause = p.divYldMin != null
+    ? sql`AND (m.cluster_metrics->>'div_yield')::float >= ${p.divYldMin / 100}`
+    : sql``;
+  const opmMinClause    = p.opmMin != null
+    ? sql`AND (m.cluster_metrics->>'op_margin_3y')::float >= ${p.opmMin / 100}`
+    : sql``;
+  const ret12mMinClause = p.ret12mMin != null
+    ? sql`AND (m.cluster_metrics->>'ret_12m_rel')::float >= ${p.ret12mMin / 100}`
+    : sql``;
+  const mcapMinClause   = p.mcapMin != null
+    ? sql`AND sm.market_cap_cr >= ${p.mcapMin}`
+    : sql``;
+  const mcapMaxClause   = p.mcapMax != null
+    ? sql`AND sm.market_cap_cr <= ${p.mcapMax}`
+    : sql``;
+  // Combined fragment we'll apply in both the count query (with m + sm
+  // already joined there too — see below) and the rows query.
+  const rangeFilters = sql`
+    ${peMaxClause} ${pbMaxClause} ${roeMinClause} ${divYldMinClause}
+    ${opmMinClause} ${ret12mMinClause} ${mcapMinClause} ${mcapMaxClause}
+  `;
+  // True when any range filter is active — used to decide whether the count
+  // query needs to join metrics_snapshot (skip the join cost when not needed).
+  const hasRangeFilters =
+    p.peMax != null || p.pbMax != null || p.roeMin != null ||
+    p.divYldMin != null || p.opmMin != null || p.ret12mMin != null ||
+    p.mcapMin != null || p.mcapMax != null;
 
   // Count query: FROM app.scores s → use s.* for score-derived columns.
   const clusterFilter = clusters.length
@@ -174,24 +223,39 @@ async function loadRows(p: ScreenerParams): Promise<{ rows: Row[]; total: number
             AND momentum_pct IS NOT NULL) DESC,
            ${tailOrderDefault}`;
 
+  // Count query joins metrics_snapshot + screener_meta only when needed
+  // (range filters active). Saves the join cost on the common no-range path.
+  const rangeJoinForCount = hasRangeFilters
+    ? sql`LEFT JOIN app.metrics_snapshot m
+            ON m.symbol = s.symbol
+           AND m.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
+          LEFT JOIN app.screener_meta sm USING (symbol)`
+    : sql``;
   const totalRows = await sql<{ n: number }[]>`
     SELECT COUNT(*)::int AS n
     FROM app.scores s
     JOIN app.universe u USING (symbol)
     JOIN app.cluster c ON c.id = s.cluster_id
+    ${rangeJoinForCount}
     WHERE s.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
       ${clusterFilter} ${metaFilter} ${tierFilter} ${capFilter} ${indexFilter}
       AND COALESCE(s.quality_pct, 0)   >= ${minQ}
       AND COALESCE(s.valuation_pct, 0) >= ${minV}
       AND COALESCE(s.momentum_pct, 0)  >= ${minM}
       AND COALESCE(s.composite_pct, 0) >= ${minC}
+      ${rangeFilters}
   `;
   const total = totalRows[0]?.n ?? 0;
 
   // Always paginate now — the results table is a flat ranked list across all
   // matching stocks. No per-industry top-N cap and no industry-block grouping.
   void isIndustryView;
-  const limitClause = sql`LIMIT ${PAGE_SIZE} OFFSET ${offset}`;
+  // Export path skips pagination but enforces a hard cap so a runaway filter
+  // can't return 100K+ rows in one CSV. 5,000 covers the entire universe with
+  // headroom and keeps the response under a few MB.
+  const limitClause = opts?.exportAll
+    ? sql`LIMIT 5000`
+    : sql`LIMIT ${PAGE_SIZE} OFFSET ${offset}`;
   const perIndustryClause = sql``;
 
   const rows = await sql<Row[]>`
@@ -282,6 +346,7 @@ async function loadRows(p: ScreenerParams): Promise<{ rows: Row[]; total: number
         AND COALESCE(r.valuation_pct, 0) >= ${minV}
         AND COALESCE(r.momentum_pct, 0)  >= ${minM}
         AND COALESCE(r.composite_pct, 0) >= ${minC}
+        ${rangeFilters}
     )
     SELECT symbol, company_name, industry_id, industry_name, sector_name,
            maturity_tier, market_cap_cr, current_price, price_fetched_at,
@@ -459,10 +524,23 @@ export default async function ScreenerPage({
             <FilterSection label="Minimum scores" hint="Pillar percentile floors (within peer cluster)" color="purple">
               <Controls only="minScores" />
             </FilterSection>
+
+            {/* Metric ranges — purple family. Filter by raw fundamental
+                values (P/E, ROE, Div Yield, Op Margin, Market Cap, 12M
+                Return). Complements the percentile floors above; range
+                filters work on the absolute number, scores work on the
+                within-cluster peer rank. */}
+            <FilterSection label="Metric ranges" hint="Filter by raw P/E, ROE, dividend yield, etc." color="purple">
+              <RangeFilters />
+            </FilterSection>
           </div>
         </aside>
 
         <main>
+          {/* Quick presets + CSV export — sits above the results toolbar so
+              users can one-click between "Compounders" / "Value" / "Growth"
+              filter combos and download the active result set as CSV. */}
+          <PresetBar />
           <ResultsToolbar
             params={params}
             total={total}

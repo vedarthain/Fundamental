@@ -12,6 +12,17 @@ export type ScreenerParams = {
   minV: number;
   minM: number;
   minC: number;
+  // Range filters on raw fundamental metrics.  null = no filter on that bound.
+  // Percentage inputs (roe, divYld, opm, ret12m) are stored as the USER value
+  // (e.g. 15 for 15%) and converted to decimal at the SQL boundary.
+  peMax:        number | null;
+  pbMax:        number | null;
+  roeMin:       number | null;   // %
+  divYldMin:    number | null;   // %
+  opmMin:       number | null;   // %
+  ret12mMin:    number | null;   // %
+  mcapMin:      number | null;   // ₹ Cr
+  mcapMax:      number | null;   // ₹ Cr
   sort: SortParam;           // column to sort by (whitelisted)
   dir: "asc" | "desc";       // sort direction
   density: "compact" | "comfortable";  // row spacing toggle
@@ -101,11 +112,25 @@ export function parseParams(sp: URLSearchParams | Record<string, string | undefi
     minV: clampInt(get("minv"), 0, 100, 0),
     minM: clampInt(get("minm"), 0, 100, 0),
     minC: clampInt(get("minc"), 0, 100, 0),
+    peMax:     parseFloatOrNull(get("pemax")),
+    pbMax:     parseFloatOrNull(get("pbmax")),
+    roeMin:    parseFloatOrNull(get("roemin")),
+    divYldMin: parseFloatOrNull(get("dymin")),
+    opmMin:    parseFloatOrNull(get("opmmin")),
+    ret12mMin: parseFloatOrNull(get("r12min")),
+    mcapMin:   parseFloatOrNull(get("mcmin")),
+    mcapMax:   parseFloatOrNull(get("mcmax")),
     sort,
     dir,
     density,
     page: Math.max(1, Number(get("page")) || 1),
   };
+}
+
+function parseFloatOrNull(v: string | null): number | null {
+  if (v == null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 }
 
 function splitList(s: string | null): string[] {
@@ -131,6 +156,14 @@ export function paramsToQuery(p: Partial<ScreenerParams>): string {
   if (p.minV) q.set("minv", String(p.minV));
   if (p.minM) q.set("minm", String(p.minM));
   if (p.minC) q.set("minc", String(p.minC));
+  if (p.peMax     != null) q.set("pemax",  String(p.peMax));
+  if (p.pbMax     != null) q.set("pbmax",  String(p.pbMax));
+  if (p.roeMin    != null) q.set("roemin", String(p.roeMin));
+  if (p.divYldMin != null) q.set("dymin",  String(p.divYldMin));
+  if (p.opmMin    != null) q.set("opmmin", String(p.opmMin));
+  if (p.ret12mMin != null) q.set("r12min", String(p.ret12mMin));
+  if (p.mcapMin   != null) q.set("mcmin",  String(p.mcapMin));
+  if (p.mcapMax   != null) q.set("mcmax",  String(p.mcapMax));
   if (p.sort && p.sort !== DEFAULT_SORT) q.set("sort", p.sort);
   if (p.dir && p.dir !== DEFAULT_DIR) q.set("dir", p.dir);
   if (p.density && p.density !== DEFAULT_DENSITY) q.set("density", p.density);
@@ -138,3 +171,53 @@ export function paramsToQuery(p: Partial<ScreenerParams>): string {
   const s = q.toString();
   return s ? "?" + s : "";
 }
+
+/** Pre-built filter combinations users can apply with one click.
+ *  Quick way to surface "compounder" / "value" / "growth" stocks without
+ *  having to manually configure 5+ filters every time.
+ *  Each preset clears the existing min/range filters before applying its own
+ *  so they don't accumulate from a previous session.
+ */
+export const FILTER_PRESETS: Record<string, {
+  label: string;
+  description: string;
+  filters: Partial<ScreenerParams>;
+}> = {
+  compounders: {
+    label: "Compounders",
+    description: "Long-term quality: ROE ≥ 18%, op margin ≥ 15%, Q-score ≥ 70",
+    filters: {
+      roeMin: 18, opmMin: 15, minQ: 70,
+      // Reset other filters
+      peMax: null, pbMax: null, divYldMin: null, ret12mMin: null,
+      mcapMin: null, mcapMax: null, minV: 0, minM: 0, minC: 0,
+    },
+  },
+  value: {
+    label: "Value",
+    description: "Cheap with floor: P/E ≤ 20, ROE ≥ 12%, V-score ≥ 70",
+    filters: {
+      peMax: 20, roeMin: 12, minV: 70,
+      pbMax: null, divYldMin: null, opmMin: null, ret12mMin: null,
+      mcapMin: null, mcapMax: null, minQ: 0, minM: 0, minC: 0,
+    },
+  },
+  growth: {
+    label: "Growth",
+    description: "Momentum + earnings: 12M return ≥ 15%, M-score ≥ 70",
+    filters: {
+      ret12mMin: 15, minM: 70,
+      peMax: null, pbMax: null, roeMin: null, divYldMin: null, opmMin: null,
+      mcapMin: null, mcapMax: null, minQ: 0, minV: 0, minC: 0,
+    },
+  },
+  dividend: {
+    label: "Dividend",
+    description: "Income with quality: yield ≥ 3%, ROE ≥ 12%",
+    filters: {
+      divYldMin: 3, roeMin: 12,
+      peMax: null, pbMax: null, opmMin: null, ret12mMin: null,
+      mcapMin: null, mcapMax: null, minQ: 0, minV: 0, minM: 0, minC: 0,
+    },
+  },
+};
