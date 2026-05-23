@@ -27,7 +27,14 @@ export type ScreenerParams = {
   dir: "asc" | "desc";       // sort direction
   density: "compact" | "comfortable";  // row spacing toggle
   page: number;
+  /** Rows per sector when grouped (multi-sector view).  Also used as the
+   *  flat page size when a single industry is selected.  Whitelisted to
+   *  10/20/50 so a malformed URL can't blow up the query. */
+  perSector: 10 | 20 | 50;
 };
+
+export const PER_SECTOR_OPTIONS = [10, 20, 50] as const;
+export const DEFAULT_PER_SECTOR: 10 | 20 | 50 = 20;
 
 /** Columns the user can sort on. Whitelisted so a malformed URL param can
  * never reach the raw SQL — page.tsx maps each value to a column expression. */
@@ -124,6 +131,12 @@ export function parseParams(sp: URLSearchParams | Record<string, string | undefi
     dir,
     density,
     page: Math.max(1, Number(get("page")) || 1),
+    perSector: ((): 10 | 20 | 50 => {
+      const raw = Number(get("ps")) || DEFAULT_PER_SECTOR;
+      return (PER_SECTOR_OPTIONS as readonly number[]).includes(raw)
+        ? (raw as 10 | 20 | 50)
+        : DEFAULT_PER_SECTOR;
+    })(),
   };
 }
 
@@ -168,6 +181,7 @@ export function paramsToQuery(p: Partial<ScreenerParams>): string {
   if (p.dir && p.dir !== DEFAULT_DIR) q.set("dir", p.dir);
   if (p.density && p.density !== DEFAULT_DENSITY) q.set("density", p.density);
   if (p.page && p.page > 1) q.set("page", String(p.page));
+  if (p.perSector && p.perSector !== DEFAULT_PER_SECTOR) q.set("ps", String(p.perSector));
   const s = q.toString();
   return s ? "?" + s : "";
 }

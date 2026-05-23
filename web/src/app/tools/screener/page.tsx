@@ -106,12 +106,20 @@ async function loadClusters(): Promise<ClusterRow[]> {
 const PER_INDUSTRY_LIMIT = 8;
 
 export async function loadRowsForExport(p: ScreenerParams, opts?: { exportAll?: boolean }): Promise<{ rows: Row[]; total: number }> {
-  return loadRows(p, opts);
+  const { rows, total } = await loadRows(p, opts);
+  return { rows, total };
 }
 
-async function loadRows(p: ScreenerParams, opts?: { exportAll?: boolean }): Promise<{ rows: Row[]; total: number }> {
-  const { clusters, metas, tiers, caps, index, minQ, minV, minM, minC, page } = p;
-  const offset = (page - 1) * PAGE_SIZE;
+async function loadRows(p: ScreenerParams, opts?: { exportAll?: boolean }): Promise<{ rows: Row[]; total: number; maxSectorDepth: number }> {
+  const { clusters, metas, tiers, caps, index, minQ, minV, minM, minC, page, perSector } = p;
+  // Industry view = single cluster selected → flat pagination over that
+  // cluster's stocks.  Otherwise we group by sector and paginate through
+  // rank tiers (page 1 = top N per sector, page 2 = ranks N+1 to 2N, etc.).
+  const isFlatPagination = clusters.length === 1;
+  const offset = (page - 1) * perSector;
+  // Within-sector rank window for the current page (multi-sector mode).
+  const sectorRankLow  = (page - 1) * perSector + 1;
+  const sectorRankHigh = page * perSector;
 
   // ── Range filters on raw fundamental metrics ──────────────────────────
   // These reference columns inside the `joined` CTE (m.cluster_metrics->>...
@@ -254,16 +262,21 @@ async function loadRows(p: ScreenerParams, opts?: { exportAll?: boolean }): Prom
   `;
   const total = totalRows[0]?.n ?? 0;
 
-  // Always paginate now — the results table is a flat ranked list across all
-  // matching stocks. No per-industry top-N cap and no industry-block grouping.
   void isIndustryView;
-  // Export path skips pagination but enforces a hard cap so a runaway filter
-  // can't return 100K+ rows in one CSV. 5,000 covers the entire universe with
-  // headroom and keeps the response under a few MB.
+  // Pagination strategy:
+  //   - Export       → no LIMIT, no rank filter (capped at 5,000 in outer SELECT)
+  //   - Industry view → flat LIMIT/OFFSET pagination through the cluster
+  //   - Multi-sector → rank-tier pagination via sector_rank WHERE clause
+  //                    (LIMIT is then a safety cap only)
   const limitClause = opts?.exportAll
     ? sql`LIMIT 5000`
-    : sql`LIMIT ${PAGE_SIZE} OFFSET ${offset}`;
-  const perIndustryClause = sql``;
+    : isFlatPagination
+      ? sql`LIMIT ${perSector} OFFSET ${offset}`
+      : sql``;  // sector_rank filter does the slicing instead
+  // Rank-tier filter — only applied in multi-sector view + non-export.
+  const sectorRankFilter = (opts?.exportAll || isFlatPagination)
+    ? sql``
+    : sql`WHERE sector_rank BETWEEN ${sectorRankLow} AND ${sectorRankHigh}`;
 
   const rows = await sql<Row[]>`
     WITH ranked AS (
@@ -344,7 +357,21 @@ async function loadRows(p: ScreenerParams, opts?: { exportAll?: boolean }): Prom
                  END ASC,
                  r.peer_rank ASC NULLS LAST,
                  r.composite_pct DESC NULLS LAST
-             )::int AS display_rank
+             )::int AS display_rank,
+             -- sector_rank = within-sector ordinal, used for "top N per
+             -- sector" pagination.  Same tier-then-composite ordering as
+             -- display_rank so the per-sector tour matches the cluster-
+             -- level ordering users expect.
+             ROW_NUMBER() OVER (
+               PARTITION BY mc.id
+               ORDER BY
+                 (r.score_status = 'full') DESC,
+                 (r.quality_pct IS NOT NULL
+                  AND r.valuation_pct IS NOT NULL
+                  AND r.momentum_pct IS NOT NULL) DESC,
+                 r.composite_pct DESC NULLS LAST,
+                 r.peer_rank ASC NULLS LAST
+             )::int AS sector_rank
       FROM ranked r
       JOIN app.universe u USING (symbol)
       JOIN app.cluster c ON c.id = r.cluster_id
@@ -369,11 +396,41 @@ async function loadRows(p: ScreenerParams, opts?: { exportAll?: boolean }): Prom
            peer_rank, peer_count, leading_pillar, score_status,
            pe_ttm, pb, roe_3y, ret_12m_rel, div_yield, op_margin_3y
     FROM joined
-    ${perIndustryClause}
+    ${sectorRankFilter}
     ORDER BY ${orderBy}
     ${limitClause}
   `;
-  return { rows, total };
+
+  // Multi-sector mode: figure out how deep the deepest sector goes so we
+  // can compute total page count (= ceil(maxSectorDepth / perSector)).
+  // Industry view doesn't need this — falls back to ceil(total / perSector).
+  let maxSectorDepth = 0;
+  if (!isFlatPagination && !opts?.exportAll) {
+    const depthQ = await sql<{ d: number }[]>`
+      SELECT COALESCE(MAX(n), 0)::int AS d
+      FROM (
+        SELECT COUNT(*)::int AS n
+        FROM app.scores s
+        JOIN app.universe u USING (symbol)
+        JOIN app.cluster c ON c.id = s.cluster_id
+        JOIN app.meta_cluster mc ON mc.id = c.meta_cluster_id
+        ${rangeJoinForCount}
+        WHERE s.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
+          ${clusterFilter} ${metaFilter} ${tierFilter} ${capFilter} ${indexFilter}
+          AND COALESCE(s.quality_pct, 0)   >= ${minQ}
+          AND COALESCE(s.valuation_pct, 0) >= ${minV}
+          AND COALESCE(s.momentum_pct, 0)  >= ${minM}
+          AND COALESCE(s.composite_pct, 0) >= ${minC}
+          ${rangeFilters}
+        GROUP BY mc.id
+      ) sub
+    `;
+    maxSectorDepth = depthQ[0]?.d ?? 0;
+  } else {
+    maxSectorDepth = total;
+  }
+
+  return { rows, total, maxSectorDepth };
 }
 
 export default async function ScreenerPage({
@@ -383,14 +440,21 @@ export default async function ScreenerPage({
 }) {
   const sp = await searchParams;
   const params = parseParams(sp);
-  const [metas, clusters, { rows, total }, coverage] = await Promise.all([
+  const [metas, clusters, { rows, total, maxSectorDepth }, coverage] = await Promise.all([
     loadMetas(),
     loadClusters(),
     loadRows(params),
     loadCoverage(),
   ]);
 
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  // Page count depends on view:
+  //   - Industry view (single cluster): flat pagination → total / perSector
+  //   - Multi-sector view: rank-tier pagination → ceil(deepest sector / perSector)
+  const isIndustryView = params.clusters.length === 1;
+  const totalPages = Math.max(
+    1,
+    Math.ceil((isIndustryView ? total : maxSectorDepth) / params.perSector),
+  );
 
   // Newest + oldest price-fetch timestamps across the rows on this page.
   // We surface this so the user knows whether the LTPs they're seeing are
@@ -1145,10 +1209,10 @@ function CompositeCell({
 function Pagination({
   params, totalPages,
 }: { params: ScreenerParams; totalPages: number }) {
-  if (totalPages <= 1) return null;
   const page = params.page;
   const buildHref = (p: number) =>
     "/tools/screener" + paramsToQuery({ ...params, page: p });
+  const isIndustryView = params.clusters.length === 1;
 
   const pages: number[] = [];
   const window = 2;
@@ -1156,29 +1220,57 @@ function Pagination({
   const end = Math.min(totalPages, page + window);
   for (let i = start; i <= end; i++) pages.push(i);
 
+  // Per-sector / page-size picker — sits to the right of the page buttons so
+  // users can switch "10 per sector" ↔ "20" ↔ "50" without leaving the
+  // results. Resets to page 1 on change to keep the user from landing past
+  // the new last page.
+  const sizeOptions = [10, 20, 50] as const;
+  const sizeLabel = isIndustryView ? "per page" : "per sector";
+
   return (
-    <nav className="mt-5 flex items-center justify-center gap-1.5 text-[13px]">
-      <PageBtn href={buildHref(Math.max(1, page - 1))} disabled={page === 1}>← Prev</PageBtn>
-      {start > 1 && (
-        <>
-          <PageBtn href={buildHref(1)}>1</PageBtn>
-          {start > 2 && <span className="muted-text">…</span>}
-        </>
+    <nav className="mt-5 flex flex-wrap items-center justify-center gap-2 text-[13px]">
+      {totalPages > 1 && (
+        <div className="flex items-center gap-1.5">
+          <PageBtn href={buildHref(Math.max(1, page - 1))} disabled={page === 1}>← Prev</PageBtn>
+          {start > 1 && (
+            <>
+              <PageBtn href={buildHref(1)}>1</PageBtn>
+              {start > 2 && <span className="muted-text">…</span>}
+            </>
+          )}
+          {pages.map((p) => (
+            <PageBtn key={p} href={buildHref(p)} active={p === page}>
+              {p}
+            </PageBtn>
+          ))}
+          {end < totalPages && (
+            <>
+              {end < totalPages - 1 && <span className="muted-text">…</span>}
+              <PageBtn href={buildHref(totalPages)}>{totalPages}</PageBtn>
+            </>
+          )}
+          <PageBtn href={buildHref(Math.min(totalPages, page + 1))} disabled={page === totalPages}>
+            Next →
+          </PageBtn>
+        </div>
       )}
-      {pages.map((p) => (
-        <PageBtn key={p} href={buildHref(p)} active={p === page}>
-          {p}
-        </PageBtn>
-      ))}
-      {end < totalPages && (
-        <>
-          {end < totalPages - 1 && <span className="muted-text">…</span>}
-          <PageBtn href={buildHref(totalPages)}>{totalPages}</PageBtn>
-        </>
-      )}
-      <PageBtn href={buildHref(Math.min(totalPages, page + 1))} disabled={page === totalPages}>
-        Next →
-      </PageBtn>
+      <div className="flex items-center gap-1.5 ml-auto sm:ml-2">
+        <span className="muted-text text-[11.5px]">Show</span>
+        {sizeOptions.map((n) => {
+          const href = "/tools/screener" + paramsToQuery({
+            ...params,
+            perSector: n,
+            page: 1,
+          });
+          const active = params.perSector === n;
+          return (
+            <PageBtn key={n} href={href} active={active}>
+              {n}
+            </PageBtn>
+          );
+        })}
+        <span className="muted-text text-[11.5px]">{sizeLabel}</span>
+      </div>
     </nav>
   );
 }
