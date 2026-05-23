@@ -125,8 +125,15 @@ async function loadRows(p: ScreenerParams, opts?: { exportAll?: boolean }): Prom
   const pbMaxClause     = p.pbMax != null
     ? sql`AND (m.cluster_metrics->>'pb')::float <= ${p.pbMax}`
     : sql``;
+  // ROE filter matches WHICHEVER return-on-capital metric the stock's cluster
+  // scorecard computes. BFSI clusters store roe_3y; most other clusters store
+  // roce_3y. Without the COALESCE the filter would silently exclude ~85% of
+  // the universe whenever it's active.
   const roeMinClause    = p.roeMin != null
-    ? sql`AND (m.cluster_metrics->>'roe_3y')::float >= ${p.roeMin / 100}`
+    ? sql`AND COALESCE(
+              (m.cluster_metrics->>'roe_3y')::float,
+              (m.cluster_metrics->>'roce_3y')::float
+            ) >= ${p.roeMin / 100}`
     : sql``;
   const divYldMinClause = p.divYldMin != null
     ? sql`AND (m.cluster_metrics->>'div_yield')::float >= ${p.divYldMin / 100}`
@@ -309,7 +316,15 @@ async function loadRows(p: ScreenerParams, opts?: { exportAll?: boolean }): Prom
              -- spreadsheet-style columns and for sorting by P/E, ROE etc.
              (m.cluster_metrics->>'pe_ttm')::float       AS pe_ttm,
              (m.cluster_metrics->>'pb')::float           AS pb,
-             (m.cluster_metrics->>'roe_3y')::float       AS roe_3y,
+             -- ROE for BFSI; ROCE for everyone else.  The screener column
+             -- "ROE / ROCE 3Y" surfaces whichever the cluster scorecard
+             -- computed.  Both are "return on capital" measures in
+             -- comparable ranges; collapsing them keeps the column populated
+             -- for the full universe.
+             COALESCE(
+                 (m.cluster_metrics->>'roe_3y')::float,
+                 (m.cluster_metrics->>'roce_3y')::float
+             ) AS roe_3y,
              (m.cluster_metrics->>'ret_12m_rel')::float  AS ret_12m_rel,
              (m.cluster_metrics->>'div_yield')::float    AS div_yield,
              (m.cluster_metrics->>'op_margin_3y')::float AS op_margin_3y,
@@ -881,7 +896,7 @@ function IndustryBlock({
                 <SortHeader sortKey="ltp"    label="LTP"  sub="₹"    params={params} align="right" className={headerPad} />
                 <SortHeader sortKey="pe"     label="P/E"  sub="TTM"  params={params} align="right" className={headerPad} />
                 <SortHeader sortKey="pb"     label="P/B"             params={params} align="right" className={headerPad} />
-                <SortHeader sortKey="roe"    label="ROE"  sub="3y"   params={params} align="right" className={headerPad} />
+                <SortHeader sortKey="roe"    label="ROE / ROCE"  sub="3y"   params={params} align="right" className={headerPad} />
                 <SortHeader sortKey="ret12m" label="1Y Δ" sub="vs market" params={params} align="right" className={headerPad} />
                 <SortHeader sortKey="divyld" label="Div"  sub="yield" params={params} align="right" className={headerPad} />
                 <SortHeader sortKey="opm"    label="Op M" sub="3y"    params={params} align="right" className={headerPad} />

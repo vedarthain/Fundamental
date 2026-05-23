@@ -45,7 +45,7 @@ export async function GET(req: NextRequest) {
     "peer_count",
     "pe_ttm",
     "pb",
-    "roe_3y_pct",        // converted to percent
+    "roe_or_roce_3y_pct", // converted to %; ROE for BFSI, ROCE elsewhere
     "div_yield_pct",     // converted to percent
     "op_margin_3y_pct",  // converted to percent
     "ret_12m_rel_pct",   // converted to percent
