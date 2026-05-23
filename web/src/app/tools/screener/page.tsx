@@ -105,19 +105,41 @@ async function loadClusters(): Promise<ClusterRow[]> {
 // first two or three. Single-industry drill-in keeps the regular pagination.
 const PER_INDUSTRY_LIMIT = 8;
 
-export async function loadRowsForExport(p: ScreenerParams, opts?: { exportAll?: boolean }): Promise<{ rows: Row[]; total: number }> {
-  const { rows, total } = await loadRows(p, opts);
-  return { rows, total };
+export async function loadRowsForExport(
+  p: ScreenerParams,
+  opts?: { exportAll?: boolean },
+): Promise<{ rows: Row[]; total: number }> {
+  const r = await loadRows(p, opts);
+  return { rows: r.rows, total: r.total };
 }
 
-async function loadRows(p: ScreenerParams, opts?: { exportAll?: boolean }): Promise<{ rows: Row[]; total: number; maxSectorDepth: number }> {
+async function loadRows(
+  p: ScreenerParams,
+  opts?: { exportAll?: boolean },
+): Promise<{
+  rows: Row[];
+  total: number;
+  maxSectorDepth: number;
+  isSectorView: boolean;
+  /** Per-tier totals — populated in sector view only. Powers the "Show all
+   *  N Long-term Compounders →" link below each tier section. */
+  tierCounts: Record<string, number>;
+}> {
   const { clusters, metas, tiers, caps, index, minQ, minV, minM, minC, page, perSector } = p;
-  // Industry view = single cluster selected → flat pagination over that
-  // cluster's stocks.  Otherwise we group by sector and paginate through
-  // rank tiers (page 1 = top N per sector, page 2 = ranks N+1 to 2N, etc.).
+  // Pagination mode logic (in order of specificity):
+  //   1. Drill-down (single cluster selected) → flat LIMIT/OFFSET.
+  //   2. Sector-view (exactly one meta, no cluster, no tier filter) →
+  //      partition by maturity_tier, top N per tier within the sector.
+  //   3. Multi-sector / default → partition by meta_cluster_id, top N per sector.
   const isFlatPagination = clusters.length === 1;
+  const isSectorView = !isFlatPagination
+    && metas.length === 1
+    && clusters.length === 0
+    && tiers.length === 0;
   const offset = (page - 1) * perSector;
-  // Within-sector rank window for the current page (multi-sector mode).
+  // Within-group rank window for the current page (used by both sector- and
+  // multi-sector views; the partition expression in the CTE differs but the
+  // [low, high] range is the same).
   const sectorRankLow  = (page - 1) * perSector + 1;
   const sectorRankHigh = page * perSector;
 
@@ -276,10 +298,15 @@ async function loadRows(p: ScreenerParams, opts?: { exportAll?: boolean }): Prom
     : isFlatPagination
       ? sql`LIMIT ${perSector} OFFSET ${offset}`
       : sql``;  // sector_rank filter does the slicing instead
-  // Rank-tier filter — only applied in multi-sector view + non-export.
+  // Rank-tier filter. Picks the right partition column for the active view:
+  //   - sector view  → tier_rank (top N per maturity tier within the sector)
+  //   - multi-sector → sector_rank (top N per sector across the universe)
+  //   - flat/export  → no rank filter
   const sectorRankFilter = (opts?.exportAll || isFlatPagination)
     ? sql``
-    : sql`WHERE sector_rank BETWEEN ${sectorRankLow} AND ${sectorRankHigh}`;
+    : isSectorView
+      ? sql`WHERE tier_rank BETWEEN ${sectorRankLow} AND ${sectorRankHigh}`
+      : sql`WHERE sector_rank BETWEEN ${sectorRankLow} AND ${sectorRankHigh}`;
 
   const rows = await sql<Row[]>`
     WITH ranked AS (
@@ -374,7 +401,21 @@ async function loadRows(p: ScreenerParams, opts?: { exportAll?: boolean }): Prom
                   AND r.momentum_pct IS NOT NULL) DESC,
                  r.composite_pct DESC NULLS LAST,
                  r.peer_rank ASC NULLS LAST
-             )::int AS sector_rank
+             )::int AS sector_rank,
+             -- tier_rank = within-tier ordinal.  In sector view (single meta
+             -- filter) this gives "top N Long-term Compounders / Established
+             -- / Emerging / New Listings" within the selected sector. Across
+             -- the whole universe in other views; only consulted in sector view.
+             ROW_NUMBER() OVER (
+               PARTITION BY r.maturity_tier
+               ORDER BY
+                 (r.score_status = 'full') DESC,
+                 (r.quality_pct IS NOT NULL
+                  AND r.valuation_pct IS NOT NULL
+                  AND r.momentum_pct IS NOT NULL) DESC,
+                 r.composite_pct DESC NULLS LAST,
+                 r.peer_rank ASC NULLS LAST
+             )::int AS tier_rank
       FROM ranked r
       JOIN app.universe u USING (symbol)
       JOIN app.cluster c ON c.id = r.cluster_id
@@ -404,11 +445,14 @@ async function loadRows(p: ScreenerParams, opts?: { exportAll?: boolean }): Prom
     ${limitClause}
   `;
 
-  // Multi-sector mode: figure out how deep the deepest sector goes so we
-  // can compute total page count (= ceil(maxSectorDepth / perSector)).
-  // Industry view doesn't need this — falls back to ceil(total / perSector).
-  let maxSectorDepth = 0;
+  // Compute max-depth of the active partition so we can derive total page
+  // count: ceil(maxPartitionDepth / perSector).
+  //   - flat/export → just use total
+  //   - sector view → MAX(count per maturity_tier within the sector)
+  //   - multi-sector → MAX(count per meta_cluster_id)
+  let maxSectorDepth = total;
   if (!isFlatPagination && !opts?.exportAll) {
+    const groupExpr = isSectorView ? sql`s.maturity_tier` : sql`mc.id`;
     const depthQ = await sql<{ d: number }[]>`
       SELECT COALESCE(MAX(n), 0)::int AS d
       FROM (
@@ -425,15 +469,36 @@ async function loadRows(p: ScreenerParams, opts?: { exportAll?: boolean }): Prom
           AND COALESCE(s.momentum_pct, 0)  >= ${minM}
           AND COALESCE(s.composite_pct, 0) >= ${minC}
           ${rangeFilters}
-        GROUP BY mc.id
+        GROUP BY ${groupExpr}
       ) sub
     `;
     maxSectorDepth = depthQ[0]?.d ?? 0;
-  } else {
-    maxSectorDepth = total;
   }
 
-  return { rows, total, maxSectorDepth };
+  // Per-tier totals (sector view only) — used by ResultsTable to render
+  // the "Show all N →" link below each tier section.
+  let tierCounts: Record<string, number> = {};
+  if (isSectorView && !opts?.exportAll) {
+    const tcRows = await sql<{ t: string; n: number }[]>`
+      SELECT s.maturity_tier AS t, COUNT(*)::int AS n
+      FROM app.scores s
+      JOIN app.universe u USING (symbol)
+      JOIN app.cluster c ON c.id = s.cluster_id
+      JOIN app.meta_cluster mc ON mc.id = c.meta_cluster_id
+      ${rangeJoinForCount}
+      WHERE s.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
+        ${clusterFilter} ${metaFilter} ${tierFilter} ${capFilter} ${indexFilter}
+        AND COALESCE(s.quality_pct, 0)   >= ${minQ}
+        AND COALESCE(s.valuation_pct, 0) >= ${minV}
+        AND COALESCE(s.momentum_pct, 0)  >= ${minM}
+        AND COALESCE(s.composite_pct, 0) >= ${minC}
+        ${rangeFilters}
+      GROUP BY s.maturity_tier
+    `;
+    tierCounts = Object.fromEntries(tcRows.map((r) => [r.t, r.n]));
+  }
+
+  return { rows, total, maxSectorDepth, isSectorView, tierCounts };
 }
 
 export default async function ScreenerPage({
@@ -443,7 +508,7 @@ export default async function ScreenerPage({
 }) {
   const sp = await searchParams;
   const params = parseParams(sp);
-  const [metas, clusters, { rows, total, maxSectorDepth }, coverage] = await Promise.all([
+  const [metas, clusters, { rows, total, maxSectorDepth, isSectorView, tierCounts }, coverage] = await Promise.all([
     loadMetas(),
     loadClusters(),
     loadRows(params),
@@ -452,7 +517,8 @@ export default async function ScreenerPage({
 
   // Page count depends on view:
   //   - Industry view (single cluster): flat pagination → total / perSector
-  //   - Multi-sector view: rank-tier pagination → ceil(deepest sector / perSector)
+  //   - Sector view (single meta): tier-rank pagination → ceil(deepest tier / perSector)
+  //   - Multi-sector view: sector-rank pagination → ceil(deepest sector / perSector)
   const isIndustryView = params.clusters.length === 1;
   const totalPages = Math.max(
     1,
@@ -629,7 +695,13 @@ export default async function ScreenerPage({
             metas={metas}
             clusters={clusters}
           />
-          <ResultsTable rows={rows} groupByIndustry={false} params={params} />
+          <ResultsTable
+            rows={rows}
+            groupByIndustry={false}
+            groupByTier={isSectorView}
+            tierCounts={tierCounts}
+            params={params}
+          />
           <Pagination params={params} totalPages={totalPages} />
           <MethodologyFooter />
         </main>
@@ -709,6 +781,34 @@ function FilterSection({
       </summary>
       <div className="mt-2 ml-3">{children}</div>
     </details>
+  );
+}
+
+/** Maturity-tier section divider for tier-grouped results.  Tinted strip
+ *  with the same colour family /sectors uses so the visual language is
+ *  consistent across both surfaces (compounders = green, established =
+ *  teal, emerging = amber, new = slate). */
+function TierSectionHeader({ tier, shown, total }: { tier: string; shown: number; total: number }) {
+  const colors: Record<string, { stripe: string; bg: string; label: string }> = {
+    veteran: { stripe: "#2e9a47", bg: "rgba(46,154,71,0.10)",  label: "#206b32" },
+    mature:  { stripe: "#3a9290", bg: "rgba(58,146,144,0.10)", label: "#236663" },
+    mid:     { stripe: "#c08e2c", bg: "rgba(192,142,44,0.12)", label: "#8a6116" },
+    new:     { stripe: "#7882b8", bg: "rgba(120,130,184,0.12)", label: "#3f4978" },
+  };
+  const c = colors[tier] ?? { stripe: "var(--color-muted)", bg: "var(--color-paper)", label: "var(--color-muted)" };
+  return (
+    <div
+      className="px-4 md:px-5 py-2.5 flex items-center gap-2.5 rounded-md mb-2"
+      style={{ backgroundColor: c.bg }}
+    >
+      <span className="inline-block w-2 h-2 rounded-full" style={{ background: c.stripe }} />
+      <span className="text-[12px] uppercase tracking-wide font-semibold" style={{ color: c.label }}>
+        {tierLabel(tier)}s
+      </span>
+      <span className="tabular-nums text-[11.5px] muted-text">
+        · showing {shown} of {total}
+      </span>
+    </div>
   );
 }
 
@@ -859,10 +959,18 @@ function ResultsToolbar({
 }
 
 function ResultsTable({
-  rows, groupByIndustry, params,
+  rows, groupByIndustry, groupByTier = false, tierCounts = {}, params,
 }: {
   rows: Row[];
   groupByIndustry: boolean;
+  /** When true, bin rows by maturity_tier with section headers.  Used in
+   *  sector view (single meta selected) to surface the four maturity
+   *  buckets (Long-term Compounder / Established / Emerging / New Listing)
+   *  separately, each with a "Show all N →" link. */
+  groupByTier?: boolean;
+  /** Map of tier code → total count of stocks in that tier within the
+   *  current filter scope. Used to render the "Show all N →" links. */
+  tierCounts?: Record<string, number>;
   params: ScreenerParams;
 }) {
   if (rows.length === 0) {
@@ -872,6 +980,59 @@ function ResultsTable({
         <div className="muted-text text-[14px]">
           Try loosening your minimum scores or expanding the cluster/tier filters.
         </div>
+      </div>
+    );
+  }
+
+  // Tier-grouped layout — runs when sector view is active.  Reads the rows
+  // (already top-N per tier from the SQL) and splits into 4 buckets.  Tier
+  // order is the curated VETERAN → MATURE → MID → NEW progression so the
+  // page reads from "buy-and-hold compounders" at the top to "newly
+  // listed" at the bottom.
+  if (groupByTier) {
+    const TIER_ORDER = ["veteran", "mature", "mid", "new"] as const;
+    const byTier = new Map<string, Row[]>();
+    for (const r of rows) {
+      const t = r.maturity_tier || "—";
+      if (!byTier.has(t)) byTier.set(t, []);
+      byTier.get(t)!.push(r);
+    }
+    const orderedTiers = [
+      ...TIER_ORDER.filter((t) => byTier.has(t)),
+      ...Array.from(byTier.keys()).filter((t) => !(TIER_ORDER as readonly string[]).includes(t)),
+    ];
+    return (
+      <div className="space-y-6">
+        {orderedTiers.map((tier) => {
+          const bucket = byTier.get(tier)!;
+          const total = tierCounts[tier] ?? bucket.length;
+          const hasMore = total > bucket.length;
+          // "Show all N →" — same screener URL plus `tiers=<tier>` so the
+          // user can drill into just that maturity bucket in the active
+          // sector. Flat pagination kicks in automatically since
+          // `tiers=[one]` exits sector-view mode.
+          const showAllHref = "/tools/screener" + paramsToQuery({
+            ...params,
+            tiers: [tier],
+            page: 1,
+          });
+          return (
+            <section key={tier}>
+              <TierSectionHeader tier={tier} shown={bucket.length} total={total} />
+              <IndustryBlock rows={bucket} showHeader={false} params={params} />
+              {hasMore && (
+                <div className="mt-2 text-right">
+                  <Link
+                    href={showAllHref}
+                    className="text-[12px] muted-text hover:text-[var(--color-accent-700)] transition-colors"
+                  >
+                    Show all {total} {tierLabel(tier)}s →
+                  </Link>
+                </div>
+              )}
+            </section>
+          );
+        })}
       </div>
     );
   }
