@@ -167,10 +167,25 @@ keyed to commits where applicable.
 
 ## Known follow-ups (not blocking)
 
-- Investigate top renamed-ticker audit candidates (PTCIL, TIPSMUSIC,
-  NIRLON, WPIL, etc.) — likely real renames worth backfilling.
-- RELIANCE `op_margin_3y` NULL — minor edge case from the parser fix.
+- **Backfill rename candidates** (PTCIL, TIPSMUSIC) — yfinance HAS the
+  history (728d / 5,931d respectively); we just never loaded it.
+  Single-command fix via `scripts/backfill-nse-bhavcopy.py`.
+- **Real rename investigation** (NIRLON, KAMAHOLD, etc.) — yfinance is
+  also missing data for these (only 24d). Need NSE bhavcopy with old
+  symbol aliases — investigate one to validate the pattern.
 - Consider moving `./snap` online (laptop independence) — discussed
   not started; needs Screener cookie expiry handling first.
 - No tests yet on the ETL or web app — backlog for when there's a
   reason to add them.
+
+## Closed-out diagnostic notes
+
+- **RELIANCE `op_margin_3y` NULL — not a bug, by design.** The typed
+  `op_margin_3y` column in `metrics_snapshot` is NULL for ALL 2,157
+  stocks; metrics live in the JSONB `cluster_metrics` column instead.
+  Each cluster's scorecard picks the profitability metric that suits
+  the industry: IT services uses `op_margin_3y`, PSU banks uses
+  `roe_3y`, oil refining uses `ebitda_margin_3y`. RELIANCE is scored
+  correctly in oil_refining (`ebitda_margin_3y` = 0.21). The blank
+  `avg_op_margin_3y` for oil-refining clusters on `/sectors` is the
+  expected, correct rendering — that cluster doesn't use the metric.

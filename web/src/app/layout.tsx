@@ -200,10 +200,39 @@ function SiteFooter() {
 
         <div className="mt-10 pt-6 border-t hairline flex flex-wrap items-center justify-between gap-3 text-[11px] muted-text">
           <span>Snapshots recompute every Friday after market close · Coverage: NSE actively-traded universe</span>
-          <span>Built for thinking, not trading.</span>
+          <span className="flex items-center gap-3">
+            <span>Built for thinking, not trading.</span>
+            <VersionBadge />
+          </span>
         </div>
       </div>
     </footer>
+  );
+}
+
+/**
+ * Version badge — short git SHA of the deployed build.  Reads
+ * VERCEL_GIT_COMMIT_SHA at render time (set automatically by Vercel for
+ * every deploy); falls back to "dev" for local runs.
+ *
+ * Useful when triaging bug reports / screenshots: the SHA pins the
+ * report to a known build so we can diff what changed since. Zero
+ * compute cost — pure env read, no DB.
+ */
+function VersionBadge() {
+  const sha = process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? "dev";
+  const commitUrl = process.env.VERCEL_GIT_COMMIT_SHA
+    ? `https://github.com/vedarthain/Fundamental/commit/${process.env.VERCEL_GIT_COMMIT_SHA}`
+    : undefined;
+  const className = "font-mono text-[10px] tabular-nums opacity-60 hover:opacity-100 transition-opacity";
+  return commitUrl ? (
+    <a href={commitUrl} target="_blank" rel="noopener noreferrer" className={className} title="View this build on GitHub">
+      v·{sha}
+    </a>
+  ) : (
+    <span className={className} title="Local dev build (no SHA)">
+      v·{sha}
+    </span>
   );
 }
 
