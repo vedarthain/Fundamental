@@ -1,7 +1,9 @@
--- TARGET DATABASE: golden_db (NOT the app DB tracked by migrate.py).
--- Apply manually until migrate.py grows multi-DB support:
---   psql golden_db -f db/migrations/0019_repairable_immutable_trigger.sql
---   psql "$NEON_GOLDEN_URL" -f db/migrations/0019_repairable_immutable_trigger.sql
+-- TARGET DATABASE: golden_db (lives in db/migrations-golden/ so the
+-- app-DB migrate.py runner never picks it up).
+--
+-- Apply manually:
+--   psql golden_db -f db/migrations-golden/0019_repairable_immutable_trigger.sql
+--   psql "$NEON_GOLDEN_URL" -f db/migrations-golden/0019_repairable_immutable_trigger.sql
 --
 -- Allow legitimate data-quality repair on golden tables while keeping the
 -- append-only guarantee for everything else.

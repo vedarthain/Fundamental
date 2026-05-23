@@ -50,6 +50,10 @@ from pathlib import Path
 import psycopg
 
 ROOT = Path(__file__).resolve().parent.parent
+# app-DB migrations live here. golden-DB migrations live in
+# db/migrations-golden/ and are applied manually with psql until this
+# runner grows multi-DB support.  We deliberately don't iterate into
+# subdirectories so the golden tree stays invisible to this script.
 MIGRATIONS_DIR = ROOT / "db" / "migrations"
 
 # Filename pattern: leading digits = version, rest = name.
