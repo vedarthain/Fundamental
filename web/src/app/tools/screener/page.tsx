@@ -898,7 +898,21 @@ function IndustryBlock({
                 <SortHeader sortKey="pb"     label="P/B"             params={params} align="right" className={headerPad} />
                 <SortHeader
                   sortKey="roe"
-                  label="ROE / ROCE"
+                  label={
+                    <>
+                      ROE / ROCE
+                      {/* Visible info icon — invites the hover/tap so users
+                          discover the tooltip explaining when ROE vs ROCE is
+                          surfaced. Muted color so it doesn't overpower the
+                          column label. */}
+                      <span
+                        aria-hidden="true"
+                        className="ml-1 opacity-50 text-[10px] align-text-top"
+                      >
+                        ⓘ
+                      </span>
+                    </>
+                  }
                   sub="3y"
                   params={params}
                   align="right"
@@ -1014,7 +1028,9 @@ function SortHeader({
   sortKey, label, sub, params, align, className = "", title,
 }: {
   sortKey: SortParam;
-  label: string;
+  /** label is ReactNode so callers can embed inline icons (e.g. an info
+   *  glyph next to the column name). Plain strings still work. */
+  label: React.ReactNode;
   sub?: string;
   params: ScreenerParams;
   align: "left" | "right";
