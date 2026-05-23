@@ -1,15 +1,42 @@
 #!/usr/bin/env bash
-# ./snap — take a fresh weekly score snapshot.
-# Recomputes metrics for every active NSE stock, then scores them.
-# Defaults to today's date. Pass an ISO date to force a different snapshot.
-#   ./snap                 # snapshot for today
-#   ./snap 2026-05-12      # snapshot for a specific date
+# ./snap — full weekly refresh: fetch fundamentals → compute metrics → score.
+#
+# Default behaviour: scrapes fresh Screener exports for every active stock
+# (~15 min), recomputes metrics, and runs the percentile + composite scorer.
+# Use this once a week (typically after market close on Friday).
+#
+# Flags:
+#   ./snap                   # full pipeline: fetch + compute + score (today's snapshot)
+#   ./snap 2026-05-12        # full pipeline, but pin the snapshot_date
+#   ./snap --skip-fetch      # skip fetch-many (quick re-score on existing data; ~10s)
+#   ./snap --skip-fetch 2026-05-12
+#
+# What this does NOT do:
+#   - Daily LTP / OHLC refresh — that's refresh-ltp.py via GitHub Actions.
+#     LTP is sourced from NSE bhavcopy (the single source of truth). Screener
+#     LTP is deliberately ignored by compute-metrics.
+#   - Sync to Neon production — run ./scripts/sync-neon.sh after this.
+
 set -eo pipefail
 
 cd "$(dirname "$0")"
 
 PY=etl/.venv/bin/python
-SNAP="${1:-}"
+
+# Parse flags / positional args. Supports any order:
+#   ./snap, ./snap 2026-05-12, ./snap --skip-fetch, ./snap --skip-fetch 2026-05-12
+SKIP_FETCH=0
+SNAP=""
+for arg in "$@"; do
+  case "$arg" in
+    --skip-fetch) SKIP_FETCH=1 ;;
+    --help|-h)
+      sed -n '1,18p' "$0"
+      exit 0
+      ;;
+    *) SNAP="$arg" ;;
+  esac
+done
 
 run() {
   local step="$1"; shift
@@ -21,8 +48,23 @@ run() {
   fi
 }
 
+run_nosnap() {
+  # fetch-many doesn't take --snapshot — it always pulls today's Screener data.
+  local step="$1"
+  echo "▶ $step"
+  "$PY" -m fundamental_etl.cli "$step"
+}
+
+if [ "$SKIP_FETCH" -eq 0 ]; then
+  run_nosnap fetch-many
+  echo
+fi
 run compute-metrics
 echo
 run score
 echo
 echo "✓ snapshot complete"
+echo
+if [ "$SKIP_FETCH" -eq 0 ]; then
+  echo "Next: ./scripts/sync-neon.sh to push to production."
+fi

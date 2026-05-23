@@ -256,14 +256,26 @@ def compute_metrics_for_symbol(
     quarterly = load_quarterly(app_conn, symbol)
     meta = load_meta_from_raw(app_conn, symbol)
 
-    # Update screener_meta with the freshly-extracted price/mc
+    # Update screener_meta with the freshly-extracted meta fields.
+    #
+    # IMPORTANT: current_price is NOT written here. NSE bhavcopy is the
+    # single source of truth for LTP (refresh-ltp.py / GH Action writes it
+    # daily from the official exchange data).  Screener's Excel export
+    # carries an LTP too, but it can lag the bhavcopy by hours-to-days and
+    # is an inferior source.  We deliberately skip it so the ETL never
+    # introduces stale prices into production.
+    #
+    # market_cap_cr DOES come from Screener — NSE bhavcopy doesn't publish
+    # market cap, so Screener is the practical source. A small staleness
+    # window is acceptable here (mc moves slowly day-to-day).
     with app_conn.cursor() as cur:
         cur.execute("""
             UPDATE app.screener_meta
-            SET current_price = %s, market_cap_cr = %s,
-                face_value = %s, no_of_shares = %s
+            SET market_cap_cr = %s,
+                face_value = %s,
+                no_of_shares = %s
             WHERE symbol = %s
-        """, (meta.get("current_price"), meta.get("market_cap_cr"),
+        """, (meta.get("market_cap_cr"),
               meta.get("face_value"), meta.get("no_of_shares"), symbol))
 
     signals = load_signals(golden_conn, symbol)
