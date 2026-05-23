@@ -500,12 +500,21 @@ function StocksPanel({
   const [activeTier, setActiveTier] = useState<string>("all");
   // Per-tier expansion state for "All" view. Each tier is capped at
   // TIER_CAP rows by default; clicking "Show all N →" adds that tier
-  // to this set and reveals every row in the bucket. Switching to a
-  // specific tier tab bypasses the cap entirely (the tab IS the full
-  // view of that tier).
+  // to this set and reveals every row in the bucket.
   const [expandedTiers, setExpandedTiers] = useState<Set<string>>(new Set());
+  // Pagination state for the specific-tier view (Long-term Compounders /
+  // Established / etc. tabs). Reset to 1 whenever the user switches tier.
+  const [tierPage, setTierPage] = useState(1);
   const TIER_CAP = 10;
+  const TIER_PAGE_SIZE = 10;
   const totalCount = stocks.length;
+
+  // Wrapper that resets pagination when the active tier changes — both
+  // explicit tab clicks and the "All" tab benefit from a clean reset.
+  const onSelectTier = useCallback((t: string) => {
+    setActiveTier(t);
+    setTierPage(1);
+  }, []);
 
   return (
     <section className="card overflow-hidden">
@@ -536,7 +545,7 @@ function StocksPanel({
                 label="All"
                 count={totalCount}
                 active={activeTier === "all"}
-                onClick={() => setActiveTier("all")}
+                onClick={() => onSelectTier("all")}
               />
               {orderedTiers.map((t) => (
                 <TierTab
@@ -544,7 +553,7 @@ function StocksPanel({
                   label={tierLabel(t) + "s"}
                   count={byTier.get(t)!.length}
                   active={activeTier === t}
-                  onClick={() => setActiveTier(t)}
+                  onClick={() => onSelectTier(t)}
                   tierKey={t}
                 />
               ))}
@@ -555,13 +564,24 @@ function StocksPanel({
             if (activeTier !== "all" && activeTier !== tier) return null;
             const bucket = byTier.get(tier)!;
             const isAllView = activeTier === "all";
-            // Cap rows in "All" view so the panel doesn't run forever for
-            // big sectors. Specific-tier tab shows the full bucket (no cap)
-            // because that tab IS the deep-dive.
-            const isExpanded = expandedTiers.has(tier);
-            const cap = isAllView && !isExpanded ? TIER_CAP : bucket.length;
-            const visible = bucket.slice(0, cap);
-            const hiddenCount = bucket.length - visible.length;
+
+            let visible: StockRow[];
+            let hiddenCount = 0;
+            let totalPages = 1;
+            if (isAllView) {
+              // "All" view: cap each tier at TIER_CAP unless expanded.
+              const isExpanded = expandedTiers.has(tier);
+              const cap = isExpanded ? bucket.length : TIER_CAP;
+              visible = bucket.slice(0, cap);
+              hiddenCount = bucket.length - visible.length;
+            } else {
+              // Specific-tier view: paginate TIER_PAGE_SIZE per page.
+              totalPages = Math.max(1, Math.ceil(bucket.length / TIER_PAGE_SIZE));
+              const safePage = Math.min(tierPage, totalPages);
+              const start = (safePage - 1) * TIER_PAGE_SIZE;
+              visible = bucket.slice(start, start + TIER_PAGE_SIZE);
+            }
+
             return (
               <section key={tier}>
                 {isAllView && (
@@ -572,7 +592,9 @@ function StocksPanel({
                     <StockRowItem key={s.symbol} stock={s} />
                   ))}
                 </div>
-                {hiddenCount > 0 && (
+
+                {/* "All" view: per-tier "Show all" / "Show top N only" toggle */}
+                {isAllView && hiddenCount > 0 && (
                   <div className="px-4 md:px-5 py-2.5 border-t hairline">
                     <button
                       type="button"
@@ -590,7 +612,7 @@ function StocksPanel({
                     </button>
                   </div>
                 )}
-                {isAllView && isExpanded && bucket.length > TIER_CAP && (
+                {isAllView && expandedTiers.has(tier) && bucket.length > TIER_CAP && (
                   <div className="px-4 md:px-5 py-2.5 border-t hairline">
                     <button
                       type="button"
@@ -607,12 +629,113 @@ function StocksPanel({
                     </button>
                   </div>
                 )}
+
+                {/* Specific-tier view: paginated nav */}
+                {!isAllView && totalPages > 1 && (
+                  <TierPagination
+                    page={Math.min(tierPage, totalPages)}
+                    totalPages={totalPages}
+                    pageSize={TIER_PAGE_SIZE}
+                    total={bucket.length}
+                    onPageChange={setTierPage}
+                  />
+                )}
               </section>
             );
           })}
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * Compact pagination strip for the specific-tier view (Long-term Compounders /
+ * Established / etc. tabs).  Prev / Next + a windowed list of page buttons +
+ * a "Showing X-Y of Z" counter.  Pure presentational — the parent owns the
+ * page-number state and provides onPageChange.
+ */
+function TierPagination({
+  page, totalPages, pageSize, total, onPageChange,
+}: {
+  page: number;
+  totalPages: number;
+  pageSize: number;
+  total: number;
+  onPageChange: (p: number) => void;
+}) {
+  const start = (page - 1) * pageSize + 1;
+  const end = Math.min(page * pageSize, total);
+
+  const windowSize = 2;
+  const lo = Math.max(1, page - windowSize);
+  const hi = Math.min(totalPages, page + windowSize);
+  const pages: number[] = [];
+  for (let i = lo; i <= hi; i++) pages.push(i);
+
+  return (
+    <div className="px-4 md:px-5 py-2.5 border-t hairline flex flex-wrap items-center justify-between gap-2">
+      <div className="text-[11px] tabular-nums muted-text">
+        Showing {start}–{end} of {total}
+      </div>
+      <div className="flex items-center gap-1 text-[11.5px]">
+        <PageNavBtn onClick={() => onPageChange(Math.max(1, page - 1))} disabled={page === 1}>
+          ← Prev
+        </PageNavBtn>
+        {lo > 1 && (
+          <>
+            <PageNavBtn onClick={() => onPageChange(1)}>1</PageNavBtn>
+            {lo > 2 && <span className="muted-text px-0.5">…</span>}
+          </>
+        )}
+        {pages.map((p) => (
+          <PageNavBtn key={p} onClick={() => onPageChange(p)} active={p === page}>
+            {p}
+          </PageNavBtn>
+        ))}
+        {hi < totalPages && (
+          <>
+            {hi < totalPages - 1 && <span className="muted-text px-0.5">…</span>}
+            <PageNavBtn onClick={() => onPageChange(totalPages)}>{totalPages}</PageNavBtn>
+          </>
+        )}
+        <PageNavBtn onClick={() => onPageChange(Math.min(totalPages, page + 1))} disabled={page === totalPages}>
+          Next →
+        </PageNavBtn>
+      </div>
+    </div>
+  );
+}
+
+function PageNavBtn({
+  children, onClick, active, disabled,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  active?: boolean;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`px-2 py-0.5 rounded tabular-nums transition-colors ${
+        disabled ? "opacity-40 cursor-not-allowed" : "hover:bg-[var(--color-paper)]"
+      }`}
+      style={
+        active
+          ? {
+              backgroundColor: "var(--color-accent-50)",
+              color: "var(--color-accent-700)",
+              fontWeight: 600,
+              boxShadow: "inset 0 0 0 1px var(--color-accent-300)",
+            }
+          : { color: "var(--color-ink)" }
+      }
+    >
+      {children}
+    </button>
   );
 }
 
