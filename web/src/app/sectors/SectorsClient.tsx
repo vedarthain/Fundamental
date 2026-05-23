@@ -498,6 +498,13 @@ function StocksPanel({
   );
 
   const [activeTier, setActiveTier] = useState<string>("all");
+  // Per-tier expansion state for "All" view. Each tier is capped at
+  // TIER_CAP rows by default; clicking "Show all N →" adds that tier
+  // to this set and reveals every row in the bucket. Switching to a
+  // specific tier tab bypasses the cap entirely (the tab IS the full
+  // view of that tier).
+  const [expandedTiers, setExpandedTiers] = useState<Set<string>>(new Set());
+  const TIER_CAP = 10;
   const totalCount = stocks.length;
 
   return (
@@ -547,17 +554,59 @@ function StocksPanel({
           {orderedTiers.map((tier) => {
             if (activeTier !== "all" && activeTier !== tier) return null;
             const bucket = byTier.get(tier)!;
-            const showHeader = activeTier === "all";
+            const isAllView = activeTier === "all";
+            // Cap rows in "All" view so the panel doesn't run forever for
+            // big sectors. Specific-tier tab shows the full bucket (no cap)
+            // because that tab IS the deep-dive.
+            const isExpanded = expandedTiers.has(tier);
+            const cap = isAllView && !isExpanded ? TIER_CAP : bucket.length;
+            const visible = bucket.slice(0, cap);
+            const hiddenCount = bucket.length - visible.length;
             return (
               <section key={tier}>
-                {showHeader && (
+                {isAllView && (
                   <TierHeader tier={tier} count={bucket.length} />
                 )}
                 <div className="divide-y hairline">
-                  {bucket.map((s) => (
+                  {visible.map((s) => (
                     <StockRowItem key={s.symbol} stock={s} />
                   ))}
                 </div>
+                {hiddenCount > 0 && (
+                  <div className="px-4 md:px-5 py-2.5 border-t hairline">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExpandedTiers((prev) => {
+                          const next = new Set(prev);
+                          next.add(tier);
+                          return next;
+                        })
+                      }
+                      className="text-[12px] font-medium hover:underline transition-colors"
+                      style={{ color: "var(--color-accent-700)" }}
+                    >
+                      Show all {bucket.length} {tierLabel(tier)}s →
+                    </button>
+                  </div>
+                )}
+                {isAllView && isExpanded && bucket.length > TIER_CAP && (
+                  <div className="px-4 md:px-5 py-2.5 border-t hairline">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExpandedTiers((prev) => {
+                          const next = new Set(prev);
+                          next.delete(tier);
+                          return next;
+                        })
+                      }
+                      className="text-[11.5px] muted-text hover:text-[var(--color-ink)] transition-colors"
+                    >
+                      ↑ Show top {TIER_CAP} only
+                    </button>
+                  </div>
+                )}
               </section>
             );
           })}
