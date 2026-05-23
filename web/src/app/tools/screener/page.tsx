@@ -896,7 +896,21 @@ function IndustryBlock({
                 <SortHeader sortKey="ltp"    label="LTP"  sub="₹"    params={params} align="right" className={headerPad} />
                 <SortHeader sortKey="pe"     label="P/E"  sub="TTM"  params={params} align="right" className={headerPad} />
                 <SortHeader sortKey="pb"     label="P/B"             params={params} align="right" className={headerPad} />
-                <SortHeader sortKey="roe"    label="ROE / ROCE"  sub="3y"   params={params} align="right" className={headerPad} />
+                <SortHeader
+                  sortKey="roe"
+                  label="ROE / ROCE"
+                  sub="3y"
+                  params={params}
+                  align="right"
+                  className={headerPad}
+                  title={"Return on capital, averaged over 3 years.\n\n"
+                    + "BFSI / financial stocks use ROE (Return on Equity = Net Profit ÷ Shareholder Equity).\n"
+                    + "Other industries use ROCE (Return on Capital Employed = EBIT ÷ (Equity + Debt)).\n\n"
+                    + "Higher is better. 15%+ is good, 25%+ is exceptional.\n\n"
+                    + "The cluster scorecard picks whichever metric best suits the industry — ROE for "
+                    + "banks (equity-driven), ROCE for manufacturing / capital-heavy industries (equity + debt).\n\n"
+                    + "See /glossary for full details and examples."}
+                />
                 <SortHeader sortKey="ret12m" label="1Y Δ" sub="vs market" params={params} align="right" className={headerPad} />
                 <SortHeader sortKey="divyld" label="Div"  sub="yield" params={params} align="right" className={headerPad} />
                 <SortHeader sortKey="opm"    label="Op M" sub="3y"    params={params} align="right" className={headerPad} />
