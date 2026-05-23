@@ -126,22 +126,20 @@ async function loadRows(
   tierCounts: Record<string, number>;
 }> {
   const { clusters, metas, tiers, caps, index, minQ, minV, minM, minC, page, perSector } = p;
-  // Pagination mode logic (in order of specificity):
-  //   1. Drill-down (single cluster selected) → flat LIMIT/OFFSET.
-  //   2. Sector-view (exactly one meta, no cluster, no tier filter) →
-  //      partition by maturity_tier, top N per tier within the sector.
-  //   3. Multi-sector / default → partition by meta_cluster_id, top N per sector.
-  const isFlatPagination = clusters.length === 1;
-  const isSectorView = !isFlatPagination
-    && metas.length === 1
+  // Pagination model:
+  //   - Sector view (exactly one meta, no cluster, no tier filter)
+  //     → tier-grouped layout. Top N per maturity tier within the sector,
+  //       no further pagination (~4 tiers × N is small enough to fit).
+  //   - Everything else → simple flat pagination, N stocks per page.
+  //     "Show 10" = 10 stocks visible, period. Next page = next 10.
+  const isSectorView = metas.length === 1
     && clusters.length === 0
     && tiers.length === 0;
+  const isFlatPagination = !isSectorView;
   const offset = (page - 1) * perSector;
-  // Within-group rank window for the current page (used by both sector- and
-  // multi-sector views; the partition expression in the CTE differs but the
-  // [low, high] range is the same).
-  const sectorRankLow  = (page - 1) * perSector + 1;
-  const sectorRankHigh = page * perSector;
+  // Tier-rank window range for sector view (always [1, perSector] — top N per tier).
+  const sectorRankLow  = 1;
+  const sectorRankHigh = perSector;
 
   // ── Range filters on raw fundamental metrics ──────────────────────────
   // These reference columns inside the `joined` CTE (m.cluster_metrics->>...
@@ -288,25 +286,19 @@ async function loadRows(
   const total = totalRows[0]?.n ?? 0;
 
   void isIndustryView;
-  // Pagination strategy:
+  // Pagination clauses:
   //   - Export       → no LIMIT, no rank filter (capped at 5,000 in outer SELECT)
-  //   - Industry view → flat LIMIT/OFFSET pagination through the cluster
-  //   - Multi-sector → rank-tier pagination via sector_rank WHERE clause
-  //                    (LIMIT is then a safety cap only)
+  //   - Sector view  → tier-rank filter (top N per maturity tier, ALL tiers
+  //                    on one page; no LIMIT/OFFSET needed)
+  //   - Everything else → flat LIMIT/OFFSET pagination
   const limitClause = opts?.exportAll
     ? sql`LIMIT 5000`
-    : isFlatPagination
-      ? sql`LIMIT ${perSector} OFFSET ${offset}`
-      : sql``;  // sector_rank filter does the slicing instead
-  // Rank-tier filter. Picks the right partition column for the active view:
-  //   - sector view  → tier_rank (top N per maturity tier within the sector)
-  //   - multi-sector → sector_rank (top N per sector across the universe)
-  //   - flat/export  → no rank filter
-  const sectorRankFilter = (opts?.exportAll || isFlatPagination)
-    ? sql``
     : isSectorView
-      ? sql`WHERE tier_rank BETWEEN ${sectorRankLow} AND ${sectorRankHigh}`
-      : sql`WHERE sector_rank BETWEEN ${sectorRankLow} AND ${sectorRankHigh}`;
+      ? sql``  // tier_rank filter does the slicing
+      : sql`LIMIT ${perSector} OFFSET ${offset}`;
+  const sectorRankFilter = (opts?.exportAll || !isSectorView)
+    ? sql``
+    : sql`WHERE tier_rank BETWEEN ${sectorRankLow} AND ${sectorRankHigh}`;
 
   const rows = await sql<Row[]>`
     WITH ranked AS (
@@ -515,15 +507,12 @@ export default async function ScreenerPage({
     loadCoverage(),
   ]);
 
-  // Page count depends on view:
-  //   - Industry view (single cluster): flat pagination → total / perSector
-  //   - Sector view (single meta): tier-rank pagination → ceil(deepest tier / perSector)
-  //   - Multi-sector view: sector-rank pagination → ceil(deepest sector / perSector)
-  const isIndustryView = params.clusters.length === 1;
-  const totalPages = Math.max(
-    1,
-    Math.ceil((isIndustryView ? total : maxSectorDepth) / params.perSector),
-  );
+  // Page count: sector view doesn't paginate (single page with all four
+  // tier sections); everything else uses flat pagination.
+  const totalPages = isSectorView
+    ? 1
+    : Math.max(1, Math.ceil(total / params.perSector));
+  void maxSectorDepth;
 
   // Newest + oldest price-fetch timestamps across the rows on this page.
   // We surface this so the user knows whether the LTPs they're seeing are
@@ -1384,7 +1373,6 @@ function Pagination({
   const page = params.page;
   const buildHref = (p: number) =>
     "/tools/screener" + paramsToQuery({ ...params, page: p });
-  const isIndustryView = params.clusters.length === 1;
 
   const pages: number[] = [];
   const window = 2;
@@ -1392,12 +1380,14 @@ function Pagination({
   const end = Math.min(totalPages, page + window);
   for (let i = start; i <= end; i++) pages.push(i);
 
-  // Per-sector / page-size picker — sits to the right of the page buttons so
-  // users can switch "10 per sector" ↔ "20" ↔ "50" without leaving the
-  // results. Resets to page 1 on change to keep the user from landing past
-  // the new last page.
+  // Page-size picker — controls how many stocks appear on the current page.
+  // (In sector view this means "top N per maturity tier"; everywhere else
+  // it's flat "N stocks per page".)
   const sizeOptions = [10, 20, 50] as const;
-  const sizeLabel = isIndustryView ? "per page" : "per sector";
+  const isSectorView = params.metas.length === 1
+    && params.clusters.length === 0
+    && params.tiers.length === 0;
+  const sizeLabel = isSectorView ? "per tier" : "per page";
 
   return (
     <nav className="mt-5 flex flex-wrap items-center justify-center gap-2 text-[13px]">
