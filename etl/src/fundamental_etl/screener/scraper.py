@@ -103,15 +103,18 @@ def _maybe_raise_429(resp: httpx.Response, url: str) -> None:
     """
     if resp.status_code not in (405, 429):
         return
+    # 30s default backoff (was 60s).  Faster recovery from soft throttles;
+    # the @retry mechanism will simply pause again if Screener is still
+    # limiting us, so we don't risk getting stuck — just sleep shorter.
     if resp.status_code == 405:
-        retry_after = 60.0
+        retry_after = 30.0
         log.warning("rate_limited_405", url=url, retry_after=retry_after)
         raise RateLimited(retry_after, f"{resp.request.method} {url} returned HTTP 405 (treating as throttle, sleeping {retry_after}s)")
-    raw = resp.headers.get("Retry-After", "60")
+    raw = resp.headers.get("Retry-After", "30")
     try:
         retry_after = float(raw)
     except (TypeError, ValueError):
-        retry_after = 60.0
+        retry_after = 30.0
     # Cap at 5 minutes — Screener's 429 windows are typically short; a
     # longer reported value usually means our IP has been deeper-throttled
     # and we'd rather give up than block the run for ages.
