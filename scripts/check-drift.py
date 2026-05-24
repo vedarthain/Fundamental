@@ -104,23 +104,37 @@ _APP_METRICS: list[tuple[str, str, int | None]] = [
         "JOIN app.universe u USING (symbol) WHERE u.is_active", 50),
 ]
 
-# Golden DB drift — by design, local has more historical data than Neon
-# (local is the source-of-truth archive; Neon is the production slice).
-# So we compare MAX(date) and row count over the last 30 days — both
-# should match closely.
+# Golden DB drift — filtered to ACTIVE UNIVERSE SYMBOLS ONLY.
+#
+# Local golden_db tracks the full ~5,500-symbol NSE universe via the
+# user's separate bhavcopy ingest project; Neon only stores rows for
+# active universe stocks (sync-neon.sh filters to ~2,163). A blanket
+# COUNT(*) comparison would always look like a ~2.6× drift even when
+# the sync is perfectly healthy. Filtering by the active universe
+# (set as a SQL parameter at run time) makes the comparison
+# apples-to-apples.
+#
+# `:syms` is a placeholder we substitute with the actual symbol list
+# (with .NS suffix) fetched from the app DB at the top of main().
 _GOLDEN_METRICS: list[tuple[str, str, int | None]] = [
-    ("price_history.max_date",
-        "SELECT MAX(date)::text FROM golden.price_history WHERE interval='1d'",
+    ("price_history.max_date (universe)",
+        "SELECT MAX(date)::text FROM golden.price_history "
+        "WHERE interval='1d' AND symbol = ANY(%(syms)s)",
         None),
-    ("price_history.rows_last_30d",
+    ("price_history.rows_last_30d (universe)",
         "SELECT COUNT(*) FROM golden.price_history "
-        "WHERE interval='1d' AND date > CURRENT_DATE - INTERVAL '30 days'", 50),
+        "WHERE interval='1d' AND date > CURRENT_DATE - INTERVAL '30 days' "
+        "  AND symbol = ANY(%(syms)s)",
+        50),
 ]
 
 
-def _scalar(conn, sql) -> object:
+def _scalar(conn, sql, params: dict | None = None) -> object:
     with conn.cursor() as cur:
-        cur.execute(sql)
+        if params:
+            cur.execute(sql, params)
+        else:
+            cur.execute(sql)
         row = cur.fetchone()
     return row[0] if row else None
 
@@ -160,17 +174,17 @@ def main() -> int:
 
     drift_lines: list[str] = []
 
-    def run(label: str, conn_l, conn_n, metrics):
+    def run(label: str, conn_l, conn_n, metrics, params: dict | None = None):
         print(f"── {label} ─────────────────────────────────────────────")
         print(f"{'metric':<38} {'local':>16}  {'neon':>16}  status")
         print("-" * 86)
         for name, sql, tol in metrics:
             try:
-                v_l = _scalar(conn_l, sql)
+                v_l = _scalar(conn_l, sql, params)
             except Exception as e:
                 v_l = f"ERR: {str(e)[:30]}"
             try:
-                v_n = _scalar(conn_n, sql)
+                v_n = _scalar(conn_n, sql, params)
             except Exception as e:
                 v_n = f"ERR: {str(e)[:30]}"
             ok = _diff_ok(v_l, v_n, tol)
@@ -183,16 +197,25 @@ def main() -> int:
                 )
         print()
 
+    # Universe symbol list — fetched once from local app DB and passed to
+    # every golden-DB query so we only compare price_history rows for
+    # symbols that are SUPPOSED to be on Neon. Without this filter, local's
+    # ~5,500-symbol bhavcopy archive falsely drifts vs Neon's 2,163-symbol
+    # production slice.
+    universe_ns: list[str] = []
     try:
         with psycopg.connect(local_app) as cl, psycopg.connect(neon_app) as cn:
             run("App DB", cl, cn, _APP_METRICS)
+            with cl.cursor() as cur:
+                cur.execute("SELECT symbol FROM app.universe WHERE is_active")
+                universe_ns = [f"{r[0]}.NS" for r in cur.fetchall()]
     except psycopg.OperationalError as e:
         print(f"✗ FATAL: app DB connection failed — {e}", file=sys.stderr)
         return 2
 
     try:
         with psycopg.connect(local_golden) as cl, psycopg.connect(neon_golden) as cn:
-            run("Golden DB", cl, cn, _GOLDEN_METRICS)
+            run("Golden DB", cl, cn, _GOLDEN_METRICS, params={"syms": universe_ns})
     except psycopg.OperationalError as e:
         print(f"✗ FATAL: golden DB connection failed — {e}", file=sys.stderr)
         return 2
