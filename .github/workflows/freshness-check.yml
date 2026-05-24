@@ -13,10 +13,12 @@
 #     (configure under Settings → Notifications → Watching).
 #   - Logs are visible in the Actions UI — diagnosis is one click away.
 #
-# Frequency: every 4 hours. The underlying data only changes daily/weekly,
-# so polling more often would just burn Neon compute on the read queries.
-# Each check uses <100ms of compute, so ~6 runs/day × ~0.3s of compute ≈
-# 1 minute/day on Neon. Effectively free.
+# Frequency: every 12 hours. Each wake-up holds Neon compute for the
+# autosuspend tail (5 min on Launch plan), so frequency matters more
+# than per-check work. Twice a day is plenty given the underlying data
+# changes daily (prices) and weekly (scores). Detection latency is at
+# most 12h which fits comfortably inside the freshness thresholds
+# (snapshot ≤ 8 days, price ≤ 4 days).
 #
 # Tuning thresholds: pass --snapshot-max-days / --price-max-days to the
 # script if the defaults need adjusting (e.g. after a long holiday).
@@ -29,10 +31,14 @@
 name: Production data freshness
 
 on:
-  # Every 4 hours, on the half-hour to avoid colliding with refresh-ltp
+  # Every 12 hours, on the half-hour to avoid colliding with refresh-ltp
   # (which runs at 13:00 UTC = 18:30 IST).
+  # 06:30 and 18:30 UTC = 12:00 and 00:00 IST.
+  # Cut from 4h → 12h to reduce Neon wake-ups (each wake holds compute for
+  # the full autosuspend tail). Data quality lag from 12h between checks
+  # is acceptable — snapshot age threshold is 8 days, price age is 4 days.
   schedule:
-    - cron: '30 */4 * * *'
+    - cron: '30 */12 * * *'
 
   # Manual trigger for testing or post-incident verification.
   workflow_dispatch: {}
