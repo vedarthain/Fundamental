@@ -121,11 +121,17 @@ _GOLDEN_METRICS: list[tuple[str, str, int | None]] = [
         "SELECT MAX(date)::text FROM golden.price_history "
         "WHERE interval='1d' AND symbol = ANY(%(syms)s)",
         None),
+    # Tolerance is generous (3,000 rows ≈ 7% of typical 30d volume) because
+    # sync-neon.sh's price_history sync is *incremental* — it only pushes
+    # dates after Neon's MAX(date). Historical backfills (NSE bhavcopy fills
+    # for renamed tickers etc.) live on local but aren't pushed retroactively.
+    # That natural gap is normally 2,000-3,000 rows; anything beyond that
+    # indicates a real sync issue worth investigating.
     ("price_history.rows_last_30d (universe)",
         "SELECT COUNT(*) FROM golden.price_history "
         "WHERE interval='1d' AND date > CURRENT_DATE - INTERVAL '30 days' "
         "  AND symbol = ANY(%(syms)s)",
-        50),
+        3000),
 ]
 
 
