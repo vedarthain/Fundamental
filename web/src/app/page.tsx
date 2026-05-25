@@ -37,36 +37,24 @@ async function loadHero() {
       (SELECT COUNT(DISTINCT snapshot_date)::int FROM app.scores) AS weeks,
       (SELECT MAX(snapshot_date)::text FROM app.scores) AS snapshot_date
   `;
-  // Industry tiles use app.cluster_composite, which scores each cluster by
-  // its cluster-aggregate fundamentals (avg ROE, avg P/E, etc.) percent-
-  // ranked across all clusters. We can't use AVG(scores.composite_pct) here
-  // because that's a within-cluster percentile rank — its mean is always ~50
-  // for every cluster by construction, so it can't distinguish strong from
-  // weak industries.
+  // Industry tiles — read from the materialised cluster_composite_cache table
+  // (refreshed weekly by the ETL `score` command). Used to read from the
+  // live cluster_composite view, which ran 8 PERCENT_RANK() windows + AVG()
+  // over JSONB on every request — added 1-3 seconds to cold-start time.
+  // The cache table holds identical data with a simple indexed lookup.
   const tilesPromise = sql<IndustryTile[]>`
     SELECT cluster_id AS industry_id,
            industry_name,
            composite_aggr_pct::float AS avg_composite
-    FROM app.cluster_composite
-    WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM app.metrics_snapshot)
+    FROM app.cluster_composite_cache
+    WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
     ORDER BY composite_aggr_pct DESC NULLS LAST
   `;
-  // Top + bottom marquee items — proxy for "trending" until we have a 2nd snapshot
-  const trendingPromise = sql<TrendingRow[]>`
-    (SELECT s.symbol, s.composite_pct, c.name AS cluster_short
-     FROM app.scores s JOIN app.cluster c ON c.id = s.cluster_id
-     WHERE s.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
-       AND s.maturity_tier = 'veteran'
-     ORDER BY s.composite_pct DESC NULLS LAST LIMIT 8)
-    UNION ALL
-    (SELECT s.symbol, s.composite_pct, c.name AS cluster_short
-     FROM app.scores s JOIN app.cluster c ON c.id = s.cluster_id
-     WHERE s.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
-       AND s.maturity_tier = 'veteran' AND s.composite_pct < 30
-     ORDER BY s.composite_pct ASC NULLS LAST LIMIT 4)
-  `;
+  // Removed: `trendingPromise` — was executed on every cold start but its
+  // result was discarded (the marquee UI got cut). Pure wasted Neon CU.
+  // If we ever need top/bottom movers on the home page again, query the
+  // materialised cache or use cluster_stocks_panel_cache.
   const [snapRows, tiles] = await Promise.all([snapPromise, tilesPromise]);
-  void trendingPromise; // marquee removed; data fetch retained for cheap revalidation tracking
   return { snap: snapRows[0], tiles };
 }
 
