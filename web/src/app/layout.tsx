@@ -198,6 +198,7 @@ function SiteFooter() {
               { href: "/about",                       label: "About the platform" },
               { href: "/about#data-sources",          label: "Data sources" },
               { href: "/about#what-we-dont-publish",  label: "What we don't publish" },
+              { href: "/feedback",                    label: "Send us feedback" },
             ]}
           />
         </div>
