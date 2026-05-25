@@ -5,6 +5,7 @@ import { StockSearch } from "@/components/StockSearch";
 import { SnapshotRibbon } from "@/components/SnapshotRibbon";
 import { TopNavLinks } from "@/components/TopNavLinks";
 import { Analytics } from "@vercel/analytics/next";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import { EngagementTracker } from "@/components/EngagementTracker";
 import "./globals.css";
 
@@ -49,6 +50,7 @@ export default function RootLayout({
         <main className="flex-1">{children}</main>
         <SiteFooter />
         <Analytics />
+        <SpeedInsights />
         <EngagementTracker />
       </body>
     </html>
