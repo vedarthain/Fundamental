@@ -1,30 +1,27 @@
 /**
  * /admin/ideas — view recent /feedback submissions.
  *
- * Token-gated via the ADMIN_TOKEN env var.  The user passes ?token=...
- * once; we drop a long-lived cookie on success so subsequent visits skip
- * the query param.  Not a robust auth system — adequate for a single-
- * operator setup right now.  When real auth lands later (Phase A of
- * commercialisation), this page moves behind that.
+ * Auth flow:
+ *   - First visit: append ?token=<ADMIN_TOKEN> to the URL.
+ *     The page detects the token, redirects to /api/admin/auth?token=...
+ *     which validates + sets a cookie + redirects back here.
+ *   - Subsequent visits: the cookie carries the auth, no token needed.
  *
- * Cost (Rule #1): one cheap SELECT per page load, only when the operator
- * (you) views it.  Effectively zero.
+ * Why not set the cookie here directly: Next.js 15 server components can
+ * READ cookies but cannot SET them. Setting must happen in a Route
+ * Handler (the auth route) or a Server Action.
+ *
+ * Cost (Rule #1): one SELECT per page view (only you see this page).
  */
-import { cookies, headers } from "next/headers";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { createHash } from "crypto";
 import { sql } from "@/lib/db";
 import { TriageActions } from "./TriageActions";
 
 export const dynamic = "force-dynamic";
 
 const COOKIE_NAME = "er_admin";
-// The cookie stores the SHA-256 of the token so the raw secret isn't sent
-// over the wire on every request. Server-side we compare against the same hash.
-
-import { createHash } from "crypto";
-function hashToken(t: string): string {
-  return createHash("sha256").update(t).digest("hex");
-}
 
 type Idea = {
   id: number;
@@ -38,22 +35,12 @@ type Idea = {
   notes: string | null;
 };
 
-async function checkAuth(searchToken?: string): Promise<boolean> {
+async function isAuthed(): Promise<boolean> {
   const expected = process.env.ADMIN_TOKEN;
-  if (!expected) {
-    // Server misconfigured — fail closed.
-    return false;
-  }
-  const expectedHash = hashToken(expected);
-
-  // Query-string token (initial visit) — sets cookie.
-  if (searchToken && hashToken(searchToken) === expectedHash) {
-    return true;
-  }
-  // Cookie (subsequent visits).
+  if (!expected) return false;
+  const expectedHash = createHash("sha256").update(expected).digest("hex");
   const c = await cookies();
-  const cookieVal = c.get(COOKIE_NAME)?.value;
-  return cookieVal === expectedHash;
+  return c.get(COOKIE_NAME)?.value === expectedHash;
 }
 
 export default async function AdminIdeasPage({
@@ -62,9 +49,15 @@ export default async function AdminIdeasPage({
   searchParams: Promise<{ token?: string }>;
 }) {
   const sp = await searchParams;
-  const ok = await checkAuth(sp.token);
 
-  if (!ok) {
+  // If the user landed here with ?token=..., bounce to the auth route
+  // which sets the cookie and redirects back. Page components can't set
+  // cookies in Next.js 15.
+  if (sp.token) {
+    redirect(`/api/admin/auth?token=${encodeURIComponent(sp.token)}&redirect=/admin/ideas`);
+  }
+
+  if (!(await isAuthed())) {
     return (
       <div className="mx-auto max-w-md px-4 py-16 text-center">
         <h1 className="text-[18px] font-display mb-2">Admin only</h1>
@@ -73,23 +66,6 @@ export default async function AdminIdeasPage({
         </p>
       </div>
     );
-  }
-
-  // First successful auth via query param → set the cookie so the user can
-  // bookmark /admin/ideas without the token.
-  if (sp.token) {
-    const c = await cookies();
-    const expected = process.env.ADMIN_TOKEN!;
-    c.set(COOKIE_NAME, hashToken(expected), {
-      httpOnly: true,
-      secure: true,
-      sameSite: "lax",
-      maxAge: 60 * 60 * 24 * 30, // 30 days
-      path: "/",
-    });
-    // Drop the token from the URL after setting the cookie.
-    void headers; // imported for completeness
-    redirect("/admin/ideas");
   }
 
   const ideas = await sql<Idea[]>`
