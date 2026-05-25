@@ -45,30 +45,68 @@ export async function PATCH(
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
 
-  const updates: { handled?: boolean; notes?: string | null } = {};
-  if (typeof body.handled === "boolean") updates.handled = body.handled;
-  if (body.notes === null) updates.notes = null;
-  else if (typeof body.notes === "string") {
-    updates.notes = body.notes.slice(0, 1000);
+  const ALLOWED_STATUS = ["open", "planned", "building", "shipped", "wont_do"] as const;
+  type Status = (typeof ALLOWED_STATUS)[number];
+  const raw = body as Record<string, unknown>;
+
+  // Parse + validate each known field. undefined = "not in payload, skip";
+  // null = "explicit clear" (only valid for notes/response).
+  const updates: {
+    handled?: boolean;
+    notes?: string | null;
+    is_public?: boolean;
+    response?: string | null;
+    status?: Status;
+  } = {};
+
+  if ("handled" in raw) {
+    if (typeof raw.handled !== "boolean") {
+      return NextResponse.json({ error: "invalid handled" }, { status: 400 });
+    }
+    updates.handled = raw.handled;
+  }
+  if ("notes" in raw) {
+    if (raw.notes === null) updates.notes = null;
+    else if (typeof raw.notes === "string") updates.notes = raw.notes.slice(0, 1000);
+    else return NextResponse.json({ error: "invalid notes" }, { status: 400 });
+  }
+  if ("is_public" in raw) {
+    if (typeof raw.is_public !== "boolean") {
+      return NextResponse.json({ error: "invalid is_public" }, { status: 400 });
+    }
+    updates.is_public = raw.is_public;
+  }
+  if ("response" in raw) {
+    if (raw.response === null) updates.response = null;
+    else if (typeof raw.response === "string") updates.response = raw.response.slice(0, 2000);
+    else return NextResponse.json({ error: "invalid response" }, { status: 400 });
+  }
+  if ("status" in raw) {
+    if (
+      typeof raw.status !== "string" ||
+      !(ALLOWED_STATUS as readonly string[]).includes(raw.status)
+    ) {
+      return NextResponse.json({ error: "invalid status" }, { status: 400 });
+    }
+    updates.status = raw.status as Status;
   }
 
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ error: "no fields to update" }, { status: 400 });
   }
 
-  // Build the UPDATE dynamically — both fields are well-known and safe
-  // to interpolate as tagged-template params.
-  if (updates.handled !== undefined && updates.notes !== undefined) {
-    await sql`
-      UPDATE app.user_ideas
-      SET handled = ${updates.handled}, notes = ${updates.notes}
-      WHERE id = ${id}
-    `;
-  } else if (updates.handled !== undefined) {
-    await sql`UPDATE app.user_ideas SET handled = ${updates.handled} WHERE id = ${id}`;
-  } else {
-    await sql`UPDATE app.user_ideas SET notes = ${updates.notes ?? null} WHERE id = ${id}`;
-  }
-
+  // COALESCE-pattern UPDATE: every field gets a value, but rows we didn't
+  // intend to touch see CURRENT_VALUE (sentinel handled below).  Cleaner
+  // than dynamic SET construction with postgres.js's type-strict tagged
+  // template, and only one round-trip.
+  await sql`
+    UPDATE app.user_ideas SET
+      handled   = ${updates.handled   ?? sql`handled`},
+      notes     = ${updates.notes     !== undefined ? updates.notes     : sql`notes`},
+      is_public = ${updates.is_public ?? sql`is_public`},
+      response  = ${updates.response  !== undefined ? updates.response  : sql`response`},
+      status    = ${updates.status    ?? sql`status`}
+    WHERE id = ${id}
+  `;
   return NextResponse.json({ ok: true });
 }

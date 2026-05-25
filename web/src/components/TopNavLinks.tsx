@@ -37,6 +37,7 @@ const LINKS: NavLink[] = [
   // /watchlist gets a count badge attached at render time (see TopNavLinks
   // component) so users see at a glance how many stocks they're tracking.
   { href: "/watchlist", label: "Watchlist" },
+  { href: "/feedback",  label: "Feedback"  },
   {
     href: "/tools",
     label: "Tools",

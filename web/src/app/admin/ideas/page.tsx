@@ -33,6 +33,9 @@ type Idea = {
   user_agent: string | null;
   handled: boolean;
   notes: string | null;
+  status: string;
+  is_public: boolean;
+  response: string | null;
 };
 
 async function isAuthed(): Promise<boolean> {
@@ -69,7 +72,8 @@ export default async function AdminIdeasPage({
   }
 
   const ideas = await sql<Idea[]>`
-    SELECT id, submitted_at::text, name, email, body, page_url, user_agent, handled, notes
+    SELECT id, submitted_at::text, name, email, body, page_url, user_agent,
+           handled, notes, status, is_public, response
     FROM app.user_ideas
     ORDER BY handled ASC, submitted_at DESC
     LIMIT 200
@@ -148,7 +152,14 @@ export default async function AdminIdeasPage({
                   notes: {idea.notes}
                 </div>
               )}
-              <TriageActions id={idea.id} handled={idea.handled} notes={idea.notes} />
+              <TriageActions
+                id={idea.id}
+                handled={idea.handled}
+                notes={idea.notes}
+                status={idea.status}
+                isPublic={idea.is_public}
+                response={idea.response}
+              />
             </li>
           ))}
         </ul>

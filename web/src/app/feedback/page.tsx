@@ -1,55 +1,77 @@
 /**
- * /feedback — public submission form.
+ * /feedback — public submission form + public board.
  *
- * Anyone can submit; no login required.  We capture the page they came
- * from (referer header) for context — helps interpret submissions like
- * "the buttons here are confusing" without having to guess which page.
+ * Form: anyone can submit. POSTs to /api/feedback → INSERTs into
+ * app.user_ideas. State stays private unless I (admin) explicitly flag
+ * the row as public from /admin/ideas.
  *
- * Cost (Rule #1): zero CU on this page itself (no DB calls).  The submit
- * action posts to /api/feedback which does one tiny INSERT.
+ * Public board: rows where is_public = true, grouped by status. Shows
+ * only body + status + admin response — never name/email/page/UA/IP.
+ *
+ * Revalidate every 5 minutes — board updates appear quickly after I
+ * flip a publish toggle, but visiting the page doesn't hit Neon on
+ * every load.
  */
+import { sql } from "@/lib/db";
 import { FeedbackForm } from "./FeedbackForm";
+import { PublicBoard, type PublicIdea } from "./PublicBoard";
 
-export const dynamic = "force-static";
+// 5-minute ISR: long enough that repeated visits are served from cache,
+// short enough that toggling publish on /admin/ideas shows up quickly.
+export const revalidate = 300;
 
 export const metadata = {
-  title: "Feedback — EquityRoots",
-  description: "Tell us what to build next, what's broken, or what could be better.",
+  title: "Feedback & Roadmap — EquityRoots",
+  description:
+    "Tell us what to build next. See what others have suggested, what we're working on, and what's shipped.",
 };
 
-export default function FeedbackPage() {
+async function loadPublic(): Promise<PublicIdea[]> {
+  // Public board excludes name/email/page_url/user_agent/ip_hash by
+  // construction — those columns are never selected here, so a
+  // privacy bug at this layer is impossible.
+  return sql<PublicIdea[]>`
+    SELECT id, submitted_at::text, body, status, response
+    FROM app.user_ideas
+    WHERE is_public = true
+    ORDER BY
+      CASE status
+        WHEN 'shipped'  THEN 1
+        WHEN 'building' THEN 2
+        WHEN 'planned'  THEN 3
+        WHEN 'open'     THEN 4
+        WHEN 'wont_do'  THEN 5
+        ELSE 6
+      END,
+      submitted_at DESC
+    LIMIT 100
+  `;
+}
+
+export default async function FeedbackPage() {
+  const publicIdeas = await loadPublic();
+
   return (
-    <div className="mx-auto max-w-[640px] px-4 md:px-6 py-8 md:py-12">
+    <div className="mx-auto max-w-[720px] px-4 md:px-6 py-8 md:py-12">
       <header className="mb-6">
         <div className="text-[11px] uppercase tracking-wide muted-text mb-2">
-          Tell us what to build
+          Feedback & roadmap
         </div>
         <h1 className="font-display text-[28px] md:text-[32px] leading-tight tracking-tight">
-          What should we work on next?
+          What should we build next?
         </h1>
         <p className="muted-text text-[14px] mt-3 leading-relaxed">
-          Found a bug? Want a feature? Confused by something? Type it below — every
-          response is read. Email is optional but lets us reply if we have questions.
+          Found a bug? Want a feature? Confused by something? Type it below.
+          Submissions are private by default — we only publish a thread (without
+          your name or email) if it helps other users.
         </p>
       </header>
 
       <FeedbackForm />
 
-      <section className="mt-10 pt-6 border-t hairline">
-        <h2 className="text-[12.5px] uppercase tracking-wide muted-text font-semibold mb-2">
-          What we&apos;re thinking about
-        </h2>
-        <ul className="space-y-1.5 text-[13px] muted-text">
-          <li>• Saved screener filters (so you can re-run your own analyses fast)</li>
-          <li>• Portfolio upload — get peer-relative scores for your holdings</li>
-          <li>• Daily insight page — auto-generated &quot;top movers&quot; for sharing</li>
-          <li>• Score alerts via email when a stock crosses a threshold</li>
-        </ul>
-        <p className="muted-text text-[12px] mt-3 leading-relaxed">
-          If you&apos;d use any of these, let us know — helps us prioritise.
-          And if you want something we haven&apos;t mentioned, that&apos;s exactly what this form is for.
-        </p>
-      </section>
+      {publicIdeas.length > 0 && (
+        <PublicBoard ideas={publicIdeas} />
+      )}
     </div>
   );
 }
