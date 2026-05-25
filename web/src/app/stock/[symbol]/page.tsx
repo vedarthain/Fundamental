@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { sql, golden } from "@/lib/db";
 import { band, bandColor, fmtPct, fmtRupeesCr, tierLabel } from "@/lib/score";
 import { StrengthBars } from "@/components/StrengthBars";
+import { WatchlistButton } from "@/components/WatchlistButton";
 import { PriceChart, type PricePoint } from "@/components/PriceChart";
 import type { SparkPoint } from "@/components/Sparkline";
 import { PillarTabs, type PillarTabContent } from "@/components/PillarTabs";
@@ -268,6 +269,7 @@ export default async function StockPage({
               {stock.company_name || stock.symbol}
             </h1>
             {quarterly[0] && <ResultFlashChip latest={quarterly[0]} />}
+            <WatchlistButton symbol={stock.symbol} />
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-3 text-[14px] muted-text">
             <span className="font-medium ink-text tabular-nums">{stock.symbol}</span>

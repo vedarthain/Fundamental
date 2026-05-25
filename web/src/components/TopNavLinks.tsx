@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { useWatchlist } from "@/lib/watchlist";
 
 /**
  * Top-bar navigation links with active-state awareness.
@@ -33,6 +34,9 @@ const LINKS: NavLink[] = [
   { href: "/sectors", label: "Sectors" },
   { href: "/feed",    label: "Feed"    },
   { href: "/ideas",   label: "Ideas"   },
+  // /watchlist gets a count badge attached at render time (see TopNavLinks
+  // component) so users see at a glance how many stocks they're tracking.
+  { href: "/watchlist", label: "Watchlist" },
   {
     href: "/tools",
     label: "Tools",
@@ -65,30 +69,54 @@ function isActive(pathname: string, href: string): boolean {
 
 export function TopNavLinks() {
   const pathname = usePathname() ?? "";
+  // Watchlist count badge — read client-side from localStorage.  During SSR
+  // and first paint we render 0; once hydrated the real number appears.
+  // Hidden when 0 to avoid clutter for users who haven't added any yet.
+  const { count: watchCount, hydrated } = useWatchlist();
   return (
     <nav className="flex items-center gap-3 md:gap-6 text-[13px] md:text-[14px] shrink-0 ml-auto">
       {LINKS.map((l) =>
         l.submenu ? (
           <NavDropdown key={l.href} link={l} active={isActive(pathname, l.href)} />
         ) : (
-          <NavLink key={l.href} href={l.href} label={l.label} active={isActive(pathname, l.href)} />
+          <NavLink
+            key={l.href}
+            href={l.href}
+            label={l.label}
+            active={isActive(pathname, l.href)}
+            badge={l.href === "/watchlist" && hydrated && watchCount > 0 ? watchCount : null}
+          />
         )
       )}
     </nav>
   );
 }
 
-function NavLink({ href, label, active }: { href: string; label: string; active: boolean }) {
+function NavLink({
+  href, label, active, badge,
+}: { href: string; label: string; active: boolean; badge?: number | null }) {
   return (
     <Link
       href={href}
-      className={`relative pb-[3px] transition-colors ${
+      className={`relative pb-[3px] transition-colors inline-flex items-center gap-1.5 ${
         active
           ? "font-semibold text-[var(--color-accent-600)]"
           : "text-[var(--color-ink)] hover:text-[var(--color-accent-600)]"
       }`}
     >
-      {label}
+      <span>{label}</span>
+      {badge != null && badge > 0 && (
+        <span
+          className="inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full text-[10px] font-semibold tabular-nums"
+          style={{
+            backgroundColor: "var(--color-accent-50)",
+            color: "var(--color-accent-700)",
+            border: "1px solid var(--color-accent-300)",
+          }}
+        >
+          {badge}
+        </span>
+      )}
       {active && (
         <span
           aria-hidden
