@@ -27,62 +27,27 @@ type SnapshotStats = {
   latest: Date | null;
   coverage: number;
   clusters: number;
-  upgrades: number | null;
-  downgrades: number | null;
-  topMoverSymbol: string | null;
-  topMoverDelta: number | null;
   archiveCount: number;
 };
 
 async function fetchSnapshot(): Promise<SnapshotStats> {
-  // One round-trip with multiple subqueries. Each is keyed off the latest
-  // and prior snapshot_date so the ribbon always reflects the most recent
-  // run, no parameter wiring needed.
+  // Minimal ribbon query — just snapshot date, total stocks, total
+  // clusters, archive count. Used to also compute MOVERS + TOP MOVE
+  // via prior-snapshot delta CTE, but those panels were removed and
+  // their subqueries were pure waste on every cold render.
   const rows = await sql<
     {
       latest: Date | null;
       coverage: string;
       clusters: string;
-      upgrades: string | null;
-      downgrades: string | null;
-      top_symbol: string | null;
-      top_delta: number | null;
       archive_count: string;
     }[]
   >`
-    WITH latest AS (SELECT MAX(snapshot_date) AS d FROM app.scores),
-    prior AS (
-      SELECT MAX(snapshot_date) AS d FROM app.scores
-      WHERE snapshot_date < (SELECT d FROM latest)
-    ),
-    delta AS (
-      SELECT c.symbol, (c.composite_pct - p.composite_pct)::int AS dlt
-      FROM app.scores c
-      JOIN app.scores p USING (symbol)
-      WHERE c.snapshot_date = (SELECT d FROM latest)
-        AND p.snapshot_date = (SELECT d FROM prior)
-        AND c.composite_pct IS NOT NULL
-        AND p.composite_pct IS NOT NULL
-    ),
-    top_abs AS (
-      -- Cap at |dlt| <= 40. Composite_pct is 0-100, so a single-snapshot
-      -- swing greater than 40 is almost always noise from a recent listing
-      -- (e.g. BLUESTONE, CCAVENUE in their first months of trading) or a
-      -- peer-set change rather than a real score-mover signal.
-      SELECT symbol, dlt
-      FROM delta
-      WHERE ABS(dlt) <= 40
-      ORDER BY ABS(dlt) DESC NULLS LAST
-      LIMIT 1
-    )
+    WITH latest AS (SELECT MAX(snapshot_date) AS d FROM app.scores)
     SELECT
       (SELECT d FROM latest) AS latest,
       (SELECT COUNT(*) FROM app.scores WHERE snapshot_date = (SELECT d FROM latest)) AS coverage,
       (SELECT COUNT(*) FROM app.cluster) AS clusters,
-      (SELECT COUNT(*) FROM delta WHERE dlt >= 5)  AS upgrades,
-      (SELECT COUNT(*) FROM delta WHERE dlt <= -5) AS downgrades,
-      (SELECT symbol FROM top_abs) AS top_symbol,
-      (SELECT dlt    FROM top_abs) AS top_delta,
       (SELECT COUNT(DISTINCT snapshot_date) FROM app.scores) AS archive_count
   `;
 
@@ -91,10 +56,6 @@ async function fetchSnapshot(): Promise<SnapshotStats> {
     latest: r.latest,
     coverage: Number(r.coverage),
     clusters: Number(r.clusters),
-    upgrades: r.upgrades == null ? null : Number(r.upgrades),
-    downgrades: r.downgrades == null ? null : Number(r.downgrades),
-    topMoverSymbol: r.top_symbol,
-    topMoverDelta: r.top_delta,
     archiveCount: Number(r.archive_count),
   };
 }
@@ -156,7 +117,6 @@ function Sep() {
 
 export async function SnapshotRibbon() {
   const s = await getCachedSnapshot();
-  const topSign = s.topMoverDelta != null && s.topMoverDelta >= 0 ? "+" : "";
 
   return (
     <div
@@ -172,42 +132,19 @@ export async function SnapshotRibbon() {
         <Cell label="COVERAGE">{s.coverage.toLocaleString("en-IN")}</Cell>
         <Sep />
         <Cell label="CLUSTERS">{s.clusters}</Cell>
-        {s.upgrades != null && s.downgrades != null && (
-          <>
-            <Sep />
-            <Cell label="MOVERS">
-              <span className="delta-up">▲{s.upgrades}</span>
-              <span style={{ color: "var(--color-strip-muted)" }}> · </span>
-              <span className="delta-down">▼{s.downgrades}</span>
-            </Cell>
-          </>
-        )}
-        {s.topMoverSymbol && s.topMoverDelta != null && (
-          <>
-            <Sep />
-            <Cell label="TOP MOVE">
-              <span style={{ color: "var(--color-strip-fg)" }}>
-                {s.topMoverSymbol}
-              </span>{" "}
-              <span
-                className={s.topMoverDelta >= 0 ? "delta-up" : "delta-down"}
-              >
-                {topSign}
-                {s.topMoverDelta}
-              </span>
-            </Cell>
-          </>
-        )}
         <Sep />
         <Cell label="ARCHIVE">
           {s.archiveCount} {s.archiveCount === 1 ? "snapshot" : "snapshots"}
         </Cell>
         <Sep />
         {/* Persistent disclaimer — sits in the dark ribbon so it's visible
-            on every page without taking up dedicated UI real estate. */}
+            on every page without taking up dedicated UI real estate.
+            Rendered bold + white so the regulatory framing reads at a
+            glance and isn't easily confused with the muted metadata cells
+            around it. */}
         <span
-          className="kbd-label whitespace-nowrap shrink-0"
-          style={{ color: "var(--color-strip-muted)" }}
+          className="kbd-label whitespace-nowrap shrink-0 font-bold"
+          style={{ color: "#ffffff" }}
           title="EquityRoots is not a SEBI-registered investment adviser. Information only."
         >
           INFO ONLY · NOT ADVICE
