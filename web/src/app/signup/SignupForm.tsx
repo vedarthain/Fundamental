@@ -16,6 +16,12 @@ export function SignupForm() {
   const [displayName, setDisplayName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // `success` switches the form into a confirmation state instead of doing
+  // an instant redirect. The signup route already set the session cookie,
+  // so the user is signed in by the time this state flips — the brief
+  // delay just gives them a moment to see "account created" before we
+  // navigate. Skipping it makes the form feel like nothing happened.
+  const [success, setSuccess] = useState(false);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -39,17 +45,45 @@ export function SignupForm() {
       const data: { ok?: boolean; error?: string } = await r.json();
       if (!r.ok || !data.ok) {
         setError(data.error || "Could not create account");
+        setBusy(false);
         return;
       }
+      // Best-effort: push any localStorage symbols up to the server.
+      // Failure here is non-fatal.
       await mergeLocalWatchlistIntoServer().catch(() => undefined);
+      // Flip into the success state and tell the rest of the app (top
+      // nav, etc.) that the session changed.
+      setSuccess(true);
       broadcastSessionChange();
-      router.push(next);
-      router.refresh();
+      // Pause briefly so the user actually sees the confirmation, then
+      // navigate to the destination (defaults to /watchlist).
+      setTimeout(() => {
+        router.push(next);
+        router.refresh();
+      }, 1400);
     } catch {
       setError("Network error");
-    } finally {
       setBusy(false);
     }
+  }
+
+  if (success) {
+    return (
+      <div className="card p-6 text-center space-y-3">
+        <div
+          className="inline-flex items-center justify-center w-12 h-12 rounded-full mx-auto"
+          style={{ backgroundColor: "var(--color-accent-50, #ecfdf5)", color: "var(--color-accent-600, #059669)" }}
+          aria-hidden
+        >
+          {/* Inline check icon — avoids dragging a new lucide-react import. */}
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+        </div>
+        <div className="font-display text-[18px]">Account created — you&apos;re signed in</div>
+        <div className="muted-text text-[13px]">Taking you to your watchlist…</div>
+      </div>
+    );
   }
 
   return (

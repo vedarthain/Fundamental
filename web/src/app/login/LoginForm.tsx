@@ -15,6 +15,8 @@ export function LoginForm() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Brief confirmation state so the user sees "signed in" before redirect.
+  const [success, setSuccess] = useState(false);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -29,19 +31,40 @@ export function LoginForm() {
       const data: { ok?: boolean; error?: string } = await r.json();
       if (!r.ok || !data.ok) {
         setError(data.error || "Could not sign in");
+        setBusy(false);
         return;
       }
       // Best-effort: push any localStorage symbols up to the server.
       // Failure here is non-fatal; the user can re-add manually.
       await mergeLocalWatchlistIntoServer().catch(() => undefined);
+      setSuccess(true);
       broadcastSessionChange();
-      router.push(next);
-      router.refresh();
+      setTimeout(() => {
+        router.push(next);
+        router.refresh();
+      }, 900);
     } catch {
       setError("Network error");
-    } finally {
       setBusy(false);
     }
+  }
+
+  if (success) {
+    return (
+      <div className="card p-6 text-center space-y-3">
+        <div
+          className="inline-flex items-center justify-center w-12 h-12 rounded-full mx-auto"
+          style={{ backgroundColor: "var(--color-accent-50, #ecfdf5)", color: "var(--color-accent-600, #059669)" }}
+          aria-hidden
+        >
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+        </div>
+        <div className="font-display text-[18px]">Signed in</div>
+        <div className="muted-text text-[13px]">Taking you back…</div>
+      </div>
+    );
   }
 
   return (
