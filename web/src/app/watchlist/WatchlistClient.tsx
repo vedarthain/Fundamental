@@ -43,6 +43,10 @@ export function WatchlistClient() {
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  // Snapshot date from the API response so we can tell the user when the
+  // prices/scores were computed.  Same value /sectors and the top ribbon
+  // show — keeps the "as-of" date consistent across surfaces.
+  const [snapshotDate, setSnapshotDate] = useState<string | null>(null);
 
   // Fetch whenever the symbol list changes (post-hydration only — avoid
   // a wasted fetch with empty symbols during SSR).
@@ -59,7 +63,10 @@ export function WatchlistClient() {
         if (!r.ok) throw new Error(`Server returned ${r.status}`);
         return r.json();
       })
-      .then((data: { rows: Row[] }) => setRows(data.rows))
+      .then((data: { rows: Row[]; snapshot_date?: string | null }) => {
+        setRows(data.rows);
+        setSnapshotDate(data.snapshot_date ?? null);
+      })
       .catch((e: Error) => setError(e.message || "Failed to load"))
       .finally(() => setLoading(false));
   }, [hydrated, symbols.join(",")]);  // join so changing order doesn't refetch unnecessarily
@@ -115,9 +122,26 @@ export function WatchlistClient() {
 
   return (
     <div className="space-y-6">
-      <div className="text-[12px] muted-text tabular-nums">
-        {count} {count === 1 ? "stock" : "stocks"} on your watchlist
-        {loading && <span className="ml-2">· refreshing…</span>}
+      <div className="flex items-center gap-3 flex-wrap text-[12px] muted-text tabular-nums">
+        <span>
+          {count} {count === 1 ? "stock" : "stocks"} on your watchlist
+        </span>
+        {snapshotDate && (
+          <span
+            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border"
+            style={{
+              borderColor: "var(--color-border-default)",
+              backgroundColor: "var(--color-paper)",
+            }}
+            title="Scoring snapshot date (Q/V/M percentiles). Refreshed weekly; LTP price refreshes daily — see the top ribbon."
+          >
+            <span className="opacity-70">Scores snapshot</span>
+            <span className="font-medium" style={{ color: "var(--color-ink)" }}>
+              {formatSnapshotDate(snapshotDate)}
+            </span>
+          </span>
+        )}
+        {loading && <span>· refreshing…</span>}
       </div>
 
       {orderedTiers.map((tier) => {
@@ -163,6 +187,23 @@ export function WatchlistClient() {
       )}
     </div>
   );
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+/** YYYY-MM-DD → "Mon, 24 May 2026" for human-readable "as of" badges. */
+function formatSnapshotDate(iso: string): string {
+  // Anchor at noon UTC so a date string parses to the same day regardless of
+  // the viewer's timezone — avoids "Sat 24 May" turning into "Fri 23" in -ve
+  // offsets.
+  const d = new Date(`${iso}T12:00:00Z`);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString("en-IN", {
+    weekday: "short",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────

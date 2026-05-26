@@ -89,6 +89,15 @@ async function loadRows(symbols: string[]): Promise<WatchRow[]> {
   `;
 }
 
+async function loadSnapshotDate(): Promise<string | null> {
+  // Pulled separately so it returns even when the user has zero saved
+  // symbols (loadRows would otherwise short-circuit before we knew).
+  const rows = await sql<{ snapshot_date: string | null }[]>`
+    SELECT MAX(snapshot_date)::text AS snapshot_date FROM app.cluster_stocks_panel_cache
+  `;
+  return rows[0]?.snapshot_date ?? null;
+}
+
 export async function GET(req: NextRequest) {
   const param = req.nextUrl.searchParams.get("symbols");
   const session = await getSession();
@@ -110,8 +119,16 @@ export async function GET(req: NextRequest) {
     symbols = rows.map((r) => r.symbol);
   }
 
-  const rows = await loadRows(symbols);
-  return NextResponse.json({ rows, symbols, signedIn: session !== null });
+  const [rows, snapshotDate] = await Promise.all([
+    loadRows(symbols),
+    loadSnapshotDate(),
+  ]);
+  return NextResponse.json({
+    rows,
+    symbols,
+    signedIn: session !== null,
+    snapshot_date: snapshotDate,
+  });
 }
 
 export async function POST(req: NextRequest) {

@@ -20,11 +20,12 @@
  * the segment level (revalidate below) since the underlying snapshot only
  * changes when the Friday ETL run lands.
  */
-import { sql } from "@/lib/db";
+import { sql, golden } from "@/lib/db";
 import { unstable_cache } from "next/cache";
 
 type SnapshotStats = {
-  latest: Date | null;
+  latest: Date | null;          // weekly scoring snapshot date
+  ltpDate: Date | string | null; // most recent bhavcopy / LTP date
   coverage: number;
   clusters: number;
   archiveCount: number;
@@ -35,25 +36,41 @@ async function fetchSnapshot(): Promise<SnapshotStats> {
   // clusters, archive count. Used to also compute MOVERS + TOP MOVE
   // via prior-snapshot delta CTE, but those panels were removed and
   // their subqueries were pure waste on every cold render.
-  const rows = await sql<
-    {
-      latest: Date | null;
-      coverage: string;
-      clusters: string;
-      archive_count: string;
-    }[]
-  >`
-    WITH latest AS (SELECT MAX(snapshot_date) AS d FROM app.scores)
-    SELECT
-      (SELECT d FROM latest) AS latest,
-      (SELECT COUNT(*) FROM app.scores WHERE snapshot_date = (SELECT d FROM latest)) AS coverage,
-      (SELECT COUNT(*) FROM app.cluster) AS clusters,
-      (SELECT COUNT(DISTINCT snapshot_date) FROM app.scores) AS archive_count
-  `;
+  //
+  // The LTP/bhavcopy date is fetched separately from golden_db because
+  // it's a different pool (read-only price warehouse). Both queries run
+  // in parallel; the ribbon is cached for an hour so the extra round
+  // trip lands at most once per hour per region.
+  const [appRows, goldenRows] = await Promise.all([
+    sql<
+      {
+        latest: Date | null;
+        coverage: string;
+        clusters: string;
+        archive_count: string;
+      }[]
+    >`
+      WITH latest AS (SELECT MAX(snapshot_date) AS d FROM app.scores)
+      SELECT
+        (SELECT d FROM latest) AS latest,
+        (SELECT COUNT(*) FROM app.scores WHERE snapshot_date = (SELECT d FROM latest)) AS coverage,
+        (SELECT COUNT(*) FROM app.cluster) AS clusters,
+        (SELECT COUNT(DISTINCT snapshot_date) FROM app.scores) AS archive_count
+    `,
+    // MAX(date) in golden.price_history WHERE interval='1d' is the most
+    // recent trading day for which bhavcopy data is present — which is
+    // the LTP date. Single index lookup; cheap.
+    golden<{ ltp_date: Date | string | null }[]>`
+      SELECT MAX(date) AS ltp_date
+        FROM golden.price_history
+       WHERE interval = '1d'
+    `,
+  ]);
 
-  const r = rows[0];
+  const r = appRows[0];
   return {
     latest: r.latest,
+    ltpDate: goldenRows[0]?.ltp_date ?? null,
     coverage: Number(r.coverage),
     clusters: Number(r.clusters),
     archiveCount: Number(r.archive_count),
@@ -127,6 +144,13 @@ export async function SnapshotRibbon() {
       }}
     >
       <div className="mx-auto max-w-[1300px] px-4 md:px-6 h-7 flex items-center gap-4 overflow-x-auto">
+        {/* PRICES — last LTP / bhavcopy date. Updates daily (Mon-Fri 18:30 IST).
+            Shown first because price freshness is what users typically wonder
+            about ("are these stale?"). */}
+        <Cell label="PRICES">{formatSnapshotDate(s.ltpDate)}</Cell>
+        <Sep />
+        {/* SNAPSHOT — weekly scoring snapshot date. Updates Fridays after
+            close. Quality/Valuation/Momentum percentiles are pinned to this. */}
         <Cell label="SNAPSHOT">{formatSnapshotDate(s.latest)}</Cell>
         <Sep />
         <Cell label="COVERAGE">{s.coverage.toLocaleString("en-IN")}</Cell>
