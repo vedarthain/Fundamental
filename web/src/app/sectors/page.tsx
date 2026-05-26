@@ -98,8 +98,15 @@ async function loadAll(): Promise<SectorsData> {
 // this, awaiting searchParams in the page component (needed to read the
 // initial sector/industry from the URL on first paint) marks the page as
 // dynamic and bypasses ISR.
+// Tag the cache entry so /api/revalidate can purge it on demand after the
+// daily refresh-ltp script lands fresh data in Neon. Without the tag, only
+// `revalidate: 86400` controls when this data becomes stale — meaning
+// /sectors can serve up to a full day of yesterday's prices even though
+// the DB already has today's. With the tag, the GH Action posts to
+// /api/revalidate after the upsert and the next page render rebuilds.
 const getCachedAll = unstable_cache(() => loadAll(), ["sectors-all"], {
   revalidate: 86400,
+  tags: ["sectors", "panel-cache"],
 });
 
 // ── Page component ──────────────────────────────────────────────────────
