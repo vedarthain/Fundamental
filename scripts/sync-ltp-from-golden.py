@@ -170,25 +170,55 @@ def main() -> int:
             )
             n_meta = cur.rowcount
 
-        # ── 7. ALWAYS refresh cluster_stocks_panel_cache for the latest
-        # snapshot — /sectors reads from this materialised table, not
-        # screener_meta. Even when screener_meta is fully in sync, the
-        # panel cache may still be stale (separate write paths — score
-        # writes it weekly, refresh-ltp/this-script write screener_meta
-        # daily). Older snapshot rows are intentionally left alone
-        # (they're historical archives keyed to their snapshot date).
+        # ── 7. Recompute market_cap_cr from bhavcopy LTP × shares ─────────
+        # market_cap_cr = current_price × no_of_equity_shares / 10^7
+        # (shares stored as raw count in fundamentals_annual; market cap
+        # convention is rupees in crores → divide by 10^7).
+        #
+        # This makes market cap track the bhavcopy LTP just like current_price
+        # already does, and fixes anomalies where Screener's exported market
+        # cap differs from the price × shares identity (HDFCBANK was off by
+        # ~2× pre-fix — Screener's number was 11.8L Cr, math says 6L Cr).
+        #
+        # Skips stocks where no_of_equity_shares isn't available in
+        # fundamentals_annual (~17 of 2,163 today).
+        cur.execute("""
+            WITH latest_shares AS (
+                SELECT DISTINCT ON (symbol) symbol, no_of_equity_shares
+                  FROM app.fundamentals_annual
+                 WHERE no_of_equity_shares IS NOT NULL
+                 ORDER BY symbol, period_end DESC
+            )
+            UPDATE app.screener_meta sm
+               SET market_cap_cr = ROUND(
+                       (sm.current_price * ls.no_of_equity_shares / 10000000.0)::numeric, 2
+                   )
+              FROM latest_shares ls
+             WHERE sm.symbol = ls.symbol
+               AND sm.current_price IS NOT NULL
+        """)
+        n_mcap = cur.rowcount
+
+        # ── 8. ALWAYS refresh cluster_stocks_panel_cache for the latest
+        # snapshot (both current_price + market_cap_cr) — /sectors reads
+        # from this materialised table, not screener_meta directly.
         cur.execute("""
             UPDATE app.cluster_stocks_panel_cache c
-               SET current_price = sm.current_price
+               SET current_price = sm.current_price,
+                   market_cap_cr = sm.market_cap_cr
               FROM app.screener_meta sm
              WHERE c.symbol = sm.symbol
                AND c.snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_stocks_panel_cache)
                AND sm.current_price IS NOT NULL
-               AND (c.current_price IS DISTINCT FROM sm.current_price)
+               AND (
+                     c.current_price IS DISTINCT FROM sm.current_price
+                  OR c.market_cap_cr IS DISTINCT FROM sm.market_cap_cr
+               )
         """)
         n_panel = cur.rowcount
     print(f"✓ Updated current_price for {n_meta:,} screener_meta rows.")
-    print(f"✓ Updated current_price for {n_panel:,} cluster_stocks_panel_cache rows (latest snapshot).")
+    print(f"✓ Recomputed market_cap_cr for {n_mcap:,} screener_meta rows.")
+    print(f"✓ Refreshed {n_panel:,} cluster_stocks_panel_cache rows (latest snapshot).")
     return 0
 
 
