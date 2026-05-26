@@ -96,10 +96,20 @@ export function verifySession(token: string): SessionPayload | null {
   return p;
 }
 
-/** Issue a fresh session cookie for `userId`. Called from login/signup routes. */
-export async function setSessionCookie(userId: number): Promise<void> {
+/** Issue a fresh session cookie for `userId`. Called from login/signup routes.
+ *
+ *  Accepts number|string because postgres.js returns BIGSERIAL columns as
+ *  strings — JS numbers can't safely hold values above 2^53, so the driver
+ *  preserves precision by handing back a string. We coerce to a regular
+ *  number here (we're nowhere near 2^53 user IDs, and verifySession
+ *  expects a number in the payload). */
+export async function setSessionCookie(userId: number | string): Promise<void> {
+  const id = typeof userId === "number" ? userId : Number(userId);
+  if (!Number.isFinite(id) || id <= 0) {
+    throw new Error(`setSessionCookie: invalid userId ${userId}`);
+  }
   const exp = Math.floor(Date.now() / 1000) + MAX_AGE_S;
-  const token = signSession({ userId, exp });
+  const token = signSession({ userId: id, exp });
   const c = await cookies();
   c.set({
     name: COOKIE_NAME,
