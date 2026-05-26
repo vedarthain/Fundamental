@@ -139,9 +139,10 @@ def main() -> int:
     print(f"Stale or missing current_price: {len(changes):,} stocks")
     print()
 
-    if not changes:
-        print("Nothing to update.")
-        return 0
+    # Note: even if screener_meta is fully up-to-date (changes == 0), we
+    # ALWAYS refresh cluster_stocks_panel_cache from screener_meta below.
+    # The panel cache can be stale relative to screener_meta when the
+    # score run hasn't happened recently — separate write paths.
 
     # ── 5. Print a sample so the operator can sanity-check ───────────────
     print(f"Sample changes (first {min(args.limit, len(changes))}):")
@@ -158,15 +159,36 @@ def main() -> int:
         print("Skipping writes (--dry-run).")
         return 0
 
-    # ── 6. Bulk update via executemany ────────────────────────────────────
-    rows = [(new_close, sym) for sym, new_close, _, _ in changes]
+    n_meta = 0
     with psycopg.connect(app_url) as ac, ac.cursor() as cur:
-        cur.executemany(
-            "UPDATE app.screener_meta SET current_price = %s WHERE symbol = %s",
-            rows,
-        )
-        n = cur.rowcount
-    print(f"✓ Updated current_price for {n:,} symbols.")
+        # ── 6. Bulk update screener_meta (only if any rows are stale) ────
+        if changes:
+            rows = [(new_close, sym) for sym, new_close, _, _ in changes]
+            cur.executemany(
+                "UPDATE app.screener_meta SET current_price = %s WHERE symbol = %s",
+                rows,
+            )
+            n_meta = cur.rowcount
+
+        # ── 7. ALWAYS refresh cluster_stocks_panel_cache for the latest
+        # snapshot — /sectors reads from this materialised table, not
+        # screener_meta. Even when screener_meta is fully in sync, the
+        # panel cache may still be stale (separate write paths — score
+        # writes it weekly, refresh-ltp/this-script write screener_meta
+        # daily). Older snapshot rows are intentionally left alone
+        # (they're historical archives keyed to their snapshot date).
+        cur.execute("""
+            UPDATE app.cluster_stocks_panel_cache c
+               SET current_price = sm.current_price
+              FROM app.screener_meta sm
+             WHERE c.symbol = sm.symbol
+               AND c.snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_stocks_panel_cache)
+               AND sm.current_price IS NOT NULL
+               AND (c.current_price IS DISTINCT FROM sm.current_price)
+        """)
+        n_panel = cur.rowcount
+    print(f"✓ Updated current_price for {n_meta:,} screener_meta rows.")
+    print(f"✓ Updated current_price for {n_panel:,} cluster_stocks_panel_cache rows (latest snapshot).")
     return 0
 
 
