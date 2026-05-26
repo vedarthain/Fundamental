@@ -76,8 +76,94 @@ export default async function TodayInsightPage({
 
       <MethodologyCallout text={insight.methodology} snapshotDate={insight.snapshotDate} />
 
+      <ShareBar insight={insight} />
+
+      <Disclaimer />
+
       <PrevNext date={date} prevDate={prevDate} nextDate={nextDate} showNext={showNext} />
     </div>
+  );
+}
+
+// ── Share + disclaimer ────────────────────────────────────────────────────
+
+function ShareBar({
+  insight,
+}: {
+  insight: Awaited<ReturnType<typeof loadInsight>>;
+}) {
+  // Build the tweet text + URL.  Pre-filled but the user can edit before
+  // posting from Twitter's compose screen.  Length-aware: keep symbols
+  // under ~5 so we stay well under Twitter's 280-char limit.
+  const url = `https://equityroots.in/today/${insight.date}`;
+  const symbols = insight.stocks.slice(0, 5).map((s) => s.symbol).join(", ");
+  const tweet = `${insight.title}\n\n${symbols}\n\nMore: ${url}\n\n#NSE #IndianStocks`;
+  const twitterHref = `https://twitter.com/intent/tweet?text=${encodeURIComponent(tweet)}`;
+  const linkedInHref = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(url)}`;
+  const waText = `${insight.title} — ${url}`;
+  const waHref = `https://wa.me/?text=${encodeURIComponent(waText)}`;
+
+  return (
+    <div className="mt-6 flex flex-wrap items-center gap-2 text-[12.5px]">
+      <span className="muted-text">Share this signal:</span>
+      <a
+        href={twitterHref}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="px-2.5 py-1 rounded-md border font-medium transition-colors hover:bg-[var(--color-paper)]"
+        style={{ borderColor: "var(--color-border-default)" }}
+      >
+        𝕏 / Twitter
+      </a>
+      <a
+        href={linkedInHref}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="px-2.5 py-1 rounded-md border font-medium transition-colors hover:bg-[var(--color-paper)]"
+        style={{ borderColor: "var(--color-border-default)" }}
+      >
+        LinkedIn
+      </a>
+      <a
+        href={waHref}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="px-2.5 py-1 rounded-md border font-medium transition-colors hover:bg-[var(--color-paper)]"
+        style={{ borderColor: "var(--color-border-default)" }}
+      >
+        WhatsApp
+      </a>
+    </div>
+  );
+}
+
+function Disclaimer() {
+  // Prominent + un-muted so the framing is unmissable.  Sits right above
+  // the prev/next nav so anyone scrolling past stocks reads it before
+  // leaving the page.  SEBI / regulatory framing — "data + analysis, not
+  // advice" — is the line we never blur.
+  return (
+    <section
+      className="mt-8 p-4 rounded-md text-[12.5px] leading-relaxed"
+      style={{
+        backgroundColor: "color-mix(in srgb, var(--color-delta-down) 6%, transparent)",
+        border: "1px solid color-mix(in srgb, var(--color-delta-down) 30%, transparent)",
+      }}
+    >
+      <div
+        className="text-[11px] uppercase tracking-wide font-bold mb-2"
+        style={{ color: "var(--color-delta-down)" }}
+      >
+        Not investment advice
+      </div>
+      <p style={{ color: "var(--color-ink)" }}>
+        These stocks are surfaced by a deterministic, peer-relative scoring algorithm
+        — <strong>not a recommendation to buy or sell</strong>. Past percentile scores
+        do not predict future returns. EquityRoots is <strong>not a SEBI-registered
+        investment adviser</strong>. Do your own research and, if you need personalised
+        guidance, consult a SEBI-registered investment adviser before transacting.
+      </p>
+    </section>
   );
 }
 
