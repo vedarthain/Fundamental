@@ -1,0 +1,137 @@
+"use client";
+
+/**
+ * UserMenu — the signed-in indicator + sign-out control in the top nav.
+ *
+ * Replaces the anonymous "Sign in" link once the user has a session.
+ * Renders a circular initial badge (their email's first letter) that
+ * expands on click into a dropdown showing the email and a Sign out
+ * action.
+ *
+ * Visual treatment is intentionally distinct from the nav links — a
+ * small chip rather than a text link — so the signed-in state reads
+ * unambiguously from the corner of the eye. Without this, /watchlist
+ * felt like a dead end ("am I even logged in?").
+ *
+ * Click-outside + Escape close the menu (same pattern as the Tools
+ * dropdown).
+ */
+
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { broadcastSessionChange } from "@/lib/session-client";
+
+type Props = {
+  email: string;
+  displayName: string | null;
+};
+
+export function UserMenu({ email, displayName }: Props) {
+  const [open, setOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const router = useRouter();
+
+  // Close on outside click.
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [open]);
+
+  // Close on Escape.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open]);
+
+  async function onSignOut() {
+    setSigningOut(true);
+    try {
+      await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+    } catch {
+      // Cookie will still be cleared client-side via broadcast/refresh below
+      // even if the server call fails; not worth blocking on.
+    }
+    broadcastSessionChange();
+    setOpen(false);
+    router.push("/");
+    router.refresh();
+  }
+
+  // Derive the badge initial from displayName first, then email.  Falls
+  // back to "?" for paranoia — never crash on a missing letter.
+  const initial =
+    (displayName?.trim()?.[0] ?? email?.trim()?.[0] ?? "?").toUpperCase();
+  const shortLabel = displayName?.trim() || email;
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className="inline-flex items-center gap-1.5 pl-1.5 pr-2 py-1 rounded-full border transition-colors hover:bg-[var(--color-paper)]"
+        style={{ borderColor: "var(--color-border-default)" }}
+        title={`Signed in as ${email}`}
+      >
+        <span
+          className="inline-flex items-center justify-center w-6 h-6 rounded-full text-[11px] font-semibold"
+          style={{
+            backgroundColor: "var(--color-accent-600)",
+            color: "white",
+          }}
+          aria-hidden
+        >
+          {initial}
+        </span>
+        <span className="hidden md:inline text-[12.5px] font-medium max-w-[140px] truncate">
+          {shortLabel}
+        </span>
+        <span aria-hidden className="text-[10px] mt-px opacity-70">▾</span>
+      </button>
+
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 top-full mt-2 w-[240px] rounded-md border hairline shadow-lg z-50 overflow-hidden"
+          style={{ backgroundColor: "var(--color-card)" }}
+        >
+          <div className="px-4 py-3 border-b hairline">
+            <div className="text-[11px] muted-text">Signed in as</div>
+            <div className="text-[13px] font-medium truncate" title={email}>
+              {email}
+            </div>
+          </div>
+          <Link
+            href="/watchlist"
+            role="menuitem"
+            onClick={() => setOpen(false)}
+            className="block px-4 py-2.5 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
+          >
+            Your watchlist
+          </Link>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={signingOut}
+            onClick={onSignOut}
+            className="w-full text-left px-4 py-2.5 hover:bg-[var(--color-paper)] transition-colors text-[13px] border-t hairline"
+            style={{ color: "var(--color-delta-down, #b00)", opacity: signingOut ? 0.6 : 1 }}
+          >
+            {signingOut ? "Signing out…" : "Sign out"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}

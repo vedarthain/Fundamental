@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useSession } from "@/lib/session-client";
+import { UserMenu } from "./UserMenu";
 
 /**
  * Top-bar navigation links with active-state awareness.
@@ -122,6 +123,9 @@ export function TopNavLinks() {
           label="Sign in"
           active={isActive(pathname, "/login")}
         />
+      )}
+      {!loading && user !== null && (
+        <UserMenu email={user.email} displayName={user.displayName} />
       )}
     </nav>
   );
