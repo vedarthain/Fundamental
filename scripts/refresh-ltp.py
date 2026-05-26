@@ -1,11 +1,21 @@
 #!/usr/bin/env python3
 """
-refresh-ltp.py — fetch the latest NSE bhavcopy and refresh two things from
-the same single CSV download:
+refresh-ltp.py — fetch the latest NSE bhavcopy and refresh four things
+from the same single CSV download:
 
-  1. app.screener_meta.current_price        — today's LTP for header/cards
-  2. golden.price_history (interval='1d')   — today's OHLC bar for /sectors
-                                              1W/1M/1Y returns + scoring
+  1. app.screener_meta.current_price             — today's LTP for header/cards
+  2. app.screener_meta.market_cap_cr             — recomputed = LTP × shares
+                                                   (replaces Screener's mcap
+                                                    field, which is buggy for
+                                                    some post-merger entities
+                                                    like HDFCBANK)
+  3. app.cluster_stocks_panel_cache              — latest snapshot's price +
+                                                   mcap refreshed from (1)+(2)
+                                                   so /sectors stays current
+                                                   without a weekly score run
+  4. golden.price_history (interval='1d')        — today's OHLC bar for
+                                                   /sectors 1W/1M/1Y returns
+                                                   and scoring
 
 Designed to run as a GitHub Action every weekday after market close +
 bhavcopy publish time (cron 13:00 UTC = 18:30 IST). Also runnable manually:
@@ -245,6 +255,66 @@ def update_ltps(conn: psycopg.Connection, bars: dict[str, dict],
     return len(rows), missing
 
 
+def recompute_market_cap_and_panel(conn: psycopg.Connection) -> tuple[int, int]:
+    """Recompute screener_meta.market_cap_cr and refresh
+    cluster_stocks_panel_cache from the freshly-updated current_price.
+
+    Two updates, run in this order:
+      1. screener_meta.market_cap_cr = current_price × no_of_equity_shares / 10^7
+         (formula uses the latest no_of_equity_shares from fundamentals_annual;
+         skips symbols missing that field — ~17 of ~2,150 today).
+      2. cluster_stocks_panel_cache.current_price + market_cap_cr ← screener_meta
+         for the latest snapshot only. This is the materialised table that
+         /sectors reads, so without this step the /sectors page would
+         continue showing pre-refresh values until the next weekly score run.
+
+    Same logic as sync-ltp-from-golden.py (the local-DB equivalent), running
+    here against Neon so production auto-corrects every weekday after the
+    bhavcopy LTP refresh. Means production never relies on a manual
+    sync-neon.sh to surface today's prices/caps.
+
+    Returns (n_meta_mcap_updated, n_panel_rows_updated).
+    """
+    with conn.cursor() as cur:
+        # Step A: recompute market_cap_cr in screener_meta
+        cur.execute("""
+            WITH latest_shares AS (
+                SELECT DISTINCT ON (symbol) symbol, no_of_equity_shares
+                  FROM app.fundamentals_annual
+                 WHERE no_of_equity_shares IS NOT NULL
+                 ORDER BY symbol, period_end DESC
+            )
+            UPDATE app.screener_meta sm
+               SET market_cap_cr = ROUND(
+                       (sm.current_price * ls.no_of_equity_shares / 10000000.0)::numeric, 2
+                   )
+              FROM latest_shares ls
+             WHERE sm.symbol = ls.symbol
+               AND sm.current_price IS NOT NULL
+        """)
+        n_mcap = cur.rowcount
+
+        # Step B: refresh cluster_stocks_panel_cache (latest snapshot only).
+        # Older snapshots are historical archives — leave them keyed to their
+        # snapshot date's values.
+        cur.execute("""
+            UPDATE app.cluster_stocks_panel_cache c
+               SET current_price = sm.current_price,
+                   market_cap_cr = sm.market_cap_cr
+              FROM app.screener_meta sm
+             WHERE c.symbol = sm.symbol
+               AND c.snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_stocks_panel_cache)
+               AND sm.current_price IS NOT NULL
+               AND (
+                     c.current_price IS DISTINCT FROM sm.current_price
+                  OR c.market_cap_cr IS DISTINCT FROM sm.market_cap_cr
+               )
+        """)
+        n_panel = cur.rowcount
+    conn.commit()
+    return n_mcap, n_panel
+
+
 def upsert_golden_stocks(
     conn: psycopg.Connection,
     bars: dict[str, dict],
@@ -343,13 +413,20 @@ def main() -> None:
 
     # Step 1: update screener_meta.current_price (always)
     # Same DB connection produces the `known` filter we'll reuse for OHLC.
+    # Step 1b (in the same connection): derive market_cap_cr from the fresh
+    # LTP × shares, then cascade both fields into cluster_stocks_panel_cache.
+    # Without 1b the /sectors page keeps showing stale prices + the buggy
+    # Screener-sourced market cap until the next weekly score run.
     app_url = env_url("APP_DB_URL", required=True)
     with psycopg.connect(app_url) as conn:
         known = fetch_known_symbols(conn)
         updated, missing = update_ltps(conn, bars, known)
+        n_mcap, n_panel = recompute_market_cap_and_panel(conn)
     print(f"✓ updated current_price for {updated:,} symbols")
     if missing:
         print(f"  {missing:,} bhavcopy symbols not in our universe (ignored)")
+    print(f"✓ recomputed market_cap_cr for {n_mcap:,} symbols")
+    print(f"✓ refreshed {n_panel:,} cluster_stocks_panel_cache rows (latest snapshot)")
 
     # Step 2: insert today's OHLC bar into golden.price_history (if configured)
     # The OHLC write is optional so local dev still works without a Neon golden
