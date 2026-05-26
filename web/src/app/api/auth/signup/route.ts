@@ -72,8 +72,18 @@ export async function POST(req: NextRequest) {
         { status: 409 },
       );
     }
+    // Log the full technical detail server-side so the operator can fix
+    // setup problems (missing migration, missing SESSION_SECRET, etc.) by
+    // reading Vercel logs. Users see a clean, plain-English message —
+    // never a raw Postgres / Node error.
     console.error("signup failed:", err);
-    return NextResponse.json({ error: "could not create account" }, { status: 500 });
+    return NextResponse.json(
+      {
+        error:
+          "Something went wrong on our end while creating your account. Please try again in a minute. If it keeps happening, write to us via /feedback.",
+      },
+      { status: 500 },
+    );
   }
 
   await setSessionCookie(userId);

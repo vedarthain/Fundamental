@@ -32,12 +32,28 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "email and password required" }, { status: 400 });
   }
 
-  const rows = await sql<{ id: number; email: string; password_hash: string; display_name: string | null }[]>`
-    SELECT id, email::text AS email, password_hash, display_name
-      FROM app.users
-     WHERE email = ${email}
-     LIMIT 1
-  `;
+  let rows: { id: number; email: string; password_hash: string; display_name: string | null }[];
+  try {
+    rows = await sql<{ id: number; email: string; password_hash: string; display_name: string | null }[]>`
+      SELECT id, email::text AS email, password_hash, display_name
+        FROM app.users
+       WHERE email = ${email}
+       LIMIT 1
+    `;
+  } catch (err) {
+    // Most common cause in early-deploy: migration 0022 hasn't been applied yet
+    // so app.users doesn't exist. Surface the underlying error so the operator
+    // can fix it without digging through logs.
+    // Plain-English to the user; technical detail to the server log only.
+    console.error("login query failed:", err);
+    return NextResponse.json(
+      {
+        error:
+          "Something went wrong on our end while signing you in. Please try again in a minute.",
+      },
+      { status: 500 },
+    );
+  }
   const user = rows[0];
 
   // Always run bcrypt even if user is missing — defends against timing
