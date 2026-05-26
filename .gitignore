@@ -21,3 +21,5 @@ Fundamental app.zip
 
 # Migration script staging dirs
 /tmp/migrate-*/
+.vercel
+.env*
