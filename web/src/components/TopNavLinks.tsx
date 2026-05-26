@@ -32,6 +32,7 @@ type NavLink = {
 // Tools, all reachable via this dropdown.
 const LINKS: NavLink[] = [
   { href: "/sectors", label: "Sectors" },
+  { href: "/today",   label: "Today"   },
   { href: "/feed",    label: "Feed"    },
   { href: "/ideas",   label: "Ideas"   },
   // /watchlist gets a count badge attached at render time (see TopNavLinks
