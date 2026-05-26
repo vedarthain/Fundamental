@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { useWatchlist } from "@/lib/watchlist";
+import { useSession } from "@/lib/session-client";
 
 /**
  * Top-bar navigation links with active-state awareness.
@@ -26,19 +26,18 @@ type NavLink = {
   submenu?: Submenu[];
 };
 
-// Order matters — left to right in the header. Tools sits last as the
-// "advanced features" umbrella; previously had a flat "Discover" link that
-// pointed at the screener. Now the screener is one of three siblings under
-// Tools, all reachable via this dropdown.
+// Order matters — left to right in the header.
+//
+// Top-level slots are reserved for content surfaces every visitor benefits
+// from (Sectors / Feed / Ideas) plus the Tools umbrella that holds every
+// analytical + meta page.  /watchlist is special: rendered separately at
+// the end of the bar and ONLY when the user actually has stocks saved
+// (count > 0).  This keeps the nav personal — a fresh visitor doesn't see
+// a "Watchlist" link suggesting public/global data.
 const LINKS: NavLink[] = [
   { href: "/sectors", label: "Sectors" },
-  { href: "/today",   label: "Today"   },
   { href: "/feed",    label: "Feed"    },
   { href: "/ideas",   label: "Ideas"   },
-  // /watchlist gets a count badge attached at render time (see TopNavLinks
-  // component) so users see at a glance how many stocks they're tracking.
-  { href: "/watchlist", label: "Watchlist" },
-  { href: "/feedback",  label: "Feedback"  },
   {
     href: "/tools",
     label: "Tools",
@@ -58,6 +57,16 @@ const LINKS: NavLink[] = [
         label: "Peer Comparison",
         description: "Stack 2-5 stocks side by side",
       },
+      {
+        href: "/today",
+        label: "Today's Signal",
+        description: "Auto-generated daily stock insight",
+      },
+      {
+        href: "/feedback",
+        label: "Feedback",
+        description: "Tell us what to build next",
+      },
     ],
   },
 ];
@@ -71,10 +80,21 @@ function isActive(pathname: string, href: string): boolean {
 
 export function TopNavLinks() {
   const pathname = usePathname() ?? "";
-  // Watchlist count badge — read client-side from localStorage.  During SSR
-  // and first paint we render 0; once hydrated the real number appears.
-  // Hidden when 0 to avoid clutter for users who haven't added any yet.
-  const { count: watchCount, hydrated } = useWatchlist();
+  // Watchlist is rendered as a SEPARATE conditional link at the end of the
+  // bar — only when the user is SIGNED IN. The list itself is a private
+  // surface (server-stored against the user account), so showing the link
+  // to anonymous visitors would be misleading. Signed-out visitors see no
+  // Watchlist entry; they get a login prompt if they navigate to the URL
+  // directly.
+  //
+  // useSession() is a thin client hook that fetches /api/auth/me once on
+  // mount and caches the result. SSR returns null (loading) so the link is
+  // hidden during the initial paint and appears after hydration — the
+  // tradeoff is an unavoidable flicker for signed-in users, but it keeps
+  // the nav truthful for the much larger anonymous audience.
+  const { user, loading } = useSession();
+  const showWatchlist = !loading && user !== null;
+
   return (
     <nav className="flex items-center gap-3 md:gap-6 text-[13px] md:text-[14px] shrink-0 ml-auto">
       {LINKS.map((l) =>
@@ -86,9 +106,22 @@ export function TopNavLinks() {
             href={l.href}
             label={l.label}
             active={isActive(pathname, l.href)}
-            badge={l.href === "/watchlist" && hydrated && watchCount > 0 ? watchCount : null}
           />
         )
+      )}
+      {showWatchlist && (
+        <NavLink
+          href="/watchlist"
+          label="Watchlist"
+          active={isActive(pathname, "/watchlist")}
+        />
+      )}
+      {!loading && user === null && (
+        <NavLink
+          href="/login"
+          label="Sign in"
+          active={isActive(pathname, "/login")}
+        />
       )}
     </nav>
   );
