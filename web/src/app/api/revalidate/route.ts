@@ -26,20 +26,45 @@ export const dynamic = "force-dynamic";
 
 const DEFAULT_TAGS = ["sectors", "panel-cache"];
 
-function authOk(req: NextRequest): boolean {
+type AuthDiag =
+  | { ok: true }
+  | { ok: false; reason: "no-env"; expectedLen: 0 }
+  | { ok: false; reason: "no-token"; expectedLen: number }
+  | { ok: false; reason: "length-mismatch"; expectedLen: number; givenLen: number }
+  | { ok: false; reason: "value-mismatch"; expectedLen: number; givenLen: number };
+
+function authCheck(req: NextRequest): AuthDiag {
   const expected = process.env.REVALIDATE_TOKEN;
-  if (!expected) return false;
+  if (!expected) return { ok: false, reason: "no-env", expectedLen: 0 };
   const header = req.headers.get("authorization") || "";
   const m = /^Bearer\s+(.+)$/i.exec(header);
   const given = m?.[1] ?? req.nextUrl.searchParams.get("token") ?? "";
-  // Constant-time-ish compare; for a short bearer token a normal compare
-  // is fine in practice, but cheap to do better.
-  if (given.length !== expected.length) return false;
+  if (!given) return { ok: false, reason: "no-token", expectedLen: expected.length };
+  if (given.length !== expected.length) {
+    return {
+      ok: false,
+      reason: "length-mismatch",
+      expectedLen: expected.length,
+      givenLen: given.length,
+    };
+  }
   let diff = 0;
   for (let i = 0; i < given.length; i++) {
     diff |= given.charCodeAt(i) ^ expected.charCodeAt(i);
   }
-  return diff === 0;
+  if (diff !== 0) {
+    return {
+      ok: false,
+      reason: "value-mismatch",
+      expectedLen: expected.length,
+      givenLen: given.length,
+    };
+  }
+  return { ok: true };
+}
+
+function authOk(req: NextRequest): boolean {
+  return authCheck(req).ok;
 }
 
 export async function POST(req: NextRequest) {
@@ -78,7 +103,17 @@ export async function POST(req: NextRequest) {
 // GET form for browser-typed manual triggers — same auth, defaults to the
 // "sectors" + "panel-cache" tags.  Handy when you want to type
 // equityroots.in/api/revalidate?token=... into the address bar.
+//
+// Also supports ?diag=1 (no token required) — returns just whether the
+// env var is set + its length, no values. Lets us debug "why does my
+// token not match" without revealing anything sensitive. Safe to leave
+// public because nothing here helps an attacker; the comparison is still
+// constant-time against the real value when a token is supplied.
 export async function GET(req: NextRequest) {
+  if (req.nextUrl.searchParams.get("diag") === "1") {
+    const diag = authCheck(req);
+    return NextResponse.json(diag);
+  }
   if (!authOk(req)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
