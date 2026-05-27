@@ -218,10 +218,20 @@ type MobileSheetProps = {
   showSignIn: boolean;
 };
 
+type MobileTab = "pages" | "tools" | "account";
+
 function MobileSheet({ pathname, user, isAdmin, showWatchlist, showSignIn }: MobileSheetProps) {
   const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState<MobileTab>("pages");
   const [purgeState, setPurgeState] = useState<"idle" | "running" | "ok" | "error">("idle");
   const router = useRouter();
+
+  // Reset to the Pages tab whenever the sheet opens fresh. Avoids the
+  // user landing on the Account tab next time after they happened to
+  // close it from there.
+  useEffect(() => {
+    if (open) setTab("pages");
+  }, [open]);
 
   // Close on Escape (rare on mobile but cheap to support).
   useEffect(() => {
@@ -334,98 +344,149 @@ function MobileSheet({ pathname, user, isAdmin, showWatchlist, showSignIn }: Mob
               </button>
             </div>
 
+            {/* Tab bar — three sticky tabs at the top of the sheet body
+                so the user can switch sections without a long scroll.
+                We deliberately keep the section panels MUTUALLY exclusive
+                instead of merging them into one flat list per the user's
+                ask. */}
+            <div
+              className="flex border-b hairline shrink-0"
+              style={{ backgroundColor: "var(--color-card, #ffffff)" }}
+            >
+              <TabButton label="Pages"  isActive={tab === "pages"}   onClick={() => setTab("pages")} />
+              <TabButton label="Tools"  isActive={tab === "tools"}   onClick={() => setTab("tools")} />
+              <TabButton label="Account" isActive={tab === "account"} onClick={() => setTab("account")} />
+            </div>
+
             {/* Scrollable body — explicit bg + min-height guard so an
                 empty / pre-hydration state still looks intentional. */}
             <div
               className="flex-1 overflow-y-auto py-2"
               style={{ backgroundColor: "var(--color-card, #ffffff)", minHeight: 200 }}
             >
-              {/* Primary links */}
-              {LINKS.filter((l) => !l.submenu).map((l) => (
-                <SheetLink key={l.href} href={l.href} label={l.label} active={isActive(pathname, l.href)} />
-              ))}
-
-              {/* Watchlist (signed in only) */}
-              {showWatchlist && (
-                <SheetLink href="/watchlist" label="Watchlist" active={isActive(pathname, "/watchlist")} />
+              {tab === "pages" && (
+                <>
+                  {LINKS.filter((l) => !l.submenu).map((l) => (
+                    <SheetLink key={l.href} href={l.href} label={l.label} active={isActive(pathname, l.href)} />
+                  ))}
+                  {showWatchlist && (
+                    <SheetLink href="/watchlist" label="Watchlist" active={isActive(pathname, "/watchlist")} />
+                  )}
+                </>
               )}
 
-              {/* Tools group — flattened, no nested dropdown */}
-              {LINKS.filter((l) => l.submenu).map((l) => (
-                <div key={l.href} className="mt-1 pt-2 border-t hairline">
-                  <div className="px-4 pb-1 text-[10.5px] tracking-[0.12em] uppercase font-semibold muted-text">
-                    {l.label}
-                  </div>
-                  {l.submenu!.map((item) => (
-                    <SheetLink
-                      key={item.href}
-                      href={item.href}
-                      label={item.label}
-                      sublabel={item.description}
-                      active={isActive(pathname, item.href)}
-                    />
-                  ))}
-                </div>
-              ))}
+              {tab === "tools" && (
+                <>
+                  {LINKS.filter((l) => l.submenu).flatMap((l) =>
+                    l.submenu!.map((item) => (
+                      <SheetLink
+                        key={item.href}
+                        href={item.href}
+                        label={item.label}
+                        sublabel={item.description}
+                        active={isActive(pathname, item.href)}
+                      />
+                    )),
+                  )}
+                </>
+              )}
 
-              {/* Auth section */}
-              <div className="mt-1 pt-2 border-t hairline">
-                {showSignIn ? (
-                  <SheetLink href="/login" label="Sign in" active={isActive(pathname, "/login")} />
-                ) : user ? (
-                  <>
-                    <div className="px-4 py-2">
-                      <div className="text-[10.5px] tracking-[0.12em] uppercase font-semibold muted-text">
-                        Signed in as
+              {tab === "account" && (
+                <>
+                  {showSignIn && (
+                    <SheetLink href="/login" label="Sign in" active={isActive(pathname, "/login")} />
+                  )}
+                  {user && (
+                    <>
+                      <div className="px-4 py-3">
+                        <div className="text-[10.5px] tracking-[0.12em] uppercase font-semibold muted-text">
+                          Signed in as
+                        </div>
+                        <div className="text-[13.5px] font-medium truncate mt-0.5">{user.email}</div>
                       </div>
-                      <div className="text-[13px] font-medium truncate">{user.email}</div>
-                    </div>
-                    {isAdmin && (
-                      <>
-                        <SheetLink
-                          href="/admin/upstox"
-                          label="Upstox session"
-                          badge="ADMIN"
-                          active={isActive(pathname, "/admin/upstox")}
-                        />
+                      {isAdmin && (
+                        <>
+                          <SheetLink
+                            href="/admin/upstox"
+                            label="Upstox session"
+                            sublabel="Daily Upstox API token reauth"
+                            badge="ADMIN"
+                            active={isActive(pathname, "/admin/upstox")}
+                          />
+                          <button
+                            type="button"
+                            onClick={onPurgeCache}
+                            disabled={purgeState === "running"}
+                            className="w-full text-left px-4 py-3 hover:bg-[var(--color-paper)] transition-colors"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[14px] font-medium">
+                                {purgeState === "running" ? "Purging cache…"
+                                  : purgeState === "ok"     ? "Cache purged ✓"
+                                  : purgeState === "error"  ? "Purge failed — retry"
+                                  : "Purge cache"}
+                              </span>
+                              {purgeState === "idle" && (
+                                <span
+                                  className="inline-block px-1 py-0.5 rounded text-[9.5px] font-semibold tracking-wide uppercase"
+                                  style={{ backgroundColor: "var(--color-paper)", color: "var(--color-muted)" }}
+                                >
+                                  Admin
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[11.5px] muted-text mt-0.5 leading-snug">
+                              Force a fresh server render of /market, /sectors and their data caches.
+                            </div>
+                          </button>
+                        </>
+                      )}
+                      <div className="mt-1 pt-2 border-t hairline">
                         <button
                           type="button"
-                          onClick={onPurgeCache}
-                          disabled={purgeState === "running"}
-                          className="w-full text-left px-4 py-3 text-[14px] hover:bg-[var(--color-paper)] transition-colors flex items-center justify-between gap-2"
+                          onClick={onSignOut}
+                          className="w-full text-left px-4 py-3 text-[14px] font-medium hover:bg-[var(--color-paper)] transition-colors"
+                          style={{ color: "var(--color-delta-down, #b00)" }}
                         >
-                          <span>
-                            {purgeState === "running" ? "Purging cache…"
-                              : purgeState === "ok"      ? "Cache purged ✓"
-                              : purgeState === "error"   ? "Purge failed — retry"
-                              : "Purge cache"}
-                          </span>
-                          {purgeState === "idle" && (
-                            <span
-                              className="inline-block px-1 py-0.5 rounded text-[9.5px] font-semibold tracking-wide uppercase"
-                              style={{ backgroundColor: "var(--color-paper)", color: "var(--color-muted)" }}
-                            >
-                              Admin
-                            </span>
-                          )}
+                          Sign out
                         </button>
-                      </>
-                    )}
-                    <button
-                      type="button"
-                      onClick={onSignOut}
-                      className="w-full text-left px-4 py-3 text-[14px] hover:bg-[var(--color-paper)] transition-colors"
-                      style={{ color: "var(--color-delta-down, #b00)" }}
-                    >
-                      Sign out
-                    </button>
-                  </>
-                ) : null}
-              </div>
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
             </div>
         </div>
       )}
     </>
+  );
+}
+
+/** Single tab button inside the mobile-sheet tab bar. Visual treatment
+ *  is intentionally restrained — bold + accent color underline on
+ *  active, muted on inactive — so the active tab reads from the corner
+ *  of the eye without dominating the layout. */
+function TabButton({
+  label, isActive, onClick,
+}: {
+  label: string;
+  isActive: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex-1 px-4 py-3 text-[13px] tracking-wide transition-colors ${
+        isActive ? "font-semibold" : "font-medium muted-text"
+      }`}
+      style={isActive ? {
+        color: "var(--color-accent-600)",
+        boxShadow: "inset 0 -2px 0 var(--color-accent-600)",
+      } : undefined}
+    >
+      {label}
+    </button>
   );
 }
 
