@@ -21,20 +21,22 @@ type SessionUser = {
   displayName: string | null;
 };
 
+type SessionState = { user: SessionUser | null; isAdmin: boolean };
+
 // Per-tab cache so a page with five components doesn't make five /me calls.
 declare global {
-  var __er_session_cache: { user: SessionUser | null; fetchedAt: number } | undefined;
+  var __er_session_cache: { state: SessionState; fetchedAt: number } | undefined;
 }
 const SESSION_CHANGED = "er-session-changed";
 
-async function fetchMe(): Promise<SessionUser | null> {
+async function fetchMe(): Promise<SessionState> {
   try {
     const r = await fetch("/api/auth/me", { credentials: "include" });
-    if (!r.ok) return null;
-    const data: { user: SessionUser | null } = await r.json();
-    return data.user;
+    if (!r.ok) return { user: null, isAdmin: false };
+    const data: { user: SessionUser | null; isAdmin?: boolean } = await r.json();
+    return { user: data.user ?? null, isAdmin: !!data.isAdmin };
   } catch {
-    return null;
+    return { user: null, isAdmin: false };
   }
 }
 
@@ -47,14 +49,14 @@ export function broadcastSessionChange() {
 }
 
 export function useSession() {
-  const [user, setUser] = useState<SessionUser | null>(null);
+  const [state, setState] = useState<SessionState>({ user: null, isAdmin: false });
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
     setLoading(true);
-    const u = await fetchMe();
-    globalThis.__er_session_cache = { user: u, fetchedAt: Date.now() };
-    setUser(u);
+    const s = await fetchMe();
+    globalThis.__er_session_cache = { state: s, fetchedAt: Date.now() };
+    setState(s);
     setLoading(false);
   }, []);
 
@@ -63,7 +65,7 @@ export function useSession() {
     // navigation within the same SPA session.
     const cached = globalThis.__er_session_cache;
     if (cached && Date.now() - cached.fetchedAt < 60_000) {
-      setUser(cached.user);
+      setState(cached.state);
       setLoading(false);
     } else {
       refresh();
@@ -74,5 +76,5 @@ export function useSession() {
     return () => window.removeEventListener(SESSION_CHANGED, onChange);
   }, [refresh]);
 
-  return { user, loading, refresh };
+  return { user: state.user, isAdmin: state.isAdmin, loading, refresh };
 }

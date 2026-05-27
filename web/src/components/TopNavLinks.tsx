@@ -94,7 +94,7 @@ export function TopNavLinks() {
   // hidden during the initial paint and appears after hydration — the
   // tradeoff is an unavoidable flicker for signed-in users, but it keeps
   // the nav truthful for the much larger anonymous audience.
-  const { user, loading } = useSession();
+  const { user, isAdmin, loading } = useSession();
   const showWatchlist = !loading && user !== null;
 
   return (
@@ -126,7 +126,7 @@ export function TopNavLinks() {
         />
       )}
       {!loading && user !== null && (
-        <UserMenu email={user.email} displayName={user.displayName} />
+        <UserMenu email={user.email} displayName={user.displayName} isAdmin={isAdmin} />
       )}
     </nav>
   );

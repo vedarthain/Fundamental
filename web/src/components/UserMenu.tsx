@@ -25,9 +25,11 @@ import { broadcastSessionChange } from "@/lib/session-client";
 type Props = {
   email: string;
   displayName: string | null;
+  /** Whether the er_admin cookie validates — surfaces admin-only links. */
+  isAdmin?: boolean;
 };
 
-export function UserMenu({ email, displayName }: Props) {
+export function UserMenu({ email, displayName, isAdmin = false }: Props) {
   const [open, setOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -120,6 +122,23 @@ export function UserMenu({ email, displayName }: Props) {
           >
             Your watchlist
           </Link>
+          {isAdmin && (
+            <Link
+              href="/admin/upstox"
+              role="menuitem"
+              onClick={() => setOpen(false)}
+              className="block px-4 py-2.5 hover:bg-[var(--color-paper)] transition-colors text-[13px] border-t hairline"
+              title="Admin · daily Upstox token reauth"
+            >
+              Upstox session{" "}
+              <span
+                className="ml-1 inline-block px-1 py-0.5 rounded text-[9.5px] font-semibold tracking-wide uppercase align-middle"
+                style={{ backgroundColor: "var(--color-paper)", color: "var(--color-muted)" }}
+              >
+                Admin
+              </span>
+            </Link>
+          )}
           <button
             type="button"
             role="menuitem"
