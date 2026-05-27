@@ -36,6 +36,7 @@ type NavLink = {
 // (count > 0).  This keeps the nav personal — a fresh visitor doesn't see
 // a "Watchlist" link suggesting public/global data.
 const LINKS: NavLink[] = [
+  { href: "/market",  label: "Market"  },
   { href: "/sectors", label: "Sectors" },
   { href: "/feed",    label: "Feed"    },
   { href: "/ideas",   label: "Ideas"   },
