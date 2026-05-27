@@ -29,9 +29,25 @@ type Props = {
   isAdmin?: boolean;
 };
 
+type PurgeState = "idle" | "running" | "ok" | "error";
+
+export /** Small "Admin" pill rendered inside admin-only menu items. Stays a
+ *  separate helper because the same chip appears in two siblings. */
+function AdminBadge() {
+  return (
+    <span
+      className="ml-1 inline-block px-1 py-0.5 rounded text-[9.5px] font-semibold tracking-wide uppercase align-middle"
+      style={{ backgroundColor: "var(--color-paper)", color: "var(--color-muted)" }}
+    >
+      Admin
+    </span>
+  );
+}
+
 export function UserMenu({ email, displayName, isAdmin = false }: Props) {
   const [open, setOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const [purgeState, setPurgeState] = useState<PurgeState>("idle");
   const ref = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
@@ -54,6 +70,32 @@ export function UserMenu({ email, displayName, isAdmin = false }: Props) {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [open]);
+
+  async function onPurgeCache() {
+    setPurgeState("running");
+    try {
+      const r = await fetch("/api/revalidate", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        // Purge every tag the live data layer carries. Cheap; just
+        // rebuilds on next page render.
+        body: JSON.stringify({
+          tags: ["sectors", "panel-cache", "market", "snapshot"],
+        }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setPurgeState("ok");
+      // Force a soft refresh of the current page so the user immediately
+      // sees the result of the purge.
+      router.refresh();
+      // Reset the "ok" badge after 2s so the menu doesn't show it forever.
+      setTimeout(() => setPurgeState("idle"), 2000);
+    } catch {
+      setPurgeState("error");
+      setTimeout(() => setPurgeState("idle"), 3000);
+    }
+  }
 
   async function onSignOut() {
     setSigningOut(true);
@@ -123,21 +165,38 @@ export function UserMenu({ email, displayName, isAdmin = false }: Props) {
             Your watchlist
           </Link>
           {isAdmin && (
-            <Link
-              href="/admin/upstox"
-              role="menuitem"
-              onClick={() => setOpen(false)}
-              className="block px-4 py-2.5 hover:bg-[var(--color-paper)] transition-colors text-[13px] border-t hairline"
-              title="Admin · daily Upstox token reauth"
-            >
-              Upstox session{" "}
-              <span
-                className="ml-1 inline-block px-1 py-0.5 rounded text-[9.5px] font-semibold tracking-wide uppercase align-middle"
-                style={{ backgroundColor: "var(--color-paper)", color: "var(--color-muted)" }}
+            <>
+              <Link
+                href="/admin/upstox"
+                role="menuitem"
+                onClick={() => setOpen(false)}
+                className="block px-4 py-2.5 hover:bg-[var(--color-paper)] transition-colors text-[13px] border-t hairline"
+                title="Admin · daily Upstox token reauth"
               >
-                Admin
-              </span>
-            </Link>
+                Upstox session{" "}
+                <AdminBadge />
+              </Link>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={purgeState === "running"}
+                onClick={onPurgeCache}
+                className="w-full text-left px-4 py-2.5 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
+                title="Admin · purge Next.js Data Cache so the next page render fetches fresh data"
+              >
+                {purgeState === "running"
+                  ? "Purging cache…"
+                  : purgeState === "ok"
+                    ? "Cache purged ✓"
+                    : purgeState === "error"
+                      ? "Purge failed — retry"
+                      : (
+                        <>
+                          Purge cache <AdminBadge />
+                        </>
+                      )}
+              </button>
+            </>
           )}
           <button
             type="button"
