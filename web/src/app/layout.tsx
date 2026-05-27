@@ -63,41 +63,55 @@ function SiteHeader() {
       className="border-b hairline sticky top-7 z-30 backdrop-blur-md"
       style={{ backgroundColor: "color-mix(in srgb, var(--color-paper) 90%, transparent)" }}
     >
-      {/* Desktop layout: logo + centered search + nav.
-          Mobile layout: logo + nav inline (no search to save space). The
-          search is reachable from /discover and stock cards, so dropping
-          it from mobile chrome is fine. Without this fix the search bar
-          eats all the horizontal space and pushes Clusters/Discover off
-          the right edge. */}
-      <div className="mx-auto max-w-[1300px] px-4 md:px-6 h-14 flex items-center gap-3 md:gap-6">
-        <Link href="/" className="flex items-center gap-2 md:gap-2.5 shrink-0">
+      {/* ─────────────────── Desktop (md+) — single row ───────────────── */}
+      <div className="hidden md:flex mx-auto max-w-[1300px] px-6 h-14 items-center gap-6">
+        <Link href="/" className="flex items-center gap-2.5 shrink-0">
           <BanyanLogo />
           <div className="flex flex-col leading-none gap-0.5">
             <div className="flex items-baseline gap-2">
-              <span className="font-display text-[17px] md:text-[19px] tracking-tight">
-                EquityRoots
-              </span>
-              <span className="muted-text text-[10px] md:text-[11px] tracking-[0.1em] uppercase hidden sm:inline">
-                NSE India
-              </span>
+              <span className="font-display text-[19px] tracking-tight">EquityRoots</span>
+              <span className="muted-text text-[11px] tracking-[0.1em] uppercase">NSE India</span>
             </div>
-            {/* Tagline — desktop only. Header is already tight with nav on
-                mobile, so we drop the second line below md. */}
-            <span className="hidden md:inline muted-text text-[10.5px] tracking-tight italic">
+            <span className="muted-text text-[10.5px] tracking-tight italic">
               Indian fundamentals, made easy — with a sharper view.
             </span>
           </div>
         </Link>
-        {/* Search hides on mobile — it dominates the bar on narrow widths.
-            Users open /discover for search-as-they-type instead. */}
-        <div className="flex-1 justify-center hidden md:flex">
+        <div className="flex-1 justify-center flex">
           <StockSearch />
         </div>
-        {/* Top nav — all 4 surfaces visible on mobile now. Smaller font + gap on
-            mobile to fit comfortably alongside the logo. Active-state styling
-            lives inside the client component so the header layout can stay a
-            server component. */}
         <TopNavLinks />
+      </div>
+
+      {/* ─────────────────── Mobile (<md) — three stacked rows ────────── */}
+      <div className="md:hidden mx-auto max-w-[1300px] px-4">
+        {/* Row 1: logo on the left, optional user chip on the right.
+            UserMenu lives inside TopNavLinks; we render it via a small
+            mobile-only slot rather than duplicating the auth logic here. */}
+        <div className="h-12 flex items-center justify-between">
+          <Link href="/" className="flex items-center gap-2 shrink-0">
+            <BanyanLogo />
+            <div className="flex items-baseline gap-2">
+              <span className="font-display text-[17px] tracking-tight">EquityRoots</span>
+              <span className="muted-text text-[10px] tracking-[0.1em] uppercase hidden sm:inline">
+                NSE India
+              </span>
+            </div>
+          </Link>
+        </div>
+
+        {/* Row 2: stock search — restored on mobile in its own row, no
+            longer competing with the nav for horizontal space. */}
+        <div className="pb-2">
+          <StockSearch />
+        </div>
+
+        {/* Row 3: persistent tab bar — Market / Sector / Pages / Tools /
+            Account. TopNavLinks renders the mobile-specific variant here.
+            No hamburger; tabs are always visible. */}
+        <div className="-mx-4">
+          <TopNavLinks />
+        </div>
       </div>
     </header>
   );

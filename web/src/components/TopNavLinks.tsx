@@ -5,22 +5,24 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useSession, broadcastSessionChange } from "@/lib/session-client";
 import { UserMenu } from "./UserMenu";
-import { StockSearch } from "./StockSearch";
 
 /**
  * Top-bar navigation.
  *
  * Two layouts share the same data:
- *   - md+ (desktop / tablet): inline nav with the "Tools" dropdown +
- *     UserMenu chip on the right. Same as before this commit.
- *   - <md  (mobile): a hamburger button only. The inline links wouldn't
- *     fit on a ~400px viewport (we tried — items crammed against the
- *     right edge and the user chip got squished). Tapping the hamburger
- *     opens a full-width sheet listing every link vertically.
  *
- * The Tools submenu items appear flattened in the mobile sheet — no
- * second-level dropdown, just the same items as a sub-list under a
- * "Tools" heading. Nobody wants nested taps on a phone.
+ *  - md+ (desktop / tablet): inline nav with the "Tools" dropdown +
+ *    UserMenu chip on the right. Same as before this commit.
+ *
+ *  - <md  (mobile): a persistent 5-tab row directly below the logo +
+ *    search bar (no hamburger). Layout in layout.tsx stacks logo /
+ *    search / tabs as three rows. Order: Market | Sector | Pages |
+ *    Tools | Account.
+ *      • Market and Sector are direct-nav links (tap → navigate).
+ *      • Pages, Tools, Account are popup dropdowns — tap opens a
+ *        sheet of options anchored below the tab.
+ *      • Watchlist lives inside the Account popup because it's account-
+ *        specific data.
  */
 
 type Submenu = { href: string; label: string; description?: string };
@@ -49,6 +51,8 @@ function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(href + "/");
 }
 
+const TOOLS_LINK = LINKS.find((l) => l.submenu)!;
+
 export function TopNavLinks() {
   const pathname = usePathname() ?? "";
   const { user, isAdmin, loading } = useSession();
@@ -57,43 +61,41 @@ export function TopNavLinks() {
 
   return (
     <>
-      {/* ───── Desktop / tablet (md+) ─────────────────────────────── */}
+      {/* ───── Desktop / tablet (md+) — unchanged ─────────────────── */}
       <nav className="hidden md:flex items-center gap-3 md:gap-6 text-[13px] md:text-[14px] shrink-0 ml-auto">
         {LINKS.map((l) =>
           l.submenu
-            ? <NavDropdown key={l.href} link={l} active={isActive(pathname, l.href)} />
-            : <NavLink key={l.href} href={l.href} label={l.label} active={isActive(pathname, l.href)} />
+            ? <DesktopDropdown key={l.href} link={l} active={isActive(pathname, l.href)} />
+            : <DesktopLink key={l.href} href={l.href} label={l.label} active={isActive(pathname, l.href)} />
         )}
         {showWatchlist && (
-          <NavLink href="/watchlist" label="Watchlist" active={isActive(pathname, "/watchlist")} />
+          <DesktopLink href="/watchlist" label="Watchlist" active={isActive(pathname, "/watchlist")} />
         )}
         {showSignIn && (
-          <NavLink href="/login" label="Sign in" active={isActive(pathname, "/login")} />
+          <DesktopLink href="/login" label="Sign in" active={isActive(pathname, "/login")} />
         )}
         {!loading && user !== null && (
           <UserMenu email={user.email} displayName={user.displayName} isAdmin={isAdmin} />
         )}
       </nav>
 
-      {/* ───── Mobile (<md) ──────────────────────────────────────── */}
-      <div className="md:hidden flex items-center gap-2 ml-auto">
-        <MobileSheet
-          pathname={pathname}
-          user={user}
-          isAdmin={isAdmin}
-          showWatchlist={showWatchlist}
-          showSignIn={showSignIn}
-        />
-      </div>
+      {/* ───── Mobile (<md) — persistent tab bar ──────────────────── */}
+      <MobileTabBar
+        pathname={pathname}
+        user={user}
+        isAdmin={isAdmin}
+        showWatchlist={showWatchlist}
+        showSignIn={showSignIn}
+      />
     </>
   );
 }
 
 // ── Desktop helpers (unchanged) ────────────────────────────────────────────
 
-function NavLink({
-  href, label, active, badge,
-}: { href: string; label: string; active: boolean; badge?: number | null }) {
+function DesktopLink({
+  href, label, active,
+}: { href: string; label: string; active: boolean }) {
   return (
     <Link
       href={href}
@@ -104,18 +106,6 @@ function NavLink({
       }`}
     >
       <span>{label}</span>
-      {badge != null && badge > 0 && (
-        <span
-          className="inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full text-[10px] font-semibold tabular-nums"
-          style={{
-            backgroundColor: "var(--color-accent-50)",
-            color: "var(--color-accent-700)",
-            border: "1px solid var(--color-accent-300)",
-          }}
-        >
-          {badge}
-        </span>
-      )}
       {active && (
         <span
           aria-hidden
@@ -127,7 +117,7 @@ function NavLink({
   );
 }
 
-function NavDropdown({ link, active }: { link: NavLink; active: boolean }) {
+function DesktopDropdown({ link, active }: { link: NavLink; active: boolean }) {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
   const ref = useRef<HTMLDivElement>(null);
@@ -209,9 +199,9 @@ function NavDropdown({ link, active }: { link: NavLink; active: boolean }) {
   );
 }
 
-// ── Mobile sheet ───────────────────────────────────────────────────────────
+// ── Mobile tab bar ─────────────────────────────────────────────────────────
 
-type MobileSheetProps = {
+type MobileTabBarProps = {
   pathname: string;
   user: ReturnType<typeof useSession>["user"];
   isAdmin: boolean;
@@ -219,54 +209,141 @@ type MobileSheetProps = {
   showSignIn: boolean;
 };
 
-/** Tab keys for the mobile sheet body.  Market + Sector are direct
- *  navigation links (tap → navigate + close sheet) rather than panel
- *  switchers, so they don't need a key here.  The three remaining tabs
- *  group content that benefits from a panel of its own:
- *    - pages   : Feed, Ideas (general content surfaces)
- *    - tools   : Stock Screener, Investing Trials, etc.
- *    - account : Watchlist (account-specific) + signed-in info + admin */
-type MobileTab = "pages" | "tools" | "account";
+type Popup = "pages" | "tools" | "account" | null;
 
-function MobileSheet({ pathname, user, isAdmin, showWatchlist, showSignIn }: MobileSheetProps) {
-  const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<MobileTab>("pages");
-  const [purgeState, setPurgeState] = useState<"idle" | "running" | "ok" | "error">("idle");
-  const router = useRouter();
+function MobileTabBar({ pathname, user, isAdmin, showWatchlist, showSignIn }: MobileTabBarProps) {
+  const [popup, setPopup] = useState<Popup>(null);
+  const ref = useRef<HTMLDivElement>(null);
 
-  // Reset to the Pages tab whenever the sheet opens fresh. Avoids the
-  // user landing on the Account tab next time after they happened to
-  // close it from there.
+  // Close popup on outside-click.  We register one generic listener
+  // typed as Event so the same handler can serve mousedown and
+  // touchstart without an overload mismatch.
   useEffect(() => {
-    if (open) setTab("pages");
-  }, [open]);
+    if (popup === null) return;
+    const handler = (e: Event) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setPopup(null);
+    };
+    document.addEventListener("mousedown", handler);
+    document.addEventListener("touchstart", handler);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      document.removeEventListener("touchstart", handler);
+    };
+  }, [popup]);
 
-  // Close on Escape (rare on mobile but cheap to support).
+  // Close on Escape.
   useEffect(() => {
-    if (!open) return;
-    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    if (popup === null) return;
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") setPopup(null); };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [open]);
+  }, [popup]);
 
-  // Close when route changes. The sheet links use <Link>, so pathname
-  // updates on tap, which triggers this and clears the overlay.
-  useEffect(() => { setOpen(false); }, [pathname]);
+  // Close on route change.
+  useEffect(() => { setPopup(null); }, [pathname]);
 
-  // Prevent body scroll while sheet is open.
-  useEffect(() => {
-    if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = prev; };
-  }, [open]);
+  const pagesActive = ["/feed", "/ideas"].some((p) => isActive(pathname, p));
+  const toolsActive = isActive(pathname, "/tools") || (TOOLS_LINK.submenu ?? []).some((s) => isActive(pathname, s.href));
+  const accountActive = isActive(pathname, "/watchlist") || isActive(pathname, "/login") ||
+                        isActive(pathname, "/admin");
+
+  return (
+    <div ref={ref} className="md:hidden relative">
+      {/* The tab bar. Horizontally scrolls on very narrow phones; on
+          most viewports (>360px) all five tabs fit comfortably. */}
+      <div
+        role="tablist"
+        className="flex border-t hairline overflow-x-auto"
+        style={{ scrollbarWidth: "none" }}
+      >
+        <TabLink  href="/market"  label="Market"  active={isActive(pathname, "/market")}  onClick={() => setPopup(null)} />
+        <TabLink  href="/sectors" label="Sector"  active={isActive(pathname, "/sectors")} onClick={() => setPopup(null)} />
+        <TabButton label="Pages"   active={pagesActive}   isOpen={popup === "pages"}   onClick={() => setPopup((p) => p === "pages"   ? null : "pages"  )} />
+        <TabButton label="Tools"   active={toolsActive}   isOpen={popup === "tools"}   onClick={() => setPopup((p) => p === "tools"   ? null : "tools"  )} />
+        <TabButton label="Account" active={accountActive} isOpen={popup === "account"} onClick={() => setPopup((p) => p === "account" ? null : "account")} />
+      </div>
+
+      {popup && (
+        <PopupSheet
+          which={popup}
+          onClose={() => setPopup(null)}
+          pathname={pathname}
+          user={user}
+          isAdmin={isAdmin}
+          showWatchlist={showWatchlist}
+          showSignIn={showSignIn}
+        />
+      )}
+    </div>
+  );
+}
+
+const TAB_BASE_CLS =
+  "shrink-0 flex-1 min-w-[80px] px-2.5 py-2.5 text-[12.5px] tracking-wide transition-colors whitespace-nowrap text-center";
+
+function tabActiveStyle(): React.CSSProperties {
+  return {
+    color: "var(--color-accent-600)",
+    boxShadow: "inset 0 -2px 0 var(--color-accent-600)",
+  };
+}
+
+function TabLink({
+  href, label, active, onClick,
+}: { href: string; label: string; active: boolean; onClick: () => void }) {
+  return (
+    <Link
+      href={href}
+      onClick={onClick}
+      className={`${TAB_BASE_CLS} ${active ? "font-semibold" : "font-medium muted-text"}`}
+      style={active ? tabActiveStyle() : undefined}
+    >
+      {label}
+    </Link>
+  );
+}
+
+function TabButton({
+  label, active, isOpen, onClick,
+}: { label: string; active: boolean; isOpen: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-haspopup="menu"
+      aria-expanded={isOpen}
+      className={`${TAB_BASE_CLS} ${active || isOpen ? "font-semibold" : "font-medium muted-text"} inline-flex items-center justify-center gap-1`}
+      style={(active || isOpen) ? tabActiveStyle() : undefined}
+    >
+      {label}
+      <span aria-hidden className="text-[9px] mt-px opacity-70">{isOpen ? "▴" : "▾"}</span>
+    </button>
+  );
+}
+
+// ── Mobile popup sheets ────────────────────────────────────────────────────
+
+type PopupSheetProps = {
+  which: "pages" | "tools" | "account";
+  onClose: () => void;
+  pathname: string;
+  user: ReturnType<typeof useSession>["user"];
+  isAdmin: boolean;
+  showWatchlist: boolean;
+  showSignIn: boolean;
+};
+
+function PopupSheet({
+  which, onClose, pathname, user, isAdmin, showWatchlist, showSignIn,
+}: PopupSheetProps) {
+  const router = useRouter();
+  const [purgeState, setPurgeState] = useState<"idle" | "running" | "ok" | "error">("idle");
 
   async function onSignOut() {
-    try {
-      await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
-    } catch {}
+    try { await fetch("/api/auth/logout", { method: "POST", credentials: "include" }); }
+    catch {}
     broadcastSessionChange();
-    setOpen(false);
+    onClose();
     router.push("/");
     router.refresh();
   }
@@ -291,280 +368,121 @@ function MobileSheet({ pathname, user, isAdmin, showWatchlist, showSignIn }: Mob
   }
 
   return (
-    <>
-      {/* Hamburger button — visible in the header */}
-      <button
-        type="button"
-        aria-label={open ? "Close menu" : "Open menu"}
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-        className="inline-flex items-center justify-center w-9 h-9 rounded-md border transition-colors"
-        style={{ borderColor: "var(--color-border-default)" }}
-      >
-        {open ? (
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <line x1="6" y1="6" x2="18" y2="18" /><line x1="18" y1="6" x2="6" y2="18" />
-          </svg>
-        ) : (
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <line x1="4" y1="7"  x2="20" y2="7"  />
-            <line x1="4" y1="12" x2="20" y2="12" />
-            <line x1="4" y1="17" x2="20" y2="17" />
-          </svg>
-        )}
-      </button>
-
-      {/* Full-screen sheet overlay.  Previously a right-side narrow drawer
-          (w-84vw max-340px) — looked correct on paper but the body's
-          background let the page bleed through on Safari iOS, leaving
-          only the header visible. Full-screen with an explicit solid
-          background avoids that whole class of layout race.  We use
-          100dvh so it tracks the dynamic viewport (browser chrome
-          collapse on scroll). */}
-      {open && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-[60] flex flex-col"
-          style={{
-            backgroundColor: "var(--color-card, #ffffff)",
-            // 100dvh respects browser chrome; svh/lvh fallback for older
-            // engines. CSS handles the cascade.
-            height: "100dvh",
-            minHeight: "100vh",
-          }}
-        >
-            {/* Header inside the sheet */}
-            <div
-              className="px-4 py-3 border-b hairline flex items-center justify-between shrink-0"
-              style={{ backgroundColor: "var(--color-card, #ffffff)" }}
-            >
-              <span className="font-display text-[16px]">Menu</span>
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                aria-label="Close menu"
-                className="w-9 h-9 rounded-md inline-flex items-center justify-center hover:bg-[var(--color-paper)] transition-colors"
-              >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <line x1="6" y1="6" x2="18" y2="18" /><line x1="18" y1="6" x2="6" y2="18" />
-                </svg>
-              </button>
-            </div>
-
-            {/* Search bar — `Find an Indian stock…` was hidden on mobile
-                via `hidden md:flex` on the header.  Putting it at the
-                top of the sheet restores access without crowding the
-                ~390px-wide phone header. */}
-            <div
-              className="px-3 py-2 border-b hairline shrink-0"
-              style={{ backgroundColor: "var(--color-card, #ffffff)" }}
-            >
-              <StockSearch />
-            </div>
-
-            {/* Tab bar.  Market and Sector are direct-navigation tabs
-                — tapping them closes the sheet and navigates straight
-                to the page (they're each a single destination, no
-                content panel to expand).  Pages / Tools / Account are
-                panel switchers because each groups multiple items. */}
-            <div
-              className="flex border-b hairline shrink-0 overflow-x-auto"
-              style={{ backgroundColor: "var(--color-card, #ffffff)" }}
-            >
-              <TabLink href="/market"  label="Market" active={isActive(pathname, "/market")}  onClick={() => setOpen(false)} />
-              <TabLink href="/sectors" label="Sector" active={isActive(pathname, "/sectors")} onClick={() => setOpen(false)} />
-              <TabButton label="Pages"   isActive={tab === "pages"}   onClick={() => setTab("pages")} />
-              <TabButton label="Tools"   isActive={tab === "tools"}   onClick={() => setTab("tools")} />
-              <TabButton label="Account" isActive={tab === "account"} onClick={() => setTab("account")} />
-            </div>
-
-            {/* Scrollable body — explicit bg + min-height guard so an
-                empty / pre-hydration state still looks intentional. */}
-            <div
-              className="flex-1 overflow-y-auto py-2"
-              style={{ backgroundColor: "var(--color-card, #ffffff)", minHeight: 200 }}
-            >
-              {tab === "pages" && (
-                <>
-                  {/* Pages tab now holds only the content surfaces that
-                      aren't reachable from a dedicated tab (Market /
-                      Sector have their own).  That's Feed + Ideas
-                      today; new public pages would land here too. */}
-                  {LINKS
-                    .filter((l) => !l.submenu)
-                    .filter((l) => l.href !== "/market" && l.href !== "/sectors")
-                    .map((l) => (
-                      <SheetLink key={l.href} href={l.href} label={l.label} active={isActive(pathname, l.href)} />
-                    ))}
-                </>
-              )}
-
-              {tab === "tools" && (
-                <>
-                  {LINKS.filter((l) => l.submenu).flatMap((l) =>
-                    l.submenu!.map((item) => (
-                      <SheetLink
-                        key={item.href}
-                        href={item.href}
-                        label={item.label}
-                        sublabel={item.description}
-                        active={isActive(pathname, item.href)}
-                      />
-                    )),
-                  )}
-                </>
-              )}
-
-              {tab === "account" && (
-                <>
-                  {showSignIn && (
-                    <SheetLink href="/login" label="Sign in" active={isActive(pathname, "/login")} />
-                  )}
-                  {user && (
-                    <>
-                      <div className="px-4 py-3">
-                        <div className="text-[10.5px] tracking-[0.12em] uppercase font-semibold muted-text">
-                          Signed in as
-                        </div>
-                        <div className="text-[13.5px] font-medium truncate mt-0.5">{user.email}</div>
-                      </div>
-                      {/* Watchlist is account-specific — lives here, not
-                          in the Pages tab. Bookmarked symbols are tied
-                          to the signed-in user. */}
-                      {showWatchlist && (
-                        <SheetLink
-                          href="/watchlist"
-                          label="Your watchlist"
-                          sublabel="Stocks you're tracking"
-                          active={isActive(pathname, "/watchlist")}
-                        />
-                      )}
-                      {isAdmin && (
-                        <>
-                          <SheetLink
-                            href="/admin/upstox"
-                            label="Upstox session"
-                            sublabel="Daily Upstox API token reauth"
-                            badge="ADMIN"
-                            active={isActive(pathname, "/admin/upstox")}
-                          />
-                          <button
-                            type="button"
-                            onClick={onPurgeCache}
-                            disabled={purgeState === "running"}
-                            className="w-full text-left px-4 py-3 hover:bg-[var(--color-paper)] transition-colors"
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="text-[14px] font-medium">
-                                {purgeState === "running" ? "Purging cache…"
-                                  : purgeState === "ok"     ? "Cache purged ✓"
-                                  : purgeState === "error"  ? "Purge failed — retry"
-                                  : "Purge cache"}
-                              </span>
-                              {purgeState === "idle" && (
-                                <span
-                                  className="inline-block px-1 py-0.5 rounded text-[9.5px] font-semibold tracking-wide uppercase"
-                                  style={{ backgroundColor: "var(--color-paper)", color: "var(--color-muted)" }}
-                                >
-                                  Admin
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-[11.5px] muted-text mt-0.5 leading-snug">
-                              Force a fresh server render of /market, /sectors and their data caches.
-                            </div>
-                          </button>
-                        </>
-                      )}
-                      <div className="mt-1 pt-2 border-t hairline">
-                        <button
-                          type="button"
-                          onClick={onSignOut}
-                          className="w-full text-left px-4 py-3 text-[14px] font-medium hover:bg-[var(--color-paper)] transition-colors"
-                          style={{ color: "var(--color-delta-down, #b00)" }}
-                        >
-                          Sign out
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </>
-              )}
-            </div>
-        </div>
+    <div
+      role="menu"
+      className="absolute left-0 right-0 top-full z-[55] border-b hairline shadow-lg"
+      style={{ backgroundColor: "var(--color-card, #ffffff)" }}
+    >
+      {which === "pages" && (
+        <>
+          <PopupLink href="/feed"  label="Feed"  active={isActive(pathname, "/feed")}  onClose={onClose} />
+          <PopupLink href="/ideas" label="Ideas" active={isActive(pathname, "/ideas")} onClose={onClose} />
+        </>
       )}
-    </>
+
+      {which === "tools" && (TOOLS_LINK.submenu ?? []).map((item) => (
+        <PopupLink
+          key={item.href}
+          href={item.href}
+          label={item.label}
+          sublabel={item.description}
+          active={isActive(pathname, item.href)}
+          onClose={onClose}
+        />
+      ))}
+
+      {which === "account" && (
+        <>
+          {showSignIn && (
+            <PopupLink href="/login" label="Sign in" active={isActive(pathname, "/login")} onClose={onClose} />
+          )}
+          {user && (
+            <>
+              <div className="px-4 py-3 border-b hairline">
+                <div className="text-[10.5px] tracking-[0.12em] uppercase font-semibold muted-text">
+                  Signed in as
+                </div>
+                <div className="text-[13.5px] font-medium truncate mt-0.5">{user.email}</div>
+              </div>
+              {showWatchlist && (
+                <PopupLink
+                  href="/watchlist"
+                  label="Your watchlist"
+                  sublabel="Stocks you're tracking"
+                  active={isActive(pathname, "/watchlist")}
+                  onClose={onClose}
+                />
+              )}
+              {isAdmin && (
+                <>
+                  <PopupLink
+                    href="/admin/upstox"
+                    label="Upstox session"
+                    sublabel="Daily Upstox API token reauth"
+                    badge="ADMIN"
+                    active={isActive(pathname, "/admin/upstox")}
+                    onClose={onClose}
+                  />
+                  <button
+                    type="button"
+                    onClick={onPurgeCache}
+                    disabled={purgeState === "running"}
+                    className="w-full text-left px-4 py-3 hover:bg-[var(--color-paper)] transition-colors"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[14px] font-medium">
+                        {purgeState === "running" ? "Purging cache…"
+                          : purgeState === "ok"     ? "Cache purged ✓"
+                          : purgeState === "error"  ? "Purge failed — retry"
+                          : "Purge cache"}
+                      </span>
+                      {purgeState === "idle" && (
+                        <span
+                          className="inline-block px-1 py-0.5 rounded text-[9.5px] font-semibold tracking-wide uppercase"
+                          style={{ backgroundColor: "var(--color-paper)", color: "var(--color-muted)" }}
+                        >
+                          Admin
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[11.5px] muted-text mt-0.5 leading-snug">
+                      Force a fresh server render of /market, /sectors and their data caches.
+                    </div>
+                  </button>
+                </>
+              )}
+              <div className="border-t hairline">
+                <button
+                  type="button"
+                  onClick={onSignOut}
+                  className="w-full text-left px-4 py-3 text-[14px] font-medium hover:bg-[var(--color-paper)] transition-colors"
+                  style={{ color: "var(--color-delta-down, #b00)" }}
+                >
+                  Sign out
+                </button>
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 
-/** Tab visual — bold + accent-color underline when active, muted
- *  otherwise. Same treatment for both <button> tabs (panel switchers)
- *  and <Link> tabs (direct navigation).  Sharing styles keeps the bar
- *  visually consistent even though tabs differ functionally. */
-const TAB_BASE_CLS =
-  "shrink-0 px-3.5 py-3 text-[13px] tracking-wide transition-colors whitespace-nowrap";
-function tabActiveStyle(): React.CSSProperties {
-  return {
-    color: "var(--color-accent-600)",
-    boxShadow: "inset 0 -2px 0 var(--color-accent-600)",
-  };
-}
-
-function TabButton({
-  label, isActive, onClick,
-}: {
-  label: string;
-  isActive: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`${TAB_BASE_CLS} ${isActive ? "font-semibold" : "font-medium muted-text"}`}
-      style={isActive ? tabActiveStyle() : undefined}
-    >
-      {label}
-    </button>
-  );
-}
-
-/** Direct-nav tab — used for Market and Sector. Tapping closes the
- *  sheet AND navigates to the target route (the <Link> handles the
- *  latter; onClick is just for the sheet close). */
-function TabLink({
-  href, label, active, onClick,
-}: {
-  href: string;
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <Link
-      href={href}
-      onClick={onClick}
-      className={`${TAB_BASE_CLS} ${active ? "font-semibold" : "font-medium muted-text"}`}
-      style={active ? tabActiveStyle() : undefined}
-    >
-      {label}
-    </Link>
-  );
-}
-
-function SheetLink({
-  href, label, sublabel, badge, active,
+function PopupLink({
+  href, label, sublabel, badge, active, onClose,
 }: {
   href: string;
   label: string;
   sublabel?: string;
   badge?: string;
   active: boolean;
+  onClose: () => void;
 }) {
   return (
     <Link
       href={href}
+      onClick={onClose}
       className={`block px-4 py-3 transition-colors hover:bg-[var(--color-paper)] ${
         active ? "bg-[var(--color-paper)]" : ""
       }`}
