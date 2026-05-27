@@ -275,81 +275,14 @@ async function loadMovers1WPool(direction: "up" | "down", limit: number): Promis
   `;
 }
 
-async function loadMovers1DPool(direction: "up" | "down", limit: number): Promise<MoverWithFlags[]> {
-  // Pull top N 1D moves from golden, then enrich with panel + universe
-  // context in a single follow-up query. Two queries total instead of
-  // six (was: one per universe × direction).
-  const moves = direction === "up"
-    ? await golden<{ symbol: string; pct: number; today_close: number }[]>`
-        WITH bounds AS (
-          SELECT date AS latest FROM golden.price_history WHERE interval='1d'
-           ORDER BY date DESC LIMIT 1
-        ),
-        prev AS (
-          SELECT MAX(date) AS d FROM golden.price_history
-           WHERE interval='1d' AND date < (SELECT latest FROM bounds)
-        ),
-        today_close AS (
-          SELECT REPLACE(symbol, '.NS', '') AS symbol, close
-            FROM golden.price_history, bounds
-           WHERE interval='1d' AND date = bounds.latest
-        ),
-        prev_close AS (
-          SELECT REPLACE(symbol, '.NS', '') AS symbol, close
-            FROM golden.price_history, prev
-           WHERE interval='1d' AND date = prev.d
-        )
-        SELECT t.symbol, t.close AS today_close,
-               ((t.close - p.close) / NULLIF(p.close, 0))::float AS pct
-          FROM today_close t
-          JOIN prev_close  p ON p.symbol = t.symbol
-         WHERE p.close > 0
-         ORDER BY pct DESC NULLS LAST
-         LIMIT ${limit}
-      `
-    : await golden<{ symbol: string; pct: number; today_close: number }[]>`
-        WITH bounds AS (
-          SELECT date AS latest FROM golden.price_history WHERE interval='1d'
-           ORDER BY date DESC LIMIT 1
-        ),
-        prev AS (
-          SELECT MAX(date) AS d FROM golden.price_history
-           WHERE interval='1d' AND date < (SELECT latest FROM bounds)
-        ),
-        today_close AS (
-          SELECT REPLACE(symbol, '.NS', '') AS symbol, close
-            FROM golden.price_history, bounds
-           WHERE interval='1d' AND date = bounds.latest
-        ),
-        prev_close AS (
-          SELECT REPLACE(symbol, '.NS', '') AS symbol, close
-            FROM golden.price_history, prev
-           WHERE interval='1d' AND date = prev.d
-        )
-        SELECT t.symbol, t.close AS today_close,
-               ((t.close - p.close) / NULLIF(p.close, 0))::float AS pct
-          FROM today_close t
-          JOIN prev_close  p ON p.symbol = t.symbol
-         WHERE p.close > 0
-         ORDER BY pct ASC NULLS LAST
-         LIMIT ${limit}
-      `;
-  if (moves.length === 0) return [];
-
-  const symbols = moves.map((m) => m.symbol);
-  const context = await sql<{
-    symbol: string;
-    company_name: string | null;
-    sector_name: string | null;
-    industry_name: string | null;
-    current_price: number | null;
-    market_cap_cr: number | null;
-    composite_pct: number | null;
-    quality_pct: number | null;
-    maturity_tier: string | null;
-    is_nifty50: boolean;
-    is_nifty200: boolean;
-  }[]>`
+/**
+ * Loads ALL active panel-cache rows with universe flags in a single
+ * query.  Used by deriveMovers1DPool to look up cluster + quality +
+ * universe context for the top movers without firing a per-symbol
+ * IN clause.  ~2,150 rows; ~150 KB; one indexed scan.
+ */
+async function loadAllPanelContext(): Promise<Map<string, MoverWithFlags>> {
+  const rows = await sql<MoverWithFlags[]>`
     SELECT
       c.symbol,
       c.company_name,
@@ -357,6 +290,7 @@ async function loadMovers1DPool(direction: "up" | "down", limit: number): Promis
       cl.name AS industry_name,
       c.current_price::float AS current_price,
       c.market_cap_cr::float AS market_cap_cr,
+      0::float               AS ret,
       c.composite_pct::float AS composite_pct,
       c.quality_pct::float   AS quality_pct,
       c.maturity_tier,
@@ -367,28 +301,43 @@ async function loadMovers1DPool(direction: "up" | "down", limit: number): Promis
     JOIN app.meta_cluster mc ON mc.id = cl.meta_cluster_id
     LEFT JOIN app.universe u ON u.symbol = c.symbol
     WHERE c.snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_stocks_panel_cache)
-      AND c.symbol = ANY(${symbols})
       AND c.market_cap_cr >= 500
   `;
-  const ctxBySym = new Map(context.map((c) => [c.symbol, c]));
+  return new Map(rows.map((r) => [r.symbol, r]));
+}
+
+/**
+ * Derive 1D mover pool from the consolidated snapshot — no DB hit.
+ * Sorts symbols by pct_1d, slices top `limit`, joins each with the
+ * panel-cache context map.
+ */
+function deriveMovers1DPool(
+  direction: "up" | "down",
+  limit: number,
+  snap: Map<string, GoldenSnap>,
+  panelCtx: Map<string, MoverWithFlags>,
+): MoverWithFlags[] {
+  // Build (symbol, pct) pairs filtered to symbols with both a 1D move
+  // AND panel context (market_cap_cr >= 500 etc.).
+  const candidates: Array<{ symbol: string; pct: number; today_close: number }> = [];
+  for (const [sym, s] of snap) {
+    if (s.pct_1d == null) continue;
+    if (!panelCtx.has(sym)) continue;  // drops micro-caps + delisted
+    candidates.push({ symbol: sym, pct: s.pct_1d, today_close: s.today_close });
+  }
+  candidates.sort((a, b) =>
+    direction === "up" ? b.pct - a.pct : a.pct - b.pct,
+  );
 
   const out: MoverWithFlags[] = [];
-  for (const m of moves) {
-    const c = ctxBySym.get(m.symbol);
-    if (!c) continue;
+  for (const c of candidates) {
+    if (out.length >= limit) break;
+    const ctx = panelCtx.get(c.symbol);
+    if (!ctx) continue;
     out.push({
-      symbol:        m.symbol,
-      company_name:  c.company_name,
-      sector_name:   c.sector_name,
-      industry_name: c.industry_name,
-      current_price: c.current_price ?? m.today_close,
-      market_cap_cr: c.market_cap_cr,
-      ret:           m.pct,
-      composite_pct: c.composite_pct,
-      quality_pct:   c.quality_pct,
-      maturity_tier: c.maturity_tier,
-      is_nifty50:    c.is_nifty50,
-      is_nifty200:   c.is_nifty200,
+      ...ctx,
+      current_price: ctx.current_price ?? c.today_close,
+      ret: c.pct,
     });
   }
   return out;
@@ -748,10 +697,34 @@ async function loadAdvanceDecline1W(): Promise<AdvanceDeclineSet> {
   return mut;
 }
 
-async function loadAdvanceDecline1D(): Promise<AdvanceDeclineSet> {
-  // 1D: golden.price_history close-vs-prev. We bucket inside the same
-  // query so only a 3-row result crosses the wire.  Flat band ±0.5%.
-  const rows = await golden<{ direction: string; n: number }[]>`
+/**
+ * Consolidated golden snapshot — ONE query that returns
+ * (symbol, today_close, prev_close, pct_1d, hi_52w, lo_52w) for every
+ * actively-traded symbol.  All the per-symbol 1D + 52W derivations
+ * (movers, A/D, sector heat, range bands) consume this in Node instead
+ * of running their own golden scan.
+ *
+ * Replaces 4 separate golden queries (each with its own multi-CTE
+ * setup) → 1 query.  On a cold Neon compute this is the difference
+ * between ~15s and ~2s end-to-end.
+ */
+type GoldenSnap = {
+  today_close: number;
+  prev_close: number | null;
+  pct_1d: number | null;
+  hi_52w: number | null;
+  lo_52w: number | null;
+};
+
+async function loadGoldenSnapshot(): Promise<Map<string, GoldenSnap>> {
+  const rows = await golden<{
+    symbol: string;
+    today_close: number;
+    prev_close: number | null;
+    pct_1d: number | null;
+    hi_52w: number | null;
+    lo_52w: number | null;
+  }[]>`
     WITH bounds AS (
       SELECT date AS latest FROM golden.price_history WHERE interval='1d'
        ORDER BY date DESC LIMIT 1
@@ -760,48 +733,75 @@ async function loadAdvanceDecline1D(): Promise<AdvanceDeclineSet> {
       SELECT MAX(date) AS d FROM golden.price_history
        WHERE interval='1d' AND date < (SELECT latest FROM bounds)
     ),
+    horizon AS (
+      SELECT (SELECT latest FROM bounds) - INTERVAL '370 days' AS cutoff
+    ),
+    yearly AS (
+      SELECT REPLACE(p.symbol, '.NS', '') AS symbol,
+             MAX(p.close) AS hi, MIN(p.close) AS lo
+        FROM golden.price_history p, horizon h
+       WHERE p.interval = '1d' AND p.date >= h.cutoff
+       GROUP BY 1
+    ),
     today_close AS (
       SELECT REPLACE(symbol, '.NS', '') AS symbol, close
         FROM golden.price_history, bounds
-       WHERE interval='1d' AND date = bounds.latest
+       WHERE interval = '1d' AND date = bounds.latest
     ),
     prev_close AS (
       SELECT REPLACE(symbol, '.NS', '') AS symbol, close
         FROM golden.price_history, prev
-       WHERE interval='1d' AND date = prev.d
-    ),
-    moves AS (
-      SELECT ((t.close - p.close) / NULLIF(p.close, 0))::float AS pct
-        FROM today_close t
-        JOIN prev_close  p ON p.symbol = t.symbol
-       WHERE p.close > 0
+       WHERE interval = '1d' AND date = prev.d
     )
-    SELECT CASE
-             WHEN pct >  0.005 THEN 'up'
-             WHEN pct < -0.005 THEN 'down'
-             ELSE 'flat'
-           END AS direction,
-           COUNT(*)::int AS n
-      FROM moves
-     WHERE pct IS NOT NULL
-     GROUP BY 1
+    SELECT
+      t.symbol,
+      t.close::float                                        AS today_close,
+      p.close::float                                        AS prev_close,
+      CASE
+        WHEN p.close IS NOT NULL AND p.close > 0
+          THEN ((t.close - p.close) / p.close)::float
+        ELSE NULL
+      END                                                    AS pct_1d,
+      y.hi::float                                            AS hi_52w,
+      y.lo::float                                            AS lo_52w
+    FROM today_close t
+    LEFT JOIN prev_close p ON p.symbol = t.symbol
+    LEFT JOIN yearly y     ON y.symbol = t.symbol
   `;
-  const mut: AdvanceDeclineSet = { up: 0, flat: 0, down: 0 };
+  const out = new Map<string, GoldenSnap>();
   for (const r of rows) {
-    if (r.direction === "up") mut.up = r.n;
-    else if (r.direction === "down") mut.down = r.n;
-    else mut.flat = r.n;
+    out.set(r.symbol, {
+      today_close: r.today_close,
+      prev_close:  r.prev_close,
+      pct_1d:      r.pct_1d,
+      hi_52w:      r.hi_52w,
+      lo_52w:      r.lo_52w,
+    });
+  }
+  return out;
+}
+
+function deriveAdvanceDecline1D(snap: Map<string, GoldenSnap>): AdvanceDeclineSet {
+  // Flat band ±0.5%, same as the 1W variant.  Pure JS — no DB hit.
+  const mut: AdvanceDeclineSet = { up: 0, flat: 0, down: 0 };
+  for (const s of snap.values()) {
+    if (s.pct_1d == null) continue;
+    if (s.pct_1d >  0.005) mut.up++;
+    else if (s.pct_1d < -0.005) mut.down++;
+    else mut.flat++;
   }
   return mut;
 }
 
-async function loadSectorHeat(): Promise<SectorHeatRow[]> {
-  // 1W average (from panel cache) + 1D average (computed from golden,
-  // joined in Node by symbol). Single response shape with both columns
-  // so the UI can toggle without a second roundtrip.
-
-  // --- 1W aggregate from panel cache ---
-  const oneWeek = await sql<{
+async function loadSectorHeat1W(): Promise<{
+  sector_name: string;
+  display_order: number;
+  industry_count: number;
+  stocks_count: number;
+  avg_ret_1w: number | null;
+  avg_composite_pct: number | null;
+}[]> {
+  return sql<{
     sector_name: string;
     display_order: number;
     industry_count: number;
@@ -824,54 +824,34 @@ async function loadSectorHeat(): Promise<SectorHeatRow[]> {
     GROUP BY mc.name, mc.display_order
     ORDER BY mc.display_order, mc.name
   `;
+}
 
-  // --- per-symbol 1D moves from golden ---
-  const moves1D = await golden<{ symbol: string; pct: number }[]>`
-    WITH bounds AS (
-      SELECT date AS latest FROM golden.price_history WHERE interval='1d'
-       ORDER BY date DESC LIMIT 1
-    ),
-    prev AS (
-      SELECT MAX(date) AS d FROM golden.price_history
-       WHERE interval='1d' AND date < (SELECT latest FROM bounds)
-    ),
-    today_close AS (
-      SELECT REPLACE(symbol, '.NS', '') AS symbol, close
-        FROM golden.price_history, bounds
-       WHERE interval='1d' AND date = bounds.latest
-    ),
-    prev_close AS (
-      SELECT REPLACE(symbol, '.NS', '') AS symbol, close
-        FROM golden.price_history, prev
-       WHERE interval='1d' AND date = prev.d
-    )
-    SELECT t.symbol, ((t.close - p.close) / NULLIF(p.close, 0))::float AS pct
-      FROM today_close t
-      JOIN prev_close  p ON p.symbol = t.symbol
-     WHERE p.close > 0
-  `;
-
-  // --- symbol → sector map (cheap pull from panel cache) ---
-  const map = await sql<{ symbol: string; sector_name: string }[]>`
+async function loadSectorMap(): Promise<Map<string, string>> {
+  const rows = await sql<{ symbol: string; sector_name: string }[]>`
     SELECT c.symbol, mc.name AS sector_name
       FROM app.cluster_stocks_panel_cache c
       JOIN app.cluster cl      ON cl.id = c.cluster_id
       JOIN app.meta_cluster mc ON mc.id = cl.meta_cluster_id
      WHERE c.snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_stocks_panel_cache)
   `;
-  const sectorBySym = new Map(map.map((r) => [r.symbol, r.sector_name]));
+  return new Map(rows.map((r) => [r.symbol, r.sector_name]));
+}
 
-  // Aggregate 1D moves per sector.
+function deriveSectorHeat(
+  oneWeek: Awaited<ReturnType<typeof loadSectorHeat1W>>,
+  snap: Map<string, GoldenSnap>,
+  sectorBySym: Map<string, string>,
+): SectorHeatRow[] {
+  // Aggregate 1D moves per sector from the snapshot.
   const sum1D = new Map<string, { total: number; n: number }>();
-  for (const m of moves1D) {
-    const sec = sectorBySym.get(m.symbol);
-    if (!sec || m.pct === null || Number.isNaN(m.pct)) continue;
+  for (const [sym, s] of snap) {
+    const sec = sectorBySym.get(sym);
+    if (!sec || s.pct_1d == null || Number.isNaN(s.pct_1d)) continue;
     const cur = sum1D.get(sec) ?? { total: 0, n: 0 };
-    cur.total += m.pct;
+    cur.total += s.pct_1d;
     cur.n     += 1;
     sum1D.set(sec, cur);
   }
-
   return oneWeek.map((s) => {
     const agg = sum1D.get(s.sector_name);
     return {
@@ -885,64 +865,21 @@ async function loadSectorHeat(): Promise<SectorHeatRow[]> {
   });
 }
 
-async function loadWeekRange(): Promise<WeekRangeStat> {
-  // 52-week high / low touch count, computed against golden.price_history.
-  //
-  // We pull the last ~260 trading days' worth of rows for every symbol,
-  // compute MAX/MIN per symbol, then compare to the latest close. Buckets:
-  //   - at_high   : close >= 52W high × 0.995 (within 0.5%)
-  //   - at_low    : close <= 52W low  × 1.005
-  //   - near_high : close >= 52W high × 0.95 but not at_high
-  //   - near_low  : close <= 52W low  × 1.05 but not at_low
-  //
-  // Single window query, scoped to active universe via JOIN so we don't
-  // count delisted scrips. Runs once per hour inside the cached overview.
-  const rows = await golden<{
-    at_high: number;
-    at_low: number;
-    near_high: number;
-    near_low: number;
-    total: number;
-  }[]>`
-    WITH bounds AS (
-      SELECT date AS latest FROM golden.price_history WHERE interval='1d'
-       ORDER BY date DESC LIMIT 1
-    ),
-    horizon AS (
-      SELECT (SELECT latest FROM bounds) - INTERVAL '370 days' AS cutoff,
-             (SELECT latest FROM bounds) AS latest
-    ),
-    yearly AS (
-      SELECT REPLACE(p.symbol, '.NS', '') AS symbol,
-             MAX(p.close) AS hi,
-             MIN(p.close) AS lo
-        FROM golden.price_history p, horizon h
-       WHERE p.interval = '1d'
-         AND p.date >= h.cutoff
-       GROUP BY 1
-    ),
-    today_close AS (
-      SELECT REPLACE(p.symbol, '.NS', '') AS symbol,
-             p.close
-        FROM golden.price_history p, horizon h
-       WHERE p.interval = '1d'
-         AND p.date = h.latest
-    ),
-    joined AS (
-      SELECT t.symbol, t.close, y.hi, y.lo
-        FROM today_close t
-        JOIN yearly y ON y.symbol = t.symbol
-       WHERE y.hi > 0 AND y.lo > 0
-    )
-    SELECT
-      COUNT(*) FILTER (WHERE close >= hi * 0.995)::int                                              AS at_high,
-      COUNT(*) FILTER (WHERE close <= lo * 1.005)::int                                              AS at_low,
-      COUNT(*) FILTER (WHERE close >= hi * 0.95 AND close <  hi * 0.995)::int                       AS near_high,
-      COUNT(*) FILTER (WHERE close <= lo * 1.05 AND close >  lo * 1.005)::int                       AS near_low,
-      COUNT(*)::int                                                                                  AS total
-    FROM joined
-  `;
-  return rows[0] ?? { at_high: 0, at_low: 0, near_high: 0, near_low: 0, total: 0 };
+function deriveWeekRange(snap: Map<string, GoldenSnap>): WeekRangeStat {
+  // Same bucket definitions as before (at = within 0.5%, near = within
+  // 5% but not at).  Derived from the consolidated snapshot — no extra
+  // DB hit.
+  let at_high = 0, at_low = 0, near_high = 0, near_low = 0, total = 0;
+  for (const s of snap.values()) {
+    if (s.hi_52w == null || s.lo_52w == null || s.hi_52w <= 0 || s.lo_52w <= 0) continue;
+    total++;
+    const c = s.today_close;
+    if (c >= s.hi_52w * 0.995) at_high++;
+    else if (c >= s.hi_52w * 0.95) near_high++;
+    if (c <= s.lo_52w * 1.005) at_low++;
+    else if (c <= s.lo_52w * 1.05) near_low++;
+  }
+  return { at_high, at_low, near_high, near_low, total };
 }
 
 async function loadFii(): Promise<OverviewResponse["fii"]> {
@@ -978,42 +915,49 @@ async function loadSnapshotDates(): Promise<{ snapshotDate: string | null; ltpDa
 // ── Cached aggregator ──────────────────────────────────────────────────────
 
 async function loadOverview(): Promise<OverviewResponse> {
-  // Movers: 4 queries (2 periods × 2 dirs), each returning the top 300
-  // rows with universe flags attached.  We slice into 3 universe buckets
-  // in Node — cheaper than 12 separate DB roundtrips, and 300 is enough
-  // headroom that the top-7 within Nifty 50 is reliably present even on
-  // small-cap-led days.
+  // Massive consolidation: instead of 4 separate golden queries (each
+  // scanning thousands of price_history rows with its own CTE setup),
+  // we run ONE golden query (loadGoldenSnapshot) and derive everything
+  // 1D + 52W from the resulting Map in Node.  On a cold Neon compute
+  // this drops the route from ~15-20s to a couple of seconds.
+  //
+  // All app-side queries fan out in parallel alongside.
   const [
     indices,
     heroSeries,
     ad1W,
-    ad1D,
-    weekRange,
-    sectorHeat,
+    sector1W,
+    sectorMap,
+    panelCtx,
     fii,
     dates,
     movers1WUp,
     movers1WDown,
-    movers1DUp,
-    movers1DDown,
+    snap,
   ] = await Promise.all([
     loadIndices(),
     loadHeroSeries(),
     loadAdvanceDecline1W(),
-    loadAdvanceDecline1D(),
-    loadWeekRange(),
-    loadSectorHeat(),
+    loadSectorHeat1W(),
+    loadSectorMap(),
+    loadAllPanelContext(),
     loadFii(),
     loadSnapshotDates(),
     loadMovers1WPool("up", 300),
     loadMovers1WPool("down", 300),
-    loadMovers1DPool("up", 300),
-    loadMovers1DPool("down", 300),
+    loadGoldenSnapshot(),
   ]);
+
+  // Pure-JS derivations from the consolidated snapshot.
+  const ad1D       = deriveAdvanceDecline1D(snap);
+  const weekRange  = deriveWeekRange(snap);
+  const sectorHeat = deriveSectorHeat(sector1W, snap, sectorMap);
+  const movers1DUp   = deriveMovers1DPool("up",   300, snap, panelCtx);
+  const movers1DDown = deriveMovers1DPool("down", 300, snap, panelCtx);
+
   const advanceDecline = { "1D": ad1D, "1W": ad1W };
 
-  // Partition each pool into 3 universes × top 7. Membership flags
-  // (is_nifty50 / is_nifty200) live on each row, so this is pure JS.
+  // Partition each pool into 3 universes × top 7.
   const movers = sliceMovers({
     pool1WUp: movers1WUp,
     pool1WDown: movers1WDown,
