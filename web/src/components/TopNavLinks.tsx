@@ -1,40 +1,30 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { useSession } from "@/lib/session-client";
+import { useSession, broadcastSessionChange } from "@/lib/session-client";
 import { UserMenu } from "./UserMenu";
 
 /**
- * Top-bar navigation links with active-state awareness.
+ * Top-bar navigation.
  *
- * "Tools" is rendered as a dropdown — clicking opens a panel listing the three
- * sub-tools. Other entries are plain links. Clicking outside the dropdown
- * closes it; pressing Escape also closes; navigating closes via path change.
+ * Two layouts share the same data:
+ *   - md+ (desktop / tablet): inline nav with the "Tools" dropdown +
+ *     UserMenu chip on the right. Same as before this commit.
+ *   - <md  (mobile): a hamburger button only. The inline links wouldn't
+ *     fit on a ~400px viewport (we tried — items crammed against the
+ *     right edge and the user chip got squished). Tapping the hamburger
+ *     opens a full-width sheet listing every link vertically.
  *
- * Active treatment is intentionally strong (bold + accent color + 2px solid
- * underline) so the current page reads from the corner of the eye. For the
- * Tools entry, the same active treatment applies whenever the user is on any
- * /tools/* page or on the /tools landing.
+ * The Tools submenu items appear flattened in the mobile sheet — no
+ * second-level dropdown, just the same items as a sub-list under a
+ * "Tools" heading. Nobody wants nested taps on a phone.
  */
 
 type Submenu = { href: string; label: string; description?: string };
+type NavLink = { href: string; label: string; submenu?: Submenu[] };
 
-type NavLink = {
-  href: string;
-  label: string;
-  submenu?: Submenu[];
-};
-
-// Order matters — left to right in the header.
-//
-// Top-level slots are reserved for content surfaces every visitor benefits
-// from (Sectors / Feed / Ideas) plus the Tools umbrella that holds every
-// analytical + meta page.  /watchlist is special: rendered separately at
-// the end of the bar and ONLY when the user actually has stocks saved
-// (count > 0).  This keeps the nav personal — a fresh visitor doesn't see
-// a "Watchlist" link suggesting public/global data.
 const LINKS: NavLink[] = [
   { href: "/market",  label: "Market"  },
   { href: "/sectors", label: "Sectors" },
@@ -44,93 +34,61 @@ const LINKS: NavLink[] = [
     href: "/tools",
     label: "Tools",
     submenu: [
-      {
-        href: "/tools/screener",
-        label: "Stock Screener",
-        description: "Filter by criteria, see ranked matches",
-      },
-      {
-        href: "/tools/investing-trials",
-        label: "Investing Trials",
-        description: "Set your own Q/V/M weights",
-      },
-      {
-        href: "/tools/peer-comparison",
-        label: "Peer Comparison",
-        description: "Stack 2-5 stocks side by side",
-      },
-      {
-        href: "/today",
-        label: "Today's Signal",
-        description: "Auto-generated daily stock insight",
-      },
-      {
-        href: "/feedback",
-        label: "Feedback",
-        description: "Tell us what to build next",
-      },
+      { href: "/tools/screener",          label: "Stock Screener",     description: "Filter by criteria, see ranked matches" },
+      { href: "/tools/investing-trials",  label: "Investing Trials",   description: "Set your own Q/V/M weights" },
+      { href: "/tools/peer-comparison",   label: "Peer Comparison",    description: "Stack 2-5 stocks side by side" },
+      { href: "/today",                   label: "Today's Signal",     description: "Auto-generated daily stock insight" },
+      { href: "/feedback",                label: "Feedback",           description: "Tell us what to build next" },
     ],
   },
 ];
 
 function isActive(pathname: string, href: string): boolean {
   if (href === "/") return pathname === "/";
-  // Match either an exact hit or a child route (e.g. /sectors/<id>,
-  // /tools/screener, etc.)
   return pathname === href || pathname.startsWith(href + "/");
 }
 
 export function TopNavLinks() {
   const pathname = usePathname() ?? "";
-  // Watchlist is rendered as a SEPARATE conditional link at the end of the
-  // bar — only when the user is SIGNED IN. The list itself is a private
-  // surface (server-stored against the user account), so showing the link
-  // to anonymous visitors would be misleading. Signed-out visitors see no
-  // Watchlist entry; they get a login prompt if they navigate to the URL
-  // directly.
-  //
-  // useSession() is a thin client hook that fetches /api/auth/me once on
-  // mount and caches the result. SSR returns null (loading) so the link is
-  // hidden during the initial paint and appears after hydration — the
-  // tradeoff is an unavoidable flicker for signed-in users, but it keeps
-  // the nav truthful for the much larger anonymous audience.
   const { user, isAdmin, loading } = useSession();
   const showWatchlist = !loading && user !== null;
+  const showSignIn = !loading && user === null;
 
   return (
-    <nav className="flex items-center gap-3 md:gap-6 text-[13px] md:text-[14px] shrink-0 ml-auto">
-      {LINKS.map((l) =>
-        l.submenu ? (
-          <NavDropdown key={l.href} link={l} active={isActive(pathname, l.href)} />
-        ) : (
-          <NavLink
-            key={l.href}
-            href={l.href}
-            label={l.label}
-            active={isActive(pathname, l.href)}
-          />
-        )
-      )}
-      {showWatchlist && (
-        <NavLink
-          href="/watchlist"
-          label="Watchlist"
-          active={isActive(pathname, "/watchlist")}
+    <>
+      {/* ───── Desktop / tablet (md+) ─────────────────────────────── */}
+      <nav className="hidden md:flex items-center gap-3 md:gap-6 text-[13px] md:text-[14px] shrink-0 ml-auto">
+        {LINKS.map((l) =>
+          l.submenu
+            ? <NavDropdown key={l.href} link={l} active={isActive(pathname, l.href)} />
+            : <NavLink key={l.href} href={l.href} label={l.label} active={isActive(pathname, l.href)} />
+        )}
+        {showWatchlist && (
+          <NavLink href="/watchlist" label="Watchlist" active={isActive(pathname, "/watchlist")} />
+        )}
+        {showSignIn && (
+          <NavLink href="/login" label="Sign in" active={isActive(pathname, "/login")} />
+        )}
+        {!loading && user !== null && (
+          <UserMenu email={user.email} displayName={user.displayName} isAdmin={isAdmin} />
+        )}
+      </nav>
+
+      {/* ───── Mobile (<md) ──────────────────────────────────────── */}
+      <div className="md:hidden flex items-center gap-2 ml-auto">
+        <MobileSheet
+          pathname={pathname}
+          user={user}
+          isAdmin={isAdmin}
+          showWatchlist={showWatchlist}
+          showSignIn={showSignIn}
         />
-      )}
-      {!loading && user === null && (
-        <NavLink
-          href="/login"
-          label="Sign in"
-          active={isActive(pathname, "/login")}
-        />
-      )}
-      {!loading && user !== null && (
-        <UserMenu email={user.email} displayName={user.displayName} isAdmin={isAdmin} />
-      )}
-    </nav>
+      </div>
+    </>
   );
 }
+
+// ── Desktop helpers (unchanged) ────────────────────────────────────────────
 
 function NavLink({
   href, label, active, badge,
@@ -173,9 +131,6 @@ function NavDropdown({ link, active }: { link: NavLink; active: boolean }) {
   const pathname = usePathname();
   const ref = useRef<HTMLDivElement>(null);
 
-  // Close on outside click. Click handler is attached to document so any
-  // tap/click that lands outside the dropdown closes it. Listener is only
-  // attached while the menu is open to avoid wasted work.
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
@@ -185,7 +140,6 @@ function NavDropdown({ link, active }: { link: NavLink; active: boolean }) {
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
-  // Close on Escape.
   useEffect(() => {
     if (!open) return;
     const handler = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
@@ -193,7 +147,6 @@ function NavDropdown({ link, active }: { link: NavLink; active: boolean }) {
     return () => document.removeEventListener("keydown", handler);
   }, [open]);
 
-  // Close when navigation occurs (pathname changed).
   useEffect(() => { setOpen(false); }, [pathname]);
 
   return (
@@ -252,5 +205,258 @@ function NavDropdown({ link, active }: { link: NavLink; active: boolean }) {
         </div>
       )}
     </div>
+  );
+}
+
+// ── Mobile sheet ───────────────────────────────────────────────────────────
+
+type MobileSheetProps = {
+  pathname: string;
+  user: ReturnType<typeof useSession>["user"];
+  isAdmin: boolean;
+  showWatchlist: boolean;
+  showSignIn: boolean;
+};
+
+function MobileSheet({ pathname, user, isAdmin, showWatchlist, showSignIn }: MobileSheetProps) {
+  const [open, setOpen] = useState(false);
+  const [purgeState, setPurgeState] = useState<"idle" | "running" | "ok" | "error">("idle");
+  const router = useRouter();
+
+  // Close on Escape (rare on mobile but cheap to support).
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [open]);
+
+  // Close when route changes. The sheet links use <Link>, so pathname
+  // updates on tap, which triggers this and clears the overlay.
+  useEffect(() => { setOpen(false); }, [pathname]);
+
+  // Prevent body scroll while sheet is open.
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, [open]);
+
+  async function onSignOut() {
+    try {
+      await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+    } catch {}
+    broadcastSessionChange();
+    setOpen(false);
+    router.push("/");
+    router.refresh();
+  }
+
+  async function onPurgeCache() {
+    setPurgeState("running");
+    try {
+      const r = await fetch("/api/revalidate", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tags: ["sectors", "panel-cache", "market", "snapshot"] }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setPurgeState("ok");
+      router.refresh();
+      setTimeout(() => setPurgeState("idle"), 2000);
+    } catch {
+      setPurgeState("error");
+      setTimeout(() => setPurgeState("idle"), 3000);
+    }
+  }
+
+  return (
+    <>
+      {/* Hamburger button — visible in the header */}
+      <button
+        type="button"
+        aria-label={open ? "Close menu" : "Open menu"}
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex items-center justify-center w-9 h-9 rounded-md border transition-colors"
+        style={{ borderColor: "var(--color-border-default)" }}
+      >
+        {open ? (
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <line x1="6" y1="6" x2="18" y2="18" /><line x1="18" y1="6" x2="6" y2="18" />
+          </svg>
+        ) : (
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <line x1="4" y1="7"  x2="20" y2="7"  />
+            <line x1="4" y1="12" x2="20" y2="12" />
+            <line x1="4" y1="17" x2="20" y2="17" />
+          </svg>
+        )}
+      </button>
+
+      {/* Overlay + sheet */}
+      {open && (
+        <>
+          {/* Backdrop */}
+          <button
+            type="button"
+            aria-label="Close menu"
+            onClick={() => setOpen(false)}
+            className="fixed inset-0 z-40"
+            style={{ backgroundColor: "rgba(0,0,0,0.35)" }}
+          />
+          {/* Panel — slides in from right */}
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="fixed top-0 right-0 bottom-0 z-50 w-[84vw] max-w-[340px] flex flex-col"
+            style={{ backgroundColor: "var(--color-card)" }}
+          >
+            {/* Header inside the sheet */}
+            <div className="px-4 py-3 border-b hairline flex items-center justify-between">
+              <span className="font-display text-[15px]">Menu</span>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                aria-label="Close menu"
+                className="w-8 h-8 rounded-md inline-flex items-center justify-center hover:bg-[var(--color-paper)] transition-colors"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <line x1="6" y1="6" x2="18" y2="18" /><line x1="18" y1="6" x2="6" y2="18" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Scrollable body */}
+            <div className="flex-1 overflow-y-auto py-2">
+              {/* Primary links */}
+              {LINKS.filter((l) => !l.submenu).map((l) => (
+                <SheetLink key={l.href} href={l.href} label={l.label} active={isActive(pathname, l.href)} />
+              ))}
+
+              {/* Watchlist (signed in only) */}
+              {showWatchlist && (
+                <SheetLink href="/watchlist" label="Watchlist" active={isActive(pathname, "/watchlist")} />
+              )}
+
+              {/* Tools group — flattened, no nested dropdown */}
+              {LINKS.filter((l) => l.submenu).map((l) => (
+                <div key={l.href} className="mt-1 pt-2 border-t hairline">
+                  <div className="px-4 pb-1 text-[10.5px] tracking-[0.12em] uppercase font-semibold muted-text">
+                    {l.label}
+                  </div>
+                  {l.submenu!.map((item) => (
+                    <SheetLink
+                      key={item.href}
+                      href={item.href}
+                      label={item.label}
+                      sublabel={item.description}
+                      active={isActive(pathname, item.href)}
+                    />
+                  ))}
+                </div>
+              ))}
+
+              {/* Auth section */}
+              <div className="mt-1 pt-2 border-t hairline">
+                {showSignIn ? (
+                  <SheetLink href="/login" label="Sign in" active={isActive(pathname, "/login")} />
+                ) : user ? (
+                  <>
+                    <div className="px-4 py-2">
+                      <div className="text-[10.5px] tracking-[0.12em] uppercase font-semibold muted-text">
+                        Signed in as
+                      </div>
+                      <div className="text-[13px] font-medium truncate">{user.email}</div>
+                    </div>
+                    {isAdmin && (
+                      <>
+                        <SheetLink
+                          href="/admin/upstox"
+                          label="Upstox session"
+                          badge="ADMIN"
+                          active={isActive(pathname, "/admin/upstox")}
+                        />
+                        <button
+                          type="button"
+                          onClick={onPurgeCache}
+                          disabled={purgeState === "running"}
+                          className="w-full text-left px-4 py-3 text-[14px] hover:bg-[var(--color-paper)] transition-colors flex items-center justify-between gap-2"
+                        >
+                          <span>
+                            {purgeState === "running" ? "Purging cache…"
+                              : purgeState === "ok"      ? "Cache purged ✓"
+                              : purgeState === "error"   ? "Purge failed — retry"
+                              : "Purge cache"}
+                          </span>
+                          {purgeState === "idle" && (
+                            <span
+                              className="inline-block px-1 py-0.5 rounded text-[9.5px] font-semibold tracking-wide uppercase"
+                              style={{ backgroundColor: "var(--color-paper)", color: "var(--color-muted)" }}
+                            >
+                              Admin
+                            </span>
+                          )}
+                        </button>
+                      </>
+                    )}
+                    <button
+                      type="button"
+                      onClick={onSignOut}
+                      className="w-full text-left px-4 py-3 text-[14px] hover:bg-[var(--color-paper)] transition-colors"
+                      style={{ color: "var(--color-delta-down, #b00)" }}
+                    >
+                      Sign out
+                    </button>
+                  </>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
+function SheetLink({
+  href, label, sublabel, badge, active,
+}: {
+  href: string;
+  label: string;
+  sublabel?: string;
+  badge?: string;
+  active: boolean;
+}) {
+  return (
+    <Link
+      href={href}
+      className={`block px-4 py-3 transition-colors hover:bg-[var(--color-paper)] ${
+        active ? "bg-[var(--color-paper)]" : ""
+      }`}
+      style={active ? { borderLeft: "3px solid var(--color-accent-600)", paddingLeft: 13 } : undefined}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span
+          className={`text-[14px] ${active ? "font-semibold" : "font-medium"}`}
+          style={active ? { color: "var(--color-accent-600)" } : undefined}
+        >
+          {label}
+        </span>
+        {badge && (
+          <span
+            className="inline-block px-1 py-0.5 rounded text-[9.5px] font-semibold tracking-wide uppercase"
+            style={{ backgroundColor: "var(--color-paper)", color: "var(--color-muted)" }}
+          >
+            {badge}
+          </span>
+        )}
+      </div>
+      {sublabel && (
+        <div className="text-[11.5px] muted-text mt-0.5 leading-snug">{sublabel}</div>
+      )}
+    </Link>
   );
 }
