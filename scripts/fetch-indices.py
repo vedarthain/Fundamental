@@ -39,7 +39,7 @@ import csv
 import io
 import os
 import sys
-import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -98,7 +98,7 @@ HEADERS = {
 }
 
 MAX_DAYS_BACK = 5   # walk-back limit for "find latest published"
-REQUEST_GAP_S = 0.4 # polite gap between sequential fetches in --backfill mode
+DEFAULT_CONCURRENCY = 4  # parallel HTTP fetches during backfill; NSE handles this fine
 
 
 # ----------------------- Helpers ------------------------------------------
@@ -295,16 +295,78 @@ def run_latest(conn: psycopg.Connection) -> int:
     return 0
 
 
-def run_backfill(conn: psycopg.Connection, start: date, end: date) -> int:
-    """Backfill an inclusive date range. Skips weekends + 404s automatically."""
-    total = 0
+def run_backfill(
+    conn: psycopg.Connection,
+    start: date,
+    end: date,
+    concurrency: int = DEFAULT_CONCURRENCY,
+    skip_existing: bool = True,
+) -> int:
+    """Backfill an inclusive date range.
+
+    Two optimisations on top of the original sequential loop:
+      1. skip_existing — query the DB up front for dates that already
+         have rows in this range, and never fetch those.  Critical when
+         resuming an interrupted run: a re-invocation only fetches the
+         missing tail.
+      2. Concurrent fetches via a thread pool — NSE handles 4 parallel
+         CSV downloads without rate-limiting, and HTTP latency dominates
+         the loop. We still serialise the DB inserts in the main thread
+         because psycopg connections aren't thread-safe.
+
+    Output is intentionally compact: one line per date.  The earlier
+    "fetching X… wrote 14 rows" two-line format gets noisy on a
+    1-year backfill.
+    """
+    # 1. Build list of weekday targets.
+    targets: list[date] = []
     d = start
     while d <= end:
-        if d.weekday() < 5:  # Mon-Fri
-            n = run_single(conn, d)
-            total += n
-            time.sleep(REQUEST_GAP_S)
+        if d.weekday() < 5:
+            targets.append(d)
         d += timedelta(days=1)
+
+    if not targets:
+        print("(no weekdays in range)")
+        return 0
+
+    # 2. Filter out dates already in DB.
+    if skip_existing:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT DISTINCT date
+                  FROM app.market_index_history
+                 WHERE date BETWEEN %s AND %s
+            """, (targets[0], targets[-1]))
+            existing = {row[0] for row in cur.fetchall()}
+        before = len(targets)
+        targets = [d for d in targets if d not in existing]
+        if before != len(targets):
+            print(f"skipping {before - len(targets)} dates already in DB; "
+                  f"fetching {len(targets)}")
+        if not targets:
+            print("nothing to fetch.")
+            return 0
+
+    # 3. Parallel fetch → serial upsert.
+    print(f"backfilling {len(targets)} dates with concurrency={concurrency}")
+    total = 0
+    with ThreadPoolExecutor(max_workers=concurrency) as ex:
+        futures = {ex.submit(fetch_csv, d): d for d in targets}
+        for fut in as_completed(futures):
+            d = futures[fut]
+            try:
+                body = fut.result()
+            except Exception as e:  # noqa: BLE001 — log + continue
+                print(f"  {d}: fetch error {e}", file=sys.stderr)
+                continue
+            if not body:
+                print(f"  {d}: no CSV (404 / holiday)")
+                continue
+            rows = parse_rows(body)
+            n = upsert(conn, rows)
+            total += n
+            print(f"  {d}: {n} rows")
     return total
 
 
@@ -316,6 +378,10 @@ def parse_args():
     p.add_argument("--date", help="Single ISO date (YYYY-MM-DD) to fetch")
     p.add_argument("--from", dest="from_", help="Backfill start (YYYY-MM-DD)")
     p.add_argument("--to", help="Backfill end (YYYY-MM-DD, inclusive)")
+    p.add_argument("--concurrency", type=int, default=DEFAULT_CONCURRENCY,
+                   help=f"Parallel HTTP fetches during backfill (default: {DEFAULT_CONCURRENCY})")
+    p.add_argument("--no-skip-existing", action="store_true",
+                   help="Re-fetch dates that already have rows (default: skip them).")
     return p.parse_args()
 
 
@@ -329,7 +395,11 @@ def main() -> None:
             start = datetime.strptime(args.from_, "%Y-%m-%d").date()
             end   = datetime.strptime(args.to,    "%Y-%m-%d").date()
             print(f"backfill {start} → {end}")
-            n = run_backfill(conn, start, end)
+            n = run_backfill(
+                conn, start, end,
+                concurrency=args.concurrency,
+                skip_existing=not args.no_skip_existing,
+            )
         elif args.date:
             d = datetime.strptime(args.date, "%Y-%m-%d").date()
             n = run_single(conn, d)

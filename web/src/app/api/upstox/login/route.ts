@@ -30,9 +30,11 @@ const STATE_COOKIE = "upstox_oauth_state";
 function adminTokenOk(req: NextRequest, cookieJar: { get: (k: string) => { value: string } | undefined }): boolean {
   const expected = process.env.ADMIN_TOKEN;
   if (!expected) return false;
-  // SHA-256 of the raw token, same scheme as /admin/ideas auth.
+  // SHA-256 of the raw token — matches the er_admin cookie set by
+  // /api/admin/auth (the existing /admin/ideas flow), so the same
+  // cookie unlocks both surfaces.
   const expectedHash = createHash("sha256").update(expected).digest("hex");
-  const cookieHash = cookieJar.get("admin_token")?.value ?? "";
+  const cookieHash = cookieJar.get("er_admin")?.value ?? "";
   if (cookieHash === expectedHash) return true;
   // Allow ?token=... fallback for direct browser navigation by the admin.
   const queryToken = req.nextUrl.searchParams.get("token");

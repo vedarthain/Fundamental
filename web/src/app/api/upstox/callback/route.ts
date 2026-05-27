@@ -104,21 +104,12 @@ export async function GET(req: NextRequest) {
     return res;
   }
 
-  // 4. Exchange + persist
+  // 4. Exchange + persist, then bounce back to the admin dashboard so the
+  //    operator can confirm the new token + see refreshed_at / expires_at.
   try {
     const tok = await exchangeCode(code);
     await saveSession(tok);
-
-    const res = new NextResponse(
-      pageHtml({
-        title: "Upstox connected",
-        body: `<h1 class="ok">Upstox connected ✓</h1>
-               <p>Token saved for <code>${escapeHtml(tok.user_name ?? tok.user_id ?? "this app")}</code>.
-               Intraday refresh script can now fetch live LTPs until the next 08:30 IST expiry.</p>
-               <p>You can close this tab.</p>`,
-      }),
-      { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } },
-    );
+    const res = NextResponse.redirect(new URL("/admin/upstox", req.url));
     clearCookie(res);
     return res;
   } catch (e) {

@@ -1,0 +1,80 @@
+# Intraday LTP refresh — Upstox quotes during market hours.
+#
+# Runs every 30 minutes between 09:30 and 15:30 IST, Monday-Friday.
+# Three steps per run:
+#   1. intraday-refresh-ltp.py  — pull LTPs from Upstox, update DB
+#   2. build-market-snapshot.py — rebuild the /market dashboard cache
+#   3. curl /api/revalidate     — purge Next.js Data Cache
+#
+# If the Upstox access token isn't refreshed for the day (admin hasn't
+# tapped the morning bookmark yet), step 1 exits 0 with a "token expired"
+# log line and the rest of the steps still run with whatever data is in
+# DB. So forgetting to reauth = stale prices for that day, never a
+# pipeline failure.
+#
+# The daily 18:30 IST bhavcopy refresh (.github/workflows/refresh-ltp.yml)
+# is unaffected — bhavcopy stays the authoritative EOD writer for
+# golden.price_history. Upstox is just the intraday flavour.
+#
+# Schedule note: GitHub cron uses UTC. India is UTC+5:30 (no DST).
+#   09:30 IST = 04:00 UTC
+#   15:30 IST = 10:00 UTC
+# Cron "0,30 4-10 * * 1-5" = every 30 min from 04:00 to 10:30 UTC.
+# That's 14 fires per day; the 10:30 UTC run captures the very end of
+# Indian market hours (15:30 IST close — gives Upstox a few extra
+# minutes to settle the last trades before our final intraday tick).
+
+name: Intraday LTP refresh (Upstox)
+
+on:
+  schedule:
+    - cron: '0,30 4-10 * * 1-5'   # every 30 min, market hours, Mon-Fri
+  workflow_dispatch: {}            # also runnable on demand from Actions UI
+
+env:
+  # GH-managed Node 24 default (see refresh-ltp.yml for context).
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install psycopg
+        run: pip install 'psycopg[binary]==3.2.*'
+
+      - name: Pull LTPs from Upstox
+        # --tolerate-expired makes this step idempotent against a missed
+        # morning reauth: it logs the issue and exits 0 rather than
+        # failing the workflow.
+        env:
+          APP_DB_URL: ${{ secrets.NEON_APP_URL }}
+        run: python scripts/intraday-refresh-ltp.py --tolerate-expired
+
+      - name: Rebuild /market snapshot
+        # Snapshot rebuild is cheap and idempotent. Even if the LTP
+        # pull was a no-op, rebuilding is harmless — it just produces
+        # the same JSONB blob.
+        env:
+          APP_DB_URL: ${{ secrets.NEON_APP_URL }}
+          GOLDEN_DB_URL: ${{ secrets.NEON_GOLDEN_URL }}
+        run: python scripts/build-market-snapshot.py
+
+      - name: Purge Next.js Data Cache
+        # continue-on-error: a transient Vercel hiccup shouldn't cause
+        # the whole workflow to fail — the data has already landed in
+        # Neon. The next run will retry the cache purge anyway.
+        continue-on-error: true
+        run: |
+          curl -sS -X POST "https://equityroots.in/api/revalidate" \
+            -H "Authorization: Bearer ${{ secrets.REVALIDATE_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"tags":["market","panel-cache","snapshot"]}'
