@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useSession, broadcastSessionChange } from "@/lib/session-client";
 import { UserMenu } from "./UserMenu";
+import { StockSearch } from "./StockSearch";
 
 /**
  * Top-bar navigation.
@@ -218,6 +219,13 @@ type MobileSheetProps = {
   showSignIn: boolean;
 };
 
+/** Tab keys for the mobile sheet body.  Market + Sector are direct
+ *  navigation links (tap → navigate + close sheet) rather than panel
+ *  switchers, so they don't need a key here.  The three remaining tabs
+ *  group content that benefits from a panel of its own:
+ *    - pages   : Feed, Ideas (general content surfaces)
+ *    - tools   : Stock Screener, Investing Trials, etc.
+ *    - account : Watchlist (account-specific) + signed-in info + admin */
 type MobileTab = "pages" | "tools" | "account";
 
 function MobileSheet({ pathname, user, isAdmin, showWatchlist, showSignIn }: MobileSheetProps) {
@@ -344,17 +352,30 @@ function MobileSheet({ pathname, user, isAdmin, showWatchlist, showSignIn }: Mob
               </button>
             </div>
 
-            {/* Tab bar — three sticky tabs at the top of the sheet body
-                so the user can switch sections without a long scroll.
-                We deliberately keep the section panels MUTUALLY exclusive
-                instead of merging them into one flat list per the user's
-                ask. */}
+            {/* Search bar — `Find an Indian stock…` was hidden on mobile
+                via `hidden md:flex` on the header.  Putting it at the
+                top of the sheet restores access without crowding the
+                ~390px-wide phone header. */}
             <div
-              className="flex border-b hairline shrink-0"
+              className="px-3 py-2 border-b hairline shrink-0"
               style={{ backgroundColor: "var(--color-card, #ffffff)" }}
             >
-              <TabButton label="Pages"  isActive={tab === "pages"}   onClick={() => setTab("pages")} />
-              <TabButton label="Tools"  isActive={tab === "tools"}   onClick={() => setTab("tools")} />
+              <StockSearch />
+            </div>
+
+            {/* Tab bar.  Market and Sector are direct-navigation tabs
+                — tapping them closes the sheet and navigates straight
+                to the page (they're each a single destination, no
+                content panel to expand).  Pages / Tools / Account are
+                panel switchers because each groups multiple items. */}
+            <div
+              className="flex border-b hairline shrink-0 overflow-x-auto"
+              style={{ backgroundColor: "var(--color-card, #ffffff)" }}
+            >
+              <TabLink href="/market"  label="Market" active={isActive(pathname, "/market")}  onClick={() => setOpen(false)} />
+              <TabLink href="/sectors" label="Sector" active={isActive(pathname, "/sectors")} onClick={() => setOpen(false)} />
+              <TabButton label="Pages"   isActive={tab === "pages"}   onClick={() => setTab("pages")} />
+              <TabButton label="Tools"   isActive={tab === "tools"}   onClick={() => setTab("tools")} />
               <TabButton label="Account" isActive={tab === "account"} onClick={() => setTab("account")} />
             </div>
 
@@ -366,12 +387,16 @@ function MobileSheet({ pathname, user, isAdmin, showWatchlist, showSignIn }: Mob
             >
               {tab === "pages" && (
                 <>
-                  {LINKS.filter((l) => !l.submenu).map((l) => (
-                    <SheetLink key={l.href} href={l.href} label={l.label} active={isActive(pathname, l.href)} />
-                  ))}
-                  {showWatchlist && (
-                    <SheetLink href="/watchlist" label="Watchlist" active={isActive(pathname, "/watchlist")} />
-                  )}
+                  {/* Pages tab now holds only the content surfaces that
+                      aren't reachable from a dedicated tab (Market /
+                      Sector have their own).  That's Feed + Ideas
+                      today; new public pages would land here too. */}
+                  {LINKS
+                    .filter((l) => !l.submenu)
+                    .filter((l) => l.href !== "/market" && l.href !== "/sectors")
+                    .map((l) => (
+                      <SheetLink key={l.href} href={l.href} label={l.label} active={isActive(pathname, l.href)} />
+                    ))}
                 </>
               )}
 
@@ -404,6 +429,17 @@ function MobileSheet({ pathname, user, isAdmin, showWatchlist, showSignIn }: Mob
                         </div>
                         <div className="text-[13.5px] font-medium truncate mt-0.5">{user.email}</div>
                       </div>
+                      {/* Watchlist is account-specific — lives here, not
+                          in the Pages tab. Bookmarked symbols are tied
+                          to the signed-in user. */}
+                      {showWatchlist && (
+                        <SheetLink
+                          href="/watchlist"
+                          label="Your watchlist"
+                          sublabel="Stocks you're tracking"
+                          active={isActive(pathname, "/watchlist")}
+                        />
+                      )}
                       {isAdmin && (
                         <>
                           <SheetLink
@@ -462,10 +498,19 @@ function MobileSheet({ pathname, user, isAdmin, showWatchlist, showSignIn }: Mob
   );
 }
 
-/** Single tab button inside the mobile-sheet tab bar. Visual treatment
- *  is intentionally restrained — bold + accent color underline on
- *  active, muted on inactive — so the active tab reads from the corner
- *  of the eye without dominating the layout. */
+/** Tab visual — bold + accent-color underline when active, muted
+ *  otherwise. Same treatment for both <button> tabs (panel switchers)
+ *  and <Link> tabs (direct navigation).  Sharing styles keeps the bar
+ *  visually consistent even though tabs differ functionally. */
+const TAB_BASE_CLS =
+  "shrink-0 px-3.5 py-3 text-[13px] tracking-wide transition-colors whitespace-nowrap";
+function tabActiveStyle(): React.CSSProperties {
+  return {
+    color: "var(--color-accent-600)",
+    boxShadow: "inset 0 -2px 0 var(--color-accent-600)",
+  };
+}
+
 function TabButton({
   label, isActive, onClick,
 }: {
@@ -477,16 +522,34 @@ function TabButton({
     <button
       type="button"
       onClick={onClick}
-      className={`flex-1 px-4 py-3 text-[13px] tracking-wide transition-colors ${
-        isActive ? "font-semibold" : "font-medium muted-text"
-      }`}
-      style={isActive ? {
-        color: "var(--color-accent-600)",
-        boxShadow: "inset 0 -2px 0 var(--color-accent-600)",
-      } : undefined}
+      className={`${TAB_BASE_CLS} ${isActive ? "font-semibold" : "font-medium muted-text"}`}
+      style={isActive ? tabActiveStyle() : undefined}
     >
       {label}
     </button>
+  );
+}
+
+/** Direct-nav tab — used for Market and Sector. Tapping closes the
+ *  sheet AND navigates to the target route (the <Link> handles the
+ *  latter; onClick is just for the sheet close). */
+function TabLink({
+  href, label, active, onClick,
+}: {
+  href: string;
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Link
+      href={href}
+      onClick={onClick}
+      className={`${TAB_BASE_CLS} ${active ? "font-semibold" : "font-medium muted-text"}`}
+      style={active ? tabActiveStyle() : undefined}
+    >
+      {label}
+    </Link>
   );
 }
 
