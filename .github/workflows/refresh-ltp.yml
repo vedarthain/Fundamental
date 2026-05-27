@@ -1,25 +1,36 @@
-# Refresh LTP + OHLC every weekday after market close.
+# End-of-day data pipeline. Runs every weekday after market close,
+# sequencing every job that needs to land before the next morning's
+# /market dashboard render.
 #
-# What this does:
-#   1. Picks the most recent NSE bhavcopy (walks back from today)
-#   2. Parses it for equity scrips (EQ / BE / BZ / BL series)
-#   3. UPDATEs app.screener_meta.current_price on Neon for every symbol
-#      we already track (the LTP shown on cards/headers)
-#   4. INSERTs today's OHLC bar into golden.price_history (interval='1d')
-#      on Neon — powers /sectors 1W/1M/1Y returns and the universe
-#      momentum percentile in the scorer
+# Pipeline (each step is idempotent; failure of a downstream step does
+# NOT roll back earlier writes — that's by design, daily rerun safe):
+#
+#   1. refresh-ltp.py          NSE bhavcopy → screener_meta.current_price,
+#                              market_cap_cr recompute, cluster_stocks_panel_cache
+#                              refresh, golden.price_history OHLC insert.
+#   2. fetch-indices.py        NSE indices CSV → app.market_index_history
+#                              (so /market top tiles aren't frozen on yesterday's
+#                              close).
+#   3. fetch-fii-dii.py        NSE FII/DII JSON → app.fii_dii_flow (one new row
+#                              per trading day; cheap upsert).
+#   4. build-market-snapshot.py  Rebuilds app.market_snapshot_cache so /market
+#                              reflects today's prices + indices + flows on
+#                              the next page render.
+#   5. /api/revalidate         Purges Next.js Data Cache (sectors + market +
+#                              snapshot tags) so users get fresh data on the
+#                              next request, not whatever 1-hour cached blob
+#                              Vercel was serving.
 #
 # Why a GitHub Action (not local launchd):
 #   - NSE bhavcopy is daily; you don't want to remember to refresh prices
 #   - Runs in GitHub's cloud, no laptop dependency
-#   - Single CSV download covers both LTP and OHLC needs — no rate-limit
-#     risk and ~30 second runtime (vs ~30 min for a per-symbol yfinance
-#     approach we tried and rejected)
+#   - Single CSV download for bhavcopy + targeted fetches for indices + FII
+#     stay well under any rate limit
 #
-# Required secrets (set once, manually):
-#   NEON_APP_URL    — Postgres URL for fundamental_app on Neon (LTP write)
-#   NEON_GOLDEN_URL — Postgres URL for golden_db on Neon (OHLC write)
-#   Add via Repo Settings → Secrets and variables → Actions.
+# Required secrets (set once, manually via Settings → Secrets → Actions):
+#   NEON_APP_URL      — Postgres URL for fundamental_app on Neon
+#   NEON_GOLDEN_URL   — Postgres URL for golden_db on Neon (OHLC write)
+#   REVALIDATE_TOKEN  — bearer for the /api/revalidate cache purge
 
 name: Refresh LTP + OHLC
 
@@ -56,9 +67,50 @@ jobs:
       - name: Install psycopg
         run: pip install 'psycopg[binary]==3.2.*'
 
-      - name: Refresh LTP + OHLC
+      - name: Refresh LTP + OHLC (bhavcopy)
         env:
           APP_DB_URL:      ${{ secrets.NEON_APP_URL }}
           NEON_GOLDEN_URL: ${{ secrets.NEON_GOLDEN_URL }}
           PYTHONUNBUFFERED: "1"
         run: python scripts/refresh-ltp.py
+
+      # Indices + FII/DII land into their own tables. Failure here doesn't
+      # roll back the bhavcopy write above — we still want the LTP refresh
+      # to land even if NSE's index CSV is temporarily 404 or their
+      # FII/DII JSON is rate-limited. Both scripts are idempotent.
+      - name: Refresh NSE indices
+        env:
+          APP_DB_URL:       ${{ secrets.NEON_APP_URL }}
+          PYTHONUNBUFFERED: "1"
+        run: python scripts/fetch-indices.py
+        continue-on-error: true
+
+      - name: Refresh FII / DII flows
+        env:
+          APP_DB_URL:       ${{ secrets.NEON_APP_URL }}
+          PYTHONUNBUFFERED: "1"
+        run: python scripts/fetch-fii-dii.py
+        continue-on-error: true
+
+      # Rebuild the precomputed /market response into app.market_snapshot_cache.
+      # Reads from BOTH app + golden; needs both URLs in env. Without this
+      # step /market keeps serving yesterday's baked JSON even after the
+      # daily refresh lands fresh prices.
+      - name: Rebuild /market snapshot cache
+        env:
+          APP_DB_URL:    ${{ secrets.NEON_APP_URL }}
+          GOLDEN_DB_URL: ${{ secrets.NEON_GOLDEN_URL }}
+          PYTHONUNBUFFERED: "1"
+        run: python scripts/build-market-snapshot.py
+
+      # Tell Vercel to drop the cached Next.js responses tagged for these
+      # surfaces. continue-on-error so a transient Vercel hiccup doesn't
+      # fail the job — the data is already in Neon, just the cache stays
+      # stale until users force a refresh or the 1h TTL elapses.
+      - name: Purge Next.js Data Cache
+        continue-on-error: true
+        run: |
+          curl -sS -X POST "https://equityroots.in/api/revalidate" \
+            -H "Authorization: Bearer ${{ secrets.REVALIDATE_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"tags":["market","panel-cache","snapshot","sectors"]}'

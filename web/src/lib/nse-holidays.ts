@@ -24,7 +24,7 @@ export const NSE_HOLIDAYS_2026: NseHoliday[] = [
   { date: "2026-04-14", name: "Dr Baba Saheb Ambedkar Jayanti" },
   { date: "2026-04-21", name: "Shri Mahavir Jayanti" },
   { date: "2026-05-01", name: "Maharashtra Day" },
-  { date: "2026-05-27", name: "Bakri Eid" },
+  { date: "2026-05-28", name: "Bakri Eid" },
   { date: "2026-08-15", name: "Independence Day" },
   { date: "2026-09-25", name: "Ganesh Chaturthi" },
   { date: "2026-10-02", name: "Mahatma Gandhi Jayanti" },
