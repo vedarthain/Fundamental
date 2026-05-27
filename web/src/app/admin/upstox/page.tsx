@@ -15,13 +15,11 @@
  * Page shows token state (valid / expired / missing) at-a-glance so you
  * don't have to remember whether you already reauthed today.
  */
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { createHash } from "crypto";
 import { sql } from "@/lib/db";
+import { isAdminRequest } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
-const COOKIE_NAME = "er_admin";
 
 type SessionRow = {
   access_token: string | null;
@@ -31,12 +29,13 @@ type SessionRow = {
   refreshed_at: string | null;
 };
 
+/**
+ * Admin gate. Either the er_admin cookie (legacy /api/admin/auth?token=
+ * flow) OR a signed-in user whose email is listed in ADMIN_EMAILS is
+ * accepted — see lib/auth.ts isAdminRequest for the full rules.
+ */
 async function isAuthed(): Promise<boolean> {
-  const expected = process.env.ADMIN_TOKEN;
-  if (!expected) return false;
-  const expectedHash = createHash("sha256").update(expected).digest("hex");
-  const c = await cookies();
-  return c.get(COOKIE_NAME)?.value === expectedHash;
+  return isAdminRequest();
 }
 
 async function loadSession(): Promise<SessionRow> {

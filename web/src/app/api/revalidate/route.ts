@@ -19,9 +19,8 @@
  * Returns: { ok: true, revalidated: { tags, paths } }
  */
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { createHash, timingSafeEqual } from "crypto";
 import { revalidateTag, revalidatePath } from "next/cache";
+import { isAdminRequest } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -69,33 +68,12 @@ function authOk(req: NextRequest): boolean {
   return authCheck(req).ok;
 }
 
-/**
- * Admin-cookie fallback for the in-app "Purge cache" button rendered
- * inside UserMenu.  Validates the er_admin cookie against
- * SHA-256(ADMIN_TOKEN) — same scheme as /admin/upstox + /admin/ideas.
- *
- * Why a second auth path: the in-app button can't carry a bearer token
- * (Vercel-side secret, not exposed to the browser), so we trust the
- * admin cookie instead.  Bearer-token path stays as the canonical
- * machine-to-machine auth used by the GH Actions.
- */
-async function adminCookieOk(): Promise<boolean> {
-  const expected = process.env.ADMIN_TOKEN;
-  if (!expected) return false;
-  const c = await cookies();
-  const cookieVal = c.get("er_admin")?.value;
-  if (!cookieVal) return false;
-  const expectedHash = createHash("sha256").update(expected).digest("hex");
-  const a = Buffer.from(cookieVal, "utf8");
-  const b = Buffer.from(expectedHash, "utf8");
-  if (a.length !== b.length) return false;
-  return timingSafeEqual(a, b);
-}
-
 export async function POST(req: NextRequest) {
-  // Either the bearer-token path (GH Actions / curl) or the admin
-  // cookie path (in-app "Purge cache" button) is sufficient.
-  if (!authOk(req) && !(await adminCookieOk())) {
+  // Two acceptable auth paths:
+  //   - Bearer REVALIDATE_TOKEN (GH Actions, curl)
+  //   - Admin (er_admin cookie OR signed-in user whose email is in
+  //     ADMIN_EMAILS) — used by the in-app "Purge cache" menu item.
+  if (!authOk(req) && !(await isAdminRequest())) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 

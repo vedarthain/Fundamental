@@ -20,7 +20,7 @@
  */
 import "server-only";
 import { cookies } from "next/headers";
-import { createHmac, timingSafeEqual } from "crypto";
+import { createHash, createHmac, timingSafeEqual } from "crypto";
 import { sql } from "@/lib/db";
 
 const COOKIE_NAME = "er_session";
@@ -164,4 +164,60 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   const u = rows[0];
   if (!u) return null;
   return { id: u.id, email: u.email, displayName: u.display_name };
+}
+
+/**
+ * Returns true if the request should be treated as administrative.
+ *
+ * Two acceptable conditions, either is sufficient:
+ *   1. The er_admin cookie matches SHA-256(ADMIN_TOKEN) — the legacy
+ *      bearer-style admin, set via /api/admin/auth?token=...
+ *   2. The signed-in session belongs to a user whose email is listed in
+ *      the ADMIN_EMAILS env var (comma-separated, case-insensitive).
+ *
+ * The email path lets operators promote themselves to admin just by
+ * signing in normally — no need to remember the admin token URL.  The
+ * cookie path stays for the GH Actions / CI surface that doesn't have a
+ * user session.
+ *
+ * ADMIN_EMAILS format examples (all valid):
+ *   "you@example.com"
+ *   "you@example.com,partner@example.com"
+ *   " You@Example.com , partner@example.com "   (case + whitespace tolerated)
+ *
+ * If ADMIN_EMAILS is unset, the email path is disabled — only the
+ * cookie path grants admin.  If ADMIN_TOKEN is unset, the cookie path
+ * is disabled — only the email path grants admin.  At least one must
+ * be set for any admin access to work.
+ */
+export async function isAdminRequest(): Promise<boolean> {
+  // Path 1: legacy er_admin cookie (set by /api/admin/auth?token=).
+  // Constant-time SHA-256 compare against ADMIN_TOKEN.
+  const cookieToken = process.env.ADMIN_TOKEN;
+  if (cookieToken) {
+    const c = await cookies();
+    const cookieVal = c.get("er_admin")?.value;
+    if (cookieVal) {
+      const expected = createHash("sha256").update(cookieToken).digest("hex");
+      const a = Buffer.from(cookieVal, "utf8");
+      const b = Buffer.from(expected, "utf8");
+      if (a.length === b.length && timingSafeEqual(a, b)) {
+        return true;
+      }
+    }
+  }
+
+  // Path 2: signed-in user with email in ADMIN_EMAILS.
+  const adminEmails = (process.env.ADMIN_EMAILS ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  if (adminEmails.length > 0) {
+    const u = await getSessionUser();
+    if (u && adminEmails.includes(u.email.toLowerCase())) {
+      return true;
+    }
+  }
+
+  return false;
 }

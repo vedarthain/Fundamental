@@ -13,15 +13,12 @@
  *
  * Cost (Rule #1): one SELECT per page view (only you see this page).
  */
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { createHash } from "crypto";
 import { sql } from "@/lib/db";
+import { isAdminRequest } from "@/lib/auth";
 import { TriageActions } from "./TriageActions";
 
 export const dynamic = "force-dynamic";
-
-const COOKIE_NAME = "er_admin";
 
 type Idea = {
   id: number;
@@ -38,12 +35,10 @@ type Idea = {
   response: string | null;
 };
 
+/** Admin gate. Either the er_admin cookie OR a signed-in user whose
+ *  email is listed in ADMIN_EMAILS is accepted — see lib/auth.ts. */
 async function isAuthed(): Promise<boolean> {
-  const expected = process.env.ADMIN_TOKEN;
-  if (!expected) return false;
-  const expectedHash = createHash("sha256").update(expected).digest("hex");
-  const c = await cookies();
-  return c.get(COOKIE_NAME)?.value === expectedHash;
+  return isAdminRequest();
 }
 
 export default async function AdminIdeasPage({

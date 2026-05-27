@@ -12,32 +12,17 @@
  * client without exposing the token value itself.
  */
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { createHash, timingSafeEqual } from "crypto";
-import { getSessionUser } from "@/lib/auth";
+import { getSessionUser, isAdminRequest } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-async function isAdminFromCookie(): Promise<boolean> {
-  const expected = process.env.ADMIN_TOKEN;
-  if (!expected) return false;
-  const c = await cookies();
-  const cookieVal = c.get("er_admin")?.value;
-  if (!cookieVal) return false;
-  const expectedHash = createHash("sha256").update(expected).digest("hex");
-  // Constant-time compare guards against a (very unlikely) timing oracle
-  // someone might use to learn the cookie format.
-  const a = Buffer.from(cookieVal, "utf8");
-  const b = Buffer.from(expectedHash, "utf8");
-  if (a.length !== b.length) return false;
-  return timingSafeEqual(a, b);
-}
-
 export async function GET() {
+  // Single helper checks both the er_admin cookie and the signed-in
+  // user's email against ADMIN_EMAILS.  Either grants admin.
   const [user, isAdmin] = await Promise.all([
     getSessionUser(),
-    isAdminFromCookie(),
+    isAdminRequest(),
   ]);
   return NextResponse.json({ user, isAdmin });
 }
