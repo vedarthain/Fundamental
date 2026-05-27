@@ -296,41 +296,50 @@ function MobileSheet({ pathname, user, isAdmin, showWatchlist, showSignIn }: Mob
         )}
       </button>
 
-      {/* Overlay + sheet */}
+      {/* Full-screen sheet overlay.  Previously a right-side narrow drawer
+          (w-84vw max-340px) — looked correct on paper but the body's
+          background let the page bleed through on Safari iOS, leaving
+          only the header visible. Full-screen with an explicit solid
+          background avoids that whole class of layout race.  We use
+          100dvh so it tracks the dynamic viewport (browser chrome
+          collapse on scroll). */}
       {open && (
-        <>
-          {/* Backdrop */}
-          <button
-            type="button"
-            aria-label="Close menu"
-            onClick={() => setOpen(false)}
-            className="fixed inset-0 z-40"
-            style={{ backgroundColor: "rgba(0,0,0,0.35)" }}
-          />
-          {/* Panel — slides in from right */}
-          <div
-            role="dialog"
-            aria-modal="true"
-            className="fixed top-0 right-0 bottom-0 z-50 w-[84vw] max-w-[340px] flex flex-col"
-            style={{ backgroundColor: "var(--color-card)" }}
-          >
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-[60] flex flex-col"
+          style={{
+            backgroundColor: "var(--color-card, #ffffff)",
+            // 100dvh respects browser chrome; svh/lvh fallback for older
+            // engines. CSS handles the cascade.
+            height: "100dvh",
+            minHeight: "100vh",
+          }}
+        >
             {/* Header inside the sheet */}
-            <div className="px-4 py-3 border-b hairline flex items-center justify-between">
-              <span className="font-display text-[15px]">Menu</span>
+            <div
+              className="px-4 py-3 border-b hairline flex items-center justify-between shrink-0"
+              style={{ backgroundColor: "var(--color-card, #ffffff)" }}
+            >
+              <span className="font-display text-[16px]">Menu</span>
               <button
                 type="button"
                 onClick={() => setOpen(false)}
                 aria-label="Close menu"
-                className="w-8 h-8 rounded-md inline-flex items-center justify-center hover:bg-[var(--color-paper)] transition-colors"
+                className="w-9 h-9 rounded-md inline-flex items-center justify-center hover:bg-[var(--color-paper)] transition-colors"
               >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                   <line x1="6" y1="6" x2="18" y2="18" /><line x1="18" y1="6" x2="6" y2="18" />
                 </svg>
               </button>
             </div>
 
-            {/* Scrollable body */}
-            <div className="flex-1 overflow-y-auto py-2">
+            {/* Scrollable body — explicit bg + min-height guard so an
+                empty / pre-hydration state still looks intentional. */}
+            <div
+              className="flex-1 overflow-y-auto py-2"
+              style={{ backgroundColor: "var(--color-card, #ffffff)", minHeight: 200 }}
+            >
               {/* Primary links */}
               {LINKS.filter((l) => !l.submenu).map((l) => (
                 <SheetLink key={l.href} href={l.href} label={l.label} active={isActive(pathname, l.href)} />
@@ -414,8 +423,7 @@ function MobileSheet({ pathname, user, isAdmin, showWatchlist, showSignIn }: Mob
                 ) : null}
               </div>
             </div>
-          </div>
-        </>
+        </div>
       )}
     </>
   );
