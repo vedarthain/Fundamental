@@ -23,7 +23,6 @@ import type { Metadata } from "next";
 import { MarketClient } from "./MarketClient";
 import { SignedInExtras } from "./SignedInExtras";
 import type { OverviewResponse } from "../api/market/overview/route";
-import type { MarketMeResponse } from "../api/market/me/route";
 import { getSession } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -58,35 +57,16 @@ async function fetchOverview(): Promise<OverviewResponse | null> {
   }
 }
 
-async function fetchMe(): Promise<MarketMeResponse | null> {
-  // Pull the user's watchlist movers + extended FII trend.  We forward
-  // the request's cookies so the route handler sees the same session.
-  // Failure is non-fatal — the page just renders without signed-in
-  // extras, no broken state.
-  try {
-    const base = await buildBaseUrl();
-    const cookieHeader = (await headers()).get("cookie") ?? "";
-    const r = await fetch(`${base}/api/market/me`, {
-      next: { revalidate: 0 },
-      headers: { cookie: cookieHeader },
-    });
-    if (!r.ok) return null;
-    return (await r.json()) as MarketMeResponse;
-  } catch {
-    return null;
-  }
-}
+// Signed-in extras moved to client-side fetch (see SignedInExtras.tsx).
+// Server only awaits the public overview, so the HTML ships as soon as
+// /api/market/overview resolves — no double cold-start penalty for
+// signed-in users.
 
 export default async function MarketPage() {
-  // Session read in parallel with the public data fetch.  If signed in,
-  // we additionally fetch /api/market/me for watchlist movers + extended
-  // FII trend — also in parallel so the page doesn't pay two serial
-  // round-trips.
-  const session = await getSession();
-  const [data, me] = await Promise.all([
-    fetchOverview(),
-    session ? fetchMe() : Promise.resolve(null),
-  ]);
+  // Only two server-side awaits: the session (cookie read, instant) and
+  // the public overview (single cache-table row, ~100ms warm / ~1s cold).
+  // The signed-in extras fetch happens client-side in SignedInExtras.
+  const [data, session] = await Promise.all([fetchOverview(), getSession()]);
 
   if (!data) {
     return (
@@ -122,9 +102,11 @@ export default async function MarketPage() {
 
       <MarketClient data={data} />
 
-      {session && me && (
+      {session && (
         <div className="mt-6">
-          <SignedInExtras data={me} />
+          {/* Client-side fetch — page HTML doesn't wait on it.  Renders a
+              skeleton until /api/market/me responds. */}
+          <SignedInExtras />
         </div>
       )}
 

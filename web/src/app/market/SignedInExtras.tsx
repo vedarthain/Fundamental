@@ -2,19 +2,15 @@
 
 /**
  * SignedInExtras — additional /market cards visible only to signed-in
- * users.  Rendered below the public overview and intentionally styled
- * with a subtle accent so the user sees they're getting something
- * personal/extra without it screaming.
+ * users.  Fetches /api/market/me client-side AFTER the public page
+ * shell has rendered, so signed-in users don't pay a second cold-start
+ * cost on the server. Shows a lightweight skeleton until the fetch
+ * resolves; the rest of /market is fully interactive while this loads.
  *
- * Two cards:
+ * Two cards once data arrives:
  *   1. Your watchlist today — every saved symbol with 1D + 1W context,
- *      sorted by absolute 1D move. Empty-state CTA points at /stock if
- *      no symbols are saved yet.
+ *      sorted by absolute 1D move.
  *   2. FII / DII trend · 60 days — full-month grouped bar chart.
- *      Companion to the compact 5-day version in the public surface.
- *
- * No selectors here yet; both cards are static views of the data shipped
- * by /api/market/me. We can add filters later if usage warrants it.
  */
 
 import Link from "next/link";
@@ -30,7 +26,31 @@ const DOWN = "var(--color-delta-down)";
 const MUTED = "var(--color-muted)";
 const INK  = "var(--color-ink)";
 
-export function SignedInExtras({ data }: { data: MarketMeResponse }) {
+export function SignedInExtras() {
+  // Client-side fetch so the public page renders immediately; this
+  // section pops in once /api/market/me responds. Skeleton holds the
+  // layout to avoid jumpy hydration when data arrives.
+  const [data, setData] = useState<MarketMeResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch("/api/market/me", { credentials: "include" });
+        if (!r.ok) throw new Error(`server ${r.status}`);
+        const json = (await r.json()) as MarketMeResponse;
+        if (!cancelled) setData(json);
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : "load failed");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   return (
     <section className="space-y-4">
       <div className="flex items-baseline gap-2">
@@ -46,8 +66,35 @@ export function SignedInExtras({ data }: { data: MarketMeResponse }) {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <WatchlistTodayCard rows={data.watchlistMovers} />
-        <FiiTrend60DayCard series={data.fiiTrend} />
+        {loading ? (
+          <>
+            <SkeletonCard label="Your watchlist today" />
+            <SkeletonCard label="FII / DII trend" />
+          </>
+        ) : error ? (
+          <div className="lg:col-span-2 card p-4 text-[12px] muted-text">
+            Couldn&apos;t load your personalised cards ({error}). Refresh to retry.
+          </div>
+        ) : data ? (
+          <>
+            <WatchlistTodayCard rows={data.watchlistMovers} />
+            <FiiTrend60DayCard series={data.fiiTrend} />
+          </>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function SkeletonCard({ label }: { label: string }) {
+  return (
+    <section className="card p-4 md:p-5">
+      <div className="font-display text-[15px] leading-tight">{label}</div>
+      <div className="muted-text text-[10.5px] mt-0.5">Loading…</div>
+      <div className="mt-3 space-y-2">
+        <div className="h-3 w-3/4 rounded animate-pulse" style={{ backgroundColor: "var(--color-paper)" }} />
+        <div className="h-3 w-1/2 rounded animate-pulse" style={{ backgroundColor: "var(--color-paper)" }} />
+        <div className="h-[120px] mt-2 rounded animate-pulse" style={{ backgroundColor: "var(--color-paper)" }} />
       </div>
     </section>
   );
