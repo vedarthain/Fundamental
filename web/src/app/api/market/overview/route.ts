@@ -982,16 +982,47 @@ async function loadOverview(): Promise<OverviewResponse> {
   };
 }
 
+/**
+ * Read the precomputed snapshot from app.market_snapshot_cache.
+ *
+ * This is the fast path — a single indexed row read (~5-30 KB JSONB)
+ * returned as-is. Sub-100ms on Neon even cold. Populated daily by
+ * scripts/build-market-snapshot.py after refresh-ltp.
+ */
+async function loadOverviewFromCache(): Promise<OverviewResponse | null> {
+  const rows = await sql<{ data: OverviewResponse }[]>`
+    SELECT data
+      FROM app.market_snapshot_cache
+     ORDER BY date DESC
+     LIMIT 1
+  `;
+  return rows[0]?.data ?? null;
+}
+
 // Cache strategy:
-//   - Dev: 30s TTL — short enough that fresh data after running
-//     refresh-ltp / backfill scripts surfaces on the next reload,
-//     long enough that iterating on UI without changing data is snappy.
+//   - Dev: 30s TTL
 //   - Prod: 1h TTL — daily refresh-ltp wiring purges via /api/revalidate.
+// The TTL applies to the (already-fast) DB read, so first-after-purge is
+// ~one indexed SELECT, not a 21-second aggregation.
 const CACHE_TTL_S = process.env.NODE_ENV === "development" ? 30 : 3600;
-const getCachedOverview = unstable_cache(loadOverview, ["market-overview"], {
-  revalidate: CACHE_TTL_S,
-  tags: ["market", "panel-cache", "snapshot"],
-});
+const getCachedOverview = unstable_cache(
+  async (): Promise<OverviewResponse> => {
+    // Prefer the precomputed snapshot. Fall back to live computation
+    // only if the cache table is empty (first deploy before the daily
+    // build script has run). The fallback path is slow but produces a
+    // correct response so the page never renders an error.
+    const cached = await loadOverviewFromCache();
+    if (cached) return cached;
+    console.warn("[market] snapshot cache empty — falling back to live compute. "
+                 + "Run scripts/build-market-snapshot.py to populate.");
+    return loadOverview();
+  },
+  ["market-overview-v2"],   // bumped key so the new code doesn't serve old blobs
+  {
+    revalidate: CACHE_TTL_S,
+    tags: ["market", "panel-cache", "snapshot"],
+  },
+);
 
 export const dynamic = "force-dynamic";
 
