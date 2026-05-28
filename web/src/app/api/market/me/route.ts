@@ -168,5 +168,12 @@ export async function GET() {
     loadWatchlistMovers(session.userId),
     loadFiiTrend(),
   ]);
-  return NextResponse.json({ watchlistMovers, fiiTrend });
+  // Browser-cache the per-user response for 5 minutes. `private` because
+  // it includes the user's watchlist — never share at the CDN. 5 min is
+  // long enough to deduplicate rapid SPA navigations, short enough that
+  // watchlist additions surface within reasonable time.
+  return NextResponse.json(
+    { watchlistMovers, fiiTrend },
+    { headers: { "Cache-Control": "private, max-age=300" } },
+  );
 }

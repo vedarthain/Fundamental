@@ -24,5 +24,12 @@ export async function GET() {
     getSessionUser(),
     isAdminRequest(),
   ]);
-  return NextResponse.json({ user, isAdmin });
+  // Browser cache for 60s — the useSession() hook already has an in-tab
+  // cache, but this header lets browsers reuse the response across hard
+  // navigations within the same minute. `private` because the body is
+  // per-user; never CDN-share it.
+  return NextResponse.json(
+    { user, isAdmin },
+    { headers: { "Cache-Control": "private, max-age=60" } },
+  );
 }

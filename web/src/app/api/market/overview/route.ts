@@ -1028,5 +1028,16 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   const data = await getCachedOverview();
-  return NextResponse.json(data);
+  // Edge-cache header so Vercel's CDN serves repeat hits without
+  // invoking the function. The payload is identical for all visitors
+  // (no per-user data) so `public` is correct.
+  //   s-maxage=3600         — CDN caches 1h, matches our unstable_cache TTL
+  //   stale-while-revalidate=86400  — serve stale up to 24h while refreshing
+  // Effect: 1 origin hit per region per hour at most, even under heavy
+  // bot traffic. Cuts Fast Origin Transfer dramatically on repeated reads.
+  return NextResponse.json(data, {
+    headers: {
+      "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=86400",
+    },
+  });
 }
