@@ -20,6 +20,7 @@
  * This module is just OAuth.
  */
 import "server-only";
+import { createHmac, randomBytes, timingSafeEqual } from "crypto";
 import { sql } from "@/lib/db";
 
 const UPSTOX_DIALOG_BASE  = "https://api.upstox.com/v2/login/authorization/dialog";
@@ -39,16 +40,74 @@ function env(name: string): string {
   return v;
 }
 
-/** Build the Upstox login dialog URL. Caller is responsible for setting a
- *  CSRF `state` cookie before redirecting. */
-export function buildLoginUrl(state: string): string {
+/** Build the Upstox login dialog URL with a freshly-signed state token. */
+export function buildLoginUrl(): string {
   const params = new URLSearchParams({
     response_type: "code",
     client_id:     env("UPSTOX_API_KEY"),
     redirect_uri:  env("UPSTOX_REDIRECT_URI"),
-    state,
+    state:         signState(),
   });
   return `${UPSTOX_DIALOG_BASE}?${params.toString()}`;
+}
+
+// ── Self-validating OAuth state ───────────────────────────────────────────
+//
+// We used to store the state in a cookie and compare on callback. iOS
+// Safari's ITP blocked that cookie on the cross-site redirect back from
+// upstox.com, surfacing as "state mismatch" errors on mobile.
+//
+// Switched to HMAC-signed state that carries its own validity envelope:
+//   state = "<nonce>.<exp>.<mac>"
+//   nonce  : 16 hex chars (random per login)
+//   exp    : unix seconds, +5 min from issue
+//   mac    : truncated HMAC-SHA256(nonce + "." + exp, SESSION_SECRET)
+//
+// On callback we recompute the MAC and compare constant-time; if it
+// matches and exp hasn't passed, the state is from us and still valid.
+// No cookie crosses the origin boundary.  Replay is bounded by the
+// 5-minute exp window plus the fact that Upstox burns the `code` after
+// one exchange.
+
+const STATE_NAMESPACE = "upstox-state:";
+
+function stateSecret(): string {
+  const s = process.env.SESSION_SECRET;
+  if (!s || s.length < 16) {
+    throw new Error("SESSION_SECRET missing — reused as the Upstox state signer");
+  }
+  return s;
+}
+
+function signState(): string {
+  const nonce = randomBytes(8).toString("hex");
+  const exp = Math.floor(Date.now() / 1000) + 300;
+  const body = `${nonce}.${exp}`;
+  const mac = createHmac("sha256", stateSecret())
+    .update(STATE_NAMESPACE + body)
+    .digest("hex")
+    .slice(0, 32);
+  return `${body}.${mac}`;
+}
+
+export function verifyState(state: string | null | undefined): boolean {
+  if (!state) return false;
+  const parts = state.split(".");
+  if (parts.length !== 3) return false;
+  const [nonce, expStr, macGiven] = parts;
+  if (!/^[0-9a-f]+$/i.test(nonce) || !/^\d+$/.test(expStr)) return false;
+  const expected = createHmac("sha256", stateSecret())
+    .update(STATE_NAMESPACE + nonce + "." + expStr)
+    .digest("hex")
+    .slice(0, 32);
+  if (macGiven.length !== expected.length) return false;
+  const a = Buffer.from(macGiven, "utf8");
+  const b = Buffer.from(expected, "utf8");
+  if (!timingSafeEqual(a, b)) return false;
+  const exp = Number(expStr);
+  if (!Number.isFinite(exp)) return false;
+  if (exp < Math.floor(Date.now() / 1000)) return false;
+  return true;
 }
 
 /** Exchange the authorisation code for an access token. */

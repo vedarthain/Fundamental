@@ -16,13 +16,10 @@
  * is persisted; cookie is cleared either way.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { exchangeCode, saveSession } from "@/lib/upstox";
+import { exchangeCode, saveSession, verifyState } from "@/lib/upstox";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const STATE_COOKIE = "upstox_oauth_state";
 
 function pageHtml({ title, body }: { title: string; body: string }): string {
   // Inlined CSS keeps the page useful without any client JS or framework
@@ -50,16 +47,9 @@ export async function GET(req: NextRequest) {
   const state = sp.get("state");
   const errFromUpstox = sp.get("error") || sp.get("error_description");
 
-  const c = await cookies();
-  const cookieState = c.get(STATE_COOKIE)?.value ?? "";
-
-  // Always clear the CSRF cookie — single-use.
-  const clearCookie = (res: NextResponse) =>
-    res.cookies.set({ name: STATE_COOKIE, value: "", maxAge: 0, path: "/" });
-
   // 1. Upstox-side error (user denied, etc.)
   if (errFromUpstox) {
-    const res = new NextResponse(
+    return new NextResponse(
       pageHtml({
         title: "Upstox auth failed",
         body: `<h1 class="err">Upstox returned an error</h1>
@@ -68,30 +58,27 @@ export async function GET(req: NextRequest) {
       }),
       { status: 400, headers: { "Content-Type": "text/html; charset=utf-8" } },
     );
-    clearCookie(res);
-    return res;
   }
 
-  // 2. State mismatch (CSRF or expired cookie)
-  if (!state || !cookieState || state !== cookieState) {
-    const res = new NextResponse(
+  // 2. State validation (signature + 5-min expiry).  Replaces the old
+  //    cookie comparison that iOS Safari ITP blocked on cross-site redirects.
+  if (!verifyState(state)) {
+    return new NextResponse(
       pageHtml({
         title: "Upstox state mismatch",
-        body: `<h1 class="err">State mismatch</h1>
-               <p>The OAuth state cookie did not match. This usually means
-               the callback was opened from a different browser session,
-               or the cookie expired (5 min window).</p>
+        body: `<h1 class="err">State validation failed</h1>
+               <p>The OAuth state token did not validate. This usually means
+               more than 5 minutes elapsed between starting the login and
+               returning, or the request was crafted manually.</p>
                <p><a href="/api/upstox/login">Start again</a></p>`,
       }),
       { status: 400, headers: { "Content-Type": "text/html; charset=utf-8" } },
     );
-    clearCookie(res);
-    return res;
   }
 
   // 3. Missing code
   if (!code) {
-    const res = new NextResponse(
+    return new NextResponse(
       pageHtml({
         title: "Upstox missing code",
         body: `<h1 class="err">No authorisation code</h1>
@@ -100,8 +87,6 @@ export async function GET(req: NextRequest) {
       }),
       { status: 400, headers: { "Content-Type": "text/html; charset=utf-8" } },
     );
-    clearCookie(res);
-    return res;
   }
 
   // 4. Exchange + persist, then bounce back to the admin dashboard so the
@@ -109,13 +94,11 @@ export async function GET(req: NextRequest) {
   try {
     const tok = await exchangeCode(code);
     await saveSession(tok);
-    const res = NextResponse.redirect(new URL("/admin/upstox", req.url));
-    clearCookie(res);
-    return res;
+    return NextResponse.redirect(new URL("/admin/upstox", req.url));
   } catch (e) {
     const msg = e instanceof Error ? e.message : "unknown error";
     console.error("[upstox/callback] exchange failed:", e);
-    const res = new NextResponse(
+    return new NextResponse(
       pageHtml({
         title: "Upstox exchange failed",
         body: `<h1 class="err">Token exchange failed</h1>
@@ -126,8 +109,6 @@ export async function GET(req: NextRequest) {
       }),
       { status: 500, headers: { "Content-Type": "text/html; charset=utf-8" } },
     );
-    clearCookie(res);
-    return res;
   }
 }
 
