@@ -1,10 +1,16 @@
 /**
  * GET /api/upstox/login — admin-gated kickoff of the Upstox OAuth flow.
  *
- * Auth: requires the ADMIN_TOKEN cookie set by /admin/ideas login.  This
- * is intentionally NOT exposed to regular signed-in users — Upstox tokens
- * are server-wide credentials.  Misuse would burn through Upstox rate
- * limits and possibly violate their TOS.
+ * Auth: any path that lib/auth.ts isAdminRequest() recognises as admin.
+ * That means either:
+ *   - the er_admin cookie set by /api/admin/auth, OR
+ *   - a signed-in session whose email is listed in ADMIN_EMAILS, OR
+ *   - a ?token=ADMIN_TOKEN URL parameter (one-shot bookmark).
+ *
+ * Earlier this route only honoured the cookie + ?token paths; the
+ * ADMIN_EMAILS path was missing, which caused "Auth required" errors
+ * for admins who signed in via the normal /login flow on mobile and
+ * tried to tap the reauth button without ever opening a token URL.
  *
  * Flow:
  *   1. Generate a fresh CSRF `state` token, set as an httpOnly cookie.
@@ -18,35 +24,33 @@
  * gate.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
 import { createHash, randomBytes } from "crypto";
 import { buildLoginUrl } from "@/lib/upstox";
+import { isAdminRequest } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const STATE_COOKIE = "upstox_oauth_state";
 
-function adminTokenOk(req: NextRequest, cookieJar: { get: (k: string) => { value: string } | undefined }): boolean {
+/** ?token=... fallback for direct bookmark navigation.  Kept as a parallel
+ *  path because lib/auth.ts isAdminRequest doesn't peek at query strings —
+ *  it only checks cookies + ADMIN_EMAILS. */
+function queryTokenOk(req: NextRequest): boolean {
   const expected = process.env.ADMIN_TOKEN;
   if (!expected) return false;
-  // SHA-256 of the raw token — matches the er_admin cookie set by
-  // /api/admin/auth (the existing /admin/ideas flow), so the same
-  // cookie unlocks both surfaces.
+  const given = req.nextUrl.searchParams.get("token");
+  if (!given) return false;
   const expectedHash = createHash("sha256").update(expected).digest("hex");
-  const cookieHash = cookieJar.get("er_admin")?.value ?? "";
-  if (cookieHash === expectedHash) return true;
-  // Allow ?token=... fallback for direct browser navigation by the admin.
-  const queryToken = req.nextUrl.searchParams.get("token");
-  if (queryToken && createHash("sha256").update(queryToken).digest("hex") === expectedHash) {
-    return true;
-  }
-  return false;
+  const givenHash = createHash("sha256").update(given).digest("hex");
+  return givenHash === expectedHash;
 }
 
 export async function GET(req: NextRequest) {
-  const c = await cookies();
-  if (!adminTokenOk(req, c)) {
+  // Three admin paths accepted: er_admin cookie, ADMIN_EMAILS session,
+  // ?token=... query param.
+  const allowed = (await isAdminRequest()) || queryTokenOk(req);
+  if (!allowed) {
     return NextResponse.json({ error: "admin auth required" }, { status: 401 });
   }
 
