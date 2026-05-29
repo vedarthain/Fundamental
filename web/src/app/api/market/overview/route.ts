@@ -1035,9 +1035,17 @@ export async function GET() {
   //   stale-while-revalidate=86400  — serve stale up to 24h while refreshing
   // Effect: 1 origin hit per region per hour at most, even under heavy
   // bot traffic. Cuts Fast Origin Transfer dramatically on repeated reads.
+  //
+  // Cache-Tag tells Vercel CDN which named tags this response belongs to.
+  // When refresh-ltp calls revalidateTag('market'), Vercel CDN purges every
+  // cached response that carried this tag. Without it, revalidateTag only
+  // invalidates the unstable_cache layer, leaving the CDN to keep serving
+  // the stale response until its s-maxage expires naturally — which is
+  // exactly the symptom we hit on the 29th.
   return NextResponse.json(data, {
     headers: {
       "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=86400",
+      "Cache-Tag":     "market,panel-cache,snapshot",
     },
   });
 }

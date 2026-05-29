@@ -104,13 +104,25 @@ jobs:
         run: python scripts/build-market-snapshot.py
 
       # Tell Vercel to drop the cached Next.js responses tagged for these
-      # surfaces. continue-on-error so a transient Vercel hiccup doesn't
-      # fail the job — the data is already in Neon, just the cache stays
-      # stale until users force a refresh or the 1h TTL elapses.
+      # surfaces. Fail loudly on non-200 — the previous silent-failure mode
+      # masked a token/cache misconfiguration for multiple runs (users had
+      # to tap the in-app "Purge cache" button to see fresh data). When the
+      # step does fail now, the response body is dumped to the log so the
+      # cause (wrong token, missing env, route 500) is immediately visible.
       - name: Purge Next.js Data Cache
-        continue-on-error: true
         run: |
-          curl -sS -X POST "https://equityroots.in/api/revalidate" \
+          set +e
+          RESPONSE_FILE=$(mktemp)
+          HTTP_CODE=$(curl -sS -o "$RESPONSE_FILE" -w "%{http_code}" \
+            -X POST "https://equityroots.in/api/revalidate" \
             -H "Authorization: Bearer ${{ secrets.REVALIDATE_TOKEN }}" \
             -H "Content-Type: application/json" \
-            -d '{"tags":["market","panel-cache","snapshot","sectors"]}'
+            -d '{"tags":["market","panel-cache","snapshot","sectors"]}')
+          echo "HTTP status: $HTTP_CODE"
+          echo "Response body:"
+          cat "$RESPONSE_FILE"
+          echo
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::Cache purge failed (HTTP $HTTP_CODE) — check REVALIDATE_TOKEN secret matches Vercel."
+            exit 1
+          fi

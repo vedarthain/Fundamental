@@ -68,13 +68,22 @@ jobs:
           GOLDEN_DB_URL: ${{ secrets.NEON_GOLDEN_URL }}
         run: python scripts/build-market-snapshot.py
 
+      # Cache purge with visible error output — see refresh-ltp.yml for the
+      # rationale. Failing loudly catches token/config drift early.
       - name: Purge Next.js Data Cache
-        # continue-on-error: a transient Vercel hiccup shouldn't cause
-        # the whole workflow to fail — the data has already landed in
-        # Neon. The next run will retry the cache purge anyway.
-        continue-on-error: true
         run: |
-          curl -sS -X POST "https://equityroots.in/api/revalidate" \
+          set +e
+          RESPONSE_FILE=$(mktemp)
+          HTTP_CODE=$(curl -sS -o "$RESPONSE_FILE" -w "%{http_code}" \
+            -X POST "https://equityroots.in/api/revalidate" \
             -H "Authorization: Bearer ${{ secrets.REVALIDATE_TOKEN }}" \
             -H "Content-Type: application/json" \
-            -d '{"tags":["market","panel-cache","snapshot"]}'
+            -d '{"tags":["market","panel-cache","snapshot"]}')
+          echo "HTTP status: $HTTP_CODE"
+          echo "Response body:"
+          cat "$RESPONSE_FILE"
+          echo
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::Cache purge failed (HTTP $HTTP_CODE) — check REVALIDATE_TOKEN."
+            exit 1
+          fi
