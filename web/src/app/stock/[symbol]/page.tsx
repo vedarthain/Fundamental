@@ -14,6 +14,8 @@ import {
 } from "@/lib/companyNarration";
 import { BusinessVisual } from "@/components/BusinessVisual";
 import { StockPageTabs } from "@/components/StockPageTabs";
+import { TrendSection, TrendCommentary } from "@/components/TrendSection";
+import { loadPersistenceForSymbol } from "@/lib/persistence";
 
 // Stock fundamentals + scores change weekly at most. 6h cache cuts Neon wakes
 // significantly — with 2,000+ stock pages each revalidating at 30min, the
@@ -212,7 +214,10 @@ export default async function StockPage({
   params: Promise<{ symbol: string }>;
 }) {
   const { symbol } = await params;
-  const data = await loadStock(symbol);
+  const [data, persistence] = await Promise.all([
+    loadStock(symbol),
+    loadPersistenceForSymbol(symbol),
+  ]);
   if (!data) return notFound();
   const { stock, scorecard, annual, quarterly, priceHistory, shareholding, rankInIndustry, industryPeerCount } = data;
 
@@ -320,20 +325,10 @@ export default async function StockPage({
               {stock.composite_pct == null ? "—" : Math.round(stock.composite_pct)}
             </div>
           </div>
-          {stock.composite_pct != null && (
-            <>
-              <div className="text-[11px] muted-text mt-2 max-w-[220px]">
-                {percentileLabel(stock.composite_pct)} in {stock.industry_name} ·{" "}
-                {tierLabel(stock.maturity_tier)}
-              </div>
-              <div className="text-[11px] muted-text italic mt-1 max-w-[240px]">
-                Where this stock ranks within its industry — not the whole market.
-              </div>
-              <div className="text-[10.5px] muted-text italic mt-1 max-w-[240px]" style={{ opacity: 0.85 }}>
-                Not a buy/sell recommendation.
-              </div>
-            </>
-          )}
+          {/* The wordy "Above median in … not a buy/sell" description used
+              to live here.  Moved down to a single asterisked footnote
+              under the score badge column so the header sits tighter and
+              the tab bar reaches the eye sooner. */}
           {/* Rank-in-cluster pill — explicit position within the peer group,
               complementing the abstract percentile. "Rank 3 of 12" reads
               more concretely than "Top 18%". */}
@@ -350,6 +345,17 @@ export default async function StockPage({
           )}
         </div>
       </header>
+
+      {/* Single asterisked footnote replaces the three-line description that
+          used to sit under the Industry Score badge.  Compact, one line
+          where possible, italic so it reads as an annotation. */}
+      {stock.composite_pct != null && (
+        <p className="text-[11px] muted-text italic mt-2 leading-snug">
+          * {percentileLabel(stock.composite_pct)} in {stock.industry_name} ·{" "}
+          {tierLabel(stock.maturity_tier)} — where this stock ranks within its
+          industry, not the whole market. Not a buy/sell recommendation.
+        </p>
+      )}
 
       <StockPageTabs
         results={
@@ -454,6 +460,25 @@ export default async function StockPage({
                 tier={stock.maturity_tier}
               />
             </aside>
+          </div>
+        }
+        trend={
+          // Two strictly equal-width, equal-height cards.  Grid uses
+          // auto-rows-fr to force the row to the tallest item's height
+          // (default behaviour) AND each card has its own min-h floor
+          // so when content is short the cards don't collapse.
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-stretch auto-rows-fr max-w-[960px]">
+            <div className="min-h-[420px]">
+              <TrendSection persistence={persistence} />
+            </div>
+            <div className="min-h-[420px]">
+              <TrendCommentary
+                persistence={persistence}
+                companyName={stock.company_name}
+                industryName={stock.industry_name}
+                maturityTier={stock.maturity_tier}
+              />
+            </div>
           </div>
         }
         numbers={<FundamentalsTables annual={annual} quarterly={quarterly} />}

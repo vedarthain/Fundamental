@@ -1,10 +1,11 @@
 "use client";
 
 /**
- * Stock-page tab switcher. Four tabs:
+ * Stock-page tab switcher. Five tabs:
  *   • Latest result    — quarterly flash + TTM ratios (the default landing)
  *   • About            — company description, basics, price chart
  *   • Strengths & gaps — peer-cluster percentile bars + pillar stories
+ *   • Trend            — multi-snapshot composite trajectory + peer context
  *   • The Numbers      — annual + quarterly fundamentals tables
  *
  * Why client-side state instead of URL: switching is instant, no navigation
@@ -17,9 +18,9 @@
  */
 
 import { useEffect, useState, type ReactNode } from "react";
-import { Activity, Info, Layers, BarChart3 } from "lucide-react";
+import { Activity, Info, Layers, BarChart3, TrendingUp } from "lucide-react";
 
-type TabKey = "results" | "about" | "strengths" | "numbers";
+type TabKey = "results" | "about" | "strengths" | "trend" | "numbers";
 
 type TabDef = {
   key: TabKey;
@@ -55,6 +56,15 @@ const TABS: TabDef[] = [
     tint: "var(--color-tab-tint-strength)",
   },
   {
+    key: "trend",
+    label: "Trend",
+    icon: <TrendingUp size={14} strokeWidth={1.8} />,
+    // Accent-600 is the same hue as the trend line itself, so the
+    // stripe visually previews what's inside the panel.
+    stripe: "var(--color-accent-600)",
+    tint: "var(--color-tab-tint-about)",
+  },
+  {
     key: "numbers",
     label: "The Numbers",
     icon: <BarChart3 size={14} strokeWidth={1.8} />,
@@ -67,11 +77,13 @@ export function StockPageTabs({
   results,
   about,
   strengths,
+  trend,
   numbers,
 }: {
   results: ReactNode;
   about: ReactNode;
   strengths: ReactNode;
+  trend: ReactNode;
   numbers: ReactNode;
 }) {
   // Default to "results" so visitors land on the freshest signal first.
@@ -85,7 +97,7 @@ export function StockPageTabs({
   const activeDef = TABS.find((t) => t.key === active)!;
 
   return (
-    <div className="mt-6">
+    <div className="mt-3">
       {/* Tab bar — sticky so user can switch while reading mid-tab */}
       <div
         role="tablist"
@@ -145,7 +157,7 @@ export function StockPageTabs({
         />
 
         <div
-          className="relative -mx-6 px-6 pt-6 pb-2 transition-colors"
+          className="relative -mx-6 px-6 pt-4 pb-2 transition-colors"
           style={{
             background: `linear-gradient(180deg, ${activeDef.tint} 0%, transparent 320px)`,
           }}
@@ -153,6 +165,7 @@ export function StockPageTabs({
           <Panel show={active === "results"}   keyName="results">   {results}   </Panel>
           <Panel show={active === "about"}     keyName="about">     {about}     </Panel>
           <Panel show={active === "strengths"} keyName="strengths"> {strengths} </Panel>
+          <Panel show={active === "trend"}     keyName="trend">     {trend}     </Panel>
           <Panel show={active === "numbers"}   keyName="numbers">   {numbers}   </Panel>
         </div>
       </div>

@@ -34,6 +34,12 @@ type Row = {
   ret_1w: number | null;
   ret_1m: number | null;
   ret_1y: number | null;
+  /** Persistence fields — 4-snapshot trend. Null if <2 snapshots of
+   *  history (recent listing, missing data). */
+  raw_delta: number | null;
+  cluster_avg_delta: number | null;
+  cluster_adjusted: number | null;
+  snaps_improving: number;
 };
 
 const TIER_ORDER = ["veteran", "mature", "mid", "new"] as const;
@@ -328,6 +334,42 @@ function WatchRow({ row, onRemove }: { row: Row; onRemove: () => void }) {
         <ReturnPill label="1M" value={row.ret_1m} signed />
         <ReturnPill label="1Y" value={row.ret_1y} signed />
       </div>
+
+      {/* Persistence row — multi-snapshot trend.  Frames as "context for
+          review", not a buy/sell signal: muted color, no green/red,
+          explicit "vs cluster" framing so users don't read the raw
+          delta as the headline number. */}
+      {row.raw_delta != null && (
+        <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[10.5px] tabular-nums muted-text">
+          <span title="4-snapshot composite_pct change minus the cluster's average change. Positive = beating peers.">
+            vs cluster{" "}
+            <span
+              className="font-semibold"
+              style={{
+                color: (row.cluster_adjusted ?? 0) >= 0
+                  ? "var(--color-accent-600)"
+                  : "var(--color-muted)",
+              }}
+            >
+              {row.cluster_adjusted == null
+                ? "—"
+                : `${row.cluster_adjusted >= 0 ? "+" : ""}${row.cluster_adjusted.toFixed(1)}`}
+            </span>
+          </span>
+          <span title="Raw 4-snapshot composite percentile change">
+            raw{" "}
+            <span className="font-medium" style={{ color: "var(--color-ink)" }}>
+              {row.raw_delta >= 0 ? "+" : ""}{row.raw_delta.toFixed(1)}
+            </span>
+          </span>
+          <span title="Snapshot-to-snapshot transitions where composite_pct increased">
+            improving{" "}
+            <span className="font-medium" style={{ color: "var(--color-ink)" }}>
+              {row.snaps_improving}/{Math.max(0, Math.min(3, row.snaps_improving + (row.cluster_adjusted == null ? 0 : 3 - row.snaps_improving)))}
+            </span>
+          </span>
+        </div>
+      )}
     </div>
   );
 }

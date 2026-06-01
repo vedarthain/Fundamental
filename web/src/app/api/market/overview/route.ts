@@ -86,6 +86,26 @@ export type HolidayItem = { date: string; name: string };
 /** Universe codes for the movers filter. FULL = no universe restriction. */
 export type MoverUniverse = "NIFTY50" | "NIFTY200" | "FULL";
 
+export type BuildingStrengthRow = {
+  symbol: string;
+  company_name: string | null;
+  sector_name: string | null;
+  industry_name: string | null;
+  maturity_tier: string | null;
+  current_price: number | null;
+  market_cap_cr: number | null;
+  composite_pct: number | null;
+  quality_pct: number | null;
+  valuation_pct: number | null;
+  momentum_pct: number | null;
+  /** Stock's raw composite_pct change over last 4 snapshots. */
+  raw_delta: number;
+  /** Cluster's average composite_pct change over the same 4 snapshots. */
+  cluster_avg_delta: number;
+  /** raw_delta − cluster_avg_delta. Positive = beating peers. */
+  cluster_adjusted: number;
+};
+
 export type OverviewResponse = {
   indices: IndexRow[];
   /** Full 1Y daily series for the headline charts. Keyed by index_code. */
@@ -96,6 +116,10 @@ export type OverviewResponse = {
     "1D": { up: Mover[]; down: Mover[] };
     "1W": { up: Mover[]; down: Mover[] };
   }>;
+  /** Stocks whose composite_pct beat their cluster's average over the
+   *  last 4 weekly snapshots — persistent stock-specific strength. May
+   *  be empty when <4 snapshots exist in panel cache history. */
+  buildingStrength?: BuildingStrengthRow[];
   /** A/D in both 1D (golden close-vs-prev) and 1W (panel ret_1w). */
   advanceDecline: { "1D": AdvanceDeclineSet; "1W": AdvanceDeclineSet };
   weekRange: WeekRangeStat;

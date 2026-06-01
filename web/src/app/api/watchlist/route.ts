@@ -22,6 +22,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { getSession } from "@/lib/auth";
+import { loadPersistenceForSymbols } from "@/lib/persistence";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,6 +45,12 @@ type WatchRow = {
   ret_1w: number | null;
   ret_1m: number | null;
   ret_1y: number | null;
+  /** Multi-snapshot persistence — 4-week composite_pct trend.  All
+   *  three fields null if the symbol has <2 snapshots of history. */
+  raw_delta: number | null;
+  cluster_avg_delta: number | null;
+  cluster_adjusted: number | null;
+  snaps_improving: number;
 };
 
 function cleanSymbol(raw: string): string | null {
@@ -119,10 +126,22 @@ export async function GET(req: NextRequest) {
     symbols = rows.map((r) => r.symbol);
   }
 
-  const [rows, snapshotDate] = await Promise.all([
+  const [rows, snapshotDate, persistence] = await Promise.all([
     loadRows(symbols),
     loadSnapshotDate(),
+    // Multi-snapshot trend per symbol. Two cheap reads regardless of
+    // watchlist size, then merged in Node.
+    loadPersistenceForSymbols(symbols),
   ]);
+  // Splice the persistence fields into each row so the client renders
+  // them in the same iteration as the rest of the watchlist data.
+  for (const row of rows) {
+    const p = persistence.get(row.symbol);
+    row.raw_delta         = p?.raw_delta         ?? null;
+    row.cluster_avg_delta = p?.cluster_avg_delta ?? null;
+    row.cluster_adjusted  = p?.cluster_adjusted  ?? null;
+    row.snaps_improving   = p?.snaps_improving   ?? 0;
+  }
   return NextResponse.json({
     rows,
     symbols,
