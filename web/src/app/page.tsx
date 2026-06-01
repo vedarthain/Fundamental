@@ -218,9 +218,9 @@ function Hero({ snap }: { snap: Snapshot }) {
           />
           <BenefitPill
             icon="📈"
-            label="See weekly movers"
-            sub="What's strengthening / slipping"
-            href="/feed"
+            label="Today's market"
+            sub="Indices, movers, FII flows"
+            href="/market"
           />
         </div>
 

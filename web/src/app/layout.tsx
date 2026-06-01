@@ -180,7 +180,6 @@ function SiteFooter() {
               { href: "/tools/screener",           label: "Stock Screener" },
               { href: "/tools/investing-trials",   label: "Investing Trials" },
               { href: "/tools/peer-comparison",    label: "Peer Comparison" },
-              { href: "/feed",                     label: "Feed" },
               { href: "/ideas",                    label: "Ideas" },
             ]}
           />
@@ -202,7 +201,6 @@ function SiteFooter() {
               { href: "/ideas?bucket=cheap",       label: "Cheap in cluster" },
               { href: "/ideas?bucket=promoter_up", label: "Promoter accumulation" },
               { href: "/ideas?bucket=fii_up",      label: "FII accumulation" },
-              { href: "/feed?dir=down",            label: "Biggest losers" },
             ]}
           />
 
