@@ -19,16 +19,25 @@
 # Schedule note: GitHub cron uses UTC. India is UTC+5:30 (no DST).
 #   09:30 IST = 04:00 UTC
 #   15:30 IST = 10:00 UTC
-# Cron "0,30 4-10 * * 1-5" = every 30 min from 04:00 to 10:30 UTC.
-# That's 14 fires per day; the 10:30 UTC run captures the very end of
-# Indian market hours (15:30 IST close — gives Upstox a few extra
+#
+# Cron "7,37 4-10 * * 1-5" = every 30 min from 04:07 to 10:37 UTC, on
+# odd offsets. We deliberately AVOID the :00 / :30 slots because GitHub
+# throttles scheduled workflows hardest at the top and middle of the
+# hour — those are the most-contested cron slots across the whole
+# platform, and free-tier scheduled jobs get silently dropped during
+# the contention spikes. Empirically we saw ~2 of 14 daily fires
+# actually run with :00/:30. Off-hour offsets get materially better
+# delivery (GitHub's own docs explicitly recommend this).
+#
+# 14 fires per day. The 10:37 UTC (16:07 IST) run captures the very end
+# of Indian market hours (15:30 IST close — gives Upstox a few extra
 # minutes to settle the last trades before our final intraday tick).
 
 name: Intraday LTP refresh (Upstox)
 
 on:
   schedule:
-    - cron: '0,30 4-10 * * 1-5'   # every 30 min, market hours, Mon-Fri
+    - cron: '7,37 4-10 * * 1-5'   # every 30 min, market hours, Mon-Fri (odd offsets to dodge GH cron throttling)
   workflow_dispatch: {}            # also runnable on demand from Actions UI
 
 env:
