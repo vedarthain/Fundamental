@@ -123,6 +123,29 @@ def _maybe_raise_429(resp: httpx.Response, url: str) -> None:
     raise RateLimited(retry_after, f"GET {url} returned HTTP 429 (sleeping {retry_after}s)")
 
 
+def _maybe_raise_5xx(resp: httpx.Response, url: str) -> None:
+    """Treat 5xx as a transient throttle, not a hard failure.
+
+    Screener intermittently returns 500/502/503/504 for high-volume or
+    bot-like traffic — especially from datacenter IPs (e.g. GitHub Actions
+    runners). These aren't permanent: backing off and retrying usually
+    succeeds. We raise RateLimited (which the @retry decorators already
+    treat as retryable) with a fixed backoff so a stray 5xx doesn't skip the
+    symbol outright. If Screener is genuinely down, the retry cap eventually
+    gives up and the symbol is logged as failed — same as before, just after
+    a few patient attempts.
+    """
+    if resp.status_code not in (500, 502, 503, 504):
+        return
+    retry_after = 20.0
+    log.warning("server_5xx_retry", url=url, status=resp.status_code, retry_after=retry_after)
+    raise RateLimited(
+        retry_after,
+        f"{resp.request.method} {url} returned HTTP {resp.status_code} "
+        f"(treating as transient, sleeping {retry_after}s)",
+    )
+
+
 # Smart wait policy used by both @retry decorators below. On a RateLimited
 # exception we sleep the exact retry-after the server told us. On any other
 # retryable error (httpx.TransportError) we fall back to exponential backoff.
@@ -166,6 +189,7 @@ def discover_export(
         if _is_login_redirect(resp):
             raise AuthFailed(f"Login redirect on {url} — Screener cookies expired")
         _maybe_raise_429(resp, url)
+        _maybe_raise_5xx(resp, url)
         if resp.status_code == 404:
             last_seen_status = "404"
             continue
@@ -223,6 +247,7 @@ def download_export(client: httpx.Client, info: CompanyExportInfo) -> bytes:
     if _is_login_redirect(resp):
         raise AuthFailed(f"Login redirect on POST {url} — Screener cookies expired")
     _maybe_raise_429(resp, url)
+    _maybe_raise_5xx(resp, url)
     if resp.status_code != 200:
         raise ScrapeError(f"POST {url} returned HTTP {resp.status_code}")
     ct = resp.headers.get("content-type", "")
