@@ -56,7 +56,10 @@ env:
 jobs:
   snapshot:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # compute-metrics fires several golden-DB queries per symbol; from a GH
+    # runner those hit Neon cross-region, so the full ~2,150-symbol pass
+    # takes ~40–50 min. 15 min was far too low (the job was cancelled mid-run).
+    timeout-minutes: 75
     steps:
       - name: Checkout
         uses: actions/checkout@v4
