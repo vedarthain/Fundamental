@@ -221,73 +221,110 @@ function next0830Ist(): Date {
   return candidate;
 }
 
-// ── Intraday index LTP client ─────────────────────────────────────────────
+// ── Intraday LTP client (indices + equities) ──────────────────────────────
 
 export type IndexQuote = { index_code: string; ltp: number };
 
-/** Thrown when the Upstox token is missing/expired — the cron route maps
- *  this to a soft 200 (no-op) so a missed morning reauth never trips the
+// Upstox accepts many instrument keys per /ltp call; we batch at 200 (well
+// under their documented limit) — same chunk size the Python equity path
+// used. ~11 calls for the full ~2,150-symbol universe.
+const LTP_BATCH = 200;
+
+/** Thrown when the Upstox token is missing/expired — cron routes map this
+ *  to a soft 200 (no-op) so a missed morning reauth never trips the
  *  external pinger into retry storms. */
 export class UpstoxTokenError extends Error {
   constructor(msg: string) { super(msg); this.name = "UpstoxTokenError"; }
 }
 
-/**
- * Fetch live LTP for the two headline indices from Upstox.
- *
- * Mirrors the Python equity path (scripts/intraday-refresh-ltp.py): one
- * GET /v2/market-quote/ltp with the instrument keys comma-joined, Bearer
- * auth. Upstox returns data keyed by an opaque string per instrument;
- * each value carries `instrument_token` (the canonical request key) plus
- * `last_price`. We map instrument_token → our internal index_code.
- *
- * Returns [] only if Upstox returns no usable rows; throws
- * UpstoxTokenError on 401 (expired token) so the caller can no-op cleanly.
- */
-export async function fetchIndexQuotes(): Promise<IndexQuote[]> {
+/** Load the session and assert the token is present + not past its stored
+ *  expiry. Throws UpstoxTokenError otherwise. */
+async function requireFreshToken(): Promise<string> {
   const session = await loadSession();
   if (!session.access_token) {
     throw new UpstoxTokenError("Upstox access token missing — reauth at /api/upstox/login");
   }
-  // Cheap expiry guard: our stored expires_at is the next 08:30 IST
-  // boundary. If it's in the past the token is certainly dead.
+  // Our stored expires_at is the next 08:30 IST boundary; past it = dead.
   if (session.expires_at && new Date(session.expires_at) <= new Date()) {
     throw new UpstoxTokenError("Upstox access token expired — reauth at /api/upstox/login");
   }
+  return session.access_token;
+}
 
-  const keys = Object.keys(INDEX_INSTRUMENT_KEYS);
-  const qs = new URLSearchParams({ instrument_key: keys.join(",") });
-  const res = await fetch(`${UPSTOX_LTP_URL}?${qs.toString()}`, {
-    method: "GET",
-    headers: {
-      "Accept":        "application/json",
-      "Api-Version":   "2.0",
-      "Authorization": `Bearer ${session.access_token}`,
-    },
-    // Never let a stale CDN/proxy answer a market-data call.
-    cache: "no-store",
-  });
+/**
+ * Low-level batched LTP fetch for arbitrary instrument keys.
+ *
+ * Mirrors the Python path (scripts/intraday-refresh-ltp.py): GET
+ * /v2/market-quote/ltp with keys comma-joined, Bearer auth, chunked at 200.
+ * Upstox echoes each instrument's canonical `instrument_token` + `last_price`;
+ * we key the returned Map by instrument_token (what the caller requested by).
+ *
+ * Throws UpstoxTokenError on a 401 in the FIRST batch (whole token is dead);
+ * a non-auth failure mid-run skips that chunk and keeps what we have, rather
+ * than discarding a near-complete fetch.
+ */
+export async function fetchLtpsByKeys(keys: string[]): Promise<Map<string, number>> {
+  const token = await requireFreshToken();
+  const out = new Map<string, number>();
 
-  if (res.status === 401) {
-    throw new UpstoxTokenError(`Upstox 401 — token rejected; reauth required`);
+  for (let i = 0; i < keys.length; i += LTP_BATCH) {
+    const chunk = keys.slice(i, i + LTP_BATCH);
+    const qs = new URLSearchParams({ instrument_key: chunk.join(",") });
+    let res: Response;
+    try {
+      res = await fetch(`${UPSTOX_LTP_URL}?${qs.toString()}`, {
+        method: "GET",
+        headers: {
+          "Accept":        "application/json",
+          "Api-Version":   "2.0",
+          "Authorization": `Bearer ${token}`,
+        },
+        cache: "no-store",
+      });
+    } catch {
+      if (i === 0) throw new Error("Upstox LTP fetch failed on first batch");
+      continue; // transient mid-run network blip — keep partial results
+    }
+
+    if (res.status === 401) {
+      // Auth is dead for every batch — no point continuing.
+      throw new UpstoxTokenError("Upstox 401 — token rejected; reauth required");
+    }
+    if (!res.ok) {
+      if (i === 0) {
+        const body = await res.text().catch(() => "");
+        throw new Error(`Upstox LTP HTTP ${res.status}: ${body.slice(0, 200)}`);
+      }
+      continue;
+    }
+
+    const payload = (await res.json().catch(() => ({}))) as {
+      status?: string;
+      data?: Record<string, { instrument_token?: string; last_price?: number }>;
+    };
+    if (payload.status !== "success" || !payload.data) continue;
+    for (const v of Object.values(payload.data)) {
+      const key = v.instrument_token;
+      if (typeof key === "string" && typeof v.last_price === "number") {
+        out.set(key, v.last_price);
+      }
+    }
   }
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Upstox LTP HTTP ${res.status}: ${body.slice(0, 200)}`);
-  }
+  return out;
+}
 
-  const payload = (await res.json().catch(() => ({}))) as {
-    status?: string;
-    data?: Record<string, { instrument_token?: string; last_price?: number }>;
-  };
-  if (payload.status !== "success" || !payload.data) return [];
-
+/**
+ * Fetch live LTP for the two headline indices. Thin wrapper over
+ * fetchLtpsByKeys that maps Upstox's instrument_token back to our internal
+ * index_code. Returns [] if Upstox yields no usable rows; propagates
+ * UpstoxTokenError so the caller can no-op cleanly.
+ */
+export async function fetchIndexQuotes(): Promise<IndexQuote[]> {
+  const priceByKey = await fetchLtpsByKeys(Object.keys(INDEX_INSTRUMENT_KEYS));
   const out: IndexQuote[] = [];
-  for (const v of Object.values(payload.data)) {
-    const reqKey = v.instrument_token;       // canonical "NSE_INDEX|Nifty 50"
-    const code = reqKey ? INDEX_INSTRUMENT_KEYS[reqKey] : undefined;
-    if (!code || typeof v.last_price !== "number") continue;
-    out.push({ index_code: code, ltp: v.last_price });
+  for (const [key, code] of Object.entries(INDEX_INSTRUMENT_KEYS)) {
+    const ltp = priceByKey.get(key);
+    if (typeof ltp === "number") out.push({ index_code: code, ltp });
   }
   return out;
 }
