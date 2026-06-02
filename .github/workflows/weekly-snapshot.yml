@@ -53,11 +53,11 @@
 name: Weekly Refresh + Score
 
 on:
-  # 13:00 UTC Sunday = 18:30 IST. Market closed ~48h; the intraday pingers
+  # 13:00 UTC Saturday = 18:30 IST. Market closed ~27h; the intraday pingers
   # don't run on weekends, so this contends with nothing (avoids the
   # deadlock we saw on a manual mid-market run).
   schedule:
-    - cron: '0 13 * * 0'
+    - cron: '0 13 * * 6'
 
   # Manual trigger — for the first cloud run, testing, or a re-run.
   workflow_dispatch:
