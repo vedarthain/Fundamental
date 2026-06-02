@@ -22,6 +22,7 @@ import { headers } from "next/headers";
 import type { Metadata } from "next";
 import { MarketClient } from "./MarketClient";
 import { SignedInExtras } from "./SignedInExtras";
+import { PriceDateBadge } from "./PriceDateBadge";
 import type { OverviewResponse } from "../api/market/overview/route";
 import { getSession } from "@/lib/auth";
 
@@ -146,19 +147,8 @@ function FreshnessBadges({
   }
   return (
     <div className="flex items-center gap-2 text-[11px] tabular-nums">
-      <span
-        className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border"
-        style={{
-          borderColor: "var(--color-border-default)",
-          backgroundColor: "var(--color-paper)",
-        }}
-        title="Index closing prices, NSE bhavcopy"
-      >
-        <span className="muted-text">Prices</span>
-        <span className="font-medium" style={{ color: "var(--color-ink)" }}>
-          {fmt(ltpDate)}
-        </span>
-      </span>
+      {/* Live during market hours (intraday pingers), EOD close otherwise. */}
+      <PriceDateBadge ltpDate={ltpDate} />
       <span
         className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border"
         style={{
