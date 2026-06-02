@@ -182,8 +182,9 @@ export function MarketClient({ data }: { data: OverviewResponse }) {
 // Hero pair — NIFTY 50 + NIFTY Bank, side by side, sharing one range toggle
 // ──────────────────────────────────────────────────────────────────────────
 
-type Range = "1M" | "3M" | "6M" | "1Y";
-const RANGE_DAYS: Record<Range, number> = { "1M": 30, "3M": 90, "6M": 180, "1Y": 365 };
+type Range = "1D" | "1M" | "3M" | "6M" | "1Y";
+// 1D is special-cased (intraday ticks, not daily closes) so it has no entry.
+const RANGE_DAYS: Record<Exclude<Range, "1D">, number> = { "1M": 30, "3M": 90, "6M": 180, "1Y": 365 };
 
 // A live tick is only shown if it's fresher than this. Beyond it we assume
 // the market is closed (or the pinger stalled) and fall back to the daily
@@ -191,34 +192,40 @@ const RANGE_DAYS: Record<Range, number> = { "1M": 30, "3M": 90, "6M": 180, "1Y":
 // tick cadence plus pinger jitter.
 const LIVE_MAX_AGE_S = 20 * 60;
 
-type LiveTick = { ltp: number; pct_change: number | null; age_seconds: number };
+type LiveTick = { ltp: number; prev_close: number | null; pct_change: number | null; age_seconds: number; ts: string };
+type IntradayPoint = { ts: string; ltp: number };
+type LiveData = {
+  ticks: Record<string, LiveTick>;
+  intraday: Record<string, IntradayPoint[]>;
+};
 
 /**
  * Poll the lightweight /api/market/index-live endpoint for the latest
- * NIFTY 50 / NIFTY BANK ticks. Kept separate from the (CDN-cached, hourly)
- * overview payload so the hero price can refresh live without busting that
- * cache. Polls every 60s while the tab is mounted; the endpoint itself is
- * 60s-CDN-cached so this is at most one origin read per minute per region.
+ * NIFTY 50 / NIFTY BANK ticks AND today's intraday series (for the 1D
+ * chart). Kept separate from the (CDN-cached, hourly) overview payload so
+ * the hero price can refresh live without busting that cache. Polls every
+ * 60s while mounted; the endpoint is 60s-CDN-cached so this is at most one
+ * origin read per minute per region.
  */
-function useLiveIndexTicks(): Record<string, LiveTick> {
-  const [ticks, setTicks] = useState<Record<string, LiveTick>>({});
+function useLiveIndexTicks(): LiveData {
+  const [data, setData] = useState<LiveData>({ ticks: {}, intraday: {} });
   useEffect(() => {
     let alive = true;
     const pull = async () => {
       try {
         const res = await fetch("/api/market/index-live", { cache: "no-store" });
         if (!res.ok) return;
-        const json = (await res.json()) as { ticks?: Record<string, LiveTick> };
-        if (alive && json.ticks) setTicks(json.ticks);
+        const json = (await res.json()) as Partial<LiveData>;
+        if (alive) setData({ ticks: json.ticks ?? {}, intraday: json.intraday ?? {} });
       } catch {
-        /* transient network error — keep last good ticks */
+        /* transient network error — keep last good data */
       }
     };
     pull();
     const id = setInterval(pull, 60_000);
     return () => { alive = false; clearInterval(id); };
   }, []);
-  return ticks;
+  return data;
 }
 
 function HeroPair({
@@ -233,8 +240,10 @@ function HeroPair({
   // synced lets the eye compare slopes directly.
   const [range, setRange] = useState<Range>("3M");
   const live = useLiveIndexTicks();
-  const leftLive  = freshTick(live["NIFTY50"]);
-  const rightLive = freshTick(live["NIFTYBANK"]);
+  const leftLive  = freshTick(live.ticks["NIFTY50"]);
+  const rightLive = freshTick(live.ticks["NIFTYBANK"]);
+  const leftIntraday  = live.intraday["NIFTY50"]  ?? [];
+  const rightIntraday = live.intraday["NIFTYBANK"] ?? [];
   return (
     <section className="card overflow-hidden">
       <div className="px-3 md:px-4 pt-3 pb-2 flex items-center justify-between gap-2 border-b hairline">
@@ -242,7 +251,7 @@ function HeroPair({
           Headline indices
         </div>
         <div className="flex items-center gap-1 p-0.5 rounded-md border" style={{ borderColor: "var(--color-border-default)" }}>
-          {(["1M", "3M", "6M", "1Y"] as Range[]).map((r) => (
+          {(["1D", "1M", "3M", "6M", "1Y"] as Range[]).map((r) => (
             <button key={r} type="button" onClick={() => setRange(r)}
               className={`px-2 py-0.5 text-[11px] font-medium tabular-nums rounded transition-colors ${
                 range === r ? "" : "muted-text hover:bg-[var(--color-paper)]"
@@ -254,8 +263,8 @@ function HeroPair({
         </div>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x hairline">
-        <HeroPanel label="NIFTY 50"   row={left}  series={leftSeries}  range={range} chartIdSuffix="50"   live={leftLive} />
-        <HeroPanel label="NIFTY BANK" row={right} series={rightSeries} range={range} chartIdSuffix="bank" live={rightLive} />
+        <HeroPanel label="NIFTY 50"   row={left}  series={leftSeries}  intraday={leftIntraday}  range={range} chartIdSuffix="50"   live={leftLive} />
+        <HeroPanel label="NIFTY BANK" row={right} series={rightSeries} intraday={rightIntraday} range={range} chartIdSuffix="bank" live={rightLive} />
       </div>
     </section>
   );
@@ -268,36 +277,63 @@ function freshTick(t: LiveTick | undefined): LiveTick | null {
 }
 
 function HeroPanel({
-  label, row, series, range, chartIdSuffix, live,
+  label, row, series, intraday, range, chartIdSuffix, live,
 }: {
   label: string;
   row: IndexRow | undefined;
   series: IndexSeriesPoint[];
+  intraday: IntradayPoint[];
   range: Range;
   chartIdSuffix: string;
   live: LiveTick | null;
 }) {
-  const points = useMemo(() => {
-    if (series.length === 0) return [];
-    const cutoff = Date.now() - RANGE_DAYS[range] * 86_400_000;
-    const filtered = series.filter((p) => new Date(p.date).getTime() >= cutoff);
-    return filtered.length >= 2 ? filtered : series.slice(-Math.max(2, RANGE_DAYS[range] / 7));
-  }, [series, range]);
+  const isIntraday = range === "1D";
 
-  if (!row || points.length === 0) {
+  // Daily series for 1M/3M/6M/1Y — filter to the range window.
+  const dailyPoints = useMemo(() => {
+    if (isIntraday || series.length === 0) return [];
+    const days = RANGE_DAYS[range as Exclude<Range, "1D">];
+    const cutoff = Date.now() - days * 86_400_000;
+    const filtered = series.filter((p) => new Date(p.date).getTime() >= cutoff);
+    return filtered.length >= 2 ? filtered : series.slice(-Math.max(2, days / 7));
+  }, [series, range, isIntraday]);
+
+  // 1D series from today's accumulating intraday ticks (ts → date, ltp → close)
+  // so the same AreaChart can render it. Anchored with the prior close as the
+  // first point when we have it, so the line starts from "yesterday's close"
+  // and the day's move reads correctly even with one tick so far.
+  const intradayPoints = useMemo(() => {
+    const pts = intraday.map((p) => ({ date: p.ts, close: p.ltp }));
+    const prev = live?.prev_close;
+    if (prev != null && pts.length > 0) {
+      // Synthetic baseline ~1 min before the first tick.
+      const t0 = new Date(new Date(pts[0].date).getTime() - 60_000).toISOString();
+      return [{ date: t0, close: prev }, ...pts];
+    }
+    return pts;
+  }, [intraday, live]);
+
+  const points = isIntraday ? intradayPoints : dailyPoints;
+
+  if (!row) {
     return (
       <div className="px-3 md:px-4 py-3 muted-text text-[12px]">{label} — no data.</div>
     );
   }
 
-  const first = points[0].close;
-  const last  = points[points.length - 1].close;
-  const change = last - first;
-  const changePct = first > 0 ? (change / first) * 100 : 0;
-  const positive = change >= 0;
+  const haveChart = points.length >= 2;
+  const first = haveChart ? points[0].close : 0;
+  const last  = haveChart ? points[points.length - 1].close : 0;
+
+  // Range change %: for 1D use the live day-change vs prev close (more
+  // meaningful than first-tick-to-last); for daily ranges it's first→last.
+  const changePct = isIntraday
+    ? (live?.pct_change ?? (first > 0 ? ((last - first) / first) * 100 : 0))
+    : (first > 0 ? ((last - first) / first) * 100 : 0);
+  const positive = changePct >= 0;
   const stroke = positive ? UP : DOWN;
-  const yMin = Math.min(...points.map((p) => p.close)) * 0.995;
-  const yMax = Math.max(...points.map((p) => p.close)) * 1.005;
+  const yMin = haveChart ? Math.min(...points.map((p) => p.close)) * 0.995 : 0;
+  const yMax = haveChart ? Math.max(...points.map((p) => p.close)) * 1.005 : 1;
 
   // When a fresh intraday tick exists, it supersedes the EOD close: show
   // the live price as the headline number and live change vs prev close.
@@ -306,6 +342,7 @@ function HeroPanel({
   const headlinePct   = live ? live.pct_change : row.pct_change_1d;
   const headlineColor = headlinePct == null ? MUTED : headlinePct >= 0 ? UP : DOWN;
   const gradId = `hero-fill-${chartIdSuffix}`;
+  const updatedAt = live ? fmtClock(live.ts) : null;
 
   return (
     <div className="px-3 md:px-4 pt-2.5 pb-2">
@@ -325,12 +362,33 @@ function HeroPanel({
           </div>
         </div>
         <div className="text-right">
-          <div className="muted-text text-[10px]">{range}</div>
+          <div className="muted-text text-[10px]">{isIntraday ? "Today" : range}</div>
           <div className="tabular-nums text-[12.5px] font-medium" style={{ color: stroke }}>
             {positive ? "+" : ""}{changePct.toFixed(2)}%
           </div>
         </div>
       </div>
+      {/* Last-updated stamp — highlighted so the freshness of the live price
+          is obvious at a glance. Only shown when we have a live tick. */}
+      {updatedAt && (
+        <div className="mt-1">
+          <span
+            className="inline-flex items-center gap-1 rounded px-1.5 py-[1px] text-[10px] font-medium tabular-nums"
+            style={{ background: "color-mix(in srgb, var(--color-accent-600) 12%, transparent)", color: "var(--color-accent-600)" }}
+          >
+            Updated {updatedAt} IST
+          </span>
+        </div>
+      )}
+      {!haveChart ? (
+        <div className="h-[100px] md:h-[110px] mt-1.5 flex items-center justify-center muted-text text-[11.5px] text-center px-2">
+          {isIntraday
+            ? (live
+                ? "Today's intraday line builds as new ticks arrive."
+                : "No live ticks yet today — switch to 1M/3M for history.")
+            : "No data for this range."}
+        </div>
+      ) : (
       <MountedChart className="h-[100px] md:h-[110px] mt-1.5 -mx-1 min-w-0">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={points} margin={{ top: 2, right: 10, left: 0, bottom: 2 }}>
@@ -341,14 +399,14 @@ function HeroPanel({
               </linearGradient>
             </defs>
             <CartesianGrid stroke="var(--color-border-default)" strokeDasharray="2 3" vertical={false} />
-            <XAxis dataKey="date" tickFormatter={fmtMonth} minTickGap={28}
+            <XAxis dataKey="date" tickFormatter={isIntraday ? fmtClock : fmtMonth} minTickGap={28}
               tick={{ fontSize: 9, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} />
             <YAxis domain={[yMin, yMax]}
               tickFormatter={(v: number) => v.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
               tick={{ fontSize: 9, fill: "var(--color-muted)" }} axisLine={false} tickLine={false}
               width={42} orientation="right" />
             <Tooltip cursor={{ stroke: "var(--color-border-default)" }} contentStyle={chartTooltipStyle}
-              labelFormatter={(l) => fmtFull(String(l ?? ""))}
+              labelFormatter={(l) => (isIntraday ? `${fmtClock(String(l ?? ""))} IST` : fmtFull(String(l ?? "")))}
               formatter={(v: unknown) => [
                 Number(v).toLocaleString("en-IN", { maximumFractionDigits: 1 }),
                 label,
@@ -357,6 +415,7 @@ function HeroPanel({
           </AreaChart>
         </ResponsiveContainer>
       </MountedChart>
+      )}
       <div className="mt-1 flex flex-wrap gap-3 text-[10.5px] tabular-nums">
         <RangeChange label="1W" value={row.pct_change_1w} />
         <RangeChange label="1M" value={row.pct_change_1m} />
@@ -1013,4 +1072,15 @@ function fmtFull(iso: string): string {
   const d = new Date(`${iso}T12:00:00Z`);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short", year: "numeric" });
+}
+
+/** Format a full ISO timestamp as IST clock time, e.g. "2:47 PM". Used for
+ *  the 1D intraday axis/tooltip and the last-updated stamp. The stored ts is
+ *  timezone-aware (timestamptz), so we render it in Asia/Kolkata explicitly. */
+function fmtClock(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleTimeString("en-IN", {
+    timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit", hour12: true,
+  });
 }
