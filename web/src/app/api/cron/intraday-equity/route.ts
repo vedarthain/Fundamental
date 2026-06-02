@@ -56,70 +56,78 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  // symbol ↔ instrument_key for the active universe that has an Upstox map.
-  const mapping = await sql<{ symbol: string; instrument_key: string }[]>`
-    SELECT i.symbol, i.instrument_key
-      FROM app.upstox_instrument i
-      JOIN app.universe u ON u.symbol = i.symbol AND u.is_active
-  `;
-  if (mapping.length === 0) {
-    return NextResponse.json(
-      { ok: false, reason: "no-instruments", message: "run fetch-upstox-instruments first" },
-      { status: 500 },
-    );
-  }
-
-  const keyToSym = new Map(mapping.map((m) => [m.instrument_key, m.symbol]));
-
-  // Pull LTPs (batched inside the client). Soft no-op on a stale token.
-  let priceByKey: Map<string, number>;
   try {
-    priceByKey = await fetchLtpsByKeys(mapping.map((m) => m.instrument_key));
-  } catch (e) {
-    if (e instanceof UpstoxTokenError) {
-      return NextResponse.json({ ok: false, reason: "token", message: e.message });
+    // symbol ↔ instrument_key for the active universe that has an Upstox map.
+    const mapping = await sql<{ symbol: string; instrument_key: string }[]>`
+      SELECT i.symbol, i.instrument_key
+        FROM app.upstox_instrument i
+        JOIN app.universe u ON u.symbol = i.symbol AND u.is_active
+    `;
+    if (mapping.length === 0) {
+      return NextResponse.json(
+        { ok: false, reason: "no-instruments", message: "run fetch-upstox-instruments first" },
+        { status: 500 },
+      );
     }
+
+    const keyToSym = new Map(mapping.map((m) => [m.instrument_key, m.symbol]));
+
+    // Pull LTPs (batched inside the client). Soft no-op on a stale token.
+    let priceByKey: Map<string, number>;
+    try {
+      priceByKey = await fetchLtpsByKeys(mapping.map((m) => m.instrument_key));
+    } catch (e) {
+      if (e instanceof UpstoxTokenError) {
+        return NextResponse.json({ ok: false, reason: "token", message: e.message });
+      }
+      const msg = e instanceof Error ? e.message : String(e);
+      return NextResponse.json({ ok: false, reason: "upstox", message: msg }, { status: 502 });
+    }
+
+    // Map instrument_token → our symbol → price.
+    const rows: { sym: string; price: number }[] = [];
+    for (const [key, price] of priceByKey) {
+      const sym = keyToSym.get(key);
+      if (sym) rows.push({ sym, price });
+    }
+
+    if (rows.length === 0) {
+      return NextResponse.json({ ok: false, reason: "empty", written: 0 });
+    }
+
+    // Bulk UPDATE via json_to_recordset — a single JSON parameter expanded
+    // server-side. Avoids postgres-js array-type binding pitfalls; one
+    // round-trip per table.
+    const payload = JSON.stringify(rows);
+    const metaRes = await sql`
+      UPDATE app.screener_meta sm
+         SET current_price = d.price,
+             updated_at    = NOW()
+        FROM json_to_recordset(${payload}::json) AS d(sym text, price float8)
+       WHERE sm.symbol = d.sym
+    `;
+    const panelRes = await sql`
+      UPDATE app.cluster_stocks_panel_cache c
+         SET current_price = d.price
+        FROM json_to_recordset(${payload}::json) AS d(sym text, price float8)
+       WHERE c.symbol = d.sym
+         AND c.snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_stocks_panel_cache)
+    `;
+
+    // Purge the live-reading surfaces so fresh prices show on the next render.
+    // (Not "market"/"snapshot" — that blob is unchanged until the EOD rebuild.)
+    revalidateTag("panel-cache", "default");
+    revalidateTag("sectors", "default");
+
+    return NextResponse.json({
+      ok: true,
+      fetched: rows.length,
+      rows_screener_meta: metaRes.count ?? 0,
+      rows_panel_cache: panelRes.count ?? 0,
+    });
+  } catch (e) {
+    // Surface the message so a 500 isn't an opaque empty body.
     const msg = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ ok: false, reason: "upstox", message: msg }, { status: 502 });
+    return NextResponse.json({ ok: false, reason: "exception", message: msg }, { status: 500 });
   }
-
-  // Map instrument_token → our symbol → price.
-  const syms: string[] = [];
-  const prices: number[] = [];
-  for (const [key, price] of priceByKey) {
-    const sym = keyToSym.get(key);
-    if (sym) { syms.push(sym); prices.push(price); }
-  }
-
-  if (syms.length === 0) {
-    return NextResponse.json({ ok: false, reason: "empty", written: 0 });
-  }
-
-  // Bulk UPDATE both price tables via unnest — one round-trip each.
-  const metaRes = await sql`
-    UPDATE app.screener_meta sm
-       SET current_price = up.price,
-           updated_at    = NOW()
-      FROM unnest(${syms}::text[], ${prices}::float[]) AS up(sym, price)
-     WHERE sm.symbol = up.sym
-  `;
-  const panelRes = await sql`
-    UPDATE app.cluster_stocks_panel_cache c
-       SET current_price = up.price
-      FROM unnest(${syms}::text[], ${prices}::float[]) AS up(sym, price)
-     WHERE c.symbol = up.sym
-       AND c.snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_stocks_panel_cache)
-  `;
-
-  // Purge the live-reading surfaces so fresh prices show on the next render.
-  // (Not "market"/"snapshot" — that blob is unchanged until the EOD rebuild.)
-  revalidateTag("panel-cache", "default");
-  revalidateTag("sectors", "default");
-
-  return NextResponse.json({
-    ok: true,
-    fetched: syms.length,
-    rows_screener_meta: metaRes.count ?? 0,
-    rows_panel_cache: panelRes.count ?? 0,
-  });
 }
