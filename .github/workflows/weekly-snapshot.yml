@@ -75,11 +75,9 @@ env:
 jobs:
   snapshot:
     runs-on: ubuntu-latest
-    # Cloud scrape is run GENTLY (1 worker, ~4s throttle) to stay under
-    # Screener's datacenter-IP throttle, so fetch alone takes ~2.5–3h. Plus
-    # compute ~45 min + score ~15 min. GitHub's hard cap is 6h; 330 min
-    # leaves headroom.
-    timeout-minutes: 330
+    # Fetch at default speed (~45 min, proved 99.5% from the runner) +
+    # compute ~45 min + score ~15 min + rebuild ~3 min. 150 min is ample.
+    timeout-minutes: 150
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -102,14 +100,12 @@ jobs:
           GOLDEN_DB_URL:        ${{ secrets.NEON_GOLDEN_URL }}
           SCREENER_SESSIONID:   ${{ secrets.SCREENER_SESSIONID }}
           SCREENER_CSRFTOKEN:   ${{ secrets.SCREENER_CSRFTOKEN }}
-          # Run GENTLY from the datacenter IP: ~4s between requests, single
-          # worker, long cool-downs between batches. Screener returns 502/503
-          # under bursty datacenter traffic; pacing keeps us under that line.
-          # 5xx are now retried with backoff too (scraper change), so stray
-          # rejections recover instead of skipping the symbol.
-          SCREENER_THROTTLE_SECONDS: "4.0"
           PYTHONUNBUFFERED:     "1"
-        run: python -m fundamental_etl.cli fetch-many --workers 1 --batch-size 50 --batch-pause 30
+        # Default pacing (3 workers, 1s throttle) — proved 99.5% from the
+        # runner in ~45 min. The scraper now retries 5xx with backoff, so the
+        # occasional transient 502/503 recovers instead of skipping a symbol;
+        # no need to crawl.
+        run: python -m fundamental_etl.cli fetch-many
 
       # 2. Keep only the latest raw blob per symbol — bounds Neon storage.
       - name: Prune old raw blobs
