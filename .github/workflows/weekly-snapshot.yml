@@ -66,8 +66,10 @@ on:
         description: 'YYYY-MM-DD to snapshot (default: today UTC)'
         required: false
       skip_fetch:
-        description: 'Set to "true" to skip the Screener scrape (re-score on existing data)'
+        description: 'Skip the Screener scrape (re-score on existing data)'
         required: false
+        type: boolean
+        default: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
