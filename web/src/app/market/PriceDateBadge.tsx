@@ -74,7 +74,7 @@ export function PriceDateBadge({ ltpDate }: { ltpDate: string | null }) {
   }, [ltpDate]);
 
   const live = state?.live ?? false;
-  const prefix = live ? "Live" : "Close";
+  const prefix = live ? "Live" : "EOD";
   const value = state ? state.label : fmtClose(ltpDate);
 
   return (
@@ -88,7 +88,7 @@ export function PriceDateBadge({ ltpDate }: { ltpDate: string | null }) {
       }}
       title={live
         ? "Market open — prices updating intraday"
-        : "Index closing prices, last settled session (NSE bhavcopy)"}
+        : "End-of-day closing prices from the last settled session (NSE bhavcopy)"}
     >
       {live && (
         <span className="relative flex h-1.5 w-1.5">

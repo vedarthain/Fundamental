@@ -71,25 +71,37 @@ jobs:
       - name: Install fundamental-etl
         run: pip install -e ./etl
 
-      # Score + refresh all four caches in one shot. Score is idempotent
-      # for a given snapshot_date (DELETE+INSERT inside the command), so a
-      # manual re-run for the same date is safe.
+      # Compute metrics, THEN score — equivalent to `./snap --skip-fetch`.
       #
-      # pydantic-settings requires screener_sessionid/csrftoken to load
-      # even though `score` doesn't scrape. Dummy values keep it happy.
-      - name: Run score command
+      # Critical: `score` reads app.metrics_snapshot WHERE snapshot_date = D
+      # and is a no-op if no metrics exist for D. compute-metrics is what
+      # writes that row (derived from existing fundamentals + golden prices;
+      # no Screener fetch, so it runs fine in CI). Without this step the
+      # snapshot date never advances — which is exactly the "still showing
+      # the old date" bug we hit. We deliberately DON'T run fetch-many here
+      # (it needs real Screener cookies); fundamentals change quarterly, and
+      # valuation still refreshes because compute-metrics reads the live
+      # screener_meta.current_price kept fresh by the intraday pinger.
+      #
+      # Both commands are idempotent for a given snapshot_date (DELETE+INSERT
+      # / upsert), so a manual re-run for the same date is safe.
+      #
+      # pydantic-settings requires screener_sessionid/csrftoken to load even
+      # though neither command scrapes. Dummy values keep it happy.
+      - name: Compute metrics + score
         env:
           APP_DB_URL:           ${{ secrets.NEON_APP_URL }}
           GOLDEN_DB_URL:        ${{ secrets.NEON_GOLDEN_URL }}
-          SCREENER_SESSIONID:   "unused-in-score"
-          SCREENER_CSRFTOKEN:   "unused-in-score"
+          SCREENER_SESSIONID:   "unused-in-snapshot"
+          SCREENER_CSRFTOKEN:   "unused-in-snapshot"
           PYTHONUNBUFFERED:     "1"
         run: |
+          SNAP_ARG=""
           if [ -n "${{ github.event.inputs.snapshot_date }}" ]; then
-            python -m fundamental_etl.cli score --snapshot "${{ github.event.inputs.snapshot_date }}"
-          else
-            python -m fundamental_etl.cli score
+            SNAP_ARG="--snapshot ${{ github.event.inputs.snapshot_date }}"
           fi
+          python -m fundamental_etl.cli compute-metrics $SNAP_ARG
+          python -m fundamental_etl.cli score $SNAP_ARG
 
       # Rebuild app.market_snapshot_cache so /market picks up the new
       # snapshot's Building strength rows on the next render. Without this,
