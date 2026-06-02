@@ -8,6 +8,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 
+import psycopg
 import typer
 
 from .config import settings
@@ -479,20 +480,44 @@ def compute_metrics_cmd(
 
             ok = fail = 0
             for i, s in enumerate(stocks, 1):
-                try:
-                    cm, meta, status = compute_metrics_for_symbol(
-                        ac, gc, s["symbol"], s["cluster_id"], s["maturity_tier"], nifty,
-                        scorecard_overrides=overrides,
-                    )
-                    persist_metrics(ac, s["symbol"], snap, cm, meta, s["maturity_tier"], status)
-                    ok += 1
-                    if i % 100 == 0:
+                # Per-symbol commit + deadlock retry. compute-metrics can run
+                # concurrently with the intraday price pinger (both touch rows
+                # under the same FK parents on Neon), so a transient deadlock
+                # is possible. persist_metrics is an idempotent upsert keyed by
+                # (symbol, snapshot_date), so retrying a symbol is safe.
+                #
+                # Committing per symbol keeps the lock window tiny and means a
+                # deadlock victim loses at most one symbol's work — it never
+                # cascades into "current transaction is aborted" for the whole
+                # rest of the run (the bug that wiped a manual mid-market run).
+                for attempt in range(1, 4):
+                    try:
+                        cm, meta, status = compute_metrics_for_symbol(
+                            ac, gc, s["symbol"], s["cluster_id"], s["maturity_tier"], nifty,
+                            scorecard_overrides=overrides,
+                        )
+                        persist_metrics(ac, s["symbol"], snap, cm, meta, s["maturity_tier"], status)
                         ac.commit()
-                        log.info("progress", done=i, n=len(stocks), ok=ok, failed=fail)
-                except Exception as e:
-                    fail += 1
-                    log.error("metrics_error", symbol=s["symbol"], error=str(e)[:200])
-            ac.commit()
+                        ok += 1
+                        break
+                    except psycopg.errors.DeadlockDetected:
+                        ac.rollback()
+                        if attempt < 3:
+                            log.warning("metrics_deadlock_retry", symbol=s["symbol"], attempt=attempt)
+                            time.sleep(0.2 * attempt)
+                            continue
+                        fail += 1
+                        log.error("metrics_deadlock_giveup", symbol=s["symbol"])
+                    except Exception as e:
+                        # Roll back so this symbol's failure can't poison the
+                        # next iteration's transaction.
+                        ac.rollback()
+                        fail += 1
+                        log.error("metrics_error", symbol=s["symbol"], error=str(e)[:200])
+                        break
+                if i % 100 == 0:
+                    log.info("progress", done=i, n=len(stocks), ok=ok, failed=fail)
+            ac.commit()  # harmless no-op; each symbol already committed
 
     log.info("compute_metrics_done", ok=ok, failed=fail)
 
