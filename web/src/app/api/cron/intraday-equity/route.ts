@@ -84,32 +84,31 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, reason: "upstox", message: msg }, { status: 502 });
     }
 
-    // Map instrument_token → our symbol → price.
-    const rows: { sym: string; price: number }[] = [];
+    // Map instrument_token → our symbol → price (parallel arrays for unnest).
+    const syms: string[] = [];
+    const prices: number[] = [];
     for (const [key, price] of priceByKey) {
       const sym = keyToSym.get(key);
-      if (sym) rows.push({ sym, price });
+      if (sym) { syms.push(sym); prices.push(price); }
     }
 
-    if (rows.length === 0) {
+    if (syms.length === 0) {
       return NextResponse.json({ ok: false, reason: "empty", written: 0 });
     }
 
-    // Bulk UPDATE via json_to_recordset — a single JSON parameter expanded
-    // server-side. Avoids postgres-js array-type binding pitfalls; one
-    // round-trip per table.
-    const payload = JSON.stringify(rows);
+    // Bulk UPDATE via unnest of two parallel arrays — postgres-js sends JS
+    // arrays as native Postgres arrays. One round-trip per table.
     const metaRes = await sql`
       UPDATE app.screener_meta sm
-         SET current_price = d.price
-        FROM json_to_recordset(${payload}::json) AS d(sym text, price float8)
-       WHERE sm.symbol = d.sym
+         SET current_price = up.price
+        FROM unnest(${syms}::text[], ${prices}::float8[]) AS up(sym, price)
+       WHERE sm.symbol = up.sym
     `;
     const panelRes = await sql`
       UPDATE app.cluster_stocks_panel_cache c
-         SET current_price = d.price
-        FROM json_to_recordset(${payload}::json) AS d(sym text, price float8)
-       WHERE c.symbol = d.sym
+         SET current_price = up.price
+        FROM unnest(${syms}::text[], ${prices}::float8[]) AS up(sym, price)
+       WHERE c.symbol = up.sym
          AND c.snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_stocks_panel_cache)
     `;
 
@@ -120,7 +119,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       ok: true,
-      fetched: rows.length,
+      fetched: syms.length,
       rows_screener_meta: metaRes.count ?? 0,
       rows_panel_cache: panelRes.count ?? 0,
     });
