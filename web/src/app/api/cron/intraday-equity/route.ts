@@ -101,8 +101,7 @@ export async function POST(req: NextRequest) {
     const payload = JSON.stringify(rows);
     const metaRes = await sql`
       UPDATE app.screener_meta sm
-         SET current_price = d.price,
-             updated_at    = NOW()
+         SET current_price = d.price
         FROM json_to_recordset(${payload}::json) AS d(sym text, price float8)
        WHERE sm.symbol = d.sym
     `;
