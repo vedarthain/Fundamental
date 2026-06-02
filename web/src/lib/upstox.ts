@@ -14,10 +14,12 @@
  * Token-store table is single-row by design (CHECK id=1); we UPDATE in
  * place. See db/migrations/0026_upstox_session.sql for the schema.
  *
- * NOTE on TS-side LTP fetching: we DON'T currently call the LTP API from
- * the Next.js process — that lives in scripts/intraday-refresh-ltp.py
- * (Python, fan-out to update screener_meta + panel cache + snapshot).
- * This module is just OAuth.
+ * NOTE on TS-side LTP fetching: equity LTP fan-out still lives in
+ * scripts/intraday-refresh-ltp.py (Python, updates screener_meta + panel
+ * cache). But the lightweight INDEX tick (NIFTY 50 / NIFTY BANK only) is
+ * fetched server-side here via fetchIndexQuotes() — see the cron route at
+ * /api/cron/intraday-index. Indices are just 2 instrument keys, so a small
+ * native fetch beats spinning up a Python runner on a 15-min cadence.
  */
 import "server-only";
 import { createHmac, randomBytes, timingSafeEqual } from "crypto";
@@ -25,6 +27,17 @@ import { sql } from "@/lib/db";
 
 const UPSTOX_DIALOG_BASE  = "https://api.upstox.com/v2/login/authorization/dialog";
 const UPSTOX_TOKEN_URL    = "https://api.upstox.com/v2/login/authorization/token";
+const UPSTOX_LTP_URL      = "https://api.upstox.com/v2/market-quote/ltp";
+
+// Upstox instrument keys for the two headline indices we tick intraday.
+// Stable, well-known constants (indices aren't in our app.upstox_instrument
+// equity table). KEY = the Upstox instrument key we request by; VALUE = our
+// internal index_code used everywhere else (market_index_history /
+// market_index_intraday).
+export const INDEX_INSTRUMENT_KEYS: Record<string, string> = {
+  "NSE_INDEX|Nifty 50":   "NIFTY50",
+  "NSE_INDEX|Nifty Bank": "NIFTYBANK",
+};
 
 export type UpstoxSession = {
   access_token: string | null;
@@ -206,4 +219,75 @@ function next0830Ist(): Date {
     candidate.setUTCDate(candidate.getUTCDate() + 1);
   }
   return candidate;
+}
+
+// ── Intraday index LTP client ─────────────────────────────────────────────
+
+export type IndexQuote = { index_code: string; ltp: number };
+
+/** Thrown when the Upstox token is missing/expired — the cron route maps
+ *  this to a soft 200 (no-op) so a missed morning reauth never trips the
+ *  external pinger into retry storms. */
+export class UpstoxTokenError extends Error {
+  constructor(msg: string) { super(msg); this.name = "UpstoxTokenError"; }
+}
+
+/**
+ * Fetch live LTP for the two headline indices from Upstox.
+ *
+ * Mirrors the Python equity path (scripts/intraday-refresh-ltp.py): one
+ * GET /v2/market-quote/ltp with the instrument keys comma-joined, Bearer
+ * auth. Upstox returns data keyed by an opaque string per instrument;
+ * each value carries `instrument_token` (the canonical request key) plus
+ * `last_price`. We map instrument_token → our internal index_code.
+ *
+ * Returns [] only if Upstox returns no usable rows; throws
+ * UpstoxTokenError on 401 (expired token) so the caller can no-op cleanly.
+ */
+export async function fetchIndexQuotes(): Promise<IndexQuote[]> {
+  const session = await loadSession();
+  if (!session.access_token) {
+    throw new UpstoxTokenError("Upstox access token missing — reauth at /api/upstox/login");
+  }
+  // Cheap expiry guard: our stored expires_at is the next 08:30 IST
+  // boundary. If it's in the past the token is certainly dead.
+  if (session.expires_at && new Date(session.expires_at) <= new Date()) {
+    throw new UpstoxTokenError("Upstox access token expired — reauth at /api/upstox/login");
+  }
+
+  const keys = Object.keys(INDEX_INSTRUMENT_KEYS);
+  const qs = new URLSearchParams({ instrument_key: keys.join(",") });
+  const res = await fetch(`${UPSTOX_LTP_URL}?${qs.toString()}`, {
+    method: "GET",
+    headers: {
+      "Accept":        "application/json",
+      "Api-Version":   "2.0",
+      "Authorization": `Bearer ${session.access_token}`,
+    },
+    // Never let a stale CDN/proxy answer a market-data call.
+    cache: "no-store",
+  });
+
+  if (res.status === 401) {
+    throw new UpstoxTokenError(`Upstox 401 — token rejected; reauth required`);
+  }
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Upstox LTP HTTP ${res.status}: ${body.slice(0, 200)}`);
+  }
+
+  const payload = (await res.json().catch(() => ({}))) as {
+    status?: string;
+    data?: Record<string, { instrument_token?: string; last_price?: number }>;
+  };
+  if (payload.status !== "success" || !payload.data) return [];
+
+  const out: IndexQuote[] = [];
+  for (const v of Object.values(payload.data)) {
+    const reqKey = v.instrument_token;       // canonical "NSE_INDEX|Nifty 50"
+    const code = reqKey ? INDEX_INSTRUMENT_KEYS[reqKey] : undefined;
+    if (!code || typeof v.last_price !== "number") continue;
+    out.push({ index_code: code, ltp: v.last_price });
+  }
+  return out;
 }

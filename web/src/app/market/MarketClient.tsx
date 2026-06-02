@@ -185,6 +185,42 @@ export function MarketClient({ data }: { data: OverviewResponse }) {
 type Range = "1M" | "3M" | "6M" | "1Y";
 const RANGE_DAYS: Record<Range, number> = { "1M": 30, "3M": 90, "6M": 180, "1Y": 365 };
 
+// A live tick is only shown if it's fresher than this. Beyond it we assume
+// the market is closed (or the pinger stalled) and fall back to the daily
+// close from the overview payload. 20 min comfortably covers the ~15-min
+// tick cadence plus pinger jitter.
+const LIVE_MAX_AGE_S = 20 * 60;
+
+type LiveTick = { ltp: number; pct_change: number | null; age_seconds: number };
+
+/**
+ * Poll the lightweight /api/market/index-live endpoint for the latest
+ * NIFTY 50 / NIFTY BANK ticks. Kept separate from the (CDN-cached, hourly)
+ * overview payload so the hero price can refresh live without busting that
+ * cache. Polls every 60s while the tab is mounted; the endpoint itself is
+ * 60s-CDN-cached so this is at most one origin read per minute per region.
+ */
+function useLiveIndexTicks(): Record<string, LiveTick> {
+  const [ticks, setTicks] = useState<Record<string, LiveTick>>({});
+  useEffect(() => {
+    let alive = true;
+    const pull = async () => {
+      try {
+        const res = await fetch("/api/market/index-live", { cache: "no-store" });
+        if (!res.ok) return;
+        const json = (await res.json()) as { ticks?: Record<string, LiveTick> };
+        if (alive && json.ticks) setTicks(json.ticks);
+      } catch {
+        /* transient network error — keep last good ticks */
+      }
+    };
+    pull();
+    const id = setInterval(pull, 60_000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+  return ticks;
+}
+
 function HeroPair({
   left, leftSeries, right, rightSeries,
 }: {
@@ -196,6 +232,9 @@ function HeroPair({
   // Single range selector drives both panels — cleaner UX, and keeping them
   // synced lets the eye compare slopes directly.
   const [range, setRange] = useState<Range>("3M");
+  const live = useLiveIndexTicks();
+  const leftLive  = freshTick(live["NIFTY50"]);
+  const rightLive = freshTick(live["NIFTYBANK"]);
   return (
     <section className="card overflow-hidden">
       <div className="px-3 md:px-4 pt-3 pb-2 flex items-center justify-between gap-2 border-b hairline">
@@ -215,21 +254,28 @@ function HeroPair({
         </div>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x hairline">
-        <HeroPanel label="NIFTY 50"   row={left}  series={leftSeries}  range={range} chartIdSuffix="50" />
-        <HeroPanel label="NIFTY BANK" row={right} series={rightSeries} range={range} chartIdSuffix="bank" />
+        <HeroPanel label="NIFTY 50"   row={left}  series={leftSeries}  range={range} chartIdSuffix="50"   live={leftLive} />
+        <HeroPanel label="NIFTY BANK" row={right} series={rightSeries} range={range} chartIdSuffix="bank" live={rightLive} />
       </div>
     </section>
   );
 }
 
+/** Return the tick only if it's fresh enough to display live; else null. */
+function freshTick(t: LiveTick | undefined): LiveTick | null {
+  if (!t || typeof t.ltp !== "number") return null;
+  return t.age_seconds <= LIVE_MAX_AGE_S ? t : null;
+}
+
 function HeroPanel({
-  label, row, series, range, chartIdSuffix,
+  label, row, series, range, chartIdSuffix, live,
 }: {
   label: string;
   row: IndexRow | undefined;
   series: IndexSeriesPoint[];
   range: Range;
   chartIdSuffix: string;
+  live: LiveTick | null;
 }) {
   const points = useMemo(() => {
     if (series.length === 0) return [];
@@ -253,21 +299,28 @@ function HeroPanel({
   const yMin = Math.min(...points.map((p) => p.close)) * 0.995;
   const yMax = Math.max(...points.map((p) => p.close)) * 1.005;
 
-  const dailyPct = row.pct_change_1d;
-  const dailyColor = dailyPct == null ? MUTED : dailyPct >= 0 ? UP : DOWN;
+  // When a fresh intraday tick exists, it supersedes the EOD close: show
+  // the live price as the headline number and live change vs prev close.
+  // Otherwise fall back to the daily close already baked into the payload.
+  const headlinePrice = live ? live.ltp : row.close;
+  const headlinePct   = live ? live.pct_change : row.pct_change_1d;
+  const headlineColor = headlinePct == null ? MUTED : headlinePct >= 0 ? UP : DOWN;
   const gradId = `hero-fill-${chartIdSuffix}`;
 
   return (
     <div className="px-3 md:px-4 pt-2.5 pb-2">
       <div className="flex items-baseline justify-between gap-2">
         <div>
-          <div className="muted-text text-[10px] tracking-[0.10em] font-semibold uppercase">{label}</div>
+          <div className="flex items-center gap-1.5">
+            <div className="muted-text text-[10px] tracking-[0.10em] font-semibold uppercase">{label}</div>
+            {live && <LiveBadge />}
+          </div>
           <div className="flex items-baseline gap-2 mt-0.5">
             <span className="font-display text-[20px] md:text-[22px] leading-none tabular-nums">
-              {row.close.toLocaleString("en-IN", { maximumFractionDigits: 1 })}
+              {headlinePrice.toLocaleString("en-IN", { maximumFractionDigits: 1 })}
             </span>
-            <span className="tabular-nums text-[11.5px] font-medium" style={{ color: dailyColor }}>
-              {dailyPct == null ? "—" : `${dailyPct >= 0 ? "+" : ""}${dailyPct.toFixed(2)}%`}
+            <span className="tabular-nums text-[11.5px] font-medium" style={{ color: headlineColor }}>
+              {headlinePct == null ? "—" : `${headlinePct >= 0 ? "+" : ""}${headlinePct.toFixed(2)}%`}
             </span>
           </div>
         </div>
@@ -310,6 +363,23 @@ function HeroPanel({
         <RangeChange label="1Y" value={row.pct_change_1y} />
       </div>
     </div>
+  );
+}
+
+/** Small pulsing "LIVE" pill shown when a fresh intraday tick is driving
+ *  the hero price. The dot animates so it reads as real-time at a glance. */
+function LiveBadge() {
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-full px-1.5 py-[1px] text-[8.5px] font-bold uppercase tracking-[0.08em]"
+      style={{ background: "color-mix(in srgb, var(--color-delta-up) 14%, transparent)", color: UP }}
+    >
+      <span className="relative flex h-1.5 w-1.5">
+        <span className="absolute inline-flex h-full w-full rounded-full opacity-60 animate-ping" style={{ background: UP }} />
+        <span className="relative inline-flex h-1.5 w-1.5 rounded-full" style={{ background: UP }} />
+      </span>
+      Live
+    </span>
   );
 }
 
