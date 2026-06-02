@@ -90,11 +90,14 @@ export async function POST(req: NextRequest) {
     written++;
   }
 
-  // Prune ticks older than 2 days — we only ever read the latest. Keeps the
-  // table tiny without a separate cleanup job.
+  // Retention cap: never keep more than 24h of ticks. Each write prunes
+  // anything older, so the table only ever holds the trailing day — the
+  // prior session's values are gone by the time the next day's ticks
+  // accumulate. We only ever READ today's (IST-day-bounded) slice anyway;
+  // this just bounds storage as requested.
   await sql`
     DELETE FROM app.market_index_intraday
-     WHERE ts < now() - INTERVAL '2 days'
+     WHERE ts < now() - INTERVAL '24 hours'
   `;
 
   return NextResponse.json({

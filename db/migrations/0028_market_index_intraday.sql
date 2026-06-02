@@ -16,9 +16,11 @@
 --   truncated freely (we only ever read the latest tick — history here is
 --   disposable).
 --
--- Retention: only the latest tick per index is ever read. We DELETE ticks
--- older than 2 days at write time (cheap, keeps the table tiny). No
--- partitioning needed at this volume (~26 ticks/day × 2 indices).
+-- Retention: capped at 24h. Each write DELETEs ticks older than 24 hours,
+-- so the table only ever holds the trailing day and the prior session's
+-- values are overwritten as the next day accumulates. We only ever read
+-- the current IST-day slice anyway. No partitioning needed at this volume
+-- (~26 ticks/day × 2 indices).
 
 SET search_path = app, public;
 
