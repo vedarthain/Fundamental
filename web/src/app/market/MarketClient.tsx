@@ -498,16 +498,20 @@ function IndicesStrip({ rows }: { rows: IndexRow[] }) {
   const broad  = rows.filter((r) => r.code !== "NIFTY50" && r.code !== "NIFTYBANK" && broadCodes.has(r.code));
   const sector = rows.filter((r) => r.code !== "NIFTY50" && r.code !== "NIFTYBANK" && !broadCodes.has(r.code));
 
+  // Live ticks for all indices — same endpoint as HeroPair, CDN-cached 60s
+  // so this doesn't add a second origin hit.
+  const { ticks } = useLiveIndexTicks();
+
   return (
     <section className="space-y-2">
       {broad.length > 0 && (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
-          {broad.map((r) => <SparkTile key={r.code} row={r} />)}
+          {broad.map((r) => <SparkTile key={r.code} row={r} liveTick={ticks[r.code]} />)}
         </div>
       )}
       {sector.length > 0 && (
         <div className="grid grid-cols-3 md:grid-cols-5 lg:grid-cols-10 gap-2">
-          {sector.map((r) => <SparkTile key={r.code} row={r} compact />)}
+          {sector.map((r) => <SparkTile key={r.code} row={r} compact liveTick={ticks[r.code]} />)}
         </div>
       )}
     </section>
@@ -532,8 +536,10 @@ const SHORT_NAME: Record<string, string> = {
   NIFTYREALTY:     "Realty",
 };
 
-function SparkTile({ row, compact = false }: { row: IndexRow; compact?: boolean }) {
-  const v = row.pct_change_1d;
+function SparkTile({ row, compact = false, liveTick }: { row: IndexRow; compact?: boolean; liveTick?: LiveTick }) {
+  const fresh = liveTick && liveTick.age_seconds <= LIVE_MAX_AGE_S ? liveTick : undefined;
+  const v = fresh?.pct_change ?? row.pct_change_1d;
+  const price = fresh?.ltp ?? row.close;
   const positive = (v ?? 0) >= 0;
   const color = v == null ? MUTED : positive ? UP : DOWN;
   const shortName = SHORT_NAME[row.code] ?? row.name;
@@ -550,7 +556,7 @@ function SparkTile({ row, compact = false }: { row: IndexRow; compact?: boolean 
       </div>
       <div className="flex items-end justify-between gap-1.5">
         <span className={`font-medium tabular-nums shrink-0 ${compact ? "text-[12px]" : "text-[13.5px]"}`}>
-          {row.close.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+          {price.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
         </span>
         {/* min-w-0 lets flex-1 actually shrink under content; without it,
             the child sparkline div can briefly report a negative width

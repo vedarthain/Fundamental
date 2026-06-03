@@ -29,14 +29,28 @@ const UPSTOX_DIALOG_BASE  = "https://api.upstox.com/v2/login/authorization/dialo
 const UPSTOX_TOKEN_URL    = "https://api.upstox.com/v2/login/authorization/token";
 const UPSTOX_LTP_URL      = "https://api.upstox.com/v2/market-quote/ltp";
 
-// Upstox instrument keys for the two headline indices we tick intraday.
-// Stable, well-known constants (indices aren't in our app.upstox_instrument
-// equity table). KEY = the Upstox instrument key we request by; VALUE = our
-// internal index_code used everywhere else (market_index_history /
-// market_index_intraday).
+// Upstox instrument keys for all tracked NSE indices.
+// KEY = Upstox instrument key (NSE_INDEX|<NSE display name>)
+// VALUE = our internal index_code (matches market_index_history / market_index_intraday)
+// Names match exactly what NSE uses in its daily CSV — see fetch-indices.py INDEX_WHITELIST.
 export const INDEX_INSTRUMENT_KEYS: Record<string, string> = {
-  "NSE_INDEX|Nifty 50":   "NIFTY50",
-  "NSE_INDEX|Nifty Bank": "NIFTYBANK",
+  // Headline
+  "NSE_INDEX|Nifty 50":            "NIFTY50",
+  "NSE_INDEX|Nifty Bank":          "NIFTYBANK",
+  // Broad market
+  "NSE_INDEX|Nifty 100":           "NIFTY100",
+  "NSE_INDEX|Nifty 500":           "NIFTY500",
+  "NSE_INDEX|Nifty Next 50":       "NIFTYNEXT50",
+  "NSE_INDEX|NIFTY Midcap 100":    "NIFTYMIDCAP100",
+  "NSE_INDEX|NIFTY Smallcap 100":  "NIFTYSMALLCAP100",
+  // Sectoral
+  "NSE_INDEX|Nifty IT":            "NIFTYIT",
+  "NSE_INDEX|Nifty Auto":          "NIFTYAUTO",
+  "NSE_INDEX|Nifty FMCG":          "NIFTYFMCG",
+  "NSE_INDEX|Nifty Pharma":        "NIFTYPHARMA",
+  "NSE_INDEX|Nifty Energy":        "NIFTYENERGY",
+  "NSE_INDEX|Nifty Metal":         "NIFTYMETAL",
+  "NSE_INDEX|Nifty Realty":        "NIFTYREALTY",
 };
 
 export type UpstoxSession = {
