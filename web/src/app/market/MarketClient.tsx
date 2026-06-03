@@ -302,6 +302,25 @@ function freshTick(t: LiveTick | undefined): LiveTick | null {
   return t.age_seconds <= LIVE_MAX_AGE_S ? t : null;
 }
 
+/** YYYY-MM-DD in IST for a Date or ISO string — used to decide whether a
+ *  tick belongs to the current trading day. */
+function istDayKey(d: Date | string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date(d));
+}
+
+/** The latest tick if it belongs to TODAY's IST session — regardless of the
+ *  15-min live window. This lets the headline price HOLD the 15:30 close from
+ *  market close until tonight's bhavcopy lands, instead of snapping back to
+ *  yesterday's EOD at ~15:45 when the freshness window lapses. Returns null
+ *  before the first tick of the day, so pre-open we correctly show row.close
+ *  (yesterday's settled EOD) rather than yesterday's last tick. */
+function todayTick(t: LiveTick | undefined): LiveTick | null {
+  if (!t || typeof t.ltp !== "number") return null;
+  return istDayKey(t.ts) === istDayKey(new Date()) ? t : null;
+}
+
 function HeroPanel({
   label, row, series, intraday, range, chartIdSuffix, live, rawTick,
 }: {
@@ -315,6 +334,12 @@ function HeroPanel({
   rawTick?: LiveTick;
 }) {
   const isIntraday = range === "1D";
+
+  // The latest price we have for TODAY, even if older than the 15-min live
+  // window. Between 15:30 (close) and ~18:30 (bhavcopy) the pinger stops but
+  // this keeps the 15:30 close on screen instead of reverting to yesterday's
+  // EOD. `live` (fresh ≤15 min) still gates the pulsing LIVE badge.
+  const held = todayTick(rawTick);
 
   // Daily series for 1M/3M/6M/1Y — filter to the range window.
   const dailyPoints = useMemo(() => {
@@ -331,14 +356,14 @@ function HeroPanel({
   // and the day's move reads correctly even with one tick so far.
   const intradayPoints = useMemo(() => {
     const pts = intraday.map((p) => ({ date: p.ts, close: p.ltp }));
-    const prev = live?.prev_close;
+    const prev = held?.prev_close;
     if (prev != null && pts.length > 0) {
       // Synthetic baseline ~1 min before the first tick.
       const t0 = new Date(new Date(pts[0].date).getTime() - 60_000).toISOString();
       return [{ date: t0, close: prev }, ...pts];
     }
     return pts;
-  }, [intraday, live]);
+  }, [intraday, held]);
 
   const points = isIntraday ? intradayPoints : dailyPoints;
 
@@ -355,7 +380,7 @@ function HeroPanel({
   // Range change %: for 1D use the live day-change vs prev close (more
   // meaningful than first-tick-to-last); for daily ranges it's first→last.
   const changePct = isIntraday
-    ? (live?.pct_change ?? (first > 0 ? ((last - first) / first) * 100 : 0))
+    ? (held?.pct_change ?? (first > 0 ? ((last - first) / first) * 100 : 0))
     : (first > 0 ? ((last - first) / first) * 100 : 0);
   const positive = changePct >= 0;
   const stroke = positive ? UP : DOWN;
@@ -365,8 +390,8 @@ function HeroPanel({
   // When a fresh intraday tick exists, it supersedes the EOD close: show
   // the live price as the headline number and live change vs prev close.
   // Otherwise fall back to the daily close already baked into the payload.
-  const headlinePrice = live ? live.ltp : row.close;
-  const headlinePct   = live ? live.pct_change : row.pct_change_1d;
+  const headlinePrice = held ? held.ltp : row.close;
+  const headlinePct   = held ? (held.pct_change ?? row.pct_change_1d) : row.pct_change_1d;
   const headlineColor = headlinePct == null ? MUTED : headlinePct >= 0 ? UP : DOWN;
   const gradId = `hero-fill-${chartIdSuffix}`;
   // Timestamp badge: show fetch time in both live and EOD modes so users
@@ -552,10 +577,11 @@ const SHORT_NAME: Record<string, string> = {
 };
 
 function SparkTile({ row, compact = false, range = "1D", liveTick }: { row: IndexRow; compact?: boolean; range?: Range; liveTick?: LiveTick }) {
-  // In 1D mode use the live tick if fresh; all other ranges use snapshot pct.
-  const fresh = range === "1D" && liveTick && liveTick.age_seconds <= LIVE_MAX_AGE_S ? liveTick : undefined;
-  const v = fresh?.pct_change ?? rangeToPct(row, range);
-  const price = fresh?.ltp ?? row.close;
+  // In 1D mode show the latest tick from today (holds the 15:30 close through
+  // to bhavcopy, not just the 15-min live window); other ranges use snapshot.
+  const held = range === "1D" ? todayTick(liveTick) : null;
+  const v = held?.pct_change ?? rangeToPct(row, range);
+  const price = held?.ltp ?? row.close;
   const positive = (v ?? 0) >= 0;
   const color = v == null ? MUTED : positive ? UP : DOWN;
   const shortName = SHORT_NAME[row.code] ?? row.name;
