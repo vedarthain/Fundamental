@@ -41,8 +41,8 @@ export const INDEX_INSTRUMENT_KEYS: Record<string, string> = {
   "NSE_INDEX|Nifty 100":           "NIFTY100",
   "NSE_INDEX|Nifty 500":           "NIFTY500",
   "NSE_INDEX|Nifty Next 50":       "NIFTYNEXT50",
-  "NSE_INDEX|NIFTY Midcap 100":    "NIFTYMIDCAP100",
-  "NSE_INDEX|NIFTY Smallcap 100":  "NIFTYSMALLCAP100",
+  "NSE_INDEX|Nifty Midcap 100":    "NIFTYMIDCAP100",
+  "NSE_INDEX|Nifty Smallcap 100":  "NIFTYSMALLCAP100",
   // Sectoral
   "NSE_INDEX|Nifty IT":            "NIFTYIT",
   "NSE_INDEX|Nifty Auto":          "NIFTYAUTO",
