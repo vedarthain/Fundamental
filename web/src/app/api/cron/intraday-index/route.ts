@@ -2,7 +2,7 @@
  * POST /api/cron/intraday-index — capture a live LTP tick for the two
  * headline indices (NIFTY 50, NIFTY BANK) into app.market_index_intraday.
  *
- * Trigger: an external pinger (cron-job.org) hits this every ~15 min
+ * Trigger: an external pinger (cron-job.org) hits this every ~10 min
  * during market hours (09:16–15:30 IST, Mon–Fri). We use an external
  * pinger rather than GitHub Actions cron because GH throttles scheduled
  * jobs hard at sub-hourly cadence (observed ~2 of 14 fires running);

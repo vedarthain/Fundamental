@@ -188,9 +188,9 @@ const RANGE_DAYS: Record<Exclude<Range, "1D">, number> = { "1M": 30, "3M": 90, "
 
 // A live tick is only shown if it's fresher than this. Beyond it we assume
 // the market is closed (or the pinger stalled) and fall back to the daily
-// close from the overview payload. 20 min comfortably covers the ~15-min
-// tick cadence plus pinger jitter.
-const LIVE_MAX_AGE_S = 20 * 60;
+// close from the overview payload. 15 min covers the ~10-min tick cadence
+// plus pinger jitter (one missed fire still lands within the window).
+const LIVE_MAX_AGE_S = 15 * 60;
 
 type LiveTick = { ltp: number; prev_close: number | null; pct_change: number | null; age_seconds: number; ts: string };
 type IntradayPoint = { ts: string; ltp: number };
@@ -263,8 +263,8 @@ function HeroPair({
         </div>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x hairline">
-        <HeroPanel label="NIFTY 50"   row={left}  series={leftSeries}  intraday={leftIntraday}  range={range} chartIdSuffix="50"   live={leftLive} />
-        <HeroPanel label="NIFTY BANK" row={right} series={rightSeries} intraday={rightIntraday} range={range} chartIdSuffix="bank" live={rightLive} />
+        <HeroPanel label="NIFTY 50"   row={left}  series={leftSeries}  intraday={leftIntraday}  range={range} chartIdSuffix="50"   live={leftLive}  rawTick={live.ticks["NIFTY50"]} />
+        <HeroPanel label="NIFTY BANK" row={right} series={rightSeries} intraday={rightIntraday} range={range} chartIdSuffix="bank" live={rightLive} rawTick={live.ticks["NIFTYBANK"]} />
       </div>
     </section>
   );
@@ -277,7 +277,7 @@ function freshTick(t: LiveTick | undefined): LiveTick | null {
 }
 
 function HeroPanel({
-  label, row, series, intraday, range, chartIdSuffix, live,
+  label, row, series, intraday, range, chartIdSuffix, live, rawTick,
 }: {
   label: string;
   row: IndexRow | undefined;
@@ -286,6 +286,7 @@ function HeroPanel({
   range: Range;
   chartIdSuffix: string;
   live: LiveTick | null;
+  rawTick?: LiveTick;
 }) {
   const isIntraday = range === "1D";
 
@@ -342,7 +343,14 @@ function HeroPanel({
   const headlinePct   = live ? live.pct_change : row.pct_change_1d;
   const headlineColor = headlinePct == null ? MUTED : headlinePct >= 0 ? UP : DOWN;
   const gradId = `hero-fill-${chartIdSuffix}`;
-  const updatedAt = live ? fmtClock(live.ts) : null;
+  // Timestamp badge: show fetch time in both live and EOD modes so users
+  // always know how fresh the displayed price is.
+  //   live tick  → green "Updated HH:MM IST"
+  //   stale tick → muted "Last fetched HH:MM IST" (tick exists but >15 min old)
+  //   no tick    → nothing
+  const tickForTime = live ?? rawTick;
+  const fetchedAt   = tickForTime ? fmtClock(tickForTime.ts) : null;
+  const isLiveTick  = live !== null;
 
   return (
     <div className="px-3 md:px-4 pt-2.5 pb-2">
@@ -368,15 +376,16 @@ function HeroPanel({
           </div>
         </div>
       </div>
-      {/* Last-updated stamp — highlighted so the freshness of the live price
-          is obvious at a glance. Only shown when we have a live tick. */}
-      {updatedAt && (
+      {/* Always show fetch timestamp — green when live, muted when EOD fallback. */}
+      {fetchedAt && (
         <div className="mt-1">
           <span
             className="inline-flex items-center gap-1 rounded px-1.5 py-[1px] text-[10px] font-medium tabular-nums"
-            style={{ background: "color-mix(in srgb, var(--color-accent-600) 12%, transparent)", color: "var(--color-accent-600)" }}
+            style={isLiveTick
+              ? { background: "color-mix(in srgb, var(--color-accent-600) 12%, transparent)", color: "var(--color-accent-600)" }
+              : { background: "color-mix(in srgb, var(--color-muted) 10%, transparent)", color: "var(--color-muted)" }}
           >
-            Updated {updatedAt} IST
+            {isLiveTick ? `Updated ${fetchedAt} IST` : `Last fetched ${fetchedAt} IST`}
           </span>
         </div>
       )}
