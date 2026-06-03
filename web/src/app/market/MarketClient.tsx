@@ -141,6 +141,9 @@ function useSuppressRechartsDimensionWarning() {
 
 export function MarketClient({ data }: { data: OverviewResponse }) {
   useSuppressRechartsDimensionWarning();
+  // Range is lifted here so the hero chart, indices strip, and sector
+  // heatmap all react to the same selector — one click updates everything.
+  const [range, setRange] = useState<Range>("1D");
   const liveSectors = useLiveSectors();
   const nifty     = data.indices.find((r) => r.code === "NIFTY50");
   const niftyBank = data.indices.find((r) => r.code === "NIFTYBANK");
@@ -151,8 +154,10 @@ export function MarketClient({ data }: { data: OverviewResponse }) {
         leftSeries={data.heroSeries["NIFTY50"] ?? []}
         right={niftyBank}
         rightSeries={data.heroSeries["NIFTYBANK"] ?? []}
+        range={range}
+        setRange={setRange}
       />
-      <IndicesStrip rows={data.indices.filter((r) => r.code !== "NIFTYBANK")} />
+      <IndicesStrip rows={data.indices.filter((r) => r.code !== "NIFTYBANK")} range={range} />
 
       {/* Movers + Building strength row.  Movers is the wide left side
           (existing UX), Building strength is the secondary discovery
@@ -174,7 +179,7 @@ export function MarketClient({ data }: { data: OverviewResponse }) {
         <HolidaysCard holidays={data.holidays} />
       </div>
 
-      <SectorHeatmap rows={data.sectorHeat} liveSectors={liveSectors} />
+      <SectorHeatmap rows={data.sectorHeat} liveSectors={liveSectors} range={range} />
     </div>
   );
 }
@@ -250,16 +255,16 @@ function useLiveIndexTicks(): LiveData {
 }
 
 function HeroPair({
-  left, leftSeries, right, rightSeries,
+  left, leftSeries, right, rightSeries, range, setRange,
 }: {
   left: IndexRow | undefined;
   leftSeries: IndexSeriesPoint[];
   right: IndexRow | undefined;
   rightSeries: IndexSeriesPoint[];
+  range: Range;
+  setRange: (r: Range) => void;
 }) {
-  // Single range selector drives both panels — cleaner UX, and keeping them
-  // synced lets the eye compare slopes directly.
-  const [range, setRange] = useState<Range>("1D");
+  // range/setRange lifted to MarketClient so all sections stay in sync.
   const live = useLiveIndexTicks();
   const leftLive  = freshTick(live.ticks["NIFTY50"]);
   const rightLive = freshTick(live.ticks["NIFTYBANK"]);
@@ -490,7 +495,17 @@ function RangeChange({ label, value, positive }: { label: string; value: number 
 // Index strip — compact sparkline tiles
 // ──────────────────────────────────────────────────────────────────────────
 
-function IndicesStrip({ rows }: { rows: IndexRow[] }) {
+// Map the page-level range to the IndexRow pct column available.
+// IndexRow has 1d/1w/1m/1y; 3M and 6M fall back to the nearest available.
+function rangeToPct(row: IndexRow, range: Range): number | null {
+  if (range === "1D") return row.pct_change_1d;
+  if (range === "1W") return row.pct_change_1w;
+  if (range === "1M") return row.pct_change_1m;
+  if (range === "3M" || range === "6M") return row.pct_change_1y ?? row.pct_change_1m; // best available
+  return row.pct_change_1y;
+}
+
+function IndicesStrip({ rows, range }: { rows: IndexRow[]; range: Range }) {
   // NIFTY 50 + NIFTY BANK now live in the hero pair — exclude here so we
   // don't duplicate them. The broad set below covers the remaining
   // broad-market indices; sectoral indices land in the dense second row.
@@ -499,19 +514,19 @@ function IndicesStrip({ rows }: { rows: IndexRow[] }) {
   const sector = rows.filter((r) => r.code !== "NIFTY50" && r.code !== "NIFTYBANK" && !broadCodes.has(r.code));
 
   // Live ticks for all indices — same endpoint as HeroPair, CDN-cached 60s
-  // so this doesn't add a second origin hit.
+  // so this doesn't add a second origin hit. Only used in 1D mode.
   const { ticks } = useLiveIndexTicks();
 
   return (
     <section className="space-y-2">
       {broad.length > 0 && (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
-          {broad.map((r) => <SparkTile key={r.code} row={r} liveTick={ticks[r.code]} />)}
+          {broad.map((r) => <SparkTile key={r.code} row={r} range={range} liveTick={ticks[r.code]} />)}
         </div>
       )}
       {sector.length > 0 && (
         <div className="grid grid-cols-3 md:grid-cols-5 lg:grid-cols-10 gap-2">
-          {sector.map((r) => <SparkTile key={r.code} row={r} compact liveTick={ticks[r.code]} />)}
+          {sector.map((r) => <SparkTile key={r.code} row={r} range={range} compact liveTick={ticks[r.code]} />)}
         </div>
       )}
     </section>
@@ -536,9 +551,10 @@ const SHORT_NAME: Record<string, string> = {
   NIFTYREALTY:     "Realty",
 };
 
-function SparkTile({ row, compact = false, liveTick }: { row: IndexRow; compact?: boolean; liveTick?: LiveTick }) {
-  const fresh = liveTick && liveTick.age_seconds <= LIVE_MAX_AGE_S ? liveTick : undefined;
-  const v = fresh?.pct_change ?? row.pct_change_1d;
+function SparkTile({ row, compact = false, range = "1D", liveTick }: { row: IndexRow; compact?: boolean; range?: Range; liveTick?: LiveTick }) {
+  // In 1D mode use the live tick if fresh; all other ranges use snapshot pct.
+  const fresh = range === "1D" && liveTick && liveTick.age_seconds <= LIVE_MAX_AGE_S ? liveTick : undefined;
+  const v = fresh?.pct_change ?? rangeToPct(row, range);
   const price = fresh?.ltp ?? row.close;
   const positive = (v ?? 0) >= 0;
   const color = v == null ? MUTED : positive ? UP : DOWN;
@@ -1017,21 +1033,30 @@ function HolidaysCard({ holidays }: { holidays: HolidayItem[] }) {
 
 type SectorPeriod = "1D" | "1W";
 
+// Map page range to the two periods the sector data supports.
+function rangeToPeriod(range: Range): SectorPeriod {
+  return range === "1D" ? "1D" : "1W";
+}
+
 function SectorHeatmap({
   rows,
   liveSectors,
+  range,
 }: {
   rows: SectorHeatRow[];
   liveSectors?: Record<string, { avg_pct_1d: number; fetched_at: string }>;
+  range?: Range;
 }) {
+  // When a page-level range is provided, sync to it; allow local override too.
   const [period, setPeriod] = useState<SectorPeriod>("1D");
+  const effectivePeriod: SectorPeriod = range ? rangeToPeriod(range) : period;
   if (rows.length === 0) return null;
   const maxStocks = Math.max(...rows.map((r) => r.stocks_count));
 
   // When in 1D mode, prefer the live sector returns (from current_price vs
   // yesterday's close) over the precomputed snapshot value, which is stale
   // until the daily EOD rebuild at 18:30 IST.
-  const hasLive = period === "1D" && liveSectors && Object.keys(liveSectors).length > 0;
+  const hasLive = effectivePeriod === "1D" && liveSectors && Object.keys(liveSectors).length > 0;
 
   // Latest fetch timestamp across all sectors (shown in header).
   const liveTs = hasLive
@@ -1044,14 +1069,9 @@ function SectorHeatmap({
       }).format(new Date(liveTs)) + " IST"
     : null;
 
-  // Auto-calibrate the colour scale to the data range. Indian sector
-  // 1W averages typically cluster within ±2%, so a fixed ±5% cap makes
-  // every tile look pale. Cap at max(|values|) clipped to [1.5%, 5%]
-  // so very flat weeks still get visual contrast and an outlier doesn't
-  // wash out the rest.
   const values = rows.map((r) => {
-    if (period === "1D" && hasLive) return liveSectors![r.sector_name]?.avg_pct_1d ?? r.avg_ret_1d ?? 0;
-    return (period === "1D" ? r.avg_ret_1d : r.avg_ret_1w) ?? 0;
+    if (effectivePeriod === "1D" && hasLive) return liveSectors![r.sector_name]?.avg_pct_1d ?? r.avg_ret_1d ?? 0;
+    return (effectivePeriod === "1D" ? r.avg_ret_1d : r.avg_ret_1w) ?? 0;
   });
   const dataMax = Math.max(...values.map(Math.abs));
   const cap = Math.min(0.05, Math.max(0.015, dataMax * 1.05));
@@ -1062,11 +1082,11 @@ function SectorHeatmap({
       <div className="px-3 md:px-4 py-2.5 border-b hairline flex flex-wrap items-baseline justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <div className="font-display text-[14px] leading-tight">Sector heatmap · {period}</div>
+            <div className="font-display text-[14px] leading-tight">Sector heatmap · {effectivePeriod}</div>
             {hasLive && <LiveBadge />}
           </div>
           <div className="muted-text text-[10.5px] mt-0.5">
-            Tile size = stocks · colour = avg {period} return
+            Tile size = stocks · colour = avg {effectivePeriod} return
             {liveClock && <span className="ml-1.5 tabular-nums">· fetched {liveClock}</span>}
           </div>
         </div>
@@ -1074,17 +1094,13 @@ function SectorHeatmap({
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm" style={{ background: DOWN, opacity: 0.7 }} />−{capPct}%</span>
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm" style={{ background: "var(--color-paper)" }} />0</span>
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm" style={{ background: UP, opacity: 0.7 }} />+{capPct}%</span>
-          <Toggle<SectorPeriod>
-            value={period} onChange={setPeriod}
-            options={[{ value: "1D", label: "1D" }, { value: "1W", label: "1W" }]}
-          />
         </div>
       </div>
       <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-1.5 p-2">
         {rows.map((s) => {
-          const r = (period === "1D" && hasLive)
+          const r = (effectivePeriod === "1D" && hasLive)
             ? (liveSectors![s.sector_name]?.avg_pct_1d ?? s.avg_ret_1d ?? 0)
-            : ((period === "1D" ? s.avg_ret_1d : s.avg_ret_1w) ?? 0);
+            : ((effectivePeriod === "1D" ? s.avg_ret_1d : s.avg_ret_1w) ?? 0);
           const intensity = Math.min(Math.abs(r) / cap, 1);
           const bg = r > 0
             ? `color-mix(in srgb, var(--color-delta-up) ${Math.round(intensity * 50)}%, var(--color-paper))`
