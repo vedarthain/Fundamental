@@ -40,18 +40,15 @@ export function PriceChart({
     if (range === "1D") {
       // For 1D: show yesterday's EOD close → today's live price (if available).
       // Falls back to last 2 EOD closes when the pinger hasn't run yet today.
+      // Use the raw ISO timestamp (priceFetchedAt or todayIso) as the date
+      // field so new Date() can parse it; the tickFormatter converts it to
+      // a readable time label.
       const base = data.slice(-1);          // yesterday's close
       if (currentPrice != null && base.length > 0) {
         const todayIso = new Date().toISOString().slice(0, 10);
-        // Only inject today's point if it's genuinely newer than the last EOD.
         if (todayIso > base[0].date) {
-          const label = priceFetchedAt
-            ? new Intl.DateTimeFormat("en-IN", {
-                timeZone: "Asia/Kolkata",
-                hour: "2-digit", minute: "2-digit", hour12: false,
-              }).format(new Date(priceFetchedAt)) + " IST"
-            : todayIso;
-          return [...base, { date: label, close: currentPrice }];
+          const dateField = priceFetchedAt ?? `${todayIso}T15:30:00+05:30`;
+          return [...base, { date: dateField, close: currentPrice }];
         }
       }
       return data.slice(-2);               // fallback: last 2 EOD closes
@@ -167,6 +164,13 @@ export function PriceChart({
                   : 0;
 
               if (range === "1D" || range === "1W" || range === "1M" || spanDays <= 31) {
+                // For the live intraday point (a full ISO timestamp, not just
+                // a date), show the time in IST instead of the date.
+                if (range === "1D" && d.length > 10) {
+                  return new Intl.DateTimeFormat("en-IN", {
+                    timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false,
+                  }).format(dt);
+                }
                 return dt.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
               }
               if (range === "3M" || range === "1Y" || spanDays <= 548 /* ~18 months */) {
@@ -196,11 +200,19 @@ export function PriceChart({
               borderRadius: 8,
               fontSize: 12,
             }}
-            labelFormatter={(d) =>
-              new Date(d).toLocaleDateString("en-IN", {
+            labelFormatter={(d) => {
+              const s = String(d ?? "");
+              if (range === "1D" && s.length > 10) {
+                // Live intraday point — show time in IST
+                return new Intl.DateTimeFormat("en-IN", {
+                  timeZone: "Asia/Kolkata",
+                  hour: "2-digit", minute: "2-digit", hour12: false,
+                }).format(new Date(s)) + " IST (live)";
+              }
+              return new Date(s).toLocaleDateString("en-IN", {
                 day: "numeric", month: "short", year: "numeric",
-              })
-            }
+              });
+            }}
             formatter={(v: unknown) => [
               `₹${Number(v).toLocaleString("en-IN", { maximumFractionDigits: 1 })}`,
               "Close",
