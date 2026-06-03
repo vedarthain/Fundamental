@@ -141,6 +141,7 @@ function useSuppressRechartsDimensionWarning() {
 
 export function MarketClient({ data }: { data: OverviewResponse }) {
   useSuppressRechartsDimensionWarning();
+  const liveSectors = useLiveSectors();
   const nifty     = data.indices.find((r) => r.code === "NIFTY50");
   const niftyBank = data.indices.find((r) => r.code === "NIFTYBANK");
   return (
@@ -173,7 +174,7 @@ export function MarketClient({ data }: { data: OverviewResponse }) {
         <HolidaysCard holidays={data.holidays} />
       </div>
 
-      <SectorHeatmap rows={data.sectorHeat} />
+      <SectorHeatmap rows={data.sectorHeat} liveSectors={liveSectors} />
     </div>
   );
 }
@@ -207,6 +208,26 @@ type LiveData = {
  * 60s while mounted; the endpoint is 60s-CDN-cached so this is at most one
  * origin read per minute per region.
  */
+/** Poll /api/market/sector-live every 60s for intraday sector 1D returns. */
+function useLiveSectors(): Record<string, { avg_pct_1d: number; fetched_at: string }> {
+  const [data, setData] = useState<Record<string, { avg_pct_1d: number; fetched_at: string }>>({});
+  useEffect(() => {
+    let alive = true;
+    const pull = async () => {
+      try {
+        const res = await fetch("/api/market/sector-live", { cache: "no-store" });
+        if (!res.ok) return;
+        const json = await res.json();
+        if (alive) setData(json);
+      } catch { /* keep last good data */ }
+    };
+    pull();
+    const id = setInterval(pull, 60_000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+  return data;
+}
+
 function useLiveIndexTicks(): LiveData {
   const [data, setData] = useState<LiveData>({ ticks: {}, intraday: {} });
   useEffect(() => {
@@ -990,17 +1011,42 @@ function HolidaysCard({ holidays }: { holidays: HolidayItem[] }) {
 
 type SectorPeriod = "1D" | "1W";
 
-function SectorHeatmap({ rows }: { rows: SectorHeatRow[] }) {
+function SectorHeatmap({
+  rows,
+  liveSectors,
+}: {
+  rows: SectorHeatRow[];
+  liveSectors?: Record<string, { avg_pct_1d: number; fetched_at: string }>;
+}) {
   const [period, setPeriod] = useState<SectorPeriod>("1D");
   if (rows.length === 0) return null;
   const maxStocks = Math.max(...rows.map((r) => r.stocks_count));
+
+  // When in 1D mode, prefer the live sector returns (from current_price vs
+  // yesterday's close) over the precomputed snapshot value, which is stale
+  // until the daily EOD rebuild at 18:30 IST.
+  const hasLive = period === "1D" && liveSectors && Object.keys(liveSectors).length > 0;
+
+  // Latest fetch timestamp across all sectors (shown in header).
+  const liveTs = hasLive
+    ? Object.values(liveSectors!).reduce<string | null>((best, s) =>
+        !best || s.fetched_at > best ? s.fetched_at : best, null)
+    : null;
+  const liveClock = liveTs
+    ? new Intl.DateTimeFormat("en-IN", {
+        timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false,
+      }).format(new Date(liveTs)) + " IST"
+    : null;
 
   // Auto-calibrate the colour scale to the data range. Indian sector
   // 1W averages typically cluster within ±2%, so a fixed ±5% cap makes
   // every tile look pale. Cap at max(|values|) clipped to [1.5%, 5%]
   // so very flat weeks still get visual contrast and an outlier doesn't
   // wash out the rest.
-  const values = rows.map((r) => (period === "1D" ? r.avg_ret_1d : r.avg_ret_1w) ?? 0);
+  const values = rows.map((r) => {
+    if (period === "1D" && hasLive) return liveSectors![r.sector_name]?.avg_pct_1d ?? r.avg_ret_1d ?? 0;
+    return (period === "1D" ? r.avg_ret_1d : r.avg_ret_1w) ?? 0;
+  });
   const dataMax = Math.max(...values.map(Math.abs));
   const cap = Math.min(0.05, Math.max(0.015, dataMax * 1.05));
   const capPct = (cap * 100).toFixed(1);
@@ -1009,9 +1055,13 @@ function SectorHeatmap({ rows }: { rows: SectorHeatRow[] }) {
     <section className="card overflow-hidden">
       <div className="px-3 md:px-4 py-2.5 border-b hairline flex flex-wrap items-baseline justify-between gap-3">
         <div>
-          <div className="font-display text-[14px] leading-tight">Sector heatmap · {period}</div>
+          <div className="flex items-center gap-2">
+            <div className="font-display text-[14px] leading-tight">Sector heatmap · {period}</div>
+            {hasLive && <LiveBadge />}
+          </div>
           <div className="muted-text text-[10.5px] mt-0.5">
             Tile size = stocks · colour = avg {period} return
+            {liveClock && <span className="ml-1.5 tabular-nums">· fetched {liveClock}</span>}
           </div>
         </div>
         <div className="flex items-center gap-2 text-[10px] muted-text">
@@ -1026,7 +1076,9 @@ function SectorHeatmap({ rows }: { rows: SectorHeatRow[] }) {
       </div>
       <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-1.5 p-2">
         {rows.map((s) => {
-          const r = (period === "1D" ? s.avg_ret_1d : s.avg_ret_1w) ?? 0;
+          const r = (period === "1D" && hasLive)
+            ? (liveSectors![s.sector_name]?.avg_pct_1d ?? s.avg_ret_1d ?? 0)
+            : ((period === "1D" ? s.avg_ret_1d : s.avg_ret_1w) ?? 0);
           const intensity = Math.min(Math.abs(r) / cap, 1);
           const bg = r > 0
             ? `color-mix(in srgb, var(--color-delta-up) ${Math.round(intensity * 50)}%, var(--color-paper))`
