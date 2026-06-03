@@ -113,6 +113,22 @@ export async function POST(req: NextRequest) {
          AND c.snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_stocks_panel_cache)
     `;
 
+    // APPEND one tick per symbol so the /stock 1D chart can draw a real
+    // intraday curve (current_price above is overwritten each fire and keeps
+    // no shape). Same LTPs already in hand — one extra bulk INSERT, no extra
+    // Upstox calls. ts defaults to now() for every row in the batch.
+    await sql`
+      INSERT INTO app.stock_intraday (symbol, ltp)
+      SELECT sym, price
+        FROM unnest(${syms}::text[], ${prices}::float8[]) AS up(sym, price)
+    `;
+    // Retention: keep ~one trading day. A touch over 24h so the current
+    // IST-day read is never truncated at the boundary.
+    await sql`
+      DELETE FROM app.stock_intraday
+       WHERE ts < now() - INTERVAL '26 hours'
+    `;
+
     // Purge the live-reading surfaces so fresh prices show on the next render.
     // (Not "market"/"snapshot" — that blob is unchanged until the EOD rebuild.)
     revalidateTag("panel-cache", "default");
@@ -123,6 +139,7 @@ export async function POST(req: NextRequest) {
       fetched: syms.length,
       rows_screener_meta: metaRes.count ?? 0,
       rows_panel_cache: panelRes.count ?? 0,
+      intraday_ticks: syms.length,
     });
   } catch (e) {
     // Surface the message so a 500 isn't an opaque empty body.

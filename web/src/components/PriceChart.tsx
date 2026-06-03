@@ -24,10 +24,14 @@ const RANGES: Range[] = ["1D", "1W", "1M", "3M", "1Y", "3Y", "5Y", "10Y", "ALL"]
 
 export function PriceChart({
   data,
+  intraday,
   currentPrice,
   priceFetchedAt,
 }: {
   data: PricePoint[];
+  /** Today's intraday ticks (oldest-first), used to draw a real 1D curve
+   *  instead of a straight yesterday-close → current-price line. */
+  intraday?: { ts: string; ltp: number }[];
   currentPrice?: number;
   priceFetchedAt?: string;
 }) {
@@ -38,12 +42,18 @@ export function PriceChart({
     if (data.length === 0) return [];
     if (range === "ALL") return data;
     if (range === "1D") {
-      // For 1D: show yesterday's EOD close → today's live price (if available).
-      // Falls back to last 2 EOD closes when the pinger hasn't run yet today.
-      // Use the raw ISO timestamp (priceFetchedAt or todayIso) as the date
-      // field so new Date() can parse it; the tickFormatter converts it to
-      // a readable time label.
+      // Preferred: draw the real intraday curve from today's accumulating
+      // ticks, anchored on yesterday's EOD close so the line starts from the
+      // prior close and the day's move reads correctly even with one tick.
+      // The ts is a full ISO timestamp; the tickFormatter renders it as IST
+      // time (detected via length > 10).
       const base = data.slice(-1);          // yesterday's close
+      if (intraday && intraday.length > 0) {
+        const pts = intraday.map((t) => ({ date: t.ts, close: t.ltp }));
+        return base.length > 0 ? [...base, ...pts] : pts;
+      }
+      // Fallback (no ticks yet today): yesterday's EOD close → current price,
+      // a straight 2-point line until the first tick lands.
       if (currentPrice != null && base.length > 0) {
         const todayIso = new Date().toISOString().slice(0, 10);
         if (todayIso > base[0].date) {
@@ -59,7 +69,7 @@ export function PriceChart({
     // If the range is so short there's no data (e.g. 1W on a freshly-listed
     // stock), fall back to the last few points so the chart doesn't go blank.
     return sliced.length >= 2 ? sliced : data.slice(-Math.max(2, Math.ceil(days / 7)));
-  }, [data, range, currentPrice, priceFetchedAt]);
+  }, [data, intraday, range, currentPrice, priceFetchedAt]);
 
   // Direction colour — green if last close ≥ first close in the visible range,
   // red if it dropped. Uses our existing earthy score palette.
