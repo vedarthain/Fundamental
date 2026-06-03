@@ -100,7 +100,8 @@ export async function POST(req: NextRequest) {
     // arrays as native Postgres arrays. One round-trip per table.
     const metaRes = await sql`
       UPDATE app.screener_meta sm
-         SET current_price = up.price
+         SET current_price   = up.price,
+             price_fetched_at = NOW()
         FROM unnest(${syms}::text[], ${prices}::float8[]) AS up(sym, price)
        WHERE sm.symbol = up.sym
     `;

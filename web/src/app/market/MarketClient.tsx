@@ -182,9 +182,9 @@ export function MarketClient({ data }: { data: OverviewResponse }) {
 // Hero pair — NIFTY 50 + NIFTY Bank, side by side, sharing one range toggle
 // ──────────────────────────────────────────────────────────────────────────
 
-type Range = "1D" | "1M" | "3M" | "6M" | "1Y";
+type Range = "1D" | "1W" | "1M" | "3M" | "6M" | "1Y";
 // 1D is special-cased (intraday ticks, not daily closes) so it has no entry.
-const RANGE_DAYS: Record<Exclude<Range, "1D">, number> = { "1M": 30, "3M": 90, "6M": 180, "1Y": 365 };
+const RANGE_DAYS: Record<Exclude<Range, "1D">, number> = { "1W": 7, "1M": 30, "3M": 90, "6M": 180, "1Y": 365 };
 
 // A live tick is only shown if it's fresher than this. Beyond it we assume
 // the market is closed (or the pinger stalled) and fall back to the daily
@@ -238,7 +238,7 @@ function HeroPair({
 }) {
   // Single range selector drives both panels — cleaner UX, and keeping them
   // synced lets the eye compare slopes directly.
-  const [range, setRange] = useState<Range>("3M");
+  const [range, setRange] = useState<Range>("1D");
   const live = useLiveIndexTicks();
   const leftLive  = freshTick(live.ticks["NIFTY50"]);
   const rightLive = freshTick(live.ticks["NIFTYBANK"]);
@@ -251,7 +251,7 @@ function HeroPair({
           Headline indices
         </div>
         <div className="flex items-center gap-1 p-0.5 rounded-md border" style={{ borderColor: "var(--color-border-default)" }}>
-          {(["1D", "1M", "3M", "6M", "1Y"] as Range[]).map((r) => (
+          {(["1D", "1W", "1M", "3M", "6M", "1Y"] as Range[]).map((r) => (
             <button key={r} type="button" onClick={() => setRange(r)}
               className={`px-2 py-0.5 text-[11px] font-medium tabular-nums rounded transition-colors ${
                 range === r ? "" : "muted-text hover:bg-[var(--color-paper)]"

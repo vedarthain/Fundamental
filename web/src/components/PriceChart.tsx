@@ -22,21 +22,47 @@ const RANGE_DAYS: Record<Exclude<Range, "1D" | "ALL">, number> = {
 
 const RANGES: Range[] = ["1D", "1W", "1M", "3M", "1Y", "3Y", "5Y", "10Y", "ALL"];
 
-export function PriceChart({ data }: { data: PricePoint[] }) {
+export function PriceChart({
+  data,
+  currentPrice,
+  priceFetchedAt,
+}: {
+  data: PricePoint[];
+  currentPrice?: number;
+  priceFetchedAt?: string;
+}) {
   const [range, setRange] = useState<Range>("1Y");
 
   // Filter the full daily series down to the selected range.
   const filtered = useMemo(() => {
     if (data.length === 0) return [];
     if (range === "ALL") return data;
-    if (range === "1D") return data.slice(-2);          // last 2 daily closes
+    if (range === "1D") {
+      // For 1D: show yesterday's EOD close → today's live price (if available).
+      // Falls back to last 2 EOD closes when the pinger hasn't run yet today.
+      const base = data.slice(-1);          // yesterday's close
+      if (currentPrice != null && base.length > 0) {
+        const todayIso = new Date().toISOString().slice(0, 10);
+        // Only inject today's point if it's genuinely newer than the last EOD.
+        if (todayIso > base[0].date) {
+          const label = priceFetchedAt
+            ? new Intl.DateTimeFormat("en-IN", {
+                timeZone: "Asia/Kolkata",
+                hour: "2-digit", minute: "2-digit", hour12: false,
+              }).format(new Date(priceFetchedAt)) + " IST"
+            : todayIso;
+          return [...base, { date: label, close: currentPrice }];
+        }
+      }
+      return data.slice(-2);               // fallback: last 2 EOD closes
+    }
     const days = RANGE_DAYS[range as Exclude<Range, "1D" | "ALL">];
     const cutoff = Date.now() - days * 86_400_000;
     const sliced = data.filter((p) => new Date(p.date).getTime() >= cutoff);
     // If the range is so short there's no data (e.g. 1W on a freshly-listed
     // stock), fall back to the last few points so the chart doesn't go blank.
     return sliced.length >= 2 ? sliced : data.slice(-Math.max(2, Math.ceil(days / 7)));
-  }, [data, range]);
+  }, [data, range, currentPrice, priceFetchedAt]);
 
   // Direction colour — green if last close ≥ first close in the visible range,
   // red if it dropped. Uses our existing earthy score palette.

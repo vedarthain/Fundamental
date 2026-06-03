@@ -51,6 +51,7 @@ type Stock = {
   maturity_tier: string;
   market_cap_cr: number | null;
   current_price: number | null;
+  price_fetched_at: string | null;
   composite_pct: number | null;
   quality_pct: number | null;
   valuation_pct: number | null;
@@ -99,6 +100,7 @@ async function loadStock(symbol: string) {
       u.ceo_name, u.ceo_title,
       s.cluster_id AS industry_id, c.name AS industry_name, mc.id AS sector_id, mc.name AS sector_name,
       s.maturity_tier, sm.market_cap_cr, sm.current_price,
+      sm.price_fetched_at::text,
       s.composite_pct, s.quality_pct, s.valuation_pct, s.momentum_pct,
       s.quality_components, s.valuation_components, s.momentum_components,
       s.score_status
@@ -282,6 +284,18 @@ export default async function StockPage({
               <>
                 <span>·</span>
                 <span className="tabular-nums">₹{stock.current_price.toLocaleString("en-IN")}</span>
+                {stock.price_fetched_at && (
+                  <span
+                    className="inline-flex items-center rounded px-1.5 py-[1px] text-[10px] font-medium tabular-nums"
+                    style={{ background: "color-mix(in srgb, var(--color-muted) 10%, transparent)", color: "var(--color-muted)" }}
+                    title="Last time the intraday price pinger updated this stock"
+                  >
+                    {new Intl.DateTimeFormat("en-IN", {
+                      timeZone: "Asia/Kolkata",
+                      hour: "2-digit", minute: "2-digit", hour12: false,
+                    }).format(new Date(stock.price_fetched_at))} IST
+                  </span>
+                )}
               </>
             )}
             {stock.market_cap_cr != null && (
@@ -384,7 +398,7 @@ export default async function StockPage({
             )}
             <div className="mt-8 grid grid-cols-1 lg:grid-cols-[1fr_2fr] gap-6">
               <AboutCard stock={stock} priceHistoryStart={priceHistory[0]?.date ?? null} />
-              <PriceChartCard symbol={stock.symbol} history={priceHistory} />
+              <PriceChartCard symbol={stock.symbol} history={priceHistory} currentPrice={stock.current_price} priceFetchedAt={stock.price_fetched_at} />
             </div>
           </>
         }
@@ -638,8 +652,8 @@ function AboutCard({
 /* ----------------------------- Price chart card -------------------- */
 
 function PriceChartCard({
-  symbol, history,
-}: { symbol: string; history: PricePoint[] }) {
+  symbol, history, currentPrice, priceFetchedAt,
+}: { symbol: string; history: PricePoint[]; currentPrice?: number | null; priceFetchedAt?: string | null }) {
   const first = history[0];
   const last = history[history.length - 1];
   const totalReturn = first && last && first.close > 0
@@ -686,7 +700,7 @@ function PriceChartCard({
           </div>
         )}
       </div>
-      <PriceChart data={history} />
+      <PriceChart data={history} currentPrice={currentPrice ?? undefined} priceFetchedAt={priceFetchedAt ?? undefined} />
     </section>
   );
 }
