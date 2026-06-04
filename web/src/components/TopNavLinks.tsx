@@ -30,8 +30,15 @@ type NavLink = { href: string; label: string; submenu?: Submenu[] };
 
 const LINKS: NavLink[] = [
   { href: "/market",  label: "Market"  },
-  { href: "/indices", label: "Indices" },
-  { href: "/sectors", label: "Sectors" },
+  {
+    // Two complementary market-structure views under one tab.
+    href: "/indices",
+    label: "Segments",
+    submenu: [
+      { href: "/indices", label: "Indices", description: "Official NSE benchmarks + their constituents" },
+      { href: "/sectors", label: "Sectors", description: "Our full-universe scoring view — every stock" },
+    ],
+  },
   { href: "/ideas",   label: "Ideas"   },
   {
     href: "/tools",
@@ -51,7 +58,7 @@ function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(href + "/");
 }
 
-const TOOLS_LINK = LINKS.find((l) => l.submenu)!;
+const TOOLS_LINK = LINKS.find((l) => l.href === "/tools")!;
 
 export function TopNavLinks() {
   const pathname = usePathname() ?? "";
@@ -63,11 +70,14 @@ export function TopNavLinks() {
     <>
       {/* ───── Desktop / tablet (md+) — unchanged ─────────────────── */}
       <nav className="hidden md:flex items-center gap-3 md:gap-6 text-[13px] md:text-[14px] shrink-0 ml-auto">
-        {LINKS.map((l) =>
-          l.submenu
-            ? <DesktopDropdown key={l.href} link={l} active={isActive(pathname, l.href)} />
-            : <DesktopLink key={l.href} href={l.href} label={l.label} active={isActive(pathname, l.href)} />
-        )}
+        {LINKS.map((l) => {
+          const active = l.submenu
+            ? isActive(pathname, l.href) || l.submenu.some((s) => isActive(pathname, s.href))
+            : isActive(pathname, l.href);
+          return l.submenu
+            ? <DesktopDropdown key={l.href} link={l} active={active} />
+            : <DesktopLink key={l.href} href={l.href} label={l.label} active={active} />;
+        })}
         {showWatchlist && (
           <DesktopLink href="/watchlist" label="Watchlist" active={isActive(pathname, "/watchlist")} />
         )}
@@ -185,14 +195,16 @@ function DesktopDropdown({ link, active }: { link: NavLink; active: boolean }) {
               )}
             </Link>
           ))}
-          <Link
-            href={link.href}
-            role="menuitem"
-            className="block px-4 py-2 border-t hairline text-[12px] hover:bg-[var(--color-paper)] transition-colors"
-            style={{ color: "var(--color-accent-600)" }}
-          >
-            See all tools →
-          </Link>
+          {link.href === "/tools" && (
+            <Link
+              href={link.href}
+              role="menuitem"
+              className="block px-4 py-2 border-t hairline text-[12px] hover:bg-[var(--color-paper)] transition-colors"
+              style={{ color: "var(--color-accent-600)" }}
+            >
+              See all tools →
+            </Link>
+          )}
         </div>
       )}
     </div>
@@ -209,7 +221,7 @@ type MobileTabBarProps = {
   showSignIn: boolean;
 };
 
-type Popup = "pages" | "tools" | "account" | null;
+type Popup = "segments" | "pages" | "tools" | "account" | null;
 
 function MobileTabBar({ pathname, user, isAdmin, showWatchlist, showSignIn }: MobileTabBarProps) {
   const [popup, setPopup] = useState<Popup>(null);
@@ -242,7 +254,8 @@ function MobileTabBar({ pathname, user, isAdmin, showWatchlist, showSignIn }: Mo
   // Close on route change.
   useEffect(() => { setPopup(null); }, [pathname]);
 
-  const pagesActive = ["/ideas", "/indices"].some((p) => isActive(pathname, p));
+  const segmentsActive = ["/indices", "/sectors"].some((p) => isActive(pathname, p));
+  const pagesActive = ["/ideas"].some((p) => isActive(pathname, p));
   const toolsActive = isActive(pathname, "/tools") || (TOOLS_LINK.submenu ?? []).some((s) => isActive(pathname, s.href));
   const accountActive = isActive(pathname, "/watchlist") || isActive(pathname, "/login") ||
                         isActive(pathname, "/admin");
@@ -257,7 +270,7 @@ function MobileTabBar({ pathname, user, isAdmin, showWatchlist, showSignIn }: Mo
         style={{ scrollbarWidth: "none" }}
       >
         <TabLink  href="/market"  label="Market"  active={isActive(pathname, "/market")}  onClick={() => setPopup(null)} />
-        <TabLink  href="/sectors" label="Sector"  active={isActive(pathname, "/sectors")} onClick={() => setPopup(null)} />
+        <TabButton label="Segments" active={segmentsActive} isOpen={popup === "segments"} onClick={() => setPopup((p) => p === "segments" ? null : "segments")} />
         <TabButton label="Pages"   active={pagesActive}   isOpen={popup === "pages"}   onClick={() => setPopup((p) => p === "pages"   ? null : "pages"  )} />
         <TabButton label="Tools"   active={toolsActive}   isOpen={popup === "tools"}   onClick={() => setPopup((p) => p === "tools"   ? null : "tools"  )} />
         <TabButton label="Account" active={accountActive} isOpen={popup === "account"} onClick={() => setPopup((p) => p === "account" ? null : "account")} />
@@ -324,7 +337,7 @@ function TabButton({
 // ── Mobile popup sheets ────────────────────────────────────────────────────
 
 type PopupSheetProps = {
-  which: "pages" | "tools" | "account";
+  which: "segments" | "pages" | "tools" | "account";
   onClose: () => void;
   pathname: string;
   user: ReturnType<typeof useSession>["user"];
@@ -373,9 +386,15 @@ function PopupSheet({
       className="absolute left-0 right-0 top-full z-[55] border-b hairline shadow-lg"
       style={{ backgroundColor: "var(--color-card, #ffffff)" }}
     >
+      {which === "segments" && (
+        <>
+          <PopupLink href="/indices" label="Indices" sublabel="Official NSE benchmarks + constituents" active={isActive(pathname, "/indices")} onClose={onClose} />
+          <PopupLink href="/sectors" label="Sectors" sublabel="Our full-universe scoring view — every stock" active={isActive(pathname, "/sectors")} onClose={onClose} />
+        </>
+      )}
+
       {which === "pages" && (
         <>
-          <PopupLink href="/indices" label="Indices" active={isActive(pathname, "/indices")} onClose={onClose} />
           <PopupLink href="/ideas" label="Ideas" active={isActive(pathname, "/ideas")} onClose={onClose} />
         </>
       )}
