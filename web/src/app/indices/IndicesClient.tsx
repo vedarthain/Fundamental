@@ -327,23 +327,25 @@ function ConstituentsPanel({ code }: { code: string }) {
 
   return (
     <div className="mt-1 border-t hairline pt-2">
-      <div className="flex items-baseline justify-between gap-2 mb-1.5">
-        <span className="text-[11px] muted-text">
-          {data.count} constituents · weight ≈ by market cap
+      <div className="flex items-baseline justify-between gap-2 mb-1">
+        <span className="text-[10.5px] muted-text">
+          {data.count} constituents · Cap % ≈ market-cap share (not free-float weight)
         </span>
         {data.fetched_at && (
           <span className="text-[10px] muted-text tabular-nums">prices {fmtClock(data.fetched_at)} IST</span>
         )}
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-[12px]">
-          <thead>
-            <tr className="muted-text text-[10px] uppercase tracking-wide text-left">
-              <th className="font-medium py-1 pr-2">Company</th>
-              <th className="font-medium py-1 px-2 hidden sm:table-cell">Sector</th>
-              <th className="font-medium py-1 px-2 text-right">Price</th>
-              <th className="font-medium py-1 px-2 text-right">1D</th>
-              <th className="font-medium py-1 pl-2 text-right">Wt%</th>
+      {/* Height-capped + scrollable so big indices (NIFTY 500 = 500 rows)
+          don't blow up the page; sticky header keeps columns labelled. */}
+      <div className="overflow-y-auto overflow-x-auto max-h-[360px] rounded border hairline">
+        <table className="w-full text-[11px]">
+          <thead className="sticky top-0 z-10" style={{ background: "var(--color-card)" }}>
+            <tr className="muted-text text-[9.5px] uppercase tracking-wide text-left">
+              <th className="font-medium py-1 pl-2 pr-1.5">Symbol</th>
+              <th className="font-medium py-1 px-1.5 hidden lg:table-cell">Sector</th>
+              <th className="font-medium py-1 px-1.5 text-right">Price</th>
+              <th className="font-medium py-1 px-1.5 text-right">1D</th>
+              <th className="font-medium py-1 pl-1.5 pr-2 text-right">Cap%</th>
             </tr>
           </thead>
           <tbody>
@@ -352,23 +354,23 @@ function ConstituentsPanel({ code }: { code: string }) {
               const pctColor = pct == null ? MUTED : pct >= 0 ? UP : DOWN;
               return (
                 <tr key={c.symbol} className="border-t hairline hover:bg-[var(--color-paper)] transition-colors">
-                  <td className="py-1 pr-2">
-                    <Link href={`/stock/${c.symbol}`} className="hover:underline">
+                  <td className="py-0.5 pl-2 pr-1.5">
+                    <Link href={`/stock/${c.symbol}`} className="hover:underline" title={c.company_name ?? c.symbol}>
                       <span className="font-medium">{c.symbol}</span>
                       {c.company_name && (
-                        <span className="muted-text ml-1.5 hidden md:inline">{c.company_name}</span>
+                        <span className="muted-text ml-1.5 hidden xl:inline">{c.company_name}</span>
                       )}
                     </Link>
                   </td>
-                  <td className="py-1 px-2 muted-text hidden sm:table-cell truncate">{c.sector ?? "—"}</td>
-                  <td className="py-1 px-2 text-right tabular-nums">
-                    {c.price == null ? "—" : `₹${c.price.toLocaleString("en-IN", { maximumFractionDigits: 1 })}`}
+                  <td className="py-0.5 px-1.5 muted-text hidden lg:table-cell truncate max-w-[140px]">{c.sector ?? "—"}</td>
+                  <td className="py-0.5 px-1.5 text-right tabular-nums">
+                    {c.price == null ? "—" : c.price.toLocaleString("en-IN", { maximumFractionDigits: 1 })}
                   </td>
-                  <td className="py-1 px-2 text-right tabular-nums" style={{ color: pctColor }}>
+                  <td className="py-0.5 px-1.5 text-right tabular-nums" style={{ color: pctColor }}>
                     {pct == null ? "—" : `${pct >= 0 ? "+" : ""}${(pct * 100).toFixed(2)}%`}
                   </td>
-                  <td className="py-1 pl-2 text-right tabular-nums muted-text">
-                    {c.weight_pct == null ? "—" : `${c.weight_pct.toFixed(1)}`}
+                  <td className="py-0.5 pl-1.5 pr-2 text-right tabular-nums muted-text">
+                    {c.weight_pct == null ? "—" : c.weight_pct.toFixed(1)}
                   </td>
                 </tr>
               );
