@@ -49,7 +49,9 @@ INDEX_FILES: dict[str, tuple[str, str | None]] = {
     "NIFTYPHARMA":      ("ind_nifty_pharma.pdf",      "ind_niftypharmalist.csv"),
     "NIFTYMETAL":       ("ind_nifty_metal.pdf",       "ind_niftymetallist.csv"),
     "NIFTYREALTY":      ("ind_nifty_realty.pdf",      "ind_niftyrealtylist.csv"),
-    # NIFTYENERGY: no factsheet saved yet → not emitted (UI shows "not added").
+    # Nifty Energy has no local list CSV → symbols map via the global union +
+    # the manual fallback below.
+    "NIFTYENERGY":      ("ind_nifty_energy.pdf",      None),
 }
 
 DATE_RE = re.compile(r"([A-Z][a-z]+ \d{1,2}, \d{4})")
@@ -97,6 +99,15 @@ MANUAL_SYMBOLS: dict[str, str] = {
     "karur vysya bank": "KARURVYSYA",
     "delhivery": "DELHIVERY",
     "piramal finance": "PIRAMALFIN",
+    "coal india": "COALINDIA",
+    "cg power and industrial solutions": "CGPOWER",
+    "ntpc green energy": "NGEL",
+    "adani green energy": "ADANIGREEN",
+    "adani energy solutions": "ADANIENSOL",
+    "jsw energy": "JSWENERGY",
+    "oil & natural gas corporation": "ONGC",
+    "indian oil corporation": "IOC",
+    "bharat petroleum corporation": "BPCL",
 }
 
 

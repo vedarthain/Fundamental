@@ -24,6 +24,7 @@ export const INDEX_WEIGHTS_AS_OF: Record<string, string> = {
   NIFTYPHARMA: "2026-05-29",
   NIFTYMETAL: "2026-05-29",
   NIFTYREALTY: "2026-05-29",
+  NIFTYENERGY: "2026-05-29",
 };
 
 export const INDEX_WEIGHTS: Record<string, IndexWeight[]> = {
@@ -182,6 +183,18 @@ export const INDEX_WEIGHTS: Record<string, IndexWeight[]> = {
     { symbol: "ANANTRAJ", weight: 3.99 },
     { symbol: "ABREL", weight: 3.31 },
     { symbol: "SOBHA", weight: 3.21 },
+  ],
+  NIFTYENERGY: [
+    { symbol: "COALINDIA", weight: 9.86 },
+    { symbol: "ONGC", weight: 9.4 },
+    { symbol: "RELIANCE", weight: 9.25 },
+    { symbol: "NTPC", weight: 6.14 },
+    { symbol: "GAIL", weight: 4.75 },
+    { symbol: "POWERGRID", weight: 4.41 },
+    { symbol: "SUZLON", weight: 4.18 },
+    { symbol: "GVT&D", weight: 3.86 },
+    { symbol: "CGPOWER", weight: 3.81 },
+    { symbol: "BHEL", weight: 3.68 },
   ],
 };
 
