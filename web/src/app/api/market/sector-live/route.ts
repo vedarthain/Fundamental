@@ -13,10 +13,15 @@
  * HOW it works:
  *   1. Golden DB: load the latest daily close per symbol (= yesterday EOD,
  *      the baseline for today's intraday move).
- *   2. App DB: load current_price + sector mapping from screener_meta JOIN
- *      scores JOIN cluster JOIN meta_cluster.
+ *   2. App DB: load current_price + sector mapping + market_cap_cr from
+ *      screener_meta JOIN scores JOIN cluster JOIN meta_cluster, with a LEFT
+ *      JOIN to the panel cache for the (snapshot) market cap used as weight.
  *   3. In Node: compute (current_price - prev_close) / prev_close per symbol,
- *      then average per sector.
+ *      then take a CAP-WEIGHTED mean per sector — Σ(cap·ret)/Σ(cap) — so each
+ *      tile reflects what the sector's large caps did, directionally aligned
+ *      with the cap-weighted sectoral indices rather than an equal-weight mean
+ *      dominated by micro-caps. (Full cap, not free-float, so it's a close
+ *      proxy, not an exact index replica.)
  *
  * Caching: 60s s-maxage — same as index-live. The equity pinger writes
  *   current_price every ~10 min, so a 60s CDN window keeps data at most
@@ -48,29 +53,41 @@ export async function GET() {
   `;
   const prevClose = new Map(goldenRows.map((r) => [r.symbol, r.prev_close]));
 
-  // 2. Live current_price + sector mapping from app DB.
-  //    Use latest snapshot scores for sector assignment.
+  // 2. Live current_price + sector mapping + market cap from app DB.
+  //    Use latest snapshot scores for sector assignment; pull market_cap_cr
+  //    from the panel cache (snapshot value) to cap-weight the aggregation.
   const liveRows = await sql<{
     symbol: string;
     sector_name: string;
     current_price: number;
+    market_cap_cr: number | null;
     price_fetched_at: string | null;
   }[]>`
     SELECT sm.symbol,
            mc.name           AS sector_name,
            sm.current_price::float,
+           pc.market_cap_cr::float,
            sm.price_fetched_at::text
       FROM app.screener_meta sm
       JOIN app.scores sc ON sc.symbol = sm.symbol
         AND sc.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
       JOIN app.cluster cl      ON cl.id = sc.cluster_id
       JOIN app.meta_cluster mc ON mc.id = cl.meta_cluster_id
+      LEFT JOIN app.cluster_stocks_panel_cache pc ON pc.symbol = sm.symbol
+        AND pc.snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_stocks_panel_cache)
      WHERE sm.current_price IS NOT NULL
   `;
 
-  // 3. Aggregate per sector in Node.
+  // 3. Aggregate per sector in Node — CAP-WEIGHTED so the tile reflects what
+  //    the sector's large caps did (directionally aligned with the cap-
+  //    weighted sectoral indices), not an equal-weight mean dominated by
+  //    micro-caps. sector_return = Σ(cap·ret) / Σ(cap). Symbols without a
+  //    usable market cap are skipped from the weighted sum (rare; they'd add
+  //    an undefined weight). MIN_CAP_CR drops illiquid micro-cap noise — same
+  //    ₹500cr floor the movers panel uses.
+  const MIN_CAP_CR = 500;
   const bysector = new Map<string, {
-    total: number; n: number; latestTs: string | null
+    weighted: number; weight: number; n: number; latestTs: string | null
   }>();
 
   for (const row of liveRows) {
@@ -78,10 +95,13 @@ export async function GET() {
     if (!base || base <= 0) continue;
     const pct = (row.current_price - base) / base;
     if (!isFinite(pct)) continue;
+    const cap = row.market_cap_cr;
+    if (cap == null || !isFinite(cap) || cap < MIN_CAP_CR) continue;
 
-    const cur = bysector.get(row.sector_name) ?? { total: 0, n: 0, latestTs: null };
-    cur.total += pct;
-    cur.n     += 1;
+    const cur = bysector.get(row.sector_name) ?? { weighted: 0, weight: 0, n: 0, latestTs: null };
+    cur.weighted += pct * cap;
+    cur.weight   += cap;
+    cur.n        += 1;
     if (row.price_fetched_at && (!cur.latestTs || row.price_fetched_at > cur.latestTs)) {
       cur.latestTs = row.price_fetched_at;
     }
@@ -89,10 +109,10 @@ export async function GET() {
   }
 
   const result: Record<string, SectorLiveRow> = {};
-  for (const [sector, { total, n, latestTs }] of bysector) {
-    if (n === 0) continue;
+  for (const [sector, { weighted, weight, n, latestTs }] of bysector) {
+    if (n === 0 || weight <= 0) continue;
     result[sector] = {
-      avg_pct_1d:  total / n,
+      avg_pct_1d:  weighted / weight,
       stock_count: n,
       fetched_at:  latestTs ?? new Date().toISOString(),
     };

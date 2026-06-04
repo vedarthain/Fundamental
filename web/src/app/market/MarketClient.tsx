@@ -1116,7 +1116,7 @@ function SectorHeatmap({
             {hasLive && <LiveBadge />}
           </div>
           <div className="muted-text text-[10.5px] mt-0.5">
-            Tile size = stocks · colour = avg {effectivePeriod} return
+            Tile size = stocks · colour = cap-weighted {effectivePeriod} return
             {liveClock && <span className="ml-1.5 tabular-nums">· fetched {liveClock}</span>}
           </div>
         </div>

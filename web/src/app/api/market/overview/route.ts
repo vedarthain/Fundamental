@@ -838,7 +838,12 @@ async function loadSectorHeat1W(): Promise<{
       mc.display_order,
       COUNT(DISTINCT c.cluster_id)::int AS industry_count,
       COUNT(c.symbol)::int              AS stocks_count,
-      AVG(c.ret_1w)::float              AS avg_ret_1w,
+      -- Cap-weighted 1W return (Σ(ret·cap)/Σ(cap), micro-caps < ₹500cr
+      -- dropped) so the heatmap's 1W view matches its cap-weighted 1D view
+      -- and the live sector-live aggregation. NULLIF guards a zero-weight
+      -- sector. Composite stays an equal-weight percentile mean.
+      (SUM(c.ret_1w * c.market_cap_cr) FILTER (WHERE c.market_cap_cr >= 500)
+       / NULLIF(SUM(c.market_cap_cr) FILTER (WHERE c.market_cap_cr >= 500), 0))::float AS avg_ret_1w,
       AVG(c.composite_pct)::float       AS avg_composite_pct
     FROM app.cluster_stocks_panel_cache c
     JOIN app.cluster cl      ON cl.id = c.cluster_id
@@ -850,39 +855,49 @@ async function loadSectorHeat1W(): Promise<{
   `;
 }
 
-async function loadSectorMap(): Promise<Map<string, string>> {
-  const rows = await sql<{ symbol: string; sector_name: string }[]>`
-    SELECT c.symbol, mc.name AS sector_name
+async function loadSectorMap(): Promise<Map<string, { sector: string; cap: number | null }>> {
+  // sector + (snapshot) market cap per symbol. Cap is the weight used to
+  // cap-weight the EOD sector-heat fallback, so it stays consistent with the
+  // live /api/market/sector-live aggregation (also cap-weighted).
+  const rows = await sql<{ symbol: string; sector_name: string; market_cap_cr: number | null }[]>`
+    SELECT c.symbol, mc.name AS sector_name, c.market_cap_cr::float AS market_cap_cr
       FROM app.cluster_stocks_panel_cache c
       JOIN app.cluster cl      ON cl.id = c.cluster_id
       JOIN app.meta_cluster mc ON mc.id = cl.meta_cluster_id
      WHERE c.snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_stocks_panel_cache)
   `;
-  return new Map(rows.map((r) => [r.symbol, r.sector_name]));
+  return new Map(rows.map((r) => [r.symbol, { sector: r.sector_name, cap: r.market_cap_cr }]));
 }
 
 function deriveSectorHeat(
   oneWeek: Awaited<ReturnType<typeof loadSectorHeat1W>>,
   snap: Map<string, GoldenSnap>,
-  sectorBySym: Map<string, string>,
+  sectorBySym: Map<string, { sector: string; cap: number | null }>,
 ): SectorHeatRow[] {
-  // Aggregate 1D moves per sector from the snapshot.
-  const sum1D = new Map<string, { total: number; n: number }>();
+  // CAP-WEIGHTED 1D move per sector from the snapshot — mirrors the live
+  // /api/market/sector-live aggregation so the heatmap doesn't switch methods
+  // between its live value and this EOD fallback. sector_ret = Σ(cap·ret)/Σ(cap),
+  // micro-caps (< ₹500cr) dropped. Falls back to NULL when a sector has no
+  // weight (no qualifying caps).
+  const MIN_CAP_CR = 500;
+  const agg1D = new Map<string, { weighted: number; weight: number }>();
   for (const [sym, s] of snap) {
-    const sec = sectorBySym.get(sym);
-    if (!sec || s.pct_1d == null || Number.isNaN(s.pct_1d)) continue;
-    const cur = sum1D.get(sec) ?? { total: 0, n: 0 };
-    cur.total += s.pct_1d;
-    cur.n     += 1;
-    sum1D.set(sec, cur);
+    const info = sectorBySym.get(sym);
+    if (!info || s.pct_1d == null || Number.isNaN(s.pct_1d)) continue;
+    const cap = info.cap;
+    if (cap == null || !Number.isFinite(cap) || cap < MIN_CAP_CR) continue;
+    const cur = agg1D.get(info.sector) ?? { weighted: 0, weight: 0 };
+    cur.weighted += s.pct_1d * cap;
+    cur.weight   += cap;
+    agg1D.set(info.sector, cur);
   }
   return oneWeek.map((s) => {
-    const agg = sum1D.get(s.sector_name);
+    const agg = agg1D.get(s.sector_name);
     return {
       sector_name:       s.sector_name,
       industry_count:    s.industry_count,
       stocks_count:      s.stocks_count,
-      avg_ret_1d:        agg && agg.n > 0 ? agg.total / agg.n : null,
+      avg_ret_1d:        agg && agg.weight > 0 ? agg.weighted / agg.weight : null,
       avg_ret_1w:        s.avg_ret_1w,
       avg_composite_pct: s.avg_composite_pct,
     };
