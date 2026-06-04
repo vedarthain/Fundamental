@@ -90,14 +90,14 @@ export async function POST(req: NextRequest) {
     written++;
   }
 
-  // Retention cap: never keep more than 24h of ticks. Each write prunes
-  // anything older, so the table only ever holds the trailing day — the
-  // prior session's values are gone by the time the next day's ticks
-  // accumulate. We only ever READ today's (IST-day-bounded) slice anyway;
-  // this just bounds storage as requested.
+  // Retention cap: keep ~48h of ticks. The 1D chart reads the most-recent
+  // SESSION's slice, so the full prior session must survive overnight until
+  // the next 09:15 open (a 24h cap would prune the prior morning's ticks by
+  // the next morning, truncating the held curve). 48h covers it; volume is
+  // trivial (~26 ticks/day x 14 indices x 2 days).
   await sql`
     DELETE FROM app.market_index_intraday
-     WHERE ts < now() - INTERVAL '24 hours'
+     WHERE ts < now() - INTERVAL '48 hours'
   `;
 
   return NextResponse.json({

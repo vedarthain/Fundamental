@@ -101,11 +101,19 @@ export function SectorsClient({
   }, [data.tiles]);
 
   // ── Active sector ──────────────────────────────────────────────────────
-  const [activeSectorId, setActiveSectorIdState] = useState<string>(
-    (initialSectorId && groups.find((g) => g.id === initialSectorId)?.id) ||
-      groups[0]?.id ||
-      "",
-  );
+  // initialSectorId from the URL may be either a meta_cluster id (internal
+  // deep-links) OR a sector name (e.g. the /market heatmap links by name,
+  // which has no id to hand). Match on either, case-insensitively.
+  const [activeSectorId, setActiveSectorIdState] = useState<string>(() => {
+    if (initialSectorId) {
+      const key = initialSectorId.toLowerCase();
+      const match = groups.find(
+        (g) => g.id === initialSectorId || g.name.toLowerCase() === key,
+      );
+      if (match) return match.id;
+    }
+    return groups[0]?.id || "";
+  });
 
   // ── Active industry (scoped to active sector) ──────────────────────────
   // sectorIndustries are the industries within the active sector, sorted

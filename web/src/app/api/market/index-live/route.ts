@@ -53,16 +53,23 @@ export async function GET() {
      ORDER BY index_code, ts DESC
   `;
 
-  // Today's ticks (IST calendar day), oldest-first for chart consumption.
-  // Bounding to the current IST day keeps yesterday's ticks (the table
-  // retains 2 days) out of the 1D chart. At most ~26 rows per index.
+  // Most-recent SESSION's ticks, oldest-first for chart consumption. We bound
+  // to the IST day of the latest tick (not "today") so that between 15:30
+  // close and the next 09:15 open — including overnight, when "today" has no
+  // ticks yet — the 1D chart keeps showing the last session's curve instead
+  // of going blank ("waiting for first tick"). Once the new session's first
+  // tick lands, max(ts) flips to the new day and the chart resets. The table
+  // retains 48h so the full prior session survives until the next open.
   const series = await sql<SeriesRow[]>`
+    WITH last_day AS (
+      SELECT (MAX(ts) AT TIME ZONE 'Asia/Kolkata')::date AS d
+        FROM app.market_index_intraday
+    )
     SELECT index_code        AS code,
            ts::text          AS ts,
            ltp::float        AS ltp
-      FROM app.market_index_intraday
-     WHERE (ts AT TIME ZONE 'Asia/Kolkata')
-           >= date_trunc('day', now() AT TIME ZONE 'Asia/Kolkata')
+      FROM app.market_index_intraday, last_day
+     WHERE (ts AT TIME ZONE 'Asia/Kolkata')::date = last_day.d
      ORDER BY index_code, ts ASC
   `;
 

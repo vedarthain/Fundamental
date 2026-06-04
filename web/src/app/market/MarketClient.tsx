@@ -356,14 +356,18 @@ function HeroPanel({
   // and the day's move reads correctly even with one tick so far.
   const intradayPoints = useMemo(() => {
     const pts = intraday.map((p) => ({ date: p.ts, close: p.ltp }));
-    const prev = held?.prev_close;
+    // Anchor on the session's prior close. Use held (today) when live, else
+    // fall back to the latest tick's prev_close so the OVERNIGHT held curve
+    // (last session, shown 15:30→next 09:15) still starts from its prior
+    // close rather than the first tick.
+    const prev = held?.prev_close ?? rawTick?.prev_close;
     if (prev != null && pts.length > 0) {
       // Synthetic baseline ~1 min before the first tick.
       const t0 = new Date(new Date(pts[0].date).getTime() - 60_000).toISOString();
       return [{ date: t0, close: prev }, ...pts];
     }
     return pts;
-  }, [intraday, held]);
+  }, [intraday, held, rawTick]);
 
   const points = isIntraday ? intradayPoints : dailyPoints;
 
@@ -380,7 +384,7 @@ function HeroPanel({
   // Range change %: for 1D use the live day-change vs prev close (more
   // meaningful than first-tick-to-last); for daily ranges it's first→last.
   const changePct = isIntraday
-    ? (held?.pct_change ?? (first > 0 ? ((last - first) / first) * 100 : 0))
+    ? (held?.pct_change ?? rawTick?.pct_change ?? (first > 0 ? ((last - first) / first) * 100 : 0))
     : (first > 0 ? ((last - first) / first) * 100 : 0);
   const positive = changePct >= 0;
   const stroke = positive ? UP : DOWN;
@@ -1135,7 +1139,11 @@ function SectorHeatmap({
               : "var(--color-paper)";
           const sizeBoost = Math.round((s.stocks_count / maxStocks) * 14);
           return (
-            <div key={s.sector_name} className="rounded-md border p-2 flex flex-col justify-between"
+            <Link
+              key={s.sector_name}
+              href={`/sectors?sector=${encodeURIComponent(s.sector_name)}`}
+              title={`View ${s.sector_name} sector — industries & stocks`}
+              className="rounded-md border p-2 flex flex-col justify-between transition-shadow transition-transform hover:shadow-md hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-400)]"
               style={{ borderColor: "var(--color-border-default)", backgroundColor: bg, minHeight: 72 + sizeBoost }}>
               <div>
                 <div className="text-[11.5px] font-medium leading-tight">{s.sector_name}</div>
@@ -1144,7 +1152,7 @@ function SectorHeatmap({
               <div className="text-[15px] font-display tabular-nums mt-1" style={{ color: r >= 0 ? UP : DOWN }}>
                 {r === 0 ? "0.0%" : `${r > 0 ? "+" : ""}${(r * 100).toFixed(2)}%`}
               </div>
-            </div>
+            </Link>
           );
         })}
       </div>
