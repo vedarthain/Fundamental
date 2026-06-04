@@ -1,21 +1,32 @@
 "use client";
 
 /**
- * IndicesClient — the all-Nifty index board.
+ * IndicesClient — master-detail index board.
  *
- * Renders every tracked index grouped (Headline / Broad market / Sectoral),
- * each card showing the LIVE level + today's move overlaid on the EOD daily
- * figures from the server. Live ticks come from /api/market/index-live,
- * polled every 60s (the endpoint is CDN-cached 60s, so ~one origin read per
- * minute per region). The 10-min index pinger writes the underlying ticks.
+ * Left: a selectable list of every tracked index (grouped Headline / Broad /
+ * Sectoral) with its live level + 1D move. Right: the selected index in two
+ * tabs — Chart (the price graph, reusing the shared PriceChart with live 1D
+ * intraday) and Constituents (members with live price, 1D, real NSE weight).
  *
- * Phase 2 will add a per-card expand for constituents (read each member's
- * live price from the equity pinger, weighted by market cap). The card shell
- * is structured so that section slots in without a rewrite.
+ * Live ticks + today's intraday series come from /api/market/index-live,
+ * polled every 60s (the 10-min index pinger writes them). On mobile the left
+ * list collapses to a dropdown so the detail pane gets the full width.
  */
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Sparkline, type SparkPoint } from "@/components/Sparkline";
+import { PriceChart, type PricePoint } from "@/components/PriceChart";
+
+export type IndexBoardRow = {
+  code: string;
+  name: string;
+  close: number;
+  pct_change_1d: number | null;
+  pct_change_1w: number | null;
+  pct_change_1m: number | null;
+  pct_change_1y: number | null;
+  date: string;
+  sparkline: { date: string; close: number }[];
+};
 
 type ConstituentRow = {
   symbol: string;
@@ -35,27 +46,11 @@ type ConstituentsResponse = {
   constituents: ConstituentRow[];
 };
 
-export type IndexBoardRow = {
-  code: string;
-  name: string;
-  close: number;
-  pct_change_1d: number | null;
-  pct_change_1w: number | null;
-  pct_change_1m: number | null;
-  pct_change_1y: number | null;
-  date: string;
-  sparkline: { date: string; close: number }[];
-};
-
-type Range = "1D" | "1W" | "1M" | "1Y";
-
 const UP = "var(--color-delta-up)";
 const DOWN = "var(--color-delta-down)";
 const MUTED = "var(--color-muted)";
 const ACCENT = "var(--color-accent-600)";
 
-// A live tick is "live" (pulsing badge) only within this window; beyond it we
-// still HOLD the price (last session) but drop the live indicator.
 const LIVE_MAX_AGE_S = 15 * 60;
 
 type LiveTick = {
@@ -66,8 +61,11 @@ type LiveTick = {
   ts: string;
   age_seconds: number;
 };
+type LiveData = {
+  ticks: Record<string, LiveTick>;
+  intraday: Record<string, { ts: string; ltp: number }[]>;
+};
 
-// ── Index taxonomy ─────────────────────────────────────────────────────────
 const GROUPS: { title: string; codes: string[] }[] = [
   { title: "Headline", codes: ["NIFTY50", "NIFTYBANK"] },
   { title: "Broad market", codes: ["NIFTY100", "NIFTY500", "NIFTYNEXT50", "NIFTYMIDCAP100", "NIFTYSMALLCAP100"] },
@@ -75,16 +73,16 @@ const GROUPS: { title: string; codes: string[] }[] = [
 ];
 
 // ── Live polling ────────────────────────────────────────────────────────────
-function useLiveIndexTicks(): Record<string, LiveTick> {
-  const [ticks, setTicks] = useState<Record<string, LiveTick>>({});
+function useLiveIndexData(): LiveData {
+  const [data, setData] = useState<LiveData>({ ticks: {}, intraday: {} });
   useEffect(() => {
     let alive = true;
     const pull = async () => {
       try {
         const res = await fetch("/api/market/index-live", { cache: "no-store" });
         if (!res.ok) return;
-        const json = (await res.json()) as { ticks?: Record<string, LiveTick> };
-        if (alive) setTicks(json.ticks ?? {});
+        const json = (await res.json()) as Partial<LiveData>;
+        if (alive) setData({ ticks: json.ticks ?? {}, intraday: json.intraday ?? {} });
       } catch {
         /* keep last good data */
       }
@@ -93,7 +91,7 @@ function useLiveIndexTicks(): Record<string, LiveTick> {
     const id = setInterval(pull, 60_000);
     return () => { alive = false; clearInterval(id); };
   }, []);
-  return ticks;
+  return data;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -102,15 +100,10 @@ function istDayKey(d: Date | string): string {
     timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
   }).format(new Date(d));
 }
-
-/** Latest tick if it's from today's IST session (regardless of age) — so the
- *  board holds the 15:30 close through to the next session instead of
- *  reverting to yesterday's EOD. */
 function todayTick(t: LiveTick | undefined): LiveTick | null {
   if (!t || typeof t.ltp !== "number") return null;
   return istDayKey(t.ts) === istDayKey(new Date()) ? t : null;
 }
-
 function fmtClock(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
@@ -118,175 +111,226 @@ function fmtClock(iso: string): string {
     timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false,
   });
 }
-
-function pctFor(row: IndexBoardRow, range: Range): number | null {
-  if (range === "1D") return row.pct_change_1d;
-  if (range === "1W") return row.pct_change_1w;
-  if (range === "1M") return row.pct_change_1m;
-  return row.pct_change_1y;
+function pctColorOf(v: number | null): string {
+  return v == null ? MUTED : v >= 0 ? UP : DOWN;
 }
-
-const RANGES: Range[] = ["1D", "1W", "1M", "1Y"];
+function fmtPct(v: number | null, dp = 2): string {
+  return v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(dp)}%`;
+}
+/** Live level + 1D for a row, preferring today's held tick. */
+function liveOf(row: IndexBoardRow, tick: LiveTick | undefined) {
+  const held = todayTick(tick);
+  return {
+    level: held ? held.ltp : row.close,
+    pct: held?.pct_change ?? row.pct_change_1d,
+    isLive: !!held && (tick?.age_seconds ?? Infinity) <= LIVE_MAX_AGE_S,
+    ts: held?.ts ?? tick?.ts ?? null,
+  };
+}
 
 // ── Board ───────────────────────────────────────────────────────────────────
 export function IndicesClient({ indices }: { indices: IndexBoardRow[] }) {
-  const [range, setRange] = useState<Range>("1D");
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const ticks = useLiveIndexTicks();
+  const live = useLiveIndexData();
   const byCode = useMemo(() => new Map(indices.map((r) => [r.code, r])), [indices]);
+  // Default to the first available code (prefer NIFTY50).
+  const firstCode = byCode.has("NIFTY50") ? "NIFTY50" : indices[0]?.code ?? "";
+  const [selected, setSelected] = useState<string>(firstCode);
+  const [tab, setTab] = useState<"chart" | "constituents">("chart");
 
-  // Newest live fetch time across all indices (header freshness stamp).
-  const latestTs = useMemo(() => {
-    let best: string | null = null;
-    for (const t of Object.values(ticks)) {
-      const held = todayTick(t);
-      if (held && (!best || held.ts > best)) best = held.ts;
-    }
-    return best;
-  }, [ticks]);
-  const anyLive = useMemo(
-    () => Object.values(ticks).some((t) => todayTick(t) && t.age_seconds <= LIVE_MAX_AGE_S),
-    [ticks],
-  );
+  const row = byCode.get(selected);
 
   return (
-    <div className="space-y-5">
-      {/* Header */}
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="font-display text-[22px] md:text-[26px] leading-tight">NSE Index Board</h1>
-          <p className="muted-text text-[12px] mt-1">
-            All tracked Nifty indices · live level updates every ~10 min during market hours
-            {latestTs && (
-              <span className="ml-1.5 tabular-nums">
-                · {anyLive ? "updated" : "last fetched"} {fmtClock(latestTs)} IST
-              </span>
-            )}
-          </p>
-        </div>
-        <div className="flex items-center gap-1 p-0.5 rounded-md border" style={{ borderColor: "var(--color-border-default)" }}>
-          {RANGES.map((r) => (
-            <button
-              key={r}
-              type="button"
-              onClick={() => setRange(r)}
-              className={`px-2.5 py-1 text-[12px] font-medium tabular-nums rounded transition-colors ${
-                range === r ? "" : "muted-text hover:bg-[var(--color-paper)]"
-              }`}
-              style={range === r ? { backgroundColor: ACCENT, color: "white" } : undefined}
-            >
-              {r}
-            </button>
+    <div>
+      <header className="mb-4">
+        <h1 className="font-display text-[22px] md:text-[26px] leading-tight">NSE Index Board</h1>
+        <p className="muted-text text-[12px] mt-1">
+          All tracked Nifty indices · pick one to see its chart and constituents · live updates every ~10 min
+        </p>
+      </header>
+
+      {/* Mobile selector */}
+      <div className="lg:hidden mb-3">
+        <select
+          value={selected}
+          onChange={(e) => setSelected(e.target.value)}
+          className="w-full rounded-md border px-3 py-2 text-[13px] bg-[var(--color-card)]"
+          style={{ borderColor: "var(--color-border-default)" }}
+        >
+          {GROUPS.map((g) => (
+            <optgroup key={g.title} label={g.title}>
+              {g.codes.filter((c) => byCode.has(c)).map((c) => (
+                <option key={c} value={c}>{byCode.get(c)!.name}</option>
+              ))}
+            </optgroup>
           ))}
-        </div>
+        </select>
       </div>
 
-      {/* Groups */}
-      {GROUPS.map((g) => {
-        const rows = g.codes.map((c) => byCode.get(c)).filter((r): r is IndexBoardRow => !!r);
-        if (rows.length === 0) return null;
-        // Sort gainers-first by the selected range, using the live 1D when active.
-        const sorted = [...rows].sort((a, b) => effPct(b, range, ticks) - effPct(a, range, ticks));
-        return (
-          <section key={g.title}>
-            <h2 className="muted-text text-[11px] tracking-[0.12em] font-semibold uppercase mb-2">{g.title}</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 items-start">
-              {sorted.map((row) => (
-                <IndexCard
-                  key={row.code}
-                  row={row}
-                  range={range}
-                  tick={ticks[row.code]}
-                  expanded={expanded === row.code}
-                  onToggle={() => setExpanded((c) => (c === row.code ? null : row.code))}
-                />
-              ))}
-            </div>
-          </section>
-        );
-      })}
+      <div className="lg:grid lg:grid-cols-[290px_1fr] lg:gap-4">
+        {/* Left list (desktop) */}
+        <aside className="hidden lg:block self-start sticky top-4 space-y-3">
+          {GROUPS.map((g) => {
+            const rows = g.codes.map((c) => byCode.get(c)).filter((r): r is IndexBoardRow => !!r);
+            if (rows.length === 0) return null;
+            return (
+              <div key={g.title}>
+                <div className="muted-text text-[10px] tracking-[0.12em] font-semibold uppercase mb-1.5 px-1">{g.title}</div>
+                <div className="space-y-1">
+                  {rows.map((r) => (
+                    <IndexListItem
+                      key={r.code}
+                      row={r}
+                      tick={live.ticks[r.code]}
+                      selected={r.code === selected}
+                      onSelect={() => setSelected(r.code)}
+                    />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </aside>
+
+        {/* Detail pane */}
+        <section className="min-w-0">
+          {row ? (
+            <IndexDetail
+              row={row}
+              tick={live.ticks[row.code]}
+              intraday={live.intraday[row.code] ?? []}
+              tab={tab}
+              setTab={setTab}
+            />
+          ) : (
+            <div className="card p-6 muted-text text-[13px]">No index data.</div>
+          )}
+        </section>
+      </div>
     </div>
   );
 }
 
-/** Effective % for sorting: live day-change when range is 1D and a today
- *  tick exists, else the EOD figure for that range. */
-function effPct(row: IndexBoardRow, range: Range, ticks: Record<string, LiveTick>): number {
-  if (range === "1D") {
-    const held = todayTick(ticks[row.code]);
-    if (held?.pct_change != null) return held.pct_change;
-  }
-  return pctFor(row, range) ?? -Infinity;
-}
-
-// ── Card ────────────────────────────────────────────────────────────────────
-function IndexCard({
-  row, range, tick, expanded, onToggle,
+// ── Left list item ──────────────────────────────────────────────────────────
+function IndexListItem({
+  row, tick, selected, onSelect,
 }: {
   row: IndexBoardRow;
-  range: Range;
   tick?: LiveTick;
-  expanded: boolean;
-  onToggle: () => void;
+  selected: boolean;
+  onSelect: () => void;
 }) {
-  const held = todayTick(tick);
-  const isLive = !!held && tick!.age_seconds <= LIVE_MAX_AGE_S;
+  const { level, pct, isLive } = liveOf(row, tick);
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className="w-full text-left rounded-md border px-2.5 py-1.5 transition-colors"
+      style={
+        selected
+          ? { background: "color-mix(in srgb, var(--color-accent-600) 10%, transparent)", borderColor: "var(--color-accent-300)" }
+          : { background: "transparent", borderColor: "var(--color-border-default)" }
+      }
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[12px] font-medium leading-tight truncate flex items-center gap-1.5">
+          {row.name}
+          {isLive && <LiveDot />}
+        </span>
+        <span className="tabular-nums text-[11px] font-medium shrink-0" style={{ color: pctColorOf(pct) }}>
+          {fmtPct(pct, 2)}
+        </span>
+      </div>
+      <div className="tabular-nums text-[12px] mt-0.5 muted-text">
+        {level.toLocaleString("en-IN", { maximumFractionDigits: 1 })}
+      </div>
+    </button>
+  );
+}
 
-  // Headline level + change. For 1D prefer the held live tick; other ranges
-  // are EOD by nature (level still shows the latest known price).
-  const level = held ? held.ltp : row.close;
-  const headPct =
-    range === "1D"
-      ? (held?.pct_change ?? row.pct_change_1d)
-      : pctFor(row, range);
-  const headColor = headPct == null ? MUTED : headPct >= 0 ? UP : DOWN;
-
-  // Sparkline (90d daily). Stroke follows the selected range's direction.
-  const spark: SparkPoint[] = row.sparkline.map((p) => ({ label: p.date, value: p.close }));
-  const sparkColor = (pctFor(row, range) ?? 0) >= 0 ? UP : DOWN;
+// ── Detail pane ─────────────────────────────────────────────────────────────
+function IndexDetail({
+  row, tick, intraday, tab, setTab,
+}: {
+  row: IndexBoardRow;
+  tick?: LiveTick;
+  intraday: { ts: string; ltp: number }[];
+  tab: "chart" | "constituents";
+  setTab: (t: "chart" | "constituents") => void;
+}) {
+  const { level, pct, isLive, ts } = liveOf(row, tick);
+  const sparkData: PricePoint[] = row.sparkline;
 
   return (
-    <div className={`card p-3 flex flex-col gap-2 ${expanded ? "sm:col-span-2 lg:col-span-3" : ""}`}>
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="flex items-center gap-1.5">
-            <span className="font-medium text-[13px] leading-tight truncate">{row.name}</span>
-            {isLive && <LiveDot />}
-          </div>
-          <div className="flex items-baseline gap-2 mt-0.5">
-            <span className="font-display text-[19px] tabular-nums leading-none">
-              {level.toLocaleString("en-IN", { maximumFractionDigits: 1 })}
-            </span>
-            <span className="tabular-nums text-[12px] font-medium" style={{ color: headColor }}>
-              {headPct == null ? "—" : `${headPct >= 0 ? "+" : ""}${headPct.toFixed(2)}%`}
-            </span>
-          </div>
+    <div className="card overflow-hidden">
+      {/* Header */}
+      <div className="px-4 pt-3 pb-2 border-b hairline">
+        <div className="flex items-center gap-1.5">
+          <h2 className="font-display text-[18px] leading-tight">{row.name}</h2>
+          {isLive && <LiveDot />}
         </div>
-        <div className="shrink-0">
-          <Sparkline data={spark} width={104} height={36} stroke={sparkColor} />
+        <div className="flex items-baseline gap-2 mt-0.5">
+          <span className="font-display text-[24px] tabular-nums leading-none">
+            {level.toLocaleString("en-IN", { maximumFractionDigits: 1 })}
+          </span>
+          <span className="tabular-nums text-[13px] font-medium" style={{ color: pctColorOf(pct) }}>
+            {fmtPct(pct, 2)} <span className="muted-text font-normal">1D</span>
+          </span>
+          {ts && (
+            <span className="text-[10.5px] muted-text tabular-nums ml-auto">
+              {isLive ? "updated" : "last"} {fmtClock(ts)} IST
+            </span>
+          )}
+        </div>
+        {/* Range chips (read-only context; chart has its own range control) */}
+        <div className="flex flex-wrap gap-3 mt-1.5 text-[10.5px] tabular-nums">
+          <span className="muted-text">1W <span style={{ color: pctColorOf(row.pct_change_1w) }}>{fmtPct(row.pct_change_1w, 1)}</span></span>
+          <span className="muted-text">1M <span style={{ color: pctColorOf(row.pct_change_1m) }}>{fmtPct(row.pct_change_1m, 1)}</span></span>
+          <span className="muted-text">1Y <span style={{ color: pctColorOf(row.pct_change_1y) }}>{fmtPct(row.pct_change_1y, 1)}</span></span>
         </div>
       </div>
 
-      {/* Range chips */}
-      <div className="grid grid-cols-4 gap-1 pt-1.5 border-t hairline">
-        <RangeCell label="1D" value={range === "1D" ? (held?.pct_change ?? row.pct_change_1d) : row.pct_change_1d} active={range === "1D"} />
-        <RangeCell label="1W" value={row.pct_change_1w} active={range === "1W"} />
-        <RangeCell label="1M" value={row.pct_change_1m} active={range === "1M"} />
-        <RangeCell label="1Y" value={row.pct_change_1y} active={range === "1Y"} />
+      {/* Tabs */}
+      <div className="flex border-b hairline">
+        <TabButton label="Chart" active={tab === "chart"} onClick={() => setTab("chart")} />
+        <TabButton label="Constituents" active={tab === "constituents"} onClick={() => setTab("constituents")} />
       </div>
 
-      {/* Constituents expander */}
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={expanded}
-        className="flex items-center justify-center gap-1 text-[11px] font-medium muted-text hover:text-[var(--color-ink)] transition-colors pt-1"
-      >
-        <span style={{ transform: expanded ? "rotate(90deg)" : "none", transition: "transform .15s" }}>▸</span>
-        {expanded ? "Hide constituents" : "Constituents"}
-      </button>
-      {expanded && <ConstituentsPanel code={row.code} />}
+      <div className="p-3 md:p-4">
+        {tab === "chart" ? (
+          sparkData.length >= 2 ? (
+            <PriceChart
+              data={sparkData}
+              intraday={intraday}
+              currentPrice={level}
+              priceFetchedAt={ts ?? undefined}
+              prefix=""
+            />
+          ) : (
+            <div className="h-[200px] flex items-center justify-center muted-text text-[13px]">
+              No price history for this index.
+            </div>
+          )
+        ) : (
+          <ConstituentsPanel key={row.code} code={row.code} />
+        )}
+      </div>
     </div>
+  );
+}
+
+function TabButton({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="px-4 py-2 text-[12.5px] font-medium transition-colors relative"
+      style={{ color: active ? ACCENT : "var(--color-muted)" }}
+    >
+      {label}
+      {active && (
+        <span className="absolute left-2 right-2 -bottom-px h-[2px] rounded-full" style={{ background: ACCENT }} />
+      )}
+    </button>
   );
 }
 
@@ -296,8 +340,8 @@ function ConstituentsPanel({ code }: { code: string }) {
   const [state, setState] = useState<"loading" | "ok" | "error">("loading");
 
   useEffect(() => {
-    // Panel mounts fresh on each expand (conditionally rendered), so initial
-    // state is already "loading"/null — no reset needed here.
+    // Panel is keyed by code → remounts on index change, so initial state is
+    // already "loading"/null; no reset needed here.
     let alive = true;
     (async () => {
       try {
@@ -312,23 +356,15 @@ function ConstituentsPanel({ code }: { code: string }) {
     return () => { alive = false; };
   }, [code]);
 
-  if (state === "loading") {
-    return <div className="muted-text text-[12px] py-3 text-center">Loading constituents…</div>;
-  }
-  if (state === "error") {
-    return <div className="muted-text text-[12px] py-3 text-center">Couldn’t load constituents.</div>;
-  }
+  if (state === "loading") return <div className="muted-text text-[12px] py-6 text-center">Loading constituents…</div>;
+  if (state === "error") return <div className="muted-text text-[12px] py-6 text-center">Couldn’t load constituents.</div>;
   if (!data || data.count === 0) {
-    return (
-      <div className="muted-text text-[12px] py-3 text-center">
-        No constituent list ingested yet for this index.
-      </div>
-    );
+    return <div className="muted-text text-[12px] py-6 text-center">No constituent list ingested yet for this index.</div>;
   }
 
   return (
-    <div className="mt-1 border-t hairline pt-2">
-      <div className="flex items-baseline justify-between gap-2 mb-1">
+    <div>
+      <div className="flex items-baseline justify-between gap-2 mb-1.5">
         <span className="text-[10.5px] muted-text">
           {data.count} constituents · Wt% = NSE index weight
           {data.weights_as_of ? ` (factsheet ${data.weights_as_of})` : " — not yet added for this index"}
@@ -337,41 +373,36 @@ function ConstituentsPanel({ code }: { code: string }) {
           <span className="text-[10px] muted-text tabular-nums">prices {fmtClock(data.fetched_at)} IST</span>
         )}
       </div>
-      {/* Height-capped + scrollable so big indices (NIFTY 500 = 500 rows)
-          don't blow up the page; sticky header keeps columns labelled. */}
-      <div className="overflow-y-auto overflow-x-auto max-h-[360px] rounded border hairline">
-        <table className="w-full text-[11px]">
+      <div className="overflow-y-auto overflow-x-auto max-h-[520px] rounded border hairline">
+        <table className="w-full text-[12px]">
           <thead className="sticky top-0 z-10" style={{ background: "var(--color-card)" }}>
-            <tr className="muted-text text-[9.5px] uppercase tracking-wide text-left">
-              <th className="font-medium py-1 pl-2 pr-1.5">Symbol</th>
-              <th className="font-medium py-1 px-1.5 hidden lg:table-cell">Sector</th>
-              <th className="font-medium py-1 px-1.5 text-right">Price</th>
-              <th className="font-medium py-1 px-1.5 text-right">1D</th>
-              <th className="font-medium py-1 pl-1.5 pr-2 text-right">Wt%</th>
+            <tr className="muted-text text-[10px] uppercase tracking-wide text-left">
+              <th className="font-medium py-1.5 pl-2 pr-1.5">Symbol</th>
+              <th className="font-medium py-1.5 px-1.5 hidden md:table-cell">Sector</th>
+              <th className="font-medium py-1.5 px-1.5 text-right">Price</th>
+              <th className="font-medium py-1.5 px-1.5 text-right">1D</th>
+              <th className="font-medium py-1.5 pl-1.5 pr-2 text-right">Wt%</th>
             </tr>
           </thead>
           <tbody>
             {data.constituents.map((c) => {
               const pct = c.pct_1d;
-              const pctColor = pct == null ? MUTED : pct >= 0 ? UP : DOWN;
               return (
                 <tr key={c.symbol} className="border-t hairline hover:bg-[var(--color-paper)] transition-colors">
-                  <td className="py-0.5 pl-2 pr-1.5">
+                  <td className="py-1 pl-2 pr-1.5">
                     <Link href={`/stock/${c.symbol}`} className="hover:underline" title={c.company_name ?? c.symbol}>
                       <span className="font-medium">{c.symbol}</span>
-                      {c.company_name && (
-                        <span className="muted-text ml-1.5 hidden xl:inline">{c.company_name}</span>
-                      )}
+                      {c.company_name && <span className="muted-text ml-1.5 hidden lg:inline">{c.company_name}</span>}
                     </Link>
                   </td>
-                  <td className="py-0.5 px-1.5 muted-text hidden lg:table-cell truncate max-w-[140px]">{c.sector ?? "—"}</td>
-                  <td className="py-0.5 px-1.5 text-right tabular-nums">
+                  <td className="py-1 px-1.5 muted-text hidden md:table-cell truncate max-w-[160px]">{c.sector ?? "—"}</td>
+                  <td className="py-1 px-1.5 text-right tabular-nums">
                     {c.price == null ? "—" : c.price.toLocaleString("en-IN", { maximumFractionDigits: 1 })}
                   </td>
-                  <td className="py-0.5 px-1.5 text-right tabular-nums" style={{ color: pctColor }}>
+                  <td className="py-1 px-1.5 text-right tabular-nums" style={{ color: pctColorOf(pct == null ? null : pct * 100) }}>
                     {pct == null ? "—" : `${pct >= 0 ? "+" : ""}${(pct * 100).toFixed(2)}%`}
                   </td>
-                  <td className="py-0.5 pl-1.5 pr-2 text-right tabular-nums muted-text">
+                  <td className="py-1 pl-1.5 pr-2 text-right tabular-nums muted-text">
                     {c.weight_pct == null ? "—" : c.weight_pct.toFixed(1)}
                   </td>
                 </tr>
@@ -379,21 +410,6 @@ function ConstituentsPanel({ code }: { code: string }) {
             })}
           </tbody>
         </table>
-      </div>
-    </div>
-  );
-}
-
-function RangeCell({ label, value, active }: { label: string; value: number | null; active: boolean }) {
-  const color = value == null ? MUTED : value >= 0 ? UP : DOWN;
-  return (
-    <div
-      className="rounded px-1 py-0.5 text-center"
-      style={active ? { background: "color-mix(in srgb, var(--color-accent-600) 9%, transparent)" } : undefined}
-    >
-      <div className="text-[9px] muted-text uppercase tracking-wide">{label}</div>
-      <div className="tabular-nums text-[11px] font-medium" style={{ color }}>
-        {value == null ? "—" : `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`}
       </div>
     </div>
   );

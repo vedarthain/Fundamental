@@ -27,6 +27,7 @@ export function PriceChart({
   intraday,
   currentPrice,
   priceFetchedAt,
+  prefix = "₹",
 }: {
   data: PricePoint[];
   /** Today's intraday ticks (oldest-first), used to draw a real 1D curve
@@ -34,6 +35,9 @@ export function PriceChart({
   intraday?: { ts: string; ltp: number }[];
   currentPrice?: number;
   priceFetchedAt?: string;
+  /** Value prefix for the headline/axis/tooltip. "₹" for stocks; pass "" for
+   *  index levels (which aren't a rupee amount). */
+  prefix?: string;
 }) {
   const [range, setRange] = useState<Range>("1Y");
 
@@ -100,7 +104,7 @@ export function PriceChart({
           {last != null && (
             <div className="flex items-baseline gap-2">
               <span className="text-[18px] font-medium tabular-nums">
-                ₹{last.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+                {prefix}{last.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
               </span>
               {changeAbs != null && changePct != null && (
                 <span
@@ -196,7 +200,7 @@ export function PriceChart({
             tickLine={false}
           />
           <YAxis
-            tickFormatter={(v) => `₹${Math.round(v).toLocaleString("en-IN")}`}
+            tickFormatter={(v) => `${prefix}${Math.round(v).toLocaleString("en-IN")}`}
             tick={{ fontSize: 11, fill: "var(--color-muted)" }}
             axisLine={false}
             tickLine={false}
@@ -224,7 +228,7 @@ export function PriceChart({
               });
             }}
             formatter={(v: unknown) => [
-              `₹${Number(v).toLocaleString("en-IN", { maximumFractionDigits: 1 })}`,
+              `${prefix}${Number(v).toLocaleString("en-IN", { maximumFractionDigits: 1 })}`,
               "Close",
             ]}
           />

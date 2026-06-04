@@ -58,14 +58,16 @@ async function loadIndices(): Promise<IndexBoardRow[]> {
      ORDER BY t.name
   `;
 
-  // 90 trailing daily closes per index for the sparkline, oldest-first.
+  // Trailing daily closes per index (oldest-first) — feeds the left-list
+  // mini sparkline AND the detail-pane chart, so we keep enough depth for the
+  // chart's 1W…1Y ranges (~500 trading days ≈ 2 years).
   const spark = await sql<{ index_code: string; date: string; close: number }[]>`
     WITH ranked AS (
       SELECT index_code, date::text AS date, close::float AS close,
              ROW_NUMBER() OVER (PARTITION BY index_code ORDER BY date DESC) AS rn
         FROM app.market_index_history
     )
-    SELECT index_code, date, close FROM ranked WHERE rn <= 90 ORDER BY index_code, date
+    SELECT index_code, date, close FROM ranked WHERE rn <= 500 ORDER BY index_code, date
   `;
   const byCode = new Map<string, { date: string; close: number }[]>();
   for (const r of spark) {
