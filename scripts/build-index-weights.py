@@ -53,8 +53,51 @@ INDEX_FILES: dict[str, tuple[str, str | None]] = {
 }
 
 DATE_RE = re.compile(r"([A-Z][a-z]+ \d{1,2}, \d{4})")
-# "<company name>  <weight>" — ≥2 spaces between name and the trailing number.
-ROW_RE = re.compile(r"^\s*(.+?)\s{2,}(\d+(?:\.\d+)?)\s*$")
+# "<name>  <weight>" pair anywhere on a line. Used with a column threshold so
+# we pick the RIGHT-hand "Top constituents" column on two-column (broad-index)
+# factsheets and ignore the left-hand sector-representation column.
+PAIR_RE = re.compile(r"([A-Za-z][\w .,&’'()/-]*?[A-Za-z.)])\s{2,}(\d+\.\d+)")
+# Section markers that mean we've run past the constituents table.
+STOP_KEYS = ("based on price return", "index methodology", "disclaimer",
+             "re-balancing", "key indices", "industry representation")
+
+# Mega-caps that headline broad indices but aren't in any sectoral list CSV
+# we keep locally (telecom, capital goods, etc.) — small manual fallback.
+MANUAL_SYMBOLS: dict[str, str] = {
+    "bharti airtel": "BHARTIARTL",
+    "larsen & toubro": "LT",
+    "reliance industries": "RELIANCE",
+    "state bank of india": "SBIN",
+    "ntpc": "NTPC",
+    "power grid corporation of india": "POWERGRID",
+    "titan company": "TITAN",
+    "ultratech cement": "ULTRACEMCO",
+    "bajaj finance": "BAJFINANCE",
+    "bajaj finserv": "BAJAJFINSV",
+    "adani ports and special economic zone": "ADANIPORTS",
+    "adani enterprises": "ADANIENT",
+    "hindustan unilever": "HINDUNILVR",
+    "grasim industries": "GRASIM",
+    "jio financial services": "JIOFIN",
+    "interglobe aviation": "INDIGO",
+    "shriram finance": "SHRIRAMFIN",
+    "tata consultancy services": "TCS",
+    "hdfc life insurance company": "HDFCLIFE",
+    "sbi life insurance company": "SBILIFE",
+    "trent": "TRENT",
+    "eternal": "ETERNAL",
+    "adani power": "ADANIPOWER",
+    "hindustan aeronautics": "HAL",
+    "cummins india": "CUMMINSIND",
+    "tata motors": "TATAMOTORS",
+    "tata power co": "TATAPOWER",
+    "suzlon energy": "SUZLON",
+    "ge vernova t&d india": "GVT&D",
+    "bharat heavy electricals": "BHEL",
+    "karur vysya bank": "KARURVYSYA",
+    "delhivery": "DELHIVERY",
+    "piramal finance": "PIRAMALFIN",
+}
 
 
 def norm_name(s: str) -> str:
@@ -107,24 +150,37 @@ def parse_factsheet(text: str) -> tuple[str | None, list[tuple[str, float]]]:
             as_of = None
 
     lines = text.splitlines()
-    start = next((i for i, ln in enumerate(lines) if "top constituents by weightage" in ln.lower()), None)
-    if start is None:
+    # The constituents column is anchored by its "Company's Name ... Weight(%)"
+    # sub-header. On broad-index factsheets this header sits in the RIGHT
+    # column of a two-column page, so we record its x-position and only accept
+    # name/weight pairs at/after that column — skipping the left-hand sector
+    # table that shares the same lines.
+    sub = next(
+        (i for i, ln in enumerate(lines)
+         if "company" in ln.lower() and "name" in ln.lower() and "weight" in ln.lower()),
+        None,
+    )
+    if sub is None:
         return as_of, []
+    boundary = lines[sub].lower().find("company")
+    if boundary < 0:
+        boundary = 0
 
     rows: list[tuple[str, float]] = []
-    for ln in lines[start + 1:]:
-        m = ROW_RE.match(ln)
-        if not m:
-            # stop once we've started collecting and hit a non-row line
-            if rows:
-                break
+    for ln in lines[sub + 1:]:
+        low = ln.lower()
+        if any(k in low for k in STOP_KEYS):
+            break
+        # Right-column pairs only. The "Company" header sits a bit right of
+        # where the names actually start, and the left sector column is far
+        # left (~col 1), so a generous margin cleanly separates them.
+        cands = [m for m in PAIR_RE.finditer(ln) if m.start() >= boundary - 45]
+        if not cands:
             continue
-        name, wt = m.group(1).strip(), float(m.group(2))
-        # The "Company's Name  Weight(%)" header never matches ROW_RE (no
-        # trailing number), so no skip is needed. (Do NOT filter on the word
-        # "company" — it'd drop real names like "TVS Motor Company Ltd.")
-        rows.append((name, wt))
-        if len(rows) >= 15:
+        m = cands[-1]  # rightmost pair = the constituent column
+        name = re.sub(r"\s+", " ", m.group(1)).strip()
+        rows.append((name, float(m.group(2))))
+        if len(rows) >= 12:
             break
     return as_of, rows
 
@@ -147,7 +203,7 @@ def main() -> None:
         entries: list[tuple[str, float]] = []
         for name, wt in rows:
             key = norm_name(name)
-            sym = own_map.get(key) or glob_map.get(key)
+            sym = own_map.get(key) or glob_map.get(key) or MANUAL_SYMBOLS.get(key)
             if not sym:
                 unmatched.append(f"{code}: '{name}'")
                 continue
