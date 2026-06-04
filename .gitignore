@@ -24,3 +24,9 @@ Fundamental app.zip
 .vercel
 .env*
 scripts/__pycache__/
+
+# NSE index Fact Sheet PDFs + list CSVs — source data for
+# scripts/build-index-weights.py (~11 MB binaries, reproducible by
+# re-downloading at each rebalance). The GENERATED web/src/lib/indexWeights.ts
+# is what ships; keep the raw PDFs out of git.
+factsheet/
