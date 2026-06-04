@@ -30,6 +30,7 @@ type NavLink = { href: string; label: string; submenu?: Submenu[] };
 
 const LINKS: NavLink[] = [
   { href: "/market",  label: "Market"  },
+  { href: "/indices", label: "Indices" },
   { href: "/sectors", label: "Sectors" },
   { href: "/ideas",   label: "Ideas"   },
   {
@@ -241,7 +242,7 @@ function MobileTabBar({ pathname, user, isAdmin, showWatchlist, showSignIn }: Mo
   // Close on route change.
   useEffect(() => { setPopup(null); }, [pathname]);
 
-  const pagesActive = ["/ideas"].some((p) => isActive(pathname, p));
+  const pagesActive = ["/ideas", "/indices"].some((p) => isActive(pathname, p));
   const toolsActive = isActive(pathname, "/tools") || (TOOLS_LINK.submenu ?? []).some((s) => isActive(pathname, s.href));
   const accountActive = isActive(pathname, "/watchlist") || isActive(pathname, "/login") ||
                         isActive(pathname, "/admin");
@@ -374,6 +375,7 @@ function PopupSheet({
     >
       {which === "pages" && (
         <>
+          <PopupLink href="/indices" label="Indices" active={isActive(pathname, "/indices")} onClose={onClose} />
           <PopupLink href="/ideas" label="Ideas" active={isActive(pathname, "/ideas")} onClose={onClose} />
         </>
       )}
