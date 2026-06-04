@@ -29,6 +29,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { fetchIndexQuotes, UpstoxTokenError } from "@/lib/upstox";
+import { withinPingerWindow } from "@/lib/marketHours";
 import { timingSafeEqual } from "crypto";
 
 export const runtime = "nodejs";
@@ -47,6 +48,12 @@ function authOk(req: NextRequest): boolean {
 export async function POST(req: NextRequest) {
   if (!authOk(req)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+
+  // Market-hours guard FIRST — before any DB access. Off-hours fires (cron
+  // over-firing past close / weekends) no-op here so they never wake Neon.
+  if (!withinPingerWindow()) {
+    return NextResponse.json({ ok: false, reason: "closed" });
   }
 
   // Pull live LTPs. Soft no-op if the token isn't fresh for the day.
