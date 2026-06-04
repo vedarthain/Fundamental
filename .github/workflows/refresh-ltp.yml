@@ -85,6 +85,18 @@ jobs:
         run: python scripts/fetch-indices.py
         continue-on-error: true
 
+      # Index membership (NSE per-index list CSVs → app.index_constituent),
+      # powering the /indices constituents view. Changes only at NSE's
+      # semi-annual rebalance, so daily is overkill but harmless (~14 small
+      # CSVs, idempotent atomic replace). Soft-fail so a 404 here never
+      # blocks the rest of the refresh.
+      - name: Refresh index constituents
+        env:
+          APP_DB_URL:       ${{ secrets.NEON_APP_URL }}
+          PYTHONUNBUFFERED: "1"
+        run: python scripts/fetch-index-constituents.py
+        continue-on-error: true
+
       - name: Refresh FII / DII flows
         env:
           APP_DB_URL:       ${{ secrets.NEON_APP_URL }}
