@@ -31,6 +31,7 @@ type ConstituentsResponse = {
   count: number;
   total_mcap_cr: number;
   fetched_at: string | null;
+  weights_as_of: string | null;
   constituents: ConstituentRow[];
 };
 
@@ -329,7 +330,8 @@ function ConstituentsPanel({ code }: { code: string }) {
     <div className="mt-1 border-t hairline pt-2">
       <div className="flex items-baseline justify-between gap-2 mb-1">
         <span className="text-[10.5px] muted-text">
-          {data.count} constituents · Cap % ≈ market-cap share (not free-float weight)
+          {data.count} constituents · Wt% = NSE index weight
+          {data.weights_as_of ? ` (factsheet ${data.weights_as_of})` : " — not yet added for this index"}
         </span>
         {data.fetched_at && (
           <span className="text-[10px] muted-text tabular-nums">prices {fmtClock(data.fetched_at)} IST</span>
@@ -345,7 +347,7 @@ function ConstituentsPanel({ code }: { code: string }) {
               <th className="font-medium py-1 px-1.5 hidden lg:table-cell">Sector</th>
               <th className="font-medium py-1 px-1.5 text-right">Price</th>
               <th className="font-medium py-1 px-1.5 text-right">1D</th>
-              <th className="font-medium py-1 pl-1.5 pr-2 text-right">Cap%</th>
+              <th className="font-medium py-1 pl-1.5 pr-2 text-right">Wt%</th>
             </tr>
           </thead>
           <tbody>
