@@ -14,7 +14,25 @@
  * is structured so that section slots in without a rewrite.
  */
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { Sparkline, type SparkPoint } from "@/components/Sparkline";
+
+type ConstituentRow = {
+  symbol: string;
+  company_name: string | null;
+  sector: string | null;
+  price: number | null;
+  pct_1d: number | null;
+  market_cap_cr: number | null;
+  weight_pct: number | null;
+};
+type ConstituentsResponse = {
+  code: string;
+  count: number;
+  total_mcap_cr: number;
+  fetched_at: string | null;
+  constituents: ConstituentRow[];
+};
 
 export type IndexBoardRow = {
   code: string;
@@ -112,6 +130,7 @@ const RANGES: Range[] = ["1D", "1W", "1M", "1Y"];
 // ── Board ───────────────────────────────────────────────────────────────────
 export function IndicesClient({ indices }: { indices: IndexBoardRow[] }) {
   const [range, setRange] = useState<Range>("1D");
+  const [expanded, setExpanded] = useState<string | null>(null);
   const ticks = useLiveIndexTicks();
   const byCode = useMemo(() => new Map(indices.map((r) => [r.code, r])), [indices]);
 
@@ -170,9 +189,16 @@ export function IndicesClient({ indices }: { indices: IndexBoardRow[] }) {
         return (
           <section key={g.title}>
             <h2 className="muted-text text-[11px] tracking-[0.12em] font-semibold uppercase mb-2">{g.title}</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 items-start">
               {sorted.map((row) => (
-                <IndexCard key={row.code} row={row} range={range} tick={ticks[row.code]} />
+                <IndexCard
+                  key={row.code}
+                  row={row}
+                  range={range}
+                  tick={ticks[row.code]}
+                  expanded={expanded === row.code}
+                  onToggle={() => setExpanded((c) => (c === row.code ? null : row.code))}
+                />
               ))}
             </div>
           </section>
@@ -193,7 +219,15 @@ function effPct(row: IndexBoardRow, range: Range, ticks: Record<string, LiveTick
 }
 
 // ── Card ────────────────────────────────────────────────────────────────────
-function IndexCard({ row, range, tick }: { row: IndexBoardRow; range: Range; tick?: LiveTick }) {
+function IndexCard({
+  row, range, tick, expanded, onToggle,
+}: {
+  row: IndexBoardRow;
+  range: Range;
+  tick?: LiveTick;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
   const held = todayTick(tick);
   const isLive = !!held && tick!.age_seconds <= LIVE_MAX_AGE_S;
 
@@ -211,7 +245,7 @@ function IndexCard({ row, range, tick }: { row: IndexBoardRow; range: Range; tic
   const sparkColor = (pctFor(row, range) ?? 0) >= 0 ? UP : DOWN;
 
   return (
-    <div className="card p-3 flex flex-col gap-2">
+    <div className={`card p-3 flex flex-col gap-2 ${expanded ? "sm:col-span-2 lg:col-span-3" : ""}`}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
@@ -238,6 +272,109 @@ function IndexCard({ row, range, tick }: { row: IndexBoardRow; range: Range; tic
         <RangeCell label="1W" value={row.pct_change_1w} active={range === "1W"} />
         <RangeCell label="1M" value={row.pct_change_1m} active={range === "1M"} />
         <RangeCell label="1Y" value={row.pct_change_1y} active={range === "1Y"} />
+      </div>
+
+      {/* Constituents expander */}
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={expanded}
+        className="flex items-center justify-center gap-1 text-[11px] font-medium muted-text hover:text-[var(--color-ink)] transition-colors pt-1"
+      >
+        <span style={{ transform: expanded ? "rotate(90deg)" : "none", transition: "transform .15s" }}>▸</span>
+        {expanded ? "Hide constituents" : "Constituents"}
+      </button>
+      {expanded && <ConstituentsPanel code={row.code} />}
+    </div>
+  );
+}
+
+// ── Constituents (lazy) ─────────────────────────────────────────────────────
+function ConstituentsPanel({ code }: { code: string }) {
+  const [data, setData] = useState<ConstituentsResponse | null>(null);
+  const [state, setState] = useState<"loading" | "ok" | "error">("loading");
+
+  useEffect(() => {
+    // Panel mounts fresh on each expand (conditionally rendered), so initial
+    // state is already "loading"/null — no reset needed here.
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch(`/api/indices/constituents?code=${encodeURIComponent(code)}`, { cache: "no-store" });
+        if (!res.ok) throw new Error(String(res.status));
+        const json = (await res.json()) as ConstituentsResponse;
+        if (alive) { setData(json); setState("ok"); }
+      } catch {
+        if (alive) setState("error");
+      }
+    })();
+    return () => { alive = false; };
+  }, [code]);
+
+  if (state === "loading") {
+    return <div className="muted-text text-[12px] py-3 text-center">Loading constituents…</div>;
+  }
+  if (state === "error") {
+    return <div className="muted-text text-[12px] py-3 text-center">Couldn’t load constituents.</div>;
+  }
+  if (!data || data.count === 0) {
+    return (
+      <div className="muted-text text-[12px] py-3 text-center">
+        No constituent list ingested yet for this index.
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-1 border-t hairline pt-2">
+      <div className="flex items-baseline justify-between gap-2 mb-1.5">
+        <span className="text-[11px] muted-text">
+          {data.count} constituents · weight ≈ by market cap
+        </span>
+        {data.fetched_at && (
+          <span className="text-[10px] muted-text tabular-nums">prices {fmtClock(data.fetched_at)} IST</span>
+        )}
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[12px]">
+          <thead>
+            <tr className="muted-text text-[10px] uppercase tracking-wide text-left">
+              <th className="font-medium py-1 pr-2">Company</th>
+              <th className="font-medium py-1 px-2 hidden sm:table-cell">Sector</th>
+              <th className="font-medium py-1 px-2 text-right">Price</th>
+              <th className="font-medium py-1 px-2 text-right">1D</th>
+              <th className="font-medium py-1 pl-2 text-right">Wt%</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.constituents.map((c) => {
+              const pct = c.pct_1d;
+              const pctColor = pct == null ? MUTED : pct >= 0 ? UP : DOWN;
+              return (
+                <tr key={c.symbol} className="border-t hairline hover:bg-[var(--color-paper)] transition-colors">
+                  <td className="py-1 pr-2">
+                    <Link href={`/stock/${c.symbol}`} className="hover:underline">
+                      <span className="font-medium">{c.symbol}</span>
+                      {c.company_name && (
+                        <span className="muted-text ml-1.5 hidden md:inline">{c.company_name}</span>
+                      )}
+                    </Link>
+                  </td>
+                  <td className="py-1 px-2 muted-text hidden sm:table-cell truncate">{c.sector ?? "—"}</td>
+                  <td className="py-1 px-2 text-right tabular-nums">
+                    {c.price == null ? "—" : `₹${c.price.toLocaleString("en-IN", { maximumFractionDigits: 1 })}`}
+                  </td>
+                  <td className="py-1 px-2 text-right tabular-nums" style={{ color: pctColor }}>
+                    {pct == null ? "—" : `${pct >= 0 ? "+" : ""}${(pct * 100).toFixed(2)}%`}
+                  </td>
+                  <td className="py-1 pl-2 text-right tabular-nums muted-text">
+                    {c.weight_pct == null ? "—" : `${c.weight_pct.toFixed(1)}`}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );
