@@ -5,6 +5,18 @@ the decision context so it can be picked up cold.
 
 ---
 
+## ⚙️ Deployment & fix policy (effective 2026-06-05)
+
+- **Fix on localhost first**, then promote to production.
+- **Production deploys happen once a week — Saturdays/Sundays only.** Batch the
+  week's changes and ship them together on the weekend.
+- **No production fixes mid-week** unless **very critical** (site down, data
+  corruption, security). Everything else waits for the weekend window.
+- Localhost DB = local Postgres (`postgres:///fundamental_app` +
+  `postgres:///golden_db`). Never point local work at Neon prod.
+
+---
+
 ## Cost / infra
 
 ### Raise CDN cache TTL on live endpoints (`s-maxage` 60 → 300)
@@ -98,3 +110,24 @@ from a story into a defensible asset. Pick from here.
 > Sequencing note: M3 (uptime) and M5 (reg) are the cheap insurance to do
 > first; M1 + M2 are the real moat-makers; M4 monetises them. M2 feeds M4's
 > hook, and M1's value depends on M3.
+
+---
+
+## Bug inventory (from EquityRoots_bug_list.md, reviewed 5 Jun 2026)
+
+Fix on localhost, ship the batch on the weekend. Severity per the source list.
+See that file for full descriptions. Located + planned 2026-06-05.
+
+| ID | Sev | Source (located) | Fix |
+|----|-----|------------------|-----|
+| BUG-01 | High | `/market` top losers — TRENT −33.4% 1D. Bad tick/corp-action in **read-only golden** (prod-only; local golden TRENT is clean). Movers built by `build-market-snapshot.py`. | Trace prod golden tick; add a sanity guard (drop/winsorize implausible 1D for large-caps) in the mover computation. Can't fix golden source. |
+| BUG-02 | High | Cluster count stated 3 ways: `app/page.tsx:519` hardcodes "Forty-one"; `SectorsClient.tsx:241` shows computed `clusterCount`; `SnapshotRibbon.tsx:184` shows `s.clusters`. Local truth: **cluster=49, meta_cluster=9**. | One canonical count from DB; replace hardcoded copy; reconcile cluster (49) vs "peer sectors" wording. NEEDS DECISION: which count is canonical + terminology. |
+| BUG-03 | Med | Coverage count drifts 2,157/2,163/2,153/2,156. `app/page.tsx:34` = `COUNT(universe is_active)` (local=2163); header/screener use other sources. | Single canonical coverage count, computed once, reused. NEEDS DECISION: active-universe vs scored-at-latest-snapshot. |
+| BUG-04 | Med | `peer-comparison/page.tsx:166` "up to five" vs `:301` "up to three" vs home card "2–5". | Read enforced max; make all 3 strings match. |
+| BUG-05 | Low | PRICES date chip stale a day on static pages (home/about/glossary/feedback) vs data pages — ISR cache skew. | Align ribbon date source / revalidate across page types. |
+| BUG-06 | Med | Identical `<title>`/meta description on about/glossary/sectors/ideas/screener/tools (only `/market`,`/feedback` unique). | Per-page `export const metadata` (unique title+desc). Doubles as moat M4 SEO. |
+| BUG-07 | Med | Glossary example dials show 0.0%/0.00×/0 days in SSR HTML. Likely count-up animation. | Verify in-browser first; if animation, SSR the final value as no-JS fallback. |
+| BUG-08 | Low | `SectorsClient.tsx:561/619/836` do `tierLabel(t)+"s"` → "Establisheds" (also breaks "Emergings"). | Add `tierLabelPlural()` in `lib/score.ts`; use at all 3 sites. |
+
+**Suggested batches:** A = copy/counts (02,03,04,08) · B = SEO metadata (06) ·
+C = date+glossary (05,07) · D = data guard (01, needs prod golden trace).
