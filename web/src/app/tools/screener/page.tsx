@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { sql } from "@/lib/db";
-import { band, bandColor, fmtPct, tierLabel } from "@/lib/score";
+import { band, bandColor, fmtPct, tierLabel, tierLabelPlural } from "@/lib/score";
 import { Controls } from "./Controls";
 import { MetaChips, type MetaOption } from "./MetaChips";
 import { SubClusterChips, type ClusterRow } from "./SubClusterChips";
@@ -792,7 +792,7 @@ function TierSectionHeader({ tier, shown, total }: { tier: string; shown: number
     >
       <span className="inline-block w-2 h-2 rounded-full" style={{ background: c.stripe }} />
       <span className="text-[12px] uppercase tracking-wide font-semibold" style={{ color: c.label }}>
-        {tierLabel(tier)}s
+        {tierLabelPlural(tier)}
       </span>
       <span className="tabular-nums text-[11.5px] muted-text">
         · showing {shown} of {total}
@@ -1015,7 +1015,7 @@ function ResultsTable({
                     href={showAllHref}
                     className="text-[12px] muted-text hover:text-[var(--color-accent-700)] transition-colors"
                   >
-                    Show all {total} {tierLabel(tier)}s →
+                    Show all {total} {tierLabelPlural(tier)} →
                   </Link>
                 </div>
               )}

@@ -16,7 +16,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useWatchlist } from "@/lib/watchlist";
-import { band, bandColor, tierLabel } from "@/lib/score";
+import { band, bandColor, tierLabelPlural } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
 
 type Row = {
@@ -272,7 +272,7 @@ function TierHeader({ tier, count }: { tier: string; count: number }) {
     >
       <span className="inline-block w-2 h-2 rounded-full" style={{ background: c.stripe }} />
       <span className="text-[11px] uppercase tracking-wide font-semibold" style={{ color: c.label }}>
-        {tierLabel(tier)}s
+        {tierLabelPlural(tier)}
       </span>
       <span className="tabular-nums text-[11px] muted-text">· {count}</span>
     </div>

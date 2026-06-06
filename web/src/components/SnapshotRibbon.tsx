@@ -55,7 +55,11 @@ async function fetchSnapshot(): Promise<SnapshotStats> {
       WITH latest AS (SELECT MAX(snapshot_date) AS d FROM app.scores)
       SELECT
         (SELECT d FROM latest) AS latest,
-        (SELECT COUNT(*) FROM app.scores WHERE snapshot_date = (SELECT d FROM latest)) AS coverage,
+        -- "Coverage" = how many NSE stocks we track = the active universe
+        -- (matches the home hero + screener breadcrumb). Counting scores at the
+        -- latest snapshot instead drifts a few low (e.g. 2,157 vs 2,163) when a
+        -- handful of active names miss a weekly score.
+        (SELECT COUNT(*) FROM app.universe WHERE is_active) AS coverage,
         -- Populated peer groups at the latest snapshot (same definition the
         -- /sectors page uses → consistent "46"). A raw COUNT(*) on app.cluster
         -- over-counts: it includes 2 deprecated clusters + the empty

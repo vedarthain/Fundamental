@@ -33,6 +33,19 @@ export function tierLabel(t: string | null | undefined): string {
   }
 }
 
+/** Plural tier label for "N <tier>" / tab contexts. Naively appending "s" to
+ *  tierLabel() produced "Establisheds"/"Emergings" — those are adjectives, so
+ *  they stay as-is; only the count-noun labels pluralise. */
+export function tierLabelPlural(t: string | null | undefined): string {
+  switch (t) {
+    case "veteran": return "Long-term Compounders";
+    case "mature":  return "Established";
+    case "mid":     return "Emerging";
+    case "new":     return "New Listings";
+    default:        return "—";
+  }
+}
+
 export function fmtPct(p: number | null | undefined, suffix = "%"): string {
   if (p == null) return "—";
   return Math.round(p) + suffix;

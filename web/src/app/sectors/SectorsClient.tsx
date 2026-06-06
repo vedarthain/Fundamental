@@ -22,7 +22,7 @@
  */
 import { useState, useMemo, useCallback, type ReactNode } from "react";
 import Link from "next/link";
-import { band, bandColor, tierLabel } from "@/lib/score";
+import { band, bandColor, tierLabelPlural } from "@/lib/score";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -558,7 +558,7 @@ function StocksPanel({
               {orderedTiers.map((t) => (
                 <TierTab
                   key={t}
-                  label={tierLabel(t) + "s"}
+                  label={tierLabelPlural(t)}
                   count={byTier.get(t)!.length}
                   active={activeTier === t}
                   onClick={() => onSelectTier(t)}
@@ -616,7 +616,7 @@ function StocksPanel({
                       className="text-[12px] font-medium hover:underline transition-colors"
                       style={{ color: "var(--color-accent-700)" }}
                     >
-                      Show all {bucket.length} {tierLabel(tier)}s →
+                      Show all {bucket.length} {tierLabelPlural(tier)} →
                     </button>
                   </div>
                 )}
@@ -833,7 +833,7 @@ function TierHeader({ tier, count }: { tier: string; count: number }) {
         className="text-[11px] uppercase tracking-wide font-semibold"
         style={{ color: c.label }}
       >
-        {tierLabel(tier) + "s"}
+        {tierLabelPlural(tier)}
       </span>
       <span className="tabular-nums text-[11px] muted-text">· {count}</span>
     </div>

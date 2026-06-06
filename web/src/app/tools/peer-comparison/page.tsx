@@ -298,7 +298,7 @@ function EmptyState() {
     <div className="card p-10 mt-8 text-center max-w-[600px] mx-auto">
       <div className="font-display text-[20px] mb-2">Pick stocks to compare</div>
       <p className="muted-text text-[13.5px] leading-[1.6]">
-        Enter up to three NSE symbols above and hit <em>Compare</em>. Try{" "}
+        Enter up to five NSE symbols above and hit <em>Compare</em>. Try{" "}
         <Link href="/tools/peer-comparison?a=INFY&b=TCS&c=HCLTECH" className="underline">
           INFY / TCS / HCLTECH
         </Link>{" "}
