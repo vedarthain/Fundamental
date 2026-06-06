@@ -335,6 +335,10 @@ async function loadAllPanelContext(): Promise<Map<string, MoverWithFlags>> {
  * Sorts symbols by pct_1d, slices top `limit`, joins each with the
  * panel-cache context map.
  */
+/** |1D| return beyond this (fraction) is treated as a data artifact and kept
+ *  out of the movers leaderboards. See scripts/build-market-snapshot.py. */
+const MAX_PLAUSIBLE_1D_RET = 0.25;
+
 function deriveMovers1DPool(
   direction: "up" | "down",
   limit: number,
@@ -347,6 +351,11 @@ function deriveMovers1DPool(
   for (const [sym, s] of snap) {
     if (s.pct_1d == null) continue;
     if (!panelCtx.has(sym)) continue;  // drops micro-caps + delisted
+    // Guard: |1D| beyond ~25% is implausible (NSE circuit bands cap legit
+    // daily moves at ~20%) — almost always an unadjusted corp action / bad
+    // golden tick. Drop it so the board never shows e.g. "TRENT -33.4% 1D".
+    // Mirrors MAX_PLAUSIBLE_1D in scripts/build-market-snapshot.py.
+    if (Math.abs(s.pct_1d) > MAX_PLAUSIBLE_1D_RET) continue;
     candidates.push({ symbol: sym, pct: s.pct_1d, today_close: s.today_close });
   }
   candidates.sort((a, b) =>

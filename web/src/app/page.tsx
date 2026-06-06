@@ -32,7 +32,11 @@ async function loadHero() {
   const snapPromise = sql<Snapshot[]>`
     SELECT
       (SELECT COUNT(*)::int FROM app.universe WHERE is_active) AS stocks,
-      (SELECT COUNT(*)::int FROM app.cluster WHERE id <> 'unclassified') AS clusters,
+      -- Populated peer groups at the latest snapshot (same definition as
+      -- /sectors + the ribbon → consistent "46"). COUNT on app.cluster
+      -- over-counts (deprecated + unclassified buckets hold no stocks).
+      (SELECT COUNT(*)::int FROM app.cluster_composite_cache
+        WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)) AS clusters,
       (SELECT COUNT(*)::int FROM app.universe WHERE is_active AND maturity_tier='veteran') AS veterans,
       (SELECT COUNT(DISTINCT snapshot_date)::int FROM app.scores) AS weeks,
       (SELECT MAX(snapshot_date)::text FROM app.scores) AS snapshot_date
@@ -195,7 +199,7 @@ function Hero({ snap }: { snap: Snapshot }) {
         </h1>
 
         <p className="muted-text mt-4 text-[15.5px] leading-[1.55] max-w-[560px]">
-          Quality, Valuation, and Momentum percentiles within every peer sector —
+          Quality, Valuation, and Momentum percentiles within every peer group —
           recomputed weekly, never edited. Stop comparing a small-cap bank to HDFC.
         </p>
 
@@ -470,7 +474,7 @@ function PolaroidBanner({ snap }: { snap: Snapshot }) {
           <div className="flex gap-9 items-baseline">
             <BannerStat value={snap.stocks.toLocaleString("en-IN")} label="stocks" />
             <Divider />
-            <BannerStat value={String(snap.clusters)} label="clusters" />
+            <BannerStat value={String(snap.clusters)} label="peer groups" />
             <Divider />
             <BannerStat value={String(snap.weeks)} label={snap.weeks === 1 ? "weekly snapshot" : "weekly snapshots"} />
           </div>
@@ -516,7 +520,7 @@ function HeatMapTear({ tiles }: { tiles: IndustryTile[] }) {
               <em className="accent">torn open.</em>
             </h2>
             <p className="muted-text mt-4 text-[14.5px] leading-[1.6] max-w-[420px]">
-              Forty-one peer sectors — every one scored and ranked, every week. Greens compound.
+              {tiles.length} peer groups — every one scored and ranked, every week. Greens compound.
               Reds need a closer look. Open the map to see the rest.
             </p>
             <div className="mt-6 flex items-center gap-3 flex-wrap">

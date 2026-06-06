@@ -56,7 +56,12 @@ async function fetchSnapshot(): Promise<SnapshotStats> {
       SELECT
         (SELECT d FROM latest) AS latest,
         (SELECT COUNT(*) FROM app.scores WHERE snapshot_date = (SELECT d FROM latest)) AS coverage,
-        (SELECT COUNT(*) FROM app.cluster) AS clusters,
+        -- Populated peer groups at the latest snapshot (same definition the
+        -- /sectors page uses → consistent "46"). A raw COUNT(*) on app.cluster
+        -- over-counts: it includes 2 deprecated clusters + the empty
+        -- "unclassified" bucket that no stock is in.
+        (SELECT COUNT(*) FROM app.cluster_composite_cache
+          WHERE snapshot_date = (SELECT d FROM latest)) AS clusters,
         (SELECT COUNT(DISTINCT snapshot_date) FROM app.scores) AS archive_count,
         -- Most recent intraday pinger write, as an IST calendar date. Lets
         -- the PRICES cell show TODAY once the pinger has run, instead of
@@ -181,7 +186,7 @@ export async function SnapshotRibbon() {
         <Sep />
         <Cell label="COVERAGE">{s.coverage.toLocaleString("en-IN")}</Cell>
         <Sep />
-        <Cell label="CLUSTERS">{s.clusters}</Cell>
+        <Cell label="PEER GROUPS">{s.clusters}</Cell>
         <Sep />
         <Cell label="ARCHIVE">
           {s.archiveCount} {s.archiveCount === 1 ? "snapshot" : "snapshots"}

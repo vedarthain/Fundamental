@@ -459,12 +459,29 @@ def derive_sector_heat(sector_1w: list[dict], snap: dict, sector_by_sym: dict) -
     return out
 
 
+# |1D| beyond this is implausible for a real close-to-close move — NSE circuit
+# bands cap legitimate daily moves at ~20%, so anything past 25% is almost
+# always an unadjusted corporate action (split/bonus/demerger) or a bad tick in
+# golden. We drop such rows from the movers leaderboards (and log them) so the
+# board never shows e.g. "TRENT -33.4% 1D". Does NOT fix golden — it's a
+# display safety net.
+MAX_PLAUSIBLE_1D = 0.25
+
+
 def derive_movers_1d_pool(direction: str, limit: int, snap: dict, panel: dict) -> list[dict]:
     cands = []
+    dropped = []
     for sym, s in snap.items():
         if s["pct_1d"] is None: continue
         if sym not in panel: continue
+        if abs(s["pct_1d"]) > MAX_PLAUSIBLE_1D:
+            dropped.append((sym, s["pct_1d"]))
+            continue
         cands.append((sym, s["pct_1d"], s["today_close"]))
+    if dropped:
+        print("  [movers-1d guard] dropped %d implausible |1D|>%.0f%%: %s"
+              % (len(dropped), MAX_PLAUSIBLE_1D * 100,
+                 ", ".join("%s=%+.1f%%" % (sym, p * 100) for sym, p in dropped[:10])))
     cands.sort(key=lambda c: c[1], reverse=(direction == "up"))
     # `limit` is effectively the pool ceiling. Set high enough above that
     # every universe (Nifty 50 has 50 candidates) gets a chance to fill 7.

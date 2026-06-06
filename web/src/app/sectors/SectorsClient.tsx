@@ -238,7 +238,7 @@ function Hero(props: {
       <div className="flex items-center gap-x-3 text-[12px] muted-text tabular-nums flex-wrap">
         <span>{props.stockCount.toLocaleString("en-IN")} stocks</span>
         <span>·</span>
-        <span>{props.clusterCount} peer sectors</span>
+        <span>{props.clusterCount} peer groups</span>
         {props.snapshotDate && (
           <>
             <span>·</span>
