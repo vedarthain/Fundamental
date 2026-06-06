@@ -1513,6 +1513,12 @@ const CATEGORIES: Category[] = [
   },
 ];
 
+export const metadata = {
+  title: "Glossary — every metric & score in plain English · EquityRoots",
+  description:
+    "Plain-English definitions of every metric and score on EquityRoots: the Quality, Valuation and Momentum pillars, percentile bands, maturity tiers and more.",
+};
+
 export default function GlossaryPage() {
   return (
     <div className="theme-indigo mx-auto max-w-[1200px] px-6 py-12">

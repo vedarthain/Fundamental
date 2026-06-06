@@ -84,6 +84,12 @@ const getCachedIndices = unstable_cache(loadIndices, ["indices-board"], {
   tags: ["market"],
 });
 
+export const metadata = {
+  title: "Indices — all Nifty indices, live levels & constituents · EquityRoots",
+  description:
+    "All tracked Nifty indices with live levels, 1D–1Y performance and full constituents — each member's live price, 1D move and real NSE index weight.",
+};
+
 export default async function IndicesPage() {
   const indices = await getCachedIndices();
   return (

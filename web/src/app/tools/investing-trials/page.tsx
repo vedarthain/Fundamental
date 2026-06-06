@@ -66,6 +66,12 @@ async function loadRows(
   return { rows, total: n };
 }
 
+export const metadata = {
+  title: "Investing Trials — set your own Q/V/M weights · EquityRoots",
+  description:
+    "Set your own Quality, Valuation and Momentum weights and watch every NSE stock re-rank — test your investing style against the peer-cluster scoring engine.",
+};
+
 export default async function ScreenPage({
   searchParams,
 }: {

@@ -379,6 +379,12 @@ function isTabKey(s: string | undefined): s is TabKey {
   return !!s && (TAB_KEYS as readonly string[]).includes(s);
 }
 
+export const metadata = {
+  title: "Ideas — weekly NSE stock ideas from the scoring engine · EquityRoots",
+  description:
+    "Auto-generated weekly stock ideas grounded in EquityRoots' peer-cluster scores — compounders, cheap-in-cluster names and momentum shifts across the NSE.",
+};
+
 export default async function IdeasPage({
   searchParams,
 }: {

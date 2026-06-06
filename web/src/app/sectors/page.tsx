@@ -111,6 +111,12 @@ const getCachedAll = unstable_cache(() => loadAll(), ["sectors-all"], {
 
 // ── Page component ──────────────────────────────────────────────────────
 
+export const metadata = {
+  title: "Sectors — NSE peer groups by quality, value & momentum · EquityRoots",
+  description:
+    "Browse NSE peer groups ranked on Quality, Valuation and Momentum. See cluster leaders and laggards, scored weekly within their true peers — not broad sectors.",
+};
+
 export default async function Home({
   searchParams,
 }: {

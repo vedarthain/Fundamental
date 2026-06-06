@@ -123,6 +123,12 @@ async function loadOne(symbol: string): Promise<CompareRow | null> {
   return rows[0] ?? null;
 }
 
+export const metadata = {
+  title: "Peer Comparison — stack 2–5 NSE stocks on one scorecard · EquityRoots",
+  description:
+    "Compare 2–5 NSE stocks side by side on the same peer-cluster scorecard — Quality, Valuation, Momentum and key fundamentals, without apples-to-oranges.",
+};
+
 export default async function ComparePage({
   searchParams,
 }: {

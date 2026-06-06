@@ -493,6 +493,12 @@ async function loadRows(
   return { rows, total, maxSectorDepth, isSectorView, tierCounts };
 }
 
+export const metadata = {
+  title: "Stock Screener — filter NSE stocks by score, sector & pillar · EquityRoots",
+  description:
+    "Filter every active NSE stock by composite score, Quality/Valuation/Momentum, sector and maturity tier. Build a shortlist ranked against true peers.",
+};
+
 export default async function ScreenerPage({
   searchParams,
 }: {
