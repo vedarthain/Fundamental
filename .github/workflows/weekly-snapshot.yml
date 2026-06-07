@@ -77,9 +77,11 @@ env:
 jobs:
   snapshot:
     runs-on: ubuntu-latest
-    # Fetch at default speed (~45 min, proved 99.5% from the runner) +
-    # compute ~45 min + score ~15 min + rebuild ~3 min. 150 min is ample.
-    timeout-minutes: 150
+    # Fetch is capped at --max-runtime-min 120 (graceful), then compute ~45 +
+    # score ~15 + rebuild ~3. 180 leaves margin so the score steps are never
+    # the thing that gets killed; the fetch cap (not this timeout) is what
+    # bounds a throttled scrape.
+    timeout-minutes: 180
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -107,7 +109,15 @@ jobs:
         # runner in ~45 min. The scraper now retries 5xx with backoff, so the
         # occasional transient 502/503 recovers instead of skipping a symbol;
         # no need to crawl.
-        run: python -m fundamental_etl.cli fetch-many
+        #
+        # --max-runtime-min caps the scrape so a throttled week (like
+        # 2026-06-06, which only reached 900/2157 before timeout-minutes killed
+        # the whole job mid-scrape — leaving an ARCHIVE GAP) stops gracefully
+        # (exit 0) and the score step below STILL runs. Unscraped symbols
+        # resume next run via skip_recent_hours; fundamentals are quarterly, so
+        # a partial scrape still scores correctly. 120 min leaves ample room
+        # under timeout-minutes for compute + score + rebuild.
+        run: python -m fundamental_etl.cli fetch-many --max-runtime-min 120
 
       # 2. Keep only the latest raw blob per symbol — bounds Neon storage.
       - name: Prune old raw blobs

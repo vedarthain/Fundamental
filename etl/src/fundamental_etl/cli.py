@@ -66,6 +66,14 @@ def fetch_many(
     workers: int = typer.Option(3, help="Concurrent worker threads (3 = 3x sequential)"),
     batch_size: int = typer.Option(50, help="Stocks per batch before the cool-down pause"),
     batch_pause: float = typer.Option(5.0, help="Seconds to pause between batches"),
+    max_runtime_min: int = typer.Option(
+        0,
+        help=(
+            "Stop scraping gracefully after N minutes (0 = unlimited) and exit 0, "
+            "so a downstream score step still runs even when Screener is throttling. "
+            "Remaining symbols resume on the next run via skip_recent_hours."
+        ),
+    ),
 ):
     """Backfill / refresh fundamentals for many symbols.
 
@@ -252,6 +260,11 @@ def fetch_many(
     signal.signal(signal.SIGINT, _sigint_handler)
 
     n_total = len(symbols)
+    # Optional wall-clock budget. When set, we stop launching new batches once
+    # exceeded and exit cleanly (0) — the partial scrape is fine (fundamentals
+    # are quarterly; unscraped symbols keep last run's blobs) and, crucially,
+    # the score step downstream still runs instead of being killed with us.
+    deadline = (time.monotonic() + max_runtime_min * 60) if max_runtime_min > 0 else None
     try:
         with ThreadPoolExecutor(max_workers=workers) as executor:
             # Process in batches so we can pause between them. The cool-down
@@ -262,6 +275,18 @@ def fetch_many(
             for batch_start in range(0, n_total, batch_size):
                 if halt.is_set():
                     log.warning("skipping_remaining_batches", reason="halt_set")
+                    break
+                if deadline is not None and time.monotonic() >= deadline:
+                    with counter_lock:
+                        done_so_far = counter["done"]
+                    log.warning(
+                        "time_budget_reached",
+                        max_runtime_min=max_runtime_min,
+                        done=done_so_far,
+                        total=n_total,
+                        remaining=n_total - done_so_far,
+                        note="stopping gracefully; remaining resume next run via skip_recent_hours",
+                    )
                     break
                 batch_no += 1
                 # Snapshot counters *before* the batch so we can show the

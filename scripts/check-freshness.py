@@ -2,10 +2,14 @@
 """
 check-freshness.py — alarm if production data is stale.
 
-Three checks run against Neon (production):
+Checks run against Neon (production):
 
   1. app.scores           — MAX(snapshot_date) within 8 days?
                             Score ETL runs weekly; >8 days = a missed run.
+
+  1b. app.scores rows     — latest snapshot has the full universe (~2,150)?
+                            Catches a PARTIAL snapshot (date recent but the
+                            score step was cut short, e.g. a job timeout).
 
   2. golden.price_history — MAX(date) within 4 days?
                             refresh-ltp.py runs weekdays after close.
@@ -85,6 +89,29 @@ def check_snapshot_age(conn: psycopg.Connection, max_days: int) -> tuple[bool, s
     return ok, (
         f"{icon} snapshot_age: latest={snap.isoformat()} "
         f"({age}d ago, threshold={max_days}d)"
+    )
+
+
+def check_snapshot_completeness(conn: psycopg.Connection, min_rows: int) -> tuple[bool, str]:
+    """Verify the latest snapshot isn't a partial/truncated run.
+
+    Scoring covers the whole active universe (~2,150), so a latest snapshot
+    with far fewer rows means the score step was cut short (e.g. the job timed
+    out mid-run). snapshot_age alone can't catch this — the date is recent, the
+    data is just incomplete."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            WITH latest AS (SELECT MAX(snapshot_date) AS d FROM app.scores)
+            SELECT COUNT(*)::int
+              FROM app.scores s JOIN latest ON s.snapshot_date = latest.d
+        """)
+        row = cur.fetchone()
+    n = int(row[0]) if row else 0
+    ok = n >= min_rows
+    icon = "✓" if ok else "✗"
+    return ok, (
+        f"{icon} snapshot_rows: {n} scored in latest snapshot "
+        f"(expected ≥ {min_rows})"
     )
 
 
@@ -168,6 +195,8 @@ def main() -> int:
         help="Alert if latest snapshot is older than this (default 8)")
     parser.add_argument("--price-max-days", type=int, default=4,
         help="Alert if latest price is older than this (default 4 — covers a long weekend + holiday)")
+    parser.add_argument("--snapshot-min-rows", type=int, default=2000,
+        help="Alert if the latest snapshot has fewer than this many scored rows (default 2000; full universe ~2,150)")
     args = parser.parse_args()
 
     app_url = env_url("APP_DB_URL")
@@ -183,6 +212,7 @@ def main() -> int:
     try:
         with psycopg.connect(app_url) as conn:
             results.append(check_snapshot_age(conn, args.snapshot_max_days))
+            results.append(check_snapshot_completeness(conn, args.snapshot_min_rows))
             results.append(check_panel_cache_populated(conn))
             results.append(check_cookie_health(conn))
     except psycopg.OperationalError as e:
