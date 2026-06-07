@@ -70,6 +70,11 @@ on:
         required: false
         type: boolean
         default: false
+      force_full_fetch:
+        description: 'Re-scrape ALL symbols, ignoring the 20h freshness skip'
+        required: false
+        type: boolean
+        default: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -117,7 +122,15 @@ jobs:
         # resume next run via skip_recent_hours; fundamentals are quarterly, so
         # a partial scrape still scores correctly. 120 min leaves ample room
         # under timeout-minutes for compute + score + rebuild.
-        run: python -m fundamental_etl.cli fetch-many --max-runtime-min 120
+        #
+        # force_full_fetch=true adds --skip-recent-hours 0 to re-scrape EVERY
+        # symbol regardless of when it was last pulled (the normal run skips
+        # anything fresh within 20h). If a throttled full re-scrape doesn't
+        # finish inside the 120-min budget, a plain re-run (default 20h skip)
+        # resumes the symbols it didn't reach.
+        run: >
+          python -m fundamental_etl.cli fetch-many --max-runtime-min 120
+          ${{ github.event.inputs.force_full_fetch == 'true' && '--skip-recent-hours 0' || '' }}
 
       # 2. Keep only the latest raw blob per symbol — bounds Neon storage.
       - name: Prune old raw blobs
