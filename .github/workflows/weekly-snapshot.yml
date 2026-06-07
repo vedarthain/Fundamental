@@ -82,11 +82,13 @@ env:
 jobs:
   snapshot:
     runs-on: ubuntu-latest
-    # Fetch is capped at --max-runtime-min 120 (graceful), then compute ~45 +
-    # score ~15 + rebuild ~3. 180 leaves margin so the score steps are never
-    # the thing that gets killed; the fetch cap (not this timeout) is what
-    # bounds a throttled scrape.
-    timeout-minutes: 180
+    # Fetch is capped at --max-runtime-min 180 (graceful), then compute ~45 +
+    # score ~15 + rebuild ~3. 330 (well under GitHub's 6h job cap) leaves wide
+    # margin so the score steps are NEVER the thing that gets killed; the fetch
+    # cap (not this timeout) is what bounds a throttled scrape. NOTE: a "Re-run"
+    # of an OLD failed run reuses that run's workflow file — trigger a FRESH
+    # "Run workflow" to pick up these values + the graceful budget.
+    timeout-minutes: 330
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -129,7 +131,7 @@ jobs:
         # finish inside the 120-min budget, a plain re-run (default 20h skip)
         # resumes the symbols it didn't reach.
         run: >
-          python -m fundamental_etl.cli fetch-many --max-runtime-min 120
+          python -m fundamental_etl.cli fetch-many --max-runtime-min 180
           ${{ github.event.inputs.force_full_fetch == 'true' && '--skip-recent-hours 0' || '' }}
 
       # 2. Keep only the latest raw blob per symbol — bounds Neon storage.
