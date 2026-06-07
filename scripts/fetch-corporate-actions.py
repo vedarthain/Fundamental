@@ -67,7 +67,7 @@ def env_url(name: str) -> str:
     raise SystemExit(f"{name} not set — pass --url or add to .env.local")
 
 
-def get_json(url: str, timeout: int = 30):
+def get_json(url: str, timeout: int = 12):
     req = Request(url, headers=HEADERS)
     with urlopen(req, timeout=timeout) as r:
         raw = r.read()
@@ -98,7 +98,7 @@ def parse_date(s: str):
 
 def build_isin_to_code() -> dict[str, str]:
     """ISIN → BSE scrip code from the active-equity scrip master."""
-    data = get_json(SCRIP_MASTER)
+    data = get_json(SCRIP_MASTER, timeout=45)  # ~1.7 MB download
     out: dict[str, str] = {}
     for row in data:
         isin = (row.get("ISIN_NUMBER") or "").strip().upper()

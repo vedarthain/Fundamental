@@ -28,9 +28,10 @@ env:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    # ~2,000 BSE calls at a polite throttle + the scrip master. Off the
-    # critical path, so a generous budget is harmless.
-    timeout-minutes: 30
+    # ~2,000 BSE calls + the scrip master. Round-trips are slower from GitHub
+    # runners than from a local machine (the 30-min cap timed out 2026-06-07),
+    # so give it wide headroom. Off the critical path → harmless.
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -47,4 +48,4 @@ jobs:
         env:
           APP_DB_URL:       ${{ secrets.NEON_APP_URL }}
           PYTHONUNBUFFERED: "1"
-        run: python scripts/fetch-corporate-actions.py
+        run: python scripts/fetch-corporate-actions.py --throttle 0.25
