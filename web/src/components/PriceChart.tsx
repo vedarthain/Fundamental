@@ -22,6 +22,14 @@ const RANGE_DAYS: Record<Exclude<Range, "1D" | "ALL">, number> = {
 
 const RANGES: Range[] = ["1D", "1W", "1M", "3M", "1Y", "3Y", "5Y", "10Y", "ALL"];
 
+/** IST calendar date ("YYYY-MM-DD") of a timestamp — used to anchor the 1D
+ *  curve on the close of the day before the intraday ticks. */
+function istDayOf(iso: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date(iso));
+}
+
 export function PriceChart({
   data,
   intraday,
@@ -46,18 +54,23 @@ export function PriceChart({
     if (data.length === 0) return [];
     if (range === "ALL") return data;
     if (range === "1D") {
-      // Preferred: draw the real intraday curve from today's accumulating
-      // ticks, anchored on yesterday's EOD close so the line starts from the
-      // prior close and the day's move reads correctly even with one tick.
-      // The ts is a full ISO timestamp; the tickFormatter renders it as IST
-      // time (detected via length > 10).
-      const base = data.slice(-1);          // yesterday's close
+      // Preferred: draw the real intraday curve from the latest session's
+      // ticks. The ts is a full ISO timestamp; the tickFormatter renders it as
+      // IST time (detected via length > 10).
       if (intraday && intraday.length > 0) {
         const pts = intraday.map((t) => ({ date: t.ts, close: t.ltp }));
-        return base.length > 0 ? [...base, ...pts] : pts;
+        // Anchor on the daily close from the day BEFORE the ticks' day so the
+        // line reads "prior close → session". Using data.slice(-1) is wrong
+        // once that point is the SAME day as the ticks (weekend / after EOD) —
+        // it would flat-line at the close value. p.date is "YYYY-MM-DD", so a
+        // lexicographic "<" against the ticks' IST day is correct.
+        const tickDay = istDayOf(intraday[0].ts);
+        const anchor = [...data].reverse().find((p) => p.date < tickDay);
+        return anchor ? [anchor, ...pts] : pts;
       }
-      // Fallback (no ticks yet today): yesterday's EOD close → current price,
-      // a straight 2-point line until the first tick lands.
+      // Fallback (no ticks at all for this symbol): yesterday's EOD close →
+      // current price, a straight 2-point line.
+      const base = data.slice(-1);
       if (currentPrice != null && base.length > 0) {
         const todayIso = new Date().toISOString().slice(0, 10);
         if (todayIso > base[0].date) {

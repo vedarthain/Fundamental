@@ -150,16 +150,21 @@ async function loadStock(symbol: string) {
     WHERE symbol = ${upper + ".NS"} AND interval = '1d'
     ORDER BY date ASC
   `;
-  // Today's intraday ticks (appended every ~10 min by the equity pinger) so
-  // the 1D chart draws a real curve as the session builds, instead of a
-  // straight line from yesterday's close to the single current price.
-  // IST-day-bounded; at most ~38 rows. Empty pre-open / on a fresh listing.
+  // Intraday ticks (appended every ~10 min by the equity pinger) for the 1D
+  // chart's real session curve. Use the MOST RECENT tick-day, not strictly
+  // "today" — otherwise the chart is a straight line all weekend / before the
+  // first tick lands (today has no ticks, so it fell back to a 2-point line).
+  // The latest tick-day is today during market hours, Friday on a weekend.
+  // At most ~38 rows. Empty only if the symbol has never been pinged.
   const intradayTicks = await sql<{ ts: string; ltp: number }[]>`
+    WITH latest AS (
+      SELECT MAX((ts AT TIME ZONE 'Asia/Kolkata')::date) AS d
+        FROM app.stock_intraday WHERE symbol = ${upper}
+    )
     SELECT ts::text, ltp::float
-      FROM app.stock_intraday
+      FROM app.stock_intraday, latest
      WHERE symbol = ${upper}
-       AND (ts AT TIME ZONE 'Asia/Kolkata')
-           >= date_trunc('day', now() AT TIME ZONE 'Asia/Kolkata')
+       AND (ts AT TIME ZONE 'Asia/Kolkata')::date = latest.d
      ORDER BY ts ASC
   `;
 

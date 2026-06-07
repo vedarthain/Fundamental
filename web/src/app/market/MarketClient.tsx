@@ -1093,11 +1093,23 @@ function SectorHeatmap({
     ? Object.values(liveSectors!).reduce<string | null>((best, s) =>
         !best || s.fetched_at > best ? s.fetched_at : best, null)
     : null;
-  const liveClock = liveTs
-    ? new Intl.DateTimeFormat("en-IN", {
-        timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false,
-      }).format(new Date(liveTs)) + " IST"
-    : null;
+  // Time only when the fetch is from today; otherwise prefix the date (e.g.
+  // "5 Jun 15:40 IST") so "fetched 15:40 IST" isn't ambiguous over a weekend /
+  // after hours, when the last price update was a prior trading day.
+  const liveClock = liveTs ? (() => {
+    const d = new Date(liveTs);
+    const istDay = (x: Date) => new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(x);
+    const time = new Intl.DateTimeFormat("en-IN", {
+      timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false,
+    }).format(d) + " IST";
+    if (istDay(d) === istDay(new Date())) return time;
+    const dateLabel = new Intl.DateTimeFormat("en-IN", {
+      timeZone: "Asia/Kolkata", day: "numeric", month: "short",
+    }).format(d);
+    return `${dateLabel} ${time}`;
+  })() : null;
 
   const values = rows.map((r) => {
     if (effectivePeriod === "1D" && hasLive) return liveSectors![r.sector_name]?.avg_pct_1d ?? r.avg_ret_1d ?? 0;
