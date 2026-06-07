@@ -1,0 +1,50 @@
+# Corporate-actions refresh (dividends etc. from BSE).
+#
+# Populates app.corporate_action via scripts/fetch-corporate-actions.py: maps
+# our NSE symbols → BSE scrip codes by ISIN (BSE scrip master ⋈ universe.isin),
+# then pulls each stock's recent actions (BSE serves the actual ₹ amounts).
+# BSE responds reliably where NSE's dynamic API 403s.
+#
+# Why its own workflow: corporate actions change infrequently and BSE is off
+# the price critical path — a slow BSE day must never threaten refresh-ltp.
+# Weekly is ample (dividends land around results season; a few days' latency on
+# an upcoming ex-date is fine).
+#
+# Required secret:
+#   NEON_APP_URL — Postgres URL for fundamental_app on Neon (same as the other
+#                  data workflows).
+
+name: Refresh corporate actions
+
+on:
+  # Sundays 05:00 UTC = 10:30 IST — off-market, off the other crons' cadence.
+  schedule:
+    - cron: '0 5 * * 0'
+  workflow_dispatch: {}
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    # ~2,000 BSE calls at a polite throttle + the scrip master. Off the
+    # critical path, so a generous budget is harmless.
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install psycopg
+        run: pip install 'psycopg[binary]==3.2.*'
+
+      - name: Fetch corporate actions from BSE
+        env:
+          APP_DB_URL:       ${{ secrets.NEON_APP_URL }}
+          PYTHONUNBUFFERED: "1"
+        run: python scripts/fetch-corporate-actions.py

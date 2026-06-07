@@ -219,8 +219,27 @@ async function loadStock(symbol: string) {
     LIMIT 4
   `;
 
+  // Corporate actions (dividends — BSE serves the actual per-share amounts;
+  // ~last 5 actions per stock, which in practice are dividends). Fail-soft: if
+  // the table isn't present in this environment yet (migration 0032 not
+  // applied), return none rather than 500-ing the whole stock page.
+  type CARow = { action_type: string; ex_date: string | null; purpose: string; amount: number | null };
+  let corporateActions: CARow[] = [];
+  try {
+    corporateActions = await sql<CARow[]>`
+      SELECT action_type, ex_date::text, purpose, amount::float
+        FROM app.corporate_action
+       WHERE symbol = ${upper}
+       ORDER BY ex_date DESC NULLS LAST
+       LIMIT 12
+    `;
+  } catch {
+    corporateActions = [];
+  }
+
   return {
     stock, scorecard, annual, quarterly, priceHistory, intradayTicks, shareholding,
+    corporateActions,
     peerMedianComposite: peerStats[0]?.median ?? 50,
     rankInIndustry: peerStats[0]?.rank ?? null,
     industryPeerCount: peerStats[0]?.peer_count ?? null,
@@ -238,7 +257,7 @@ export default async function StockPage({
     loadPersistenceForSymbol(symbol),
   ]);
   if (!data) return notFound();
-  const { stock, scorecard, annual, quarterly, priceHistory, intradayTicks, shareholding, rankInIndustry, industryPeerCount } = data;
+  const { stock, scorecard, annual, quarterly, priceHistory, intradayTicks, shareholding, corporateActions, rankInIndustry, industryPeerCount } = data;
 
   // Build the 5-axis strength bars from per-component sub-percentiles
   const strengthRows = buildSpider(
@@ -417,6 +436,11 @@ export default async function StockPage({
               <AboutCard stock={stock} priceHistoryStart={priceHistory[0]?.date ?? null} />
               <PriceChartCard symbol={stock.symbol} history={priceHistory} intraday={intradayTicks} currentPrice={stock.current_price} priceFetchedAt={stock.price_fetched_at} />
             </div>
+            {corporateActions.length > 0 && (
+              <div className="mt-6">
+                <CorporateActionsCard actions={corporateActions} />
+              </div>
+            )}
           </>
         }
         strengths={
@@ -661,6 +685,77 @@ function AboutCard({
             <span>{f.value}</span>
           </div>
         ))}
+      </div>
+    </section>
+  );
+}
+
+/* ----------------------- Corporate actions card -------------------- */
+
+const CA_STYLE: Record<string, { label: string; color: string }> = {
+  dividend: { label: "Dividend", color: "var(--color-score-good)" },
+  split:    { label: "Split",    color: "var(--color-accent-600)" },
+  bonus:    { label: "Bonus",    color: "var(--color-accent-600)" },
+  rights:   { label: "Rights",   color: "var(--color-score-weak)" },
+  buyback:  { label: "Buyback",  color: "var(--color-score-good)" },
+  other:    { label: "Action",   color: "var(--color-muted)" },
+};
+
+function CorporateActionsCard({
+  actions,
+}: {
+  actions: { action_type: string; ex_date: string | null; purpose: string; amount: number | null }[];
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+  return (
+    <section className="card p-5">
+      <div className="flex items-baseline justify-between mb-3">
+        <div>
+          <div className="text-[11px] uppercase tracking-wide muted-text">Corporate actions</div>
+          <div className="font-display text-[18px] mt-0.5">Dividend history</div>
+        </div>
+        <span className="text-[10.5px] muted-text">source: BSE</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[13px]">
+          <thead>
+            <tr className="muted-text text-[10px] uppercase tracking-wide text-left">
+              <th className="font-medium py-1 pr-2">Ex-date</th>
+              <th className="font-medium py-1 px-2">Type</th>
+              <th className="font-medium py-1 px-2">Details</th>
+              <th className="font-medium py-1 pl-2 text-right">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {actions.map((a, i) => {
+              const st = CA_STYLE[a.action_type] ?? CA_STYLE.other;
+              const upcoming = a.ex_date != null && a.ex_date >= today;
+              return (
+                <tr key={`${a.ex_date}-${a.purpose}-${i}`} className="border-t hairline">
+                  <td className="py-1.5 pr-2 tabular-nums whitespace-nowrap">
+                    {a.ex_date ? fmtResultDate(a.ex_date) : "—"}
+                    {upcoming && (
+                      <span className="ml-1.5 text-[9px] uppercase tracking-wide rounded px-1 py-[1px]"
+                        style={{ background: "color-mix(in srgb, var(--color-accent-600) 12%, transparent)", color: "var(--color-accent-700)" }}>
+                        upcoming
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-1.5 px-2">
+                    <span className="inline-block rounded px-1.5 py-[1px] text-[10.5px] font-medium"
+                      style={{ background: `color-mix(in srgb, ${st.color} 12%, transparent)`, color: st.color }}>
+                      {st.label}
+                    </span>
+                  </td>
+                  <td className="py-1.5 px-2 muted-text">{a.purpose}</td>
+                  <td className="py-1.5 pl-2 text-right tabular-nums">
+                    {a.amount != null ? `₹${a.amount.toLocaleString("en-IN", { maximumFractionDigits: 2 })}` : "—"}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </section>
   );
