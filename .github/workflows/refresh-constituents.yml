@@ -1,0 +1,54 @@
+# Index constituent membership refresh.
+#
+# Seeds app.index_constituent from NSE's per-index list CSVs (see
+# scripts/fetch-index-constituents.py). Membership changes only at NSE's
+# semi-annual rebalance (cut-offs Jan 31 / Jul 31), so weekly is already far
+# more often than needed — it just guarantees we pick up a rebalance within a
+# few days without anyone remembering to trigger it.
+#
+# Why its own workflow (split out of refresh-ltp.yml on 2026-06-07):
+#   It was a daily, NSE-bound step (~14 sequential CSV fetches, 30s timeout
+#   each) sitting in refresh-ltp's tight 5-min critical path. On a slow NSE day
+#   that pushed the daily refresh past its timeout (the 2026-06-05 failure).
+#   Constituents don't need daily cadence, so they get their own slot here with
+#   room to breathe — and a slow NSE day can never threaten the EOD price job.
+#
+# Required secret:
+#   NEON_APP_URL — Postgres URL for fundamental_app on Neon (same as the
+#                  other data workflows; no new setup).
+
+name: Refresh index constituents
+
+on:
+  # Sundays 04:00 UTC = 09:30 IST — off-market, off the refresh-ltp cadence.
+  schedule:
+    - cron: '0 4 * * 0'
+  # Manual trigger for an immediate re-seed (e.g. right after a rebalance).
+  workflow_dispatch: {}
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    # Generous: 14 NSE CSV fetches with retries/fallbacks. Off the critical
+    # path, so a slow NSE day here is harmless.
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install psycopg
+        run: pip install 'psycopg[binary]==3.2.*'
+
+      - name: Refresh index constituents
+        env:
+          APP_DB_URL:       ${{ secrets.NEON_APP_URL }}
+          PYTHONUNBUFFERED: "1"
+        run: python scripts/fetch-index-constituents.py
