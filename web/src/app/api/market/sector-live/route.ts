@@ -40,22 +40,19 @@ export type SectorLiveRow = {
   fetched_at: string;   // ISO timestamp of the newest price_fetched_at in this sector
 };
 
-export async function GET() {
-  // 1. Yesterday's EOD close per symbol from golden (the baseline).
-  const goldenRows = await golden<{ symbol: string; prev_close: number }[]>`
-    WITH latest AS (
-      SELECT MAX(date) AS d FROM golden.price_history WHERE interval = '1d'
-    )
-    SELECT REPLACE(symbol, '.NS', '') AS symbol,
-           close::float               AS prev_close
-      FROM golden.price_history, latest
-     WHERE interval = '1d' AND date = latest.d AND close > 0
-  `;
-  const prevClose = new Map(goldenRows.map((r) => [r.symbol, r.prev_close]));
+/** IST calendar date ("YYYY-MM-DD") for a timestamp — works directly as a
+ *  Postgres ::date literal. */
+function istDateKey(iso: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date(iso));
+}
 
-  // 2. Live current_price + sector mapping + market cap from app DB.
-  //    Use latest snapshot scores for sector assignment; pull market_cap_cr
-  //    from the panel cache (snapshot value) to cap-weight the aggregation.
+export async function GET() {
+  // 1. Live current_price + sector mapping + market cap from app DB. Run this
+  //    FIRST — the 1D baseline depends on which trading day these prices belong
+  //    to (step 2). Latest snapshot scores give the sector; panel-cache
+  //    market_cap_cr cap-weights the aggregation.
   const liveRows = await sql<{
     symbol: string;
     sector_name: string;
@@ -77,6 +74,33 @@ export async function GET() {
         AND pc.snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_stocks_panel_cache)
      WHERE sm.current_price IS NOT NULL
   `;
+
+  // The IST day the live prices belong to (freshest price_fetched_at).
+  let freshestTs: string | null = null;
+  for (const r of liveRows) {
+    if (r.price_fetched_at && (!freshestTs || r.price_fetched_at > freshestTs)) {
+      freshestTs = r.price_fetched_at;
+    }
+  }
+  const priceDay = istDateKey(freshestTs ?? new Date().toISOString());
+
+  // 2. Baseline = latest golden close STRICTLY BEFORE the price day. Using
+  //    golden's ABSOLUTE latest is wrong: once today's EOD close is ingested,
+  //    current_price (~today's close) is compared to the SAME day → every
+  //    sector collapses to 0% (seen all weekend and after each EOD). The day
+  //    BEFORE the price day yields the true 1D move whether the price is live
+  //    intraday or the settled close.
+  const goldenRows = await golden<{ symbol: string; prev_close: number }[]>`
+    WITH base AS (
+      SELECT MAX(date) AS d FROM golden.price_history
+       WHERE interval = '1d' AND date < ${priceDay}::date
+    )
+    SELECT REPLACE(symbol, '.NS', '') AS symbol,
+           close::float               AS prev_close
+      FROM golden.price_history, base
+     WHERE interval = '1d' AND date = base.d AND close > 0
+  `;
+  const prevClose = new Map(goldenRows.map((r) => [r.symbol, r.prev_close]));
 
   // 3. Aggregate per sector in Node — CAP-WEIGHTED so the tile reflects what
   //    the sector's large caps did (directionally aligned with the cap-
