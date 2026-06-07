@@ -131,3 +131,40 @@ See that file for full descriptions. Located + planned 2026-06-05.
 
 **Suggested batches:** A = copy/counts (02,03,04,08) · B = SEO metadata (06) ·
 C = date+glossary (05,07) · D = data guard (01, needs prod golden trace).
+
+---
+
+## Features — deferred
+
+### Corporate actions: splits / bonus / rights history + announcements
+- **Status:** Deferred (2026-06-07). Dividend history (BSE) shipped (52e50fe).
+- **What's missing:** deep **split/bonus/rights** history and the **announcements**
+  feed (Reg-30: board meetings, results dates, order wins, ratings, insider/SAST).
+- **Why deferred — proven data ceiling:** BSE's free per-stock endpoint returns
+  only the ~last 5 actions; a full-universe run (7,068 actions / 1,630 stocks)
+  came back **100% dividends** — splits/bonus are rarer and fall outside that
+  window, and BSE's `CorpactCustom` (full history) returns HTML, while its
+  `AnnGetData` (announcements) returns "No Record Found" for us even market-wide.
+  NSE has it all but **403s** (anti-bot wall).
+- **Source options (a SOURCE decision, not a code one):**
+  - **indianapi.in** — documented developer API, key-based; has `/corporate_actions`
+    **and** `/news` (announcements). Recommended richer source. Freemium → **paid**
+    for our ~2,160-stock volume; third-party dependency.
+  - **Paid vendor** (NSE official feed / Refinitiv) — authoritative, costly.
+  - **NOT StockEdge** — consumer app with a private/undocumented API; scraping it
+    is fragile + ToS-violating. Evaluated and rejected.
+- **Where it lands:** same `app.corporate_action` table (already has `action_type`
+  + `source` + `details` jsonb) — just add a second fetcher writing source='indianapi'
+  and relabel the stock card back to "Corporate actions" once non-dividends flow.
+- **Decision:** revisit only if users ask for announcements / non-dividend actions;
+  otherwise the BSE dividend feature stands.
+
+### StockEdge-style daily-updates dashboard
+- **Status:** Idea (2026-06-07).
+- **What:** a market "daily updates" page. ~70% buildable from sources we already
+  own/proven — movers, 52w H/L, FII/DII, sector moves, **corporate actions (BSE)**,
+  **bulk/block deals (NSE archive CSVs)**, IPO updates, price/volume shockers.
+  The other ~30% (announcements, insider, board meetings, ratings) needs the
+  richer source above.
+- **Next step if picked up:** spec the tabs + per-tab source/query; new fetchers
+  mainly for bulk/block deals + IPO.
