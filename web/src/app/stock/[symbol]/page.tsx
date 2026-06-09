@@ -693,12 +693,13 @@ function AboutCard({
 /* ----------------------- Corporate actions card -------------------- */
 
 const CA_STYLE: Record<string, { label: string; color: string }> = {
-  dividend: { label: "Dividend", color: "var(--color-score-good)" },
-  split:    { label: "Split",    color: "var(--color-accent-600)" },
-  bonus:    { label: "Bonus",    color: "var(--color-accent-600)" },
-  rights:   { label: "Rights",   color: "var(--color-score-weak)" },
-  buyback:  { label: "Buyback",  color: "var(--color-score-good)" },
-  other:    { label: "Action",   color: "var(--color-muted)" },
+  dividend:      { label: "Dividend",      color: "var(--color-score-good)" },
+  split:         { label: "Split",         color: "var(--color-accent-600)" },
+  bonus:         { label: "Bonus",         color: "var(--color-accent-600)" },
+  rights:        { label: "Rights",        color: "var(--color-score-weak)" },
+  buyback:       { label: "Buyback",       color: "var(--color-score-good)" },
+  board_meeting: { label: "Board meeting", color: "var(--color-muted)" },
+  other:         { label: "Action",        color: "var(--color-muted)" },
 };
 
 function CorporateActionsCard({
@@ -712,9 +713,8 @@ function CorporateActionsCard({
       <div className="flex items-baseline justify-between mb-3">
         <div>
           <div className="text-[11px] uppercase tracking-wide muted-text">Corporate actions</div>
-          <div className="font-display text-[18px] mt-0.5">Dividend history</div>
+          <div className="font-display text-[18px] mt-0.5">Dividends, bonus &amp; board meetings</div>
         </div>
-        <span className="text-[10.5px] muted-text">source: BSE</span>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-[13px]">

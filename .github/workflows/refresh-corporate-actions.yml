@@ -1,25 +1,29 @@
-# Corporate-actions refresh (dividends etc. from BSE).
+# Corporate-actions refresh — full history from indianapi.in.
 #
-# Populates app.corporate_action via scripts/fetch-corporate-actions.py: maps
-# our NSE symbols → BSE scrip codes by ISIN (BSE scrip master ⋈ universe.isin),
-# then pulls each stock's recent actions (BSE serves the actual ₹ amounts).
-# BSE responds reliably where NSE's dynamic API 403s.
+# Populates app.corporate_action via scripts/fetch-corporate-actions-iapi.py:
+# one call per stock to indianapi's /corporate_actions (accepts our NSE symbol
+# directly), returning dividends + splits + bonus + rights + board meetings
+# (results dates). Far richer than the BSE path — it supersedes it (atomic
+# per-symbol replace, source='indianapi'). The BSE fetcher
+# (fetch-corporate-actions.py) is kept as a free fallback but no longer
+# scheduled.
 #
-# Why its own workflow: corporate actions change infrequently and BSE is off
-# the price critical path — a slow BSE day must never threaten refresh-ltp.
-# Weekly is ample (dividends land around results season; a few days' latency on
-# an upcoming ex-date is fine).
+# CADENCE — MONTHLY (1st, 04:30 UTC = 10:00 IST). Why: the Hobby plan is
+# 5,000 requests/month + 1 req/sec, and a full ~2,160-symbol refresh is one
+# call each (~43% of the monthly budget, ~40 min at the rate limit). Corporate
+# actions move slowly, so monthly is ample; weekly would blow the quota.
 #
-# Required secret:
-#   NEON_APP_URL — Postgres URL for fundamental_app on Neon (same as the other
-#                  data workflows).
+# Required secrets:
+#   NEON_APP_URL          — Postgres URL for fundamental_app on Neon
+#   INDIANAPI_KEY         — the auth HEADER NAME (e.g. x-api-key)
+#   INDIANAPI_KEY_VALUE   — the API key value
+#   (add the last two under Settings → Secrets and variables → Actions)
 
 name: Refresh corporate actions
 
 on:
-  # Sundays 05:00 UTC = 10:30 IST — off-market, off the other crons' cadence.
   schedule:
-    - cron: '0 5 * * 0'
+    - cron: '30 4 1 * *'   # 1st of each month, 04:30 UTC = 10:00 IST
   workflow_dispatch: {}
 
 env:
@@ -28,10 +32,9 @@ env:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    # ~2,000 BSE calls + the scrip master. Round-trips are slower from GitHub
-    # runners than from a local machine (the 30-min cap timed out 2026-06-07),
-    # so give it wide headroom. Off the critical path → harmless.
-    timeout-minutes: 60
+    # ~2,160 calls at the 1 req/s limit ≈ 40 min; 55 leaves margin. A 429
+    # (quota hit) makes the script stop gracefully with a partial save.
+    timeout-minutes: 55
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -44,8 +47,10 @@ jobs:
       - name: Install psycopg
         run: pip install 'psycopg[binary]==3.2.*'
 
-      - name: Fetch corporate actions from BSE
+      - name: Fetch corporate actions from indianapi.in
         env:
-          APP_DB_URL:       ${{ secrets.NEON_APP_URL }}
-          PYTHONUNBUFFERED: "1"
-        run: python scripts/fetch-corporate-actions.py --throttle 0.25
+          APP_DB_URL:          ${{ secrets.NEON_APP_URL }}
+          INDIANAPI_KEY:       ${{ secrets.INDIANAPI_KEY }}
+          INDIANAPI_KEY_VALUE: ${{ secrets.INDIANAPI_KEY_VALUE }}
+          PYTHONUNBUFFERED:    "1"
+        run: python scripts/fetch-corporate-actions-iapi.py
