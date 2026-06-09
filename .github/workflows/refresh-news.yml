@@ -14,10 +14,10 @@
 name: Refresh news
 
 on:
-  # Every hour, 02:00–14:00 UTC = 07:30–19:30 IST (covers the market day +
-  # evening wrap). Off-hours headlines get picked up the next morning.
+  # Every hour, 02:00–17:00 UTC = 07:30–22:30 IST (pre-open through the late
+  # evening wrap). Overnight headlines get picked up at the 07:30 run.
   schedule:
-    - cron: '0 2-14 * * *'
+    - cron: '0 2-17 * * *'
   workflow_dispatch: {}
 
 env:

@@ -17,7 +17,7 @@ import { notFound } from "next/navigation";
 import { unstable_cache } from "next/cache";
 import type { Metadata } from "next";
 import { loadInsight } from "@/lib/today-insight";
-import { band, bandColor, tierLabel } from "@/lib/score";
+import { band, bandColor, tierLabel, displayCompanyName } from "@/lib/score";
 
 export const revalidate = 86400;
 
@@ -226,7 +226,7 @@ function StockCard({
             </span>
           </div>
           <div className="text-[12.5px] muted-text truncate mt-0.5">
-            {stock.company_name}
+            {displayCompanyName(stock.company_name, stock.symbol)}
           </div>
           <div className="text-[10.5px] muted-text mt-0.5">
             {stock.sector_name} · {stock.industry_name}

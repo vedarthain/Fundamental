@@ -46,6 +46,17 @@ export function tierLabelPlural(t: string | null | undefined): string {
   }
 }
 
+/** Clean a company name for display. Some app.universe.company_name rows are
+ *  polluted with the ".NS" Yahoo suffix (e.g. "RELIANCE.NS"); strip it. Falls
+ *  back to the symbol when the name is empty/just the suffix. */
+export function displayCompanyName(
+  name: string | null | undefined,
+  symbol?: string | null,
+): string {
+  const cleaned = (name ?? "").replace(/\.NS$/i, "").trim();
+  return cleaned || (symbol ?? "").trim();
+}
+
 export function fmtPct(p: number | null | undefined, suffix = "%"): string {
   if (p == null) return "—";
   return Math.round(p) + suffix;

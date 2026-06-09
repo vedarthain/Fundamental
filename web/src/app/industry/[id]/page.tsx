@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { sql } from "@/lib/db";
-import { band, bandColor, fmtPct, tierLabel } from "@/lib/score";
+import { band, bandColor, fmtPct, tierLabel, displayCompanyName } from "@/lib/score";
 
 // Industry data changes weekly. 24h cache avoids hourly Neon wakes per cluster.
 export const revalidate = 86400;
@@ -167,7 +167,7 @@ export default async function ClusterPage({
                           {s.symbol}
                         </Link>
                         <div className="text-[12px] muted-text truncate max-w-[300px]">
-                          {s.company_name}
+                          {displayCompanyName(s.company_name, s.symbol)}
                         </div>
                       </td>
                       <td className="px-4 py-3 text-right tabular-nums text-[13px] muted-text">

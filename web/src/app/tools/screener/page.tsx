@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { sql } from "@/lib/db";
-import { band, bandColor, fmtPct, tierLabel, tierLabelPlural } from "@/lib/score";
+import { band, bandColor, fmtPct, tierLabel, tierLabelPlural, displayCompanyName } from "@/lib/score";
 import { Controls } from "./Controls";
 import { MetaChips, type MetaOption } from "./MetaChips";
 import { SubClusterChips, type ClusterRow } from "./SubClusterChips";
@@ -1194,7 +1194,7 @@ function IndustryBlock({
                     </div>
                     {!compact && (
                       <div className="text-[10.5px] muted-text truncate max-w-[180px]">
-                        {r.company_name}
+                        {displayCompanyName(r.company_name, r.symbol)}
                       </div>
                     )}
                   </td>

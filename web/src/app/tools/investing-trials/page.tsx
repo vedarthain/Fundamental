@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { sql } from "@/lib/db";
-import { band, bandColor, fmtPct, tierLabel } from "@/lib/score";
+import { band, bandColor, fmtPct, tierLabel, displayCompanyName } from "@/lib/score";
 import { Controls } from "./Controls";
 import { PAGE_SIZE, parseParams } from "./types";
 
@@ -199,7 +199,7 @@ function ResultsTable({ rows, weights }: { rows: Row[]; weights: { q: number; v:
                 <Link href={`/stock/${r.symbol}`} className="font-medium hover:text-[var(--color-accent-600)]">
                   {r.symbol}
                 </Link>
-                <div className="text-[12px] muted-text truncate max-w-[240px]">{r.company_name}</div>
+                <div className="text-[12px] muted-text truncate max-w-[240px]">{displayCompanyName(r.company_name, r.symbol)}</div>
               </td>
               <td className="px-4 py-3 text-[12px]">
                 <div className="text-[10px] uppercase tracking-wide muted-text mb-0.5">{r.sector_name}</div>

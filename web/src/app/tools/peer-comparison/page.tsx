@@ -20,7 +20,7 @@
  */
 import Link from "next/link";
 import { sql } from "@/lib/db";
-import { band, bandColor, fmtRupeesCr, tierLabel } from "@/lib/score";
+import { band, bandColor, fmtRupeesCr, tierLabel, displayCompanyName } from "@/lib/score";
 import { ArrowLeftRight } from "lucide-react";
 
 export const revalidate = 1800;
@@ -375,7 +375,7 @@ function ScorecardTable<R extends { symbol: string; company_name: string }>({
             >
               {r.symbol}
             </Link>
-            <div className="muted-text text-[12px] truncate">{r.company_name}</div>
+            <div className="muted-text text-[12px] truncate">{displayCompanyName(r.company_name, r.symbol)}</div>
           </div>
         ))}
       </div>

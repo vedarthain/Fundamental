@@ -22,7 +22,7 @@
  */
 import { useState, useMemo, useCallback, type ReactNode } from "react";
 import Link from "next/link";
-import { band, bandColor, tierLabelPlural } from "@/lib/score";
+import { band, bandColor, tierLabelPlural, displayCompanyName } from "@/lib/score";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -898,7 +898,7 @@ function StockIdentity({ stock }: { stock: StockRow }) {
           {stock.symbol}
         </span>
         <span className="muted-text text-[11.5px] truncate">
-          {stock.company_name}
+          {displayCompanyName(stock.company_name, stock.symbol)}
         </span>
       </div>
       <div className="muted-text text-[10.5px] mt-0.5 tabular-nums flex flex-wrap gap-x-2.5 gap-y-0">
