@@ -32,9 +32,12 @@ env:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    # ~2,160 calls at the 1 req/s limit ≈ 40 min; 55 leaves margin. A 429
-    # (quota hit) makes the script stop gracefully with a partial save.
-    timeout-minutes: 55
+    # The API is slow (~2s/call), so a full ~2,160-symbol sweep is ~80 min even
+    # with the adaptive throttle. We give the job 120 min and tell the script to
+    # self-stop at 110 (--max-minutes) so it exits cleanly with progress saved
+    # rather than being hard-canceled. The sweep is resumable (least-recently-
+    # fetched first), so any leftover symbols are picked up on the next run.
+    timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -53,4 +56,4 @@ jobs:
           INDIANAPI_KEY:       ${{ secrets.INDIANAPI_KEY }}
           INDIANAPI_KEY_VALUE: ${{ secrets.INDIANAPI_KEY_VALUE }}
           PYTHONUNBUFFERED:    "1"
-        run: python scripts/fetch-corporate-actions-iapi.py
+        run: python scripts/fetch-corporate-actions-iapi.py --max-minutes 110

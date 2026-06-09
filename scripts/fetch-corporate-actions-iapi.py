@@ -13,11 +13,22 @@ Endpoint:  GET https://stock.indianapi.in/corporate_actions?stock_name=<SYM>
 Auth:      header from .env.local — INDIANAPI_KEY (name) + INDIANAPI_KEY_VALUE.
 
 BUDGET: Hobby plan = 5,000 req/month, 1 req/sec. One call per stock → a full
-~2,160-symbol refresh is ~43% of the month + ~36 min. So run MONTHLY (its own
-workflow). Use --limit while testing to spend only a few calls.
+~2,160-symbol refresh is ~43% of the month. So run MONTHLY (its own workflow).
+Use --limit while testing to spend only a few calls.
+
+RESUMABLE: symbols are processed least-recently-fetched first (tracked in
+app.corporate_action_fetch). A run that hits --max-minutes or a timeout stops
+cleanly with progress committed, and the next run continues where it left off
+instead of restarting at "A" — so the full universe gets covered across runs
+and never re-spends quota on symbols already done this cycle.
+
+THROTTLE: adaptive. The 1 req/sec limit needs ≥1s *between call starts*; since
+each call already takes ~2s, we only sleep the remainder up to --min-spacing
+(no wasted fixed sleep).
 
 USAGE:
   etl/.venv/bin/python scripts/fetch-corporate-actions-iapi.py --limit 15
+  etl/.venv/bin/python scripts/fetch-corporate-actions-iapi.py --max-minutes 110
   etl/.venv/bin/python scripts/fetch-corporate-actions-iapi.py            # full
 """
 from __future__ import annotations
@@ -156,7 +167,10 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Fetch corporate actions from indianapi.in.")
     ap.add_argument("--url", help="Postgres URL (default APP_DB_URL)")
     ap.add_argument("--limit", type=int, help="Only first N symbols (testing — saves quota)")
-    ap.add_argument("--throttle", type=float, default=1.1, help="Seconds between calls (≥1 for the 1 req/s limit)")
+    ap.add_argument("--min-spacing", type=float, default=1.05,
+                    help="Min seconds between call starts (≥1 for the 1 req/s limit)")
+    ap.add_argument("--max-minutes", type=float, default=None,
+                    help="Stop cleanly after this many minutes (resumable next run)")
     args = ap.parse_args()
 
     url = args.url or env("APP_DB_URL")
@@ -166,15 +180,40 @@ def main() -> None:
 
     with psycopg.connect(url) as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT symbol FROM app.universe WHERE is_active ORDER BY symbol")
+            # Least-recently-fetched first (never-fetched → NULLS FIRST), so a
+            # timed-out run or re-run continues instead of restarting at "A".
+            cur.execute(
+                """
+                SELECT u.symbol
+                  FROM app.universe u
+                  LEFT JOIN app.corporate_action_fetch f ON f.symbol = u.symbol
+                 WHERE u.is_active
+                 ORDER BY f.fetched_at ASC NULLS FIRST, u.symbol
+                """
+            )
             symbols = [r[0] for r in cur.fetchall()]
         if args.limit:
             symbols = symbols[: args.limit]
-        print(f"Symbols: {len(symbols)} · ~{len(symbols)} API calls "
-              f"(~{len(symbols) * args.throttle / 60:.0f} min)", file=sys.stderr)
+        budget = f", budget {args.max_minutes:.0f}m" if args.max_minutes else ""
+        print(f"Symbols: {len(symbols)} (least-recently-fetched first){budget}",
+              file=sys.stderr)
 
+        start = time.monotonic()
         total, ok, calls = 0, 0, 0
         for i, sym in enumerate(symbols, 1):
+            if args.max_minutes and (time.monotonic() - start) / 60 >= args.max_minutes:
+                print(f"  ⏱ {args.max_minutes:.0f}m budget reached at {i-1}/{len(symbols)} "
+                      f"— stopping cleanly (resumes next run).", file=sys.stderr)
+                break
+
+            call_t0 = time.monotonic()
+
+            def space():
+                """Sleep only the remainder needed to keep ≥min-spacing between starts."""
+                dt = time.monotonic() - call_t0
+                if dt < args.min_spacing:
+                    time.sleep(args.min_spacing - dt)
+
             try:
                 payload = get(sym, headers)
                 calls += 1
@@ -183,11 +222,11 @@ def main() -> None:
                     print("  ! 429 rate/quota limit — stopping (partial run saved)", file=sys.stderr)
                     break
                 print(f"  ! {sym}: HTTP {e.code}", file=sys.stderr)
-                time.sleep(args.throttle)
+                space()
                 continue
             except (URLError, TimeoutError, ValueError) as e:
                 print(f"  ! {sym}: {type(e).__name__}", file=sys.stderr)
-                time.sleep(args.throttle)
+                space()
                 continue
 
             actions = build_actions(sym, payload) if isinstance(payload, dict) else []
@@ -202,13 +241,23 @@ def main() -> None:
                         """,
                         actions,
                     )
+                # Mark this symbol fetched regardless of whether it had actions,
+                # so resumable ordering advances past empty-history stocks too.
+                cur.execute(
+                    """
+                    INSERT INTO app.corporate_action_fetch (symbol, fetched_at)
+                    VALUES (%s, now())
+                    ON CONFLICT (symbol) DO UPDATE SET fetched_at = now()
+                    """,
+                    (sym,),
+                )
             conn.commit()
             if actions:
                 total += len(actions)
                 ok += 1
             if i % 100 == 0:
                 print(f"  …{i}/{len(symbols)}, {total} actions, {calls} calls", file=sys.stderr)
-            time.sleep(args.throttle)
+            space()
 
     print(f"Done — {total} actions across {ok} symbols; {calls} API calls used.")
 
