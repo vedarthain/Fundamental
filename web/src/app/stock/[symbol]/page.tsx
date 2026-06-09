@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { sql, golden } from "@/lib/db";
-import { band, bandColor, fmtPct, fmtRupeesCr, tierLabel } from "@/lib/score";
+import { band, bandColor, fmtPct, fmtRupeesCr, tierLabel, displayCompanyName } from "@/lib/score";
 import { StrengthBars } from "@/components/StrengthBars";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { PriceChart, type PricePoint } from "@/components/PriceChart";
@@ -275,6 +275,12 @@ export default async function StockPage({
   if (!data) return notFound();
   const { stock, scorecard, annual, quarterly, priceHistory, intradayTicks, shareholding, corporateActions, stockNews, rankInIndustry, industryPeerCount } = data;
 
+  // Some app.universe.company_name rows are polluted with the ".NS" Yahoo
+  // suffix (e.g. "INFY.NS"). Strip it once here so every downstream render —
+  // header, About card, BusinessVisual, TrendCommentary, page metadata — shows
+  // the clean name.
+  stock.company_name = displayCompanyName(stock.company_name, stock.symbol);
+
   // Build the 5-axis strength bars from per-component sub-percentiles
   const strengthRows = buildSpider(
     stock.quality_components || {},
@@ -332,6 +338,16 @@ export default async function StockPage({
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-3 text-[14px] muted-text">
             <span className="font-medium ink-text tabular-nums">{stock.symbol}</span>
+            <span
+              className="inline-flex items-center rounded px-1.5 py-[1px] text-[10px] font-semibold tracking-wide"
+              style={{
+                background: "color-mix(in srgb, var(--color-accent-600) 12%, transparent)",
+                color: "var(--color-accent-700)",
+              }}
+              title="Listed on the National Stock Exchange of India"
+            >
+              NSE
+            </span>
             {stock.current_price != null && (
               <>
                 <span>·</span>
