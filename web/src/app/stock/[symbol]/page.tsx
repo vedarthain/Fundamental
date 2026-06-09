@@ -452,17 +452,22 @@ export default async function StockPage({
               <AboutCard stock={stock} priceHistoryStart={priceHistory[0]?.date ?? null} />
               <PriceChartCard symbol={stock.symbol} history={priceHistory} intraday={intradayTicks} currentPrice={stock.current_price} priceFetchedAt={stock.price_fetched_at} />
             </div>
-            {corporateActions.length > 0 && (
-              <div className="mt-6">
-                <CorporateActionsCard actions={corporateActions} />
-              </div>
-            )}
             {stockNews.length > 0 && (
               <div className="mt-6">
                 <StockNewsCard news={stockNews} />
               </div>
             )}
           </>
+        }
+        actions={
+          corporateActions.length > 0 ? (
+            <CorporateActionsCard actions={corporateActions} />
+          ) : (
+            <div className="card p-6 muted-text text-[13px]">
+              No corporate actions on record yet for {stock.symbol}. Dividends,
+              bonus/splits and board meetings will appear here once published.
+            </div>
+          )
         }
         strengths={
           <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-8">

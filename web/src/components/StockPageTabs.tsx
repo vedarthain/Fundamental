@@ -1,12 +1,13 @@
 "use client";
 
 /**
- * Stock-page tab switcher. Five tabs:
- *   • Latest result    — quarterly flash + TTM ratios (the default landing)
- *   • About            — company description, basics, price chart
- *   • Strengths & gaps — peer-cluster percentile bars + pillar stories
- *   • Trend            — multi-snapshot composite trajectory + peer context
- *   • The Numbers      — annual + quarterly fundamentals tables
+ * Stock-page tab switcher. Six tabs:
+ *   • Latest result     — quarterly flash + TTM ratios (the default landing)
+ *   • About             — company description, basics, price chart
+ *   • Strengths & gaps  — peer-cluster percentile bars + pillar stories
+ *   • Trend             — multi-snapshot composite trajectory + peer context
+ *   • The Numbers       — annual + quarterly fundamentals tables
+ *   • Corporate actions — dividends, bonus/splits, board meetings
  *
  * Why client-side state instead of URL: switching is instant, no navigation
  * spinner, and the parent server component still controls all data fetching.
@@ -18,9 +19,9 @@
  */
 
 import { useEffect, useState, type ReactNode } from "react";
-import { Activity, Info, Layers, BarChart3, TrendingUp } from "lucide-react";
+import { Activity, Info, Layers, BarChart3, TrendingUp, CalendarClock } from "lucide-react";
 
-type TabKey = "results" | "about" | "strengths" | "trend" | "numbers";
+type TabKey = "results" | "about" | "strengths" | "trend" | "numbers" | "actions";
 
 type TabDef = {
   key: TabKey;
@@ -71,6 +72,13 @@ const TABS: TabDef[] = [
     stripe: "var(--color-tab-numbers-stripe)",
     tint: "var(--color-tab-tint-numbers)",
   },
+  {
+    key: "actions",
+    label: "Corporate actions",
+    icon: <CalendarClock size={14} strokeWidth={1.8} />,
+    stripe: "var(--color-accent-700)",
+    tint: "var(--color-tab-tint-numbers)",
+  },
 ];
 
 export function StockPageTabs({
@@ -79,12 +87,14 @@ export function StockPageTabs({
   strengths,
   trend,
   numbers,
+  actions,
 }: {
   results: ReactNode;
   about: ReactNode;
   strengths: ReactNode;
   trend: ReactNode;
   numbers: ReactNode;
+  actions: ReactNode;
 }) {
   // Default to "results" so visitors land on the freshest signal first.
   // If the URL has #latest-result (chip click from a different tab), open
@@ -167,6 +177,7 @@ export function StockPageTabs({
           <Panel show={active === "strengths"} keyName="strengths"> {strengths} </Panel>
           <Panel show={active === "trend"}     keyName="trend">     {trend}     </Panel>
           <Panel show={active === "numbers"}   keyName="numbers">   {numbers}   </Panel>
+          <Panel show={active === "actions"}   keyName="actions">   {actions}   </Panel>
         </div>
       </div>
     </div>
