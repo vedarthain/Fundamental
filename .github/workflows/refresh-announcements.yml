@@ -1,0 +1,45 @@
+# Corporate announcements refresh — per-stock exchange filings from BSE.
+#
+# scripts/fetch-announcements.py maps each NSE symbol → BSE scrip code (ISIN)
+# and pulls the last 30 days of announcements (SEBI disclosures, newspaper
+# publications, investor presentations, board outcomes, …) into app.announcement.
+# BSE's API is FREE, so this runs daily for the whole universe and spends no
+# indianapi quota.
+#
+# Cadence: once daily, after the market + late filings settle. 22:00 UTC =
+# 03:30 IST next morning — captures the full day's filings.
+#
+# Required secret: NEON_APP_URL.
+
+name: Refresh announcements
+
+on:
+  schedule:
+    - cron: '0 22 * * *'   # 22:00 UTC = 03:30 IST
+  workflow_dispatch: {}
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    # ~2,100 BSE calls at ~0.4s throttle + latency ≈ 30–40 min; 55 leaves margin.
+    timeout-minutes: 55
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install psycopg
+        run: pip install 'psycopg[binary]==3.2.*'
+
+      - name: Fetch announcements from BSE
+        env:
+          APP_DB_URL:       ${{ secrets.NEON_APP_URL }}
+          PYTHONUNBUFFERED: "1"
+        run: python scripts/fetch-announcements.py

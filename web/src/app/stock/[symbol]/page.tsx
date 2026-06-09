@@ -253,9 +253,27 @@ async function loadStock(symbol: string) {
     stockNews = [];
   }
 
+  // Corporate announcements (exchange filings) for this stock — from BSE.
+  // Fail-soft if app.announcement isn't present in this environment yet.
+  type Announcement = {
+    title: string; category: string | null; published_at: string | null; pdf_url: string | null;
+  };
+  let announcements: Announcement[] = [];
+  try {
+    announcements = await sql<Announcement[]>`
+      SELECT title, category, published_at::text, pdf_url
+        FROM app.announcement
+       WHERE symbol = ${upper}
+       ORDER BY published_at DESC NULLS LAST
+       LIMIT 30
+    `;
+  } catch {
+    announcements = [];
+  }
+
   return {
     stock, scorecard, annual, quarterly, priceHistory, intradayTicks, shareholding,
-    corporateActions, stockNews,
+    corporateActions, stockNews, announcements,
     peerMedianComposite: peerStats[0]?.median ?? 50,
     rankInIndustry: peerStats[0]?.rank ?? null,
     industryPeerCount: peerStats[0]?.peer_count ?? null,
@@ -273,7 +291,7 @@ export default async function StockPage({
     loadPersistenceForSymbol(symbol),
   ]);
   if (!data) return notFound();
-  const { stock, scorecard, annual, quarterly, priceHistory, intradayTicks, shareholding, corporateActions, stockNews, rankInIndustry, industryPeerCount } = data;
+  const { stock, scorecard, annual, quarterly, priceHistory, intradayTicks, shareholding, corporateActions, stockNews, announcements, rankInIndustry, industryPeerCount } = data;
 
   // Some app.universe.company_name rows are polluted with the ".NS" Yahoo
   // suffix (e.g. "INFY.NS"). Strip it once here so every downstream render —
@@ -476,14 +494,17 @@ export default async function StockPage({
           </>
         }
         actions={
-          corporateActions.length > 0 ? (
-            <CorporateActionsCard actions={corporateActions} />
-          ) : (
-            <div className="card p-6 muted-text text-[13px]">
-              No corporate actions on record yet for {stock.symbol}. Dividends,
-              bonus/splits and board meetings will appear here once published.
-            </div>
-          )
+          <div className="space-y-6">
+            <AnnouncementsCard announcements={announcements} symbol={stock.symbol} />
+            {corporateActions.length > 0 ? (
+              <CorporateActionsCard actions={corporateActions} />
+            ) : (
+              <div className="card p-6 muted-text text-[13px]">
+                No corporate actions on record yet for {stock.symbol}. Dividends,
+                bonus/splits and board meetings will appear here once published.
+              </div>
+            )}
+          </div>
         }
         strengths={
           <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-8">
@@ -799,6 +820,78 @@ function CorporateActionsCard({
           </tbody>
         </table>
       </div>
+    </section>
+  );
+}
+
+/* ----------------------- Announcements card ------------------------ */
+
+/** Colour-code the BSE category so filings scan quickly. */
+function annCatColor(category: string | null): string {
+  const c = (category || "").toLowerCase();
+  if (c.includes("result")) return "var(--color-score-good)";
+  if (c.includes("board")) return "var(--color-accent-600)";
+  if (c.includes("corp action") || c.includes("dividend")) return "var(--color-accent-700)";
+  if (c.includes("insider") || c.includes("sast")) return "var(--color-score-weak)";
+  return "var(--color-muted)";
+}
+
+function AnnouncementsCard({
+  announcements,
+  symbol,
+}: {
+  announcements: { title: string; category: string | null; published_at: string | null; pdf_url: string | null }[];
+  symbol: string;
+}) {
+  return (
+    <section className="card p-5">
+      <div className="flex items-baseline justify-between mb-3">
+        <div>
+          <div className="text-[11px] uppercase tracking-wide muted-text">Announcements</div>
+          <div className="font-display text-[18px] mt-0.5">Latest exchange filings</div>
+        </div>
+        <span className="text-[10.5px] muted-text">BSE · filings link to the PDF</span>
+      </div>
+      {announcements.length === 0 ? (
+        <div className="muted-text text-[13px]">
+          No recent announcements on record for {symbol}. SEBI disclosures, board
+          outcomes and other filings will appear here once published.
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          {announcements.map((a, i) => {
+            const color = annCatColor(a.category);
+            const date = a.published_at ? fmtResultDate(a.published_at.slice(0, 10)) : "";
+            const Inner = (
+              <>
+                <div className="flex items-center gap-2 text-[10px] mb-0.5">
+                  {a.category && (
+                    <span className="inline-block rounded px-1.5 py-[1px] font-medium uppercase tracking-wide"
+                      style={{ background: `color-mix(in srgb, ${color} 12%, transparent)`, color }}>
+                      {a.category}
+                    </span>
+                  )}
+                  <span className="muted-text tabular-nums">{date}</span>
+                </div>
+                <div className="text-[13px] leading-snug">{a.title}</div>
+              </>
+            );
+            return a.pdf_url ? (
+              <a
+                key={`${a.title}-${i}`}
+                href={a.pdf_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block rounded-md px-2 py-1.5 -mx-2 hover:bg-[var(--color-paper)] transition-colors"
+              >
+                {Inner}
+              </a>
+            ) : (
+              <div key={`${a.title}-${i}`} className="px-2 py-1.5 -mx-2">{Inner}</div>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
 }
