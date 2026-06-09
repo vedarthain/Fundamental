@@ -14,6 +14,7 @@ import {
 } from "@/lib/companyNarration";
 import { BusinessVisual } from "@/components/BusinessVisual";
 import { StockPageTabs } from "@/components/StockPageTabs";
+import { StockActionsTabs } from "@/components/StockActionsTabs";
 import { TrendSection, TrendCommentary } from "@/components/TrendSection";
 import { loadPersistenceForSymbol } from "@/lib/persistence";
 
@@ -494,17 +495,19 @@ export default async function StockPage({
           </>
         }
         actions={
-          <div className="space-y-6">
-            <AnnouncementsCard announcements={announcements} symbol={stock.symbol} />
-            {corporateActions.length > 0 ? (
-              <CorporateActionsCard actions={corporateActions} />
-            ) : (
-              <div className="card p-6 muted-text text-[13px]">
-                No corporate actions on record yet for {stock.symbol}. Dividends,
-                bonus/splits and board meetings will appear here once published.
-              </div>
-            )}
-          </div>
+          <StockActionsTabs
+            announcements={<AnnouncementsCard announcements={announcements} symbol={stock.symbol} />}
+            corporate={
+              corporateActions.length > 0 ? (
+                <CorporateActionsCard actions={corporateActions} />
+              ) : (
+                <div className="card p-6 muted-text text-[13px]">
+                  No corporate actions on record yet for {stock.symbol}. Dividends,
+                  bonus/splits and board meetings will appear here once published.
+                </div>
+              )
+            }
+          />
         }
         strengths={
           <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-8">
@@ -850,7 +853,6 @@ function AnnouncementsCard({
           <div className="text-[11px] uppercase tracking-wide muted-text">Announcements</div>
           <div className="font-display text-[18px] mt-0.5">Latest exchange filings</div>
         </div>
-        <span className="text-[10.5px] muted-text">BSE · filings link to the PDF</span>
       </div>
       {announcements.length === 0 ? (
         <div className="muted-text text-[13px]">

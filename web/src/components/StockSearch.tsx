@@ -54,20 +54,33 @@ export function StockSearch() {
       return;
     }
     setLoading(true);
+    // Abort the previous in-flight request when a new keystroke supersedes it.
+    // Without this, a slower earlier response (e.g. "w") can arrive AFTER the
+    // latest ("wipro") and clobber the correct results on screen.
+    const controller = new AbortController();
     const t = setTimeout(async () => {
       try {
-        const r = await fetch(`/api/search?q=${encodeURIComponent(term)}`);
+        const r = await fetch(`/api/search?q=${encodeURIComponent(term)}`, {
+          signal: controller.signal,
+        });
         if (!r.ok) throw new Error("search failed");
         const data: { hits: Hit[] } = await r.json();
         setHits(data.hits);
         setActive(0);
-      } catch {
-        setHits([]);
-      } finally {
         setLoading(false);
+      } catch (e) {
+        // Ignore aborts — a newer keystroke took over. Only a real failure
+        // should clear results + stop the spinner.
+        if ((e as Error).name !== "AbortError") {
+          setHits([]);
+          setLoading(false);
+        }
       }
     }, 130);
-    return () => clearTimeout(t);
+    return () => {
+      clearTimeout(t);
+      controller.abort();
+    };
   }, [q]);
 
   const go = useCallback(
