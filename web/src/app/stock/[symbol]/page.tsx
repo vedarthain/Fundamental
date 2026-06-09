@@ -237,9 +237,25 @@ async function loadStock(symbol: string) {
     corporateActions = [];
   }
 
+  // Recent news tagged to this stock (best-effort; from broadcaster RSS).
+  // Fail-soft if the news tables aren't present in this environment yet.
+  type StockNews = { title: string; source: string; url: string; published_at: string | null };
+  let stockNews: StockNews[] = [];
+  try {
+    stockNews = await sql<StockNews[]>`
+      SELECT n.title, n.source, n.url, n.published_at::text
+        FROM app.news_stock ns JOIN app.news n ON n.id = ns.news_id
+       WHERE ns.symbol = ${upper}
+       ORDER BY n.published_at DESC NULLS LAST
+       LIMIT 6
+    `;
+  } catch {
+    stockNews = [];
+  }
+
   return {
     stock, scorecard, annual, quarterly, priceHistory, intradayTicks, shareholding,
-    corporateActions,
+    corporateActions, stockNews,
     peerMedianComposite: peerStats[0]?.median ?? 50,
     rankInIndustry: peerStats[0]?.rank ?? null,
     industryPeerCount: peerStats[0]?.peer_count ?? null,
@@ -257,7 +273,7 @@ export default async function StockPage({
     loadPersistenceForSymbol(symbol),
   ]);
   if (!data) return notFound();
-  const { stock, scorecard, annual, quarterly, priceHistory, intradayTicks, shareholding, corporateActions, rankInIndustry, industryPeerCount } = data;
+  const { stock, scorecard, annual, quarterly, priceHistory, intradayTicks, shareholding, corporateActions, stockNews, rankInIndustry, industryPeerCount } = data;
 
   // Build the 5-axis strength bars from per-component sub-percentiles
   const strengthRows = buildSpider(
@@ -439,6 +455,11 @@ export default async function StockPage({
             {corporateActions.length > 0 && (
               <div className="mt-6">
                 <CorporateActionsCard actions={corporateActions} />
+              </div>
+            )}
+            {stockNews.length > 0 && (
+              <div className="mt-6">
+                <StockNewsCard news={stockNews} />
               </div>
             )}
           </>
@@ -756,6 +777,50 @@ function CorporateActionsCard({
             })}
           </tbody>
         </table>
+      </div>
+    </section>
+  );
+}
+
+/* ------------------------------ In the news ------------------------ */
+
+function StockNewsCard({
+  news,
+}: {
+  news: { title: string; source: string; url: string; published_at: string | null }[];
+}) {
+  const ago = (iso: string | null) => {
+    if (!iso) return "";
+    const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+    if (m < 60) return `${Math.max(1, m)}m`;
+    if (m < 1440) return `${Math.floor(m / 60)}h`;
+    return `${Math.floor(m / 1440)}d`;
+  };
+  return (
+    <section className="card p-5">
+      <div className="flex items-baseline justify-between mb-3">
+        <div>
+          <div className="text-[11px] uppercase tracking-wide muted-text">In the news</div>
+          <div className="font-display text-[18px] mt-0.5">Recent headlines</div>
+        </div>
+        <span className="text-[10.5px] muted-text">aggregated · headlines link to source</span>
+      </div>
+      <div className="space-y-2">
+        {news.map((n, i) => (
+          <a
+            key={`${n.url}-${i}`}
+            href={n.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block rounded-md px-2 py-1.5 -mx-2 hover:bg-[var(--color-paper)] transition-colors"
+          >
+            <div className="flex items-center gap-2 text-[10px] muted-text mb-0.5">
+              <span className="font-medium uppercase tracking-wide" style={{ color: "var(--color-accent-700)" }}>{n.source}</span>
+              <span className="tabular-nums">· {ago(n.published_at)} ago</span>
+            </div>
+            <div className="text-[13px] leading-snug">{n.title}</div>
+          </a>
+        ))}
       </div>
     </section>
   );

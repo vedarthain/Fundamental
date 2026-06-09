@@ -39,6 +39,7 @@ const LINKS: NavLink[] = [
       { href: "/sectors", label: "Sectors", description: "Our full-universe scoring view — every stock" },
     ],
   },
+  { href: "/news",    label: "News"    },
   { href: "/ideas",   label: "Ideas"   },
   {
     href: "/tools",
@@ -255,7 +256,7 @@ function MobileTabBar({ pathname, user, isAdmin, showWatchlist, showSignIn }: Mo
   useEffect(() => { setPopup(null); }, [pathname]);
 
   const segmentsActive = ["/indices", "/sectors"].some((p) => isActive(pathname, p));
-  const pagesActive = ["/ideas"].some((p) => isActive(pathname, p));
+  const pagesActive = ["/ideas", "/news"].some((p) => isActive(pathname, p));
   const toolsActive = isActive(pathname, "/tools") || (TOOLS_LINK.submenu ?? []).some((s) => isActive(pathname, s.href));
   const accountActive = isActive(pathname, "/watchlist") || isActive(pathname, "/login") ||
                         isActive(pathname, "/admin");
@@ -395,6 +396,7 @@ function PopupSheet({
 
       {which === "pages" && (
         <>
+          <PopupLink href="/news" label="News" active={isActive(pathname, "/news")} onClose={onClose} />
           <PopupLink href="/ideas" label="Ideas" active={isActive(pathname, "/ideas")} onClose={onClose} />
         </>
       )}

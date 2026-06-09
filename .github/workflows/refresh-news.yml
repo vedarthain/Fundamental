@@ -1,0 +1,46 @@
+# Market news refresh — aggregate broadcaster RSS into app.news.
+#
+# scripts/fetch-news.py pulls free RSS (Economic Times, LiveMint, Hindu
+# BusinessLine, Moneycontrol), dedups, stores headline+summary+link only, and
+# best-effort tags each headline to the stocks it mentions (clean BSE names via
+# ISIN). No API key, no quota — so we can run it often.
+#
+# Cadence: hourly during the day. RSS is free + the script prunes to a 30-day
+# window, so frequency is cheap. (Each run also does ~1 BSE scrip-master call
+# to refresh the name index.)
+#
+# Required secret: NEON_APP_URL.
+
+name: Refresh news
+
+on:
+  # Every hour, 02:00–14:00 UTC = 07:30–19:30 IST (covers the market day +
+  # evening wrap). Off-hours headlines get picked up the next morning.
+  schedule:
+    - cron: '0 2-14 * * *'
+  workflow_dispatch: {}
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install psycopg
+        run: pip install 'psycopg[binary]==3.2.*'
+
+      - name: Aggregate news from RSS
+        env:
+          APP_DB_URL:       ${{ secrets.NEON_APP_URL }}
+          PYTHONUNBUFFERED: "1"
+        run: python scripts/fetch-news.py
