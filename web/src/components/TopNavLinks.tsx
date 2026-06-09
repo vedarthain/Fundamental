@@ -16,13 +16,13 @@ import { UserMenu } from "./UserMenu";
  *
  *  - <md  (mobile): a persistent 5-tab row directly below the logo +
  *    search bar (no hamburger). Layout in layout.tsx stacks logo /
- *    search / tabs as three rows. Order: Market | Sector | Pages |
+ *    search / tabs as three rows. Order: Market | Segments | News |
  *    Tools | Account.
- *      • Market and Sector are direct-nav links (tap → navigate).
- *      • Pages, Tools, Account are popup dropdowns — tap opens a
+ *      • Market and News are direct-nav links (tap → navigate).
+ *      • Segments, Tools, Account are popup dropdowns — tap opens a
  *        sheet of options anchored below the tab.
- *      • Watchlist lives inside the Account popup because it's account-
- *        specific data.
+ *      • Ideas lives inside the Tools popup; Watchlist inside Account
+ *        (account-specific data). Tabs flex to fit narrow phones.
  */
 
 type Submenu = { href: string; label: string; description?: string };
@@ -222,7 +222,7 @@ type MobileTabBarProps = {
   showSignIn: boolean;
 };
 
-type Popup = "segments" | "pages" | "tools" | "account" | null;
+type Popup = "segments" | "tools" | "account" | null;
 
 function MobileTabBar({ pathname, user, isAdmin, showWatchlist, showSignIn }: MobileTabBarProps) {
   const [popup, setPopup] = useState<Popup>(null);
@@ -256,8 +256,7 @@ function MobileTabBar({ pathname, user, isAdmin, showWatchlist, showSignIn }: Mo
   useEffect(() => { setPopup(null); }, [pathname]);
 
   const segmentsActive = ["/indices", "/sectors"].some((p) => isActive(pathname, p));
-  const pagesActive = ["/ideas", "/news"].some((p) => isActive(pathname, p));
-  const toolsActive = isActive(pathname, "/tools") || (TOOLS_LINK.submenu ?? []).some((s) => isActive(pathname, s.href));
+  const toolsActive = isActive(pathname, "/tools") || isActive(pathname, "/ideas") || (TOOLS_LINK.submenu ?? []).some((s) => isActive(pathname, s.href));
   const accountActive = isActive(pathname, "/watchlist") || isActive(pathname, "/login") ||
                         isActive(pathname, "/admin");
 
@@ -272,7 +271,7 @@ function MobileTabBar({ pathname, user, isAdmin, showWatchlist, showSignIn }: Mo
       >
         <TabLink  href="/market"  label="Market"  active={isActive(pathname, "/market")}  onClick={() => setPopup(null)} />
         <TabButton label="Segments" active={segmentsActive} isOpen={popup === "segments"} onClick={() => setPopup((p) => p === "segments" ? null : "segments")} />
-        <TabButton label="Pages"   active={pagesActive}   isOpen={popup === "pages"}   onClick={() => setPopup((p) => p === "pages"   ? null : "pages"  )} />
+        <TabLink  href="/news"    label="News"    active={isActive(pathname, "/news")}    onClick={() => setPopup(null)} />
         <TabButton label="Tools"   active={toolsActive}   isOpen={popup === "tools"}   onClick={() => setPopup((p) => p === "tools"   ? null : "tools"  )} />
         <TabButton label="Account" active={accountActive} isOpen={popup === "account"} onClick={() => setPopup((p) => p === "account" ? null : "account")} />
       </div>
@@ -293,7 +292,7 @@ function MobileTabBar({ pathname, user, isAdmin, showWatchlist, showSignIn }: Mo
 }
 
 const TAB_BASE_CLS =
-  "shrink-0 flex-1 min-w-[80px] px-2.5 py-2.5 text-[12.5px] tracking-wide transition-colors whitespace-nowrap text-center";
+  "flex-1 min-w-0 px-1.5 py-2.5 text-[12px] tracking-wide transition-colors whitespace-nowrap text-center";
 
 function tabActiveStyle(): React.CSSProperties {
   return {
@@ -338,7 +337,7 @@ function TabButton({
 // ── Mobile popup sheets ────────────────────────────────────────────────────
 
 type PopupSheetProps = {
-  which: "segments" | "pages" | "tools" | "account";
+  which: "segments" | "tools" | "account";
   onClose: () => void;
   pathname: string;
   user: ReturnType<typeof useSession>["user"];
@@ -394,23 +393,27 @@ function PopupSheet({
         </>
       )}
 
-      {which === "pages" && (
+      {which === "tools" && (
         <>
-          <PopupLink href="/news" label="News" active={isActive(pathname, "/news")} onClose={onClose} />
-          <PopupLink href="/ideas" label="Ideas" active={isActive(pathname, "/ideas")} onClose={onClose} />
+          <PopupLink
+            href="/ideas"
+            label="Ideas"
+            sublabel="Auto-generated weekly stock ideas"
+            active={isActive(pathname, "/ideas")}
+            onClose={onClose}
+          />
+          {(TOOLS_LINK.submenu ?? []).map((item) => (
+            <PopupLink
+              key={item.href}
+              href={item.href}
+              label={item.label}
+              sublabel={item.description}
+              active={isActive(pathname, item.href)}
+              onClose={onClose}
+            />
+          ))}
         </>
       )}
-
-      {which === "tools" && (TOOLS_LINK.submenu ?? []).map((item) => (
-        <PopupLink
-          key={item.href}
-          href={item.href}
-          label={item.label}
-          sublabel={item.description}
-          active={isActive(pathname, item.href)}
-          onClose={onClose}
-        />
-      ))}
 
       {which === "account" && (
         <>
