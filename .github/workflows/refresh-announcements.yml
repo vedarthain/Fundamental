@@ -24,8 +24,12 @@ env:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    # ~2,100 BSE calls at ~0.4s throttle + latency ≈ 30–40 min; 55 leaves margin.
-    timeout-minutes: 55
+    # ~2,100 BSE calls at ~0.4s throttle + latency ≈ 30–40 min, but slow-BSE
+    # days run longer. Give the job 75 min and tell the script to self-stop at
+    # 68 (--max-minutes) so it exits cleanly with progress saved instead of
+    # being hard-cancelled. The sweep is resumable (least-recently-fetched
+    # first), so any leftover symbols are picked up on the next daily run.
+    timeout-minutes: 75
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -42,4 +46,4 @@ jobs:
         env:
           APP_DB_URL:       ${{ secrets.NEON_APP_URL }}
           PYTHONUNBUFFERED: "1"
-        run: python scripts/fetch-announcements.py
+        run: python scripts/fetch-announcements.py --max-minutes 68

@@ -131,6 +131,8 @@ def main() -> None:
     ap.add_argument("--url", help="Postgres URL (default APP_DB_URL)")
     ap.add_argument("--limit", type=int, help="Only first N mapped symbols (testing)")
     ap.add_argument("--throttle", type=float, default=0.4, help="Seconds between BSE calls")
+    ap.add_argument("--max-minutes", type=float, default=None,
+                    help="Stop cleanly after this many minutes (resumable next run)")
     args = ap.parse_args()
 
     url = args.url or env_url("APP_DB_URL")
@@ -144,9 +146,18 @@ def main() -> None:
 
     with psycopg.connect(url) as conn:
         with conn.cursor() as cur:
+            # Least-recently-fetched first (never-fetched → NULLS FIRST), so a
+            # timed-out run or re-run continues instead of restarting at "A".
+            # Symbols whose fetch errored aren't marked, so they stay high
+            # priority and get retried first next run.
             cur.execute(
-                "SELECT symbol, isin FROM app.universe "
-                "WHERE is_active AND isin IS NOT NULL ORDER BY symbol"
+                """
+                SELECT u.symbol, u.isin
+                  FROM app.universe u
+                  LEFT JOIN app.announcement_fetch f ON f.symbol = u.symbol
+                 WHERE u.is_active AND u.isin IS NOT NULL
+                 ORDER BY f.fetched_at ASC NULLS FIRST, u.symbol
+                """
             )
             universe = cur.fetchall()
         if args.limit:
@@ -157,18 +168,26 @@ def main() -> None:
         print(f"Mapped {len(mapped)}/{len(universe)} symbols to BSE codes "
               f"· window {frm}–{to}", file=sys.stderr)
 
+        start = time.monotonic()
         total, ok = 0, 0
         for i, (sym, code) in enumerate(mapped, 1):
+            if args.max_minutes and (time.monotonic() - start) / 60 >= args.max_minutes:
+                print(f"  ⏱ {args.max_minutes:.0f}m budget reached at {i-1}/{len(mapped)} "
+                      f"— stopping cleanly (resumes next run).", file=sys.stderr)
+                break
             try:
-                data = get_json(ANN_URL.format(code=code, frm=frm, to=to))
+                # Short per-call timeout: a slow/hanging BSE response otherwise
+                # burns 15s each and balloons the run past the job timeout.
+                data = get_json(ANN_URL.format(code=code, frm=frm, to=to), timeout=8)
             except (HTTPError, URLError, TimeoutError, ValueError) as e:
+                # Don't mark fetched — leave it high-priority for next run.
                 print(f"  ! {sym} ({code}): {type(e).__name__}", file=sys.stderr)
                 time.sleep(args.throttle)
                 continue
             table = data.get("Table", []) if isinstance(data, dict) else []
             rows = build_rows(sym, code, table)
-            if rows:
-                with conn.cursor() as cur:
+            with conn.cursor() as cur:
+                if rows:
                     cur.executemany(
                         """
                         INSERT INTO app.announcement
@@ -185,7 +204,15 @@ def main() -> None:
                         """,
                         rows,
                     )
-                conn.commit()
+                # Mark fetched regardless of whether rows resulted, so the
+                # resumable ordering advances past empty-history stocks too.
+                cur.execute(
+                    "INSERT INTO app.announcement_fetch (symbol, fetched_at) "
+                    "VALUES (%s, now()) ON CONFLICT (symbol) DO UPDATE SET fetched_at = now()",
+                    (sym,),
+                )
+            conn.commit()
+            if rows:
                 total += len(rows)
                 ok += 1
             if i % 100 == 0:
