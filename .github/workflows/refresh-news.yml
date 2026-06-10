@@ -5,19 +5,20 @@
 # best-effort tags each headline to the stocks it mentions (clean BSE names via
 # ISIN). No API key, no quota — so we can run it often.
 #
-# Cadence: hourly during the day. RSS is free + the script prunes to a 30-day
-# window, so frequency is cheap. (Each run also does ~1 BSE scrip-master call
-# to refresh the name index.)
+# Trigger: cron-job.org ONLY, via the /api/cron/refresh-news route, which
+# dispatches this workflow through the GitHub API. We deliberately do NOT use
+# GitHub's `schedule:` — top-of-hour scheduled events get load-shed and whole
+# batches of hourly runs silently never fired. workflow_dispatch events are
+# reliable, so an external pinger gives us dependable timing without GitHub's
+# flaky cron. (RSS is free + the script prunes to a 30-day window, so frequent
+# runs are cheap. Each run also does ~1 BSE scrip-master call.)
 #
 # Required secret: NEON_APP_URL.
 
 name: Refresh news
 
 on:
-  # Every hour, 02:00–17:00 UTC = 07:30–22:30 IST (pre-open through the late
-  # evening wrap). Overnight headlines get picked up at the 07:30 run.
-  schedule:
-    - cron: '0 2-17 * * *'
+  # Dispatched by cron-job.org → /api/cron/refresh-news (no GitHub schedule).
   workflow_dispatch: {}
 
 env:
