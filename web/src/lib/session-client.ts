@@ -31,7 +31,7 @@ const SESSION_CHANGED = "er-session-changed";
 
 async function fetchMe(): Promise<SessionState> {
   try {
-    const r = await fetch("/api/auth/me", { credentials: "include" });
+    const r = await fetch("/api/auth/me", { credentials: "include", cache: "no-store" });
     if (!r.ok) return { user: null, isAdmin: false };
     const data: { user: SessionUser | null; isAdmin?: boolean } = await r.json();
     return { user: data.user ?? null, isAdmin: !!data.isAdmin };

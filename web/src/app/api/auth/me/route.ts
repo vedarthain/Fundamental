@@ -24,12 +24,13 @@ export async function GET() {
     getSessionUser(),
     isAdminRequest(),
   ]);
-  // Browser cache for 60s — the useSession() hook already has an in-tab
-  // cache, but this header lets browsers reuse the response across hard
-  // navigations within the same minute. `private` because the body is
-  // per-user; never CDN-share it.
+  // NEVER HTTP-cache this. A 60s browser cache caused a stale auth state:
+  // a logged-out {user:null} response got reused for up to a minute after
+  // sign-in, so the nav showed "Sign in" while the server (reading the
+  // cookie fresh) rendered the user as logged in. The useSession() hook
+  // already dedupes calls per tab, so we don't need an HTTP cache here.
   return NextResponse.json(
     { user, isAdmin },
-    { headers: { "Cache-Control": "private, max-age=60" } },
+    { headers: { "Cache-Control": "no-store" } },
   );
 }
