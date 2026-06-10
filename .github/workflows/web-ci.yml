@@ -1,4 +1,4 @@
-# Web CI — typecheck + lint on every push and PR.
+# Web CI — typecheck + lint on PRs only.
 #
 # What this does:
 #   1. Installs web/ dependencies (npm ci against package-lock.json)
@@ -6,10 +6,13 @@
 #   3. Runs `npm run lint` — catches ESLint errors
 #
 # Why this exists:
-#   Until now, a push that broke `tsc` would still deploy to Vercel and
-#   either 500 or serve a stale ISR cache. The only way to know was to
-#   check Vercel's build dashboard manually. This workflow runs in ~60s
-#   on every push so failures show up in GitHub right next to the commit.
+#   A change that broke `tsc` would still deploy to Vercel and either 500 or
+#   serve a stale ISR cache. This workflow runs in ~60s on PRs so failures
+#   show up before merge.
+#
+# Why PR-only (not push): direct pushes to main were firing CI on every
+# commit and eating GitHub Actions minutes. CI now runs only on pull requests
+# to main; local typecheck (npx tsc --noEmit) covers direct-to-main work.
 #
 # What this does NOT do:
 #   - Full `next build` — Vercel does that on every deploy with the real
@@ -22,16 +25,11 @@
 name: Web CI
 
 on:
-  push:
+  pull_request:
     branches: [main]
     paths:
       # Only run when web/ actually changes. Saves CI minutes on backend
       # work that doesn't touch the front-end.
-      - 'web/**'
-      - '.github/workflows/web-ci.yml'
-  pull_request:
-    branches: [main]
-    paths:
       - 'web/**'
       - '.github/workflows/web-ci.yml'
 
