@@ -92,6 +92,7 @@ CREATE TEMP TABLE _u (LIKE app.universe INCLUDING ALL);
 INSERT INTO app.universe SELECT * FROM _u
   ON CONFLICT (symbol) DO UPDATE SET
     company_name             = EXCLUDED.company_name,
+    isin                     = EXCLUDED.isin,
     sector                   = EXCLUDED.sector,
     industry                 = EXCLUDED.industry,
     market_cap_category      = EXCLUDED.market_cap_category,
