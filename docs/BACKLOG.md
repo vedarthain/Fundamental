@@ -168,3 +168,32 @@ C = date+glossary (05,07) · D = data guard (01, needs prod golden trace).
   richer source above.
 - **Next step if picked up:** spec the tabs + per-tab source/query; new fetchers
   mainly for bulk/block deals + IPO.
+
+### Fully hands-off operations hardening
+- **Status:** Idea (2026-06-10). Goal: zero daily intervention except the one
+  accepted manual task below.
+- **Accepted manual task (by choice):** Upstox token reauth every morning ~08:30
+  IST via `/admin/upstox`. Upstox v2 has no refresh-token, so the daily OAuth is
+  unavoidable for live intraday. User chose the 20-sec manual tap over automating
+  it. (Automation option, if ever wanted: headless Playwright login + `pyotp`
+  TOTP on GitHub Actions, dispatched by cron-job.org ~08:40 IST — needs TOTP 2FA
+  enabled + creds in GH secrets; fragile if Upstox changes its login UI. The
+  alternative, EOD-only via NSE bhavcopy, was rejected because we want 10-min data.)
+- **Reliability gaps to close (the real hands-off work):**
+  - GitHub `schedule:` still drives `refresh-ltp`, `weekly-snapshot`,
+    `refresh-announcements`, `refresh-constituents`, `freshness-check`. GitHub
+    load-sheds top-of-hour (`:00`) scheduled events (the bug that broke news) and
+    **auto-disables scheduled workflows after 60 days of no commits**.
+    - **Quick win:** shift each cron off `:00` (e.g. `0 13` → `17 13`) to dodge
+      contention. ~2-min change, keeps GitHub scheduling.
+    - **Bulletproof:** move the critical ones (esp. `refresh-ltp`) to cron-job.org
+      dispatch — same pattern as news (`/api/cron/refresh-news` → workflow_dispatch).
+      Eliminates GitHub-scheduler dependency + the 60-day auto-disable.
+- **Alerting:** `freshness-check` already emails on stale prices/scores — confirm
+  repo Watch → "All Activity" / Settings → Notifications so breakage pings you.
+  That's the hands-off contract: ignore until it emails.
+- **Credential expiry:** set `GH_DISPATCH_TOKEN` PAT to long/no-expiry; indianapi
+  key renews with the monthly plan. One calendar reminder covers both.
+- **Recommendation when picked up:** quick cron-shift + confirm alert emails first
+  (90% of the reliability for ~zero effort); escalate to cron-job.org migration
+  only if GitHub drops a run again.
