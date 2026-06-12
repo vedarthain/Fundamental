@@ -23,10 +23,10 @@
  *      dominated by micro-caps. (Full cap, not free-float, so it's a close
  *      proxy, not an exact index replica.)
  *
- * Caching: 60s s-maxage — same as index-live. The equity pinger writes
- *   current_price every ~10 min, so a 60s CDN window keeps data at most
- *   ~11 min stale during market hours. No revalidate tag needed; it just
- *   ages out on its own clock.
+ * Caching: 600s (10-min) s-maxage — matched to both the equity pinger's
+ *   ~10-min write cadence and the heatmap's 10-min client poll, so we don't
+ *   hit the DB more often than the data actually changes. No revalidate tag
+ *   needed; it just ages out on its own clock.
  */
 import { NextResponse } from "next/server";
 import { sql, golden } from "@/lib/db";
@@ -144,7 +144,9 @@ export async function GET() {
 
   return NextResponse.json(result, {
     headers: {
-      "Cache-Control": "public, s-maxage=60, stale-while-revalidate=120",
+      // 10-min cache — matches the heatmap's 10-min client poll. Cuts DB hits
+      // vs the old 60s while staying well within intraday freshness.
+      "Cache-Control": "public, s-maxage=600, stale-while-revalidate=300",
     },
   });
 }

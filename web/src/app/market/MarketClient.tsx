@@ -213,7 +213,7 @@ type LiveData = {
  * 60s while mounted; the endpoint is 60s-CDN-cached so this is at most one
  * origin read per minute per region.
  */
-/** Poll /api/market/sector-live every 60s for intraday sector 1D returns. */
+/** Poll /api/market/sector-live every 10 min for intraday sector 1D returns. */
 function useLiveSectors(): Record<string, { avg_pct_1d: number; fetched_at: string }> {
   const [data, setData] = useState<Record<string, { avg_pct_1d: number; fetched_at: string }>>({});
   useEffect(() => {
@@ -227,7 +227,7 @@ function useLiveSectors(): Record<string, { avg_pct_1d: number; fetched_at: stri
       } catch { /* keep last good data */ }
     };
     pull();
-    const id = setInterval(pull, 60_000);
+    const id = setInterval(pull, 600_000); // 10 min
     return () => { alive = false; clearInterval(id); };
   }, []);
   return data;
