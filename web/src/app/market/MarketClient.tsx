@@ -397,6 +397,10 @@ function HeroPanel({
   const headlinePrice = held ? held.ltp : row.close;
   const headlinePct   = held ? (held.pct_change ?? row.pct_change_1d) : row.pct_change_1d;
   const headlineColor = headlinePct == null ? MUTED : headlinePct >= 0 ? UP : DOWN;
+  // Absolute points move (e.g. +50.2 / −12.4), derived from the level + %,
+  // shown beside the percentage so users see the move in both points and %.
+  const headlinePts =
+    headlinePct == null ? null : headlinePrice - headlinePrice / (1 + headlinePct / 100);
   const gradId = `hero-fill-${chartIdSuffix}`;
   // Timestamp badge: show fetch time in both live and EOD modes so users
   // always know how fresh the displayed price is.
@@ -420,7 +424,9 @@ function HeroPanel({
               {headlinePrice.toLocaleString("en-IN", { maximumFractionDigits: 1 })}
             </span>
             <span className="tabular-nums text-[11.5px] font-medium" style={{ color: headlineColor }}>
-              {headlinePct == null ? "—" : `${headlinePct >= 0 ? "+" : ""}${headlinePct.toFixed(2)}%`}
+              {headlinePct == null || headlinePts == null
+                ? "—"
+                : `${headlinePts >= 0 ? "+" : "−"}${Math.abs(headlinePts).toLocaleString("en-IN", { maximumFractionDigits: 2 })} (${headlinePct >= 0 ? "+" : ""}${headlinePct.toFixed(2)}%)`}
             </span>
           </div>
         </div>
