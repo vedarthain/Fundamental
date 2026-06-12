@@ -17,14 +17,11 @@
  * Server component: one /api/market/overview call, fully cached (1h TTL,
  * tagged so /api/revalidate purges after the daily refresh).
  */
-import Link from "next/link";
 import { headers } from "next/headers";
 import type { Metadata } from "next";
 import { MarketClient } from "./MarketClient";
-import { SignedInExtras } from "./SignedInExtras";
 import { PriceDateBadge } from "./PriceDateBadge";
 import type { OverviewResponse } from "../api/market/overview/route";
-import { getSession } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 // Page itself is render-on-each-request because we want the signed-in
@@ -64,10 +61,9 @@ async function fetchOverview(): Promise<OverviewResponse | null> {
 // signed-in users.
 
 export default async function MarketPage() {
-  // Only two server-side awaits: the session (cookie read, instant) and
-  // the public overview (single cache-table row, ~100ms warm / ~1s cold).
-  // The signed-in extras fetch happens client-side in SignedInExtras.
-  const [data, session] = await Promise.all([fetchOverview(), getSession()]);
+  // /market is now fully public — the signed-in personal cards moved to
+  // /watchlist. One server-side await: the cached public overview.
+  const data = await fetchOverview();
 
   if (!data) {
     return (
@@ -102,28 +98,6 @@ export default async function MarketPage() {
       </header>
 
       <MarketClient data={data} />
-
-      {session && (
-        <div className="mt-6">
-          {/* Client-side fetch — page HTML doesn't wait on it.  Renders a
-              skeleton until /api/market/me responds. */}
-          <SignedInExtras />
-        </div>
-      )}
-
-      {session === null && (
-        <div className="mt-12 pt-6 border-t hairline text-[12px] muted-text">
-          Want stock-level moves filtered to your watchlist?{" "}
-          <Link
-            href="/login?next=/market"
-            className="underline"
-            style={{ color: "var(--color-accent-600)" }}
-          >
-            Sign in
-          </Link>{" "}
-          — watchlist movers and an extended FII flow chart appear once you&apos;re signed in.
-        </div>
-      )}
     </div>
   );
 }

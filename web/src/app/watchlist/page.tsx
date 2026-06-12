@@ -17,6 +17,7 @@
 import Link from "next/link";
 import { getSession } from "@/lib/auth";
 import { WatchlistClient } from "./WatchlistClient";
+import { SignedInExtras } from "../market/SignedInExtras";
 
 export const dynamic = "force-dynamic";
 
@@ -66,6 +67,12 @@ export default async function WatchlistPage() {
         </p>
       </header>
       <WatchlistClient />
+
+      {/* Personal cards moved here from /market — watchlist movers (1D/1W) +
+          the 60-day FII/DII trend. Client-fetches /api/market/me. */}
+      <div className="mt-8">
+        <SignedInExtras />
+      </div>
     </div>
   );
 }
