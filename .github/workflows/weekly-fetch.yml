@@ -1,0 +1,96 @@
+# Weekly FETCH — part 1 of 2 (fetch → compute).
+#
+# Scrapes Screener for all active symbols and writes fundamentals_annual/
+# quarterly + the raw xlsx blobs into app.screener_export_raw ON NEON, then
+# prunes old blobs. This is the flaky/slow half (network + cookie-gated), split
+# off from the deterministic compute half (weekly-compute.yml) so that:
+#   • a cookie expiry / halt here doesn't block re-running compute, and
+#   • compute can be re-run on existing data without re-scraping.
+#
+# Why fresh blobs on Neon matter: the valuation pillar reads market cap from
+# those blobs (load_meta_from_raw). Without them valuation is NULL for ~91% of
+# stocks. compute (part 2) reads exactly what this job writes.
+#
+# stop_on_auth_fail=True (the fetch default) HALTS on the first auth failure —
+# that's the cue the Screener cookies expired. freshness-check.yml now alerts on
+# a single recent auth_failed; rotate the secrets and re-run this workflow.
+#
+# Cadence: Saturday 13:00 UTC = 18:30 IST (market closed ~27h; nothing else
+# contends). weekly-compute.yml runs a few hours later, after this finishes.
+#
+# Required secrets:
+#   NEON_APP_URL        — fundamental_app on Neon (needs INSERT on
+#                         screener_export_raw; use the owner role)
+#   NEON_GOLDEN_URL     — golden_db on Neon
+#   SCREENER_SESSIONID  — Screener session cookie  ┐ ROTATE ~MONTHLY. Copy fresh
+#   SCREENER_CSRFTOKEN  — Screener CSRF cookie      ┘ values from your browser
+#                         (Screener.in → DevTools → Application → Cookies) into
+#                         Settings → Secrets → Actions.
+
+name: Weekly Fetch (Screener)
+
+on:
+  schedule:
+    - cron: '0 13 * * 6'   # Sat 13:00 UTC = 18:30 IST
+  workflow_dispatch:
+    inputs:
+      force_full_fetch:
+        description: 'Re-scrape ALL symbols, ignoring the 20h freshness skip'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    # Fetch is capped at --max-runtime-min 180 (graceful exit 0). 200 gives the
+    # prune step margin. A throttled/halted scrape resumes next run via
+    # skip_recent_hours.
+    timeout-minutes: 200
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install fundamental-etl
+        run: pip install -e ./etl
+
+      # Scrape Screener → fundamentals + raw blobs on Neon. Expiry HALTS the
+      # run (rotate cue → freshness-check alerts). --max-runtime-min caps a
+      # throttled week so it stops gracefully; unscraped symbols resume next
+      # run. force_full_fetch=true re-scrapes EVERY symbol (--skip-recent-hours 0).
+      - name: Fetch fundamentals from Screener
+        env:
+          APP_DB_URL:           ${{ secrets.NEON_APP_URL }}
+          GOLDEN_DB_URL:        ${{ secrets.NEON_GOLDEN_URL }}
+          SCREENER_SESSIONID:   ${{ secrets.SCREENER_SESSIONID }}
+          SCREENER_CSRFTOKEN:   ${{ secrets.SCREENER_CSRFTOKEN }}
+          PYTHONUNBUFFERED:     "1"
+        run: >
+          python -m fundamental_etl.cli fetch-many --max-runtime-min 180
+          ${{ github.event.inputs.force_full_fetch == 'true' && '--skip-recent-hours 0' || '' }}
+
+      # Keep only the latest raw blob per symbol — bounds Neon storage.
+      - name: Prune old raw blobs
+        env:
+          APP_DB_URL: ${{ secrets.NEON_APP_URL }}
+        run: |
+          python -c "
+          import os, psycopg
+          with psycopg.connect(os.environ['APP_DB_URL']) as c, c.cursor() as cur:
+              cur.execute('''
+                  DELETE FROM app.screener_export_raw r
+                  USING (SELECT symbol, max(fetched_at) AS mx
+                           FROM app.screener_export_raw GROUP BY symbol) k
+                  WHERE r.symbol = k.symbol AND r.fetched_at < k.mx
+              ''')
+              print('pruned old blobs:', cur.rowcount)
+              c.commit()
+          "

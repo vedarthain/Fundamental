@@ -1,0 +1,102 @@
+# Weekly COMPUTE — part 2 of 2 (fetch → compute).
+#
+# The deterministic half: reads the fundamentals + raw blobs that weekly-fetch.yml
+# wrote, recomputes metrics + scores, rebuilds the /market dashboard cache, and
+# purges the CDN. No Screener scraping — so it never depends on the cookies and
+# can be re-run any time to re-score on existing data (the old `skip_fetch=true`
+# path, now its own workflow).
+#
+# Pipeline (each step depends on the previous):
+#   1. compute-metrics       metrics_snapshot from fundamentals + golden prices
+#                            + the raw blobs (market cap for the valuation pillar)
+#   2. score                 percentile + composite → app.scores +
+#                            cluster_stocks_panel_cache for the snapshot_date
+#   3. build-market-snapshot rebuild app.market_snapshot_cache for /market
+#   4. /api/revalidate       purge Vercel's Data Cache for the changed tags
+#
+# Cadence: Saturday 17:00 UTC = 22:30 IST — a few hours after weekly-fetch.yml
+# (13:00 UTC + up to 180-min scrape) so it reads fresh blobs. Decoupled by
+# fixed cron rather than chained: if fetch halts, this still scores on whatever
+# data exists (fundamentals are quarterly — a partial scrape still scores fine).
+# After a manual fetch re-run (e.g. post cookie-rotation), re-run this manually.
+#
+# Required secrets:
+#   NEON_APP_URL        — fundamental_app on Neon
+#   NEON_GOLDEN_URL     — golden_db on Neon
+#   REVALIDATE_TOKEN    — bearer for the /api/revalidate cache purge
+#   (No SCREENER_* needed — dummies below satisfy pydantic-settings; these steps
+#    don't scrape.)
+
+name: Weekly Compute + Score
+
+on:
+  schedule:
+    - cron: '0 17 * * 6'   # Sat 17:00 UTC = 22:30 IST (after weekly-fetch)
+  workflow_dispatch:
+    inputs:
+      snapshot_date:
+        description: 'YYYY-MM-DD to snapshot (default: today UTC)'
+        required: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  compute:
+    runs-on: ubuntu-latest
+    # compute ~45 + score ~15 + rebuild ~3. 90 leaves wide margin.
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install fundamental-etl
+        run: pip install -e ./etl
+
+      # compute-metrics reads the fresh blobs (from weekly-fetch), so valuation
+      # populates correctly. SCREENER_* dummies satisfy pydantic-settings.
+      - name: Compute metrics + score
+        env:
+          APP_DB_URL:           ${{ secrets.NEON_APP_URL }}
+          GOLDEN_DB_URL:        ${{ secrets.NEON_GOLDEN_URL }}
+          SCREENER_SESSIONID:   "unused-in-score"
+          SCREENER_CSRFTOKEN:   "unused-in-score"
+          PYTHONUNBUFFERED:     "1"
+        run: |
+          SNAP_ARG=""
+          if [ -n "${{ github.event.inputs.snapshot_date }}" ]; then
+            SNAP_ARG="--snapshot ${{ github.event.inputs.snapshot_date }}"
+          fi
+          python -m fundamental_etl.cli compute-metrics $SNAP_ARG
+          python -m fundamental_etl.cli score $SNAP_ARG
+
+      - name: Rebuild /market snapshot cache
+        env:
+          APP_DB_URL:    ${{ secrets.NEON_APP_URL }}
+          GOLDEN_DB_URL: ${{ secrets.NEON_GOLDEN_URL }}
+          PYTHONUNBUFFERED: "1"
+        run: python scripts/build-market-snapshot.py
+
+      # Purge the CDN so users see the new snapshot. Fail loudly on non-200.
+      - name: Purge Next.js Data Cache
+        run: |
+          set +e
+          RESPONSE_FILE=$(mktemp)
+          HTTP_CODE=$(curl -sS -o "$RESPONSE_FILE" -w "%{http_code}" \
+            -X POST "https://equityroots.in/api/revalidate" \
+            -H "Authorization: Bearer ${{ secrets.REVALIDATE_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"tags":["market","panel-cache","snapshot","sectors"]}')
+          echo "HTTP status: $HTTP_CODE"
+          echo "Response body:"
+          cat "$RESPONSE_FILE"
+          echo
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::Cache purge failed (HTTP $HTTP_CODE) — check REVALIDATE_TOKEN secret matches Vercel."
+            exit 1
+          fi
