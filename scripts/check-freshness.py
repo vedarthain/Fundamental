@@ -135,31 +135,41 @@ def check_price_age(conn: psycopg.Connection, max_days: int) -> tuple[bool, str]
 
 
 def check_cookie_health(conn: psycopg.Connection) -> tuple[bool, str]:
-    """Detect Screener cookie expiry.
+    """Detect Screener cookie expiry — alert on EVEN ONE recent auth_failed.
 
-    When fetch-many runs with dead cookies, every scrape returns 401/403 and
-    we record last_status='auth_failed' in screener_meta.  If we see a burst
-    of those in the last 7 days, cookies are dead and need refreshing.
+    fetch-many runs with stop_on_auth_fail=True (the weekly workflow's
+    default), so the *first* auth failure HALTS the whole run — recording just
+    ONE auth_failed row before truncating and leaving the rest of the universe
+    unscraped. So a single recent auth_failed is the real signal that the
+    cookie expired and the weekly run was silently cut short.
 
-    Threshold: ≥ 10 recent auth_failed rows. One or two could be transient
-    (e.g. Screener temporarily rate-limiting one symbol); dozens means the
-    whole session is dead.
+    (The old threshold of ≥10 never fired in this mode — the halt meant the
+    count never got past ~1 — so an expired cookie truncated the run with no
+    alert. That's the gap this closes.)
+
+    Window: 3 days — covers the weekly Saturday run plus the 12h check cadence,
+    while ageing out so a fixed-and-re-run cookie clears the alert.
     """
     with conn.cursor() as cur:
         cur.execute("""
             SELECT COUNT(*)::int
               FROM app.screener_meta
              WHERE last_status = 'auth_failed'
-               AND last_scraped_at > NOW() - INTERVAL '7 days'
+               AND last_scraped_at > NOW() - INTERVAL '3 days'
         """)
         row = cur.fetchone()
     n = (row[0] or 0) if row else 0
-    ok = n < 10
+    ok = n < 1
     icon = "✓" if ok else "✗"
-    suffix = "" if ok else " — refresh SCREENER cookies in .env.local"
+    suffix = (
+        "" if ok else
+        " — Screener cookies likely expired; the run HALTED/truncated. Rotate "
+        "SCREENER_SESSIONID + SCREENER_CSRFTOKEN (GitHub secrets + .env.local), "
+        "then re-run the fetch."
+    )
     return ok, (
-        f"{icon} cookie_health: {n} auth_failed scrapes in last 7d "
-        f"(threshold < 10){suffix}"
+        f"{icon} cookie_health: {n} auth_failed scrape(s) in last 3d "
+        f"(alert if ≥ 1){suffix}"
     )
 
 
