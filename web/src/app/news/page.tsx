@@ -25,14 +25,15 @@ export const metadata = {
 
 type RawNews = {
   id: string; title: string; summary: string | null;
-  url: string; published_at: string | null; tag_count: number;
+  url: string; published_at: string | null; symbols: string[];
 };
 
 async function loadNews(): Promise<RawNews[]> {
   try {
     return await sql<RawNews[]>`
       SELECT n.id, n.title, n.summary, n.url, n.published_at::text,
-             COUNT(ns.symbol)::int AS tag_count
+             COALESCE(array_agg(ns.symbol) FILTER (WHERE ns.symbol IS NOT NULL),
+                      ARRAY[]::text[]) AS symbols
         FROM app.news n
         LEFT JOIN app.news_stock ns ON ns.news_id = n.id
        -- Show a fixed 2-day window (predictable "last 2 days" regardless of
@@ -139,13 +140,30 @@ function clusterByTitle<T extends { title: string }>(rows: T[]): (T & { related:
   return reps;
 }
 
-/** Cluster + attach a category for the main feed. */
+/** Build the feed: (1) cluster near-identical titles, then (2) collapse
+ *  repeated SINGLE-stock stories into one card. Step 2 is what stops one busy
+ *  name (e.g. a Vedanta demerger spawning 6 differently-worded headlines, all
+ *  tagged only to VEDL) from flooding the feed — token overlap is too low to
+ *  cluster them, but they share the sole stock + window, so we fold them.
+ *  Multi-stock headlines (market round-ups) are left alone. */
 function enrich(rows: RawNews[]): FeedItem[] {
-  return clusterByTitle(rows).map((r) => ({
-    id: r.id, title: r.title, summary: r.summary, url: r.url,
-    published_at: r.published_at, related: r.related,
-    category: classify(r.title, r.summary, r.tag_count > 0),
-  }));
+  const clustered = clusterByTitle(rows);
+  const out: FeedItem[] = [];
+  const repBySymbol = new Map<string, number>(); // sole symbol → index in out
+  for (const r of clustered) {
+    const sole = r.symbols.length === 1 ? r.symbols[0] : null;
+    if (sole !== null && repBySymbol.has(sole)) {
+      out[repBySymbol.get(sole)!].related += 1 + r.related; // fold in
+      continue;
+    }
+    if (sole !== null) repBySymbol.set(sole, out.length);
+    out.push({
+      id: r.id, title: r.title, summary: r.summary, url: r.url,
+      published_at: r.published_at, related: r.related,
+      category: classify(r.title, r.summary, r.symbols.length > 0),
+    });
+  }
+  return out;
 }
 
 export default async function NewsPage() {

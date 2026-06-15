@@ -189,8 +189,8 @@ export function NewsClient({
                 </div>
                 <Link href="/watchlist" className="text-[10.5px] muted-text hover:underline">Manage →</Link>
               </div>
-              <div className="divide-y hairline">
-                {watchNews.slice(0, 8).map((n) => (
+              <div className="divide-y hairline overflow-y-auto lg:max-h-[calc(100vh-150px)] -mr-1 pr-1">
+                {watchNews.map((n) => (
                   <a
                     key={n.id}
                     href={n.url}

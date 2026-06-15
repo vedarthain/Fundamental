@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import hashlib
+import html
 import os
 import re
 import sys
@@ -88,7 +89,13 @@ def get(url: str, headers: dict | None = None, timeout: int = 20) -> bytes:
 
 
 def strip_html(s: str) -> str:
-    s = re.sub(r"<[^>]+>", " ", s or "")
+    # Feeds put HTML-encoded content in CDATA, so titles arrive like
+    # "Vedanta Iron &amp; Steel". Unescape entities (handles entity-encoded
+    # tags), strip any real tags, then unescape once more for double-encoded
+    # cases (&amp;amp; → &).
+    s = html.unescape(s or "")
+    s = re.sub(r"<[^>]+>", " ", s)
+    s = html.unescape(s)
     return re.sub(r"\s+", " ", s).strip()
 
 
