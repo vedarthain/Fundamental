@@ -84,19 +84,36 @@ function formatSnapshotDate(d: Date | string | null): string {
 function Cell({
   label,
   children,
+  highlight = false,
 }: {
   label: string;
   children: React.ReactNode;
+  /** Emphasise the value — used for SNAPSHOT so the "latest snapshot" date
+   *  (what every Q/V/M percentile on the site is pinned to) stands out from
+   *  the surrounding metadata. */
+  highlight?: boolean;
 }) {
   return (
     <span className="flex items-center gap-2 whitespace-nowrap">
       <span
         className="kbd-label"
-        style={{ color: "var(--color-strip-muted)" }}
+        style={{ color: highlight ? "var(--color-strip-fg)" : "var(--color-strip-muted)" }}
       >
         {label}
       </span>
-      <span className="num num-sm" style={{ color: "var(--color-strip-fg)" }}>
+      <span
+        className="num num-sm"
+        style={
+          highlight
+            ? {
+                color: "var(--color-delta-up)",
+                fontWeight: 700,
+                borderBottom: "1.5px solid var(--color-delta-up)",
+                paddingBottom: "1px",
+              }
+            : { color: "var(--color-strip-fg)" }
+        }
+      >
         {children}
       </span>
     </span>
@@ -140,7 +157,7 @@ export async function SnapshotRibbon() {
         <Sep />
         {/* SNAPSHOT — weekly scoring snapshot date. Updates Fridays after
             close. Quality/Valuation/Momentum percentiles are pinned to this. */}
-        <Cell label="SNAPSHOT">{formatSnapshotDate(s.latest)}</Cell>
+        <Cell label="SNAPSHOT" highlight>{formatSnapshotDate(s.latest)}</Cell>
         <Sep />
         <Cell label="COVERAGE">{s.coverage.toLocaleString("en-IN")}</Cell>
         <Sep />
