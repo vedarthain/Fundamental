@@ -225,9 +225,16 @@ def load_building_strength(app_conn, limit: int = 7, min_cluster_adjusted: float
     with app_conn.cursor() as cur:
         rows = fetchall_dict(cur, """
             WITH snaps AS (
-              SELECT DISTINCT snapshot_date,
+              -- Rank the DISTINCT snapshot dates. ROW_NUMBER() is a window
+              -- function evaluated BEFORE DISTINCT, so ranking the raw rows
+              -- (2,157 per snapshot) made rn=1..2157 all the latest date —
+              -- rn=4 landed inside the latest snapshot, so old_d == latest_d
+              -- and every delta was 0 (empty "Building strength" forever).
+              -- Distinct-first fixes it: rn=4 is the true 4th-oldest snapshot.
+              SELECT snapshot_date,
                      ROW_NUMBER() OVER (ORDER BY snapshot_date DESC) AS rn
-                FROM app.cluster_stocks_panel_cache
+                FROM (SELECT DISTINCT snapshot_date
+                        FROM app.cluster_stocks_panel_cache) d
             ),
             latest_d AS (SELECT snapshot_date FROM snaps WHERE rn = 1),
             old_d    AS (SELECT snapshot_date FROM snaps WHERE rn = 4),
