@@ -36,12 +36,17 @@ REPO = Path(__file__).resolve().parent.parent
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
 
-# Free RSS feeds confirmed fetchable. Skips any that 403/404 at runtime.
+# Free RSS feeds confirmed fetchable (HTTP 200 + valid <item>s as of 2026-06).
+# Skips any that 403/404/ParseError at runtime — one bad feed never kills the
+# rest. Broadened beyond the original 4 for wider per-stock coverage.
 FEEDS: dict[str, str] = {
     "Economic Times":     "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms",
     "LiveMint":           "https://www.livemint.com/rss/markets",
     "Hindu BusinessLine": "https://www.thehindubusinessline.com/markets/feeder/default.rss",
-    "Moneycontrol":       "https://www.moneycontrol.com/rss/marketreports.xml",
+    # marketreports.xml went stale/ParseError → use the high-volume latestnews feed.
+    "Moneycontrol":       "https://www.moneycontrol.com/rss/latestnews.xml",
+    "CNBC-TV18":          "https://www.cnbctv18.com/commonfeeds/v1/cne/rss/market.xml",
+    "NDTV Profit":        "https://feeds.feedburner.com/ndtvprofit-latest",
 }
 
 KEEP_DAYS = 30
