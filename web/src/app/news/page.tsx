@@ -20,7 +20,7 @@ export const dynamic = "force-dynamic";
 export const metadata = {
   title: "Market News — latest NSE headlines by category · EquityRoots",
   description:
-    "Latest Indian market headlines aggregated from Economic Times, LiveMint, BusinessLine, CNBC-TV18 and more — by category (stocks, policy, macro, markets), tagged to the stocks they mention.",
+    "Latest Indian market headlines aggregated from top business outlets — by category (stocks, policy, macro, markets), tagged to the stocks they mention.",
 };
 
 type RawNews = {
@@ -115,27 +115,33 @@ function jaccard(a: Set<string>, b: Set<string>): number {
   return union === 0 ? 0 : inter / union;
 }
 
-/** Dedup near-identical headlines (same story across outlets / re-posts) and
- *  attach a category. Keeps the first (most recent) of each cluster. */
-function enrich(rows: RawNews[]): FeedItem[] {
-  const kept: FeedItem[] = [];
+/** Drop near-identical headlines (same story across outlets / re-posts).
+ *  Keeps the first (most recent) of each cluster. Generic so both the main
+ *  feed and the watchlist sidebar dedup the same way. */
+function dedupByTitle<T extends { title: string }>(rows: T[]): T[] {
+  const kept: T[] = [];
   const keptTokens: Set<string>[] = [];
   for (const r of rows) {
     const tk = titleTokens(r.title);
     if (keptTokens.some((k) => jaccard(k, tk) >= 0.6)) continue; // duplicate
     keptTokens.push(tk);
-    kept.push({
-      id: r.id, title: r.title, summary: r.summary, url: r.url,
-      published_at: r.published_at, category: classify(r.title, r.summary, r.tag_count > 0),
-    });
+    kept.push(r);
   }
   return kept;
+}
+
+/** Dedup + attach a category for the main feed. */
+function enrich(rows: RawNews[]): FeedItem[] {
+  return dedupByTitle(rows).map((r) => ({
+    id: r.id, title: r.title, summary: r.summary, url: r.url,
+    published_at: r.published_at, category: classify(r.title, r.summary, r.tag_count > 0),
+  }));
 }
 
 export default async function NewsPage() {
   const session = await getSession();
   const [rawNews, talked] = await Promise.all([getNews(), getTalked()]);
-  const watchNews = session ? await loadWatchlistNews(session.userId) : [];
+  const watchNews = dedupByTitle(session ? await loadWatchlistNews(session.userId) : []);
   const news = enrich(rawNews);
 
   return (
@@ -143,7 +149,7 @@ export default async function NewsPage() {
       <header className="mb-4">
         <h1 className="font-display text-[22px] md:text-[26px] leading-tight">Market News</h1>
         <p className="muted-text text-[12px] mt-1">
-          Aggregated from Economic Times, LiveMint, BusinessLine, CNBC-TV18 &amp; more · by category · links open the source
+          Aggregated market headlines · by category · links open the source
         </p>
       </header>
 
