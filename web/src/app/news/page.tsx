@@ -35,9 +35,13 @@ async function loadNews(): Promise<RawNews[]> {
              COUNT(ns.symbol)::int AS tag_count
         FROM app.news n
         LEFT JOIN app.news_stock ns ON ns.news_id = n.id
+       -- Show a fixed 2-day window (predictable "last 2 days" regardless of
+       -- feed volume), not a fixed count. Retention stays 30d for per-stock
+       -- cards. LIMIT is just a payload safety bound.
+       WHERE n.published_at > now() - interval '2 days'
        GROUP BY n.id
        ORDER BY n.published_at DESC NULLS LAST
-       LIMIT 150
+       LIMIT 400
     `;
   } catch {
     return [];
