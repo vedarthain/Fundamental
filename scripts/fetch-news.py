@@ -50,6 +50,20 @@ FEEDS: dict[str, str] = {
 }
 
 KEEP_DAYS = 30
+
+# Drop obvious non-market noise that the broader "latest" feeds (NDTV Profit,
+# CNBC, Moneycontrol) carry — sports, entertainment, lifestyle, viral. Keeps the
+# wider sources without polluting a market-news page with FIFA / box-office junk.
+DENY_RE = re.compile(
+    r"\b(fifa|world cup|football|premier league|la ?liga|uefa|"
+    r"cricket|\bipl\b|\bt20\b|\bodi\b|test match|ranji|"
+    r"box ?office|bollywood|hollywood|movie|film review|web series|\bott\b|"
+    r"celebrity|actor|actress|singer|horoscope|zodiac|astrolog|"
+    r"lottery|admit card|exam result|recipe|viral video|trailer|teaser|"
+    r"grand prix|olympics|tennis|badminton|kabaddi)\b",
+    re.I,
+)
+
 SCRIP_MASTER = ("https://api.bseindia.com/BseIndiaAPI/api/ListofScripData/w"
                 "?Group=&Scripcode=&industry=&segment=Equity&status=Active")
 TAG_HEADERS = {"User-Agent": UA, "Accept": "application/json",
@@ -101,6 +115,8 @@ def fetch_feed(name: str, url: str) -> list[dict]:
         title = strip_html(txt("title"))
         if not link or not title:
             continue
+        if DENY_RE.search(title):
+            continue  # sports / entertainment / lifestyle noise
         out.append({
             "source": name,
             "title": title,
