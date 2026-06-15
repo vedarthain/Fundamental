@@ -30,6 +30,8 @@ export type FeedItem = {
   url: string;
   published_at: string | null;
   category: NewsCategory;
+  /** count of near-identical headlines folded into this one */
+  related: number;
 };
 export type TalkedItem = {
   symbol: string;
@@ -42,6 +44,7 @@ export type WatchItem = {
   title: string;
   url: string;
   published_at: string | null;
+  related: number;
 };
 
 const TABS: { id: NewsCategory | "all"; label: string }[] = [
@@ -152,7 +155,18 @@ export function NewsClient({
                   className="block card p-3 hover:bg-[var(--color-paper)] transition-colors h-full"
                 >
                   <div className="flex items-center justify-between text-[10.5px] muted-text mb-1">
-                    <span className="tabular-nums">{ago(n.published_at)} ago</span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="tabular-nums">{ago(n.published_at)} ago</span>
+                      {n.related > 0 && (
+                        <span
+                          className="rounded px-1 py-[1px] text-[9.5px] tabular-nums"
+                          style={{ background: "color-mix(in srgb, var(--color-muted) 14%, transparent)" }}
+                          title={`${n.related} more outlet${n.related === 1 ? "" : "s"} covered this`}
+                        >
+                          +{n.related} related
+                        </span>
+                      )}
+                    </span>
                     <ArrowUpRight size={12} className="opacity-50 shrink-0" />
                   </div>
                   <div className="text-[13.5px] font-medium leading-snug">{n.title}</div>
@@ -184,7 +198,9 @@ export function NewsClient({
                     rel="noopener noreferrer"
                     className="block py-2 first:pt-0 last:pb-0 hover:opacity-80 transition-opacity"
                   >
-                    <div className="text-[10px] muted-text tabular-nums mb-0.5">{ago(n.published_at)} ago</div>
+                    <div className="text-[10px] muted-text tabular-nums mb-0.5">
+                      {ago(n.published_at)} ago{n.related > 0 ? ` · +${n.related} related` : ""}
+                    </div>
                     <div className="text-[12.5px] leading-snug">{n.title}</div>
                   </a>
                 ))}

@@ -119,33 +119,39 @@ function jaccard(a: Set<string>, b: Set<string>): number {
   return union === 0 ? 0 : inter / union;
 }
 
-/** Drop near-identical headlines (same story across outlets / re-posts).
- *  Keeps the first (most recent) of each cluster. Generic so both the main
- *  feed and the watchlist sidebar dedup the same way. */
-function dedupByTitle<T extends { title: string }>(rows: T[]): T[] {
-  const kept: T[] = [];
-  const keptTokens: Set<string>[] = [];
+/** Cluster near-identical headlines (same story across outlets / re-posts) so
+ *  10 re-reports read as ~3 stories. Keeps the first (most recent) of each
+ *  cluster as the representative and counts the rest as `related`. Generic so
+ *  the feed and the watchlist sidebar cluster the same way. */
+function clusterByTitle<T extends { title: string }>(rows: T[]): (T & { related: number })[] {
+  const reps: (T & { related: number })[] = [];
+  const repTokens: Set<string>[] = [];
   for (const r of rows) {
     const tk = titleTokens(r.title);
-    if (keptTokens.some((k) => jaccard(k, tk) >= 0.6)) continue; // duplicate
-    keptTokens.push(tk);
-    kept.push(r);
+    const hit = repTokens.findIndex((k) => jaccard(k, tk) >= 0.6);
+    if (hit >= 0) {
+      reps[hit].related += 1; // fold into the existing story
+      continue;
+    }
+    repTokens.push(tk);
+    reps.push({ ...r, related: 0 });
   }
-  return kept;
+  return reps;
 }
 
-/** Dedup + attach a category for the main feed. */
+/** Cluster + attach a category for the main feed. */
 function enrich(rows: RawNews[]): FeedItem[] {
-  return dedupByTitle(rows).map((r) => ({
+  return clusterByTitle(rows).map((r) => ({
     id: r.id, title: r.title, summary: r.summary, url: r.url,
-    published_at: r.published_at, category: classify(r.title, r.summary, r.tag_count > 0),
+    published_at: r.published_at, related: r.related,
+    category: classify(r.title, r.summary, r.tag_count > 0),
   }));
 }
 
 export default async function NewsPage() {
   const session = await getSession();
   const [rawNews, talked] = await Promise.all([getNews(), getTalked()]);
-  const watchNews = dedupByTitle(session ? await loadWatchlistNews(session.userId) : []);
+  const watchNews = clusterByTitle(session ? await loadWatchlistNews(session.userId) : []);
   const news = enrich(rawNews);
 
   return (
