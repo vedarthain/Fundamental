@@ -1602,9 +1602,9 @@ function LatestResultCard({
         style={{ backgroundColor: "var(--color-border-default)" }}
       >
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-px">
-          <StatTile label="Revenue"          value={fmtCr(cur.sales)}            prev={qoq ? fmtCr(qoq.sales) : null}            yoy={revYoY} qoq={revQoQ} />
-          <StatTile label="Operating profit" value={fmtCr(cur.operating_profit)} prev={qoq ? fmtCr(qoq.operating_profit) : null} yoy={opYoY}  qoq={opQoQ} />
-          <StatTile label="Net profit"       value={fmtCr(cur.net_profit)}       prev={qoq ? fmtCr(qoq.net_profit) : null}       yoy={npYoY}  qoq={npQoQ} />
+          <StatTile label="Revenue"          value={fmtCr(cur.sales)}            prev={qoq ? fmtCr(qoq.sales) : null}            yoyBase={yoy ? fmtCr(yoy.sales) : null}            yoy={revYoY} qoq={revQoQ} />
+          <StatTile label="Operating profit" value={fmtCr(cur.operating_profit)} prev={qoq ? fmtCr(qoq.operating_profit) : null} yoyBase={yoy ? fmtCr(yoy.operating_profit) : null} yoy={opYoY}  qoq={opQoQ} />
+          <StatTile label="Net profit"       value={fmtCr(cur.net_profit)}       prev={qoq ? fmtCr(qoq.net_profit) : null}       yoyBase={yoy ? fmtCr(yoy.net_profit) : null}       yoy={npYoY}  qoq={npQoQ} />
           <MarginTile margin={opmCur} deltaBps={opmDeltaBps} />
         </div>
       </div>
@@ -1705,12 +1705,14 @@ function RatioTile({
 }
 
 function StatTile({
-  label, value, prev, yoy, qoq,
+  label, value, prev, yoyBase, yoy, qoq,
 }: {
   label: string;
   value: string;
   /** Previous quarter's value, shown under the current for direct comparison. */
   prev?: string | null;
+  /** Year-ago quarter's value — tooltip base for the YoY delta. */
+  yoyBase?: string | null;
   yoy: number | null;
   qoq: number | null;
 }) {
@@ -1734,8 +1736,8 @@ function StatTile({
         </div>
       )}
       <div className="mt-1.5 flex items-baseline gap-2 text-[10.5px] tabular-nums">
-        <DeltaPair label="YoY" pct={yoy} />
-        <DeltaPair label="QoQ" pct={qoq} />
+        <DeltaPair label="YoY" pct={yoy} base={yoyBase} />
+        <DeltaPair label="QoQ" pct={qoq} base={prev} />
       </div>
     </div>
   );
@@ -1785,9 +1787,33 @@ function MarginTile({
   );
 }
 
-function DeltaPair({ label, pct }: { label: string; pct: number | null }) {
+function DeltaPair({
+  label, pct, base,
+}: {
+  label: string;
+  pct: number | null;
+  /** Formatted comparison value (the prior period's figure) for the tooltip. */
+  base?: string | null;
+}) {
+  // A huge % off a tiny base ("+2,208%") is technically right but misleading,
+  // so beyond +300% we show the cleaner MULTIPLE (e.g. +23×). The tooltip
+  // always carries the exact % and the base value.
+  const extreme = pct != null && pct >= 300;
+  let text = "—";
+  if (pct != null) {
+    if (extreme) {
+      const mult = 1 + pct / 100; // 2208% → 23.08×
+      text = `+${mult >= 10 ? Math.round(mult) : mult.toFixed(1)}×`;
+    } else {
+      text = `${pct > 0 ? "+" : ""}${Math.abs(pct) >= 100 ? Math.round(pct) : pct.toFixed(1)}%`;
+    }
+  }
+  const pctText = pct == null ? "n/a" : `${pct > 0 ? "+" : ""}${Math.round(pct)}%`;
+  const title = base
+    ? `${label}: ${pctText} vs ${base}${extreme ? " (low base)" : ""}`
+    : undefined;
   return (
-    <span className="inline-flex items-baseline gap-1">
+    <span className="inline-flex items-baseline gap-1" title={title}>
       <span className="text-[9px] uppercase tracking-[0.06em] muted-text font-semibold">
         {label}
       </span>
@@ -1799,8 +1825,7 @@ function DeltaPair({ label, pct }: { label: string; pct: number | null }) {
             pct > 0 ? "delta-up" : pct < 0 ? "delta-down" : "muted-text"
           }`}
         >
-          {pct > 0 ? "+" : ""}
-          {Math.abs(pct) >= 100 ? Math.round(pct) : pct.toFixed(1)}%
+          {text}
         </span>
       )}
     </span>
