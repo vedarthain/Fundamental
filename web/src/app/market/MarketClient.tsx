@@ -162,7 +162,7 @@ export function MarketClient({ data }: { data: OverviewResponse }) {
       {/* Movers + Building strength row.  Movers is the wide left side
           (existing UX), Building strength is the secondary discovery
           card on the right.  Stacked on mobile. */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
         <div className="lg:col-span-2">
           <MoversPair sets={data.movers} />
         </div>
@@ -908,7 +908,9 @@ function BuildingStrengthCard({ rows }: { rows: BuildingStrengthRow[] }) {
         </div>
       ) : (
         <ul className="divide-y hairline">
-          {rows.map((r) => <BuildingRow key={r.symbol} row={r} />)}
+          {/* Cap at 5 so this column's height stays close to the Movers card
+              beside it — avoids the big empty gap under Movers. */}
+          {rows.slice(0, 5).map((r) => <BuildingRow key={r.symbol} row={r} />)}
         </ul>
       )}
     </section>
