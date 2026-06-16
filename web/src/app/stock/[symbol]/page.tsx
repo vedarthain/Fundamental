@@ -257,12 +257,13 @@ async function loadStock(symbol: string) {
   // Corporate announcements (exchange filings) for this stock — from BSE.
   // Fail-soft if app.announcement isn't present in this environment yet.
   type Announcement = {
-    title: string; category: string | null; published_at: string | null; pdf_url: string | null;
+    title: string; category: string | null; headline: string | null;
+    published_at: string | null; pdf_url: string | null;
   };
   let announcements: Announcement[] = [];
   try {
     announcements = await sql<Announcement[]>`
-      SELECT title, category, published_at::text, pdf_url
+      SELECT title, category, headline, published_at::text, pdf_url
         FROM app.announcement
        WHERE symbol = ${upper}
        ORDER BY published_at DESC NULLS LAST
@@ -848,11 +849,34 @@ function annCatColor(category: string | null): string {
   return "var(--color-muted)";
 }
 
+// Pure-boilerplate headlines that add nothing beyond the (generic) title.
+const ANN_GENERIC = new Set([
+  "press release", "media release", "enclosed", "as per the enclosed file",
+  "as per enclosed", "please find enclosed", "please find attached",
+  "please find enclosed herewith", "please find attached herewith",
+  "n.a.", "na", "not applicable", "intimation",
+]);
+
+/** The BSE HEADLINE shown as a couple of detail lines under the often-generic
+ *  title (e.g. many filings share "…Reg 30 (LODR)-Press Release/Media Release"
+ *  but the headline says what it actually is). Suppress pure boilerplate and
+ *  headlines that just repeat the title. */
+function announcementDetail(title: string, headline: string | null): string | null {
+  if (!headline) return null;
+  const h = headline.trim().replace(/\s+/g, " ");
+  if (h.length < 12) return null;
+  const hl = h.toLowerCase().replace(/[.\s]+$/, "");
+  const tl = title.toLowerCase();
+  if (ANN_GENERIC.has(hl)) return null;
+  if (tl.includes(hl) || hl.includes(tl)) return null; // duplicate of the title
+  return h;
+}
+
 function AnnouncementsCard({
   announcements,
   symbol,
 }: {
-  announcements: { title: string; category: string | null; published_at: string | null; pdf_url: string | null }[];
+  announcements: { title: string; category: string | null; headline: string | null; published_at: string | null; pdf_url: string | null }[];
   symbol: string;
 }) {
   return (
@@ -873,6 +897,7 @@ function AnnouncementsCard({
           {announcements.map((a, i) => {
             const color = annCatColor(a.category);
             const date = a.published_at ? fmtResultDate(a.published_at.slice(0, 10)) : "";
+            const detail = announcementDetail(a.title, a.headline);
             const Inner = (
               <>
                 <div className="flex items-center gap-2 text-[10px] mb-0.5">
@@ -885,6 +910,9 @@ function AnnouncementsCard({
                   <span className="muted-text tabular-nums">{date}</span>
                 </div>
                 <div className="text-[13px] leading-snug">{a.title}</div>
+                {detail && (
+                  <div className="muted-text text-[12px] mt-0.5 leading-snug line-clamp-2">{detail}</div>
+                )}
               </>
             );
             return a.pdf_url ? (
