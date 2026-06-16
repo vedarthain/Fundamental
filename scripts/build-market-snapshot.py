@@ -206,87 +206,6 @@ def load_golden_snapshot(golden_conn) -> dict[str, dict]:
     return {r["symbol"]: r for r in rows}
 
 
-def load_building_strength(app_conn, limit: int = 7, min_cluster_adjusted: float = 3.0) -> list[dict]:
-    """Stocks whose composite percentile improved MORE than their peer
-    cluster's average over the last 4 weekly snapshots.
-
-    Why cluster-adjusted: a stock can improve 10 percentile points purely
-    because its sector rallied (every stock in the cluster moved together).
-    That's beta, not stock-specific signal.  Subtracting the cluster's
-    average improvement isolates the alpha — moves driven by company-level
-    factors (earnings beat, repricing, management change, etc.).
-
-    Threshold: cluster_adjusted >= +3 means the stock outperformed its
-    peer cluster by at least 3 percentile points over the period.  Smaller
-    list, higher signal quality than the raw improvement leaderboard.
-
-    Returns empty list if fewer than 4 snapshots exist in panel cache.
-    """
-    with app_conn.cursor() as cur:
-        rows = fetchall_dict(cur, """
-            WITH snaps AS (
-              -- Rank the DISTINCT snapshot dates. ROW_NUMBER() is a window
-              -- function evaluated BEFORE DISTINCT, so ranking the raw rows
-              -- (2,157 per snapshot) made rn=1..2157 all the latest date —
-              -- rn=4 landed inside the latest snapshot, so old_d == latest_d
-              -- and every delta was 0 (empty "Building strength" forever).
-              -- Distinct-first fixes it: rn=4 is the true 4th-oldest snapshot.
-              SELECT snapshot_date,
-                     ROW_NUMBER() OVER (ORDER BY snapshot_date DESC) AS rn
-                FROM (SELECT DISTINCT snapshot_date
-                        FROM app.cluster_stocks_panel_cache) d
-            ),
-            latest_d AS (SELECT snapshot_date FROM snaps WHERE rn = 1),
-            old_d    AS (SELECT snapshot_date FROM snaps WHERE rn = 4),
-            latest AS (
-              SELECT c.symbol, c.cluster_id, c.composite_pct,
-                     c.company_name, mc.name AS sector_name,
-                     cl.name AS industry_name, c.maturity_tier,
-                     c.current_price, c.market_cap_cr,
-                     c.quality_pct, c.valuation_pct, c.momentum_pct
-                FROM app.cluster_stocks_panel_cache c
-                JOIN app.cluster cl      ON cl.id = c.cluster_id
-                JOIN app.meta_cluster mc ON mc.id = cl.meta_cluster_id
-               WHERE c.snapshot_date = (SELECT snapshot_date FROM latest_d)
-            ),
-            old AS (
-              SELECT symbol, cluster_id, composite_pct AS old_composite
-                FROM app.cluster_stocks_panel_cache
-               WHERE snapshot_date = (SELECT snapshot_date FROM old_d)
-            ),
-            combined AS (
-              SELECT l.*, o.old_composite,
-                     (l.composite_pct - o.old_composite) AS stock_delta
-                FROM latest l
-                JOIN old o ON o.symbol = l.symbol AND o.cluster_id = l.cluster_id
-               WHERE l.composite_pct IS NOT NULL AND o.old_composite IS NOT NULL
-            ),
-            cluster_avg AS (
-              SELECT cluster_id, AVG(stock_delta) AS cluster_delta_avg
-                FROM combined
-               GROUP BY cluster_id
-            )
-            SELECT c.symbol, c.company_name, c.sector_name, c.industry_name,
-                   c.maturity_tier,
-                   c.current_price::float    AS current_price,
-                   c.market_cap_cr::float    AS market_cap_cr,
-                   c.composite_pct::float    AS composite_pct,
-                   c.quality_pct::float      AS quality_pct,
-                   c.valuation_pct::float    AS valuation_pct,
-                   c.momentum_pct::float     AS momentum_pct,
-                   c.stock_delta::float      AS raw_delta,
-                   ca.cluster_delta_avg::float AS cluster_avg_delta,
-                   (c.stock_delta - ca.cluster_delta_avg)::float AS cluster_adjusted
-              FROM combined c
-              JOIN cluster_avg ca ON ca.cluster_id = c.cluster_id
-             WHERE c.market_cap_cr >= 500
-               AND (c.stock_delta - ca.cluster_delta_avg) >= %s
-             ORDER BY (c.stock_delta - ca.cluster_delta_avg) DESC
-             LIMIT %s
-        """, (min_cluster_adjusted, limit))
-    return rows
-
-
 def load_panel_context(app_conn) -> dict[str, dict]:
     with app_conn.cursor() as cur:
         rows = fetchall_dict(cur, """
@@ -593,15 +512,10 @@ def build_snapshot(app_conn, golden_conn) -> dict:
         limit=DEFAULT_LIMIT_PER_BUCKET,
     )
 
-    # Building strength — stocks beating their cluster's average improvement
-    # over the last 4 weekly snapshots. Empty list if <4 snapshots exist.
-    building_strength = load_building_strength(app_conn)
-
     return {
         "indices":          indices,
         "heroSeries":       hero_series,
         "movers":           movers,
-        "buildingStrength": building_strength,
         "advanceDecline":   {"1D": ad_1d, "1W": ad_1w},
         "weekRange":        week_range,
         "sectorHeat":       sector_heat,
