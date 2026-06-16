@@ -101,7 +101,6 @@ function MountedChart({
 import type {
   OverviewResponse, IndexRow, Mover, SectorHeatRow, FiiPoint, IndexSeriesPoint,
   WeekRangeStat, HolidayItem, MoverUniverse, AdvanceDeclineSet,
-  BuildingStrengthRow,
 } from "../api/market/overview/route";
 
 const UP    = "var(--color-delta-up)";
@@ -159,15 +158,8 @@ export function MarketClient({ data }: { data: OverviewResponse }) {
       />
       <IndicesStrip rows={data.indices.filter((r) => r.code !== "NIFTYBANK")} range={range} />
 
-      {/* Movers + Building strength row.  Movers is the wide left side
-          (existing UX), Building strength is the secondary discovery
-          card on the right.  Stacked on mobile. */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
-        <div className="lg:col-span-2">
-          <MoversPair sets={data.movers} />
-        </div>
-        <BuildingStrengthCard rows={data.buildingStrength ?? []} />
-      </div>
+      {/* Top movers — full width (gainers + losers side by side). */}
+      <MoversPair sets={data.movers} />
 
       {/* Four small cards in a single row underneath. Equal width so the
           page reads as a dense dashboard rather than empty gaps to the
@@ -877,89 +869,6 @@ function RangeStat({
   );
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Building strength — persistence signal, cluster-adjusted
-//
-// Shows stocks where composite_pct rose MORE than the average rise in
-// their peer cluster over the last 4 weekly snapshots.  Subtracting
-// the cluster's average isolates stock-specific moves from sector lift
-// (a stock that improved +10 while its cluster averaged +9 contributes
-// just +1 of "alpha" — the cluster-adjusted column).
-//
-// Intentionally NOT a buy signal — the empty header text below frames
-// it as "outpacing peers" rather than "go buy these".  No emoji, no
-// green/red color urgency, no progress bar.  Five-row max per the
-// premortem (a short list signals quality, not noise).
-// ──────────────────────────────────────────────────────────────────────────
-
-function BuildingStrengthCard({ rows }: { rows: BuildingStrengthRow[] }) {
-  return (
-    <section className="card overflow-hidden">
-      <div className="px-3 md:px-4 py-2.5 border-b hairline">
-        <div className="font-display text-[15px] leading-tight">Building strength</div>
-        <div className="muted-text text-[10.5px] mt-0.5 leading-snug">
-          Outpacing peer cluster over last 4 weekly snapshots
-        </div>
-      </div>
-      {rows.length === 0 ? (
-        <div className="px-3 md:px-4 py-5 muted-text text-[12px]">
-          Need 4+ snapshots of history to compute. Will populate as new
-          weekly snapshots accumulate.
-        </div>
-      ) : (
-        <ul className="divide-y hairline">
-          {/* Cap at 5 so this column's height stays close to the Movers card
-              beside it — avoids the big empty gap under Movers. */}
-          {rows.slice(0, 5).map((r) => <BuildingRow key={r.symbol} row={r} />)}
-        </ul>
-      )}
-    </section>
-  );
-}
-
-function BuildingRow({ row }: { row: BuildingStrengthRow }) {
-  const qPct = row.quality_pct ?? 0;
-  const qColor = qPct >= 80 ? "#1f8a4c"
-              : qPct >= 60 ? "#6cab43"
-              : qPct >= 40 ? "#d6a035"
-              : qPct >= 20 ? "#c97a3f" : "#a14a32";
-  return (
-    <li>
-      <Link
-        href={`/stock/${row.symbol}`}
-        className="block px-3 md:px-4 py-2.5 hover:bg-[var(--color-paper)] transition-colors"
-      >
-        <div className="flex items-baseline justify-between gap-3">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-baseline gap-2 flex-wrap">
-              <span className="font-medium text-[13px] tabular-nums">{row.symbol}</span>
-              <span className="muted-text text-[10.5px] truncate">{row.industry_name}</span>
-            </div>
-            <div className="text-[10.5px] muted-text mt-0.5 flex items-center gap-2">
-              <span
-                className="inline-block w-1.5 h-1.5 rounded-full"
-                style={{ backgroundColor: qColor }}
-                title={`Quality: ${Math.round(qPct)}`}
-              />
-              <span>{row.company_name}</span>
-            </div>
-          </div>
-          <div className="text-right shrink-0">
-            <div className="font-semibold text-[13.5px] tabular-nums" style={{ color: "var(--color-accent-600)" }}>
-              +{row.cluster_adjusted.toFixed(1)}
-            </div>
-            <div className="text-[9.5px] muted-text leading-tight">vs cluster</div>
-          </div>
-        </div>
-        <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[10.5px] tabular-nums muted-text">
-          <span>raw <span className="font-medium" style={{ color: INK }}>+{row.raw_delta.toFixed(1)}</span></span>
-          <span>cluster avg <span className="font-medium" style={{ color: INK }}>{row.cluster_avg_delta >= 0 ? "+" : ""}{row.cluster_avg_delta.toFixed(1)}</span></span>
-          <span>composite <span className="font-medium" style={{ color: INK }}>{Math.round(row.composite_pct ?? 0)}</span></span>
-        </div>
-      </Link>
-    </li>
-  );
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // FII / DII — grouped bars (compact)
