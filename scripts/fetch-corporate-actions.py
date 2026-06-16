@@ -167,6 +167,9 @@ def main() -> None:
                           details     = EXCLUDED.details,
                           bse_code    = EXCLUDED.bse_code,
                           fetched_at  = now()
+                        -- Never clobber an indianapi row that happens to share
+                        -- (symbol, ex_date, purpose) — indianapi is authoritative.
+                        WHERE corporate_action.source = 'bse'
                         """,
                         actions,
                     )

@@ -231,13 +231,26 @@ def main() -> None:
 
             actions = build_actions(sym, payload) if isinstance(payload, dict) else []
             with conn.cursor() as cur:
-                cur.execute("DELETE FROM app.corporate_action WHERE symbol = %s", (sym,))
+                # Source-scoped delete: only clear OUR rows so the BSE fetcher's
+                # rows (source='bse', recent dividends) survive an indianapi run.
+                cur.execute(
+                    "DELETE FROM app.corporate_action WHERE symbol = %s AND source = 'indianapi'",
+                    (sym,),
+                )
                 if actions:
                     cur.executemany(
                         """
                         INSERT INTO app.corporate_action
                           (symbol, action_type, ex_date, purpose, amount, details, source, fetched_at)
                         VALUES (%s,%s,%s,%s,%s,%s::jsonb,'indianapi', now())
+                        -- If a BSE row has the identical (symbol, ex_date, purpose),
+                        -- indianapi (richer) takes it over.
+                        ON CONFLICT (symbol, ex_date, purpose) DO UPDATE SET
+                          action_type = EXCLUDED.action_type,
+                          amount      = EXCLUDED.amount,
+                          details     = EXCLUDED.details,
+                          source      = 'indianapi',
+                          fetched_at  = now()
                         """,
                         actions,
                     )

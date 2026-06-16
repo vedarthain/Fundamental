@@ -227,10 +227,19 @@ async function loadStock(symbol: string) {
   type CARow = { action_type: string; ex_date: string | null; purpose: string; amount: number | null };
   let corporateActions: CARow[] = [];
   try {
+    // Corporate actions come from two sources — indianapi (full history) and
+    // BSE (recent dividends, fresher between indianapi runs). Dedup on
+    // (action_type, ex_date) preferring indianapi so an action covered by both
+    // shows once (the richer indianapi row wins).
     corporateActions = await sql<CARow[]>`
       SELECT action_type, ex_date::text, purpose, amount::float
-        FROM app.corporate_action
-       WHERE symbol = ${upper}
+        FROM (
+          SELECT DISTINCT ON (action_type, ex_date)
+                 action_type, ex_date, purpose, amount
+            FROM app.corporate_action
+           WHERE symbol = ${upper}
+           ORDER BY action_type, ex_date, (source = 'indianapi') DESC
+        ) d
        ORDER BY ex_date DESC NULLS LAST
        LIMIT 12
     `;
