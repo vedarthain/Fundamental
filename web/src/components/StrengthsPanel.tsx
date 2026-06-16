@@ -49,7 +49,7 @@ export function StrengthsPanel({
                 </span>
                 <span className="text-[11.5px] muted-text truncate">{t.oneLineSummary}</span>
               </div>
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 auto-rows-fr">
                 {t.trends.map((tr) => (
                   <MetricTrendCard
                     key={tr.name}

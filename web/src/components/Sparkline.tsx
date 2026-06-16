@@ -7,16 +7,20 @@ export function Sparkline({
   width = 180,
   height = 56,
   stroke = "var(--color-accent-500)",
+  fill = false,
 }: {
   data: SparkPoint[];
   width?: number;
   height?: number;
   stroke?: string;
+  /** Stretch to the container's width (svg width=100%) instead of a fixed px
+   *  width. `width` still defines the coordinate space. */
+  fill?: boolean;
 }) {
   const points = data.filter((d) => d.value != null) as { label: string; value: number }[];
   if (points.length < 2) {
     return (
-      <div className="muted-text text-[10px] italic flex items-center" style={{ width, height }}>
+      <div className="muted-text text-[10px] italic flex items-center" style={fill ? { width: "100%", height } : { width, height }}>
         not enough data
       </div>
     );
@@ -36,8 +40,13 @@ export function Sparkline({
   const first = points[0];
   const positive = last.value >= first.value;
   return (
-    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
-      <path d={path} fill="none" stroke={stroke} strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
+    <svg
+      width={fill ? "100%" : width}
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio={fill ? "none" : "xMidYMid meet"}
+    >
+      <path d={path} fill="none" stroke={stroke} strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
       <circle cx={x(points.length - 1)} cy={y(last.value)} r={2.5} fill={stroke} />
       <line
         x1={pad}
@@ -86,17 +95,19 @@ export function MetricTrendCard({
     trendColor = improved ? "var(--color-score-good)" : "var(--color-score-poor)";
   }
   return (
-    <div className="card p-3">
+    <div className="card p-3 h-full flex flex-col">
       <div className="flex items-baseline justify-between gap-2 mb-1.5">
         <div className="text-[11px] muted-text uppercase tracking-wide truncate">{name}</div>
-        <div className="text-[14px] tabular-nums font-medium" style={{ color: trendColor }}>
+        <div className="text-[14px] tabular-nums font-medium whitespace-nowrap shrink-0" style={{ color: trendColor }}>
           {fmt(last?.value ?? null)}
         </div>
       </div>
-      <Sparkline data={data} width={200} height={44} stroke={trendColor} />
-      <div className="flex justify-between text-[9px] muted-text mt-1">
-        <span>{first?.label ?? ""}</span>
-        <span>{last?.label ?? ""}</span>
+      <div className="mt-auto">
+        <Sparkline data={data} width={200} height={44} stroke={trendColor} fill />
+        <div className="flex justify-between text-[9px] muted-text mt-1">
+          <span>{first?.label ?? ""}</span>
+          <span>{last?.label ?? ""}</span>
+        </div>
       </div>
     </div>
   );
