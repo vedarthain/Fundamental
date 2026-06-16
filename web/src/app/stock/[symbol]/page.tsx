@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { sql, golden } from "@/lib/db";
-import { band, bandColor, fmtPct, fmtRupeesCr, tierLabel, displayCompanyName } from "@/lib/score";
+import { band, bandColor, fmtPct, fmtRupeesCr, tierLabel, displayCompanyName, isRecentListing, listingYear } from "@/lib/score";
 import { StrengthBars } from "@/components/StrengthBars";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { PriceChart, type PricePoint } from "@/components/PriceChart";
@@ -345,8 +345,17 @@ export default async function StockPage({
           Desktop keeps the side-by-side layout. */}
       <header className="mt-3 flex flex-col md:flex-row items-start md:justify-between gap-4 md:gap-8">
         <div>
-          <div className="text-[12px] muted-text uppercase tracking-wide">
-            {stock.sector_name} · {stock.industry_name} · {tierLabel(stock.maturity_tier)}
+          <div className="text-[12px] muted-text uppercase tracking-wide flex flex-wrap items-center gap-x-1.5 gap-y-1">
+            <span>{stock.sector_name} · {stock.industry_name} · {tierLabel(stock.maturity_tier)}</span>
+            {isRecentListing(stock.listing_date) && stock.maturity_tier !== "new" && (
+              <span
+                className="inline-flex items-center rounded px-1.5 py-[1px] text-[10px] font-semibold normal-case"
+                style={{ background: "color-mix(in srgb, var(--color-accent-600) 14%, transparent)", color: "var(--color-accent-700)" }}
+                title={`Recent IPO — listed ${listingYear(stock.listing_date)}. The maturity tier reflects years of financial history, not how long it has been listed.`}
+              >
+                Recent IPO · {listingYear(stock.listing_date)}
+              </span>
+            )}
           </div>
           <div className="mt-1 flex items-baseline gap-3 flex-wrap">
             <h1 className="font-display text-[36px] tracking-tight leading-tight">

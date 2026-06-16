@@ -57,6 +57,24 @@ export function displayCompanyName(
   return cleaned || (symbol ?? "").trim();
 }
 
+/** True if the stock listed within the last ~2 years (a recent IPO). The
+ *  maturity tier is computed from years of *financial* history, not listing
+ *  age — so a long-operating business that just IPO'd reads as "Established".
+ *  This flags that case so the recent listing isn't hidden. */
+export function isRecentListing(listingDate: string | null | undefined): boolean {
+  if (!listingDate) return false;
+  const d = new Date(listingDate);
+  if (Number.isNaN(d.getTime())) return false;
+  return (Date.now() - d.getTime()) / (365.25 * 24 * 3600 * 1000) <= 2;
+}
+
+/** Listing year, e.g. 2024 — for the "Recent IPO · 2024" badge. */
+export function listingYear(listingDate: string | null | undefined): number | null {
+  if (!listingDate) return null;
+  const y = new Date(listingDate).getFullYear();
+  return Number.isNaN(y) ? null : y;
+}
+
 export function fmtPct(p: number | null | undefined, suffix = "%"): string {
   if (p == null) return "—";
   return Math.round(p) + suffix;
