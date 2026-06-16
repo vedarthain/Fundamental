@@ -2,11 +2,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { sql, golden } from "@/lib/db";
 import { band, bandColor, fmtPct, fmtRupeesCr, tierLabel, displayCompanyName, isRecentListing, listingYear } from "@/lib/score";
-import { StrengthBars } from "@/components/StrengthBars";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { PriceChart, type PricePoint } from "@/components/PriceChart";
 import type { SparkPoint } from "@/components/Sparkline";
-import { PillarTabs, type PillarTabContent } from "@/components/PillarTabs";
+import { type PillarTabContent } from "@/components/PillarTabs";
+import { StrengthsPanel } from "@/components/StrengthsPanel";
 import { buildSpider } from "@/lib/spider";
 import { buildPillarStory } from "@/lib/explainer";
 import {
@@ -336,6 +336,37 @@ export default async function StockPage({
   const compositeBand = band(stock.composite_pct);
   const compositeBg = bandColor(compositeBand);
 
+  // Pillar data for the Strengths & gaps tab (graphs-first StrengthsPanel).
+  const pillarTabs: PillarTabContent[] = [
+    {
+      pillar: "Quality",
+      pct: stock.quality_pct,
+      oneLineSummary: pillarStories[0].summary,
+      companyNarration: qualityNarration(stockMeta, annual, stock.quality_components || {}, stock.quality_pct),
+      strength: pillarStories[0].strength,
+      gap: pillarStories[0].gap,
+      trends: computePillarTrends("Quality", annual),
+    },
+    {
+      pillar: "Valuation",
+      pct: stock.valuation_pct,
+      oneLineSummary: pillarStories[1].summary,
+      companyNarration: valuationNarration(stockMeta, stock.valuation_components || {}, stock.valuation_pct),
+      strength: pillarStories[1].strength,
+      gap: pillarStories[1].gap,
+      trends: computePillarTrends("Valuation", annual),
+    },
+    {
+      pillar: "Momentum",
+      pct: stock.momentum_pct,
+      oneLineSummary: pillarStories[2].summary,
+      companyNarration: momentumNarration(stockMeta, stock.momentum_components || {}, quarterly, stock.momentum_pct),
+      strength: pillarStories[2].strength,
+      gap: pillarStories[2].gap,
+      trends: computePillarTrends("Momentum", annual),
+    },
+  ];
+
   return (
     <div className="mx-auto max-w-[1200px] px-6 py-10">
       {/* Back link: returns to the sector page with the right sector +
@@ -530,62 +561,15 @@ export default async function StockPage({
         }
         strengths={
           <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-8">
-            <div className="space-y-8">
-              <section className="card p-6">
-                <h2 className="font-display text-[20px] mb-2">Strengths and gaps</h2>
-                <p className="text-[13px] muted-text mb-6">
-                  Each bar is this stock&apos;s percentile within {stock.industry_name} ·{" "}
-                  {tierLabel(stock.maturity_tier)} peers. The thin line in the middle is
-                  the cluster median — anything to the right of it beats half the cluster.
-                </p>
-                <StrengthBars rows={strengthRows} />
-              </section>
-
-              <section>
-                <h2 className="font-display text-[20px] mb-2">Why this score</h2>
-                <p className="text-[13px] muted-text mb-4">
-                  Three pillars. Switch between them to see how this stock specifically
-                  scored, with the underlying metric trends.
-                </p>
-                <PillarTabs
-                  tabs={[
-                    {
-                      pillar: "Quality",
-                      pct: stock.quality_pct,
-                      oneLineSummary: pillarStories[0].summary,
-                      companyNarration: qualityNarration(
-                        stockMeta, annual, stock.quality_components || {}, stock.quality_pct
-                      ),
-                      strength: pillarStories[0].strength,
-                      gap: pillarStories[0].gap,
-                      trends: computePillarTrends("Quality", annual),
-                    },
-                    {
-                      pillar: "Valuation",
-                      pct: stock.valuation_pct,
-                      oneLineSummary: pillarStories[1].summary,
-                      companyNarration: valuationNarration(
-                        stockMeta, stock.valuation_components || {}, stock.valuation_pct
-                      ),
-                      strength: pillarStories[1].strength,
-                      gap: pillarStories[1].gap,
-                      trends: computePillarTrends("Valuation", annual),
-                    },
-                    {
-                      pillar: "Momentum",
-                      pct: stock.momentum_pct,
-                      oneLineSummary: pillarStories[2].summary,
-                      companyNarration: momentumNarration(
-                        stockMeta, stock.momentum_components || {}, quarterly, stock.momentum_pct
-                      ),
-                      strength: pillarStories[2].strength,
-                      gap: pillarStories[2].gap,
-                      trends: computePillarTrends("Momentum", annual),
-                    },
-                  ] satisfies PillarTabContent[]}
-                />
-              </section>
-            </div>
+            <section className="card p-6">
+              <h2 className="font-display text-[20px] mb-2">Strengths and gaps</h2>
+              <p className="text-[13px] muted-text mb-6">
+                The charts are this stock&apos;s underlying metric trends across all three
+                pillars; the bars below show where it ranks within {stock.industry_name} ·{" "}
+                {tierLabel(stock.maturity_tier)} peers (the middle line is the cluster median).
+              </p>
+              <StrengthsPanel tabs={pillarTabs} strengthRows={strengthRows} />
+            </section>
 
             <aside className="space-y-6">
               <PillarBreakdown
