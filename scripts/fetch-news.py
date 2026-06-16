@@ -24,6 +24,7 @@ import html
 import os
 import re
 import sys
+import time
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
@@ -202,7 +203,35 @@ def main() -> None:
         nid = hashlib.sha256(it["url"].encode()).hexdigest()[:32]
         by_id.setdefault(nid, it)
 
-    with psycopg.connect(url) as conn:
+    # Retry the whole DB phase: Neon occasionally hands out a fresh pooled
+    # connection that drops on the first query ("SSL connection has been closed
+    # unexpectedly"), or drops mid-run on a compute cold-start. The RSS items
+    # are already fetched and every write is idempotent (ON CONFLICT), so a
+    # reconnect-and-retry is safe and cheap.
+    last_err: Exception | None = None
+    for attempt in range(1, 4):
+        try:
+            n_news, n_tags = persist(url, by_id)
+            print(f"Done — {n_news} headlines, {n_tags} stock tags.")
+            return
+        except psycopg.OperationalError as e:
+            last_err = e
+            print(f"  ! DB connection issue ({type(e).__name__}: {str(e).strip()[:80]}); "
+                  f"retry {attempt}/3 in 5s…", file=sys.stderr)
+            time.sleep(5)
+    raise SystemExit(f"DB unavailable after 3 attempts: {last_err}")
+
+
+def persist(url: str, by_id: dict[str, dict]) -> tuple[int, int]:
+    """Insert/refresh headlines + tags + prune. Raises OperationalError on a
+    dropped connection so main() can retry."""
+    with psycopg.connect(
+        url,
+        connect_timeout=15,
+        # TCP keepalives so an idle stretch (e.g. the BSE scrip-master fetch in
+        # build_name_index) doesn't let the connection get silently reaped.
+        keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=5,
+    ) as conn:
         index = build_name_index(conn)
         print(f"  name index: {len(index)} match phrases", file=sys.stderr)
         n_news = n_tags = 0
@@ -225,7 +254,7 @@ def main() -> None:
             cutoff = datetime.now(timezone.utc) - timedelta(days=KEEP_DAYS)
             cur.execute("DELETE FROM app.news WHERE COALESCE(published_at, fetched_at) < %s", (cutoff,))
         conn.commit()
-    print(f"Done — {n_news} headlines, {n_tags} stock tags.")
+    return n_news, n_tags
 
 
 if __name__ == "__main__":
