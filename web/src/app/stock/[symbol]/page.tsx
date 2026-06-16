@@ -1589,6 +1589,7 @@ function LatestResultCard({
         </div>
         <span className="text-[10.5px] muted-text tabular-nums">
           Period ended {fmtResultDate(cur.period_end)}
+          {qoq && <> · prev {qLabel(qoq.period_end)}</>}
         </span>
       </div>
 
@@ -1601,9 +1602,9 @@ function LatestResultCard({
         style={{ backgroundColor: "var(--color-border-default)" }}
       >
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-px">
-          <StatTile label="Revenue"          value={fmtCr(cur.sales)}            yoy={revYoY} qoq={revQoQ} />
-          <StatTile label="Operating profit" value={fmtCr(cur.operating_profit)} yoy={opYoY}  qoq={opQoQ} />
-          <StatTile label="Net profit"       value={fmtCr(cur.net_profit)}       yoy={npYoY}  qoq={npQoQ} />
+          <StatTile label="Revenue"          value={fmtCr(cur.sales)}            prev={qoq ? fmtCr(qoq.sales) : null}            yoy={revYoY} qoq={revQoQ} />
+          <StatTile label="Operating profit" value={fmtCr(cur.operating_profit)} prev={qoq ? fmtCr(qoq.operating_profit) : null} yoy={opYoY}  qoq={opQoQ} />
+          <StatTile label="Net profit"       value={fmtCr(cur.net_profit)}       prev={qoq ? fmtCr(qoq.net_profit) : null}       yoy={npYoY}  qoq={npQoQ} />
           <MarginTile margin={opmCur} deltaBps={opmDeltaBps} />
         </div>
       </div>
@@ -1704,10 +1705,12 @@ function RatioTile({
 }
 
 function StatTile({
-  label, value, yoy, qoq,
+  label, value, prev, yoy, qoq,
 }: {
   label: string;
   value: string;
+  /** Previous quarter's value, shown under the current for direct comparison. */
+  prev?: string | null;
   yoy: number | null;
   qoq: number | null;
 }) {
@@ -1725,6 +1728,11 @@ function StatTile({
       >
         {value}
       </div>
+      {prev && (
+        <div className="text-[9.5px] muted-text tabular-nums mt-0.5">
+          prev <span className="ink-text">{prev}</span>
+        </div>
+      )}
       <div className="mt-1.5 flex items-baseline gap-2 text-[10.5px] tabular-nums">
         <DeltaPair label="YoY" pct={yoy} />
         <DeltaPair label="QoQ" pct={qoq} />
