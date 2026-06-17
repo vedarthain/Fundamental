@@ -83,6 +83,11 @@ type QuarterlyRow = {
   sales: number | null;
   operating_profit: number | null;
   net_profit: number | null;
+  other_income: number | null;
+  depreciation: number | null;
+  interest: number | null;
+  profit_before_tax: number | null;
+  tax: number | null;
 };
 
 type Scorecard = {
@@ -136,7 +141,9 @@ async function loadStock(symbol: string) {
   // Latest 6 quarters
   const quarterly = await sql<QuarterlyRow[]>`
     SELECT period_end::text,
-           sales::float, operating_profit::float, net_profit::float
+           sales::float, operating_profit::float, net_profit::float,
+           other_income::float, depreciation::float, interest::float,
+           profit_before_tax::float, tax::float
     FROM app.fundamentals_quarterly
     WHERE symbol = ${upper}
     ORDER BY period_end DESC
@@ -367,6 +374,24 @@ export default async function StockPage({
     },
   ];
 
+  // Result declaration — the BSE result filing for the latest quarter (declared
+  // after period_end). From the already-loaded announcements; the EARLIEST match
+  // after period_end is the declaration (later ones are presentations etc.).
+  // Fail-soft to null if announcements don't cover it.
+  const latestQ = quarterly[0];
+  const isResultAnn = (a: { title: string; category: string | null }) =>
+    /result/i.test(a.category ?? "") ||
+    /financial results|board meeting outcome|audited|unaudited|quarterly results/i.test(a.title);
+  const resultMatches = latestQ
+    ? announcements.filter(
+        (a) => a.published_at != null && a.published_at.slice(0, 10) >= latestQ.period_end && isResultAnn(a),
+      )
+    : [];
+  const resultDecl = resultMatches.length ? resultMatches[resultMatches.length - 1] : null;
+  const declaration = resultDecl
+    ? { date: resultDecl.published_at, pdfUrl: resultDecl.pdf_url }
+    : null;
+
   return (
     <div className="mx-auto max-w-[1200px] px-6 py-10">
       {/* Back link: returns to the sector page with the right sector +
@@ -515,6 +540,7 @@ export default async function StockPage({
             annual={annual}
             marketCapCr={stock.market_cap_cr}
             currentPrice={stock.current_price}
+            declaration={declaration}
           />
         }
         about={
@@ -1426,6 +1452,11 @@ type QuarterLite = {
   sales: number | null;
   operating_profit: number | null;
   net_profit: number | null;
+  other_income: number | null;
+  depreciation: number | null;
+  interest: number | null;
+  profit_before_tax: number | null;
+  tax: number | null;
 };
 
 type AnnualLiteForRatios = {
@@ -1493,12 +1524,14 @@ function ResultFlashChip({ latest }: { latest: QuarterLite }) {
 }
 
 function LatestResultCard({
-  quarterly, annual, marketCapCr, currentPrice,
+  quarterly, annual, marketCapCr, currentPrice, declaration,
 }: {
   quarterly: QuarterLite[];
   annual: AnnualLiteForRatios[];
   marketCapCr: number | null;
   currentPrice: number | null;
+  /** When + the filing link for the latest result's declaration. */
+  declaration?: { date: string | null; pdfUrl: string | null } | null;
 }) {
   if (!quarterly || quarterly.length === 0) return null;
 
@@ -1590,6 +1623,24 @@ function LatestResultCard({
         <span className="text-[10.5px] muted-text tabular-nums">
           Period ended {fmtResultDate(cur.period_end)}
           {qoq && <> · prev {qLabel(qoq.period_end)}</>}
+          {declaration?.date && (
+            <> · declared {fmtResultDate(declaration.date.slice(0, 10))}
+              {declaration.pdfUrl && (
+                <>
+                  {" · "}
+                  <a
+                    href={declaration.pdfUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline"
+                    style={{ color: "var(--color-accent-600)" }}
+                  >
+                    filing ↗
+                  </a>
+                </>
+              )}
+            </>
+          )}
         </span>
       </div>
 
@@ -1628,6 +1679,12 @@ function LatestResultCard({
           ))}
         </ul>
       </div>
+
+      {/* Earnings-quality flags — rule-based heads-up (low-quality beat, tax one-offs). */}
+      <ResultQualityFlags cur={cur} />
+
+      {/* Full P&L for the quarter — collapsed by default. */}
+      <PnlExpander cur={cur} periodLabel={qLabel(cur.period_end)} />
 
       {/* Row 2 — TTM ratios, same single-bordered-box pattern as row 1. */}
       {hasAnyRatio && (
@@ -1945,6 +2002,99 @@ function quarterProgressLines(p: {
     lines.push(m + ".");
   }
   return lines;
+}
+
+/* ----------------- Full P&L expander + earnings-quality flags ------- */
+
+function PnlRow({
+  label, value, pct = false, bold = false,
+}: {
+  label: string;
+  value: number | null;
+  pct?: boolean;
+  bold?: boolean;
+}) {
+  return (
+    <div className="flex items-baseline justify-between px-3 py-1.5">
+      <span className={`text-[12px] ${bold ? "ink-text font-semibold" : "muted-text"}`}>{label}</span>
+      <span className={`num tabular-nums text-[12.5px] ${bold ? "font-semibold" : ""}`}>
+        {value == null ? "—" : pct ? `${value.toFixed(1)}%` : fmtCr(value)}
+      </span>
+    </div>
+  );
+}
+
+/** Collapsed full income statement for the latest quarter (the line items
+ *  behind Revenue → PBT → Net profit). Hidden if the source lacks the detail. */
+function PnlExpander({ cur, periodLabel }: { cur: QuarterLite; periodLabel: string }) {
+  const pbt = cur.profit_before_tax, tax = cur.tax, np = cur.net_profit;
+  const eff = tax != null && pbt != null && pbt !== 0 ? (tax / pbt) * 100 : null;
+  // PAT = PBT − Tax. For holding companies (minority interest) this is HIGHER
+  // than the net profit attributable to shareholders (our `net_profit`); the
+  // gap is minority interest (+ any associate/exceptional adjustment). Surface
+  // it so the waterfall closes instead of looking inconsistent.
+  const pat = pbt != null && tax != null ? pbt - tax : null;
+  const minorityEtc = pat != null && np != null ? pat - np : null;
+  const showMinority = minorityEtc != null && Math.abs(minorityEtc) >= Math.max(1, 0.01 * Math.abs(pat ?? 0));
+  if (pbt == null && cur.other_income == null && tax == null) return null;
+  return (
+    <details className="mt-2.5">
+      <summary className="cursor-pointer select-none text-[12px] muted-text hover:text-[var(--color-ink)] transition-colors">
+        Full P&amp;L · {periodLabel}
+      </summary>
+      <div className="mt-2 rounded-md overflow-hidden border hairline divide-y">
+        <PnlRow label="Revenue" value={cur.sales} />
+        <PnlRow label="Operating profit (EBITDA)" value={cur.operating_profit} />
+        <PnlRow label="+ Other income" value={cur.other_income} />
+        <PnlRow label="− Depreciation" value={cur.depreciation} />
+        <PnlRow label="− Interest" value={cur.interest} />
+        <PnlRow label="Profit before tax" value={pbt} bold />
+        <PnlRow label="− Tax" value={tax} />
+        <PnlRow label="Effective tax rate" value={eff} pct />
+        {showMinority ? (
+          <>
+            <PnlRow label="Profit after tax" value={pat} />
+            <PnlRow label="− Minority & other" value={minorityEtc} />
+            <PnlRow label="Net profit (attributable)" value={np} bold />
+          </>
+        ) : (
+          <PnlRow label="Net profit" value={np} bold />
+        )}
+      </div>
+    </details>
+  );
+}
+
+/** Rule-based earnings-quality heads-up: large non-operating income share of
+ *  pre-tax profit (low-quality beat) and tax-rate anomalies (one-offs). */
+function ResultQualityFlags({ cur }: { cur: QuarterLite }) {
+  const flags: string[] = [];
+  const oi = cur.other_income, pbt = cur.profit_before_tax, tax = cur.tax;
+  if (oi != null && pbt != null && pbt > 0 && oi / pbt >= 0.25) {
+    flags.push(`${Math.round((oi / pbt) * 100)}% of pre-tax profit is non-operating (other) income`);
+  }
+  if (tax != null && pbt != null && pbt > 0) {
+    const rate = (tax / pbt) * 100;
+    if (rate < 10) flags.push(`Low effective tax rate (${rate.toFixed(0)}%) — may include one-off credits`);
+    else if (rate > 40) flags.push(`High effective tax rate (${rate.toFixed(0)}%)`);
+  }
+  if (flags.length === 0) return null;
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5">
+      {flags.map((f, i) => (
+        <span
+          key={i}
+          className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px]"
+          style={{
+            background: "color-mix(in srgb, var(--color-score-weak) 14%, transparent)",
+            color: "var(--color-score-weak)",
+          }}
+        >
+          ⚑ {f}
+        </span>
+      ))}
+    </div>
+  );
 }
 
 function StatusCard({ status }: { status: string | null }) {
