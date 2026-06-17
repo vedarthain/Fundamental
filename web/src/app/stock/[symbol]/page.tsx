@@ -1604,14 +1604,30 @@ function LatestResultCard({
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-px">
           <StatTile label="Revenue"          value={fmtCr(cur.sales)}            prev={qoq ? fmtCr(qoq.sales) : null}            yoyBase={yoy ? fmtCr(yoy.sales) : null}            yoy={revYoY} qoq={revQoQ} />
           <StatTile label="Operating profit" value={fmtCr(cur.operating_profit)} prev={qoq ? fmtCr(qoq.operating_profit) : null} yoyBase={yoy ? fmtCr(yoy.operating_profit) : null} yoy={opYoY}  qoq={opQoQ} />
-          <StatTile label="Net profit"       value={fmtCr(cur.net_profit)}       prev={qoq ? fmtCr(qoq.net_profit) : null}       yoyBase={yoy ? fmtCr(yoy.net_profit) : null}       yoy={npYoY}  qoq={npQoQ} />
+          <StatTile label="Net profit"       value={fmtCr(cur.net_profit)}       prev={qoq ? fmtCr(qoq.net_profit) : null}       yoyBase={yoy ? fmtCr(yoy.net_profit) : null}       yoy={npYoY}  qoq={npQoQ}
+            note="Profit attributable to shareholders (excludes minority interest). For holding companies (e.g. Vedanta) this is lower than the consolidated 'Net Profit' some sources show — it's the figure EPS is based on." />
           <MarginTile margin={opmCur} deltaBps={opmDeltaBps} />
         </div>
       </div>
 
-      <p className="mt-2.5 text-[12.5px] leading-relaxed muted-text">
-        {interpretQuarter({ revYoY, opYoY, npYoY, opmDeltaBps })}
-      </p>
+      {/* Progress — a short narrative of how the quarter moved, beside the
+          tiles. Headline read + phrased revenue / profit / margin lines. */}
+      <div className="mt-3 rounded-md p-3" style={{ background: "var(--color-paper)" }}>
+        <div className="text-[10px] uppercase tracking-[0.12em] muted-text font-semibold mb-1">
+          Progress
+        </div>
+        <div className="text-[13px] font-medium leading-snug" style={{ color: "var(--color-ink)" }}>
+          {interpretQuarter({ revYoY, opYoY, npYoY, opmDeltaBps })}
+        </div>
+        <ul className="mt-1.5 space-y-0.5 text-[12.5px] muted-text">
+          {quarterProgressLines({ revYoY, revQoQ, npYoY, npQoQ, opmCur, opmDeltaBps }).map((l, i) => (
+            <li key={i} className="flex gap-1.5">
+              <span aria-hidden style={{ opacity: 0.5 }}>·</span>
+              <span>{l}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
 
       {/* Row 2 — TTM ratios, same single-bordered-box pattern as row 1. */}
       {hasAnyRatio && (
@@ -1705,7 +1721,7 @@ function RatioTile({
 }
 
 function StatTile({
-  label, value, prev, yoyBase, yoy, qoq,
+  label, value, prev, yoyBase, yoy, qoq, note,
 }: {
   label: string;
   value: string;
@@ -1715,14 +1731,18 @@ function StatTile({
   yoyBase?: string | null;
   yoy: number | null;
   qoq: number | null;
+  /** Optional hover note on the tile (e.g. net-profit definition). */
+  note?: string;
 }) {
   return (
     <div
       className="px-3 py-2.5"
       style={{ backgroundColor: "var(--color-paper)" }}
+      title={note}
     >
-      <div className="text-[9.5px] uppercase tracking-[0.1em] muted-text font-semibold truncate">
+      <div className="text-[9.5px] uppercase tracking-[0.1em] muted-text font-semibold truncate flex items-center gap-1">
         {label}
+        {note && <span aria-hidden style={{ opacity: 0.6 }}>ⓘ</span>}
       </div>
       <div
         className="num font-semibold leading-none mt-0.5"
@@ -1888,6 +1908,43 @@ function interpretQuarter({
   }
   // Fallback — neutral description.
   return "Mixed quarter — see the deltas above for the precise direction on each line.";
+}
+
+/** A few plain-English lines on how the quarter progressed — phrasing the
+ *  revenue / profit / margin moves so the result reads as a story, not just
+ *  tiles. */
+function quarterProgressLines(p: {
+  revYoY: number | null; revQoQ: number | null;
+  npYoY: number | null;  npQoQ: number | null;
+  opmCur: number | null; opmDeltaBps: number | null;
+}): string[] {
+  const both = (yo: number | null, qo: number | null): string | null => {
+    const parts = [
+      yo != null ? `${yo >= 0 ? "+" : ""}${Math.round(yo)}% YoY` : null,
+      qo != null ? `${qo >= 0 ? "+" : ""}${Math.round(qo)}% QoQ` : null,
+    ].filter(Boolean);
+    return parts.length ? parts.join(", ") : null;
+  };
+  const lines: string[] = [];
+
+  const rev = both(p.revYoY, p.revQoQ);
+  if (rev) {
+    const trend = (p.revYoY ?? 0) > 1 ? "growing" : (p.revYoY ?? 0) < -1 ? "declining" : "flat";
+    lines.push(`Revenue is ${trend} (${rev}).`);
+  }
+  const np = both(p.npYoY, p.npQoQ);
+  if (np) {
+    const trend = (p.npYoY ?? 0) > 1 ? "higher" : (p.npYoY ?? 0) < -1 ? "lower" : "broadly flat";
+    lines.push(`Net profit is ${trend} year-on-year (${np}).`);
+  }
+  if (p.opmCur != null) {
+    let m = `Operating margin at ${p.opmCur.toFixed(1)}%`;
+    if (p.opmDeltaBps != null && Math.abs(p.opmDeltaBps) >= 10) {
+      m += ` — ${p.opmDeltaBps >= 0 ? "expanded" : "contracted"} ${Math.abs(Math.round(p.opmDeltaBps))} bps vs a year ago`;
+    }
+    lines.push(m + ".");
+  }
+  return lines;
 }
 
 function StatusCard({ status }: { status: string | null }) {
