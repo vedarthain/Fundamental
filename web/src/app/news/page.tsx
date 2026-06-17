@@ -91,6 +91,19 @@ async function loadWatchlistNews(userId: number): Promise<WatchItem[]> {
   }
 }
 
+/** How many stocks the user watches — to tell "empty watchlist" apart from
+ *  "watchlist has stocks but none are in the news right now". */
+async function loadWatchlistCount(userId: number): Promise<number> {
+  try {
+    const r = await sql<{ n: number }[]>`
+      SELECT COUNT(*)::int AS n FROM app.user_watchlist WHERE user_id = ${userId}
+    `;
+    return r[0]?.n ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
 // ----- categorisation + dedup (rule-based; no LLM) ------------------------
 
 const POLICY_RE = /\b(sebi|rbi|govern|govt|ministry|minister|budget|\btax\b|gst|tariff|policy|polic|regulat|parliament|cabinet|fdi|sebi|supreme court|lok sabha|union)\b/i;
@@ -169,7 +182,10 @@ function enrich(rows: RawNews[]): FeedItem[] {
 export default async function NewsPage() {
   const session = await getSession();
   const [rawNews, talked] = await Promise.all([getNews(), getTalked()]);
-  const watchNews = clusterByTitle(session ? await loadWatchlistNews(session.userId) : []);
+  const [watchRaw, watchlistCount] = session
+    ? await Promise.all([loadWatchlistNews(session.userId), loadWatchlistCount(session.userId)])
+    : [[], 0];
+  const watchNews = clusterByTitle(watchRaw);
   const news = enrich(rawNews);
 
   return (
@@ -184,7 +200,7 @@ export default async function NewsPage() {
       {news.length === 0 ? (
         <div className="card p-6 muted-text text-[13px]">No headlines yet.</div>
       ) : (
-        <NewsClient news={news} talked={talked} watchNews={watchNews} />
+        <NewsClient news={news} talked={talked} watchNews={watchNews} signedIn={!!session} watchlistCount={watchlistCount} />
       )}
     </div>
   );

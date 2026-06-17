@@ -69,10 +69,14 @@ export function NewsClient({
   news,
   talked,
   watchNews,
+  signedIn,
+  watchlistCount,
 }: {
   news: FeedItem[];
   talked: TalkedItem[];
   watchNews: WatchItem[];
+  signedIn: boolean;
+  watchlistCount: number;
 }) {
   const [cat, setCat] = useState<NewsCategory | "all">("all");
 
@@ -179,8 +183,10 @@ export function NewsClient({
           )}
         </main>
 
-        {/* Sidebar — watchlist news (sticky on desktop, first on mobile) */}
-        {watchNews.length > 0 && (
+        {/* Sidebar — watchlist news (sticky on desktop, first on mobile).
+            Shown whenever signed in, with an empty-state so it's never a
+            silent blank: distinguishes "empty watchlist" from "no news yet". */}
+        {signedIn && (
           <aside className="order-1 lg:order-2 self-start lg:sticky lg:top-[88px]">
             <section className="card p-3">
               <div className="flex items-baseline justify-between mb-2">
@@ -189,22 +195,35 @@ export function NewsClient({
                 </div>
                 <Link href="/watchlist" className="text-[10.5px] muted-text hover:underline">Manage →</Link>
               </div>
-              <div className="divide-y hairline overflow-y-auto lg:max-h-[calc(100vh-150px)] -mr-1 pr-1">
-                {watchNews.map((n) => (
-                  <a
-                    key={n.id}
-                    href={n.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block py-2 first:pt-0 last:pb-0 hover:opacity-80 transition-opacity"
-                  >
-                    <div className="text-[10px] muted-text tabular-nums mb-0.5">
-                      {ago(n.published_at)} ago{n.related > 0 ? ` · +${n.related} related` : ""}
-                    </div>
-                    <div className="text-[12.5px] leading-snug">{n.title}</div>
-                  </a>
-                ))}
-              </div>
+              {watchNews.length > 0 ? (
+                <div className="divide-y hairline overflow-y-auto lg:max-h-[calc(100vh-150px)] -mr-1 pr-1">
+                  {watchNews.map((n) => (
+                    <a
+                      key={n.id}
+                      href={n.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block py-2 first:pt-0 last:pb-0 hover:opacity-80 transition-opacity"
+                    >
+                      <div className="text-[10px] muted-text tabular-nums mb-0.5">
+                        {ago(n.published_at)} ago{n.related > 0 ? ` · +${n.related} related` : ""}
+                      </div>
+                      <div className="text-[12.5px] leading-snug">{n.title}</div>
+                    </a>
+                  ))}
+                </div>
+              ) : watchlistCount === 0 ? (
+                <p className="text-[12px] muted-text leading-snug">
+                  Your watchlist is empty.{" "}
+                  <Link href="/sectors" className="underline" style={{ color: "var(--color-accent-600)" }}>Add stocks</Link>{" "}
+                  and headlines that mention them will show up here.
+                </p>
+              ) : (
+                <p className="text-[12px] muted-text leading-snug">
+                  No recent headlines mention your {watchlistCount} watched stock{watchlistCount === 1 ? "" : "s"} yet —
+                  we tag news to stocks as it comes in (best for large/mid caps).
+                </p>
+              )}
             </section>
           </aside>
         )}
