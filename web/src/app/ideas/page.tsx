@@ -18,9 +18,11 @@ import {
   ArrowUpRight, ArrowDownRight,
   TrendingUp, TrendingDown, Sparkles, AlertTriangle,
   Award, Tag, Users, Globe2,
+  Activity, Trophy, CalendarDays,
 } from "lucide-react";
 import { band, bandColor, tierLabel } from "@/lib/score";
-import { Sparkline } from "@/components/Sparkline";
+import { Sparkline, type SparkPoint } from "@/components/Sparkline";
+import { WatchlistButton } from "@/components/WatchlistButton";
 
 // Score data changes weekly. 6h ISR cache avoids waking Neon on every visit.
 // force-dynamic removed — this page has no per-request searchParams/cookies.
@@ -41,7 +43,6 @@ type RawScoreRow = {
   maturity_tier: string | null;
   industry_id: string;
   company_name: string;
-  is_nifty200: boolean;
   industry_name: string;
 };
 
@@ -63,7 +64,6 @@ type Stock = {
   industry_id: string;
   industry_name: string;
   maturity_tier: string | null;
-  is_nifty200: boolean;
   // Current snapshot
   curr: { c: number; q: number; v: number; m: number };
   // Comparison snapshot (windowBack ago)
@@ -72,9 +72,46 @@ type Stock = {
   windowMaxC: number;
   windowMinC: number;
   trail: { label: string; value: number | null }[];
+  // Peer-cluster average composite at each snapshot in `trail` (same order/length,
+  // null where the cluster had no data). Drives the dashed overlay so the reader
+  // sees the stock's path RELATIVE to peers, not just absolute.
+  peerTrail: SparkPoint[];
+  // Composite delta over the window MINUS the cluster's average delta — i.e.
+  // gearing up after stripping out the broad price tide. Null if no peer data.
+  clusterAdj: number | null;
+  // Consistency of the 12-week trail (weeks-up, current streak, etc.).
+  stats: TrendStats;
   // Quarterly shareholding deltas (null when ETL hasn't captured 2 quarters yet)
   share: ShareSnap | null;
 };
+
+/** Consistency descriptors derived from a composite trail (oldest → newest). */
+type TrendStats = {
+  transitions: number; // week-to-week comparisons available
+  up: number;          // count of weeks the score rose
+  down: number;        // count of weeks the score fell
+  streakUp: number;    // consecutive rising weeks from the latest end
+  streakDown: number;  // consecutive falling weeks from the latest end
+};
+
+function trendStats(trail: SparkPoint[]): TrendStats {
+  const vals = trail.map((t) => t.value).filter((v): v is number => v != null);
+  let up = 0, down = 0, transitions = 0;
+  for (let i = 1; i < vals.length; i++) {
+    transitions++;
+    if (vals[i] > vals[i - 1]) up++;
+    else if (vals[i] < vals[i - 1]) down++;
+  }
+  let streakUp = 0;
+  for (let i = vals.length - 1; i > 0; i--) {
+    if (vals[i] > vals[i - 1]) streakUp++; else break;
+  }
+  let streakDown = 0;
+  for (let i = vals.length - 1; i > 0; i--) {
+    if (vals[i] < vals[i - 1]) streakDown++; else break;
+  }
+  return { transitions, up, down, streakUp, streakDown };
+}
 
 // Trend-based — assigned exclusively by classify() (first match wins).
 type TrendSectionKey = "strength" | "losing" | "breakout" | "breakdown";
@@ -87,7 +124,7 @@ type SectionKey = TrendSectionKey | ThemedSectionKey;
 // Data loading
 // ---------------------------------------------------------------------------
 
-async function loadIdeas(nifty200Only: boolean) {
+async function loadIdeas(tier: IdxTier) {
   // Step 1 — distinct snapshot dates, newest first, up to 12.
   const dates = await sql<{ snapshot_date: string }[]>`
     SELECT DISTINCT snapshot_date::text
@@ -125,12 +162,12 @@ async function loadIdeas(nifty200Only: boolean) {
       r.composite_pct, r.quality_pct, r.valuation_pct, r.momentum_pct,
       r.maturity_tier, r.cluster_id AS industry_id,
       u.company_name,
-      u.is_nifty200,
       c.name AS industry_name
     FROM recent r
     JOIN app.universe u USING (symbol)
     JOIN app.cluster c ON c.id = r.cluster_id
-    ${nifty200Only ? sql`WHERE u.is_nifty200 = TRUE` : sql``}
+    WHERE TRUE
+    ${idxCond("r.symbol", tier)}
     ORDER BY r.symbol, r.snapshot_date DESC
   `;
 
@@ -172,10 +209,35 @@ async function loadIdeas(nifty200Only: boolean) {
     }
   }
 
-  // Window-back position (1-indexed since rn=1 is current). Ideal: 5 means "compare to 4 weeks ago".
-  // Falls back gracefully when there aren't 5 snapshots yet.
-  const ideal = 5;
-  const windowBack = Math.min(ideal, dates.length);
+  // Step 2.6 — peer-cluster average composite at each recent snapshot, across
+  // the FULL universe (not tier-limited), so the cluster baseline is unbiased.
+  // Powers the dashed overlay line and the cluster-adjusted ("vs peers") delta.
+  const clusterTrailRows = await sql<{ cluster_id: string; d: string; avg: number }[]>`
+    WITH recent_dates AS (
+      SELECT DISTINCT snapshot_date FROM app.scores ORDER BY snapshot_date DESC LIMIT 12
+    )
+    SELECT cluster_id, snapshot_date::text AS d, AVG(composite_pct)::float AS avg
+      FROM app.scores
+     WHERE snapshot_date IN (SELECT snapshot_date FROM recent_dates)
+       AND composite_pct IS NOT NULL
+     GROUP BY cluster_id, snapshot_date
+  `;
+  const clusterAvgByDate = new Map<string, Map<string, number>>();
+  for (const r of clusterTrailRows) {
+    let m = clusterAvgByDate.get(r.cluster_id);
+    if (!m) { m = new Map(); clusterAvgByDate.set(r.cluster_id, m); }
+    m.set(r.d, r.avg);
+  }
+
+  // Comparison window = the FULL available trail (up to 12 snapshots ≈ 12 weeks;
+  // `dates` is already LIMIT 12). A full quarter captures a results cycle and is
+  // far more stable week-to-week than a 4-week window (less price-noise churn →
+  // better continuity), and it makes the delta, consistency badges, "since"
+  // caption and the 12-week sparkline all describe ONE period. Adapts down
+  // gracefully in the early-archive phase when we have only a few snapshots.
+  const windowBack = dates.length;
+  const latestDate = dates[0].snapshot_date;
+  const oldDate = dates[dates.length - 1].snapshot_date;
 
   // Group rows by symbol.
   const bySymbol = new Map<string, RawScoreRow[]>();
@@ -217,13 +279,26 @@ async function loadIdeas(nifty200Only: boolean) {
       .sort((a, b) => a.snapshot_date.localeCompare(b.snapshot_date))
       .map((r) => ({ label: r.snapshot_date, value: r.composite_pct }));
 
+    // Peer baseline: the stock's cluster average composite at each trail date.
+    const clusterAvg = clusterAvgByDate.get(curr.industry_id);
+    const peerTrail: SparkPoint[] = trail.map((t) => ({
+      label: t.label,
+      value: clusterAvg?.get(t.label) ?? null,
+    }));
+    // Cluster-adjusted window delta = own delta − cluster average delta.
+    const peerLatest = clusterAvg?.get(latestDate);
+    const peerOld = clusterAvg?.get(oldDate);
+    const clusterAdj =
+      peerLatest != null && peerOld != null
+        ? (curr.composite_pct! - then.composite_pct!) - (peerLatest - peerOld)
+        : null;
+
     stocks.push({
       symbol,
       company_name: curr.company_name,
       industry_id: curr.industry_id,
       industry_name: curr.industry_name,
       maturity_tier: curr.maturity_tier,
-      is_nifty200: curr.is_nifty200,
       curr: {
         c: curr.composite_pct!,
         q: curr.quality_pct!,
@@ -239,6 +314,13 @@ async function loadIdeas(nifty200Only: boolean) {
       windowMaxC,
       windowMinC,
       trail,
+      peerTrail,
+      clusterAdj,
+      // Consistency is measured over the SAME comparison window as the delta and
+      // the "since {date}" caption (the last `windowBack` snapshots), so the
+      // numbers all describe one period. The sparkline still shows the fuller
+      // 12-week trail for visual context.
+      stats: trendStats(trail.slice(-windowBack)),
       share: shareBySymbol.get(symbol) ?? null,
     });
   }
@@ -248,6 +330,223 @@ async function loadIdeas(nifty200Only: boolean) {
     snapshots: dates.map((d) => d.snapshot_date),
     windowBack,
   };
+}
+
+// ---------------------------------------------------------------------------
+// "First batch" — top-of-page digest. Three independent, freshly-computed
+// surfaces that answer "what's new" at a glance, above the evergreen buckets:
+//   1. Score movers   — biggest week-over-week composite shifts (latest two snapshots).
+//   2. Result winners — companies whose latest quarter beat the year-ago quarter.
+//   3. On the calendar — upcoming ex-dates / board meetings in the next ~3 weeks.
+// Each is fail-soft (missing/sparse tables → empty card, never a 500).
+// ---------------------------------------------------------------------------
+
+type ScoreMover = {
+  symbol: string; company_name: string;
+  then: number; now: number; delta: number;
+  trail: SparkPoint[];
+  peerTrail: SparkPoint[];
+  clusterAdj: number | null;
+  stats: TrendStats;
+};
+type ResultWinner = {
+  symbol: string; company_name: string;
+  npYoy: number; salesYoy: number; npNow: number; composite: number | null;
+};
+type UpcomingEvent = {
+  symbol: string; company_name: string; action_type: string;
+  ex_date: string; purpose: string; amount: number | null; composite: number | null;
+};
+
+// Index-membership tiers — the single universe control for the whole page
+// (buckets, movers, winners, calendar). Nesting: Nifty 50 ⊂ 100 ⊂ 200 ⊂ 500 ⊂ All.
+// Membership comes from app.index_constituent (maintained by
+// scripts/fetch-index-constituents.py from NSE list CSVs) — the authoritative,
+// refreshed source, not the partial is_nifty* booleans on app.universe.
+// Default = nifty50 (the highlighted pill) — the cleanest, most recognizable slice.
+const IDX_TIERS = [
+  { key: "nifty50",  label: "Nifty 50",  code: "NIFTY50"  },
+  { key: "nifty100", label: "Nifty 100", code: "NIFTY100" },
+  { key: "nifty200", label: "Nifty 200", code: "NIFTY200" },
+  { key: "nifty500", label: "Nifty 500", code: "NIFTY500" },
+  { key: "all",      label: "All",       code: null       },
+] as const;
+type IdxTier = (typeof IDX_TIERS)[number]["key"];
+
+function isIdxTier(s: string | undefined): s is IdxTier {
+  return !!s && (IDX_TIERS as readonly { key: string }[]).some((t) => t.key === s);
+}
+
+function idxCode(tier: IdxTier): string | null {
+  return IDX_TIERS.find((t) => t.key === tier)?.code ?? null;
+}
+
+/** SQL membership predicate for a tier. Returns an `AND <col> IN (...)` fragment
+ *  scoping a query to the chosen index's constituents, or empty SQL for "All".
+ *  `col` is the symbol column expression in the caller's query (e.g. "r.symbol",
+ *  "p.symbol", "ca.symbol"). Always emitted as `AND ...`, so the caller must
+ *  already have a WHERE (or use it as the sole condition via WHERE TRUE). */
+function idxCond(col: string, tier: IdxTier) {
+  const code = idxCode(tier);
+  if (code == null) return sql``;
+  return sql`AND ${sql.unsafe(col)} IN (
+    SELECT symbol FROM app.index_constituent WHERE index_code = ${code}
+  )`;
+}
+
+/** Build a /ideas href that preserves the current searchParams, applying the
+ *  given overrides (null removes a key). Used by the universe pills and the
+ *  calendar pager so navigation keeps the rest of the page state intact. */
+function ideasHref(
+  sp: Record<string, string | undefined>,
+  overrides: Record<string, string | null>,
+): string {
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(sp)) if (v != null) params.set(k, v);
+  for (const [k, v] of Object.entries(overrides)) {
+    if (v == null) params.delete(k);
+    else params.set(k, v);
+  }
+  const qs = params.toString();
+  return qs ? `/ideas?${qs}` : "/ideas";
+}
+
+/** Score movers are derived in the page from the 4-week window that loadIdeas
+ *  already computes (curr vs `windowBack` snapshots ago, ~4 weeks) — see
+ *  buildScoreMovers below. We use the longer window deliberately: between
+ *  quarterly results Quality is frozen, so a 1-week composite move is almost
+ *  pure price (Valuation re-rate + Momentum). Four weeks shows the actual
+ *  behaviour — steady drift vs. a single-week spike — and the sparkline trail
+ *  lets the reader judge which. */
+// Sort key: peer-relative climb (cluster-adjusted) is the primary signal —
+// it strips out the broad price tide so we rank durable, stock-specific moves,
+// not "everyone rallied this week". Falls back to raw delta when a stock has no
+// peer baseline. Because the metric is stable week to week, the same genuine
+// climbers persist on the list → continuity, instead of a churning cast.
+function moverRank(m: ScoreMover): number {
+  return m.clusterAdj ?? m.delta;
+}
+
+function buildScoreMovers(stocks: Stock[]): { up: ScoreMover[]; down: ScoreMover[] } {
+  // `stocks` is already scoped to the selected index tier by loadIdeas.
+  // Gates:
+  //   - LEAST(then, now) >= 30 — genuine re-rates of already-respectable names,
+  //     not microcaps whipping up from near-zero (a data-quality artifact).
+  //   - consistency: rose (fell) in >= 60% of the available weeks — a SUSTAINED
+  //     climb (slide), not a one-week price pop. This is what stops the list
+  //     reshuffling every week on noise.
+  const pool: ScoreMover[] = stocks
+    .filter((s) => Math.min(s.curr.c, s.then.c) >= 30 && s.stats.transitions >= 2)
+    .map((s) => ({
+      symbol: s.symbol,
+      company_name: s.company_name,
+      then: s.then.c,
+      now: s.curr.c,
+      delta: s.curr.c - s.then.c,
+      trail: s.trail,
+      peerTrail: s.peerTrail,
+      clusterAdj: s.clusterAdj,
+      stats: s.stats,
+    }));
+  // "Sustained" = rose (fell) in >= 60% of weeks, OR is on a clear current
+  // streak of >= 3 weeks in that direction. The streak clause admits a stock
+  // that was choppy early but has been climbing steadily of late — that's real,
+  // followable continuity, not a one-week pop — and keeps the headline card from
+  // going empty on small, stable universes (e.g. Nifty 50).
+  const consistent = (m: ScoreMover, dir: "up" | "down") => {
+    const hits = dir === "up" ? m.stats.up : m.stats.down;
+    const streak = dir === "up" ? m.stats.streakUp : m.stats.streakDown;
+    return hits / m.stats.transitions >= 0.6 || streak >= 3;
+  };
+  const up = pool
+    .filter((m) => m.delta >= 5 && consistent(m, "up"))
+    .sort((a, b) => moverRank(b) - moverRank(a))
+    .slice(0, 5);
+  const down = pool
+    .filter((m) => m.delta <= -5 && consistent(m, "down"))
+    .sort((a, b) => moverRank(a) - moverRank(b))
+    .slice(0, 5);
+  return { up, down };
+}
+
+/** Result winners — latest reported quarter vs the same quarter a year ago
+ *  (rn=1 vs rn=5). Requires real YoY profit + revenue growth, margin expansion,
+ *  a material year-ago base (so the % isn't a low-base mirage), and a decent
+ *  composite (quality gate). Recent filings only (within ~110d of the newest
+ *  period_end in the table) so stragglers don't masquerade as "this season".
+ *
+ *  Scoped to the chosen index tier (single page-wide universe control), ordered
+ *  by YoY profit growth, top 10 (matches the movers/calendar card height so the
+ *  grid row has no gap). All still pass the same quality + material-base gates. */
+async function loadResultWinners(tier: IdxTier): Promise<ResultWinner[]> {
+  try {
+    return await sql<ResultWinner[]>`
+      WITH ranked AS (
+        SELECT symbol, period_end, sales, net_profit,
+               ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY period_end DESC) AS rn
+          FROM app.fundamentals_quarterly
+      ),
+      pairs AS (
+        SELECT c.symbol, c.period_end AS curr_pe,
+               c.sales AS s_now, c.net_profit AS np_now,
+               y.sales AS s_yago, y.net_profit AS np_yago
+          FROM ranked c
+          JOIN ranked y ON y.symbol = c.symbol AND y.rn = 5
+         WHERE c.rn = 1
+      )
+      SELECT p.symbol, u.company_name,
+             ROUND((p.np_now / p.np_yago - 1) * 100)::int AS "npYoy",
+             ROUND((p.s_now / p.s_yago - 1) * 100)::int  AS "salesYoy",
+             ROUND(p.np_now)::int AS "npNow",
+             sc.composite_pct AS composite
+        FROM pairs p
+        JOIN app.universe u ON u.symbol = p.symbol
+        LEFT JOIN app.scores sc
+          ON sc.symbol = p.symbol
+         AND sc.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
+       WHERE p.s_now > 0 AND p.s_yago > 0 AND p.np_yago >= 10 AND p.s_now >= 100
+         AND p.np_now > p.np_yago * 1.15
+         AND p.s_now  > p.s_yago * 1.05
+         AND (p.np_now / p.s_now) > (p.np_yago / p.s_yago)
+         AND p.curr_pe >= (SELECT MAX(period_end) FROM app.fundamentals_quarterly) - interval '110 days'
+         AND sc.composite_pct >= 60
+         ${idxCond("p.symbol", tier)}
+       ORDER BY (p.np_now / p.np_yago) DESC
+       LIMIT 10
+    `;
+  } catch {
+    return [];
+  }
+}
+
+/** Upcoming events — dividends / board meetings with an ex_date in the next
+ *  ~3 weeks. DISTINCT ON collapses the indianapi+bse dual-source dupes (prefer
+ *  indianapi), mirroring the stock-page dedup. */
+async function loadUpcomingEvents(tier: IdxTier): Promise<UpcomingEvent[]> {
+  try {
+    return await sql<UpcomingEvent[]>`
+      SELECT ca.symbol, u.company_name, ca.action_type,
+             ca.ex_date::text AS ex_date, ca.purpose, ca.amount,
+             sc.composite_pct AS composite
+        FROM (
+          SELECT DISTINCT ON (symbol, action_type, ex_date)
+                 symbol, action_type, ex_date, purpose, amount
+            FROM app.corporate_action
+           WHERE ex_date >= CURRENT_DATE AND ex_date <= CURRENT_DATE + interval '21 days'
+           ORDER BY symbol, action_type, ex_date, (source = 'indianapi') DESC
+        ) ca
+        JOIN app.universe u ON u.symbol = ca.symbol
+        LEFT JOIN app.scores sc
+          ON sc.symbol = ca.symbol
+         AND sc.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
+       WHERE TRUE
+       ${idxCond("ca.symbol", tier)}
+       ORDER BY ca.ex_date ASC, ca.symbol
+       LIMIT 120
+    `;
+  } catch {
+    return [];
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -280,12 +579,19 @@ function classify(s: Stock, windowBack: number): TrendSectionKey | null {
   return null;
 }
 
+// Peer-relative climb for ranking the trend buckets (same rationale as the
+// movers card): cluster-adjusted delta first so a sector-wide rally doesn't
+// crowd out genuine stock-specific strength; raw delta as the fallback.
+function peerClimb(s: Stock): number {
+  return s.clusterAdj ?? (s.curr.c - s.then.c);
+}
+
 function rankWithin(section: TrendSectionKey, a: Stock, b: Stock): number {
   switch (section) {
     case "strength":
-      return (b.curr.c - b.then.c) - (a.curr.c - a.then.c); // biggest gain first
+      return peerClimb(b) - peerClimb(a); // biggest peer-relative gain first
     case "losing":
-      return (a.curr.c - a.then.c) - (b.curr.c - b.then.c); // biggest drop first
+      return peerClimb(a) - peerClimb(b); // biggest peer-relative drop first
     case "breakout":
       return b.curr.c - a.curr.c; // strongest current first
     case "breakdown":
@@ -391,17 +697,62 @@ export default async function IdeasPage({
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const sp = await searchParams;
-  // Default scope: ALL stocks. The Nifty 200 toggle is opt-in via ?scope=nifty200
-  // because (a) on Neon we only have Nifty 200 in the DB anyway so both modes
-  // look identical there, and (b) local dev has 2,000+ stocks and the unfiltered
-  // view shows more interesting signal across the full universe.
-  const nifty200Only = sp.scope === "nifty200";
-  const showAll = !nifty200Only;
+  // Single page-wide universe control: one index tier drives everything —
+  // buckets, score movers, result winners and the calendar. Default = Nifty 50
+  // (the highlighted pill): the cleanest, most recognizable slice. Opt wider via
+  // ?idx=nifty100|nifty200|nifty500|all.
+  const idxTier: IdxTier = isIdxTier(sp.idx) ? sp.idx : "nifty50";
   // Active tab — one bucket at a time. Defaults to "strength" so first load
   // shows the biggest positive-trend stocks.
   const activeTab: TabKey = isTabKey(sp.bucket) ? sp.bucket : "strength";
 
-  const { stocks, snapshots, windowBack } = await loadIdeas(nifty200Only);
+  // Calendar pagination — 10 events per page, 1-indexed. Matches the Score
+  // movers card's max of 10 (5 up + 5 down) so the three cards in the grid row
+  // are roughly equal height and the calendar fills down instead of leaving a
+  // gap below it.
+  const CAL_PER_PAGE = 10;
+  const calPage = Math.max(1, Number.parseInt(sp.cal ?? "1", 10) || 1);
+
+  const [{ stocks, snapshots, windowBack }, resultWinners, upcoming] = await Promise.all([
+    loadIdeas(idxTier),
+    loadResultWinners(idxTier),
+    loadUpcomingEvents(idxTier),
+  ]);
+
+  // Score movers — biggest composite shifts over the ~4-week comparison window
+  // (curr vs windowBack snapshots ago). `stocks` is already scoped to the tier,
+  // so this is derived in-page with no extra query.
+  let movers = buildScoreMovers(stocks);
+  // Fallback: narrow universes (Nifty 50 / 100) often have no SUSTAINED movers
+  // in a given window — stable large-caps just don't swing. Rather than show an
+  // empty headline card, widen the movers (only) to Nifty 200 and flag it.
+  // One extra query, and only when the selected tier yielded nothing.
+  let moversTierLabel: string | null = null;
+  if (movers.up.length + movers.down.length === 0 && (idxTier === "nifty50" || idxTier === "nifty100")) {
+    const fb = await loadIdeas("nifty200");
+    const fbMovers = buildScoreMovers(fb.stocks);
+    if (fbMovers.up.length + fbMovers.down.length > 0) {
+      movers = fbMovers;
+      moversTierLabel = "Nifty 200";
+    }
+  }
+  // Human-readable "since" date for the movers card caption.
+  const moversSince = snapshots[Math.min(windowBack, snapshots.length) - 1] ?? null;
+
+  // Calendar page slice.
+  const calTotalPages = Math.max(1, Math.ceil(upcoming.length / CAL_PER_PAGE));
+  const calPageClamped = Math.min(calPage, calTotalPages);
+  const upcomingPage = upcoming.slice((calPageClamped - 1) * CAL_PER_PAGE, calPageClamped * CAL_PER_PAGE);
+
+  // Band controls — tier pills (movers + winners) and calendar pager links.
+  const idxItems = IDX_TIERS.map((t) => ({
+    key: t.key,
+    label: t.label,
+    active: t.key === idxTier,
+    href: ideasHref(sp, { idx: t.key }),
+  }));
+  const calPrevHref = calPageClamped > 1 ? ideasHref(sp, { cal: String(calPageClamped - 1) }) : null;
+  const calNextHref = calPageClamped < calTotalPages ? ideasHref(sp, { cal: String(calPageClamped + 1) }) : null;
 
   // Assign each qualifying stock to exactly one trend section.
   const sectioned: Record<TrendSectionKey, Stock[]> = {
@@ -480,7 +831,10 @@ export default async function IdeasPage({
     SECTION_ORDER.reduce((n, k) => n + sectioned[k].length, 0) +
     compounders.length + cheap.length + promoterUp.length + fiiUp.length;
   const earlyArchive = windowBack < 5; // Less than ~4 weeks of history.
-  const nifty200Empty = nifty200Only && stocks.length === 0 && snapshots.length > 0;
+  // The chosen tier has no scored constituents (e.g. an index not yet seeded
+  // in app.index_constituent on this environment). "All" never trips this.
+  const tierEmpty = idxTier !== "all" && stocks.length === 0 && snapshots.length > 0;
+  const idxLabel = IDX_TIERS.find((t) => t.key === idxTier)?.label ?? "All";
 
   return (
     <div className="mx-auto max-w-[1200px] px-6 py-10">
@@ -490,15 +844,6 @@ export default async function IdeasPage({
         <h1 className="font-display text-[36px] tracking-tight leading-tight mt-1">
           Stocks worth a <em className="accent">closer look</em>.
         </h1>
-        <p className="mt-3 text-[14.5px] muted-text leading-[1.6]">
-          We surface stocks where our score has changed meaningfully over the last few weeks
-          — fundamentals strengthening, slipping, breaking out, or breaking down. Each entry
-          shows the 12-week trail so you can judge spike vs trend yourself.
-        </p>
-        <p className="mt-2 text-[12.5px] muted-text leading-[1.55] italic">
-          We don&apos;t predict prices. We surface companies whose fundamentals are moving
-          relative to their peer cluster. Always do your own research.
-        </p>
 
         {snapshots.length > 0 && (
           <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-[12px] muted-text">
@@ -521,16 +866,16 @@ export default async function IdeasPage({
         )}
       </header>
 
-      {/* Scope toggle */}
-      <nav className="mt-6 flex flex-wrap gap-1.5">
-        <ScopePill href="/ideas" label="All stocks" active={showAll} hint="Everything in the universe" />
-        <ScopePill href="/ideas?scope=nifty200" label="Nifty 200" active={nifty200Only} hint="Curated large/mid-cap set" />
+      {/* Universe control — single page-wide index tier (drives buckets, movers,
+          winners and the calendar). */}
+      <nav className="mt-6">
+        <TierPills items={idxItems} />
       </nav>
 
       {/* Banners */}
       {snapshots.length === 0 && <FirstSnapshotBanner />}
-      {nifty200Empty && <Nifty200EmptyBanner />}
-      {earlyArchive && snapshots.length > 0 && !nifty200Empty && (
+      {tierEmpty && <TierEmptyBanner label={idxLabel} />}
+      {earlyArchive && snapshots.length > 0 && !tierEmpty && (
         <ConvictionFilterBanner snapshotsHave={snapshots.length} />
       )}
 
@@ -538,11 +883,23 @@ export default async function IdeasPage({
           The dot color matches the section's accent so the eye finds the
           active tab fast. Counts give an at-a-glance overview of where the
           action is this week. */}
-      {snapshots.length > 0 && !nifty200Empty && (
+      {snapshots.length > 0 && !tierEmpty && (
         <>
+          <ThisWeekBand
+            movers={movers}
+            moversSince={moversSince}
+            moversTierLabel={moversTierLabel}
+            winners={resultWinners}
+            upcoming={upcomingPage}
+            calPage={calPageClamped}
+            calTotalPages={calTotalPages}
+            calPrevHref={calPrevHref}
+            calNextHref={calNextHref}
+          />
+
           <BucketTabs
             active={activeTab}
-            scopeQuery={nifty200Only ? "&scope=nifty200" : ""}
+            scopeQuery={`&idx=${idxTier}`}
             counts={{
               strength: sectioned.strength.length,
               losing: sectioned.losing.length,
@@ -649,8 +1006,19 @@ export default async function IdeasPage({
         </>
       )}
 
+      {/* How to read this page — moved to the foot so the surfaces lead, and the
+          methodology note is there for anyone who scrolls to understand it. */}
+      <section className="mt-12 pt-6 border-t hairline max-w-[760px]">
+        <div className="text-[12px] uppercase tracking-wide muted-text mb-1.5">How to read this</div>
+        <p className="text-[13px] muted-text leading-[1.6]">
+          We surface stocks where our score has changed meaningfully over the last few weeks
+          — fundamentals strengthening, slipping, breaking out, or breaking down. Each entry
+          shows the 12-week trail so you can judge spike vs trend yourself.
+        </p>
+      </section>
+
       {/* Footer disclaimer (persistent trust builder) */}
-      <footer className="mt-12 pt-6 border-t hairline text-[11.5px] muted-text leading-[1.6] max-w-[760px]">
+      <footer className="mt-6 text-[11.5px] muted-text leading-[1.6] max-w-[760px]">
         Information surface only — not investment advice. Scores are computed from public
         filings and prices. Stocks listed here are those whose fundamentals have moved
         relative to their peer cluster, not predictions about future prices.
@@ -779,29 +1147,318 @@ function BucketTab({
   );
 }
 
-function ScopePill({
-  href,
-  label,
-  active,
-  hint,
+// ---------------------------------------------------------------------------
+// "This week" top band — the first-batch digest. Three cards, side by side on
+// desktop, stacked on mobile. Each is self-contained and degrades to a quiet
+// empty state rather than vanishing, so the band's shape is predictable.
+// ---------------------------------------------------------------------------
+
+const EVENT_LABEL: Record<string, string> = {
+  dividend: "Dividend",
+  board_meeting: "Board meeting",
+  bonus: "Bonus",
+  split: "Split",
+  rights: "Rights",
+  buyback: "Buyback",
+};
+
+function eventDateLabel(iso: string): string {
+  // iso is YYYY-MM-DD. Render as "19 Jun" + relative "in Nd" hint.
+  const d = new Date(iso + "T00:00:00");
+  const dd = d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+  const days = Math.round((d.getTime() - Date.now()) / 86400000);
+  const rel = days <= 0 ? "today" : days === 1 ? "tomorrow" : `in ${days}d`;
+  return `${dd} · ${rel}`;
+}
+
+function ThisWeekBand({
+  movers, moversSince, moversTierLabel, winners, upcoming,
+  calPage, calTotalPages, calPrevHref, calNextHref,
 }: {
-  href: string;
-  label: string;
-  active: boolean;
-  hint: string;
+  movers: { up: ScoreMover[]; down: ScoreMover[] };
+  moversSince: string | null;
+  moversTierLabel: string | null;
+  winners: ResultWinner[];
+  upcoming: UpcomingEvent[];
+  calPage: number;
+  calTotalPages: number;
+  calPrevHref: string | null;
+  calNextHref: string | null;
 }) {
+  return (
+    <section className="mt-6">
+      <div className="flex items-baseline gap-2 mb-2.5">
+        <h2 className="font-display text-[17px]">Latest signal</h2>
+        <span className="muted-text text-[11.5px]">
+          composite shifts, earnings beats and what&apos;s on the calendar
+        </span>
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* 1 — Score movers (4-week behaviour, not a single week) */}
+        <div className="card overflow-hidden">
+          <header className="px-4 py-2.5 border-b hairline flex items-center gap-2"
+                  style={{ borderTop: "3px solid var(--color-accent-500)" }}>
+            <Activity size={14} strokeWidth={2.2} style={{ color: "var(--color-accent-600)" }} />
+            <span className="font-medium text-[13px]">Score movers</span>
+            {moversTierLabel && (
+              <span className="text-[9.5px] px-1.5 py-[1px] rounded-full tabular-nums"
+                    style={{ background: "var(--color-accent-50)", color: "var(--color-accent-700)" }}
+                    title="Not enough sustained movers in the selected index — widened to Nifty 200.">
+                {moversTierLabel}
+              </span>
+            )}
+            <span className="muted-text text-[10.5px] ml-auto uppercase tracking-wide"
+                  title={moversSince ? `composite change since ${moversSince}` : undefined}>
+              {moversSince ? "since " + moversSince : "last 4 weeks"}
+            </span>
+          </header>
+          <div className="p-3">
+            {movers.up.length === 0 && movers.down.length === 0 ? (
+              <p className="text-[12px] muted-text leading-[1.5]">
+                No notable composite shifts in this index tier over the window.
+              </p>
+            ) : (
+              <>
+                <MoverList label="Upgrades" rows={movers.up} positive />
+                {/* Clear demarcation between the rising and falling halves. */}
+                {movers.up.length > 0 && movers.down.length > 0 && (
+                  <div className="my-2.5 border-t hairline" />
+                )}
+                <MoverList label="Downgrades" rows={movers.down} positive={false} />
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* 2 — Result winners */}
+        <div className="card overflow-hidden">
+          <header className="px-4 py-2.5 border-b hairline flex items-center gap-2"
+                  style={{ borderTop: "3px solid var(--color-score-good)" }}>
+            <Trophy size={14} strokeWidth={2.2} style={{ color: "var(--color-score-good)" }} />
+            <span className="font-medium text-[13px]">Result winners</span>
+            <span className="muted-text text-[10.5px] ml-auto uppercase tracking-wide">latest quarter</span>
+          </header>
+          {winners.length === 0 ? (
+            <p className="p-4 text-[12px] muted-text leading-[1.5]">
+              No standout YoY beats in the latest reporting window yet.
+            </p>
+          ) : (
+            <ol className="divide-y hairline">
+              {winners.map((w) => (
+                <li key={w.symbol} className="flex items-stretch">
+                  <Link href={`/stock/${w.symbol}`}
+                        className="block min-w-0 flex-1 pl-4 py-2.5 hover:bg-[var(--color-paper)]/60 transition-colors">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium text-[12.5px] tabular-nums">{w.symbol}</span>
+                      <span className="inline-flex items-center gap-0.5 text-[11.5px] font-semibold tabular-nums"
+                            style={{ color: "var(--color-score-good)" }}>
+                        <ArrowUpRight size={11} strokeWidth={2.6} />
+                        Profit {fmtYoy(w.npYoy)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 mt-0.5">
+                      <span className="muted-text text-[11px] truncate">{w.company_name}</span>
+                      <span className="muted-text text-[10.5px] tabular-nums shrink-0">
+                        Sales {fmtYoy(w.salesYoy)}
+                      </span>
+                    </div>
+                  </Link>
+                  <div className="flex items-center px-2 shrink-0">
+                    <WatchlistButton symbol={w.symbol} variant="icon" />
+                  </div>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+
+        {/* 3 — On the calendar */}
+        <div className="card overflow-hidden">
+          <header className="px-4 py-2.5 border-b hairline flex items-center gap-2"
+                  style={{ borderTop: "3px solid var(--color-accent-400)" }}>
+            <CalendarDays size={14} strokeWidth={2.2} style={{ color: "var(--color-accent-500)" }} />
+            <span className="font-medium text-[13px]">On the calendar</span>
+            <span className="muted-text text-[10.5px] ml-auto uppercase tracking-wide">next 3 weeks</span>
+          </header>
+          {upcoming.length === 0 ? (
+            <p className="p-4 text-[12px] muted-text leading-[1.5]">
+              No ex-dates or board meetings scheduled in the next three weeks.
+            </p>
+          ) : (
+            <>
+              <ol className="divide-y hairline">
+                {upcoming.map((e) => (
+                  <li key={`${e.symbol}-${e.action_type}-${e.ex_date}`} className="flex items-stretch">
+                    <Link href={`/stock/${e.symbol}`}
+                          className="block min-w-0 flex-1 pl-4 py-2.5 hover:bg-[var(--color-paper)]/60 transition-colors">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-medium text-[12.5px] tabular-nums">{e.symbol}</span>
+                        <span className="muted-text text-[10.5px] tabular-nums shrink-0">
+                          {eventDateLabel(e.ex_date)}
+                        </span>
+                      </div>
+                      <div className="muted-text text-[11px] truncate mt-0.5">
+                        {EVENT_LABEL[e.action_type] ?? e.action_type}
+                        {e.amount != null ? ` · ₹${Number(e.amount)}` : ""}
+                        {e.purpose && e.action_type !== "dividend" ? ` · ${e.purpose}` : ""}
+                      </div>
+                    </Link>
+                    <div className="flex items-center px-2 shrink-0">
+                      <WatchlistButton symbol={e.symbol} variant="icon" />
+                    </div>
+                  </li>
+                ))}
+              </ol>
+              {calTotalPages > 1 && (
+                <div className="flex items-center justify-between gap-2 px-4 py-2 border-t hairline">
+                  <PagerLink href={calPrevHref} label="‹ Prev" />
+                  <span className="muted-text text-[10.5px] tabular-nums">
+                    Page {calPage} of {calTotalPages}
+                  </span>
+                  <PagerLink href={calNextHref} label="Next ›" />
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/** Index-tier pills for the band — Nifty 50 / 200 / 500 / All. Nifty 50 is the
+ *  default (highlighted) slice. Reuses the same URL-preserving links the rest
+ *  of the page uses, with scroll={false} so switching tiers doesn't jump. */
+function TierPills({ items }: { items: { key: string; label: string; active: boolean; href: string }[] }) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <span className="text-[10px] uppercase tracking-wide muted-text mr-0.5">Universe</span>
+      {items.map((it) => (
+        <Link
+          key={it.key}
+          href={it.href}
+          scroll={false}
+          className="px-2.5 py-1 rounded-full text-[11.5px] border transition-colors whitespace-nowrap"
+          style={
+            it.active
+              ? {
+                  borderColor: "var(--color-accent-300)",
+                  backgroundColor: "var(--color-accent-50)",
+                  color: "var(--color-accent-700)",
+                  fontWeight: 600,
+                }
+              : {
+                  borderColor: "var(--color-border-default)",
+                  backgroundColor: "transparent",
+                  color: "var(--color-muted)",
+                }
+          }
+        >
+          {it.label}
+        </Link>
+      ))}
+    </div>
+  );
+}
+
+/** Calendar pager button. Disabled (muted, non-interactive) when href is null. */
+function PagerLink({ href, label }: { href: string | null; label: string }) {
+  if (!href) {
+    return <span className="text-[11px] muted-text opacity-40 select-none px-1.5 py-0.5">{label}</span>;
+  }
   return (
     <Link
       href={href}
-      title={hint}
-      className={`px-3 py-1.5 rounded-full text-[12px] border transition-colors ${
-        active
-          ? "bg-[var(--color-accent-50)] border-[var(--color-accent-300)] text-[var(--color-accent-700)]"
-          : "hairline bg-[var(--color-card)] hover:bg-[var(--color-paper)]"
-      }`}
+      scroll={false}
+      className="text-[11px] px-1.5 py-0.5 rounded hover:bg-[var(--color-paper)] transition-colors"
+      style={{ color: "var(--color-accent-700)" }}
     >
       {label}
     </Link>
+  );
+}
+
+function fmtYoy(pct: number): string {
+  // Big YoY % off a low base reads as noise; show as a multiple past +300%.
+  if (pct >= 300) return `+${(pct / 100 + 1).toFixed(1).replace(/\.0$/, "")}×`;
+  return `+${pct}%`;
+}
+
+/** Continuity + peer-relative descriptors shown under each idea row.
+ *  - streak/consistency: turns a churning list into a followable one — the
+ *    reader sees "▲ 5-wk streak" or "8/11 wks up", and can track a name across
+ *    weeks instead of watching the cast rotate.
+ *  - vs peers: the cluster-adjusted delta — gearing up AFTER removing the broad
+ *    price tide, so a sector-wide rally doesn't masquerade as stock strength. */
+function TrendBadges({
+  stats, clusterAdj, positive,
+}: {
+  stats: TrendStats;
+  clusterAdj: number | null;
+  positive: boolean;
+}) {
+  // ONE consistent format for every row: "N/M wks up|down" over the comparison
+  // window (the same window the delta and "since {date}" caption use). A streak
+  // hint is appended only when notable, in the SAME shape each time.
+  const hits = positive ? stats.up : stats.down;
+  const streak = positive ? stats.streakUp : stats.streakDown;
+  const arrow = positive ? "▲" : "▼";
+  return (
+    <span className="inline-flex items-center gap-1.5 text-[10px] muted-text tabular-nums">
+      <span>{arrow} {hits}/{stats.transitions} wks {positive ? "up" : "down"}</span>
+      {streak >= 3 && <span title={`On a ${streak}-week ${positive ? "rising" : "falling"} streak`}>· {streak}-wk streak</span>}
+      {clusterAdj != null && (
+        <span
+          title="Composite change vs the stock's peer-cluster average over the same window — strips out the broad price move."
+          style={{ color: clusterAdj >= 0 ? "var(--color-score-good)" : "var(--color-score-poor)" }}
+        >
+          · vs peers {clusterAdj >= 0 ? "+" : ""}{Math.round(clusterAdj)}
+        </span>
+      )}
+    </span>
+  );
+}
+
+function MoverList({ label, rows, positive }: { label: string; rows: ScoreMover[]; positive: boolean }) {
+  if (rows.length === 0) return null;
+  const color = positive ? "var(--color-score-good)" : "var(--color-score-poor)";
+  const Arrow = positive ? ArrowUpRight : ArrowDownRight;
+  return (
+    <div>
+      <div className="flex items-center gap-1.5 mb-1.5">
+        <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: color }} />
+        <span className="text-[10px] uppercase tracking-wide font-semibold" style={{ color }}>{label}</span>
+        <span className="text-[10px] muted-text tabular-nums">{rows.length}</span>
+      </div>
+      <ul className="space-y-1">
+        {rows.map((m) => (
+          <li key={m.symbol} className="flex items-center gap-1">
+            <Link href={`/stock/${m.symbol}`}
+                  className="block min-w-0 flex-1 py-0.5 hover:opacity-80 transition-opacity">
+              <div className="flex items-center gap-2">
+                <span className="font-medium text-[12px] tabular-nums truncate min-w-0 flex-1">{m.symbol}</span>
+                <Sparkline data={m.trail} overlay={m.peerTrail} width={54} height={16} stroke={bandColor(band(m.now))} />
+                <span className="flex items-center gap-1 tabular-nums text-[11px] shrink-0">
+                  <span className="muted-text">{Math.round(m.then)}</span>
+                  <span className="muted-text" style={{ fontSize: 9 }}>→</span>
+                  <span className="font-semibold" style={{ color: bandColor(band(m.now)) }}>
+                    {Math.round(m.now)}
+                  </span>
+                  <span className="inline-flex items-center font-semibold ml-0.5" style={{ color }}>
+                    <Arrow size={10} strokeWidth={2.6} />
+                    {m.delta >= 0 ? "+" : ""}{Math.round(m.delta)}
+                  </span>
+                </span>
+              </div>
+              <div className="mt-0.5">
+                <TrendBadges stats={m.stats} clusterAdj={m.clusterAdj} positive={positive} />
+              </div>
+            </Link>
+            <WatchlistButton symbol={m.symbol} variant="icon" className="shrink-0" />
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -817,14 +1474,15 @@ function FirstSnapshotBanner() {
   );
 }
 
-function Nifty200EmptyBanner() {
+function TierEmptyBanner({ label }: { label: string }) {
   return (
     <div className="card p-8 mt-8 text-[13px] leading-[1.6]">
-      <div className="font-display text-[17px] mb-2">Nifty 200 filter not yet seeded</div>
+      <div className="font-display text-[17px] mb-2">{label} not yet seeded</div>
       <p className="muted-text">
-        No stocks are currently flagged as Nifty 200 in <code className="font-mono">app.universe.is_nifty200</code>.
-        Apply <code className="font-mono">db/migrations/0010_nifty200.sql</code> to populate it, or switch back to{" "}
-        <Link href="/ideas" className="text-[var(--color-accent-700)] underline">All stocks</Link>.
+        No scored stocks are in <span className="font-medium">{label}</span> in this environment&apos;s{" "}
+        <code className="font-mono">app.index_constituent</code>. Run{" "}
+        <code className="font-mono">scripts/fetch-index-constituents.py</code> to populate it, or switch to{" "}
+        <Link href="/ideas?idx=all" className="text-[var(--color-accent-700)] underline">All</Link>.
       </p>
     </div>
   );
@@ -843,9 +1501,9 @@ function ConvictionFilterBanner({ snapshotsHave }: { snapshotsHave: number }) {
       <Sparkles size={14} className="mt-[2px] shrink-0" />
       <div>
         <strong>Conviction filter is in early-archive mode.</strong> We have{" "}
-        {snapshotsHave} weekly snapshot{snapshotsHave === 1 ? "" : "s"} so far. The{" "}
-        <em>4-week sustained-trend</em> rule activates once we have ≥5 snapshots
-        — until then ideas use whatever history is available, so noise is higher.
+        {snapshotsHave} weekly snapshot{snapshotsHave === 1 ? "" : "s"} so far. Ideas compare
+        over the <em>full available history</em> (up to ~12 weeks once we have it); with only a
+        few snapshots, the trail is short so noise is higher.
       </div>
     </div>
   );
@@ -888,8 +1546,13 @@ function Board({
 
       <ol className="divide-y hairline">
         {stocks.map((s, i) => (
-          <li key={s.symbol}>
-            <Row stock={s} rank={i + 1} section={section} />
+          <li key={s.symbol} className="flex items-stretch">
+            <div className="min-w-0 flex-1">
+              <Row stock={s} rank={i + 1} section={section} />
+            </div>
+            <div className="flex items-center pr-3 shrink-0">
+              <WatchlistButton symbol={s.symbol} variant="icon" />
+            </div>
           </li>
         ))}
         {stocks.length === 0 && (
@@ -911,6 +1574,11 @@ function Row({ stock, rank, section }: { stock: Stock; rank: number; section: Se
   const Arrow = isNegative ? ArrowDownRight : ArrowUpRight;
   const why = whyLine(stock, section);
   const sparkColor = bandColor(band(stock.curr.c));
+  // Continuity/peer badges only make sense for the trend buckets (the themed
+  // buckets — compounder/cheap/promoter/fii — are level-based, not trend-based).
+  const isTrendSection =
+    section === "strength" || section === "losing" ||
+    section === "breakout" || section === "breakdown";
 
   return (
     <Link
@@ -937,10 +1605,11 @@ function Row({ stock, rank, section }: { stock: Stock; rank: number; section: Se
           </div>
         </div>
 
-        {/* Right: sparkline + score delta */}
+        {/* Right: sparkline (with peer overlay) + score delta + trend badges */}
         <div className="shrink-0 flex flex-col items-end gap-1">
           <Sparkline
             data={stock.trail}
+            overlay={stock.peerTrail}
             width={120}
             height={32}
             stroke={sparkColor}
@@ -963,6 +1632,9 @@ function Row({ stock, rank, section }: { stock: Stock; rank: number; section: Se
               {Math.round(dC)}
             </span>
           </div>
+          {isTrendSection && (
+            <TrendBadges stats={stock.stats} clusterAdj={stock.clusterAdj} positive={!isNegative} />
+          )}
         </div>
       </div>
     </Link>

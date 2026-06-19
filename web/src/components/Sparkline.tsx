@@ -8,6 +8,8 @@ export function Sparkline({
   height = 56,
   stroke = "var(--color-accent-500)",
   fill = false,
+  overlay,
+  overlayStroke = "var(--color-muted)",
 }: {
   data: SparkPoint[];
   width?: number;
@@ -16,6 +18,13 @@ export function Sparkline({
   /** Stretch to the container's width (svg width=100%) instead of a fixed px
    *  width. `width` still defines the coordinate space. */
   fill?: boolean;
+  /** Optional second series drawn on the SAME y-scale as `data`, as a dashed
+   *  muted line with no end dot. Used to overlay a peer/cluster baseline so the
+   *  reader sees the stock's path RELATIVE to its peers, not just in absolute
+   *  terms. Aligned to `data` by index (pass the same-length, same-order series).
+   *  When provided it replaces the static mid-line. */
+  overlay?: SparkPoint[];
+  overlayStroke?: string;
 }) {
   const points = data.filter((d) => d.value != null) as { label: string; value: number }[];
   if (points.length < 2) {
@@ -25,17 +34,25 @@ export function Sparkline({
       </div>
     );
   }
-  const vals = points.map((p) => p.value);
-  let min = Math.min(...vals);
-  let max = Math.max(...vals);
+  // Overlay aligned to the FULL data array by index, then filtered to the same
+  // positions that survived data's null-filter would over-complicate alignment;
+  // instead we just take overlay's own non-null points for scale, and map it on
+  // its own index grid (same length as data when caller passes a parallel array).
+  const overlayPts = (overlay ?? []).filter((d) => d.value != null) as { label: string; value: number }[];
+  const scaleVals = [...points.map((p) => p.value), ...overlayPts.map((p) => p.value)];
+  let min = Math.min(...scaleVals);
+  let max = Math.max(...scaleVals);
   if (min === max) {
     min -= 1;
     max += 1;
   }
   const pad = 4;
-  const x = (i: number) => pad + (i * (width - 2 * pad)) / (points.length - 1);
+  const xN = (i: number, n: number) => pad + (i * (width - 2 * pad)) / (n - 1);
   const y = (v: number) => pad + (1 - (v - min) / (max - min)) * (height - 2 * pad);
-  const path = points.map((p, i) => `${i === 0 ? "M" : "L"} ${x(i)} ${y(p.value)}`).join(" ");
+  const path = points.map((p, i) => `${i === 0 ? "M" : "L"} ${xN(i, points.length)} ${y(p.value)}`).join(" ");
+  const overlayPath = overlayPts.length >= 2
+    ? overlayPts.map((p, i) => `${i === 0 ? "M" : "L"} ${xN(i, overlayPts.length)} ${y(p.value)}`).join(" ")
+    : null;
   const last = points[points.length - 1];
   const first = points[0];
   const positive = last.value >= first.value;
@@ -46,20 +63,24 @@ export function Sparkline({
       viewBox={`0 0 ${width} ${height}`}
       preserveAspectRatio={fill ? "none" : "xMidYMid meet"}
     >
+      {overlayPath ? (
+        <path d={overlayPath} fill="none" stroke={overlayStroke} strokeWidth={1} strokeDasharray="2.5 2.5" strokeLinejoin="round" vectorEffect="non-scaling-stroke" opacity={0.7} />
+      ) : (
+        <line
+          x1={pad}
+          y1={y((min + max) / 2)}
+          x2={width - pad}
+          y2={y((min + max) / 2)}
+          stroke="var(--color-border-default)"
+          strokeDasharray="2 3"
+          strokeWidth={1}
+          opacity={0.6}
+        />
+      )}
       <path d={path} fill="none" stroke={stroke} strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
-      <circle cx={x(points.length - 1)} cy={y(last.value)} r={2.5} fill={stroke} />
-      <line
-        x1={pad}
-        y1={y((min + max) / 2)}
-        x2={width - pad}
-        y2={y((min + max) / 2)}
-        stroke="var(--color-border-default)"
-        strokeDasharray="2 3"
-        strokeWidth={1}
-        opacity={0.6}
-      />
+      <circle cx={xN(points.length - 1, points.length)} cy={y(last.value)} r={2.5} fill={stroke} />
       {/* axis labels */}
-      <title>{`${first.label} → ${last.label}, ${positive ? "improving" : "declining"}`}</title>
+      <title>{`${first.label} → ${last.label}, ${positive ? "improving" : "declining"}${overlayPath ? " (dashed = peer cluster avg)" : ""}`}</title>
     </svg>
   );
 }

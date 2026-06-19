@@ -45,6 +45,7 @@ INDEX_CSV: dict[str, str] = {
     "NIFTY50":          "ind_nifty50list.csv",
     "NIFTYBANK":        "ind_niftybanklist.csv",
     "NIFTY100":         "ind_nifty100list.csv",
+    "NIFTY200":         "ind_nifty200list.csv",
     "NIFTY500":         "ind_nifty500list.csv",
     "NIFTYNEXT50":      "ind_niftynext50list.csv",
     "NIFTYMIDCAP100":   "ind_niftymidcap100list.csv",
