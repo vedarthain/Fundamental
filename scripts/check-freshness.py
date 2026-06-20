@@ -7,6 +7,12 @@ Checks run against Neon (production):
   1. app.scores           — MAX(snapshot_date) within 8 days?
                             Score ETL runs weekly; >8 days = a missed run.
 
+  1a. app.scores cadence  — gap between the last two weekly snapshots ≤ 10 days?
+                            Catches a SKIPPED WEEK even after a later run made
+                            the latest date look fresh — a permanent hole in the
+                            score archive (the moat). Self-clears once cadence
+                            resumes, so it's loud when a hole forms, not forever.
+
   1b. app.scores rows     — latest snapshot has the full universe (~2,150)?
                             Catches a PARTIAL snapshot (date recent but the
                             score step was cut short, e.g. a job timeout).
@@ -89,6 +95,51 @@ def check_snapshot_age(conn: psycopg.Connection, max_days: int) -> tuple[bool, s
     return ok, (
         f"{icon} snapshot_age: latest={snap.isoformat()} "
         f"({age}d ago, threshold={max_days}d)"
+    )
+
+
+def check_snapshot_cadence(conn: psycopg.Connection, max_gap_days: int) -> tuple[bool, str]:
+    """Gap-proof the score archive (the moat): the week-over-week interval
+    between the two most recent weekly snapshots must not exceed the cadence +
+    slack. A larger gap means a WEEK WAS SKIPPED — a permanent hole in the
+    archive that can never be backfilled (you can't recompute a past week's
+    prices/fundamentals as they were).
+
+    Why this is distinct from `check_snapshot_age`: age only looks at the NEWEST
+    snapshot. If week N is skipped but week N+1 runs normally, age passes (latest
+    is fresh) yet there's a permanent hole between N-1 and N+1. This check fires
+    the moment that post-hole run lands, then self-clears once a normal weekly
+    cadence resumes — so it's loud exactly when a hole forms, without nagging
+    forever about an old, unfixable gap.
+
+    Double-run robustness: a same-week re-run can leave two snapshots 1 day
+    apart. We skip any snapshot within 3 days of the latest so we measure the
+    true week-over-week gap, not the double-run sibling.
+    """
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT DISTINCT snapshot_date
+              FROM app.scores
+             ORDER BY snapshot_date DESC
+             LIMIT 6
+        """)
+        dates = [r[0] for r in cur.fetchall()]
+    if len(dates) < 2:
+        return True, "✓ snapshot_cadence: <2 snapshots yet — skipped (early archive)"
+    latest = dates[0]
+    prev = next((d for d in dates[1:] if (latest - d).days >= 3), None)
+    if prev is None:
+        return True, "✓ snapshot_cadence: only same-week snapshots — skipped"
+    gap = (latest - prev).days
+    ok = gap <= max_gap_days
+    icon = "✓" if ok else "✗"
+    suffix = "" if ok else (
+        " — a WEEKLY SNAPSHOT WAS SKIPPED. This is a permanent hole in the score "
+        "archive (the moat). Investigate the missed weekly-fetch/compute run."
+    )
+    return ok, (
+        f"{icon} snapshot_cadence: {gap}d between last two weekly snapshots "
+        f"({prev.isoformat()} → {latest.isoformat()}, max {max_gap_days}d){suffix}"
     )
 
 
@@ -207,6 +258,8 @@ def main() -> int:
         help="Alert if latest price is older than this (default 4 — covers a long weekend + holiday)")
     parser.add_argument("--snapshot-min-rows", type=int, default=2000,
         help="Alert if the latest snapshot has fewer than this many scored rows (default 2000; full universe ~2,150)")
+    parser.add_argument("--snapshot-max-gap-days", type=int, default=10,
+        help="Alert if the gap between the two most recent weekly snapshots exceeds this (default 10 = 7d cadence + holiday slack; larger = a skipped week / archive hole)")
     args = parser.parse_args()
 
     app_url = env_url("APP_DB_URL")
@@ -222,6 +275,7 @@ def main() -> int:
     try:
         with psycopg.connect(app_url) as conn:
             results.append(check_snapshot_age(conn, args.snapshot_max_days))
+            results.append(check_snapshot_cadence(conn, args.snapshot_max_gap_days))
             results.append(check_snapshot_completeness(conn, args.snapshot_min_rows))
             results.append(check_panel_cache_populated(conn))
             results.append(check_cookie_health(conn))

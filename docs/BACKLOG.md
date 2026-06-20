@@ -118,9 +118,16 @@ priority — revisit if users report missing old actions.
 ### M3 — zero-touch, gap-proof weekly snapshot  *(highest operational urgency)*
 The score archive only compounds if it runs every week with no hole. **Fix:**
 (a) [optional] TOTP-automate the daily Upstox token; (b) fully schedule the
-weekly snapshot; (c) treat a missed/failed snapshot as Sev-1 — extend
-`freshness-check.yml` to alert loudly on a gap. *(User chose manual Upstox tap,
-so (a) is optional; (b)+(c) are the live work.)*
+weekly snapshot; (c) treat a missed/failed snapshot as Sev-1.
+- **(c) ✅ DONE (2026-06-20):** `check-freshness.py` gained `snapshot_cadence`
+  (alerts if the gap between the last two weekly snapshots > 10d — a skipped
+  week / permanent archive hole, double-run-robust, self-clearing).
+  `freshness-check.yml` now also runs immediately after "Weekly Compute + Score"
+  (`workflow_run`) and, on any failure, opens/append a **GitHub Issue** as a
+  loud, trackable Sev-1 alert (de-duped by title).
+- **(b) partial:** weekly fetch + compute are scheduled (fetch Sat, compute Sun);
+  remaining is the cron-off-`:00` reliability shift (see hands-off item).
+- **(a) optional:** user chose the manual morning Upstox tap.
 
 ### M6 — de-risk the data layer  *(don't-own-it fragility)*
 Archive sits on Screener (cookie-gated), NSE (403s), Upstox (daily token). **Fix:**

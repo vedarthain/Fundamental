@@ -1,16 +1,27 @@
 # Production data freshness alert.
 #
 # What this does:
-#   Connects to Neon (app DB + golden DB) every 4 hours and verifies that
-#   the production data isn't stale. Three checks:
-#     1. app.scores                       — latest snapshot ≤ 8 days old
-#     2. golden.price_history             — latest price ≤ 4 days old
-#     3. app.cluster_stocks_panel_cache  — populated for latest snapshot
+#   Connects to Neon (app DB + golden DB) and verifies the production data
+#   isn't stale. Checks (see scripts/check-freshness.py for detail):
+#     1.  app.scores                      — latest snapshot ≤ 8 days old
+#     1a. app.scores cadence              — gap between last two weekly snapshots
+#                                           ≤ 10 days (catches a SKIPPED week =
+#                                           permanent archive hole, the moat)
+#     1b. app.scores rows                 — latest snapshot ~full universe
+#     2.  golden.price_history            — latest price ≤ 4 days old
+#     3.  app.cluster_stocks_panel_cache  — populated for latest snapshot
+#     +   Screener cookie health
+#
+# When it runs:
+#   - Every 12h (schedule) as a baseline.
+#   - Immediately after "Weekly Compute + Score" finishes (workflow_run), so a
+#     missed/partial/skipped weekly snapshot is caught within minutes.
 #
 # Why a GitHub Action:
 #   - Free, no infra to manage.
-#   - On failure, GitHub auto-emails repo notification recipients
-#     (configure under Settings → Notifications → Watching).
+#   - On failure it opens (or appends to) a GitHub Issue — a loud, trackable
+#     Sev-1 alert that notifies watchers, on top of GitHub's auto-email
+#     (Settings → Notifications → Watching). De-duped by title.
 #   - Logs are visible in the Actions UI — diagnosis is one click away.
 #
 # Frequency: every 12 hours. Each wake-up holds Neon compute for the
@@ -40,8 +51,21 @@ on:
   schedule:
     - cron: '30 */12 * * *'
 
+  # Verify the weekly archive the MOMENT the weekly run finishes, so a missed/
+  # partial/skipped snapshot (a permanent hole in the score archive — the moat)
+  # is caught within minutes instead of up to 12h later. Fires on success OR
+  # failure of the compute job — either way we re-check the data that landed.
+  workflow_run:
+    workflows: ["Weekly Compute + Score"]
+    types: [completed]
+
   # Manual trigger for testing or post-incident verification.
   workflow_dispatch: {}
+
+# Needed by the failure step to open/append a GitHub Issue as a loud alert.
+permissions:
+  contents: read
+  issues: write
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -68,3 +92,30 @@ jobs:
           GOLDEN_DB_URL: ${{ secrets.NEON_GOLDEN_URL }}
           PYTHONUNBUFFERED: "1"
         run: python scripts/check-freshness.py
+
+      # Loud alert: a failed check opens (or appends to) a GitHub Issue, so a
+      # Sev-1 data gap is trackable + notifies watchers, not just a CI email that
+      # gets ignored. De-duped by title so a persistent failure appends a comment
+      # rather than spawning a new issue every run.
+      - name: Raise a loud alert on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TITLE="🚨 Production data freshness check FAILED"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          BODY=$(printf '%s\n' \
+            "The production data freshness check FAILED at $(date -u '+%Y-%m-%d %H:%M UTC')." \
+            "" \
+            "Which check failed (and why) is in the run log:" \
+            "$RUN_URL" \
+            "" \
+            "**Sev-1 for the score archive (the moat).** A stale, partial, or SKIPPED weekly snapshot is a permanent hole that can't be backfilled. Investigate the latest \`Weekly Fetch\` / \`Weekly Compute + Score\` runs, fix, and re-run.")
+          EXISTING=$(gh issue list --state open --search "$TITLE in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+            echo "Appended to existing alert issue #$EXISTING"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+            echo "Opened a new alert issue"
+          fi
