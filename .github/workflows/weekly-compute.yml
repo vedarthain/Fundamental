@@ -14,8 +14,9 @@
 #   3. build-market-snapshot rebuild app.market_snapshot_cache for /market
 #   4. /api/revalidate       purge Vercel's Data Cache for the changed tags
 #
-# Cadence: Saturday 17:00 UTC = 22:30 IST — a few hours after weekly-fetch.yml
-# (13:00 UTC + up to 180-min scrape) so it reads fresh blobs. Decoupled by
+# Cadence: Sunday 13:00 UTC = 18:30 IST — the day AFTER weekly-fetch.yml
+# (Sat 13:00 UTC + up to 180-min scrape), giving a wide margin so it always
+# reads fresh blobs even if Saturday's scrape was throttled/resumed. Decoupled by
 # fixed cron rather than chained: if fetch halts, this still scores on whatever
 # data exists (fundamentals are quarterly — a partial scrape still scores fine).
 # After a manual fetch re-run (e.g. post cookie-rotation), re-run this manually.
@@ -31,7 +32,7 @@ name: Weekly Compute + Score
 
 on:
   schedule:
-    - cron: '0 17 * * 6'   # Sat 17:00 UTC = 22:30 IST (after weekly-fetch)
+    - cron: '0 13 * * 0'   # Sun 13:00 UTC = 18:30 IST (next day, after Sat weekly-fetch)
   workflow_dispatch:
     inputs:
       snapshot_date:
