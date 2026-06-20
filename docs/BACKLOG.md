@@ -26,7 +26,15 @@ Each item keeps its decision context so it can be picked up cold.
 
 ---
 
-## ✅ Recently resolved (week of 2026-06-15 → 20)
+## ✅ Recently resolved (week of 2026-06-15 → 21)
+
+- **52W High/Low → actual stocks** — the /market 52-week H/L card was counts
+  only; now each bucket expands to the named, market-cap-ranked stocks
+  (`derive_week_range` emits `*_list`s; `WeekRangeStat` widened; chips link to
+  `/stock/[symbol]`). Lists appear once `build-market-snapshot.py` re-runs.
+- **Ops reliability** — `concurrency` guards on weekly fetch/compute (no
+  overlapping runs); Screener client forced to IPv4 (GH-runner no-IPv6 fix);
+  M3(c) archive-gap detection + GitHub-Issue alerting.
 
 - **Ideas feed redesign** — "Latest signal" band (Score movers / Result winners /
   upcoming-events calendar), unified Nifty 50/100/200/500/All universe control

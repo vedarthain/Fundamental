@@ -73,12 +73,27 @@ export type FiiPoint = {
   dii_net: number | null;
 };
 
+/** One named stock at/near its 52-week extreme — lets the card link to the
+ *  actual companies, not just show counts. Largest market cap first. */
+export type WeekRangeName = {
+  symbol: string;
+  name: string | null;
+  price: number | null;
+  market_cap_cr: number | null;
+};
+
 export type WeekRangeStat = {
   at_high: number;       // close within 0.5% of 52W high
   at_low: number;        // close within 0.5% of 52W low
   near_high: number;     // close within 5% of 52W high (excluding at_high)
   near_low: number;      // close within 5% of 52W low  (excluding at_low)
   total: number;
+  // Named, market-cap-ranked subsets (optional: absent on older cached payloads
+  // and on the rare live-fallback path, which only has counts).
+  at_high_list?: WeekRangeName[];
+  at_low_list?: WeekRangeName[];
+  near_high_list?: WeekRangeName[];
+  near_low_list?: WeekRangeName[];
 };
 
 export type HolidayItem = { date: string; name: string };

@@ -346,21 +346,52 @@ def derive_ad_1d(snap: dict) -> dict:
     return out
 
 
-def derive_week_range(snap: dict) -> dict:
+# How many named stocks to list per 52W bucket (largest market cap first). The
+# headline COUNT still reflects the full golden universe; the list is the
+# recognizable, scored subset (those present in the panel) so the card can link
+# straight to the actual stocks at/near their 52-week extremes.
+WEEK_RANGE_LIST_CAP = 20
+
+
+def derive_week_range(snap: dict, panel: dict) -> dict:
     at_high = at_low = near_high = near_low = total = 0
-    for s in snap.values():
+    lists: dict[str, list[dict]] = {
+        "at_high": [], "at_low": [], "near_high": [], "near_low": [],
+    }
+
+    def add(bucket: str, sym: str, close: float) -> None:
+        ctx = panel.get(sym)
+        if not ctx:  # not scored / not in the panel → counted but unnamed
+            return
+        lists[bucket].append({
+            "symbol":        sym,
+            "name":          ctx.get("company_name"),
+            "price":         close,
+            "market_cap_cr": ctx.get("market_cap_cr"),
+        })
+
+    for sym, s in snap.items():
         hi, lo = s["hi_52w"], s["lo_52w"]
         if hi is None or lo is None or hi <= 0 or lo <= 0:
             continue
         c = s["today_close"]
         total += 1
-        if c >= hi * 0.995: at_high += 1
-        elif c >= hi * 0.95: near_high += 1
-        if c <= lo * 1.005: at_low += 1
-        elif c <= lo * 1.05: near_low += 1
+        if c >= hi * 0.995: at_high += 1; add("at_high", sym, c)
+        elif c >= hi * 0.95: near_high += 1; add("near_high", sym, c)
+        if c <= lo * 1.005: at_low += 1; add("at_low", sym, c)
+        elif c <= lo * 1.05: near_low += 1; add("near_low", sym, c)
+
+    for bucket in lists:
+        lists[bucket].sort(key=lambda r: (r["market_cap_cr"] or 0), reverse=True)
+        lists[bucket] = lists[bucket][:WEEK_RANGE_LIST_CAP]
+
     return {
         "at_high": at_high, "at_low": at_low,
         "near_high": near_high, "near_low": near_low, "total": total,
+        "at_high_list":   lists["at_high"],
+        "at_low_list":    lists["at_low"],
+        "near_high_list": lists["near_high"],
+        "near_low_list":  lists["near_low"],
     }
 
 
@@ -501,7 +532,7 @@ def build_snapshot(app_conn, golden_conn) -> dict:
 
     # Derivations — pure Python.
     ad_1d         = derive_ad_1d(snap)
-    week_range    = derive_week_range(snap)
+    week_range    = derive_week_range(snap, panel)
     sector_heat   = derive_sector_heat(sector_1w, snap, sector_map)
     movers_1d_up  = derive_movers_1d_pool("up",   MOVER_POOL_LIMIT, snap, panel)
     movers_1d_dn  = derive_movers_1d_pool("down", MOVER_POOL_LIMIT, snap, panel)

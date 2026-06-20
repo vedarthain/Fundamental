@@ -100,7 +100,7 @@ function MountedChart({
 }
 import type {
   OverviewResponse, IndexRow, Mover, SectorHeatRow, FiiPoint, IndexSeriesPoint,
-  WeekRangeStat, HolidayItem, MoverUniverse, AdvanceDeclineSet,
+  WeekRangeStat, WeekRangeName, HolidayItem, MoverUniverse, AdvanceDeclineSet,
 } from "../api/market/overview/route";
 
 const UP    = "var(--color-delta-up)";
@@ -840,18 +840,19 @@ function WeekRangeCard({ stat }: { stat: WeekRangeStat }) {
         <div className="muted-text text-[10px]">{stat.total.toLocaleString("en-IN")} stocks scanned</div>
       </div>
       <div className="mt-2 grid grid-cols-2 gap-2">
-        <RangeStat label="At 52W high"   sublabel="within 0.5%" value={stat.at_high}   accent={UP} />
-        <RangeStat label="At 52W low"    sublabel="within 0.5%" value={stat.at_low}    accent={DOWN} />
-        <RangeStat label="Near 52W high" sublabel="within 5%"   value={stat.near_high} accent={UP}   subtle />
-        <RangeStat label="Near 52W low"  sublabel="within 5%"   value={stat.near_low}  accent={DOWN} subtle />
+        <RangeStat label="At 52W high"   sublabel="within 0.5%" value={stat.at_high}   accent={UP}   items={stat.at_high_list} />
+        <RangeStat label="At 52W low"    sublabel="within 0.5%" value={stat.at_low}    accent={DOWN} items={stat.at_low_list} />
+        <RangeStat label="Near 52W high" sublabel="within 5%"   value={stat.near_high} accent={UP}   items={stat.near_high_list} subtle />
+        <RangeStat label="Near 52W low"  sublabel="within 5%"   value={stat.near_low}  accent={DOWN} items={stat.near_low_list} subtle />
       </div>
     </section>
   );
 }
 
 function RangeStat({
-  label, sublabel, value, accent, subtle = false,
-}: { label: string; sublabel: string; value: number; accent: string; subtle?: boolean }) {
+  label, sublabel, value, accent, subtle = false, items,
+}: { label: string; sublabel: string; value: number; accent: string; subtle?: boolean; items?: WeekRangeName[] }) {
+  const list = items ?? [];
   return (
     <div
       className="rounded-md border p-2"
@@ -865,6 +866,29 @@ function RangeStat({
       </div>
       <div className="text-[10px] mt-1" style={{ color: INK }}>{label}</div>
       <div className="text-[9.5px] muted-text">{sublabel}</div>
+      {list.length > 0 && (
+        <details className="mt-1.5 group">
+          <summary
+            className="text-[9.5px] cursor-pointer list-none select-none hover:underline"
+            style={{ color: accent }}
+          >
+            {value > list.length ? `top ${list.length} stocks ▾` : "stocks ▾"}
+          </summary>
+          <div className="flex flex-wrap gap-1 mt-1">
+            {list.map((it) => (
+              <Link
+                key={it.symbol}
+                href={`/stock/${it.symbol}`}
+                title={it.name ?? it.symbol}
+                className="inline-block rounded px-1.5 py-[1px] text-[10px] tabular-nums border hover:bg-[var(--color-paper)] transition-colors"
+                style={{ borderColor: "var(--color-border-default)", color: INK }}
+              >
+                {it.symbol}
+              </Link>
+            ))}
+          </div>
+        </details>
+      )}
     </div>
   );
 }
