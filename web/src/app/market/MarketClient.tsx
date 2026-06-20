@@ -144,15 +144,11 @@ export function MarketClient({ data }: { data: OverviewResponse }) {
   // heatmap all react to the same selector — one click updates everything.
   const [range, setRange] = useState<Range>("1D");
   const liveSectors = useLiveSectors();
-  const nifty     = data.indices.find((r) => r.code === "NIFTY50");
-  const niftyBank = data.indices.find((r) => r.code === "NIFTYBANK");
   return (
     <div className="space-y-4">
       <HeroPair
-        left={nifty}
-        leftSeries={data.heroSeries["NIFTY50"] ?? []}
-        right={niftyBank}
-        rightSeries={data.heroSeries["NIFTYBANK"] ?? []}
+        indices={data.indices}
+        heroSeries={data.heroSeries}
         range={range}
         setRange={setRange}
       />
@@ -247,21 +243,19 @@ function useLiveIndexTicks(): LiveData {
 }
 
 function HeroPair({
-  left, leftSeries, right, rightSeries, range, setRange,
+  indices, heroSeries, range, setRange,
 }: {
-  left: IndexRow | undefined;
-  leftSeries: IndexSeriesPoint[];
-  right: IndexRow | undefined;
-  rightSeries: IndexSeriesPoint[];
+  indices: IndexRow[];
+  heroSeries: Record<string, IndexSeriesPoint[]>;
   range: Range;
   setRange: (r: Range) => void;
 }) {
   // range/setRange lifted to MarketClient so all sections stay in sync.
+  // Live ticks (intraday + fresh price) are polled once and handed to both
+  // panels; each panel picks the tick for whichever index it's currently
+  // showing (only NIFTY 50 / BANK have live ticks today — others fall back to
+  // their EOD close + daily series).
   const live = useLiveIndexTicks();
-  const leftLive  = freshTick(live.ticks["NIFTY50"]);
-  const rightLive = freshTick(live.ticks["NIFTYBANK"]);
-  const leftIntraday  = live.intraday["NIFTY50"]  ?? [];
-  const rightIntraday = live.intraday["NIFTYBANK"] ?? [];
   return (
     <section className="card overflow-hidden">
       <div className="px-3 md:px-4 pt-3 pb-2 flex items-center justify-between gap-2 border-b hairline">
@@ -281,8 +275,8 @@ function HeroPair({
         </div>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x hairline">
-        <HeroPanel label="NIFTY 50"   row={left}  series={leftSeries}  intraday={leftIntraday}  range={range} chartIdSuffix="50"   live={leftLive}  rawTick={live.ticks["NIFTY50"]} />
-        <HeroPanel label="NIFTY BANK" row={right} series={rightSeries} intraday={rightIntraday} range={range} chartIdSuffix="bank" live={rightLive} rawTick={live.ticks["NIFTYBANK"]} />
+        <HeroPanel defaultCode="NIFTY50"   indices={indices} heroSeries={heroSeries} range={range} live={live} chartIdSuffix="A" />
+        <HeroPanel defaultCode="NIFTYBANK" indices={indices} heroSeries={heroSeries} range={range} live={live} chartIdSuffix="B" />
       </div>
     </section>
   );
@@ -314,17 +308,49 @@ function todayTick(t: LiveTick | undefined): LiveTick | null {
 }
 
 function HeroPanel({
-  label, row, series, intraday, range, chartIdSuffix, live, rawTick,
+  defaultCode, indices, heroSeries, range, chartIdSuffix, live,
 }: {
-  label: string;
-  row: IndexRow | undefined;
-  series: IndexSeriesPoint[];
-  intraday: IntradayPoint[];
+  defaultCode: string;
+  indices: IndexRow[];
+  heroSeries: Record<string, IndexSeriesPoint[]>;
   range: Range;
   chartIdSuffix: string;
-  live: LiveTick | null;
-  rawTick?: LiveTick;
+  live: LiveData;
 }) {
+  // Which index this panel currently shows (switcher state). Default per panel.
+  const [code, setCode] = useState(defaultCode);
+  const row = indices.find((r) => r.code === code);
+  const label = row?.name ?? code;
+
+  // Series source: the default indices have their full 1Y series shipped in the
+  // overview payload (no fetch). For any other picked index we lazy-load its 1Y
+  // series from /api/market/index-series, with the row's short sparkline as an
+  // instant fallback while the fetch is in flight.
+  const [fetchedSeries, setFetchedSeries] = useState<IndexSeriesPoint[] | null>(null);
+  useEffect(() => {
+    // Reset to the fallback (row sparkline) while a new index's series loads.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setFetchedSeries(null);
+    if (code === defaultCode) return;
+    let alive = true;
+    fetch(`/api/market/index-series?code=${encodeURIComponent(code)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (alive && Array.isArray(j?.series)) setFetchedSeries(j.series as IndexSeriesPoint[]); })
+      .catch(() => { /* keep fallback */ });
+    return () => { alive = false; };
+  }, [code, defaultCode]);
+
+  const series: IndexSeriesPoint[] = useMemo(
+    () => (code === defaultCode ? (heroSeries[code] ?? []) : (fetchedSeries ?? row?.sparkline ?? [])),
+    [code, defaultCode, heroSeries, fetchedSeries, row],
+  );
+
+  // Live ticks (only NIFTY 50 / BANK have them today). Switched indices simply
+  // get no live tick → headline shows their EOD close.
+  const rawTick: LiveTick | undefined = live.ticks[code];
+  const liveTick = freshTick(rawTick);
+  const intraday: IntradayPoint[] = useMemo(() => live.intraday[code] ?? [], [live, code]);
+
   const isIntraday = range === "1D";
 
   // The latest price we have for TODAY, even if older than the 15-min live
@@ -412,17 +438,33 @@ function HeroPanel({
   //   live tick  → green "Updated HH:MM IST"
   //   stale tick → muted "Last fetched HH:MM IST" (tick exists but >15 min old)
   //   no tick    → nothing
-  const tickForTime = live ?? rawTick;
+  const tickForTime = liveTick ?? rawTick;
   const fetchedAt   = tickForTime ? fmtClock(tickForTime.ts) : null;
-  const isLiveTick  = live !== null;
+  const isLiveTick  = liveTick !== null;
 
   return (
     <div className="px-3 md:px-4 pt-2.5 pb-2">
       <div className="flex items-baseline justify-between gap-2">
         <div>
           <div className="flex items-center gap-1.5">
-            <div className="muted-text text-[10px] tracking-[0.10em] font-semibold uppercase">{label}</div>
-            {live && <LiveBadge />}
+            {/* Index switcher — swap this panel to any tracked index. Native
+                select for accessibility; styled to read as the panel label. */}
+            <select
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              aria-label="Choose index"
+              title={label}
+              className="muted-text text-[10px] tracking-[0.10em] font-semibold uppercase bg-transparent border-0 outline-none cursor-pointer hover:text-[var(--color-ink)] focus:text-[var(--color-ink)] max-w-[150px] truncate"
+              style={{ appearance: "none" }}
+            >
+              {indices.map((i) => (
+                <option key={i.code} value={i.code} className="normal-case tracking-normal">
+                  {i.name}
+                </option>
+              ))}
+            </select>
+            <span className="muted-text text-[8px] -ml-1" aria-hidden>▾</span>
+            {liveTick && <LiveBadge />}
           </div>
           <div className="flex items-baseline gap-2 mt-0.5">
             <span className="font-display text-[20px] md:text-[22px] leading-none tabular-nums">
@@ -458,7 +500,7 @@ function HeroPanel({
       {!haveChart ? (
         <div className="h-[100px] md:h-[110px] mt-1.5 flex items-center justify-center muted-text text-[11.5px] text-center px-2">
           {isIntraday
-            ? (live
+            ? (liveTick
                 ? "Today's intraday line builds as new ticks arrive."
                 : "No live ticks yet today — switch to 1M/3M for history.")
             : "No data for this range."}

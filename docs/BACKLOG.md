@@ -29,8 +29,10 @@ Each item keeps its decision context so it can be picked up cold.
 ## ✅ Recently resolved (week of 2026-06-15 → 21)
 
 - **Headline index charts** — added a prev-close/range-start dashed baseline
-  (`ReferenceLine`), an end-of-line price marker dot (`ReferenceDot`), and a
-  Day/period High–Low chip row to the NIFTY 50 / BANK hero charts on /market.
+  (`ReferenceLine`), an end-of-line price marker dot (`ReferenceDot`), a
+  Day/period High–Low chip row, an EOD freshness label on the 52W H/L card, and
+  an **index switcher** (each hero panel swaps to any of the 14 tracked indices;
+  non-default series lazy-load via new `/api/market/index-series`).
 - **52W High/Low → actual stocks** — the /market 52-week H/L card was counts
   only; now each bucket expands to the named, market-cap-ranked stocks
   (`derive_week_range` emits `*_list`s; `WeekRangeStat` widened; chips link to
@@ -119,6 +121,13 @@ GitHub load-sheds `:00` events, so runs get delayed or dropped (observed: a
 weekly-fetch that didn't fire). **Fix:** move each a few minutes past the hour
 (e.g. `17 13`). *(Quick win #1 from the 06-20 review — not yet done. Bulletproof
 alternative: cron-job.org `workflow_dispatch` like news.)*
+
+### Index history backfill (enables 3Y/5Y headline charts)  *(data task)*
+`app.market_index_history` only holds ~1 year per index (NSE fetcher pulls a
+short window), so the headline-chart range toggle stops at 1Y and a 3Y/5Y option
+can't be offered. **Fix:** backfill multi-year index levels from NSE (or another
+source) into `market_index_history`, then add 3Y/5Y range buttons (the
+`/api/market/index-series` endpoint already supports a longer window).
 
 ### Corporate actions — backfill non-dividend history depth
 Full CA via indianapi shipped, but verify split/bonus/rights/board-meeting
