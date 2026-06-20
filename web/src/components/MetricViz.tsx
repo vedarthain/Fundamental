@@ -49,11 +49,26 @@ const COUNT_UP_MS = 850;
 export function MetricViz({ ex }: { ex: MetricExample }) {
   const ref = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
+  // `mounted` flips true only on the client after hydration. We use it so the
+  // SERVER render (and any no-JS client) shows the COMPLETE final example —
+  // inputs, result number, gauge marker and note all in place — instead of the
+  // animation's blank/zero start state (the old SSR bug: "0.0% / 0.00× / 0
+  // days"). Animations are pure progressive enhancement once JS runs.
+  const [mounted, setMounted] = useState(false);
 
-  // Trigger animations only after the entry scrolls into view. Once visible
-  // we stop observing — the animation plays once per page load.
+  // Trigger animations only after the entry scrolls into view.
   useEffect(() => {
+    // Intentional: flip the SSR/no-JS "show final" gate once on the client.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMounted(true);
     if (!ref.current) return;
+    // If the example is already on screen at mount (above the fold), reveal it
+    // synchronously so it doesn't flash from final → hidden → animate.
+    const rect = ref.current.getBoundingClientRect();
+    if (rect.top < window.innerHeight && rect.bottom > 0) {
+      setVisible(true);
+      return;
+    }
     const obs = new IntersectionObserver(
       (entries) => {
         for (const e of entries) {
@@ -69,6 +84,11 @@ export function MetricViz({ ex }: { ex: MetricExample }) {
     obs.observe(ref.current);
     return () => obs.disconnect();
   }, []);
+
+  // Render in the final ("revealed") state on the server and before the reveal
+  // animation engages, so there's never a blank/zero SSR frame. Once mounted,
+  // the IntersectionObserver drives the animation as usual.
+  const reveal = !mounted || visible;
 
   const bands = ex.bands ?? [];
   // Gauge range: 0 → top band's upTo (clamped to a positive minimum so single-band
@@ -91,7 +111,7 @@ export function MetricViz({ ex }: { ex: MetricExample }) {
   // Animated result number — counts up from 0 to ex.result.numeric over
   // COUNT_UP_MS, preserving the original display's prefix / decimal places /
   // suffix so "₹3,496 cr" and "18.2%" both look right while ticking.
-  const liveValue = useCountUp(ex.result.numeric, visible, resultDelay);
+  const liveValue = useCountUp(ex.result.numeric, mounted && visible, resultDelay);
   const display = useMemo(
     () => formatLikeTemplate(liveValue, ex.result.display, ex.result.numeric),
     [liveValue, ex.result.display, ex.result.numeric],
@@ -116,7 +136,7 @@ export function MetricViz({ ex }: { ex: MetricExample }) {
           <span
             key={i}
             style={{
-              opacity: visible ? 1 : 0,
+              opacity: reveal ? 1 : 0,
               transition: `opacity 360ms ${i * stagger}ms ease-out`,
             }}
           >
@@ -132,7 +152,7 @@ export function MetricViz({ ex }: { ex: MetricExample }) {
       <div
         className="flex items-baseline gap-2 mt-2"
         style={{
-          opacity: visible ? 1 : 0,
+          opacity: reveal ? 1 : 0,
           transition: `opacity 360ms ${resultDelay - 200}ms ease-out`,
         }}
       >
@@ -178,7 +198,7 @@ export function MetricViz({ ex }: { ex: MetricExample }) {
                   style={{
                     width: `${width}%`,
                     backgroundColor: toneColor(b.tone),
-                    opacity: visible && isActive ? 1 : 0.55,
+                    opacity: reveal && isActive ? 1 : 0.55,
                     transition: `opacity 400ms ${gaugeDelay + 100}ms ease-out`,
                   }}
                 />
@@ -189,11 +209,11 @@ export function MetricViz({ ex }: { ex: MetricExample }) {
               className="absolute w-4 h-4 rounded-full border-[3px]"
               style={{
                 top: "50%",
-                left: `calc(${visible ? markerPct : 0}% - 8px)`,
+                left: `calc(${reveal ? markerPct : 0}% - 8px)`,
                 transform: "translateY(-50%)",
                 borderColor: resultColor,
                 backgroundColor: "#fff",
-                boxShadow: visible
+                boxShadow: reveal
                   ? `0 2px 6px rgba(0,0,0,0.15), 0 0 0 4px ${withAlpha(resultColor, 0.15)}`
                   : "0 1px 3px rgba(0,0,0,0.1)",
                 transition: `left 1000ms cubic-bezier(.2,.7,.25,1) ${gaugeDelay}ms, box-shadow 600ms ${gaugeDelay + 800}ms ease-out`,
@@ -227,7 +247,7 @@ export function MetricViz({ ex }: { ex: MetricExample }) {
         <div
           className="text-[12.5px] leading-relaxed muted-text mt-3"
           style={{
-            opacity: visible ? 1 : 0,
+            opacity: reveal ? 1 : 0,
             transition: `opacity 360ms ${noteDelay}ms ease-out`,
           }}
         >
@@ -244,9 +264,17 @@ export function MetricViz({ ex }: { ex: MetricExample }) {
  * `delayMs` so it lines up with the rest of the staggered fade-in.
  */
 function useCountUp(target: number, start: boolean, delayMs: number) {
-  const [value, setValue] = useState(0);
+  // Initialise to the FINAL value so the server render and the pre-animation
+  // client frame show the real number (not 0). When the reveal fires we snap to
+  // 0 and tick up; below-the-fold examples are off-screen at that moment, so the
+  // viewer simply sees the count-up as they scroll in.
+  const [value, setValue] = useState(target);
   useEffect(() => {
     if (!start) return;
+    // Intentional: snap to 0 to begin the count-up (initial state is the final
+    // value so SSR/no-JS shows the real number).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setValue(0);
     let raf = 0;
     let cancelled = false;
     const timer = setTimeout(() => {

@@ -10,6 +10,10 @@ Deferred work — captured so it isn't lost. Organised into three buckets by the
 
 Each item keeps its decision context so it can be picked up cold.
 
+> **Last reviewed: 2026-06-20.** Keep this current — re-check after each shipping
+> session: move done items to "Recently resolved", prune stale context, add new
+> work. (Several items below were found already-fixed on the 06-20 review.)
+
 ---
 
 ## ⚙️ Deployment & fix policy (effective 2026-06-05)
@@ -21,6 +25,35 @@ Each item keeps its decision context so it can be picked up cold.
   `postgres:///golden_db`). Never point local work at Neon prod.
 
 ---
+
+## ✅ Recently resolved (week of 2026-06-15 → 20)
+
+- **Ideas feed redesign** — "Latest signal" band (Score movers / Result winners /
+  upcoming-events calendar), unified Nifty 50/100/200/500/All universe control
+  (from `app.index_constituent`; added NIFTY200 to the ingest), peer-relative +
+  consistency-gated movers with streak/"N/M wks" badges + Nifty 200 fallback,
+  full ~12-week comparison window, dashed peer-cluster overlay on sparklines,
+  per-row "+ watch" hand-off, paginated calendar/winners (10/row).
+- **Dividend ₹ amounts recovered** — ~21% of indianapi dividends had NULL `amount`
+  (regex only matched "Rs N"). Fixed `fetch-corporate-actions-iapi.py` to compute
+  `pct% × face_value` (+ snap to exact text figure); backfilled 3,624 rows
+  (local + prod). e.g. INDIGO 13-Aug-2025 now shows ₹10.
+- **BUG-01** — implausible 1D mover guard shipped (`MAX_PLAUSIBLE_1D=0.25` drops
+  & logs |1D|>25% in `build-market-snapshot.py`; kills the "TRENT −33.4%" case).
+- **BUG-02** — cluster count unified to "populated peer groups" (46) from
+  `cluster_composite_cache` at latest snapshot, across home/ribbon/sectors;
+  hardcoded "Forty-one" removed.
+- **BUG-03** — coverage count unified to `COUNT(universe WHERE is_active)`
+  (=2,163) across home hero, ribbon and screener breadcrumb.
+- **BUG-04** — peer-comparison max wording consistent ("2–5"); page moved to
+  `tools/peer-comparison`.
+- **BUG-06** — per-page unique `<title>`/description now on
+  about/glossary/sectors/ideas/screener/tools/market/news/indices/peer-comparison.
+- **BUG-07** — glossary `MetricViz` now SSRs the final example (number, inputs,
+  gauge marker, note) via a `mounted` gate; animation is progressive enhancement
+  (no more "0.0% / 0.00× / 0 days" without JS).
+- **Weekly Compute + Score** moved to Sunday 18:30 IST (`0 13 * * 0`) — a full
+  day after Saturday's fetch.
 
 ## ✅ Recently resolved (week of 2026-06-08 → 12)
 
@@ -45,36 +78,10 @@ Each item keeps its decision context so it can be picked up cold.
 
 Copy / label / display-consistency / SEO. Mostly safe weekend batches.
 
-### BUG-02 — cluster count stated 3 ways  *(Med)*
-`app/page.tsx:519` hardcodes "Forty-one"; `SectorsClient.tsx:241` shows computed
-`clusterCount`; `SnapshotRibbon.tsx` shows `s.clusters`. Local truth: cluster=49,
-meta_cluster=9; ribbon/sectors now show 46 (populated peer groups).
-**Fix:** one canonical count from DB, replace hardcoded copy.
-**NEEDS DECISION:** which count is canonical + terminology ("peer groups" vs
-"clusters" vs "sectors").
-
-### BUG-03 — coverage count drifts (2,157 / 2,163 / 2,153 / 2,156)  *(Med)*
-`app/page.tsx:34` = `COUNT(universe is_active)` (=2163); header/screener use other
-sources. **Fix:** single canonical coverage count, computed once, reused.
-**NEEDS DECISION:** active-universe vs scored-at-latest-snapshot.
-
-### BUG-04 — peer-comparison max wording mismatch  *(Med)*
-`peer-comparison/page.tsx:166` "up to five" vs `:301` "up to three" vs home card
-"2–5". **Fix:** read the enforced max; make all 3 strings match.
-
 ### BUG-05 — PRICES date chip stale a day on static pages  *(Low)*
 Home/about/glossary/feedback vs data pages — ISR cache skew. **Fix:** align the
 date source / revalidate across page types. *(Partly mooted now the ribbon shows
-TODAY, but static vs data ISR skew can still differ — verify.)*
-
-### BUG-06 — duplicate `<title>` / meta description  *(Med)*
-about/glossary/sectors/ideas/screener/tools share meta (only /market, /feedback
-unique). **Fix:** per-page `export const metadata` (unique title+desc). Doubles
-as SEO for the distribution moat (M4).
-
-### BUG-07 — glossary example dials show 0.0% / 0.00× / 0 days in SSR  *(Med)*
-Likely a count-up animation with no no-JS fallback. **Fix:** verify in-browser;
-if animation, SSR the final value as the static fallback.
+TODAY, but static vs data ISR skew can still differ — verify in-browser.)*
 
 ### M5 — regulatory posture / copy scrub  *(mostly non-eng, do early)*
 India is aggressive on unregistered "research analyst" activity. **Fix:** get a
@@ -87,18 +94,20 @@ education, not advice" framing everywhere. Cheap insurance — schedule early.
 
 Enhance / harden / tune existing behaviour.
 
-### BUG-01 — implausible 1D mover guard  *(High)*
-`/market` top losers showed TRENT −33.4% 1D from a bad tick/corp-action in the
-read-only golden DB (prod-only; local golden is clean). Movers come from
-`build-market-snapshot.py`. **Fix:** sanity-guard the mover computation
-(drop/winsorize implausible 1D for large-caps). Can't fix the golden source.
-
-### Raise CDN cache TTL on remaining live endpoints (`s-maxage` 60 → 300)
-sector-live already done (→10 min). Remaining: `/api/market/index-live`,
+### Raise CDN cache TTL on remaining live endpoints (`s-maxage` 60 → 300)  *(Quick)*
+sector-live already done (→10 min). **Still 60s:** `/api/market/index-live`,
 `/api/indices/constituents`. **Why:** an open tab re-hits origin ~1×/min (keeps
 Neon awake). 300s → ~5× fewer wake-ups; data only changes ~10 min. **Risk:**
 headline numbers up to ~5 min staler — pure display latency. Optionally also
-bump client poll 60s → 120s.
+bump client poll 60s → 120s. *(Quick win #2 from the 06-20 review — not yet done.)*
+
+### Shift GitHub cron schedules off `:00`  *(Quick — reliability)*
+All 5 schedules sit on the top of the hour (`refresh-ltp 0 13`, `refresh-announcements
+0 22`, `refresh-constituents 0 4`, `weekly-fetch 0 13`, `weekly-compute 0 13`) —
+GitHub load-sheds `:00` events, so runs get delayed or dropped (observed: a
+weekly-fetch that didn't fire). **Fix:** move each a few minutes past the hour
+(e.g. `17 13`). *(Quick win #1 from the 06-20 review — not yet done. Bulletproof
+alternative: cron-job.org `workflow_dispatch` like news.)*
 
 ### Corporate actions — backfill non-dividend history depth
 Full CA via indianapi shipped, but verify split/bonus/rights/board-meeting
