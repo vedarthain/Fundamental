@@ -40,6 +40,15 @@ on:
         type: boolean
         default: false
 
+# Never run two fetches at once. A manual run and a (often GitHub-delayed)
+# scheduled run can otherwise overlap and DOUBLE the request rate at Screener
+# → heavier 502 throttling. cancel-in-progress=false protects the running
+# scrape (it's doing useful, resumable work); a second trigger queues and runs
+# after it finishes rather than racing it.
+concurrency:
+  group: weekly-fetch
+  cancel-in-progress: false
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 

@@ -145,6 +145,8 @@ Goal: zero daily intervention except the accepted morning Upstox tap. **Gaps:**
 GitHub `schedule:` still drives refresh-ltp, weekly-snapshot, refresh-announcements,
 refresh-constituents, freshness-check — GitHub load-sheds `:00` events and
 auto-disables schedules after 60 days of no commits.
+- **Done (2026-06-20):** `concurrency` guards on weekly-fetch + weekly-compute
+  so a manual run and a (GitHub-delayed) scheduled run can't overlap/race.
 - **Quick win:** shift each cron off `:00` (`0 13` → `17 13`).
 - **Bulletproof:** move critical ones (esp. refresh-ltp) to cron-job.org dispatch
   like news.

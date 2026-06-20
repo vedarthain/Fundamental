@@ -39,6 +39,13 @@ on:
         description: 'YYYY-MM-DD to snapshot (default: today UTC)'
         required: false
 
+# Never run two compute/score passes at once — a manual run and the scheduled
+# run writing the same snapshot_date would race on app.scores. cancel-in-progress
+# =false protects the in-flight pass (it's mid-write); a second trigger queues.
+concurrency:
+  group: weekly-compute
+  cancel-in-progress: false
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
