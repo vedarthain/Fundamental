@@ -30,3 +30,6 @@ scripts/__pycache__/
 # re-downloading at each rebalance). The GENERATED web/src/lib/indexWeights.ts
 # is what ships; keep the raw PDFs out of git.
 factsheet/
+
+# Local-only architecture writeup (kept under docs/ for reference, never pushed).
+docs/ARCHITECTURE_WRITEUP.md
