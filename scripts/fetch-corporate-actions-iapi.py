@@ -55,7 +55,51 @@ BASE = "https://stock.indianapi.in/corporate_actions"
 # rare → keep all).
 MAX_DIVIDENDS = 16
 MAX_BOARD = 6
-RS_RE = re.compile(r"Rs\.?\s*([0-9]+(?:\.[0-9]+)?)", re.I)
+
+# Per-share dividend amount lives in the free-text "Details" in wildly varied
+# shapes — "Rs. 10", "INR 2/-", "Re. 0.55/-", "₹ 90.50/-", "?3/-" (₹ mojibake),
+# or a bare "1.50/-". We extract every plausible rupee candidate, then
+# disambiguate against the percentage×face-value anchor (see parse_dividend_amount):
+#   - currency-prefixed:  Rs./Re./INR/₹/? <number>
+#   - "/-"-suffixed:      <number>/-
+CUR_AMT_RE = re.compile(r"(?:Rs\.?|Re\.?|INR|₹|\?)\s*([0-9]+(?:\.[0-9]+)?)\s*/?\s*-?", re.I)
+SLASH_AMT_RE = re.compile(r"([0-9]+(?:\.[0-9]+)?)\s*/-")
+PCT_NUM_RE = re.compile(r"([0-9]+(?:\.[0-9]+)?)\s*%")
+PCT_VAL_RE = re.compile(r"([0-9]+(?:\.[0-9]+)?)")
+
+
+def parse_dividend_amount(details: str, pct_str: str, face_value):
+    """Best-effort per-share dividend (₹). In Indian filings the "percentage" is
+    of FACE VALUE, so amount = pct% × face_value — that's our anchor (present for
+    ~100% of rows). When the Details text also states an exact rupee figure, we
+    prefer it IF it agrees with the anchor (the text also contains the face value
+    and the %, so we pick the candidate closest to the anchor). Returns None only
+    when neither signal is available."""
+    base = None
+    if face_value and face_value > 0:
+        mp = PCT_VAL_RE.search(pct_str or "")
+        if mp:
+            base = (float(mp.group(1)) / 100.0) * float(face_value)
+
+    text = details or ""
+    pct_nums = {float(x) for x in PCT_NUM_RE.findall(text)}
+    cands = [float(x) for x in CUR_AMT_RE.findall(text)]
+    cands += [float(x) for x in SLASH_AMT_RE.findall(text)]
+    # Drop values that are really the percentage figure (e.g. "@ 30%").
+    cands = [c for c in cands if c not in pct_nums]
+
+    if base is not None and cands:
+        best = min(cands, key=lambda c: abs(c - base))
+        # Snap to the exact text figure when it corroborates the anchor (handles
+        # the source rounding its % — e.g. 1.65/- vs 82%×₹2 = 1.64).
+        if base == 0 or abs(best - base) / max(base, 0.01) <= 0.15:
+            return round(best, 4)
+        return round(base, 4)
+    if base is not None:
+        return round(base, 4)
+    if cands:
+        return round(cands[0], 4)
+    return None
 
 
 def env(name: str, required: bool = True) -> str | None:
@@ -107,7 +151,7 @@ def section_rows(payload: dict, key: str):
     return sec.get("header") or [], sec.get("data") or []
 
 
-def build_actions(sym: str, payload: dict) -> list[tuple]:
+def build_actions(sym: str, payload: dict, face_value=None) -> list[tuple]:
     """→ list of (symbol, action_type, ex_date, purpose, amount, details_json)."""
     out: list[tuple] = []
 
@@ -123,8 +167,7 @@ def build_actions(sym: str, payload: dict) -> list[tuple]:
         ex = parse_date(row[ex_i]) if ex_i >= 0 and ex_i < len(row) else None
         details = str(row[det_i]) if det_i >= 0 and det_i < len(row) else ""
         pct = str(row[pct_i]) if pct_i >= 0 and pct_i < len(row) else ""
-        m = RS_RE.search(details)
-        amount = float(m.group(1)) if m else None
+        amount = parse_dividend_amount(details, pct, face_value)
         kind = "Interim Dividend" if "interim" in details.lower() else \
                "Special Dividend" if "special" in details.lower() else "Final Dividend"
         add("dividend", ex, kind, amount, dict(zip(h, row)))
@@ -192,6 +235,13 @@ def main() -> None:
                 """
             )
             symbols = [r[0] for r in cur.fetchall()]
+            # Face value per symbol — needed to turn the dividend "percentage"
+            # (of face value) into a per-share ₹ amount. One cheap read.
+            cur.execute(
+                "SELECT symbol, face_value FROM app.screener_meta "
+                "WHERE face_value IS NOT NULL AND face_value > 0"
+            )
+            face_values = {r[0]: float(r[1]) for r in cur.fetchall()}
         if args.limit:
             symbols = symbols[: args.limit]
         budget = f", budget {args.max_minutes:.0f}m" if args.max_minutes else ""
@@ -229,7 +279,7 @@ def main() -> None:
                 space()
                 continue
 
-            actions = build_actions(sym, payload) if isinstance(payload, dict) else []
+            actions = build_actions(sym, payload, face_values.get(sym)) if isinstance(payload, dict) else []
             with conn.cursor() as cur:
                 # Source-scoped delete: only clear OUR rows so the BSE fetcher's
                 # rows (source='bse', recent dividends) survive an indianapi run.
