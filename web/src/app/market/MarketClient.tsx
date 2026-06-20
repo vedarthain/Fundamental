@@ -166,7 +166,7 @@ export function MarketClient({ data }: { data: OverviewResponse }) {
           right of the movers. */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <AdvanceDeclineDonut sets={data.advanceDecline} />
-        <WeekRangeCard stat={data.weekRange} />
+        <WeekRangeCard stat={data.weekRange} asOf={data.ltpDate ?? data.snapshotDate} />
         <FiiBarCard latest={data.fii.latest} series={data.fii.series} />
         <HolidaysCard holidays={data.holidays} />
       </div>
@@ -882,12 +882,20 @@ function LegendCell({ dot, label, value, total }: { dot: string; label: string; 
 // 52-week high / low
 // ──────────────────────────────────────────────────────────────────────────
 
-function WeekRangeCard({ stat }: { stat: WeekRangeStat }) {
+function WeekRangeCard({ stat, asOf }: { stat: WeekRangeStat; asOf: string | null }) {
+  // Clarify cadence: this is an END-OF-DAY snapshot (rebuilt each market day from
+  // EOD closes), NOT a live/intraday feed — so anchor it to the close date.
+  const asOfLabel = asOf
+    ? new Date(asOf + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short" })
+    : null;
   return (
     <section className="card p-3 md:p-4">
       <div className="flex items-baseline justify-between gap-2">
         <div className="font-display text-[14px] leading-tight">52-week high / low</div>
         <div className="muted-text text-[10px]">{stat.total.toLocaleString("en-IN")} stocks scanned</div>
+      </div>
+      <div className="muted-text text-[10px] mt-0.5">
+        End-of-day snapshot{asOfLabel ? ` · close of ${asOfLabel}` : ""} — not live
       </div>
       <div className="mt-2 grid grid-cols-2 gap-2">
         <RangeStat label="At 52W high"   sublabel="within 0.5%" value={stat.at_high}   accent={UP}   items={stat.at_high_list} />
