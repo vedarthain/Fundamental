@@ -29,7 +29,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Line, LineChart,
-  Pie, PieChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Pie, PieChart, ReferenceDot, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 
 /**
@@ -380,8 +380,21 @@ function HeroPanel({
     : (first > 0 ? ((last - first) / first) * 100 : 0);
   const positive = changePct >= 0;
   const stroke = positive ? UP : DOWN;
-  const yMin = haveChart ? Math.min(...points.map((p) => p.close)) * 0.995 : 0;
-  const yMax = haveChart ? Math.max(...points.map((p) => p.close)) * 1.005 : 1;
+  const closes = haveChart ? points.map((p) => p.close) : [];
+  const periodHigh = haveChart ? Math.max(...closes) : null;
+  const periodLow  = haveChart ? Math.min(...closes) : null;
+  const yMin = periodLow  != null ? periodLow  * 0.995 : 0;
+  const yMax = periodHigh != null ? periodHigh * 1.005 : 1;
+
+  // Baseline for the reference line: yesterday's close for the intraday (1D)
+  // view (so "above/below prior close" reads at a glance), or the range's
+  // starting level for the daily ranges. The intraday series already anchors
+  // its first point on prev_close, so it sits inside the y-domain either way.
+  const baseline = isIntraday
+    ? (held?.prev_close ?? rawTick?.prev_close ?? (haveChart ? first : null))
+    : (haveChart ? first : null);
+  // Last point (for the end-of-line marker dot).
+  const lastDate = haveChart ? points[points.length - 1].date : null;
 
   // When a fresh intraday tick exists, it supersedes the EOD close: show
   // the live price as the headline number and live change vs prev close.
@@ -473,10 +486,47 @@ function HeroPanel({
                 Number(v).toLocaleString("en-IN", { maximumFractionDigits: 1 }),
                 label,
               ]} />
+            {baseline != null && (
+              <ReferenceLine
+                y={baseline}
+                stroke="var(--color-muted)"
+                strokeDasharray="3 3"
+                strokeWidth={1}
+                ifOverflow="extendDomain"
+              />
+            )}
             <Area type="monotone" dataKey="close" stroke={stroke} strokeWidth={1.4} fill={`url(#${gradId})`} isAnimationActive={false} />
+            {lastDate != null && (
+              <ReferenceDot
+                x={lastDate}
+                y={last}
+                r={3}
+                fill={stroke}
+                stroke="var(--color-card)"
+                strokeWidth={1.5}
+              />
+            )}
           </AreaChart>
         </ResponsiveContainer>
       </MountedChart>
+      )}
+      {/* Period high / low — day's range for 1D, else the selected window's. */}
+      {periodHigh != null && periodLow != null && (
+        <div className="mt-1 flex items-center gap-2 text-[10px] tabular-nums muted-text">
+          <span className="uppercase tracking-wide" style={{ fontSize: 9 }}>
+            {isIntraday ? "Day" : range}
+          </span>
+          <span>
+            H <span className="font-medium" style={{ color: "var(--color-ink)" }}>
+              {periodHigh.toLocaleString("en-IN", { maximumFractionDigits: 1 })}
+            </span>
+          </span>
+          <span>
+            L <span className="font-medium" style={{ color: "var(--color-ink)" }}>
+              {periodLow.toLocaleString("en-IN", { maximumFractionDigits: 1 })}
+            </span>
+          </span>
+        </div>
       )}
       <div className="mt-1 flex flex-wrap gap-3 text-[10.5px] tabular-nums">
         <RangeChange label="1W" value={row.pct_change_1w} />

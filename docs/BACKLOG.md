@@ -28,6 +28,9 @@ Each item keeps its decision context so it can be picked up cold.
 
 ## ✅ Recently resolved (week of 2026-06-15 → 21)
 
+- **Headline index charts** — added a prev-close/range-start dashed baseline
+  (`ReferenceLine`), an end-of-line price marker dot (`ReferenceDot`), and a
+  Day/period High–Low chip row to the NIFTY 50 / BANK hero charts on /market.
 - **52W High/Low → actual stocks** — the /market 52-week H/L card was counts
   only; now each bucket expands to the named, market-cap-ranked stocks
   (`derive_week_range` emits `*_list`s; `WeekRangeStat` widened; chips link to
