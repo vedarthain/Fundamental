@@ -134,6 +134,11 @@ Archive sits on Screener (cookie-gated), NSE (403s), Upstox (daily token). **Fix
 cache raw inputs so a block can't corrupt a snapshot; write the archive only from
 cached clean inputs (never a flaky live scrape); line up fallback sources; expand
 freshness alerts.
+- **Live symptom (2026-06-20):** weekly-fetch logs `[Errno 101] Network is
+  unreachable` (FIXED — GH runners have no IPv6; scraper now binds IPv4) and
+  many `HTTP 502` from Screener (datacenter-IP throttling of GH's 3-worker
+  scrape). 502s are retried + resumed (non-fatal, noisy). Real de-risking:
+  lower `--workers`, scrape from a non-datacenter IP, or cache + fallback.
 
 ### Fully hands-off operations hardening
 Goal: zero daily intervention except the accepted morning Upstox tap. **Gaps:**

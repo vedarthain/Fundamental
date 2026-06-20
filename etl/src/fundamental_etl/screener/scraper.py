@@ -58,10 +58,22 @@ class CompanyExportInfo:
 
 
 def _client() -> httpx.Client:
+    # Force IPv4 + add connection-level retries.
+    #
+    # GitHub Actions runners have NO IPv6 route. If a host resolves to an AAAA
+    # (IPv6) record, httpcore connects to it and fails with
+    # "[Errno 101] Network is unreachable" *without* falling back to the IPv4
+    # address — so the whole scrape errors out. Binding the socket to the IPv4
+    # wildcard (0.0.0.0) makes every connection use IPv4 (an IPv4 source can't
+    # bind to an IPv6 target, so httpcore moves on to the A record). `retries`
+    # adds transport-level retry on connect errors, on top of the @retry
+    # decorators that already cover TransportError mid-request.
+    transport = httpx.HTTPTransport(local_address="0.0.0.0", retries=3)
     # Browser-like default headers. Bot detectors usually look at the full
     # combination (UA + Accept + Accept-Language), not just User-Agent —
     # so we mirror what a real Chrome request would send.
     return httpx.Client(
+        transport=transport,
         cookies={
             "sessionid": settings.screener_sessionid,
             "csrftoken": settings.screener_csrftoken,
