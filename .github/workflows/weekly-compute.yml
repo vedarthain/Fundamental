@@ -52,8 +52,11 @@ env:
 jobs:
   compute:
     runs-on: ubuntu-latest
-    # compute ~45 + score ~15 + rebuild ~3. 90 leaves wide margin.
-    timeout-minutes: 90
+    # compute ~45 + score ~15 + rebuild ~3 on a warm Neon. But a cold/throttled
+    # Sunday run has pushed compute-metrics to ~75-80 min, which blew the old
+    # 90-min cap and got the build/revalidate steps canceled mid-run (scores had
+    # already saved). 150 absorbs a cold-Neon worst case with margin to spare.
+    timeout-minutes: 150
     steps:
       - name: Checkout
         uses: actions/checkout@v4
