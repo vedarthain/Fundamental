@@ -1523,6 +1523,7 @@ export default function GlossaryPage() {
   return (
     <div className="theme-indigo mx-auto max-w-[1200px] px-6 py-12">
       <Hero />
+      <ScoreLimitsNote />
 
       <div className="mt-10 grid grid-cols-1 lg:grid-cols-[200px_1fr] gap-8 lg:gap-12">
         <TableOfContents />
@@ -1533,6 +1534,33 @@ export default function GlossaryPage() {
           <CrossRefBox />
         </main>
       </div>
+    </div>
+  );
+}
+
+/** What the score deliberately does NOT model. Placed up top so the limits are
+ *  read before the ratios — these are metrics OF the reported numbers, and the
+ *  score trusts those numbers. It is not a fraud / governance / regulatory check
+ *  (e.g. it would not have flagged a misstated-revenue case like a SEBI order). */
+function ScoreLimitsNote() {
+  return (
+    <div
+      className="mt-6 max-w-[760px] rounded-[10px] p-4 text-[12.5px] leading-relaxed"
+      style={{
+        background: "color-mix(in srgb, var(--color-score-weak) 8%, var(--color-card))",
+        border: "1px solid color-mix(in srgb, var(--color-score-weak) 30%, transparent)",
+      }}
+    >
+      <div className="font-semibold ink-text mb-1">What these ratios can&apos;t tell you</div>
+      <p className="muted-text">
+        Every metric here is computed from a company&apos;s <em>reported</em> financials and
+        prices — so the score measures how good those numbers look versus peers, and{" "}
+        <strong className="ink-text">assumes the numbers are accurate</strong>. It is not a fraud
+        or governance check: it cannot detect misstated revenue, circular or related-party
+        transactions, aggressive accounting, auditor resignations, or regulatory action (e.g. a
+        SEBI order). For those, read the company&apos;s filings, cash-flow statement and any
+        exchange/regulator disclosures yourself. Information only — not investment advice.
+      </p>
     </div>
   );
 }

@@ -200,6 +200,23 @@ backtest; SEO the `/stock/[symbol]` pages (rank for "<TICKER> stock score /
 quality" — overlaps BUG-06); weekly "biggest score moves" email to build the
 return-weekly habit. **Effort:** L (ongoing). **Depends on:** M2.
 
+### Governance / forensic red-flag overlay  *(trust-the-numbers layer)*
+The composite scores how good the **reported** numbers are vs peers — it assumes
+they're accurate and so **can't catch fraud in its own inputs** (Rajesh Exports /
+SEBI June-2026 ₹15L-cr revenue-misstatement case is the canonical example; we
+don't even cover RAJESHEXPO, but a fundamentals score could have rated it *fine*
+or *cheap* on fabricated revenue). **What:** an overlay that sits ABOVE the score
+and answers "should you trust these numbers?":
+- **Regulatory-action flag** (highest signal, cleanest) — SEBI/exchange orders,
+  bans, forensic-audit directives. Needs a small fetcher + a `regulatory_flag`
+  table keyed by symbol; surfaced as a badge on the stock page + a screener filter.
+- **Cash-flow quality** — CFO/PAT ratio, receivable-days trend (profit without
+  operating cash = the Rajesh Exports tell).
+- **Related-party / revenue-concentration**, auditor changes, promoter pledge.
+**Effort:** M (regulatory flag alone is S and high-ROI). **Done so far:** added a
+"what the score does NOT model" disclaimer to the stock page + glossary (2026-06-21).
+Ties into M5 (regulatory copy).
+
 ### StockEdge-style daily-updates dashboard
 A market "daily updates" page. ~70% buildable from sources we already own —
 movers, 52w H/L, FII/DII, sector moves, corporate actions, announcements (now

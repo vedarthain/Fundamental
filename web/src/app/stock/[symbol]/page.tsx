@@ -1220,6 +1220,15 @@ function CompositeExplainer(props: {
           Read the methodology
         </Link>.
       </p>
+      <p className="text-[12px] leading-relaxed muted-text max-w-[820px] mt-3">
+        <strong className="ink-text">What this score does not do.</strong> It measures how good
+        the <em>reported</em> numbers are versus peers — it assumes those numbers are accurate.
+        It is <strong>not a fraud or governance check</strong>: it does not detect misstated
+        revenue, circular/related-party transactions, aggressive accounting, auditor
+        resignations, or regulatory actions (e.g. a SEBI order). Always read the company&apos;s
+        filings, cash flows and any regulatory disclosures yourself. Information only — not
+        investment advice.
+      </p>
     </footer>
   );
 }
