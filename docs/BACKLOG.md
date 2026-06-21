@@ -28,6 +28,10 @@ Each item keeps its decision context so it can be picked up cold.
 
 ## ✅ Recently resolved (week of 2026-06-15 → 21)
 
+- **52-week high/low scanner** — new `/tools/52-week-high-low` page: every stock
+  at/near its 52W extreme, filterable by index segment (Nifty 50/100/200/500/All),
+  EOD from golden + Industry-Score quality dot, links to each scorecard. Heavy
+  golden scan `unstable_cache`d 6h (tags snapshot/market). Added a Tools card.
 - **Headline index charts** — added a prev-close/range-start dashed baseline
   (`ReferenceLine`), an end-of-line price marker dot (`ReferenceDot`), a
   Day/period High–Low chip row, an EOD freshness label on the 52W H/L card, and

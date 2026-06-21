@@ -64,6 +64,19 @@ const TOOLS: ToolCard[] = [
     ],
     accent: "var(--color-score-weak)",
   },
+  {
+    href: "/tools/52-week-high-low",
+    title: "52-Week High / Low",
+    tagline: "Stocks at price extremes, by segment",
+    body:
+      "Every stock sitting at or near its 52-week high or low, filterable by index segment (Nifty 50 / 100 / 200 / 500 / All). End-of-day prices from the archive, with each name's Industry Score as a quality cue and a link to its scorecard.",
+    useFor: [
+      "Spot fresh 52-week highs in the Nifty 100",
+      "Find large-caps near their 52-week low",
+      "Gauge how broad a rally or sell-off is",
+    ],
+    accent: "var(--color-score-good)",
+  },
 ];
 
 export default function ToolsLanding() {
