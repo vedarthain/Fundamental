@@ -33,6 +33,9 @@ Each item keeps its decision context so it can be picked up cold.
   band dot, the score, and today's 1D move (golden), linking to the scorecard.
   The differentiator over a plain aggregator. (Lanes / regulatory / threads =
   the remaining "redefine news" ideas, still to build.)
+- **News — category colour-coding + view switcher** — per-category accent
+  (Stocks/Policy/Macro/Markets/General) on the filter tabs + a left colour rail
+  & label on every headline; a Cards ⇄ List view toggle (dense scannable list).
 - **52-week high/low scanner** — new `/tools/52-week-high-low` page: every stock
   at/near its 52W extreme, filterable by index segment (Nifty 50/100/200/500/All),
   EOD from golden + Industry-Score quality dot, links to each scorecard. Heavy

@@ -18,10 +18,25 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, LayoutGrid, Rows3 } from "lucide-react";
 import { band, bandColor } from "@/lib/score";
 
 export type NewsCategory = "stocks" | "policy" | "macro" | "markets" | "general";
+
+// Per-category accent colour — used on the filter tabs and as a left rail /
+// label on every headline so the feed is scannable by category at a glance.
+const CAT_META: Record<NewsCategory, { label: string; color: string }> = {
+  stocks:  { label: "Stocks",  color: "var(--color-accent-600)" }, // blue
+  policy:  { label: "Policy",  color: "var(--color-score-weak)" }, // orange
+  macro:   { label: "Macro",   color: "var(--color-score-good)" }, // green
+  markets: { label: "Markets", color: "#7c6dd0" },                 // purple
+  general: { label: "General", color: "var(--color-muted)" },
+};
+function catMeta(c: NewsCategory) {
+  return CAT_META[c] ?? CAT_META.general;
+}
+
+type ViewMode = "cards" | "list";
 
 /** A stock this headline is tagged to, carrying OUR context — the differentiator
  *  over a plain aggregator: the reader sees our Industry Score band + today's
@@ -92,6 +107,7 @@ export function NewsClient({
   watchlistCount: number;
 }) {
   const [cat, setCat] = useState<NewsCategory | "all">("all");
+  const [view, setView] = useState<ViewMode>("cards");
 
   const counts = useMemo(() => {
     const c: Record<string, number> = { all: news.length };
@@ -133,78 +149,53 @@ export function NewsClient({
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-6">
         {/* Feed */}
         <main className="order-2 lg:order-1 min-w-0">
-          <div role="tablist" aria-label="News categories" className="flex flex-wrap gap-1.5 mb-3">
-            {TABS.map((t) => {
-              const active = cat === t.id;
-              const n = counts[t.id] ?? 0;
-              if (t.id !== "all" && n === 0) return null; // hide empty categories
-              return (
-                <button
-                  key={t.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={active}
-                  onClick={() => setCat(t.id)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[12.5px] font-medium transition-colors border"
-                  style={
-                    active
-                      ? { background: "var(--color-accent-600)", color: "#fff", borderColor: "var(--color-accent-600)" }
-                      : { background: "transparent", color: "var(--color-muted)", borderColor: "var(--color-border-default)" }
-                  }
-                >
-                  {t.label}
-                  <span className="tabular-nums" style={{ opacity: 0.7 }}>{n}</span>
-                </button>
-              );
-            })}
+          <div className="flex items-start justify-between gap-2 mb-3">
+            <div role="tablist" aria-label="News categories" className="flex flex-wrap gap-1.5">
+              {TABS.map((t) => {
+                const active = cat === t.id;
+                const n = counts[t.id] ?? 0;
+                if (t.id !== "all" && n === 0) return null; // hide empty categories
+                // "All" uses the accent; each category uses its own hue.
+                const color = t.id === "all" ? "var(--color-accent-600)" : catMeta(t.id).color;
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => setCat(t.id)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[12.5px] font-medium transition-colors border"
+                    style={
+                      active
+                        ? { background: color, color: "#fff", borderColor: color }
+                        : { background: "transparent", color: "var(--color-muted)", borderColor: "var(--color-border-default)" }
+                    }
+                  >
+                    {t.id !== "all" && !active && (
+                      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: color }} />
+                    )}
+                    {t.label}
+                    <span className="tabular-nums" style={{ opacity: 0.7 }}>{n}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {/* View switcher — dense Cards grid vs a scannable List/timeline. */}
+            <div className="flex items-center gap-0.5 p-0.5 rounded-md border shrink-0" style={{ borderColor: "var(--color-border-default)" }}>
+              <ViewBtn active={view === "cards"} onClick={() => setView("cards")} label="Card view"><LayoutGrid size={14} /></ViewBtn>
+              <ViewBtn active={view === "list"} onClick={() => setView("list")} label="List view"><Rows3 size={14} /></ViewBtn>
+            </div>
           </div>
 
           {filtered.length === 0 ? (
             <div className="card p-6 muted-text text-[13px]">No headlines in this category yet.</div>
-          ) : (
+          ) : view === "cards" ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {filtered.map((n) => (
-                <div key={n.id} className="card p-3 h-full flex flex-col">
-                  <a
-                    href={n.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="group block"
-                  >
-                    <div className="flex items-center justify-between text-[10.5px] muted-text mb-1">
-                      <span className="flex items-center gap-1.5">
-                        <span className="tabular-nums">{ago(n.published_at)} ago</span>
-                        {n.related > 0 && (
-                          <span
-                            className="rounded px-1 py-[1px] text-[9.5px] tabular-nums"
-                            style={{ background: "color-mix(in srgb, var(--color-muted) 14%, transparent)" }}
-                            title={`${n.related} more outlet${n.related === 1 ? "" : "s"} covered this`}
-                          >
-                            +{n.related} related
-                          </span>
-                        )}
-                      </span>
-                      <ArrowUpRight size={12} className="opacity-50 shrink-0 group-hover:opacity-90 transition-opacity" />
-                    </div>
-                    <div className="text-[13.5px] font-medium leading-snug group-hover:underline">{n.title}</div>
-                    {n.summary && (
-                      <div className="muted-text text-[12px] mt-1 leading-snug line-clamp-2">{n.summary}</div>
-                    )}
-                  </a>
-                  {/* Our context — score band + 1D move per tagged stock. This is
-                      what makes it news WITH our read, not a plain headline. */}
-                  {n.tags.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-2 pt-2 border-t hairline">
-                      {n.tags.slice(0, 4).map((t) => (
-                        <StockChip key={t.symbol} tag={t} />
-                      ))}
-                      {n.tags.length > 4 && (
-                        <span className="text-[10px] muted-text self-center">+{n.tags.length - 4}</span>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ))}
+              {filtered.map((n) => <NewsCard key={n.id} n={n} />)}
+            </div>
+          ) : (
+            <div className="card overflow-hidden divide-y hairline">
+              {filtered.map((n) => <NewsRow key={n.id} n={n} />)}
             </div>
           )}
         </main>
@@ -255,6 +246,99 @@ export function NewsClient({
         )}
       </div>
     </>
+  );
+}
+
+/** Small icon toggle for the Cards/List view switcher. */
+function ViewBtn({
+  active, onClick, label, children,
+}: {
+  active: boolean; onClick: () => void; label: string; children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      aria-pressed={active}
+      title={label}
+      className="inline-flex items-center justify-center w-7 h-6 rounded transition-colors"
+      style={active ? { background: "var(--color-accent-600)", color: "#fff" } : { color: "var(--color-muted)" }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function RelatedBadge({ n }: { n: number }) {
+  return (
+    <span
+      className="rounded px-1 py-[1px] text-[9.5px] tabular-nums"
+      style={{ background: "color-mix(in srgb, var(--color-muted) 14%, transparent)" }}
+      title={`${n} more outlet${n === 1 ? "" : "s"} covered this`}
+    >
+      +{n} related
+    </span>
+  );
+}
+
+/** Our score-context chips under a headline. */
+function ChipRow({ tags, compact }: { tags: StockTag[]; compact?: boolean }) {
+  if (tags.length === 0) return null;
+  const max = compact ? 3 : 4;
+  return (
+    <div className={`flex flex-wrap gap-1 ${compact ? "mt-1.5" : "mt-2 pt-2 border-t hairline"}`}>
+      {tags.slice(0, max).map((t) => <StockChip key={t.symbol} tag={t} />)}
+      {tags.length > max && (
+        <span className="text-[10px] muted-text self-center">+{tags.length - max}</span>
+      )}
+    </div>
+  );
+}
+
+/** Cards view — dense 2-up card with a category colour rail + label. */
+function NewsCard({ n }: { n: FeedItem }) {
+  const meta = catMeta(n.category);
+  return (
+    <div className="card p-3 h-full flex flex-col" style={{ borderLeft: `3px solid ${meta.color}` }}>
+      <a href={n.url} target="_blank" rel="noopener noreferrer" className="group block">
+        <div className="flex items-center justify-between text-[10.5px] muted-text mb-1">
+          <span className="flex items-center gap-1.5">
+            <span className="uppercase tracking-wide font-semibold text-[9px]" style={{ color: meta.color }}>{meta.label}</span>
+            <span className="tabular-nums">{ago(n.published_at)} ago</span>
+            {n.related > 0 && <RelatedBadge n={n.related} />}
+          </span>
+          <ArrowUpRight size={12} className="opacity-50 shrink-0 group-hover:opacity-90 transition-opacity" />
+        </div>
+        <div className="text-[13.5px] font-medium leading-snug group-hover:underline">{n.title}</div>
+        {n.summary && (
+          <div className="muted-text text-[12px] mt-1 leading-snug line-clamp-2">{n.summary}</div>
+        )}
+      </a>
+      <ChipRow tags={n.tags} />
+    </div>
+  );
+}
+
+/** List view — a scannable single-column row with a category colour rail. */
+function NewsRow({ n }: { n: FeedItem }) {
+  const meta = catMeta(n.category);
+  return (
+    <div
+      className="px-3 py-2.5 hover:bg-[var(--color-paper)] transition-colors"
+      style={{ borderLeft: `3px solid ${meta.color}` }}
+    >
+      <a href={n.url} target="_blank" rel="noopener noreferrer" className="group block">
+        <div className="flex items-center gap-1.5 text-[10px] muted-text mb-0.5">
+          <span className="uppercase tracking-wide font-semibold text-[9px]" style={{ color: meta.color }}>{meta.label}</span>
+          <span className="tabular-nums">{ago(n.published_at)} ago</span>
+          {n.related > 0 && <RelatedBadge n={n.related} />}
+          <ArrowUpRight size={11} className="opacity-40 group-hover:opacity-80 transition-opacity" />
+        </div>
+        <div className="text-[13px] font-medium leading-snug group-hover:underline line-clamp-2">{n.title}</div>
+      </a>
+      <ChipRow tags={n.tags} compact />
+    </div>
   );
 }
 
