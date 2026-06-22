@@ -23,6 +23,17 @@ import { band, bandColor } from "@/lib/score";
 
 export type NewsCategory = "stocks" | "policy" | "macro" | "markets" | "general";
 
+/** A stock this headline is tagged to, carrying OUR context — the differentiator
+ *  over a plain aggregator: the reader sees our Industry Score band + today's
+ *  move right on the headline. `top` is the stock's standout pillar (tooltip). */
+export type StockTag = {
+  symbol: string;
+  company_name: string | null;
+  composite: number | null;
+  top: { label: "Q" | "V" | "M"; value: number } | null;
+  ret_1d: number | null;
+};
+
 export type FeedItem = {
   id: string;
   title: string;
@@ -32,6 +43,8 @@ export type FeedItem = {
   category: NewsCategory;
   /** count of near-identical headlines folded into this one */
   related: number;
+  /** stocks this headline mentions, with our score context (sorted best-first) */
+  tags: StockTag[];
 };
 export type TalkedItem = {
   symbol: string;
@@ -151,33 +164,46 @@ export function NewsClient({
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {filtered.map((n) => (
-                <a
-                  key={n.id}
-                  href={n.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block card p-3 hover:bg-[var(--color-paper)] transition-colors h-full"
-                >
-                  <div className="flex items-center justify-between text-[10.5px] muted-text mb-1">
-                    <span className="flex items-center gap-1.5">
-                      <span className="tabular-nums">{ago(n.published_at)} ago</span>
-                      {n.related > 0 && (
-                        <span
-                          className="rounded px-1 py-[1px] text-[9.5px] tabular-nums"
-                          style={{ background: "color-mix(in srgb, var(--color-muted) 14%, transparent)" }}
-                          title={`${n.related} more outlet${n.related === 1 ? "" : "s"} covered this`}
-                        >
-                          +{n.related} related
-                        </span>
+                <div key={n.id} className="card p-3 h-full flex flex-col">
+                  <a
+                    href={n.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="group block"
+                  >
+                    <div className="flex items-center justify-between text-[10.5px] muted-text mb-1">
+                      <span className="flex items-center gap-1.5">
+                        <span className="tabular-nums">{ago(n.published_at)} ago</span>
+                        {n.related > 0 && (
+                          <span
+                            className="rounded px-1 py-[1px] text-[9.5px] tabular-nums"
+                            style={{ background: "color-mix(in srgb, var(--color-muted) 14%, transparent)" }}
+                            title={`${n.related} more outlet${n.related === 1 ? "" : "s"} covered this`}
+                          >
+                            +{n.related} related
+                          </span>
+                        )}
+                      </span>
+                      <ArrowUpRight size={12} className="opacity-50 shrink-0 group-hover:opacity-90 transition-opacity" />
+                    </div>
+                    <div className="text-[13.5px] font-medium leading-snug group-hover:underline">{n.title}</div>
+                    {n.summary && (
+                      <div className="muted-text text-[12px] mt-1 leading-snug line-clamp-2">{n.summary}</div>
+                    )}
+                  </a>
+                  {/* Our context — score band + 1D move per tagged stock. This is
+                      what makes it news WITH our read, not a plain headline. */}
+                  {n.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-2 pt-2 border-t hairline">
+                      {n.tags.slice(0, 4).map((t) => (
+                        <StockChip key={t.symbol} tag={t} />
+                      ))}
+                      {n.tags.length > 4 && (
+                        <span className="text-[10px] muted-text self-center">+{n.tags.length - 4}</span>
                       )}
-                    </span>
-                    <ArrowUpRight size={12} className="opacity-50 shrink-0" />
-                  </div>
-                  <div className="text-[13.5px] font-medium leading-snug">{n.title}</div>
-                  {n.summary && (
-                    <div className="muted-text text-[12px] mt-1 leading-snug line-clamp-2">{n.summary}</div>
+                    </div>
                   )}
-                </a>
+                </div>
               ))}
             </div>
           )}
@@ -229,5 +255,41 @@ export function NewsClient({
         )}
       </div>
     </>
+  );
+}
+
+/** Compact "our context" chip on a headline: score-band dot · symbol · Industry
+ *  Score · today's move. Links to the stock's scorecard. Tooltip carries the
+ *  company name + the standout pillar. */
+function StockChip({ tag }: { tag: StockTag }) {
+  const dot = bandColor(band(tag.composite));
+  const moveColor =
+    tag.ret_1d == null
+      ? "var(--color-muted)"
+      : tag.ret_1d >= 0
+        ? "var(--color-delta-up)"
+        : "var(--color-delta-down)";
+  const title =
+    (tag.company_name ?? tag.symbol) +
+    (tag.composite != null ? ` · Industry Score ${Math.round(tag.composite)}` : "") +
+    (tag.top ? ` · strongest ${tag.top.label} ${Math.round(tag.top.value)}` : "");
+  return (
+    <Link
+      href={`/stock/${tag.symbol}`}
+      title={title}
+      className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10.5px] hover:bg-[var(--color-paper)] transition-colors"
+      style={{ borderColor: "var(--color-border-default)" }}
+    >
+      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: dot }} />
+      <span className="font-medium tabular-nums">{tag.symbol}</span>
+      {tag.composite != null && (
+        <span className="muted-text tabular-nums">{Math.round(tag.composite)}</span>
+      )}
+      {tag.ret_1d != null && (
+        <span className="tabular-nums" style={{ color: moveColor }}>
+          {tag.ret_1d >= 0 ? "+" : ""}{tag.ret_1d.toFixed(1)}%
+        </span>
+      )}
+    </Link>
   );
 }

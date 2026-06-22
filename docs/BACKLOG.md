@@ -28,6 +28,11 @@ Each item keeps its decision context so it can be picked up cold.
 
 ## ✅ Recently resolved (week of 2026-06-15 → 21)
 
+- **News redefinition #1 — score-aware cards** — every stock-tagged /news
+  headline now carries our context: a chip per stock with the Industry-Score
+  band dot, the score, and today's 1D move (golden), linking to the scorecard.
+  The differentiator over a plain aggregator. (Lanes / regulatory / threads =
+  the remaining "redefine news" ideas, still to build.)
 - **52-week high/low scanner** — new `/tools/52-week-high-low` page: every stock
   at/near its 52W extreme, filterable by index segment (Nifty 50/100/200/500/All),
   EOD from golden + Industry-Score quality dot, links to each scorecard. Heavy

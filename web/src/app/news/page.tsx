@@ -9,9 +9,9 @@
  * Fail-soft: missing tables → empty state, not a 500.
  */
 import { unstable_cache } from "next/cache";
-import { sql } from "@/lib/db";
+import { sql, golden } from "@/lib/db";
 import { getSession } from "@/lib/auth";
-import { NewsClient, type FeedItem, type NewsCategory, type TalkedItem, type WatchItem } from "./NewsClient";
+import { NewsClient, type FeedItem, type NewsCategory, type StockTag, type TalkedItem, type WatchItem } from "./NewsClient";
 
 // Reads the session cookie for the per-user watchlist sidebar, so the page
 // renders per-request. The heavy public queries stay cached via unstable_cache.
@@ -26,6 +26,14 @@ export const metadata = {
 type RawNews = {
   id: string; title: string; summary: string | null;
   url: string; published_at: string | null; symbols: string[];
+};
+
+// A clustered/collapsed headline before our score-context tags are attached.
+// Carries `symbols` (the stocks it mentions) so attachTags can look up context.
+type Enriched = {
+  id: string; title: string; summary: string | null; url: string;
+  published_at: string | null; category: NewsCategory; related: number;
+  symbols: string[];
 };
 
 async function loadNews(): Promise<RawNews[]> {
@@ -72,6 +80,96 @@ async function loadMostTalkedAbout(): Promise<TalkedItem[]> {
   }
 }
 const getTalked = unstable_cache(loadMostTalkedAbout, ["news-talked"], { revalidate: 300, tags: ["news"] });
+
+// ----- our context for tagged stocks (the differentiator) -----------------
+// Industry Score + standout pillar (from app.scores) and today's 1D move (from
+// the golden price archive), keyed by symbol. Loaded for ALL scored stocks and
+// cached, then looked up per headline — cheaper than a per-request ANY(list).
+
+type StockCtx = {
+  symbol: string; company_name: string | null;
+  c: number | null; q: number | null; v: number | null; m: number | null;
+};
+async function loadStockCtx(): Promise<StockCtx[]> {
+  try {
+    return await sql<StockCtx[]>`
+      SELECT u.symbol, u.company_name,
+             s.composite_pct AS c, s.quality_pct AS q,
+             s.valuation_pct AS v, s.momentum_pct AS m
+        FROM app.universe u
+        JOIN app.scores s
+          ON s.symbol = u.symbol
+         AND s.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
+    `;
+  } catch { return []; }
+}
+const getStockCtx = unstable_cache(loadStockCtx, ["news-stock-ctx"], { revalidate: 300, tags: ["news", "market"] });
+
+async function loadMoves1D(): Promise<{ symbol: string; ret_1d: number | null }[]> {
+  try {
+    return await golden<{ symbol: string; ret_1d: number | null }[]>`
+      WITH latest AS (SELECT MAX(date) AS d FROM golden.price_history WHERE interval='1d'),
+      prev AS (
+        SELECT MAX(date) AS d FROM golden.price_history
+         WHERE interval='1d' AND date < (SELECT d FROM latest)
+      ),
+      t AS (
+        SELECT REPLACE(symbol, '.NS', '') AS symbol, close
+          FROM golden.price_history, latest
+         WHERE interval='1d' AND date = latest.d
+      ),
+      p AS (
+        SELECT REPLACE(symbol, '.NS', '') AS symbol, close
+          FROM golden.price_history, prev
+         WHERE interval='1d' AND date = prev.d
+      )
+      SELECT t.symbol,
+             CASE WHEN p.close > 0 THEN ((t.close - p.close) / p.close * 100)::float ELSE NULL END AS ret_1d
+        FROM t LEFT JOIN p ON p.symbol = t.symbol
+    `;
+  } catch { return []; }
+}
+const getMoves1D = unstable_cache(loadMoves1D, ["news-moves-1d"], { revalidate: 300, tags: ["market"] });
+
+const PILLAR = { q: "Q", v: "V", m: "M" } as const;
+/** Strongest of the three pillars — a quick "what's this stock good at" cue. */
+function topPillar(x: StockCtx): StockTag["top"] {
+  const items: { label: "Q" | "V" | "M"; value: number | null }[] = [
+    { label: PILLAR.q, value: x.q }, { label: PILLAR.v, value: x.v }, { label: PILLAR.m, value: x.m },
+  ];
+  let best: { label: "Q" | "V" | "M"; value: number } | null = null;
+  for (const it of items) {
+    if (it.value != null && (best == null || it.value > best.value)) best = { label: it.label, value: it.value };
+  }
+  return best;
+}
+
+/** Attach our score-context tags to each enriched headline. */
+function attachTags(
+  items: Enriched[],
+  ctx: Map<string, StockCtx>,
+  moves: Map<string, number | null>,
+): FeedItem[] {
+  return items.map((n) => {
+    const tags: StockTag[] = n.symbols
+      .map((sym) => {
+        const x = ctx.get(sym);
+        return {
+          symbol: sym,
+          company_name: x?.company_name ?? null,
+          composite: x?.c ?? null,
+          top: x ? topPillar(x) : null,
+          ret_1d: moves.get(sym) ?? null,
+        };
+      })
+      // best Industry Score first, so the most recognizable/strong names lead
+      .sort((a, b) => (b.composite ?? -1) - (a.composite ?? -1));
+    return {
+      id: n.id, title: n.title, summary: n.summary, url: n.url,
+      published_at: n.published_at, category: n.category, related: n.related, tags,
+    };
+  });
+}
 
 // Per-user: headlines tagged to any stock on the signed-in user's watchlist.
 async function loadWatchlistNews(userId: number): Promise<WatchItem[]> {
@@ -159,9 +257,9 @@ function clusterByTitle<T extends { title: string }>(rows: T[]): (T & { related:
  *  tagged only to VEDL) from flooding the feed — token overlap is too low to
  *  cluster them, but they share the sole stock + window, so we fold them.
  *  Multi-stock headlines (market round-ups) are left alone. */
-function enrich(rows: RawNews[]): FeedItem[] {
+function enrich(rows: RawNews[]): Enriched[] {
   const clustered = clusterByTitle(rows);
-  const out: FeedItem[] = [];
+  const out: Enriched[] = [];
   const repBySymbol = new Map<string, number>(); // sole symbol → index in out
   for (const r of clustered) {
     const sole = r.symbols.length === 1 ? r.symbols[0] : null;
@@ -174,6 +272,7 @@ function enrich(rows: RawNews[]): FeedItem[] {
       id: r.id, title: r.title, summary: r.summary, url: r.url,
       published_at: r.published_at, related: r.related,
       category: classify(r.title, r.summary, r.symbols.length > 0),
+      symbols: r.symbols,
     });
   }
   return out;
@@ -181,19 +280,25 @@ function enrich(rows: RawNews[]): FeedItem[] {
 
 export default async function NewsPage() {
   const session = await getSession();
-  const [rawNews, talked] = await Promise.all([getNews(), getTalked()]);
+  const [rawNews, talked, ctxRows, moveRows] = await Promise.all([
+    getNews(), getTalked(), getStockCtx(), getMoves1D(),
+  ]);
   const [watchRaw, watchlistCount] = session
     ? await Promise.all([loadWatchlistNews(session.userId), loadWatchlistCount(session.userId)])
     : [[], 0];
   const watchNews = clusterByTitle(watchRaw);
-  const news = enrich(rawNews);
+
+  // Index our context by symbol, then attach to each headline.
+  const ctxMap = new Map(ctxRows.map((r) => [r.symbol, r]));
+  const moveMap = new Map(moveRows.map((r) => [r.symbol, r.ret_1d]));
+  const news = attachTags(enrich(rawNews), ctxMap, moveMap);
 
   return (
     <div className="mx-auto max-w-[1200px] px-4 md:px-6 py-6 md:py-8">
       <header className="mb-4">
         <h1 className="font-display text-[22px] md:text-[26px] leading-tight">Market News</h1>
         <p className="muted-text text-[12px] mt-1">
-          Aggregated market headlines · by category · links open the source
+          Headlines tagged to the stocks they mention — each with our Industry Score &amp; today&apos;s move
         </p>
       </header>
 
