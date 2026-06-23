@@ -560,12 +560,18 @@ function classify(s: Stock, windowBack: number): TrendSectionKey | null {
   // If we have <2 snapshots, no comparison is meaningful.
   if (windowBack < 2) return null;
 
-  // Building strength — sustained climb, current is fresh window-high, in respectable territory.
-  if (dC >= 10 && s.curr.c >= s.windowMaxC && s.curr.c >= 50) {
+  // Building strength — sustained climb, current is fresh window-high, in
+  // respectable territory, AND more weeks were up than down. The last gate
+  // prevents a single big-jump week (after 10 weeks of decline) from qualifying
+  // as "sustained" — the pattern must be majority-up across the window.
+  if (dC >= 10 && s.curr.c >= s.windowMaxC && s.curr.c >= 50
+      && s.stats.up > s.stats.down) {
     return "strength";
   }
-  // Losing ground — sustained slip, current is fresh window-low, below stronghold.
-  if (dC <= -10 && s.curr.c <= s.windowMinC && s.curr.c < 60) {
+  // Losing ground — sustained slip, current is fresh window-low, below
+  // stronghold, AND more weeks were down than up (same symmetry as above).
+  if (dC <= -10 && s.curr.c <= s.windowMinC && s.curr.c < 60
+      && s.stats.down > s.stats.up) {
     return "losing";
   }
   // Recent breakouts — just crossed top quartile.
