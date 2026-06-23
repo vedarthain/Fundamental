@@ -47,6 +47,7 @@ export type StockTag = {
   composite: number | null;
   top: { label: "Q" | "V" | "M"; value: number } | null;
   ret_1d: number | null;
+  price: number | null;
 };
 
 export type FeedItem = {
@@ -70,13 +71,6 @@ export type TalkedItem = {
   company_name: string | null;
   mentions: number;
   composite_pct: number | null;
-};
-export type WatchItem = {
-  id: string;
-  title: string;
-  url: string;
-  published_at: string | null;
-  related: number;
 };
 
 // "regulatory" is a pseudo-tab: it filters on the cross-cutting flag rather than
@@ -110,15 +104,9 @@ function ago(iso: string | null): string {
 export function NewsClient({
   news,
   talked,
-  watchNews,
-  signedIn,
-  watchlistCount,
 }: {
   news: FeedItem[];
   talked: TalkedItem[];
-  watchNews: WatchItem[];
-  signedIn: boolean;
-  watchlistCount: number;
 }) {
   const [cat, setCat] = useState<TabId>("all");
   const [view, setView] = useState<ViewMode>("cards");
@@ -189,9 +177,8 @@ export function NewsClient({
         </section>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-6">
-        {/* Feed */}
-        <main className="order-2 lg:order-1 min-w-0">
+      <div>
+        <main className="min-w-0">
           <div className="flex items-start justify-between gap-2 mb-3">
             <div role="tablist" aria-label="News categories" className="flex flex-wrap gap-1.5">
               {TABS.map((t) => {
@@ -320,51 +307,6 @@ export function NewsClient({
             </div>
           )}
         </main>
-
-        {/* Sidebar — watchlist news (sticky on desktop, first on mobile).
-            Shown whenever signed in, with an empty-state so it's never a
-            silent blank: distinguishes "empty watchlist" from "no news yet". */}
-        {signedIn && (
-          <aside className="order-1 lg:order-2 self-start lg:sticky lg:top-[88px]">
-            <section className="card p-3">
-              <div className="flex items-baseline justify-between mb-2">
-                <div className="text-[11px] uppercase tracking-wide font-semibold" style={{ color: "var(--color-accent-700)" }}>
-                  Your watchlist
-                </div>
-                <Link href="/watchlist" className="text-[10.5px] muted-text hover:underline">Manage →</Link>
-              </div>
-              {watchNews.length > 0 ? (
-                <div className="divide-y hairline overflow-y-auto lg:max-h-[calc(100vh-150px)] -mr-1 pr-1">
-                  {watchNews.map((n) => (
-                    <a
-                      key={n.id}
-                      href={n.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="block py-2 first:pt-0 last:pb-0 hover:opacity-80 transition-opacity"
-                    >
-                      <div className="text-[10px] muted-text tabular-nums mb-0.5">
-                        {ago(n.published_at)} ago{n.related > 0 ? ` · +${n.related} related` : ""}
-                      </div>
-                      <div className="text-[12.5px] leading-snug">{n.title}</div>
-                    </a>
-                  ))}
-                </div>
-              ) : watchlistCount === 0 ? (
-                <p className="text-[12px] muted-text leading-snug">
-                  Your watchlist is empty.{" "}
-                  <Link href="/sectors" className="underline" style={{ color: "var(--color-accent-600)" }}>Add stocks</Link>{" "}
-                  and headlines that mention them will show up here.
-                </p>
-              ) : (
-                <p className="text-[12px] muted-text leading-snug">
-                  No recent headlines mention your {watchlistCount} watched stock{watchlistCount === 1 ? "" : "s"} yet —
-                  we tag news to stocks as it comes in (best for large/mid caps).
-                </p>
-              )}
-            </section>
-          </aside>
-        )}
       </div>
     </>
   );
@@ -522,9 +464,9 @@ function NewsRow({ n }: { n: FeedItem }) {
   );
 }
 
-/** Compact "our context" chip on a headline: score-band dot · symbol · Industry
- *  Score · today's move. Links to the stock's scorecard. Tooltip carries the
- *  company name + the standout pillar. */
+/** Compact "our context" chip on a headline: score-band dot · symbol ·
+ *  current price · Industry Score · today's move. Links to the stock's
+ *  scorecard. Tooltip carries the company name + the standout pillar. */
 function StockChip({ tag }: { tag: StockTag }) {
   const dot = bandColor(band(tag.composite));
   const moveColor =
@@ -533,8 +475,16 @@ function StockChip({ tag }: { tag: StockTag }) {
       : tag.ret_1d >= 0
         ? "var(--color-delta-up)"
         : "var(--color-delta-down)";
+  // Compact price: no decimal for ≥100, one decimal for <100 (e.g. ₹2,340 / ₹84.5)
+  const priceStr =
+    tag.price == null
+      ? null
+      : tag.price >= 100
+        ? `₹${Math.round(tag.price).toLocaleString("en-IN")}`
+        : `₹${tag.price.toFixed(1)}`;
   const title =
     (tag.company_name ?? tag.symbol) +
+    (tag.price != null ? ` · ₹${tag.price.toFixed(2)}` : "") +
     (tag.composite != null ? ` · Industry Score ${Math.round(tag.composite)}` : "") +
     (tag.top ? ` · strongest ${tag.top.label} ${Math.round(tag.top.value)}` : "");
   return (
@@ -546,6 +496,9 @@ function StockChip({ tag }: { tag: StockTag }) {
     >
       <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: dot }} />
       <span className="font-medium tabular-nums">{tag.symbol}</span>
+      {priceStr && (
+        <span className="muted-text tabular-nums">{priceStr}</span>
+      )}
       {tag.composite != null && (
         <span className="muted-text tabular-nums">{Math.round(tag.composite)}</span>
       )}

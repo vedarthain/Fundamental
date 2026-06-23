@@ -72,15 +72,19 @@ DENY_RE = re.compile(
 # product; stock in focus" or "Nifty target cut by Citi" untouched.
 RECO_RE = re.compile(
     "|".join([
-        r"\bstocks?\s+to\s+(buy|sell|bet|grab|add)\b",
-        r"\b\d+\s+stocks?\s+to\s+(buy|sell|bet|grab|add|watch)\b",
+        # "stocks/shares to buy/sell" — covers both noun forms
+        r"\b(?:stocks?|shares?)\s+to\s+(buy|sell|bet|grab|add)\b",
+        r"\b\d+\s+(?:stocks?|shares?)\s+to\s+(buy|sell|bet|grab|add|watch)\b",
+        # "recommends [N] stocks/shares to buy" — analyst tip framing
+        r"\brecommends?\s+(?:\w+\s+){0,3}(?:stocks?|shares?)\s+to\s+(buy|sell)\b",
         r"\btop\s+(stock\s+)?picks?\b", r"\bstock\s+picks?\b",
         r"\bbuy\s+or\s+sell\b", r"\bshould\s+you\s+(buy|sell|invest)\b",
         r"\bmulti-?bagger\w*", r"\bstock\s+tips?\b",
         r"\b(stock|share)\s+recommendations?\b",
         r"\btrade\s+setups?\b", r"\btrading\s+guide\b",
         r"\bf&o\s+(strateg|pick|trade)\w*", r"\bintraday\s+(pick|tip|trade)\w*",
-        r"\bbuy\s+this\s+stock\b", r"\bbest\s+stocks?\s+to\b", r"\bhot\s+stocks?\b",
+        r"\bbuy\s+this\s+stock\b",
+        r"\bbest\s+(?:stocks?|shares?)\s+to\b", r"\bhot\s+stocks?\b",
     ]),
     re.I,
 )

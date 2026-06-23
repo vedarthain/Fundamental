@@ -10,11 +10,8 @@
  */
 import { unstable_cache } from "next/cache";
 import { sql, golden } from "@/lib/db";
-import { getSession } from "@/lib/auth";
-import { NewsClient, type FeedItem, type NewsCategory, type StockTag, type TalkedItem, type WatchItem } from "./NewsClient";
+import { NewsClient, type FeedItem, type NewsCategory, type StockTag, type TalkedItem } from "./NewsClient";
 
-// Reads the session cookie for the per-user watchlist sidebar, so the page
-// renders per-request. The heavy public queries stay cached via unstable_cache.
 export const dynamic = "force-dynamic";
 
 export const metadata = {
@@ -107,9 +104,9 @@ async function loadStockCtx(): Promise<StockCtx[]> {
 }
 const getStockCtx = unstable_cache(loadStockCtx, ["news-stock-ctx"], { revalidate: 300, tags: ["news", "market"] });
 
-async function loadMoves1D(): Promise<{ symbol: string; ret_1d: number | null }[]> {
+async function loadMoves1D(): Promise<{ symbol: string; ret_1d: number | null; price: number | null }[]> {
   try {
-    return await golden<{ symbol: string; ret_1d: number | null }[]>`
+    return await golden<{ symbol: string; ret_1d: number | null; price: number | null }[]>`
       WITH latest AS (SELECT MAX(date) AS d FROM golden.price_history WHERE interval='1d'),
       prev AS (
         SELECT MAX(date) AS d FROM golden.price_history
@@ -126,6 +123,7 @@ async function loadMoves1D(): Promise<{ symbol: string; ret_1d: number | null }[
          WHERE interval='1d' AND date = prev.d
       )
       SELECT t.symbol,
+             t.close::float AS price,
              CASE WHEN p.close > 0 THEN ((t.close - p.close) / p.close * 100)::float ELSE NULL END AS ret_1d
         FROM t LEFT JOIN p ON p.symbol = t.symbol
     `;
@@ -150,18 +148,20 @@ function topPillar(x: StockCtx): StockTag["top"] {
 function attachTags(
   items: Enriched[],
   ctx: Map<string, StockCtx>,
-  moves: Map<string, number | null>,
+  moves: Map<string, { ret_1d: number | null; price: number | null }>,
 ): FeedItem[] {
   return items.map((n) => {
     const tags: StockTag[] = n.symbols
       .map((sym) => {
         const x = ctx.get(sym);
+        const mv = moves.get(sym);
         return {
           symbol: sym,
           company_name: x?.company_name ?? null,
           composite: x?.c ?? null,
           top: x ? topPillar(x) : null,
-          ret_1d: moves.get(sym) ?? null,
+          ret_1d: mv?.ret_1d ?? null,
+          price: mv?.price ?? null,
         };
       })
       // best Industry Score first, so the most recognizable/strong names lead
@@ -172,37 +172,6 @@ function attachTags(
       regulatory: n.regulatory, sentiment: n.sentiment, tags,
     };
   });
-}
-
-// Per-user: headlines tagged to any stock on the signed-in user's watchlist.
-async function loadWatchlistNews(userId: number): Promise<WatchItem[]> {
-  try {
-    return await sql<WatchItem[]>`
-      SELECT n.id, n.title, n.url, n.published_at::text
-        FROM app.news n
-       WHERE n.id IN (
-               SELECT ns.news_id FROM app.news_stock ns
-                WHERE ns.symbol IN (SELECT symbol FROM app.user_watchlist WHERE user_id = ${userId})
-             )
-       ORDER BY n.published_at DESC NULLS LAST
-       LIMIT 20
-    `;
-  } catch {
-    return [];
-  }
-}
-
-/** How many stocks the user watches — to tell "empty watchlist" apart from
- *  "watchlist has stocks but none are in the news right now". */
-async function loadWatchlistCount(userId: number): Promise<number> {
-  try {
-    const r = await sql<{ n: number }[]>`
-      SELECT COUNT(*)::int AS n FROM app.user_watchlist WHERE user_id = ${userId}
-    `;
-    return r[0]?.n ?? 0;
-  } catch {
-    return 0;
-  }
 }
 
 // ----- categorisation + dedup (rule-based; no LLM) ------------------------
@@ -357,14 +326,25 @@ function clusterByTitle<T extends { title: string }>(rows: T[]): (T & { related:
   return reps;
 }
 
-/** Build the feed: (1) cluster near-identical titles, then (2) collapse
- *  repeated SINGLE-stock stories into one card. Step 2 is what stops one busy
- *  name (e.g. a Vedanta demerger spawning 6 differently-worded headlines, all
- *  tagged only to VEDL) from flooding the feed — token overlap is too low to
- *  cluster them, but they share the sole stock + window, so we fold them.
- *  Multi-stock headlines (market round-ups) are left alone. */
+// Display-time recommendation / tip filter — a second line of defence that
+// drops any headline that slipped through the ingest filter (old rows, RSS
+// encoding quirks). Keep in sync with RECO_RE in scripts/fetch-news.py.
+// "shares?" added alongside "stocks?" to catch "Shares to buy or sell" form.
+const DISPLAY_RECO_RE = /\b(?:stocks?|shares?)\s+to\s+(?:buy|sell|bet|grab|add)\b|\b\d+\s+(?:stocks?|shares?)\s+to\s+(?:buy|sell|bet|grab|add|watch)\b|\brecommends?\s+(?:\w+\s+){0,3}(?:stocks?|shares?)\s+to\s+(?:buy|sell)\b|\btop\s+(?:stock\s+)?picks?\b|\bstock\s+picks?\b|\bbuy\s+or\s+sell\b|\bshould\s+you\s+(?:buy|sell|invest)\b|\bmulti-?bagger\w*|\bstock\s+tips?\b|\b(?:stock|share)\s+recommendations?\b|\btrade\s+setups?\b|\btrading\s+guide\b|\bf&o\s+(?:strateg|pick|trade)\w*|\bintraday\s+(?:pick|tip|trade)\w*|\bbuy\s+this\s+stock\b|\bbest\s+(?:stocks?|shares?)\s+to\b|\bhot\s+stocks?\b/i;
+
+/** Build the feed: (1) drop recommendation/tip headlines, (2) cluster
+ *  near-identical titles, then (3) collapse repeated SINGLE-stock stories
+ *  into one card. Step 3 is what stops one busy name (e.g. a Vedanta demerger
+ *  spawning 6 differently-worded headlines, all tagged only to VEDL) from
+ *  flooding the feed — token overlap is too low to cluster them, but they
+ *  share the sole stock + window, so we fold them. Multi-stock headlines
+ *  (market round-ups) are left alone. */
 function enrich(rows: RawNews[]): Enriched[] {
-  const clustered = clusterByTitle(rows);
+  // Drop tip/recommendation headlines at display time (defence-in-depth).
+  const noReco = rows.filter(
+    (r) => !DISPLAY_RECO_RE.test(`${r.title} ${r.summary ?? ""}`),
+  );
+  const clustered = clusterByTitle(noReco);
   const out: Enriched[] = [];
   const repBySymbol = new Map<string, number>(); // sole symbol → index in out
   for (const r of clustered) {
@@ -387,18 +367,13 @@ function enrich(rows: RawNews[]): Enriched[] {
 }
 
 export default async function NewsPage() {
-  const session = await getSession();
   const [rawNews, talked, ctxRows, moveRows] = await Promise.all([
     getNews(), getTalked(), getStockCtx(), getMoves1D(),
   ]);
-  const [watchRaw, watchlistCount] = session
-    ? await Promise.all([loadWatchlistNews(session.userId), loadWatchlistCount(session.userId)])
-    : [[], 0];
-  const watchNews = clusterByTitle(watchRaw);
 
   // Index our context by symbol, then attach to each headline.
   const ctxMap = new Map(ctxRows.map((r) => [r.symbol, r]));
-  const moveMap = new Map(moveRows.map((r) => [r.symbol, r.ret_1d]));
+  const moveMap = new Map(moveRows.map((r) => [r.symbol, { ret_1d: r.ret_1d, price: r.price }]));
   const news = attachTags(enrich(rawNews), ctxMap, moveMap);
 
   return (
@@ -406,14 +381,14 @@ export default async function NewsPage() {
       <header className="mb-4">
         <h1 className="font-display text-[22px] md:text-[26px] leading-tight">Market News</h1>
         <p className="muted-text text-[12px] mt-1">
-          Headlines tagged to the stocks they mention — each with our Industry Score &amp; today&apos;s move
+          Headlines tagged to the stocks they mention — each with our Industry Score, price &amp; today&apos;s move
         </p>
       </header>
 
       {news.length === 0 ? (
         <div className="card p-6 muted-text text-[13px]">No headlines yet.</div>
       ) : (
-        <NewsClient news={news} talked={talked} watchNews={watchNews} signedIn={!!session} watchlistCount={watchlistCount} />
+        <NewsClient news={news} talked={talked} />
       )}
     </div>
   );
