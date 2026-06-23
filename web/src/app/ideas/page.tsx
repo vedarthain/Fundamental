@@ -21,6 +21,7 @@ import {
   Activity, Trophy, CalendarDays,
 } from "lucide-react";
 import { band, bandColor, tierLabel } from "@/lib/score";
+import { getOIAlerts } from "@/lib/oi-alerts";
 import { Sparkline, type SparkPoint } from "@/components/Sparkline";
 import { WatchlistButton } from "@/components/WatchlistButton";
 
@@ -82,6 +83,9 @@ type Stock = {
   stats: TrendStats;
   // Quarterly shareholding deltas (null when ETL hasn't captured 2 quarters yet)
   share: ShareSnap | null;
+  /** True when the latest quarter contains a large one-time "other income"
+   *  that may have temporarily inflated the composite score. */
+  oiAlert: boolean;
 };
 
 /** Consistency descriptors derived from a composite trail (oldest → newest). */
@@ -321,7 +325,19 @@ async function loadIdeas(tier: IdxTier) {
       // 12-week trail for visual context.
       stats: trendStats(trail.slice(-windowBack)),
       share: shareBySymbol.get(symbol) ?? null,
+      oiAlert: false, // populated in the batch check below
     });
+  }
+
+  // Step 3 — batch OI spike check.  One DB round-trip for all loaded symbols.
+  // Marks stocks whose latest quarter contains a large one-time "other income"
+  // that may have temporarily inflated their composite score.
+  if (stocks.length > 0) {
+    const allSymbols = stocks.map((s) => s.symbol);
+    const oiFlagged = await getOIAlerts(allSymbols);
+    for (const s of stocks) {
+      if (oiFlagged.has(s.symbol)) s.oiAlert = true;
+    }
   }
 
   return {
@@ -1625,6 +1641,15 @@ function Row({ stock, rank, section }: { stock: Stock; rank: number; section: Se
           <div className="text-[12px] mt-1.5 ml-[22px] leading-[1.5]" style={{ color: "var(--color-ink)" }}>
             {why}
           </div>
+          {stock.oiAlert && (
+            <div
+              className="inline-flex items-center gap-1 mt-1.5 ml-[22px] text-[10.5px] font-medium rounded px-1.5 py-0.5"
+              style={{ background: "color-mix(in srgb, #b45309 12%, transparent)", color: "#92400e" }}
+            >
+              <AlertTriangle size={10} strokeWidth={2.4} />
+              Score may include one-time income
+            </div>
+          )}
         </div>
 
         {/* Right: sparkline (with peer overlay) + score delta + trend badges */}

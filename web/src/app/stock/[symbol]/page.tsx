@@ -18,6 +18,8 @@ import { StockActionsTabs } from "@/components/StockActionsTabs";
 import { TrendSection, TrendCommentary } from "@/components/TrendSection";
 import { ScoreHistoryChart, type ScoreHistoryPoint } from "@/components/ScoreHistoryChart";
 import { loadPersistenceForSymbol } from "@/lib/persistence";
+import { getOIAlertForSymbol, type OIAlert } from "@/lib/oi-alerts";
+import { AlertTriangle } from "lucide-react";
 
 // Stock fundamentals + scores change weekly at most. 6h cache cuts Neon wakes
 // significantly — with 2,000+ stock pages each revalidating at 30min, the
@@ -227,6 +229,11 @@ async function loadStock(symbol: string) {
     ORDER BY s.snapshot_date ASC
   `;
 
+  // OI spike check — detects quarters where a large one-time "other income"
+  // has inflated net profit and downstream scoring metrics (P/E, CAGR, ROE).
+  // Financial-sector stocks are excluded (their investment income is structural).
+  const oiAlert = await getOIAlertForSymbol(upper, stock.sector_id);
+
   // Scorecard for this (cluster, tier) — needed to build the SHAP waterfall weights
   const scRow = await sql<Scorecard[]>`
     SELECT pillar_weights, quality, valuation, momentum
@@ -316,7 +323,7 @@ async function loadStock(symbol: string) {
 
   return {
     stock, scorecard, annual, quarterly, priceHistory, intradayTicks, shareholding,
-    corporateActions, stockNews, announcements, scoreHistory,
+    corporateActions, stockNews, announcements, scoreHistory, oiAlert,
     peerMedianComposite: peerStats[0]?.median ?? 50,
     rankInIndustry: peerStats[0]?.rank ?? null,
     industryPeerCount: peerStats[0]?.peer_count ?? null,
@@ -334,7 +341,7 @@ export default async function StockPage({
     loadPersistenceForSymbol(symbol),
   ]);
   if (!data) return notFound();
-  const { stock, scorecard, annual, quarterly, priceHistory, intradayTicks, shareholding, corporateActions, stockNews, announcements, scoreHistory, rankInIndustry, industryPeerCount } = data;
+  const { stock, scorecard, annual, quarterly, priceHistory, intradayTicks, shareholding, corporateActions, stockNews, announcements, scoreHistory, oiAlert, rankInIndustry, industryPeerCount } = data;
 
   // Some app.universe.company_name rows are polluted with the ".NS" Yahoo
   // suffix (e.g. "INFY.NS"). Strip it once here so every downstream render —
@@ -556,6 +563,27 @@ export default async function StockPage({
           {tierLabel(stock.maturity_tier)} — where this stock ranks within its
           industry, not the whole market. Not a buy/sell recommendation.
         </p>
+      )}
+
+      {/* One-time other income alert — shown when the latest quarter contains a
+          large non-recurring "other income" that inflates net profit and
+          downstream metrics (P/E TTM, CAGR, ROE).  Score may normalize once
+          this quarter rolls out of the trailing window. */}
+      {oiAlert && (
+        <div
+          className="flex items-start gap-2.5 px-3.5 py-2.5 rounded-md mt-3 text-[12.5px] leading-snug"
+          style={{ background: "color-mix(in srgb, #b45309 10%, transparent)", color: "#92400e" }}
+        >
+          <AlertTriangle size={14} className="shrink-0 mt-[1px]" strokeWidth={2.2} />
+          <span>
+            <strong>Score alert — one-time other income:</strong>{" "}
+            The {oiAlert.period_end.slice(0, 7)} quarter reported ₹{Math.round(oiAlert.oi_cr).toLocaleString("en-IN")} Cr
+            in other income — {oiAlert.spike_ratio.toFixed(0)}× the 8-quarter average and{" "}
+            {Math.round(oiAlert.oi_pct_pbt)}% of pre-tax profit.
+            Metrics derived from net profit (P/E, CAGR, ROE) may be temporarily elevated
+            until this quarter rolls out of the trailing window.
+          </span>
+        </div>
       )}
 
       <StockPageTabs
