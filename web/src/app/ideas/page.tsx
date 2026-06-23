@@ -24,9 +24,8 @@ import { band, bandColor, tierLabel } from "@/lib/score";
 import { Sparkline, type SparkPoint } from "@/components/Sparkline";
 import { WatchlistButton } from "@/components/WatchlistButton";
 
-// Temporarily 60s to force immediate cache bust after the consistency-gate
-// fix. Restore to 21600 once confirmed Wipro is gone.
-export const revalidate = 60;
+// Score data changes weekly. 6h ISR cache avoids waking Neon on every visit.
+export const revalidate = 21600;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -632,7 +631,10 @@ function whyLine(s: Stock, section?: SectionKey): string {
     return `FII stake ${s.share.fiiPrev.toFixed(1)}% → ${s.share.fii.toFixed(1)}% (+${delta.toFixed(1)}pp QoQ).`;
   }
 
-  // Fallback (and default for trend buckets): biggest pillar delta.
+  // Fallback (and default for trend buckets): biggest pillar delta — but
+  // section-aware so the narrative matches the direction of the bucket.
+  // "Building Strength" should say what ROSE, not what slipped.
+  // "Losing Ground" should say what FELL, not what improved.
   const dq = s.curr.q - s.then.q;
   const dv = s.curr.v - s.then.v;
   const dm = s.curr.m - s.then.m;
@@ -642,9 +644,22 @@ function whyLine(s: Stock, section?: SectionKey): string {
     { key: "V", delta: dv, curr: s.curr.v },
     { key: "M", delta: dm, curr: s.curr.m },
   ];
-  const biggest = items.reduce((acc, it) =>
-    Math.abs(it.delta) > Math.abs(acc.delta) ? it : acc,
-  );
+  const pos = items.filter((it) => it.delta > 0);
+  const neg = items.filter((it) => it.delta < 0);
+  const byAbsDesc = (acc: typeof items[0], it: typeof items[0]) =>
+    Math.abs(it.delta) > Math.abs(acc.delta) ? it : acc;
+
+  let biggest: typeof items[0];
+  if ((section === "strength" || section === "breakout") && pos.length > 0) {
+    // Lead with what drove the score UP — biggest positive mover.
+    biggest = pos.reduce((acc, it) => it.delta > acc.delta ? it : acc);
+  } else if ((section === "losing" || section === "breakdown") && neg.length > 0) {
+    // Lead with what drove the score DOWN — biggest negative mover.
+    biggest = neg.reduce((acc, it) => it.delta < acc.delta ? it : acc);
+  } else {
+    // Themed buckets or edge-case (all pillars flat/opposite): biggest absolute.
+    biggest = items.reduce(byAbsDesc);
+  }
 
   const label = biggest.key === "Q" ? "Quality" : biggest.key === "V" ? "Valuation" : "Momentum";
   const dir = biggest.delta >= 0 ? "up" : "down";
