@@ -24,9 +24,9 @@ import { band, bandColor, tierLabel } from "@/lib/score";
 import { Sparkline, type SparkPoint } from "@/components/Sparkline";
 import { WatchlistButton } from "@/components/WatchlistButton";
 
-// Score data changes weekly. 6h ISR cache avoids waking Neon on every visit.
-// force-dynamic removed — this page has no per-request searchParams/cookies.
-export const revalidate = 21600;
+// Temporarily 60s to force immediate cache bust after the consistency-gate
+// fix. Restore to 21600 once confirmed Wipro is gone.
+export const revalidate = 60;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -560,18 +560,19 @@ function classify(s: Stock, windowBack: number): TrendSectionKey | null {
   // If we have <2 snapshots, no comparison is meaningful.
   if (windowBack < 2) return null;
 
-  // Building strength — sustained climb, current is fresh window-high, in
-  // respectable territory, AND more weeks were up than down. The last gate
-  // prevents a single big-jump week (after 10 weeks of decline) from qualifying
-  // as "sustained" — the pattern must be majority-up across the window.
+  const t = Math.max(1, s.stats.transitions);
+  // Building strength — sustained climb: fresh window-high, in respectable
+  // territory, AND at least 40% of weeks were up. The ratio gate blocks a
+  // single-week spike (or flat-then-jump: e.g. 1/11 up scores 9% — well
+  // below the 40% floor). Symmetrical with score-movers' 60% gate.
   if (dC >= 10 && s.curr.c >= s.windowMaxC && s.curr.c >= 50
-      && s.stats.up > s.stats.down) {
+      && s.stats.up / t >= 0.4) {
     return "strength";
   }
-  // Losing ground — sustained slip, current is fresh window-low, below
-  // stronghold, AND more weeks were down than up (same symmetry as above).
+  // Losing ground — sustained slip: fresh window-low, soft territory, AND at
+  // least 40% of weeks were down.
   if (dC <= -10 && s.curr.c <= s.windowMinC && s.curr.c < 60
-      && s.stats.down > s.stats.up) {
+      && s.stats.down / t >= 0.4) {
     return "losing";
   }
   // Recent breakouts — just crossed top quartile.
