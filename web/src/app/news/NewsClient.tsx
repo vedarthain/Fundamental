@@ -18,7 +18,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowUpRight, LayoutGrid, Rows3, ShieldAlert } from "lucide-react";
+import { ArrowUpRight, LayoutGrid, Rows3, Scale } from "lucide-react";
 import { band, bandColor } from "@/lib/score";
 
 export type NewsCategory = "stocks" | "policy" | "macro" | "markets" | "general";
@@ -81,7 +81,10 @@ export type WatchItem = {
 // the (mutually-exclusive) category, so an enforcement story shows here AND under
 // its own category.
 type TabId = NewsCategory | "all" | "regulatory";
-const REG_COLOR = "var(--color-score-poor)"; // red — a risk/alert lane
+// Deliberately NEUTRAL (muted grey), not red. This is a TOPIC label on the news
+// ("this story is a regulatory/legal matter"), never a verdict on the company —
+// most items are allegations or interim orders, not findings.
+const REG_COLOR = "var(--color-muted)";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "all", label: "All" },
@@ -186,11 +189,11 @@ export function NewsClient({
                     style={
                       active
                         ? { background: color, color: "#fff", borderColor: color }
-                        : { background: "transparent", color: t.id === "regulatory" ? REG_COLOR : "var(--color-muted)", borderColor: t.id === "regulatory" ? "color-mix(in srgb, var(--color-score-poor) 45%, transparent)" : "var(--color-border-default)" }
+                        : { background: "transparent", color: "var(--color-muted)", borderColor: "var(--color-border-default)" }
                     }
                   >
                     {t.id === "regulatory" ? (
-                      <ShieldAlert size={12} strokeWidth={2.2} />
+                      <Scale size={12} strokeWidth={2} />
                     ) : t.id !== "all" && !active ? (
                       <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: color }} />
                     ) : null}
@@ -209,18 +212,18 @@ export function NewsClient({
 
           {cat === "regulatory" && (
             <div
-              className="mb-3 px-3 py-2 rounded-md text-[11.5px] leading-snug flex items-start gap-2"
+              className="mb-3 px-3 py-2 rounded-md text-[11.5px] leading-snug flex items-start gap-2 muted-text"
               style={{
-                color: REG_COLOR,
-                background: "color-mix(in srgb, var(--color-score-poor) 7%, transparent)",
-                border: "1px solid color-mix(in srgb, var(--color-score-poor) 25%, transparent)",
+                background: "color-mix(in srgb, var(--color-muted) 7%, transparent)",
+                border: "1px solid var(--color-border-default)",
               }}
             >
-              <ShieldAlert size={14} className="mt-[1px] shrink-0" />
+              <Scale size={14} className="mt-[1px] shrink-0" />
               <span>
-                Headlines flagged as SEBI/exchange enforcement or a governance red flag — a
-                keyword heuristic, <strong>not a verdict</strong>. Always read the actual order or
-                filing before acting.
+                Stories that involve a regulatory or legal matter — <strong>often an allegation
+                or interim order, not a final finding</strong>. This is a keyword heuristic to help
+                you notice them, not a verdict on any company. Always read the actual order or
+                filing yourself.
               </span>
             </div>
           )}
@@ -320,15 +323,17 @@ function RelatedBadge({ n }: { n: number }) {
   );
 }
 
-/** Red flag shown on any headline our enforcement/governance detector trips. */
+/** Neutral topic tag on any headline our regulatory/governance detector trips.
+ *  Grey, not red — it labels the NEWS TOPIC, never the company. Most such items
+ *  are allegations or interim orders, not findings. */
 function RegBadge() {
   return (
     <span
-      className="inline-flex items-center gap-0.5 rounded px-1 py-[1px] text-[9px] font-semibold uppercase tracking-wide"
-      style={{ color: REG_COLOR, background: "color-mix(in srgb, var(--color-score-poor) 12%, transparent)" }}
-      title="Regulatory / governance — SEBI or exchange action, or a governance red flag. Verify the filing yourself."
+      className="inline-flex items-center gap-0.5 rounded px-1 py-[1px] text-[9px] font-semibold uppercase tracking-wide muted-text"
+      style={{ background: "color-mix(in srgb, var(--color-muted) 14%, transparent)" }}
+      title="This story involves a regulatory or legal matter — often an allegation or interim order, not a final finding. Read the filing; not a verdict on the company."
     >
-      <ShieldAlert size={9} strokeWidth={2.4} /> Reg
+      <Scale size={9} strokeWidth={2.2} /> Reg
     </span>
   );
 }
