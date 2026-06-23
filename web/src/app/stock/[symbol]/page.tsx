@@ -16,6 +16,7 @@ import { BusinessVisual } from "@/components/BusinessVisual";
 import { StockPageTabs } from "@/components/StockPageTabs";
 import { StockActionsTabs } from "@/components/StockActionsTabs";
 import { TrendSection, TrendCommentary } from "@/components/TrendSection";
+import { ScoreHistoryChart, type ScoreHistoryPoint } from "@/components/ScoreHistoryChart";
 import { loadPersistenceForSymbol } from "@/lib/persistence";
 
 // Stock fundamentals + scores change weekly at most. 6h cache cuts Neon wakes
@@ -202,6 +203,30 @@ async function loadStock(symbol: string) {
     FROM peers
   `;
 
+  // Full score history — all weekly snapshots for this symbol from app.scores,
+  // oldest to newest.  The LEFT JOIN computes the peer-cluster composite average
+  // at each snapshot using the stock's current cluster_id (stable in practice).
+  // Used by the Score history chart on the Trend tab.
+  const scoreHistory = await sql<ScoreHistoryPoint[]>`
+    SELECT
+      s.snapshot_date::text,
+      s.composite_pct::float AS composite_pct,
+      s.quality_pct::float   AS quality_pct,
+      s.valuation_pct::float AS valuation_pct,
+      s.momentum_pct::float  AS momentum_pct,
+      ca.avg_composite       AS cluster_avg
+    FROM app.scores s
+    LEFT JOIN (
+      SELECT snapshot_date, AVG(composite_pct)::float AS avg_composite
+        FROM app.scores
+       WHERE cluster_id = ${stock.industry_id}
+         AND composite_pct IS NOT NULL
+       GROUP BY snapshot_date
+    ) ca ON ca.snapshot_date = s.snapshot_date
+    WHERE s.symbol = ${upper}
+    ORDER BY s.snapshot_date ASC
+  `;
+
   // Scorecard for this (cluster, tier) — needed to build the SHAP waterfall weights
   const scRow = await sql<Scorecard[]>`
     SELECT pillar_weights, quality, valuation, momentum
@@ -291,7 +316,7 @@ async function loadStock(symbol: string) {
 
   return {
     stock, scorecard, annual, quarterly, priceHistory, intradayTicks, shareholding,
-    corporateActions, stockNews, announcements,
+    corporateActions, stockNews, announcements, scoreHistory,
     peerMedianComposite: peerStats[0]?.median ?? 50,
     rankInIndustry: peerStats[0]?.rank ?? null,
     industryPeerCount: peerStats[0]?.peer_count ?? null,
@@ -309,7 +334,7 @@ export default async function StockPage({
     loadPersistenceForSymbol(symbol),
   ]);
   if (!data) return notFound();
-  const { stock, scorecard, annual, quarterly, priceHistory, intradayTicks, shareholding, corporateActions, stockNews, announcements, rankInIndustry, industryPeerCount } = data;
+  const { stock, scorecard, annual, quarterly, priceHistory, intradayTicks, shareholding, corporateActions, stockNews, announcements, scoreHistory, rankInIndustry, industryPeerCount } = data;
 
   // Some app.universe.company_name rows are polluted with the ".NS" Yahoo
   // suffix (e.g. "INFY.NS"). Strip it once here so every downstream render —
@@ -613,21 +638,33 @@ export default async function StockPage({
           </div>
         }
         trend={
-          // Two strictly equal-width, equal-height cards.  Grid uses
-          // auto-rows-fr to force the row to the tallest item's height
-          // (default behaviour) AND each card has its own min-h floor
-          // so when content is short the cards don't collapse.
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-stretch auto-rows-fr max-w-[960px]">
-            <div className="min-h-[420px]">
-              <TrendSection persistence={persistence} />
-            </div>
-            <div className="min-h-[420px]">
-              <TrendCommentary
-                persistence={persistence}
-                companyName={stock.company_name}
-                industryName={stock.industry_name}
-                maturityTier={stock.maturity_tier}
-              />
+          <div className="space-y-6 max-w-[960px]">
+            {/* Full score history — all available weekly snapshots with
+                3M / 6M / All toggle.  This is the primary R1 chart. */}
+            <ScoreHistoryChart data={scoreHistory} />
+
+            {/* 4-snapshot detail: stock vs cluster, gap table, narrative. */}
+            <div>
+              <div className="text-[11px] uppercase tracking-wide muted-text mb-3">
+                Recent trajectory — last {persistence.series.length} snapshot{persistence.series.length !== 1 ? "s" : ""}
+              </div>
+              {/* Two strictly equal-width, equal-height cards.  Grid uses
+                  auto-rows-fr to force the row to the tallest item's height
+                  (default behaviour) AND each card has its own min-h floor
+                  so when content is short the cards don't collapse. */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-stretch auto-rows-fr">
+                <div className="min-h-[420px]">
+                  <TrendSection persistence={persistence} />
+                </div>
+                <div className="min-h-[420px]">
+                  <TrendCommentary
+                    persistence={persistence}
+                    companyName={stock.company_name}
+                    industryName={stock.industry_name}
+                    maturityTier={stock.maturity_tier}
+                  />
+                </div>
+              </div>
             </div>
           </div>
         }
