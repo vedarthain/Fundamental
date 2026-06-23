@@ -18,7 +18,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowUpRight, LayoutGrid, Rows3, Scale } from "lucide-react";
+import { ArrowUpRight, LayoutGrid, Rows3, Scale, Search, X } from "lucide-react";
 import { band, bandColor } from "@/lib/score";
 
 export type NewsCategory = "stocks" | "policy" | "macro" | "markets" | "general";
@@ -120,6 +120,9 @@ export function NewsClient({
 }) {
   const [cat, setCat] = useState<TabId>("all");
   const [view, setView] = useState<ViewMode>("cards");
+  const [query, setQuery] = useState("");
+  const [stocksOnly, setStocksOnly] = useState(false);
+  const [score, setScore] = useState<"any" | "strong" | "weak">("any");
 
   const counts = useMemo(() => {
     const c: Record<string, number> = { all: news.length, regulatory: 0 };
@@ -130,10 +133,30 @@ export function NewsClient({
     return c;
   }, [news]);
 
-  const filtered =
-    cat === "all" ? news
-    : cat === "regulatory" ? news.filter((n) => n.regulatory)
-    : news.filter((n) => n.category === cat);
+  const filtered = useMemo(() => {
+    let r =
+      cat === "all" ? news
+      : cat === "regulatory" ? news.filter((n) => n.regulatory)
+      : news.filter((n) => n.category === cat);
+
+    const q = query.trim().toLowerCase();
+    if (q) {
+      r = r.filter(
+        (n) =>
+          n.title.toLowerCase().includes(q) ||
+          (n.summary?.toLowerCase().includes(q) ?? false) ||
+          n.tags.some(
+            (t) => t.symbol.toLowerCase().includes(q) || (t.company_name?.toLowerCase().includes(q) ?? false),
+          ),
+      );
+    }
+    if (stocksOnly) r = r.filter((n) => n.tags.length > 0);
+    if (score === "strong") r = r.filter((n) => n.tags.some((t) => t.composite != null && t.composite >= 75));
+    if (score === "weak") r = r.filter((n) => n.tags.some((t) => t.composite != null && t.composite < 40));
+    return r;
+  }, [news, cat, query, stocksOnly, score]);
+
+  const anyFilter = query.trim() !== "" || stocksOnly || score !== "any";
 
   return (
     <>
@@ -210,6 +233,59 @@ export function NewsClient({
             </div>
           </div>
 
+          {/* Search + filters — operate on the loaded feed (no reload). */}
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <div className="relative flex-1 min-w-[180px]">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 muted-text pointer-events-none" />
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search headlines or a stock…"
+                aria-label="Search news"
+                className="w-full pl-7 pr-7 py-1.5 rounded-md border text-[12.5px] bg-[var(--color-card)] outline-none focus:border-[var(--color-accent-400)]"
+                style={{ borderColor: "var(--color-border-default)" }}
+              />
+              {query && (
+                <button
+                  type="button"
+                  onClick={() => setQuery("")}
+                  aria-label="Clear search"
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 muted-text hover:text-[var(--color-ink)]"
+                >
+                  <X size={13} />
+                </button>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setStocksOnly((v) => !v)}
+              aria-pressed={stocksOnly}
+              className="px-2.5 py-1.5 rounded-md text-[12px] border transition-colors whitespace-nowrap"
+              style={
+                stocksOnly
+                  ? { background: "var(--color-accent-50)", borderColor: "var(--color-accent-300)", color: "var(--color-accent-700)", fontWeight: 600 }
+                  : { background: "transparent", borderColor: "var(--color-border-default)", color: "var(--color-muted)" }
+              }
+            >
+              Stocks only
+            </button>
+            <select
+              value={score}
+              onChange={(e) => setScore(e.target.value as "any" | "strong" | "weak")}
+              aria-label="Filter by Industry Score band"
+              className="px-2 py-1.5 rounded-md text-[12px] border bg-[var(--color-card)] outline-none cursor-pointer"
+              style={{ borderColor: "var(--color-border-default)", color: "var(--color-muted)" }}
+            >
+              <option value="any">Any score</option>
+              <option value="strong">Strong (≥75)</option>
+              <option value="weak">Weak (&lt;40)</option>
+            </select>
+            <span className="text-[11px] muted-text tabular-nums shrink-0">
+              {filtered.length}{anyFilter ? ` of ${news.length}` : ""}
+            </span>
+          </div>
+
           {cat === "regulatory" && (
             <div
               className="mb-3 px-3 py-2 rounded-md text-[11.5px] leading-snug flex items-start gap-2 muted-text"
@@ -229,7 +305,9 @@ export function NewsClient({
           )}
 
           {filtered.length === 0 ? (
-            <div className="card p-6 muted-text text-[13px]">No headlines in this category yet.</div>
+            <div className="card p-6 muted-text text-[13px]">
+              {anyFilter ? "No headlines match your search / filters." : "No headlines in this category yet."}
+            </div>
           ) : view === "cards" ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {filtered.map((n) => <NewsCard key={n.id} n={n} />)}
