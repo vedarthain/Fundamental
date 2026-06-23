@@ -33,7 +33,7 @@ type RawNews = {
 type Enriched = {
   id: string; title: string; summary: string | null; url: string;
   published_at: string | null; category: NewsCategory; related: number;
-  symbols: string[];
+  symbols: string[]; regulatory: boolean;
 };
 
 async function loadNews(): Promise<RawNews[]> {
@@ -166,7 +166,8 @@ function attachTags(
       .sort((a, b) => (b.composite ?? -1) - (a.composite ?? -1));
     return {
       id: n.id, title: n.title, summary: n.summary, url: n.url,
-      published_at: n.published_at, category: n.category, related: n.related, tags,
+      published_at: n.published_at, category: n.category, related: n.related,
+      regulatory: n.regulatory, tags,
     };
   });
 }
@@ -215,6 +216,38 @@ function classify(title: string, summary: string | null, tagged: boolean): NewsC
   if (MACRO_RE.test(t)) return "macro";
   if (MARKETS_RE.test(t)) return "markets";
   return "general";
+}
+
+// Regulatory & governance — a CROSS-CUTTING flag (not a category), so a SEBI
+// order on a stock keeps its "Stocks" colour but is ALSO surfaced in the
+// Regulatory lane. Tuned for ENFORCEMENT + GOVERNANCE-RISK signals (the
+// trust-relevant subset), not every routine SEBI/RBI policy mention — those
+// stay in "Policy". High-precision over recall: better to miss a borderline
+// item than to flag every regulator mention as a red-flag.
+const REGULATORY_RE = new RegExp(
+  [
+    // SEBI / exchange enforcement actions
+    "sebi (order|bar|ban|fine|penal|probe|interim|crackdown|notice|action|summon|impos|restrain)",
+    "(barred|banned|debarred|restrained) (from|by)", "show[- ]?cause notice",
+    "adjudicat", "disgorge", "impound", "settlement order",
+    // Accounting / governance red flags
+    "forensic audit", "insider[- ]trading", "(accounting|securities|financial) fraud",
+    "misrepresent", "round[- ]?trip", "price (manipulation|rigging)", "front[- ]running",
+    "siphon", "fund diversion", "shell (company|companies|firms?)", "related[- ]party transaction",
+    // Auditor / disclosure
+    "auditor['s ]*(resign|quit|raised? concern)", "qualif(ied|ication) (opinion|of accounts)",
+    "adverse opinion", "whistle[- ]?blow", "disclosure (lapse|lapses|breach)", "non[- ]?compliance",
+    // Distress / insolvency
+    "\\bnclt\\b", "\\bnclat\\b", "insolvency", "\\bibc\\b", "(debt|loan|bond) default", "defaulted on",
+    // Investigative agencies
+    "enforcement directorate", "\\bcbi\\b (probe|raid|search|case|fir)", "income[- ]tax (raid|search)",
+    // Promoter governance
+    "promoter pledge", "pledged shares", "delist(ed|ing)", "trading (halt|suspen)",
+  ].join("|"),
+  "i",
+);
+function isRegulatory(title: string, summary: string | null): boolean {
+  return REGULATORY_RE.test(`${title} ${summary ?? ""}`);
 }
 
 const STOP = new Set(["the", "and", "for", "with", "from", "that", "this", "are", "was", "its", "into", "after", "over", "amid", "say", "says", "will"]);
@@ -273,6 +306,7 @@ function enrich(rows: RawNews[]): Enriched[] {
       published_at: r.published_at, related: r.related,
       category: classify(r.title, r.summary, r.symbols.length > 0),
       symbols: r.symbols,
+      regulatory: isRegulatory(r.title, r.summary),
     });
   }
   return out;

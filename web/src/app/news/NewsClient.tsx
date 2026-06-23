@@ -18,7 +18,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowUpRight, LayoutGrid, Rows3 } from "lucide-react";
+import { ArrowUpRight, LayoutGrid, Rows3, ShieldAlert } from "lucide-react";
 import { band, bandColor } from "@/lib/score";
 
 export type NewsCategory = "stocks" | "policy" | "macro" | "markets" | "general";
@@ -58,6 +58,8 @@ export type FeedItem = {
   category: NewsCategory;
   /** count of near-identical headlines folded into this one */
   related: number;
+  /** cross-cutting flag: SEBI/exchange enforcement or a governance red flag */
+  regulatory: boolean;
   /** stocks this headline mentions, with our score context (sorted best-first) */
   tags: StockTag[];
 };
@@ -75,12 +77,19 @@ export type WatchItem = {
   related: number;
 };
 
-const TABS: { id: NewsCategory | "all"; label: string }[] = [
+// "regulatory" is a pseudo-tab: it filters on the cross-cutting flag rather than
+// the (mutually-exclusive) category, so an enforcement story shows here AND under
+// its own category.
+type TabId = NewsCategory | "all" | "regulatory";
+const REG_COLOR = "var(--color-score-poor)"; // red — a risk/alert lane
+
+const TABS: { id: TabId; label: string }[] = [
   { id: "all", label: "All" },
   { id: "stocks", label: "Stocks" },
   { id: "policy", label: "Policy" },
   { id: "macro", label: "Macro" },
   { id: "markets", label: "Markets" },
+  { id: "regulatory", label: "Regulatory" },
 ];
 
 function ago(iso: string | null): string {
@@ -106,16 +115,22 @@ export function NewsClient({
   signedIn: boolean;
   watchlistCount: number;
 }) {
-  const [cat, setCat] = useState<NewsCategory | "all">("all");
+  const [cat, setCat] = useState<TabId>("all");
   const [view, setView] = useState<ViewMode>("cards");
 
   const counts = useMemo(() => {
-    const c: Record<string, number> = { all: news.length };
-    for (const n of news) c[n.category] = (c[n.category] ?? 0) + 1;
+    const c: Record<string, number> = { all: news.length, regulatory: 0 };
+    for (const n of news) {
+      c[n.category] = (c[n.category] ?? 0) + 1;
+      if (n.regulatory) c.regulatory += 1;
+    }
     return c;
   }, [news]);
 
-  const filtered = cat === "all" ? news : news.filter((n) => n.category === cat);
+  const filtered =
+    cat === "all" ? news
+    : cat === "regulatory" ? news.filter((n) => n.regulatory)
+    : news.filter((n) => n.category === cat);
 
   return (
     <>
@@ -154,9 +169,12 @@ export function NewsClient({
               {TABS.map((t) => {
                 const active = cat === t.id;
                 const n = counts[t.id] ?? 0;
-                if (t.id !== "all" && n === 0) return null; // hide empty categories
-                // "All" uses the accent; each category uses its own hue.
-                const color = t.id === "all" ? "var(--color-accent-600)" : catMeta(t.id).color;
+                if (t.id !== "all" && n === 0) return null; // hide empty categories/lanes
+                // "All" = accent; "regulatory" = red alert lane; else the category hue.
+                const color =
+                  t.id === "all" ? "var(--color-accent-600)"
+                  : t.id === "regulatory" ? REG_COLOR
+                  : catMeta(t.id).color;
                 return (
                   <button
                     key={t.id}
@@ -168,12 +186,14 @@ export function NewsClient({
                     style={
                       active
                         ? { background: color, color: "#fff", borderColor: color }
-                        : { background: "transparent", color: "var(--color-muted)", borderColor: "var(--color-border-default)" }
+                        : { background: "transparent", color: t.id === "regulatory" ? REG_COLOR : "var(--color-muted)", borderColor: t.id === "regulatory" ? "color-mix(in srgb, var(--color-score-poor) 45%, transparent)" : "var(--color-border-default)" }
                     }
                   >
-                    {t.id !== "all" && !active && (
+                    {t.id === "regulatory" ? (
+                      <ShieldAlert size={12} strokeWidth={2.2} />
+                    ) : t.id !== "all" && !active ? (
                       <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: color }} />
-                    )}
+                    ) : null}
                     {t.label}
                     <span className="tabular-nums" style={{ opacity: 0.7 }}>{n}</span>
                   </button>
@@ -186,6 +206,24 @@ export function NewsClient({
               <ViewBtn active={view === "list"} onClick={() => setView("list")} label="List view"><Rows3 size={14} /></ViewBtn>
             </div>
           </div>
+
+          {cat === "regulatory" && (
+            <div
+              className="mb-3 px-3 py-2 rounded-md text-[11.5px] leading-snug flex items-start gap-2"
+              style={{
+                color: REG_COLOR,
+                background: "color-mix(in srgb, var(--color-score-poor) 7%, transparent)",
+                border: "1px solid color-mix(in srgb, var(--color-score-poor) 25%, transparent)",
+              }}
+            >
+              <ShieldAlert size={14} className="mt-[1px] shrink-0" />
+              <span>
+                Headlines flagged as SEBI/exchange enforcement or a governance red flag — a
+                keyword heuristic, <strong>not a verdict</strong>. Always read the actual order or
+                filing before acting.
+              </span>
+            </div>
+          )}
 
           {filtered.length === 0 ? (
             <div className="card p-6 muted-text text-[13px]">No headlines in this category yet.</div>
@@ -282,6 +320,19 @@ function RelatedBadge({ n }: { n: number }) {
   );
 }
 
+/** Red flag shown on any headline our enforcement/governance detector trips. */
+function RegBadge() {
+  return (
+    <span
+      className="inline-flex items-center gap-0.5 rounded px-1 py-[1px] text-[9px] font-semibold uppercase tracking-wide"
+      style={{ color: REG_COLOR, background: "color-mix(in srgb, var(--color-score-poor) 12%, transparent)" }}
+      title="Regulatory / governance — SEBI or exchange action, or a governance red flag. Verify the filing yourself."
+    >
+      <ShieldAlert size={9} strokeWidth={2.4} /> Reg
+    </span>
+  );
+}
+
 /** Our score-context chips under a headline. */
 function ChipRow({ tags, compact }: { tags: StockTag[]; compact?: boolean }) {
   if (tags.length === 0) return null;
@@ -303,8 +354,9 @@ function NewsCard({ n }: { n: FeedItem }) {
     <div className="card p-3 h-full flex flex-col" style={{ borderLeft: `3px solid ${meta.color}` }}>
       <a href={n.url} target="_blank" rel="noopener noreferrer" className="group block">
         <div className="flex items-center justify-between text-[10.5px] muted-text mb-1">
-          <span className="flex items-center gap-1.5">
+          <span className="flex items-center gap-1.5 flex-wrap">
             <span className="uppercase tracking-wide font-semibold text-[9px]" style={{ color: meta.color }}>{meta.label}</span>
+            {n.regulatory && <RegBadge />}
             <span className="tabular-nums">{ago(n.published_at)} ago</span>
             {n.related > 0 && <RelatedBadge n={n.related} />}
           </span>
@@ -329,8 +381,9 @@ function NewsRow({ n }: { n: FeedItem }) {
       style={{ borderLeft: `3px solid ${meta.color}` }}
     >
       <a href={n.url} target="_blank" rel="noopener noreferrer" className="group block">
-        <div className="flex items-center gap-1.5 text-[10px] muted-text mb-0.5">
+        <div className="flex items-center gap-1.5 flex-wrap text-[10px] muted-text mb-0.5">
           <span className="uppercase tracking-wide font-semibold text-[9px]" style={{ color: meta.color }}>{meta.label}</span>
+          {n.regulatory && <RegBadge />}
           <span className="tabular-nums">{ago(n.published_at)} ago</span>
           {n.related > 0 && <RelatedBadge n={n.related} />}
           <ArrowUpRight size={11} className="opacity-40 group-hover:opacity-80 transition-opacity" />

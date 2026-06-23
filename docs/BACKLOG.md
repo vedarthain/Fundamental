@@ -36,6 +36,14 @@ Each item keeps its decision context so it can be picked up cold.
 - **News — category colour-coding + view switcher** — per-category accent
   (Stocks/Policy/Macro/Markets/General) on the filter tabs + a left colour rail
   & label on every headline; a Cards ⇄ List view toggle (dense scannable list).
+- **News redefinition #2a — Regulatory & governance lane** — cross-cutting
+  `regulatory` flag (high-precision enforcement/governance regex in page.tsx:
+  SEBI/exchange actions, forensic audit, fraud, default, auditor resignation,
+  NCLT/insolvency, ED/CBI, pledge/delisting). Red "Reg" badge on any flagged
+  headline (keeps its category colour) + a dedicated Regulatory filter tab +
+  an explainer banner. Ties to the fraud-disclaimer / red-flag-overlay thread.
+  (Remaining "redefine news": Results & Corporate-action lanes, sentiment,
+  velocity, search/filter, story threads.)
 - **52-week high/low scanner** — new `/tools/52-week-high-low` page: every stock
   at/near its 52W extreme, filterable by index segment (Nifty 50/100/200/500/All),
   EOD from golden + Industry-Score quality dot, links to each scorecard. Heavy
