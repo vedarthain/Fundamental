@@ -60,6 +60,8 @@ export type FeedItem = {
   related: number;
   /** cross-cutting flag: SEBI/exchange enforcement or a governance red flag */
   regulatory: boolean;
+  /** keyword-based tone signal — positive/negative/neutral for mentioned stocks */
+  sentiment: "positive" | "negative" | "neutral";
   /** stocks this headline mentions, with our score context (sorted best-first) */
   tags: StockTag[];
 };
@@ -416,46 +418,81 @@ function RegBadge() {
   );
 }
 
-/** Our score-context chips under a headline. */
-function ChipRow({ tags, compact }: { tags: StockTag[]; compact?: boolean }) {
-  if (tags.length === 0) return null;
-  const max = compact ? 3 : 4;
+/** Inline stock chips for the meta row — separator dot + chips + overflow
+ *  count. Max is caller-specified (2 for cards, 3 for list). Chips link to
+ *  the stock scorecard and render OUTSIDE the headline <a> so they navigate
+ *  independently. */
+function MetaChips({ tags, max = 2 }: { tags: StockTag[]; max?: number }) {
   return (
-    <div className={`flex flex-wrap gap-1 ${compact ? "mt-1.5" : "mt-2 pt-2 border-t hairline"}`}>
+    <>
+      <span className="opacity-30 select-none" aria-hidden>·</span>
       {tags.slice(0, max).map((t) => <StockChip key={t.symbol} tag={t} />)}
       {tags.length > max && (
-        <span className="text-[10px] muted-text self-center">+{tags.length - max}</span>
+        <span className="text-[10px] muted-text">+{tags.length - max}</span>
       )}
-    </div>
+    </>
   );
 }
 
-/** Cards view — dense 2-up card with a category colour rail + label. */
+/** Small ▲ / ▼ tone cue in the meta row. Green = broadly positive for the
+ *  mentioned stocks; red = broadly negative. Nothing shown for neutral.
+ *  Keyword-based heuristic — directional cue only, not a rating. */
+function SentimentDot({ s }: { s: "positive" | "negative" | "neutral" }) {
+  if (s === "neutral") return null;
+  return (
+    <span
+      className="text-[10px] font-bold leading-none shrink-0"
+      style={{ color: s === "positive" ? "var(--color-delta-up)" : "var(--color-delta-down)" }}
+      title={
+        s === "positive"
+          ? "Headline signals positive news for the mentioned stock(s)"
+          : "Headline signals negative news for the mentioned stock(s)"
+      }
+      aria-label={s}
+    >
+      {s === "positive" ? "▲" : "▼"}
+    </span>
+  );
+}
+
+/** Cards view — dense 2-up card with a category colour rail + label.
+ *  Meta row (category · sentiment · time · badges · stock chips) is a
+ *  standalone div so the stock <Link>s work without nesting inside the
+ *  headline <a>; the title + summary are their own <a>. */
 function NewsCard({ n }: { n: FeedItem }) {
   const meta = catMeta(n.category);
   return (
-    <div className="card p-3 h-full flex flex-col" style={{ borderLeft: `3px solid ${meta.color}` }}>
-      <a href={n.url} target="_blank" rel="noopener noreferrer" className="group block">
-        <div className="flex items-center justify-between text-[10.5px] muted-text mb-1">
-          <span className="flex items-center gap-1.5 flex-wrap">
-            <span className="uppercase tracking-wide font-semibold text-[9px]" style={{ color: meta.color }}>{meta.label}</span>
-            {n.regulatory && <RegBadge />}
-            <span className="tabular-nums">{ago(n.published_at)} ago</span>
-            {n.related > 0 && <RelatedBadge n={n.related} />}
+    <div className="card p-3 h-full flex flex-col gap-1.5" style={{ borderLeft: `3px solid ${meta.color}` }}>
+      {/* Meta row — outside the headline <a> so chip links are independent */}
+      <div className="flex items-start justify-between gap-1 text-[10.5px] muted-text">
+        <div className="flex items-center gap-1 flex-wrap min-w-0">
+          <span className="uppercase tracking-wide font-semibold text-[9px] shrink-0" style={{ color: meta.color }}>
+            {meta.label}
           </span>
-          <ArrowUpRight size={12} className="opacity-50 shrink-0 group-hover:opacity-90 transition-opacity" />
+          <SentimentDot s={n.sentiment} />
+          {n.regulatory && <RegBadge />}
+          <span className="tabular-nums shrink-0">{ago(n.published_at)} ago</span>
+          {n.related > 0 && <RelatedBadge n={n.related} />}
+          {n.tags.length > 0 && <MetaChips tags={n.tags} max={2} />}
         </div>
+        <a href={n.url} target="_blank" rel="noopener noreferrer" className="group shrink-0 mt-[1px]" aria-label="Open article">
+          <ArrowUpRight size={12} className="opacity-50 group-hover:opacity-90 transition-opacity" />
+        </a>
+      </div>
+      {/* Headline + summary */}
+      <a href={n.url} target="_blank" rel="noopener noreferrer" className="group block">
         <div className="text-[13.5px] font-medium leading-snug group-hover:underline">{n.title}</div>
         {n.summary && (
           <div className="muted-text text-[12px] mt-1 leading-snug line-clamp-2">{n.summary}</div>
         )}
       </a>
-      <ChipRow tags={n.tags} />
     </div>
   );
 }
 
-/** List view — a scannable single-column row with a category colour rail. */
+/** List view — a scannable single-column row. Meta line holds category,
+ *  sentiment, time, badges, and up to 3 stock chips; headline is a
+ *  separate <a> below. */
 function NewsRow({ n }: { n: FeedItem }) {
   const meta = catMeta(n.category);
   return (
@@ -463,17 +500,24 @@ function NewsRow({ n }: { n: FeedItem }) {
       className="px-3 py-2.5 hover:bg-[var(--color-paper)] transition-colors"
       style={{ borderLeft: `3px solid ${meta.color}` }}
     >
-      <a href={n.url} target="_blank" rel="noopener noreferrer" className="group block">
-        <div className="flex items-center gap-1.5 flex-wrap text-[10px] muted-text mb-0.5">
-          <span className="uppercase tracking-wide font-semibold text-[9px]" style={{ color: meta.color }}>{meta.label}</span>
+      <div className="flex items-center justify-between gap-1 text-[10px] muted-text mb-0.5">
+        <div className="flex items-center gap-1 flex-wrap min-w-0">
+          <span className="uppercase tracking-wide font-semibold text-[9px] shrink-0" style={{ color: meta.color }}>
+            {meta.label}
+          </span>
+          <SentimentDot s={n.sentiment} />
           {n.regulatory && <RegBadge />}
-          <span className="tabular-nums">{ago(n.published_at)} ago</span>
+          <span className="tabular-nums shrink-0">{ago(n.published_at)} ago</span>
           {n.related > 0 && <RelatedBadge n={n.related} />}
-          <ArrowUpRight size={11} className="opacity-40 group-hover:opacity-80 transition-opacity" />
+          {n.tags.length > 0 && <MetaChips tags={n.tags} max={3} />}
         </div>
+        <a href={n.url} target="_blank" rel="noopener noreferrer" className="group shrink-0" aria-label="Open article">
+          <ArrowUpRight size={11} className="opacity-40 group-hover:opacity-80 transition-opacity" />
+        </a>
+      </div>
+      <a href={n.url} target="_blank" rel="noopener noreferrer" className="group block">
         <div className="text-[13px] font-medium leading-snug group-hover:underline line-clamp-2">{n.title}</div>
       </a>
-      <ChipRow tags={n.tags} compact />
     </div>
   );
 }

@@ -28,12 +28,14 @@ type RawNews = {
   url: string; published_at: string | null; symbols: string[];
 };
 
+type Sentiment = "positive" | "negative" | "neutral";
+
 // A clustered/collapsed headline before our score-context tags are attached.
 // Carries `symbols` (the stocks it mentions) so attachTags can look up context.
 type Enriched = {
   id: string; title: string; summary: string | null; url: string;
   published_at: string | null; category: NewsCategory; related: number;
-  symbols: string[]; regulatory: boolean;
+  symbols: string[]; regulatory: boolean; sentiment: Sentiment;
 };
 
 async function loadNews(): Promise<RawNews[]> {
@@ -167,7 +169,7 @@ function attachTags(
     return {
       id: n.id, title: n.title, summary: n.summary, url: n.url,
       published_at: n.published_at, category: n.category, related: n.related,
-      regulatory: n.regulatory, tags,
+      regulatory: n.regulatory, sentiment: n.sentiment, tags,
     };
   });
 }
@@ -250,6 +252,77 @@ function isRegulatory(title: string, summary: string | null): boolean {
   return REGULATORY_RE.test(`${title} ${summary ?? ""}`);
 }
 
+// Keyword-based headline sentiment — a directional cue for whether the news
+// is broadly positive or negative for the stocks it mentions. High precision
+// over recall: better to return "neutral" than to mis-signal direction.
+// Applied to `${title} ${summary}` so a summary clause can tip the balance.
+const SENTIMENT_POS_RE = new RegExp([
+  // Earnings beats
+  "(?:beats?|tops?|exceed(?:s|ed)?)\\s+(?:estimate|expectation|forecast|consensus|street)",
+  // Profit / revenue growing
+  "(?:net\\s+)?profit\\s+(?:rise|rises|jumped?|surge[sd]?|soar[sd]?|up\\b|grew?|hit\\s+record|beat)",
+  "revenue\\s+(?:up\\b|rise|rises|jumped?|surge[sd]?)",
+  "(?:record|highest)\\s+(?:profit|revenue|sales|quarter|earnings)",
+  // Positive analyst actions
+  "upgrade[sd]?",
+  "target\\s+(?:rais|hik)\\w+",
+  "outperform",
+  // Corporate events: unambiguously positive
+  "dividend\\s+(?:declar|announc|approv)\\w*",
+  "bonus\\s+(?:share|issue)\\w*",
+  "buyback",
+  "wins?\\s+(?:order|contract|deal|bid)\\b",
+  "bags?\\s+(?:order|contract)",
+  "new\\s+order\\b",
+  // Positive performance language
+  "strong\\s+(?:result|quarter|growth|performance)\\w*",
+  "robust\\s+(?:result|quarter|growth)\\w*",
+  "better.than.expected",
+].join("|"), "i");
+
+const SENTIMENT_NEG_RE = new RegExp([
+  // Losses
+  "\\bnet\\s+loss\\b",
+  "\\bbooks?\\s+(?:net\\s+)?loss\\b",
+  // Profit / revenue falling
+  "profit\\s+(?:falls?|drops?|declines?|slumps?|tumbles?|plunges?)",
+  "revenue\\s+(?:falls?|drops?|declines?|slumps?|plunges?)",
+  // Estimate misses
+  "miss(?:es|ed)?\\s+(?:estimate|expectation|forecast|consensus|street)",
+  "below\\s+(?:estimate|expectation|forecast|consensus|street)",
+  // Negative analyst actions
+  "downgrade[sd]?",
+  "target\\s+(?:cut|lower|reduc)\\w+",
+  "underperform",
+  // Guidance / warnings
+  "profit\\s+warn\\w+",
+  "guidance\\s+(?:cut|lower|reduc)\\w+",
+  // Distress
+  "\\bdefault(?:s|ed)?\\b",
+  "\\bpenalt(?:y|ies)\\b",
+  "\\bfined?\\b",
+  "\\bfraud\\b",
+  "\\bscam\\b",
+  "\\bnclt\\b",
+  "insolvenc\\w+",
+  // Sentiment words
+  "disappoint\\w+",
+  "worse.than.expected",
+  "weaker.than.expected",
+  "margin\\s+(?:pressur|compress|squeez)\\w+",
+  "\\blayoffs?\\b",
+  "retrench\\w+",
+].join("|"), "i");
+
+function sentimentOf(title: string, summary: string | null): Sentiment {
+  const text = `${title} ${summary ?? ""}`;
+  const pos = SENTIMENT_POS_RE.test(text);
+  const neg = SENTIMENT_NEG_RE.test(text);
+  if (pos && !neg) return "positive";
+  if (neg && !pos) return "negative";
+  return "neutral"; // conflict or neither → stay neutral
+}
+
 const STOP = new Set(["the", "and", "for", "with", "from", "that", "this", "are", "was", "its", "into", "after", "over", "amid", "say", "says", "will"]);
 function titleTokens(s: string): Set<string> {
   return new Set(
@@ -307,6 +380,7 @@ function enrich(rows: RawNews[]): Enriched[] {
       category: classify(r.title, r.summary, r.symbols.length > 0),
       symbols: r.symbols,
       regulatory: isRegulatory(r.title, r.summary),
+      sentiment: sentimentOf(r.title, r.summary),
     });
   }
   return out;
