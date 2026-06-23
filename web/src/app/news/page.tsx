@@ -5,14 +5,21 @@
  *
  * Server-rendered from app.news (written by scripts/fetch-news.py on a short
  * cron). Categorises + dedups here, then hands off to NewsClient for the
- * interactive layout (category tabs, most-talked strip, watchlist sidebar).
+ * interactive layout (category tabs, most-talked strip).
  * Fail-soft: missing tables → empty state, not a 500.
+ *
+ * No per-user data on this page — ISR-cached at the Vercel edge (revalidate
+ * 300s). Individual data queries have their own unstable_cache TTLs so
+ * background revalidations hit Neon as little as possible.
  */
 import { unstable_cache } from "next/cache";
 import { sql, golden } from "@/lib/db";
 import { NewsClient, type FeedItem, type NewsCategory, type StockTag, type TalkedItem } from "./NewsClient";
 
-export const dynamic = "force-dynamic";
+// No session reads — safe to ISR cache at the edge. Revalidate every 5 min
+// (matching getNews TTL so users see fresh headlines without a forced
+// per-request render).
+export const revalidate = 300;
 
 export const metadata = {
   title: "Market News — latest NSE headlines by category · EquityRoots",
@@ -102,7 +109,8 @@ async function loadStockCtx(): Promise<StockCtx[]> {
     `;
   } catch { return []; }
 }
-const getStockCtx = unstable_cache(loadStockCtx, ["news-stock-ctx"], { revalidate: 300, tags: ["news", "market"] });
+// Scores are weekly snapshots — no need to refetch more than once an hour.
+const getStockCtx = unstable_cache(loadStockCtx, ["news-stock-ctx"], { revalidate: 3600, tags: ["news", "market"] });
 
 async function loadMoves1D(): Promise<{ symbol: string; ret_1d: number | null; price: number | null }[]> {
   try {
@@ -129,7 +137,8 @@ async function loadMoves1D(): Promise<{ symbol: string; ret_1d: number | null; p
     `;
   } catch { return []; }
 }
-const getMoves1D = unstable_cache(loadMoves1D, ["news-moves-1d"], { revalidate: 300, tags: ["market"] });
+// EOD prices update once a day (Saturday fetch) — cache 6h.
+const getMoves1D = unstable_cache(loadMoves1D, ["news-moves-1d"], { revalidate: 21600, tags: ["market"] });
 
 const PILLAR = { q: "Q", v: "V", m: "M" } as const;
 /** Strongest of the three pillars — a quick "what's this stock good at" cue. */
