@@ -66,6 +66,25 @@ DENY_RE = re.compile(
     re.I,
 )
 
+# "Recommendation"/tip headlines — buy/sell calls, stock picks, F&O strategies.
+# We surface market NEWS, not advice (regulatory posture), so drop these at
+# ingest. Tuned to explicit tip framing only — leaves real news like "X launches
+# product; stock in focus" or "Nifty target cut by Citi" untouched.
+RECO_RE = re.compile(
+    "|".join([
+        r"\bstocks?\s+to\s+(buy|sell|bet|grab|add)\b",
+        r"\b\d+\s+stocks?\s+to\s+(buy|sell|bet|grab|add|watch)\b",
+        r"\btop\s+(stock\s+)?picks?\b", r"\bstock\s+picks?\b",
+        r"\bbuy\s+or\s+sell\b", r"\bshould\s+you\s+(buy|sell|invest)\b",
+        r"\bmulti-?bagger\w*", r"\bstock\s+tips?\b",
+        r"\b(stock|share)\s+recommendations?\b",
+        r"\btrade\s+setups?\b", r"\btrading\s+guide\b",
+        r"\bf&o\s+(strateg|pick|trade)\w*", r"\bintraday\s+(pick|tip|trade)\w*",
+        r"\bbuy\s+this\s+stock\b", r"\bbest\s+stocks?\s+to\b", r"\bhot\s+stocks?\b",
+    ]),
+    re.I,
+)
+
 SCRIP_MASTER = ("https://api.bseindia.com/BseIndiaAPI/api/ListofScripData/w"
                 "?Group=&Scripcode=&industry=&segment=Equity&status=Active")
 TAG_HEADERS = {"User-Agent": UA, "Accept": "application/json",
@@ -78,6 +97,40 @@ STOP = {"INDIA", "BANK", "POWER", "MOTORS", "FINANCE", "STEEL", "INFRA", "AUTO",
 # Only strip a TRAILING corporate suffix — keep the rest so the phrase stays
 # multi-word + specific ("Dollar Industries", not "Dollar").
 NAME_SUFFIX = re.compile(r"\s+(limited|ltd\.?|corporation|corp\.?|company|co\.?)\s*$", re.I)
+
+
+def _norm(s: str) -> str:
+    """Normalise for matching: lowercase, drop the possessive, fold '&' to 'and',
+    and collapse all other punctuation to single spaces. Applied to BOTH the
+    index names and the headline text so "Dr. Reddy's", "L&T" and "State Bank of
+    India" line up instead of being broken apart by punctuation."""
+    s = (s or "").lower()
+    s = re.sub(r"['’]s\b", "", s)        # "reddy's" -> "reddy"
+    s = s.replace("&", " and ")               # "L&T" -> "l and t"
+    s = re.sub(r"[^a-z0-9]+", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+# Famous abbreviations whose HEADLINE form differs from the registered BSE name
+# (so the auto-built name index misses them). All symbols verified in
+# app.universe. Keys are matched against the NORMALISED headline text, so
+# "L&T" -> "l and t", "Dr. Reddy's" -> "dr reddy".
+ALIASES: dict[str, str] = {
+    "sbi": "SBIN", "state bank of india": "SBIN",
+    "l and t": "LT", "larsen and toubro": "LT",
+    "m and m": "M&M", "mahindra and mahindra": "M&M",
+    "hul": "HINDUNILVR", "hindustan unilever": "HINDUNILVR",
+    "ril": "RELIANCE",
+    "dr reddy": "DRREDDY", "dr reddys": "DRREDDY",
+    "bank of baroda": "BANKBARODA",
+    "ongc": "ONGC", "ntpc": "NTPC", "gail": "GAIL",
+    "bpcl": "BPCL", "hpcl": "HINDPETRO", "iocl": "IOC",
+    "pnb": "PNB", "lic": "LICI",
+    "tcs": "TCS", "hcl tech": "HCLTECH", "itc": "ITC",
+    "bajaj finance": "BAJFINANCE", "bajaj finserv": "BAJAJFINSV",
+    "hdfc bank": "HDFCBANK", "icici bank": "ICICIBANK",
+    "axis bank": "AXISBANK", "kotak bank": "KOTAKBANK", "kotak mahindra": "KOTAKBANK",
+}
 
 
 def get(url: str, headers: dict | None = None, timeout: int = 20) -> bytes:
@@ -125,6 +178,8 @@ def fetch_feed(name: str, url: str) -> list[dict]:
             continue
         if DENY_RE.search(title):
             continue  # sports / entertainment / lifestyle noise
+        if RECO_RE.search(title):
+            continue  # buy/sell tip / stock-pick "recommendation" — news only
         out.append({
             "source": name,
             "title": title,
@@ -154,30 +209,42 @@ def build_name_index(conn) -> list[tuple[re.Pattern, str]]:
               file=sys.stderr)
 
     index: list[tuple[re.Pattern, str]] = []
+    seen: set[tuple[str, str]] = set()
     for isin, sym in uni.items():
         nm = isin_name.get(isin)
         if not nm:
             continue  # no clean name → skip (don't tag on the bare ticker)
         clean = NAME_SUFFIX.sub("", nm).strip()
         clean = re.sub(r"^the\s+", "", clean, flags=re.I)
-        clean = re.sub(r"[^A-Za-z0-9 &]", " ", clean)
-        clean = re.sub(r"\s+", " ", clean).strip()
-        words = clean.split()
+        norm = _norm(clean)  # same normalisation we apply to the headline text
+        if not norm:
+            continue
+        words = norm.split()
         # Multi-word names are specific; a single word is only kept if it's
         # long enough AND not a common English word (STOP).
-        if len(words) >= 2 or (len(clean) >= 5 and clean.upper() not in STOP):
+        if len(words) >= 2 or (len(norm) >= 5 and norm.upper() not in STOP):
+            # No re.I — both index and search text are already lowercased by _norm.
             try:
-                index.append((re.compile(rf"\b{re.escape(clean)}\b", re.I), sym))
+                index.append((re.compile(rf"\b{re.escape(norm)}\b"), sym))
+                seen.add((norm, sym))
             except re.error:
                 continue
+    # Curated aliases for famous abbreviations the registered name spells out.
+    for alias, sym in ALIASES.items():
+        key = _norm(alias)
+        if (key, sym) in seen:
+            continue
+        index.append((re.compile(rf"\b{re.escape(key)}\b"), sym))
+        seen.add((key, sym))
     index.sort(key=lambda t: -len(t[0].pattern))  # prefer longer/specific
     return index
 
 
 def tag(text: str, index) -> set[str]:
+    t = _norm(text)  # normalise the headline so punctuation/possessives line up
     hits = set()
     for pat, sym in index:
-        if pat.search(text):
+        if pat.search(t):
             hits.add(sym)
     return hits
 
