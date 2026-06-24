@@ -240,6 +240,111 @@ def load_meta_from_raw(conn: psycopg.Connection, symbol: str) -> dict:
     return out
 
 
+# ----------------------- OI Spike Adjustment --------------------------------
+#
+# A large one-time "Other Income" entry in the latest quarter inflates
+# net_profit (and therefore PBT) without reflecting recurring business
+# performance.  Downstream metrics that consume net_profit — pe_ttm,
+# np_cagr_*, roe_avg_above_threshold_*, np_growth_above_inflation_*,
+# roce_* — all move in the stock's favour even though the underlying
+# business didn't improve.
+#
+# We detect the spike and SUBTRACT the non-recurring excess from the latest
+# quarterly row AND (when the quarter is the fiscal year-end) the latest
+# annual row, BEFORE any formula runs.  The original DB rows are never
+# modified — this is a local in-memory adjustment that only affects
+# this scoring run.
+#
+# Thresholds are intentionally identical to those in web/src/lib/oi-alerts.ts
+# so the UI warning and the score correction fire on exactly the same stocks.
+
+_OI_PCT_PBT_THRESHOLD = 0.40   # other_income / pbt must exceed this
+_OI_SPIKE_RATIO       = 5.0    # relative to 8-quarter prior average
+_OI_MIN_CR            = 10.0   # minimum absolute value (₹ Cr) to care about
+_OI_MIN_PRIOR_QTR     = 3      # need at least this many prior quarters for a baseline
+
+
+def _oi_spike_adjustment(quarterly: list[dict]) -> tuple[float, float]:
+    """Return (pbt_excess, np_excess) to subtract from the latest quarter.
+
+    Both are zero when no spike is detected.
+
+    pbt_excess = one-time other income above the recurring baseline (pre-tax)
+    np_excess  = pbt_excess × (1 − effective_tax_rate)   (after-tax)
+    """
+    if len(quarterly) < 4:
+        return 0.0, 0.0
+
+    latest = quarterly[-1]
+    oi  = latest.get("other_income")
+    pbt = latest.get("profit_before_tax")
+    np_ = latest.get("net_profit")
+
+    if oi is None or pbt is None or np_ is None:
+        return 0.0, 0.0
+    if oi <= _OI_MIN_CR or pbt <= 0:
+        return 0.0, 0.0
+    if oi / pbt <= _OI_PCT_PBT_THRESHOLD:
+        return 0.0, 0.0
+
+    # Baseline: average of positive OI across prior 2–9 quarters
+    prior_ois = [q.get("other_income") for q in quarterly[-9:-1]]
+    prior_ois = [v for v in prior_ois if v is not None]
+    if len(prior_ois) < _OI_MIN_PRIOR_QTR:
+        return 0.0, 0.0
+
+    avg_prior_oi = sum(max(v, 0.0) for v in prior_ois) / len(prior_ois)
+    spike_ratio  = (oi / avg_prior_oi) if avg_prior_oi > 0 else float("inf")
+    if spike_ratio <= _OI_SPIKE_RATIO:
+        return 0.0, 0.0
+
+    pbt_excess = oi - avg_prior_oi                          # pre-tax one-time amount
+    tax_rate   = max(0.0, min(0.40, 1.0 - np_ / pbt))      # effective rate, clamped
+    np_excess  = pbt_excess * (1.0 - tax_rate)              # after-tax
+    return pbt_excess, np_excess
+
+
+def _apply_oi_adjustment(
+    quarterly: list[dict],
+    annual: list[dict],
+    pbt_excess: float,
+    np_excess: float,
+) -> tuple[list[dict], list[dict]]:
+    """Return adjusted quarterly + annual lists (original lists never mutated).
+
+    Latest quarterly row: pbt and net_profit are reduced by the excess.
+    Latest annual row: same adjustment applied ONLY when annual period_end
+    equals the quarterly period_end (i.e. the spike quarter IS the fiscal
+    year-end so the inflated number already rolled into the annual total).
+    """
+    if pbt_excess == 0.0 and np_excess == 0.0:
+        return quarterly, annual
+
+    # --- quarterly ---
+    q = {**quarterly[-1]}
+    if q.get("profit_before_tax") is not None:
+        q["profit_before_tax"] = q["profit_before_tax"] - pbt_excess
+    if q.get("net_profit") is not None:
+        q["net_profit"] = q["net_profit"] - np_excess
+    adj_quarterly = quarterly[:-1] + [q]
+
+    # --- annual (only when the fiscal year matches the spike quarter) ---
+    adj_annual = annual
+    if (
+        annual
+        and quarterly
+        and annual[-1].get("period_end") == quarterly[-1].get("period_end")
+    ):
+        a = {**annual[-1]}
+        if a.get("profit_before_tax") is not None:
+            a["profit_before_tax"] = a["profit_before_tax"] - pbt_excess
+        if a.get("net_profit") is not None:
+            a["net_profit"] = a["net_profit"] - np_excess
+        adj_annual = annual[:-1] + [a]
+
+    return adj_quarterly, adj_annual
+
+
 # ----------------------- Compute -------------------------------------------
 
 def compute_metrics_for_symbol(
@@ -255,6 +360,14 @@ def compute_metrics_for_symbol(
     annual = load_annual(app_conn, symbol)
     quarterly = load_quarterly(app_conn, symbol)
     meta = load_meta_from_raw(app_conn, symbol)
+
+    # Strip one-time Other Income spike from the latest quarter (and, when it
+    # coincides with the fiscal year-end, from the latest annual row too).
+    # This prevents a large non-recurring gain from inflating pe_ttm, np_cagr,
+    # roe_avg_above_threshold, roce and other net-profit-derived metrics.
+    pbt_excess, np_excess = _oi_spike_adjustment(quarterly)
+    if pbt_excess > 0:
+        quarterly, annual = _apply_oi_adjustment(quarterly, annual, pbt_excess, np_excess)
 
     # Update screener_meta with the freshly-extracted meta fields.
     #
