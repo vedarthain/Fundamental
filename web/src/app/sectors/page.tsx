@@ -4,6 +4,7 @@ import {
   SectorsClient,
   type IndustryTile,
   type StockRow,
+  type ClusterHistoryRow,
   type SectorsData,
 } from "./SectorsClient";
 
@@ -29,7 +30,7 @@ async function loadAll(): Promise<SectorsData> {
   `;
   const snapshotDate = latest[0]?.snapshot_date ?? null;
   if (!snapshotDate) {
-    return { tiles: [], stocksByIndustry: {}, snapshotDate: null };
+    return { tiles: [], stocksByIndustry: {}, clusterHistory: [], snapshotDate: null };
   }
 
   // Cluster tiles + cluster-level returns from the materialised cache.
@@ -91,7 +92,34 @@ async function loadAll(): Promise<SectorsData> {
     bucket.push(stock);
   }
 
-  return { tiles, stocksByIndustry, snapshotDate };
+  // Sector heatmap: weekly average scores per cluster over the last ~90 days.
+  // Aggregated from app.scores (not the materialized cache — cache only stores
+  // the latest snapshot). We skip partial snapshots (< 40 clusters) to avoid
+  // noise from early partial runs.
+  const clusterHistory = await sql<ClusterHistoryRow[]>`
+    WITH full_snaps AS (
+      SELECT snapshot_date
+      FROM app.scores
+      WHERE composite_pct IS NOT NULL
+        AND snapshot_date >= CURRENT_DATE - INTERVAL '120 days'
+      GROUP BY snapshot_date
+      HAVING COUNT(DISTINCT cluster_id) >= 40
+    )
+    SELECT
+      s.cluster_id,
+      s.snapshot_date::text,
+      ROUND(AVG(s.composite_pct))::int  AS avg_composite,
+      ROUND(AVG(s.quality_pct))::int    AS avg_quality,
+      ROUND(AVG(s.valuation_pct))::int  AS avg_valuation,
+      ROUND(AVG(s.momentum_pct))::int   AS avg_momentum
+    FROM app.scores s
+    WHERE s.snapshot_date IN (SELECT snapshot_date FROM full_snaps)
+      AND s.composite_pct IS NOT NULL
+    GROUP BY s.cluster_id, s.snapshot_date
+    ORDER BY s.cluster_id, s.snapshot_date ASC
+  `;
+
+  return { tiles, stocksByIndustry, clusterHistory, snapshotDate };
 }
 
 // Cache the entire data layer for 24h regardless of searchParams. Without

@@ -28,12 +28,14 @@ BASE = "https://www.screener.in"
 
 # Map row label → DB column. Trailing "+" comes from the expand-link Screener
 # adds to drill into sub-categories; we strip it before matching.
+# "pledge" matches "pledged %", "pledged shares", etc. (startswith check below).
 LABEL_COLUMNS: dict[str, str] = {
     "promoters":   "promoter_pct",
     "fiis":        "fii_pct",
     "diis":        "dii_pct",
     "government":  "government_pct",
     "public":      "public_pct",
+    "pledge":      "pledge_pct",   # Screener: "Pledged %" row — governance red flag
 }
 
 MONTHS_3 = {m.lower(): i for i, m in enumerate(calendar.month_abbr) if m}
@@ -140,6 +142,7 @@ def parse_shareholding(html: str) -> list[dict]:
                     "dii_pct": None,
                     "government_pct": None,
                     "public_pct": None,
+                    "pledge_pct": None,
                     "shareholders": None,
                 },
             )
@@ -236,14 +239,15 @@ def fetch_many(
                             """
                             INSERT INTO app.shareholding_pattern
                               (symbol, period_end, promoter_pct, fii_pct, dii_pct,
-                               government_pct, public_pct, shareholders, parsed_at)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                               government_pct, public_pct, pledge_pct, shareholders, parsed_at)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             ON CONFLICT (symbol, period_end) DO UPDATE SET
                               promoter_pct   = EXCLUDED.promoter_pct,
                               fii_pct        = EXCLUDED.fii_pct,
                               dii_pct        = EXCLUDED.dii_pct,
                               government_pct = EXCLUDED.government_pct,
                               public_pct     = EXCLUDED.public_pct,
+                              pledge_pct     = EXCLUDED.pledge_pct,
                               shareholders   = EXCLUDED.shareholders,
                               parsed_at      = EXCLUDED.parsed_at
                             """,
@@ -251,7 +255,7 @@ def fetch_many(
                                 sym, r["period_end"],
                                 r["promoter_pct"], r["fii_pct"], r["dii_pct"],
                                 r["government_pct"], r["public_pct"],
-                                r["shareholders"], now,
+                                r["pledge_pct"], r["shareholders"], now,
                             ),
                         )
                 conn.commit()

@@ -57,11 +57,22 @@ export type StockRow = {
   ret_1y: number | null;
 };
 
+export type ClusterHistoryRow = {
+  cluster_id: string;
+  snapshot_date: string;
+  avg_composite: number | null;
+  avg_quality: number | null;
+  avg_valuation: number | null;
+  avg_momentum: number | null;
+};
+
 export type SectorsData = {
   tiles: IndustryTile[];
   /** All stocks across all industries, pre-joined and keyed by industry_id.
    *  ~2,150 rows total, ~80KB gzipped. */
   stocksByIndustry: Record<string, StockRow[]>;
+  /** Weekly cluster-level score history for the heatmap view. */
+  clusterHistory: ClusterHistoryRow[];
   snapshotDate: string | null;
 };
 
@@ -185,6 +196,9 @@ export function SectorsClient({
     ? data.stocksByIndustry[activeIndustry.industry_id] || []
     : [];
 
+  // View mode: browse (default) or heatmap
+  const [viewMode, setViewMode] = useState<"browse" | "heatmap">("browse");
+
   // ── Render ─────────────────────────────────────────────────────────────
   return (
     <>
@@ -192,30 +206,36 @@ export function SectorsClient({
         snapshotDate={data.snapshotDate}
         clusterCount={data.tiles.length}
         stockCount={data.tiles.reduce((a, b) => a + b.stock_count, 0)}
+        viewMode={viewMode}
+        onViewChange={setViewMode}
       />
 
-      {groups.length > 0 && (
-        <>
-          <SectorTabs
-            groups={groups}
-            activeId={activeSectorId}
-            onSelect={setActiveSectorId}
-          />
+      {viewMode === "heatmap" ? (
+        <HeatmapView tiles={data.tiles} history={data.clusterHistory} />
+      ) : (
+        groups.length > 0 && (
+          <>
+            <SectorTabs
+              groups={groups}
+              activeId={activeSectorId}
+              onSelect={setActiveSectorId}
+            />
 
-          {activeIndustry && (
-            <div className="mt-6 grid grid-cols-1 md:grid-cols-[260px_1fr] gap-4 md:gap-6">
-              <IndustrySidebar
-                industries={sectorIndustries}
-                activeIndustryId={activeIndustry.industry_id}
-                onSelect={setActiveIndustryId}
-              />
-              <StocksPanel
-                industry={activeIndustry}
-                stocks={industryStocks}
-              />
-            </div>
-          )}
-        </>
+            {activeIndustry && (
+              <div className="mt-6 grid grid-cols-1 md:grid-cols-[260px_1fr] gap-4 md:gap-6">
+                <IndustrySidebar
+                  industries={sectorIndustries}
+                  activeIndustryId={activeIndustry.industry_id}
+                  onSelect={setActiveIndustryId}
+                />
+                <StocksPanel
+                  industry={activeIndustry}
+                  stocks={industryStocks}
+                />
+              </div>
+            )}
+          </>
+        )
       )}
     </>
   );
@@ -227,25 +247,46 @@ function Hero(props: {
   snapshotDate: string | null;
   clusterCount: number;
   stockCount: number;
+  viewMode: "browse" | "heatmap";
+  onViewChange: (v: "browse" | "heatmap") => void;
 }) {
   return (
-    <section className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2">
-      <h1 className="font-display text-[26px] md:text-[30px] leading-[1.1] tracking-tight">
-        Where the Indian market is{" "}
-        <em className="text-[var(--color-accent-600)] not-italic">strong</em>,
-        and where it isn&apos;t.
-      </h1>
-      <div className="flex items-center gap-x-3 text-[12px] muted-text tabular-nums flex-wrap">
-        <span>{props.stockCount.toLocaleString("en-IN")} stocks</span>
-        <span>·</span>
-        <span>{props.clusterCount} peer groups</span>
-        {props.snapshotDate && (
-          <>
-            <span>·</span>
-            <span>Snapshot {props.snapshotDate}</span>
-          </>
-        )}
-        <ScoreBandsLegend />
+    <section className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+      <div>
+        <h1 className="font-display text-[26px] md:text-[30px] leading-[1.1] tracking-tight">
+          Where the Indian market is{" "}
+          <em className="text-[var(--color-accent-600)] not-italic">strong</em>,
+          and where it isn&apos;t.
+        </h1>
+        <div className="mt-1 flex items-center gap-x-3 text-[12px] muted-text tabular-nums flex-wrap">
+          <span>{props.stockCount.toLocaleString("en-IN")} stocks</span>
+          <span>·</span>
+          <span>{props.clusterCount} peer groups</span>
+          {props.snapshotDate && (
+            <>
+              <span>·</span>
+              <span>Snapshot {props.snapshotDate}</span>
+            </>
+          )}
+          <ScoreBandsLegend />
+        </div>
+      </div>
+      {/* View toggle */}
+      <div className="flex gap-1 shrink-0">
+        {(["browse", "heatmap"] as const).map((v) => (
+          <button
+            key={v}
+            onClick={() => props.onViewChange(v)}
+            className="px-3 py-1 rounded text-[11.5px] font-medium capitalize transition-colors"
+            style={
+              props.viewMode === v
+                ? { background: "var(--color-accent-600)", color: "white" }
+                : { background: "var(--color-paper)", color: "var(--color-muted)" }
+            }
+          >
+            {v === "browse" ? "Browse" : "Heatmap"}
+          </button>
+        ))}
       </div>
     </section>
   );
@@ -1055,6 +1096,181 @@ function ReturnMini({
         {sign}
         {txt}%
       </span>
+    </div>
+  );
+}
+
+// ── Heatmap view ──────────────────────────────────────────────────────────────
+
+type HeatmapPillar = "composite" | "quality" | "valuation" | "momentum";
+
+function HeatmapView({
+  tiles,
+  history,
+}: {
+  tiles: IndustryTile[];
+  history: ClusterHistoryRow[];
+}) {
+  const [sortBy, setSortBy] = useState<"latest" | "name" | "delta">("latest");
+  const [pillar, setPillar] = useState<HeatmapPillar>("composite");
+
+  // Build lookup: cluster_id → snapshot_date → score
+  const lookup = useMemo(() => {
+    const m = new Map<string, Map<string, number>>();
+    for (const r of history) {
+      const val =
+        pillar === "composite" ? r.avg_composite
+        : pillar === "quality" ? r.avg_quality
+        : pillar === "valuation" ? r.avg_valuation
+        : r.avg_momentum;
+      if (val == null) continue;
+      if (!m.has(r.cluster_id)) m.set(r.cluster_id, new Map());
+      m.get(r.cluster_id)!.set(r.snapshot_date, val);
+    }
+    return m;
+  }, [history, pillar]);
+
+  // Unique snapshot dates, ascending
+  const dates = useMemo(() => {
+    const s = new Set(history.map((r) => r.snapshot_date));
+    return Array.from(s).sort();
+  }, [history]);
+
+  // Show last 8 snapshots max to keep the table readable
+  const visibleDates = dates.slice(-8);
+  const latestDate = visibleDates[visibleDates.length - 1] ?? "";
+
+  // Build rows: one per cluster
+  const rows = useMemo(() => {
+    return tiles.map((t) => {
+      const scores = lookup.get(t.industry_id);
+      const latest = scores?.get(latestDate) ?? null;
+      const prev = scores?.get(visibleDates[visibleDates.length - 2] ?? "") ?? null;
+      const delta = latest != null && prev != null ? latest - prev : null;
+      const snaps = visibleDates.map((d) => scores?.get(d) ?? null);
+      return { tile: t, latest, delta, snaps };
+    });
+  }, [tiles, lookup, visibleDates, latestDate]);
+
+  // Sort
+  const sorted = useMemo(() => {
+    const r = [...rows];
+    if (sortBy === "latest") r.sort((a, b) => (b.latest ?? 0) - (a.latest ?? 0));
+    else if (sortBy === "name") r.sort((a, b) => a.tile.industry_name.localeCompare(b.tile.industry_name));
+    else r.sort((a, b) => (b.delta ?? -999) - (a.delta ?? -999));
+    return r;
+  }, [rows, sortBy]);
+
+  const PILLARS: { key: HeatmapPillar; label: string }[] = [
+    { key: "composite", label: "Composite" },
+    { key: "quality",   label: "Quality" },
+    { key: "valuation", label: "Valuation" },
+    { key: "momentum",  label: "Momentum" },
+  ];
+
+  return (
+    <div className="mt-6">
+      {/* Controls */}
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <div className="flex gap-1">
+          {PILLARS.map((p) => (
+            <button
+              key={p.key}
+              onClick={() => setPillar(p.key)}
+              className="px-2.5 py-0.5 rounded text-[11px] font-medium transition-colors"
+              style={
+                pillar === p.key
+                  ? { background: "var(--color-accent-600)", color: "white" }
+                  : { background: "var(--color-paper)", color: "var(--color-muted)" }
+              }
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+        <div className="flex gap-1 ml-auto">
+          <span className="text-[11px] muted-text self-center">Sort:</span>
+          {([["latest", "Score"], ["delta", "Week Δ"], ["name", "Name"]] as const).map(([k, lbl]) => (
+            <button
+              key={k}
+              onClick={() => setSortBy(k)}
+              className="px-2 py-0.5 rounded text-[11px] font-medium transition-colors"
+              style={
+                sortBy === k
+                  ? { background: "var(--color-paper)", color: "var(--color-accent-600)", fontWeight: 600 }
+                  : { color: "var(--color-muted)" }
+              }
+            >
+              {lbl}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Heatmap table */}
+      <div className="overflow-x-auto rounded-lg hairline border">
+        <table className="w-full text-[12px] border-collapse">
+          <thead>
+            <tr className="border-b hairline">
+              <th className="text-left py-2 px-3 font-medium muted-text text-[10px] uppercase tracking-wide whitespace-nowrap w-[200px]">
+                Industry
+              </th>
+              {visibleDates.map((d) => (
+                <th
+                  key={d}
+                  className="py-2 px-1 text-center font-medium muted-text text-[10px] uppercase tracking-wide whitespace-nowrap"
+                >
+                  {d.slice(5)}
+                </th>
+              ))}
+              <th className="py-2 px-2 text-center font-medium muted-text text-[10px] uppercase tracking-wide whitespace-nowrap">
+                Wk Δ
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map(({ tile, delta, snaps }) => (
+              <tr key={tile.industry_id} className="border-t hairline hover:bg-[var(--color-paper)] transition-colors">
+                <td className="py-1.5 px-3 whitespace-nowrap">
+                  <div className="font-medium text-[12px] leading-tight">{tile.industry_name}</div>
+                  <div className="text-[10px] muted-text">{tile.sector_name}</div>
+                </td>
+                {snaps.map((v, i) => (
+                  <td key={i} className="py-1 px-1 text-center">
+                    {v != null ? (
+                      <span
+                        className="inline-block w-[34px] h-[22px] leading-[22px] rounded text-[11px] font-semibold tabular-nums"
+                        style={{
+                          background: `color-mix(in srgb, ${bandColor(band(v))} 22%, var(--color-card))`,
+                          color: bandColor(band(v)),
+                        }}
+                      >
+                        {Math.round(v)}
+                      </span>
+                    ) : (
+                      <span className="muted-text text-[10px]">—</span>
+                    )}
+                  </td>
+                ))}
+                <td className="py-1 px-2 text-center tabular-nums text-[11px]"
+                  style={{
+                    color: delta == null ? "var(--color-muted)"
+                      : delta > 0 ? "var(--color-delta-up)"
+                      : delta < 0 ? "var(--color-delta-down)"
+                      : "var(--color-muted)",
+                  }}
+                >
+                  {delta == null ? "—" : (delta > 0 ? "+" : "") + Math.round(delta)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="mt-2 text-[10.5px] muted-text">
+        Each cell = avg composite score within the peer group for that snapshot week.
+        Color matches the standard score bands. Wk Δ = latest vs prior week.
+      </div>
     </div>
   );
 }

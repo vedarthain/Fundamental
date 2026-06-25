@@ -28,6 +28,7 @@ export const revalidate = 21600;
 
 type ShareholdingRow = {
   period_end: string;
+  pledge_pct?: number | null;
   promoter_pct: number | null;
   fii_pct: number | null;
   dii_pct: number | null;
@@ -252,6 +253,7 @@ async function loadStock(symbol: string) {
            dii_pct::float         AS dii_pct,
            government_pct::float  AS government_pct,
            public_pct::float      AS public_pct,
+           pledge_pct::float      AS pledge_pct,
            shareholders::bigint   AS shareholders
     FROM app.shareholding_pattern
     WHERE symbol = ${upper}
@@ -321,9 +323,32 @@ async function loadStock(symbol: string) {
     announcements = [];
   }
 
+  // Next upcoming corporate event (board meeting, dividend, split, bonus) for
+  // the "Next event" chip in the stock page header.
+  type NextEvent = { action_type: string; ex_date: string; purpose: string };
+  let nextEvent: NextEvent | null = null;
+  try {
+    const nextRows = await sql<NextEvent[]>`
+      SELECT DISTINCT ON (action_type)
+        action_type, ex_date::text, purpose
+      FROM app.corporate_action
+      WHERE symbol = ${upper}
+        AND ex_date >= CURRENT_DATE
+      ORDER BY action_type, ex_date ASC
+    `;
+    // Prefer board_meeting > dividend > others as the "most informative" upcoming event
+    nextEvent =
+      nextRows.find((r) => r.action_type === "board_meeting") ??
+      nextRows.find((r) => r.action_type === "dividend") ??
+      nextRows[0] ??
+      null;
+  } catch {
+    nextEvent = null;
+  }
+
   return {
     stock, scorecard, annual, quarterly, priceHistory, intradayTicks, shareholding,
-    corporateActions, stockNews, announcements, scoreHistory, oiAlert,
+    corporateActions, stockNews, announcements, scoreHistory, oiAlert, nextEvent,
     peerMedianComposite: peerStats[0]?.median ?? 50,
     rankInIndustry: peerStats[0]?.rank ?? null,
     industryPeerCount: peerStats[0]?.peer_count ?? null,
@@ -341,7 +366,7 @@ export default async function StockPage({
     loadPersistenceForSymbol(symbol),
   ]);
   if (!data) return notFound();
-  const { stock, scorecard, annual, quarterly, priceHistory, intradayTicks, shareholding, corporateActions, stockNews, announcements, scoreHistory, oiAlert, rankInIndustry, industryPeerCount } = data;
+  const { stock, scorecard, annual, quarterly, priceHistory, intradayTicks, shareholding, corporateActions, stockNews, announcements, scoreHistory, oiAlert, nextEvent, rankInIndustry, industryPeerCount } = data;
 
   // Some app.universe.company_name rows are polluted with the ".NS" Yahoo
   // suffix (e.g. "INFY.NS"). Strip it once here so every downstream render —
@@ -506,6 +531,27 @@ export default async function StockPage({
                 </span>
               </>
             )}
+            {nextEvent && (
+              <>
+                <span>·</span>
+                <span
+                  className="inline-flex items-center rounded px-1.5 py-[1px] text-[10.5px] font-medium"
+                  style={{ background: "color-mix(in srgb, var(--color-accent-600) 10%, transparent)", color: "var(--color-accent-700)" }}
+                  title={nextEvent.purpose}
+                >
+                  {nextEvent.action_type === "board_meeting"
+                    ? "Board meeting"
+                    : nextEvent.action_type === "dividend"
+                    ? "Dividend ex-date"
+                    : nextEvent.action_type === "split"
+                    ? "Split"
+                    : nextEvent.action_type === "bonus"
+                    ? "Bonus"
+                    : "Event"}{" — "}
+                  {new Date(nextEvent.ex_date).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+                </span>
+              </>
+            )}
           </div>
           {stock.maturity_tier === "new" && stock.listing_date && (
             <div className="mt-3 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[var(--color-accent-50)] border border-[var(--color-accent-200)]">
@@ -569,6 +615,34 @@ export default async function StockPage({
           large non-recurring "other income" that inflates net profit and
           downstream metrics (P/E TTM, CAGR, ROE).  Score may normalize once
           this quarter rolls out of the trailing window. */}
+      {/* Promoter pledge warning — shown when the latest quarter has meaningful pledge % */}
+      {(() => {
+        const latestPledge = shareholding[0]?.pledge_pct;
+        if (latestPledge == null || latestPledge < 5) return null;
+        const isHigh = latestPledge >= 30;
+        return (
+          <div
+            className="flex items-start gap-2.5 px-3.5 py-2.5 rounded-md mt-3 text-[12.5px] leading-snug"
+            style={{
+              background: isHigh
+                ? "color-mix(in srgb, #dc2626 10%, transparent)"
+                : "color-mix(in srgb, #d97706 10%, transparent)",
+              color: isHigh ? "#991b1b" : "#92400e",
+            }}
+          >
+            <AlertTriangle size={14} className="shrink-0 mt-[1px]" strokeWidth={2.2} />
+            <span>
+              <strong>Governance alert — promoter pledge:</strong>{" "}
+              {latestPledge.toFixed(1)}% of promoter shares are pledged as of{" "}
+              {shareholding[0].period_end.slice(0, 7)}.
+              {isHigh
+                ? " High pledge levels can force distressed selling if collateral value falls."
+                : " Monitor for increases — rising pledge is a governance red flag."}
+            </span>
+          </div>
+        );
+      })()}
+
       {oiAlert && (
         <div
           className="flex items-start gap-2.5 px-3.5 py-2.5 rounded-md mt-3 text-[12.5px] leading-snug"
@@ -702,6 +776,28 @@ export default async function StockPage({
   );
 }
 
+/** Human-readable label for each pillar's percentile level. */
+function pillarLabel(pillar: string, value: number | null): string | null {
+  if (value == null) return null;
+  const v = Math.round(value);
+  if (pillar === "Valuation") {
+    if (v >= 70) return "Undervalued";
+    if (v >= 35) return "Fairly Valued";
+    return "Overvalued";
+  }
+  if (pillar === "Quality") {
+    if (v >= 70) return "High Quality";
+    if (v >= 35) return "Average";
+    return "Weak";
+  }
+  if (pillar === "Momentum") {
+    if (v >= 70) return "Rising";
+    if (v >= 35) return "Neutral";
+    return "Fading";
+  }
+  return null;
+}
+
 function PillarBreakdown(props: {
   quality: number | null;
   valuation: number | null;
@@ -718,9 +814,23 @@ function PillarBreakdown(props: {
       <div className="mt-3 space-y-3">
         {rows.map((r) => {
           const b = band(r.value);
+          const lbl = pillarLabel(r.label, r.value);
           return (
             <div key={r.label}>
-              <div className="font-medium text-[14px]">{r.label}</div>
+              <div className="flex items-center justify-between">
+                <div className="font-medium text-[14px]">{r.label}</div>
+                {lbl && (
+                  <span
+                    className="text-[10.5px] font-medium rounded px-1.5 py-[1px]"
+                    style={{
+                      color: bandColor(b),
+                      background: `color-mix(in srgb, ${bandColor(b)} 12%, transparent)`,
+                    }}
+                  >
+                    {lbl}
+                  </span>
+                )}
+              </div>
               <div className="flex items-center gap-3 mt-1">
                 <div className="flex-1 h-1.5 bg-[var(--color-paper)] rounded-full overflow-hidden">
                   <div
