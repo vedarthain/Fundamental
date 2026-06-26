@@ -10,7 +10,7 @@ Deferred work — captured so it isn't lost. Organised into three buckets by the
 
 Each item keeps its decision context so it can be picked up cold.
 
-> **Last reviewed: 2026-06-20.** Keep this current — re-check after each shipping
+> **Last reviewed: 2026-06-23.** Keep this current — re-check after each shipping
 > session: move done items to "Recently resolved", prune stale context, add new
 > work. (Several items below were found already-fixed on the 06-20 review.)
 
@@ -23,6 +23,160 @@ Each item keeps its decision context so it can be picked up cold.
   prod fixes unless **very critical** (site down, data corruption, security).
 - Localhost DB = local Postgres (`postgres:///fundamental_app` +
   `postgres:///golden_db`). Never point local work at Neon prod.
+
+---
+
+---
+
+## 🔥 Priority sprint — user review actions (added 2026-06-23)
+
+Three independent user reviews of the platform converged on the same gaps.
+Items below are ordered by: (a) impact on decision-making, (b) data already
+available, (c) SEBI safety. All are compliant without RA registration —
+**no buy/sell verdicts, no target prices, no forward estimates**.
+
+---
+
+### R1 — Full score history chart on stock page *(highest ROI, data already exists)*
+
+**The gap:** All three reviewers: "can't tell if quality has been trending up
+for 2 years or just jumped last week — trend matters more than level."
+Current stock page shows only the latest snapshot. `app.scores` already has
+a growing archive (12+ weeks and compounding weekly).
+
+**What:** On `/stock/[symbol]`, add a multi-pillar score history chart —
+composite, Q, V, M over the full archive. Toggle between 3M / 6M / all-time.
+Optionally overlay peer-cluster average (we already compute this in the Ideas
+page) so the reader sees relative movement, not just absolute.
+
+**SEBI:** Entirely safe. Historical data from our own computation.
+
+**Effort:** S–M. SQL is trivial (scan `app.scores` for one symbol). Chart
+is the same sparkline pattern already in use on the Ideas page. The main
+work is UI layout on the stock page.
+
+**Depends on:** Nothing new. Archive grows automatically each Sunday.
+
+---
+
+### R2 — Pillar input breakdown ("what drove Q/V/M") *(trust + transparency)*
+
+**The gap:** "A score of 80 tells you it ranks well but you can't verify *why*
+— can mask one strong factor hiding two weak ones." Two of three reviewers
+flagged this as a trust problem.
+
+**What:** Expand the Q/V/M score cards on `/stock/[symbol]` to show the
+**underlying financial metrics** that fed each pillar — e.g. for a bank:
+"Quality 82: RoA 91st pct · CAR 74th pct · NPA ratio 68th pct (lower = better)."
+The raw metric values + their percentile rank within the cluster.
+
+**SEBI:** Safe. Explaining your own methodology = education, not advice.
+Actually *helps* the SEBI posture by making it clear we're scoring, not
+recommending.
+
+**Effort:** M. The metric inputs are already fetched by `weekly-fetch.py`
+(Screener scrape) and stored in `app.scores` / the raw input tables. Need
+to surface them via a new API route and expand the stock-page scorecard UI.
+Requires checking which raw columns survive to the final score tables.
+
+---
+
+### R3 — 5-year P&L trend table on stock page *(removes the "go to Screener.in" step)*
+
+**The gap:** "Before deploying capital I need the 5–10 year trend of Revenue,
+Net Profit, Free Cash Flow, Debt. Right now I have to leave the site for
+Screener.in." Two reviewers said this was the biggest reason EquityRoots
+can't be the final stop.
+
+**What:** A clean historical financials panel on `/stock/[symbol]` — annual
+Revenue, Net Profit, FCF, Debt/Equity — last 5 fiscal years. Tabular + small
+sparklines per metric. No forward estimates (SEBI safety).
+
+**SEBI:** Presenting public financial statements verbatim is factual data.
+Must not be framed as "these numbers suggest you should buy" — keep it raw
+and neutral. Label source clearly (BSE/NSE filings via Screener.in).
+
+**Effort:** M–L. Screener already provides this data during our weekly fetch;
+the question is whether we're storing it in a queryable form, or just using it
+to compute scores and discarding the raw values. If raw values are discarded,
+need a new storage table + fetch pass. **Investigate first.**
+
+---
+
+### R4 — Governance red-flag panel on stock page *(pro-SEBI, trust layer)*
+
+**The gap:** "Promoter pledging, auditor changes, related-party transactions
+— make-or-break for mid/small-caps." Reviewers specifically called this out
+for small/mid-cap safety.
+
+**What:** A "Governance & Risk" section on `/stock/[symbol]`:
+- Promoter pledge % (already in shareholding data from indianapi)
+- Latest SEBI/exchange enforcement action (from BSE announcements feed we
+  already ingest — tag by symbol, surface as badge)
+- Auditor name + any recent change flag (from Screener / annual report)
+- Cash-flow quality: CFO/PAT ratio (if raw CF data available)
+
+**SEBI:** Actively *pro-SEBI*. We're surfacing public enforcement data.
+The regulatory overlay in /news was the first step — this is the stock-page
+extension. Already partially in the "Governance overlay" backlog item (M-item).
+
+**Effort:** S for pledge % + SEBI badge (data exists). M for auditor change
++ CF quality ratio (may need new Screener fields).
+
+---
+
+### R5 — Watchlist score-change alerts (weekly email) *(retention + stickiness)*
+
+**The gap:** All three reviewers: "I need to know when a stock I'm watching
+upgrades / hits a valuation sweet spot." Currently every visit starts from
+scratch.
+
+**What:** A weekly digest email to signed-in users — for each stock on their
+watchlist, show this week's score changes: composite Δ, which pillar moved
+and by how much, whether it's a new high/low in the 12-week window.
+Subject line: "Your 4 watched stocks — score changes this week."
+
+**SEBI:** Fine, *if and only if* framed as informational score updates —
+**not** "Stock X looks like a buy now". Text must say "composite score moved
+from 68 → 74" not "composite improved — consider buying." The email is a
+factual diff, not a recommendation.
+
+**Effort:** M. Need: (a) email sending infra (Resend / SES), (b) a weekly
+diff job that compares this week's vs last week's snapshot for each user's
+watchlist, (c) an email template. The score data is already there.
+
+**Depends on:** Watchlist (done), weekly archive (done), email service (new).
+
+---
+
+### R6 — Sector performance analytics *(breadth, new surface)*
+
+**The gap:** "Heatmaps, sector rotation charts, ranking tables across 6M/1Y/
+3Y/5Y." Currently /sectors is a browse surface, not a performance surface.
+
+**What:** A sector-level score trend — how each sector's average composite
+(and Q/V/M) has moved over the archive. A heatmap of sector × pillar showing
+which sectors are improving / deteriorating collectively. Price performance
+of each sector vs Nifty over available periods (needs price backfill for 3Y+).
+
+**SEBI:** Pure aggregated historical data. Safe.
+
+**Effort:** M. Score aggregation by sector is straightforward over `app.scores`
++ `app.cluster`. Price-based comparison needs the index history backfill
+(already in backlog). Start with score-only view, add price later.
+
+---
+
+### What we are explicitly NOT building (SEBI boundary)
+
+| Feature | Why not |
+|---|---|
+| Forward P/E / analyst estimates | Displaying forward estimates in a stock-ranking context = RA territory without registration |
+| Target prices | Forward-looking price prediction requires RA registration |
+| Buy / Sell / Hold labels | Direct investment advice |
+| AI-generated investment summaries ("strong buy candidate") | Research report under SEBI RA Regs 2014 |
+| Portfolio construction advice | Portfolio Management Service territory |
+| Con-call summaries with our editorial framing | Too close to research report; only safe as verbatim BSE filing extract with source label |
 
 ---
 
