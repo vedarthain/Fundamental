@@ -45,10 +45,12 @@ export async function GET(req: NextRequest) {
     "peer_count",
     "pe_ttm",
     "pb",
-    "roe_or_roce_3y_pct", // converted to %; ROE for BFSI, ROCE elsewhere
-    "div_yield_pct",     // converted to percent
-    "op_margin_3y_pct",  // converted to percent
-    "ret_12m_rel_pct",   // converted to percent
+    "return_on_capital_3y_pct", // converted to %; ROE for BFSI, ROCE elsewhere
+    "div_yield_pct",            // converted to percent
+    "op_margin_3y_pct",         // converted to percent
+    "ret_12m_rel_pct",          // converted to percent
+    "np_cagr_5y_pct",           // 5-year net profit CAGR, converted to percent
+    "rev_cagr_5y_pct",          // 5-year revenue CAGR, converted to percent
   ];
 
   // CSV field formatter — wraps anything containing comma/quote/newline
@@ -86,6 +88,8 @@ export async function GET(req: NextRequest) {
       esc(pct(r.div_yield)),
       esc(pct(r.op_margin_3y)),
       esc(pct(r.ret_12m_rel)),
+      esc(pct(r.np_cagr_5y)),
+      esc(pct(r.rev_cagr_5y)),
     ].join(","));
   }
   const body = lines.join("\n") + "\n";

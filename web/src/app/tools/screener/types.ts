@@ -40,7 +40,9 @@ export const DEFAULT_PER_SECTOR: 10 | 20 | 50 = 20;
  * never reach the raw SQL — page.tsx maps each value to a column expression. */
 export const SORT_KEYS = [
   "score", "symbol", "mcap", "ltp", "pe", "pb",
-  "roe", "ret12m", "divyld", "opm", "q", "v", "m",
+  "roe", "ret12m", "divyld", "opm",
+  "npcagr", "revcagr",
+  "q", "v", "m",
 ] as const;
 export type SortParam = (typeof SORT_KEYS)[number];
 
@@ -232,6 +234,15 @@ export const FILTER_PRESETS: Record<string, {
       divYldMin: 3, roeMin: 12,
       peMax: null, pbMax: null, opmMin: null, ret12mMin: null,
       mcapMin: null, mcapMax: null, minQ: 0, minV: 0, minM: 0, minC: 0,
+    },
+  },
+  quality_value: {
+    label: "Quality + Value",
+    description: "Quality ≥ 55 AND Valuation ≥ 55 within peer cluster — strong businesses at fair prices",
+    filters: {
+      minQ: 55, minV: 55,
+      peMax: null, pbMax: null, roeMin: null, divYldMin: null, opmMin: null, ret12mMin: null,
+      mcapMin: null, mcapMax: null, minM: 0, minC: 0,
     },
   },
 };

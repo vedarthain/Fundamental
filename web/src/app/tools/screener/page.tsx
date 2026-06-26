@@ -47,6 +47,8 @@ type Row = {
   ret_12m_rel: number | null;   // 12-month return vs market (decimal)
   div_yield: number | null;     // dividend yield (decimal)
   op_margin_3y: number | null;  // operating margin (decimal)
+  np_cagr_5y: number | null;    // 5-year net profit CAGR (decimal, 0.18 = 18%)
+  rev_cagr_5y: number | null;   // 5-year revenue CAGR (decimal)
 };
 
 /** Column-name → SQL expression (against the outer `joined` CTE). Used by
@@ -54,19 +56,21 @@ type Row = {
  * this whitelist — a malformed URL param can never reach the raw SQL. The
  * SortParam type lives in ./types so other components (SortHeader) can use it. */
 const SORT_SQL: Record<SortParam, string> = {
-  score:  "composite_pct",
-  symbol: "symbol",
-  mcap:   "market_cap_cr",
-  ltp:    "current_price",
-  pe:     "pe_ttm",
-  pb:     "pb",
-  roe:    "roe_3y",
-  ret12m: "ret_12m_rel",
-  divyld: "div_yield",
-  opm:    "op_margin_3y",
-  q:      "quality_pct",
-  v:      "valuation_pct",
-  m:      "momentum_pct",
+  score:   "composite_pct",
+  symbol:  "symbol",
+  mcap:    "market_cap_cr",
+  ltp:     "current_price",
+  pe:      "pe_ttm",
+  pb:      "pb",
+  roe:     "roe_3y",
+  ret12m:  "ret_12m_rel",
+  divyld:  "div_yield",
+  opm:     "op_margin_3y",
+  npcagr:  "np_cagr_5y",
+  revcagr: "rev_cagr_5y",
+  q:       "quality_pct",
+  v:       "valuation_pct",
+  m:       "momentum_pct",
 };
 
 async function loadCoverage(): Promise<{ stocks: number }> {
@@ -349,10 +353,10 @@ async function loadRows(
              -- Raw fundamentals extracted from metrics_snapshot.cluster_metrics JSONB.
              -- These are the absolute (non-percentile) values used for the
              -- spreadsheet-style columns and for sorting by P/E, ROE etc.
-             (m.cluster_metrics->>'pe_ttm')::float       AS pe_ttm,
-             (m.cluster_metrics->>'pb')::float           AS pb,
+             (m.cluster_metrics->>'pe_ttm')::float        AS pe_ttm,
+             (m.cluster_metrics->>'pb')::float            AS pb,
              -- ROE for BFSI; ROCE for everyone else.  The screener column
-             -- "ROE / ROCE 3Y" surfaces whichever the cluster scorecard
+             -- "Return on Capital 3Y" surfaces whichever the cluster scorecard
              -- computed.  Both are "return on capital" measures in
              -- comparable ranges; collapsing them keeps the column populated
              -- for the full universe.
@@ -360,9 +364,13 @@ async function loadRows(
                  (m.cluster_metrics->>'roe_3y')::float,
                  (m.cluster_metrics->>'roce_3y')::float
              ) AS roe_3y,
-             (m.cluster_metrics->>'ret_12m_rel')::float  AS ret_12m_rel,
-             (m.cluster_metrics->>'div_yield')::float    AS div_yield,
-             (m.cluster_metrics->>'op_margin_3y')::float AS op_margin_3y,
+             (m.cluster_metrics->>'ret_12m_rel')::float   AS ret_12m_rel,
+             (m.cluster_metrics->>'div_yield')::float     AS div_yield,
+             (m.cluster_metrics->>'op_margin_3y')::float  AS op_margin_3y,
+             -- 5-year growth rates — key signals for separating compounders
+             -- from cheap-but-stuck value traps.
+             (m.cluster_metrics->>'np_cagr_5y')::float    AS np_cagr_5y,
+             (m.cluster_metrics->>'rev_cagr_5y')::float   AS rev_cagr_5y,
              ROW_NUMBER() OVER (
                PARTITION BY r.cluster_id
                ORDER BY
@@ -430,7 +438,8 @@ async function loadRows(
            maturity_tier, market_cap_cr, current_price, price_fetched_at,
            quality_pct, valuation_pct, momentum_pct, composite_pct,
            peer_rank, peer_count, leading_pillar, score_status,
-           pe_ttm, pb, roe_3y, ret_12m_rel, div_yield, op_margin_3y
+           pe_ttm, pb, roe_3y, ret_12m_rel, div_yield, op_margin_3y,
+           np_cagr_5y, rev_cagr_5y
     FROM joined
     ${sectorRankFilter}
     ORDER BY ${orderBy}
@@ -1131,11 +1140,7 @@ function IndustryBlock({
                   sortKey="roe"
                   label={
                     <>
-                      ROE / ROCE
-                      {/* Visible info icon — invites the hover/tap so users
-                          discover the tooltip explaining when ROE vs ROCE is
-                          surfaced. Muted color so it doesn't overpower the
-                          column label. */}
+                      Return on Capital
                       <span
                         aria-hidden="true"
                         className="ml-1 opacity-50 text-[10px] align-text-top"
@@ -1144,21 +1149,36 @@ function IndustryBlock({
                       </span>
                     </>
                   }
-                  sub="3y"
+                  sub="3y avg"
                   params={params}
                   align="right"
                   className={headerPad}
-                  title={"Return on capital, averaged over 3 years.\n\n"
-                    + "BFSI / financial stocks use ROE (Return on Equity = Net Profit ÷ Shareholder Equity).\n"
-                    + "Other industries use ROCE (Return on Capital Employed = EBIT ÷ (Equity + Debt)).\n\n"
-                    + "Higher is better. 15%+ is good, 25%+ is exceptional.\n\n"
-                    + "The cluster scorecard picks whichever metric best suits the industry — ROE for "
-                    + "banks (equity-driven), ROCE for manufacturing / capital-heavy industries (equity + debt).\n\n"
-                    + "See /glossary for full details and examples."}
+                  title={"Return on Capital — how much profit the business generates per ₹100 of capital used.\n\n"
+                    + "Banks & finance (BFSI): uses ROE = Net Profit ÷ Shareholder Equity.\n"
+                    + "All other industries: uses ROCE = EBIT ÷ (Equity + Debt).\n\n"
+                    + "15%+ is good. 25%+ is exceptional. Below 10% usually means the business isn't covering its cost of capital."}
                 />
-                <SortHeader sortKey="ret12m" label="1Y Δ" sub="vs market" params={params} align="right" className={headerPad} />
-                <SortHeader sortKey="divyld" label="Div"  sub="yield" params={params} align="right" className={headerPad} />
-                <SortHeader sortKey="opm"    label="Op M" sub="3y"    params={params} align="right" className={headerPad} />
+                <SortHeader sortKey="ret12m"  label="1Y Δ"         sub="vs market"  params={params} align="right" className={headerPad} />
+                <SortHeader sortKey="divyld"  label="Div"           sub="yield"      params={params} align="right" className={headerPad} />
+                <SortHeader sortKey="opm"     label="Op Margin"     sub="3y"         params={params} align="right" className={headerPad} />
+                <SortHeader
+                  sortKey="npcagr"
+                  label="5Y Profit CAGR"
+                  sub="net profit"
+                  params={params}
+                  align="right"
+                  className={headerPad}
+                  title={"5-year compound annual growth rate of net profit.\n\nPositive + high = business growing earnings fast. Negative = earnings shrinking (investigate why before buying)."}
+                />
+                <SortHeader
+                  sortKey="revcagr"
+                  label="5Y Revenue CAGR"
+                  sub="revenue"
+                  params={params}
+                  align="right"
+                  className={headerPad}
+                  title={"5-year compound annual growth rate of revenue (top line).\n\nHigh revenue CAGR with low profit CAGR = margins being squeezed. High revenue + high profit = genuine compounder."}
+                />
                 <SortHeader sortKey="q"      label="Q"    params={params} align="right" className={headerPad} title="Quality percentile within peer cluster" />
                 <SortHeader sortKey="v"      label="V"    params={params} align="right" className={headerPad} title="Valuation percentile within peer cluster" />
                 <SortHeader sortKey="m"      label="M"    params={params} align="right" className={headerPad} title="Momentum percentile within peer cluster" />
@@ -1229,6 +1249,12 @@ function IndustryBlock({
                   </td>
                   <td className={`${rowPad} text-right tabular-nums text-[11.5px]`}>
                     {fmtPctVal(r.op_margin_3y)}
+                  </td>
+                  <td className={`${rowPad} text-right tabular-nums text-[11.5px]`}>
+                    {fmtPctVal(r.np_cagr_5y, true)}
+                  </td>
+                  <td className={`${rowPad} text-right tabular-nums text-[11.5px]`}>
+                    {fmtPctVal(r.rev_cagr_5y, true)}
                   </td>
                   <PillarCell value={r.quality_pct}   highlight={r.leading_pillar === "Q"} className={rowPad} />
                   <PillarCell value={r.valuation_pct} highlight={r.leading_pillar === "V"} className={rowPad} />

@@ -77,6 +77,19 @@ const TOOLS: ToolCard[] = [
     ],
     accent: "var(--color-score-good)",
   },
+  {
+    href: "/tools/opportunities",
+    title: "Correction Opportunities",
+    tagline: "Strong businesses temporarily beaten down",
+    body:
+      "Quality stocks the market has been selling off — high Quality score confirms fundamentals are intact, high Valuation score means they are now cheap vs peers, low Momentum score is the correction signal. Filter by correction depth (6M vs market, 200d EMA trend) and growth rate to find genuine re-entry setups.",
+    useFor: [
+      "Find quality stocks at post-correction prices",
+      "Filter by correction depth + profit growth",
+      "Spot early recovery signals (EMA re-stack)",
+    ],
+    accent: "#dc2626",
+  },
 ];
 
 export default function ToolsLanding() {
@@ -127,6 +140,11 @@ export default function ToolsLanding() {
             <span className="ink-text font-medium">Narrowed to a few candidates?</span> Use{" "}
             <Link href="/tools/peer-comparison" className="underline">Peer Comparison</Link>{" "}
             — same scorecard, side by side.
+          </li>
+          <li>
+            <span className="ink-text font-medium">Looking for post-correction re-entry setups?</span> Use{" "}
+            <Link href="/tools/opportunities" className="underline">Correction Opportunities</Link>{" "}
+            — quality stocks that have corrected, with depth and growth metrics to distinguish setups from traps.
           </li>
         </ul>
       </section>

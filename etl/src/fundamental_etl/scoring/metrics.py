@@ -135,6 +135,7 @@ def load_nifty_returns(conn_golden: psycopg.Connection) -> dict[str, float]:
             windows AS (
               SELECT
                 d AS today,
+                d - INTERVAL '21 days'  AS d_1m,
                 d - INTERVAL '63 days'  AS d_3m,
                 d - INTERVAL '126 days' AS d_6m,
                 d - INTERVAL '252 days' AS d_12m
@@ -150,6 +151,7 @@ def load_nifty_returns(conn_golden: psycopg.Connection) -> dict[str, float]:
                 AND ph.date IN (
                   -- nearest available trading day to each anchor
                   (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND close IS NOT NULL),
+                  (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND close IS NOT NULL AND date <= (SELECT d_1m FROM windows)),
                   (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND close IS NOT NULL AND date <= (SELECT d_3m FROM windows)),
                   (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND close IS NOT NULL AND date <= (SELECT d_6m FROM windows)),
                   (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND close IS NOT NULL AND date <= (SELECT d_12m FROM windows))
@@ -158,28 +160,33 @@ def load_nifty_returns(conn_golden: psycopg.Connection) -> dict[str, float]:
             anchor_dates AS (
               SELECT
                 (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND close IS NOT NULL) AS d_now,
+                (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND close IS NOT NULL AND date <= (SELECT d_1m FROM windows)) AS d_1m,
                 (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND close IS NOT NULL AND date <= (SELECT d_3m FROM windows)) AS d_3m,
                 (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND close IS NOT NULL AND date <= (SELECT d_6m FROM windows)) AS d_6m,
                 (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND close IS NOT NULL AND date <= (SELECT d_12m FROM windows)) AS d_12m
             ),
             now AS (SELECT symbol, close FROM base, anchor_dates WHERE base.date = anchor_dates.d_now),
+            d1  AS (SELECT symbol, close FROM base, anchor_dates WHERE base.date = anchor_dates.d_1m),
             d3  AS (SELECT symbol, close FROM base, anchor_dates WHERE base.date = anchor_dates.d_3m),
             d6  AS (SELECT symbol, close FROM base, anchor_dates WHERE base.date = anchor_dates.d_6m),
             d12 AS (SELECT symbol, close FROM base, anchor_dates WHERE base.date = anchor_dates.d_12m)
             SELECT
+              percentile_cont(0.5) WITHIN GROUP (ORDER BY now.close/d1.close - 1)  AS r1,
               percentile_cont(0.5) WITHIN GROUP (ORDER BY now.close/d3.close - 1)  AS r3,
               percentile_cont(0.5) WITHIN GROUP (ORDER BY now.close/d6.close - 1)  AS r6,
               percentile_cont(0.5) WITHIN GROUP (ORDER BY now.close/d12.close - 1) AS r12
             FROM now
+              JOIN d1  USING (symbol)
               JOIN d3  USING (symbol)
               JOIN d6  USING (symbol)
               JOIN d12 USING (symbol)
-            WHERE d3.close > 0 AND d6.close > 0 AND d12.close > 0
+            WHERE d1.close > 0 AND d3.close > 0 AND d6.close > 0 AND d12.close > 0
         """)
         r = cur.fetchone()
     if not r:
         return {}
     return {
+        "1m":  float(r["r1"])  if r["r1"]  is not None else None,
         "3m":  float(r["r3"])  if r["r3"]  is not None else None,
         "6m":  float(r["r6"])  if r["r6"]  is not None else None,
         "12m": float(r["r12"]) if r["r12"] is not None else None,
@@ -187,13 +194,13 @@ def load_nifty_returns(conn_golden: psycopg.Connection) -> dict[str, float]:
 
 
 def compute_returns(prices: list[dict]) -> dict[str, Optional[float]]:
-    """Compute 3M/6M/12M returns from a daily price list (newest-first)."""
+    """Compute 1M/3M/6M/12M returns from a daily price list (newest-first)."""
     if not prices:
-        return {"ret_3m": None, "ret_6m": None, "ret_12m": None}
+        return {"ret_1m": None, "ret_3m": None, "ret_6m": None, "ret_12m": None}
     prices = list(reversed(prices))  # oldest first
     closes = [p["close"] for p in prices if p["close"] is not None]
     if not closes:
-        return {"ret_3m": None, "ret_6m": None, "ret_12m": None}
+        return {"ret_1m": None, "ret_3m": None, "ret_6m": None, "ret_12m": None}
     last = closes[-1]
 
     def _ret(window):
@@ -201,7 +208,12 @@ def compute_returns(prices: list[dict]) -> dict[str, Optional[float]]:
             return None
         return last / closes[-window - 1] - 1
 
-    return {"ret_3m": _ret(63), "ret_6m": _ret(126), "ret_12m": _ret(252)}
+    return {
+        "ret_1m": _ret(21),
+        "ret_3m": _ret(63),
+        "ret_6m": _ret(126),
+        "ret_12m": _ret(252),
+    }
 
 
 # ----------------------- Meta from latest raw export ------------------------

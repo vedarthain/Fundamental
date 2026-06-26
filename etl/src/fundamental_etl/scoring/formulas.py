@@ -959,6 +959,13 @@ def p_premium(annual, quarterly, meta, signals, nifty_returns):
 # ---------- MOMENTUM (price + earnings) -------------------------------
 
 @_higher
+def ret_1m_rel(annual, quarterly, meta, signals, nifty_returns):
+    r = meta.get("ret_1m")
+    n = nifty_returns.get("1m") if nifty_returns else None
+    return None if r is None or n is None else r - n
+
+
+@_higher
 def ret_3m_rel(annual, quarterly, meta, signals, nifty_returns):
     r = meta.get("ret_3m")
     n = nifty_returns.get("3m") if nifty_returns else None
