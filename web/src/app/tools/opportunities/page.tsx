@@ -8,6 +8,13 @@ import { tierLabel, displayCompanyName } from "@/lib/score";
 
 type IndexFilter = "" | "n50" | "n200" | "n500";
 
+type NiftyReturns = {
+  ret_1m: number | null;
+  ret_3m: number | null;
+  ret_6m: number | null;
+  ret_1y: number | null;
+};
+
 type Opportunity = {
   symbol: string;
   company_name: string;
@@ -100,6 +107,7 @@ function sortRows(rows: Opportunity[], k: SortKey, dir: SortDir): Opportunity[] 
 
 export default function OpportunitiesPage() {
   const [rows, setRows]           = useState<Opportunity[]>([]);
+  const [nifty, setNifty]         = useState<NiftyReturns | null>(null);
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState<string | null>(null);
   const [recoveryWatch, setRecoveryWatch] = useState(false);
@@ -110,7 +118,11 @@ export default function OpportunitiesPage() {
   useEffect(() => {
     fetch("/api/opportunities")
       .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
-      .then((data: Opportunity[]) => { setRows(data); setLoading(false); })
+      .then((data: { rows: Opportunity[]; nifty: NiftyReturns }) => {
+        setRows(data.rows);
+        setNifty(data.nifty);
+        setLoading(false);
+      })
       .catch((e: unknown) => { setError(String(e)); setLoading(false); });
   }, []);
 
@@ -226,6 +238,11 @@ export default function OpportunitiesPage() {
           );
         })}
       </div>
+
+      {/* ── Nifty 500 benchmark strip ──────────────────────────────────── */}
+      {!loading && !error && nifty && (
+        <BenchmarkStrip nifty={nifty} />
+      )}
 
       {/* ── Count ──────────────────────────────────────────────────────── */}
       {!loading && !error && (
@@ -451,5 +468,48 @@ function CompositePill({
         )}
       </div>
     </td>
+  );
+}
+
+// ── Benchmark strip ───────────────────────────────────────────────────────────
+
+function fmtIndexReturn(v: number | null): { text: string; color: string } {
+  if (v == null) return { text: "—", color: "var(--color-muted)" };
+  const pct = v * 100;
+  const text = (pct >= 0 ? "+" : "") + pct.toFixed(1) + "%";
+  const color = pct >= 0 ? "var(--color-score-good)" : "#dc2626";
+  return { text, color };
+}
+
+function BenchmarkStrip({ nifty }: { nifty: NiftyReturns }) {
+  const items: { label: string; value: number | null }[] = [
+    { label: "1M",  value: nifty.ret_1m },
+    { label: "3M",  value: nifty.ret_3m },
+    { label: "6M",  value: nifty.ret_6m },
+    { label: "1Y",  value: nifty.ret_1y },
+  ];
+  return (
+    <div
+      className="mb-4 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-lg border px-4 py-2.5"
+      style={{ background: "var(--color-paper)", borderColor: "var(--color-border-default)" }}
+    >
+      <span className="text-[11px] uppercase tracking-wide muted-text font-medium whitespace-nowrap">
+        Nifty 500 (benchmark)
+      </span>
+      <div className="flex flex-wrap gap-x-4 gap-y-1">
+        {items.map(({ label, value }) => {
+          const { text, color } = fmtIndexReturn(value);
+          return (
+            <span key={label} className="flex items-baseline gap-1.5">
+              <span className="text-[11px] muted-text">{label}</span>
+              <span className="text-[13px] font-semibold tabular-nums" style={{ color }}>{text}</span>
+            </span>
+          );
+        })}
+      </div>
+      <span className="text-[10.5px] muted-text ml-auto hidden sm:block">
+        Stock columns show return <em>relative to this index</em>
+      </span>
+    </div>
   );
 }

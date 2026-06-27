@@ -56,8 +56,17 @@ type Row = {
   np_yoy_q: number | null;            // latest-quarter net profit YoY growth
 };
 
+type NiftyReturns = {
+  ret_1m: number | null;
+  ret_3m: number | null;
+  ret_6m: number | null;
+  ret_1y: number | null;
+};
+
 export async function GET() {
-  const rows = await sql<Row[]>`
+  // Run both queries in parallel — stocks + NIFTY500 benchmark returns.
+  const [rows, niftyRows] = await Promise.all([
+    sql<Row[]>`
     WITH ranked AS (
       SELECT
         s.symbol,
@@ -129,9 +138,53 @@ export async function GET() {
      AND m.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
     WHERE u.is_active
     ORDER BY r.quality_pct DESC NULLS LAST, r.valuation_pct DESC NULLS LAST
-  `;
+  `,
 
-  return NextResponse.json(rows, {
+    // NIFTY500 absolute returns for 1M / 3M / 6M / 1Y — used as the
+    // benchmark strip on the page so users can see the index context
+    // alongside the relative-return columns in the table.
+    sql<NiftyReturns[]>`
+      SELECT
+        CASE WHEN m.close > 0
+          THEN ((t.close - m.close) / m.close)::float END AS ret_1m,
+        CASE WHEN q.close > 0
+          THEN ((t.close - q.close) / q.close)::float END AS ret_3m,
+        CASE WHEN h.close > 0
+          THEN ((t.close - h.close) / h.close)::float END AS ret_6m,
+        CASE WHEN y.close > 0
+          THEN ((t.close - y.close) / y.close)::float END AS ret_1y
+      FROM (
+        SELECT close, date FROM app.market_index_history
+        WHERE index_code = 'NIFTY500' ORDER BY date DESC LIMIT 1
+      ) t
+      LEFT JOIN LATERAL (
+        SELECT close FROM app.market_index_history
+        WHERE index_code = 'NIFTY500' AND date <= t.date - INTERVAL '30 days'
+        ORDER BY date DESC LIMIT 1
+      ) m ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT close FROM app.market_index_history
+        WHERE index_code = 'NIFTY500' AND date <= t.date - INTERVAL '90 days'
+        ORDER BY date DESC LIMIT 1
+      ) q ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT close FROM app.market_index_history
+        WHERE index_code = 'NIFTY500' AND date <= t.date - INTERVAL '180 days'
+        ORDER BY date DESC LIMIT 1
+      ) h ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT close FROM app.market_index_history
+        WHERE index_code = 'NIFTY500' AND date <= t.date - INTERVAL '365 days'
+        ORDER BY date DESC LIMIT 1
+      ) y ON TRUE
+    `,
+  ]);
+
+  const nifty: NiftyReturns = niftyRows[0] ?? {
+    ret_1m: null, ret_3m: null, ret_6m: null, ret_1y: null,
+  };
+
+  return NextResponse.json({ rows, nifty }, {
     headers: {
       "Cache-Control": "public, s-maxage=86400, stale-while-revalidate=3600",
     },
