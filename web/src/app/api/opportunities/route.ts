@@ -224,10 +224,14 @@ export async function GET() {
       )
       SELECT
         REPLACE(p.symbol, '.NS', '') AS symbol,
-        MAX(p.close) FILTER (WHERE p.date = (SELECT d FROM d_1m))::float AS price_1m_ago,
-        MAX(p.close) FILTER (WHERE p.date = (SELECT d FROM d_3m))::float AS price_3m_ago,
-        MAX(p.close) FILTER (WHERE p.date = (SELECT d FROM d_6m))::float AS price_6m_ago,
-        MAX(p.close) FILTER (WHERE p.date = (SELECT d FROM d_1y))::float AS price_1y_ago
+        -- Use adj_close (populated by apply-corp-adjustments.py) so that
+        -- splits/bonuses within the lookback window don't distort the "from ₹X"
+        -- anchor and the % return pill. For stocks with no corporate actions,
+        -- adj_close = close (no change in behaviour).
+        MAX(p.adj_close) FILTER (WHERE p.date = (SELECT d FROM d_1m))::float AS price_1m_ago,
+        MAX(p.adj_close) FILTER (WHERE p.date = (SELECT d FROM d_3m))::float AS price_3m_ago,
+        MAX(p.adj_close) FILTER (WHERE p.date = (SELECT d FROM d_6m))::float AS price_6m_ago,
+        MAX(p.adj_close) FILTER (WHERE p.date = (SELECT d FROM d_1y))::float AS price_1y_ago
       FROM golden.price_history p
       WHERE p.interval = '1d'
         AND p.date IN (
