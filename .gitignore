@@ -31,5 +31,5 @@ scripts/__pycache__/
 # is what ships; keep the raw PDFs out of git.
 factsheet/
 
-# Local-only architecture writeup (kept under docs/ for reference, never pushed).
-docs/ARCHITECTURE_WRITEUP.md
+# Local-only docs folder — never pushed.
+docs/
