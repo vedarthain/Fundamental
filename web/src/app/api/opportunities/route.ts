@@ -38,6 +38,7 @@ type Row = {
   peer_count: number | null;
   // Index membership
   is_nifty50: boolean;
+  is_nifty100: boolean;
   is_nifty200: boolean;
   is_nifty500: boolean;
   // Correction-depth signals
@@ -76,6 +77,8 @@ type NiftyReturns = {
   ret_1y: number | null;
 };
 
+type BenchmarkRow = NiftyReturns & { index_code: string };
+
 export async function GET() {
   // Run all three queries in parallel — stocks, NIFTY500 benchmark, and
   // actual historical prices from golden for accurate "from ₹X" display.
@@ -113,9 +116,10 @@ export async function GET() {
       sm.market_cap_cr::float                             AS market_cap_cr,
       sm.current_price::float                             AS current_price,
       -- is_nifty50/200 from universe (seeded in migrations 0009/0010).
-      -- is_nifty500 was never seeded in universe — derive from
-      -- index_constituent which fetch-index-constituents.py keeps current.
+      -- is_nifty100/500 derived from index_constituent (kept current by
+      -- fetch-index-constituents.py) since they were never seeded in universe.
       COALESCE(u.is_nifty50,  false)                      AS is_nifty50,
+      (n100.symbol IS NOT NULL)                           AS is_nifty100,
       COALESCE(u.is_nifty200, false)                      AS is_nifty200,
       (n500.symbol IS NOT NULL)                           AS is_nifty500,
       r.quality_pct,
@@ -154,17 +158,21 @@ export async function GET() {
       ON m.symbol = r.symbol
      AND m.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
     LEFT JOIN (
+      SELECT symbol FROM app.index_constituent WHERE index_code = 'NIFTY100'
+    ) n100 ON n100.symbol = r.symbol
+    LEFT JOIN (
       SELECT symbol FROM app.index_constituent WHERE index_code = 'NIFTY500'
     ) n500 ON n500.symbol = r.symbol
     WHERE u.is_active
     ORDER BY r.quality_pct DESC NULLS LAST, r.valuation_pct DESC NULLS LAST
   `,
 
-    // NIFTY500 absolute returns for 1M / 3M / 6M / 1Y — used as the
-    // benchmark strip on the page so users can see the index context
-    // alongside the relative-return columns in the table.
-    sql<NiftyReturns[]>`
+    // Benchmark returns for Nifty 50, Nifty 100 (proxy for Nifty 200), and
+    // Nifty 500 — fetched in one pass via a lateral join over the index codes.
+    // The page shows the strip matching the active index filter.
+    sql<BenchmarkRow[]>`
       SELECT
+        codes.index_code,
         CASE WHEN m.close > 0
           THEN ((t.close - m.close) / m.close)::float END AS ret_1m,
         CASE WHEN q.close > 0
@@ -173,28 +181,29 @@ export async function GET() {
           THEN ((t.close - h.close) / h.close)::float END AS ret_6m,
         CASE WHEN y.close > 0
           THEN ((t.close - y.close) / y.close)::float END AS ret_1y
-      FROM (
+      FROM (VALUES ('NIFTY50'), ('NIFTY100'), ('NIFTY500')) AS codes(index_code)
+      CROSS JOIN LATERAL (
         SELECT close, date FROM app.market_index_history
-        WHERE index_code = 'NIFTY500' ORDER BY date DESC LIMIT 1
+        WHERE index_code = codes.index_code ORDER BY date DESC LIMIT 1
       ) t
       LEFT JOIN LATERAL (
         SELECT close FROM app.market_index_history
-        WHERE index_code = 'NIFTY500' AND date <= t.date - INTERVAL '30 days'
+        WHERE index_code = codes.index_code AND date <= t.date - INTERVAL '30 days'
         ORDER BY date DESC LIMIT 1
       ) m ON TRUE
       LEFT JOIN LATERAL (
         SELECT close FROM app.market_index_history
-        WHERE index_code = 'NIFTY500' AND date <= t.date - INTERVAL '90 days'
+        WHERE index_code = codes.index_code AND date <= t.date - INTERVAL '90 days'
         ORDER BY date DESC LIMIT 1
       ) q ON TRUE
       LEFT JOIN LATERAL (
         SELECT close FROM app.market_index_history
-        WHERE index_code = 'NIFTY500' AND date <= t.date - INTERVAL '180 days'
+        WHERE index_code = codes.index_code AND date <= t.date - INTERVAL '180 days'
         ORDER BY date DESC LIMIT 1
       ) h ON TRUE
       LEFT JOIN LATERAL (
         SELECT close FROM app.market_index_history
-        WHERE index_code = 'NIFTY500' AND date <= t.date - INTERVAL '365 days'
+        WHERE index_code = codes.index_code AND date <= t.date - INTERVAL '365 days'
         ORDER BY date DESC LIMIT 1
       ) y ON TRUE
     `,
@@ -258,11 +267,18 @@ export async function GET() {
     };
   });
 
-  const nifty: NiftyReturns = niftyRows[0] ?? {
-    ret_1m: null, ret_3m: null, ret_6m: null, ret_1y: null,
+  const nullReturns: NiftyReturns = { ret_1m: null, ret_3m: null, ret_6m: null, ret_1y: null };
+  const benchmarkMap = new Map(niftyRows.map((r) => [r.index_code, r as NiftyReturns]));
+
+  const benchmarks = {
+    n50:  benchmarkMap.get("NIFTY50")  ?? nullReturns,
+    n100: benchmarkMap.get("NIFTY100") ?? nullReturns,
+    // NIFTY200 price history not tracked; NIFTY100 is the closest proxy.
+    n200: benchmarkMap.get("NIFTY100") ?? nullReturns,
+    n500: benchmarkMap.get("NIFTY500") ?? nullReturns,
   };
 
-  return NextResponse.json({ rows: rowsWithPrices, nifty }, {
+  return NextResponse.json({ rows: rowsWithPrices, benchmarks }, {
     headers: {
       "Cache-Control": "public, s-maxage=86400, stale-while-revalidate=3600",
     },

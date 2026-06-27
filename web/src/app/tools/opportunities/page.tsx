@@ -6,13 +6,20 @@ import { tierLabel, displayCompanyName } from "@/lib/score";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type IndexFilter = "" | "n50" | "n200" | "n500";
+type IndexFilter = "" | "n50" | "n100" | "n200" | "n500";
 
 type NiftyReturns = {
   ret_1m: number | null;
   ret_3m: number | null;
   ret_6m: number | null;
   ret_1y: number | null;
+};
+
+type Benchmarks = {
+  n50:  NiftyReturns;
+  n100: NiftyReturns;
+  n200: NiftyReturns;
+  n500: NiftyReturns;
 };
 
 type Opportunity = {
@@ -32,6 +39,7 @@ type Opportunity = {
   peer_rank: number | null;
   peer_count: number | null;
   is_nifty50: boolean;
+  is_nifty100: boolean;
   is_nifty200: boolean;
   is_nifty500: boolean;
   ret_1m_rel: number | null;
@@ -128,7 +136,7 @@ function sortRows(rows: Opportunity[], k: SortKey, dir: SortDir): Opportunity[] 
 
 export default function OpportunitiesPage() {
   const [rows, setRows]           = useState<Opportunity[]>([]);
-  const [nifty, setNifty]         = useState<NiftyReturns | null>(null);
+  const [benchmarks, setBenchmarks] = useState<Benchmarks | null>(null);
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState<string | null>(null);
   const [recoveryWatch, setRecoveryWatch] = useState(false);
@@ -139,9 +147,9 @@ export default function OpportunitiesPage() {
   useEffect(() => {
     fetch("/api/opportunities")
       .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
-      .then((data: { rows: Opportunity[]; nifty: NiftyReturns }) => {
+      .then((data: { rows: Opportunity[]; benchmarks: Benchmarks }) => {
         setRows(data.rows);
-        setNifty(data.nifty);
+        setBenchmarks(data.benchmarks);
         setLoading(false);
       })
       .catch((e: unknown) => { setError(String(e)); setLoading(false); });
@@ -160,6 +168,7 @@ export default function OpportunitiesPage() {
   const filtered = useMemo(() => {
     let out = base;
     if (indexFilter === "n50")  out = out.filter((r) => r.is_nifty50);
+    if (indexFilter === "n100") out = out.filter((r) => r.is_nifty100);
     if (indexFilter === "n200") out = out.filter((r) => r.is_nifty200);
     if (indexFilter === "n500") out = out.filter((r) => r.is_nifty500);
     if (recoveryWatch)          out = out.filter((r) => r.ema_stack_bull === true);
@@ -237,8 +246,9 @@ export default function OpportunitiesPage() {
       <div className="flex items-center gap-2 mb-4 flex-wrap">
         {(
           [
-            { key: "" as IndexFilter,    label: "All NSE" },
+            { key: "" as IndexFilter,     label: "All NSE" },
             { key: "n50"  as IndexFilter, label: "Nifty 50" },
+            { key: "n100" as IndexFilter, label: "Nifty 100" },
             { key: "n200" as IndexFilter, label: "Nifty 200" },
             { key: "n500" as IndexFilter, label: "Nifty 500" },
           ] as const
@@ -260,9 +270,17 @@ export default function OpportunitiesPage() {
         })}
       </div>
 
-      {/* ── Nifty 500 benchmark strip ──────────────────────────────────── */}
-      {!loading && !error && nifty && (
-        <BenchmarkStrip nifty={nifty} />
+      {/* ── Benchmark strip — matches active index filter ──────────────── */}
+      {!loading && !error && benchmarks && (
+        <BenchmarkStrip
+          nifty={
+            indexFilter === "n50"  ? benchmarks.n50  :
+            indexFilter === "n100" ? benchmarks.n100 :
+            indexFilter === "n200" ? benchmarks.n200 :
+            benchmarks.n500
+          }
+          indexFilter={indexFilter}
+        />
       )}
 
       {/* ── Count ──────────────────────────────────────────────────────── */}
@@ -498,7 +516,15 @@ function fmtIndexReturn(v: number | null): { text: string; color: string } {
   return { text, color };
 }
 
-function BenchmarkStrip({ nifty }: { nifty: NiftyReturns }) {
+const BENCHMARK_LABEL: Record<IndexFilter, string> = {
+  "n50":  "Nifty 50",
+  "n100": "Nifty 100",
+  "n200": "Nifty 100",   // NIFTY200 price history not tracked; Nifty 100 is closest proxy
+  "n500": "Nifty 500",
+  "":     "Nifty 500",
+};
+
+function BenchmarkStrip({ nifty, indexFilter }: { nifty: NiftyReturns; indexFilter: IndexFilter }) {
   const items: { label: string; value: number | null }[] = [
     { label: "1M",  value: nifty.ret_1m },
     { label: "3M",  value: nifty.ret_3m },
@@ -511,7 +537,7 @@ function BenchmarkStrip({ nifty }: { nifty: NiftyReturns }) {
       style={{ background: "var(--color-paper)", borderColor: "var(--color-border-default)" }}
     >
       <span className="text-[11px] uppercase tracking-wide muted-text font-medium whitespace-nowrap">
-        Nifty 500 (benchmark)
+        {BENCHMARK_LABEL[indexFilter]} (benchmark)
       </span>
       <div className="flex flex-wrap gap-x-4 gap-y-1">
         {items.map(({ label, value }) => {
