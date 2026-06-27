@@ -98,9 +98,12 @@ export async function GET() {
       r.maturity_tier,
       sm.market_cap_cr::float                             AS market_cap_cr,
       sm.current_price::float                             AS current_price,
+      -- is_nifty50/200 from universe (seeded in migrations 0009/0010).
+      -- is_nifty500 was never seeded in universe — derive from
+      -- index_constituent which fetch-index-constituents.py keeps current.
       COALESCE(u.is_nifty50,  false)                      AS is_nifty50,
       COALESCE(u.is_nifty200, false)                      AS is_nifty200,
-      COALESCE(u.is_nifty500, false)                      AS is_nifty500,
+      (n500.symbol IS NOT NULL)                           AS is_nifty500,
       r.quality_pct,
       r.valuation_pct,
       r.momentum_pct,
@@ -136,6 +139,9 @@ export async function GET() {
     LEFT JOIN app.metrics_snapshot m
       ON m.symbol = r.symbol
      AND m.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
+    LEFT JOIN (
+      SELECT symbol FROM app.index_constituent WHERE index_code = 'NIFTY500'
+    ) n500 ON n500.symbol = r.symbol
     WHERE u.is_active
     ORDER BY r.quality_pct DESC NULLS LAST, r.valuation_pct DESC NULLS LAST
   `,

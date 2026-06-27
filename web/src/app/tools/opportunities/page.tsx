@@ -55,16 +55,18 @@ function addBenchmark(rel: number | null, bench: number | null): number | null {
 
 // ── Return cell ───────────────────────────────────────────────────────────────
 
-function styleReturn(rel: number | null): { text: string; color: string; bg: string } {
-  if (rel == null) return { text: "—", color: "var(--color-muted)", bg: "transparent" };
-  const pct = rel * 100;
+type ReturnStyle = { text: string; color: string; bg: string; confidence: string | null };
+
+function styleReturn(val: number | null): ReturnStyle {
+  if (val == null) return { text: "—", color: "var(--color-muted)", bg: "transparent", confidence: null };
+  const pct = val * 100;
   const text = (pct >= 0 ? "+" : "") + pct.toFixed(1) + "%";
-  if (pct <= -30) return { text, color: "#7f1d1d", bg: "rgba(220,38,38,0.18)" };
-  if (pct <= -20) return { text, color: "#991b1b", bg: "rgba(220,38,38,0.12)" };
-  if (pct <= -10) return { text, color: "#b45309", bg: "rgba(217,119,6,0.11)" };
-  if (pct <= -3)  return { text, color: "#92400e", bg: "rgba(180,100,30,0.07)" };
-  if (pct >= 10)  return { text, color: "var(--color-score-good)", bg: "rgba(22,163,74,0.09)" };
-  return { text, color: "var(--color-muted)", bg: "transparent" };
+  if (pct <= -30) return { text, color: "#7f1d1d", bg: "rgba(220,38,38,0.18)", confidence: "Severe" };
+  if (pct <= -20) return { text, color: "#991b1b", bg: "rgba(220,38,38,0.12)", confidence: "Deep" };
+  if (pct <= -10) return { text, color: "#b45309", bg: "rgba(217,119,6,0.11)", confidence: "Notable" };
+  if (pct <= -3)  return { text, color: "#92400e", bg: "rgba(180,100,30,0.07)", confidence: "Mild" };
+  if (pct >= 10)  return { text, color: "var(--color-score-good)", bg: "rgba(22,163,74,0.09)", confidence: "Recovery" };
+  return { text, color: "var(--color-muted)", bg: "transparent", confidence: null };
 }
 
 function ReturnCell({ value }: { value: number | null }) {
@@ -74,12 +76,19 @@ function ReturnCell({ value }: { value: number | null }) {
       {value == null
         ? <span className="muted-text text-[12px]">—</span>
         : (
-          <span
-            className="inline-block rounded-md px-2.5 py-1 text-[12.5px] font-semibold"
-            style={{ background: s.bg, color: s.color }}
-          >
-            {s.text}
-          </span>
+          <div className="inline-flex flex-col items-end gap-0.5">
+            <span
+              className="inline-block rounded-md px-2.5 py-1 text-[12.5px] font-semibold"
+              style={{ background: s.bg, color: s.color }}
+            >
+              {s.text}
+            </span>
+            {s.confidence && (
+              <span className="text-[9.5px] tabular-nums" style={{ color: s.color, opacity: 0.75 }}>
+                {s.confidence}
+              </span>
+            )}
+          </div>
         )
       }
     </td>
