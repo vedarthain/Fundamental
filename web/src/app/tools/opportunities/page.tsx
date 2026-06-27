@@ -39,6 +39,11 @@ type Opportunity = {
   ret_6m_rel: number | null;
   ret_12m_rel: number | null;
   ema_stack_bull: boolean | null;
+  // Actual historical prices from golden.price_history
+  price_1m_ago: number | null;
+  price_3m_ago: number | null;
+  price_6m_ago: number | null;
+  price_1y_ago: number | null;
 };
 
 type SortKey = "symbol" | "mcap" | "ret_1m" | "ret_3m" | "ret_6m" | "ret_12m" | "composite";
@@ -67,13 +72,8 @@ function styleReturn(val: number | null): { text: string; color: string; bg: str
   return { text, color: "var(--color-muted)", bg: "transparent" };
 }
 
-function ReturnCell({ value, currentPrice }: { value: number | null; currentPrice: number | null }) {
+function ReturnCell({ value, fromPrice }: { value: number | null; fromPrice: number | null }) {
   const s = styleReturn(value);
-  // Back-calculate historical price: past = current / (1 + return)
-  const fromPrice = value != null && currentPrice != null && value > -1
-    ? currentPrice / (1 + value)
-    : null;
-
   return (
     <td className="px-4 py-3 text-right tabular-nums">
       {value == null
@@ -364,11 +364,11 @@ export default function OpportunitiesPage() {
                         {fmtCr(r.market_cap_cr)}
                       </td>
 
-                      {/* Return columns — absolute return pill + "from ₹X" back-calculated */}
-                      <ReturnCell value={addBenchmark(r.ret_1m_rel,  nifty?.ret_1m  ?? null) ?? r.ret_1m_rel}  currentPrice={r.current_price} />
-                      <ReturnCell value={addBenchmark(r.ret_3m_rel,  nifty?.ret_3m  ?? null) ?? r.ret_3m_rel}  currentPrice={r.current_price} />
-                      <ReturnCell value={addBenchmark(r.ret_6m_rel,  nifty?.ret_6m  ?? null) ?? r.ret_6m_rel}  currentPrice={r.current_price} />
-                      <ReturnCell value={addBenchmark(r.ret_12m_rel, nifty?.ret_1y  ?? null) ?? r.ret_12m_rel} currentPrice={r.current_price} />
+                      {/* Return columns — absolute % pill + actual historical price from golden */}
+                      <ReturnCell value={addBenchmark(r.ret_1m_rel,  nifty?.ret_1m  ?? null) ?? r.ret_1m_rel}  fromPrice={r.price_1m_ago} />
+                      <ReturnCell value={addBenchmark(r.ret_3m_rel,  nifty?.ret_3m  ?? null) ?? r.ret_3m_rel}  fromPrice={r.price_3m_ago} />
+                      <ReturnCell value={addBenchmark(r.ret_6m_rel,  nifty?.ret_6m  ?? null) ?? r.ret_6m_rel}  fromPrice={r.price_6m_ago} />
+                      <ReturnCell value={addBenchmark(r.ret_12m_rel, nifty?.ret_1y  ?? null) ?? r.ret_12m_rel} fromPrice={r.price_1y_ago} />
 
                       {/* Composite score + peer rank */}
                       <CompositePill

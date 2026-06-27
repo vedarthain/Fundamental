@@ -15,7 +15,7 @@
  * Cache: 24h via s-maxage (revalidated when scores update).
  */
 import { NextResponse } from "next/server";
-import { sql } from "@/lib/db";
+import { sql, golden } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const revalidate = 86400;
@@ -54,6 +54,19 @@ type Row = {
   rev_cagr_5y: number | null;
   roe_3y: number | null;
   np_yoy_q: number | null;            // latest-quarter net profit YoY growth
+  // Actual historical prices from golden.price_history (not back-calculated)
+  price_1m_ago: number | null;
+  price_3m_ago: number | null;
+  price_6m_ago: number | null;
+  price_1y_ago: number | null;
+};
+
+type HistPrices = {
+  symbol: string;
+  price_1m_ago: number | null;
+  price_3m_ago: number | null;
+  price_6m_ago: number | null;
+  price_1y_ago: number | null;
 };
 
 type NiftyReturns = {
@@ -64,8 +77,9 @@ type NiftyReturns = {
 };
 
 export async function GET() {
-  // Run both queries in parallel — stocks + NIFTY500 benchmark returns.
-  const [rows, niftyRows] = await Promise.all([
+  // Run all three queries in parallel — stocks, NIFTY500 benchmark, and
+  // actual historical prices from golden for accurate "from ₹X" display.
+  const [rows, niftyRows, histRows] = await Promise.all([
     sql<Row[]>`
     WITH ranked AS (
       SELECT
@@ -184,13 +198,67 @@ export async function GET() {
         ORDER BY date DESC LIMIT 1
       ) y ON TRUE
     `,
+
+    // Actual closing prices at 4 anchor dates from golden.price_history.
+    // Using scalar subqueries for anchor dates so Postgres treats them as
+    // constants and can use the (interval, date) index on each scan.
+    golden<HistPrices[]>`
+      WITH latest AS (
+        SELECT MAX(date) AS d FROM golden.price_history WHERE interval = '1d'
+      ),
+      d_1m AS (
+        SELECT MAX(date) AS d FROM golden.price_history
+        WHERE interval = '1d' AND date <= (SELECT d FROM latest) - INTERVAL '30 days'
+      ),
+      d_3m AS (
+        SELECT MAX(date) AS d FROM golden.price_history
+        WHERE interval = '1d' AND date <= (SELECT d FROM latest) - INTERVAL '90 days'
+      ),
+      d_6m AS (
+        SELECT MAX(date) AS d FROM golden.price_history
+        WHERE interval = '1d' AND date <= (SELECT d FROM latest) - INTERVAL '180 days'
+      ),
+      d_1y AS (
+        SELECT MAX(date) AS d FROM golden.price_history
+        WHERE interval = '1d' AND date <= (SELECT d FROM latest) - INTERVAL '365 days'
+      )
+      SELECT
+        REPLACE(p.symbol, '.NS', '') AS symbol,
+        MAX(p.close) FILTER (WHERE p.date = (SELECT d FROM d_1m))::float AS price_1m_ago,
+        MAX(p.close) FILTER (WHERE p.date = (SELECT d FROM d_3m))::float AS price_3m_ago,
+        MAX(p.close) FILTER (WHERE p.date = (SELECT d FROM d_6m))::float AS price_6m_ago,
+        MAX(p.close) FILTER (WHERE p.date = (SELECT d FROM d_1y))::float AS price_1y_ago
+      FROM golden.price_history p
+      WHERE p.interval = '1d'
+        AND p.date IN (
+          (SELECT d FROM d_1m),
+          (SELECT d FROM d_3m),
+          (SELECT d FROM d_6m),
+          (SELECT d FROM d_1y)
+        )
+        AND p.symbol LIKE '%.NS'
+      GROUP BY REPLACE(p.symbol, '.NS', '')
+    `,
   ]);
+
+  // Merge historical prices into each row by symbol.
+  const histMap = new Map(histRows.map((h) => [h.symbol, h]));
+  const rowsWithPrices = rows.map((r) => {
+    const h = histMap.get(r.symbol);
+    return {
+      ...r,
+      price_1m_ago: h?.price_1m_ago ?? null,
+      price_3m_ago: h?.price_3m_ago ?? null,
+      price_6m_ago: h?.price_6m_ago ?? null,
+      price_1y_ago: h?.price_1y_ago ?? null,
+    };
+  });
 
   const nifty: NiftyReturns = niftyRows[0] ?? {
     ret_1m: null, ret_3m: null, ret_6m: null, ret_1y: null,
   };
 
-  return NextResponse.json({ rows, nifty }, {
+  return NextResponse.json({ rows: rowsWithPrices, nifty }, {
     headers: {
       "Cache-Control": "public, s-maxage=86400, stale-while-revalidate=3600",
     },
