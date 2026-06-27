@@ -51,11 +51,12 @@ type SortDir = "asc" | "desc";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Convert a relative return to absolute by adding the benchmark return.
- *  Returns null if either value is missing — better to show "—" than a
- *  misleading partial number. */
-function addBenchmark(rel: number | null, bench: number | null): number | null {
-  return rel != null && bench != null ? rel + bench : null;
+/** Compute absolute price return directly from anchor and current prices.
+ *  Consistent with the "from ₹X" sub-text shown in each cell. */
+function priceReturn(current: number | null, anchor: number | null): number | null {
+  return current != null && anchor != null && anchor > 0
+    ? (current - anchor) / anchor
+    : null;
 }
 
 // ── Return cell ───────────────────────────────────────────────────────────────
@@ -104,10 +105,10 @@ function sortVal(r: Opportunity, k: SortKey): number | string | null {
   switch (k) {
     case "symbol":    return r.symbol;
     case "mcap":      return r.market_cap_cr;
-    case "ret_1m":    return r.ret_1m_rel;
-    case "ret_3m":    return r.ret_3m_rel;
-    case "ret_6m":    return r.ret_6m_rel;
-    case "ret_12m":   return r.ret_12m_rel;
+    case "ret_1m":    return priceReturn(r.current_price, r.price_1m_ago);
+    case "ret_3m":    return priceReturn(r.current_price, r.price_3m_ago);
+    case "ret_6m":    return priceReturn(r.current_price, r.price_6m_ago);
+    case "ret_12m":   return priceReturn(r.current_price, r.price_1y_ago);
     case "composite": return r.composite_pct;
   }
 }
@@ -365,10 +366,10 @@ export default function OpportunitiesPage() {
                       </td>
 
                       {/* Return columns — absolute % pill + actual historical price from golden */}
-                      <ReturnCell value={addBenchmark(r.ret_1m_rel,  nifty?.ret_1m  ?? null) ?? r.ret_1m_rel}  fromPrice={r.price_1m_ago} />
-                      <ReturnCell value={addBenchmark(r.ret_3m_rel,  nifty?.ret_3m  ?? null) ?? r.ret_3m_rel}  fromPrice={r.price_3m_ago} />
-                      <ReturnCell value={addBenchmark(r.ret_6m_rel,  nifty?.ret_6m  ?? null) ?? r.ret_6m_rel}  fromPrice={r.price_6m_ago} />
-                      <ReturnCell value={addBenchmark(r.ret_12m_rel, nifty?.ret_1y  ?? null) ?? r.ret_12m_rel} fromPrice={r.price_1y_ago} />
+                      <ReturnCell value={priceReturn(r.current_price, r.price_1m_ago)} fromPrice={r.price_1m_ago} />
+                      <ReturnCell value={priceReturn(r.current_price, r.price_3m_ago)} fromPrice={r.price_3m_ago} />
+                      <ReturnCell value={priceReturn(r.current_price, r.price_6m_ago)} fromPrice={r.price_6m_ago} />
+                      <ReturnCell value={priceReturn(r.current_price, r.price_1y_ago)} fromPrice={r.price_1y_ago} />
 
                       {/* Composite score + peer rank */}
                       <CompositePill
