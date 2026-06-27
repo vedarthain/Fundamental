@@ -44,6 +44,15 @@ type Opportunity = {
 type SortKey = "symbol" | "mcap" | "price" | "ret_1m" | "ret_3m" | "ret_6m" | "ret_12m" | "composite";
 type SortDir = "asc" | "desc";
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Convert a relative return to absolute by adding the benchmark return.
+ *  Returns null if either value is missing — better to show "—" than a
+ *  misleading partial number. */
+function addBenchmark(rel: number | null, bench: number | null): number | null {
+  return rel != null && bench != null ? rel + bench : null;
+}
+
 // ── Return cell ───────────────────────────────────────────────────────────────
 
 function styleReturn(rel: number | null): { text: string; color: string; bg: string } {
@@ -282,14 +291,14 @@ export default function OpportunitiesPage() {
                   <th className="px-4 py-3 hidden md:table-cell">Industry · Tier</th>
                   <Th k="mcap"      label="Mcap" sub="₹ Cr"     onSort={toggleSort} sortKey={sortKey} sortDir={sortDir} />
                   <Th k="price"     label="Price" sub="₹"        onSort={toggleSort} sortKey={sortKey} sortDir={sortDir} />
-                  <Th k="ret_1m"    label="1M" sub="vs index"    onSort={toggleSort} sortKey={sortKey} sortDir={sortDir}
-                    title="1-month price return vs benchmark index" />
-                  <Th k="ret_3m"    label="3M" sub="vs index"    onSort={toggleSort} sortKey={sortKey} sortDir={sortDir}
-                    title="3-month price return vs benchmark index" />
-                  <Th k="ret_6m"    label="6M" sub="vs index"    onSort={toggleSort} sortKey={sortKey} sortDir={sortDir}
-                    title="6-month price return vs benchmark index" />
-                  <Th k="ret_12m"   label="12M" sub="vs index"   onSort={toggleSort} sortKey={sortKey} sortDir={sortDir}
-                    title="12-month price return vs benchmark index" />
+                  <Th k="ret_1m"    label="1M"  onSort={toggleSort} sortKey={sortKey} sortDir={sortDir}
+                    title="1-month absolute price return" />
+                  <Th k="ret_3m"    label="3M"  onSort={toggleSort} sortKey={sortKey} sortDir={sortDir}
+                    title="3-month absolute price return" />
+                  <Th k="ret_6m"    label="6M"  onSort={toggleSort} sortKey={sortKey} sortDir={sortDir}
+                    title="6-month absolute price return" />
+                  <Th k="ret_12m"   label="12M" onSort={toggleSort} sortKey={sortKey} sortDir={sortDir}
+                    title="12-month absolute price return" />
                   <Th k="composite" label="Score" sub="peer %" onSort={toggleSort} sortKey={sortKey} sortDir={sortDir}
                     title="Industry Score percentile (0–100) within peer cluster · peer rank shown below" align="center" />
                 </tr>
@@ -348,11 +357,13 @@ export default function OpportunitiesPage() {
                         }
                       </td>
 
-                      {/* Return columns */}
-                      <ReturnCell value={r.ret_1m_rel} />
-                      <ReturnCell value={r.ret_3m_rel} />
-                      <ReturnCell value={r.ret_6m_rel} />
-                      <ReturnCell value={r.ret_12m_rel} />
+                      {/* Absolute return = relative + benchmark. Falls back to
+                          relative (pre-benchmark strip load) so the table is
+                          never blank while nifty is still null. */}
+                      <ReturnCell value={addBenchmark(r.ret_1m_rel,  nifty?.ret_1m  ?? null) ?? r.ret_1m_rel} />
+                      <ReturnCell value={addBenchmark(r.ret_3m_rel,  nifty?.ret_3m  ?? null) ?? r.ret_3m_rel} />
+                      <ReturnCell value={addBenchmark(r.ret_6m_rel,  nifty?.ret_6m  ?? null) ?? r.ret_6m_rel} />
+                      <ReturnCell value={addBenchmark(r.ret_12m_rel, nifty?.ret_1y  ?? null) ?? r.ret_12m_rel} />
 
                       {/* Composite score + peer rank */}
                       <CompositePill
@@ -372,7 +383,7 @@ export default function OpportunitiesPage() {
       {/* ── Legend ─────────────────────────────────────────────────────── */}
       {!loading && !error && sorted.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-[11px] muted-text">
-          <div>Returns are <strong className="ink-text">relative to the benchmark index</strong> — negative = stock fell more than the market</div>
+          <div>Returns are <strong className="ink-text">absolute price returns</strong> — compare against the Nifty 500 strip above to gauge underperformance</div>
           <div>
             <span style={{ color: "#7f1d1d" }}>■</span> &gt;30% · {" "}
             <span style={{ color: "#991b1b" }}>■</span> &gt;20% · {" "}
