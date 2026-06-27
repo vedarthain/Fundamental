@@ -41,7 +41,7 @@ type Opportunity = {
   ema_stack_bull: boolean | null;
 };
 
-type SortKey = "symbol" | "mcap" | "price" | "ret_1m" | "ret_3m" | "ret_6m" | "ret_12m" | "composite";
+type SortKey = "symbol" | "mcap" | "ret_1m" | "ret_3m" | "ret_6m" | "ret_12m" | "composite";
 type SortDir = "asc" | "desc";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -55,22 +55,25 @@ function addBenchmark(rel: number | null, bench: number | null): number | null {
 
 // ── Return cell ───────────────────────────────────────────────────────────────
 
-type ReturnStyle = { text: string; color: string; bg: string; confidence: string | null };
-
-function styleReturn(val: number | null): ReturnStyle {
-  if (val == null) return { text: "—", color: "var(--color-muted)", bg: "transparent", confidence: null };
+function styleReturn(val: number | null): { text: string; color: string; bg: string } {
+  if (val == null) return { text: "—", color: "var(--color-muted)", bg: "transparent" };
   const pct = val * 100;
   const text = (pct >= 0 ? "+" : "") + pct.toFixed(1) + "%";
-  if (pct <= -30) return { text, color: "#7f1d1d", bg: "rgba(220,38,38,0.18)", confidence: "Severe" };
-  if (pct <= -20) return { text, color: "#991b1b", bg: "rgba(220,38,38,0.12)", confidence: "Deep" };
-  if (pct <= -10) return { text, color: "#b45309", bg: "rgba(217,119,6,0.11)", confidence: "Notable" };
-  if (pct <= -3)  return { text, color: "#92400e", bg: "rgba(180,100,30,0.07)", confidence: "Mild" };
-  if (pct >= 10)  return { text, color: "var(--color-score-good)", bg: "rgba(22,163,74,0.09)", confidence: "Recovery" };
-  return { text, color: "var(--color-muted)", bg: "transparent", confidence: null };
+  if (pct <= -30) return { text, color: "#7f1d1d", bg: "rgba(220,38,38,0.18)" };
+  if (pct <= -20) return { text, color: "#991b1b", bg: "rgba(220,38,38,0.12)" };
+  if (pct <= -10) return { text, color: "#b45309", bg: "rgba(217,119,6,0.11)" };
+  if (pct <= -3)  return { text, color: "#92400e", bg: "rgba(180,100,30,0.07)" };
+  if (pct >= 10)  return { text, color: "var(--color-score-good)", bg: "rgba(22,163,74,0.09)" };
+  return { text, color: "var(--color-muted)", bg: "transparent" };
 }
 
-function ReturnCell({ value }: { value: number | null }) {
+function ReturnCell({ value, currentPrice }: { value: number | null; currentPrice: number | null }) {
   const s = styleReturn(value);
+  // Back-calculate historical price: past = current / (1 + return)
+  const fromPrice = value != null && currentPrice != null && value > -1
+    ? currentPrice / (1 + value)
+    : null;
+
   return (
     <td className="px-4 py-3 text-right tabular-nums">
       {value == null
@@ -83,9 +86,9 @@ function ReturnCell({ value }: { value: number | null }) {
             >
               {s.text}
             </span>
-            {s.confidence && (
-              <span className="text-[9.5px] tabular-nums" style={{ color: s.color, opacity: 0.75 }}>
-                {s.confidence}
+            {fromPrice != null && (
+              <span className="text-[9.5px] muted-text tabular-nums">
+                from ₹{fromPrice.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
               </span>
             )}
           </div>
@@ -101,7 +104,6 @@ function sortVal(r: Opportunity, k: SortKey): number | string | null {
   switch (k) {
     case "symbol":    return r.symbol;
     case "mcap":      return r.market_cap_cr;
-    case "price":     return r.current_price;
     case "ret_1m":    return r.ret_1m_rel;
     case "ret_3m":    return r.ret_3m_rel;
     case "ret_6m":    return r.ret_6m_rel;
@@ -296,10 +298,8 @@ export default function OpportunitiesPage() {
                   style={{ background: "var(--color-paper)", borderBottom: "2px solid var(--color-border-default)" }}
                 >
                   <th className="px-4 py-3 w-8 text-center">#</th>
-                  <Th k="symbol"  label="Stock"        onSort={toggleSort} sortKey={sortKey} sortDir={sortDir} align="left" />
-                  <th className="px-4 py-3 hidden md:table-cell">Industry · Tier</th>
-                  <Th k="mcap"      label="Mcap" sub="₹ Cr"     onSort={toggleSort} sortKey={sortKey} sortDir={sortDir} />
-                  <Th k="price"     label="Price" sub="₹"        onSort={toggleSort} sortKey={sortKey} sortDir={sortDir} />
+                  <Th k="symbol"  label="Stock"  onSort={toggleSort} sortKey={sortKey} sortDir={sortDir} align="left" />
+                  <Th k="mcap"    label="Mcap" sub="₹ Cr" onSort={toggleSort} sortKey={sortKey} sortDir={sortDir} />
                   <Th k="ret_1m"    label="1M"  onSort={toggleSort} sortKey={sortKey} sortDir={sortDir}
                     title="1-month absolute price return" />
                   <Th k="ret_3m"    label="3M"  onSort={toggleSort} sortKey={sortKey} sortDir={sortDir}
@@ -321,7 +321,7 @@ export default function OpportunitiesPage() {
 
                       <td className="px-4 py-3 text-center muted-text text-[11px] tabular-nums">{i + 1}</td>
 
-                      {/* Stock */}
+                      {/* Stock — symbol + name + industry·tier + current price */}
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <Link
@@ -330,7 +330,9 @@ export default function OpportunitiesPage() {
                           >
                             {r.symbol}
                           </Link>
-                          {recovering && (
+                          {/* Show "recovering" badge only when not in Recovery Watch mode
+                              (if Recovery Watch is ON, every row has it — redundant noise) */}
+                          {recovering && !recoveryWatch && (
                             <span
                               className="text-[9.5px] px-1.5 py-px rounded-full font-semibold"
                               style={{ background: "rgba(22,163,74,0.14)", color: "#15803d" }}
@@ -340,17 +342,21 @@ export default function OpportunitiesPage() {
                             </span>
                           )}
                         </div>
-                        <div className="text-[11px] muted-text truncate max-w-[180px] mt-0.5">
+                        <div className="text-[11px] muted-text truncate max-w-[200px] mt-0.5">
                           {displayCompanyName(r.company_name, r.symbol)}
                         </div>
-                      </td>
-
-                      {/* Industry */}
-                      <td className="px-4 py-3 text-[11.5px] hidden md:table-cell">
-                        <Link href={`/industry/${r.industry_id}`} className="hover:text-[var(--color-accent-600)]">
-                          {r.industry_name}
-                        </Link>
-                        <div className="muted-text text-[10.5px] mt-0.5">{tierLabel(r.maturity_tier)}</div>
+                        <div className="text-[10.5px] muted-text mt-0.5">
+                          <Link href={`/industry/${r.industry_id}`} className="hover:text-[var(--color-accent-600)]">
+                            {r.industry_name}
+                          </Link>
+                          <span className="mx-1">·</span>
+                          <span>{tierLabel(r.maturity_tier)}</span>
+                        </div>
+                        {r.current_price != null && (
+                          <div className="text-[12px] font-semibold ink-text mt-1 tabular-nums">
+                            ₹{r.current_price.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+                          </div>
+                        )}
                       </td>
 
                       {/* Mcap */}
@@ -358,21 +364,11 @@ export default function OpportunitiesPage() {
                         {fmtCr(r.market_cap_cr)}
                       </td>
 
-                      {/* Price */}
-                      <td className="px-4 py-3 text-right tabular-nums font-semibold text-[13px]">
-                        {r.current_price != null
-                          ? `₹${r.current_price.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`
-                          : <span className="muted-text font-normal">—</span>
-                        }
-                      </td>
-
-                      {/* Absolute return = relative + benchmark. Falls back to
-                          relative (pre-benchmark strip load) so the table is
-                          never blank while nifty is still null. */}
-                      <ReturnCell value={addBenchmark(r.ret_1m_rel,  nifty?.ret_1m  ?? null) ?? r.ret_1m_rel} />
-                      <ReturnCell value={addBenchmark(r.ret_3m_rel,  nifty?.ret_3m  ?? null) ?? r.ret_3m_rel} />
-                      <ReturnCell value={addBenchmark(r.ret_6m_rel,  nifty?.ret_6m  ?? null) ?? r.ret_6m_rel} />
-                      <ReturnCell value={addBenchmark(r.ret_12m_rel, nifty?.ret_1y  ?? null) ?? r.ret_12m_rel} />
+                      {/* Return columns — absolute return pill + "from ₹X" back-calculated */}
+                      <ReturnCell value={addBenchmark(r.ret_1m_rel,  nifty?.ret_1m  ?? null) ?? r.ret_1m_rel}  currentPrice={r.current_price} />
+                      <ReturnCell value={addBenchmark(r.ret_3m_rel,  nifty?.ret_3m  ?? null) ?? r.ret_3m_rel}  currentPrice={r.current_price} />
+                      <ReturnCell value={addBenchmark(r.ret_6m_rel,  nifty?.ret_6m  ?? null) ?? r.ret_6m_rel}  currentPrice={r.current_price} />
+                      <ReturnCell value={addBenchmark(r.ret_12m_rel, nifty?.ret_1y  ?? null) ?? r.ret_12m_rel} currentPrice={r.current_price} />
 
                       {/* Composite score + peer rank */}
                       <CompositePill
