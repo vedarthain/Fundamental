@@ -60,6 +60,10 @@ type Row = {
   price_3m_ago: number | null;
   price_6m_ago: number | null;
   price_1y_ago: number | null;
+  // Recovery signals computed from golden.price_history OHLCV
+  above_200sma: boolean | null;
+  off_52w_low_pct: number | null;
+  accum_ratio_20d: number | null;
 };
 
 type HistPrices = {
@@ -68,6 +72,13 @@ type HistPrices = {
   price_3m_ago: number | null;
   price_6m_ago: number | null;
   price_1y_ago: number | null;
+};
+
+type RecoverySignals = {
+  symbol: string;
+  above_200sma: boolean | null;      // current adj_close > 200-day SMA
+  off_52w_low_pct: number | null;    // (current - 252d_low) / 252d_low
+  accum_ratio_20d: number | null;    // up-day vol / down-day vol over last 20 sessions
 };
 
 type NiftyReturns = {
@@ -80,9 +91,10 @@ type NiftyReturns = {
 type BenchmarkRow = NiftyReturns & { index_code: string };
 
 export async function GET() {
-  // Run all three queries in parallel — stocks, NIFTY500 benchmark, and
-  // actual historical prices from golden for accurate "from ₹X" display.
-  const [rows, niftyRows, histRows] = await Promise.all([
+  // Run all four queries in parallel — stocks, NIFTY benchmark, historical
+  // prices from golden for accurate "from ₹X" display, and recovery signals
+  // computed from 300 days of OHLCV in golden.price_history.
+  const [rows, niftyRows, histRows, recoveryRows] = await Promise.all([
     sql<Row[]>`
     WITH ranked AS (
       SELECT
@@ -252,18 +264,65 @@ export async function GET() {
         AND p.symbol LIKE '%.NS'
       GROUP BY REPLACE(p.symbol, '.NS', '')
     `,
+
+    // Recovery signals — three new signals computed from 300 calendar days
+    // (~215 trading days) of OHLCV in golden.price_history.
+    // ROW_NUMBER DESC ranks the most recent session as rn=1, so:
+    //   rn <= 200 → 200-session SMA window
+    //   rn <= 252 → approx 52-week low window
+    //   rn <= 20  → 20-session volume accumulation window
+    golden<RecoverySignals[]>`
+      WITH ranked AS (
+        SELECT
+          REPLACE(symbol, '.NS', '') AS sym,
+          adj_close,
+          volume,
+          close >= open              AS is_up_day,
+          ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
+        FROM golden.price_history
+        WHERE interval = '1d'
+          AND date >= CURRENT_DATE - INTERVAL '300 days'
+          AND symbol LIKE '%.NS'
+      ),
+      agg AS (
+        SELECT
+          sym                                                          AS symbol,
+          MAX(adj_close) FILTER (WHERE rn = 1)                        AS current_adj,
+          AVG(adj_close) FILTER (WHERE rn <= 200)                     AS sma_200,
+          MIN(adj_close) FILTER (WHERE rn <= 252)                     AS low_252d,
+          SUM(volume)    FILTER (WHERE rn <= 20 AND is_up_day)        AS vol_up,
+          SUM(volume)    FILTER (WHERE rn <= 20 AND NOT is_up_day)    AS vol_dn
+        FROM ranked
+        GROUP BY sym
+      )
+      SELECT
+        symbol,
+        (current_adj > sma_200)::boolean                              AS above_200sma,
+        CASE WHEN low_252d > 0
+             THEN ((current_adj - low_252d) / low_252d)::float END    AS off_52w_low_pct,
+        CASE WHEN vol_dn > 0
+             THEN (vol_up::float / vol_dn)::float END                 AS accum_ratio_20d
+      FROM agg
+      WHERE current_adj IS NOT NULL
+    `,
   ]);
 
-  // Merge historical prices into each row by symbol.
-  const histMap = new Map(histRows.map((h) => [h.symbol, h]));
+  // Merge historical prices and recovery signals into each row by symbol.
+  const histMap     = new Map(histRows.map((h) => [h.symbol, h]));
+  const recoveryMap = new Map(recoveryRows.map((rv) => [rv.symbol, rv]));
+
   const rowsWithPrices = rows.map((r) => {
-    const h = histMap.get(r.symbol);
+    const h  = histMap.get(r.symbol);
+    const rv = recoveryMap.get(r.symbol);
     return {
       ...r,
-      price_1m_ago: h?.price_1m_ago ?? null,
-      price_3m_ago: h?.price_3m_ago ?? null,
-      price_6m_ago: h?.price_6m_ago ?? null,
-      price_1y_ago: h?.price_1y_ago ?? null,
+      price_1m_ago:     h?.price_1m_ago     ?? null,
+      price_3m_ago:     h?.price_3m_ago     ?? null,
+      price_6m_ago:     h?.price_6m_ago     ?? null,
+      price_1y_ago:     h?.price_1y_ago     ?? null,
+      above_200sma:     rv?.above_200sma    ?? null,
+      off_52w_low_pct:  rv?.off_52w_low_pct ?? null,
+      accum_ratio_20d:  rv?.accum_ratio_20d ?? null,
     };
   });
 

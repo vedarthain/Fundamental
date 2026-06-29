@@ -52,6 +52,10 @@ type Opportunity = {
   price_3m_ago: number | null;
   price_6m_ago: number | null;
   price_1y_ago: number | null;
+  // Recovery signals computed from golden.price_history OHLCV
+  above_200sma: boolean | null;
+  off_52w_low_pct: number | null;    // (current - 252-session low) / low
+  accum_ratio_20d: number | null;    // up-day volume / down-day volume, last 20 sessions
 };
 
 type SortKey = "symbol" | "mcap" | "ret_1m" | "ret_3m" | "ret_6m" | "ret_12m" | "composite";
@@ -65,6 +69,24 @@ function priceReturn(current: number | null, anchor: number | null): number | nu
   return current != null && anchor != null && anchor > 0
     ? (current - anchor) / anchor
     : null;
+}
+
+// ── Recovery signals ──────────────────────────────────────────────────────────
+
+/** Returns the 5 individual signal states for a stock. */
+function recoverySignals(r: Opportunity) {
+  return [
+    { key: "sma",    label: "Above 200-day SMA",           active: r.above_200sma === true },
+    { key: "vol",    label: "Volume accumulation (20d)",   active: (r.accum_ratio_20d ?? 0) > 1.2 },
+    { key: "ema",    label: "Short-term EMA stack bullish", active: r.ema_stack_bull === true },
+    { key: "low",    label: "Off 52W low > 5%",            active: (r.off_52w_low_pct ?? 0) > 0.05 },
+    { key: "rel1m",  label: "Outperforming index (1M)",    active: (r.ret_1m_rel ?? -1) > 0 },
+  ];
+}
+
+/** Count of firing recovery signals (0–5). */
+function recoveryScore(r: Opportunity): number {
+  return recoverySignals(r).filter((s) => s.active).length;
 }
 
 // ── Return cell ───────────────────────────────────────────────────────────────
@@ -171,7 +193,7 @@ export default function OpportunitiesPage() {
     if (indexFilter === "n100") out = out.filter((r) => r.is_nifty100);
     if (indexFilter === "n200") out = out.filter((r) => r.is_nifty200);
     if (indexFilter === "n500") out = out.filter((r) => r.is_nifty500);
-    if (recoveryWatch)          out = out.filter((r) => r.ema_stack_bull === true);
+    if (recoveryWatch)          out = out.filter((r) => recoveryScore(r) >= 2);
     return out;
   }, [base, indexFilter, recoveryWatch]);
 
@@ -188,7 +210,7 @@ export default function OpportunitiesPage() {
     }
   }
 
-  const recoveryCount = useMemo(() => base.filter((r) => r.ema_stack_bull === true).length, [base]);
+  const recoveryCount = useMemo(() => base.filter((r) => recoveryScore(r) >= 2).length, [base]);
 
   return (
     <div className="theme-indigo mx-auto max-w-[1100px] px-4 md:px-6 py-8 md:py-10">
@@ -236,7 +258,7 @@ export default function OpportunitiesPage() {
           </button>
           <p className="mt-1.5 text-[10.5px] muted-text max-w-[200px] text-right">
             {recoveryWatch
-              ? "Price EMAs re-stacking upward"
+              ? "≥ 2 of 5 recovery signals firing"
               : "Show only stocks where sell-off is easing"}
           </p>
         </div>
@@ -334,7 +356,7 @@ export default function OpportunitiesPage() {
 
               <tbody>
                 {sorted.map((r, i) => {
-                  const recovering = r.ema_stack_bull === true;
+                  const score = recoveryScore(r);
                   return (
                     <tr key={r.symbol} className="border-t hairline hover:bg-[var(--color-paper)]/50">
 
@@ -349,17 +371,6 @@ export default function OpportunitiesPage() {
                           >
                             {r.symbol}
                           </Link>
-                          {/* Show "recovering" badge only when not in Recovery Watch mode
-                              (if Recovery Watch is ON, every row has it — redundant noise) */}
-                          {recovering && !recoveryWatch && (
-                            <span
-                              className="text-[9.5px] px-1.5 py-px rounded-full font-semibold"
-                              style={{ background: "rgba(22,163,74,0.14)", color: "#15803d" }}
-                              title="Short-term EMA stack turning bullish — early recovery signal"
-                            >
-                              ↗ recovering
-                            </span>
-                          )}
                         </div>
                         <div className="text-[11px] muted-text truncate max-w-[200px] mt-0.5">
                           {displayCompanyName(r.company_name, r.symbol)}
@@ -375,6 +386,9 @@ export default function OpportunitiesPage() {
                           <div className="text-[12px] font-semibold ink-text mt-1 tabular-nums">
                             ₹{r.current_price.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
                           </div>
+                        )}
+                        {score > 0 && (
+                          <RecoveryBadge signals={recoverySignals(r)} score={score} />
                         )}
                       </td>
 
@@ -414,8 +428,8 @@ export default function OpportunitiesPage() {
             <span style={{ color: "#b45309" }}>■</span> &gt;10% underperformance vs index
           </div>
           <div>
-            <span style={{ color: "#15803d" }} className="font-semibold">↗ recovering</span>
-            {" "}= short-term EMAs re-stacking upward (early reversal signal)
+            <span style={{ color: "#15803d" }} className="font-semibold">↗ N/5</span>
+            {" "}= recovery score (hover dots for detail) — signals: above 200d SMA · volume accumulation · EMA stack · off 52W low · outperforming index 1M
           </div>
         </div>
       )}
@@ -503,6 +517,46 @@ function CompositePill({
         )}
       </div>
     </td>
+  );
+}
+
+// ── Recovery badge ────────────────────────────────────────────────────────────
+
+type SignalState = { key: string; label: string; active: boolean };
+
+/**
+ * Shows a score pill (e.g. "↗ 3/5") + 5 coloured dots, one per recovery signal.
+ * Each dot has a tooltip (title) naming the signal. Colour scales with score.
+ */
+function RecoveryBadge({ signals, score }: { signals: SignalState[]; score: number }) {
+  const color =
+    score >= 4 ? "#15803d" :
+    score >= 2 ? "#b45309" :
+    "#6b7280";
+  const bg =
+    score >= 4 ? "rgba(22,163,74,0.14)" :
+    score >= 2 ? "rgba(180,83,9,0.12)" :
+    "rgba(107,114,128,0.10)";
+
+  return (
+    <div className="flex items-center gap-1.5 mt-1">
+      <span
+        className="text-[9px] px-1.5 py-px rounded-full font-semibold whitespace-nowrap"
+        style={{ background: bg, color }}
+      >
+        ↗ {score}/5
+      </span>
+      <div className="flex gap-[3px] items-center">
+        {signals.map((s) => (
+          <span
+            key={s.key}
+            title={s.label}
+            className="w-[7px] h-[7px] rounded-full inline-block cursor-default"
+            style={{ background: s.active ? color : "var(--color-border-default)" }}
+          />
+        ))}
+      </div>
+    </div>
   );
 }
 
