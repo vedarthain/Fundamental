@@ -141,7 +141,7 @@ async function loadStock(symbol: string) {
       AND period_end >= (CURRENT_DATE - INTERVAL '10 years')
     ORDER BY period_end DESC
     LIMIT 10
-  `;
+  `.catch(() => [] as AnnualRow[]);
   // Latest 6 quarters
   const quarterly = await sql<QuarterlyRow[]>`
     SELECT period_end::text,
@@ -152,7 +152,7 @@ async function loadStock(symbol: string) {
     WHERE symbol = ${upper}
     ORDER BY period_end DESC
     LIMIT 6
-  `;
+  `.catch(() => [] as QuarterlyRow[]);
   // Daily price history — full available range. golden_db keeps daily back to
   // ~1996 for most NSE stocks. ~7K rows × 30 bytes ≈ 50KB gzipped, fine to
   // ship to the client so the chart can support 1D/1W/1M zoom client-side.
@@ -161,7 +161,7 @@ async function loadStock(symbol: string) {
     FROM golden.price_history
     WHERE symbol = ${upper + ".NS"} AND interval = '1d'
     ORDER BY date ASC
-  `;
+  `.catch(() => [] as PricePoint[]);
   // Intraday ticks (appended every ~10 min by the equity pinger) for the 1D
   // chart's real session curve. Use the MOST RECENT tick-day, not strictly
   // "today" — otherwise the chart is a straight line all weekend / before the
@@ -178,7 +178,7 @@ async function loadStock(symbol: string) {
      WHERE symbol = ${upper}
        AND (ts AT TIME ZONE 'Asia/Kolkata')::date = latest.d
      ORDER BY ts ASC
-  `;
+  `.catch(() => [] as { ts: string; ltp: number }[]);
 
   // Peer-cluster stats for the header — cluster median (radar baseline) AND
   // this stock's rank within its (cluster, tier) peer group at the latest
@@ -204,7 +204,7 @@ async function loadStock(symbol: string) {
        ) + 1)::int AS rank,
       (SELECT COUNT(*) FROM peers)::int AS peer_count
     FROM peers
-  `;
+  `.catch(() => [] as { median: number; rank: number; peer_count: number }[]);
 
   // Full score history — all weekly snapshots for this symbol from app.scores,
   // oldest to newest.  The LEFT JOIN computes the peer-cluster composite average
@@ -228,19 +228,19 @@ async function loadStock(symbol: string) {
     ) ca ON ca.snapshot_date = s.snapshot_date
     WHERE s.symbol = ${upper}
     ORDER BY s.snapshot_date ASC
-  `;
+  `.catch(() => [] as ScoreHistoryPoint[]);
 
   // OI spike check — detects quarters where a large one-time "other income"
   // has inflated net profit and downstream scoring metrics (P/E, CAGR, ROE).
   // Financial-sector stocks are excluded (their investment income is structural).
-  const oiAlert = await getOIAlertForSymbol(upper, stock.sector_id);
+  const oiAlert = await getOIAlertForSymbol(upper, stock.sector_id).catch(() => null);
 
   // Scorecard for this (cluster, tier) — needed to build the SHAP waterfall weights
   const scRow = await sql<Scorecard[]>`
     SELECT pillar_weights, quality, valuation, momentum
     FROM app.cluster_scorecard_active
     WHERE cluster_id = ${stock.industry_id}
-  `;
+  `.catch(() => [] as Scorecard[]);
   const scorecard = scRow[0] ?? null;
 
   // Latest 4 quarters of shareholding pattern. Latest one drives the chart;
@@ -259,7 +259,7 @@ async function loadStock(symbol: string) {
     WHERE symbol = ${upper}
     ORDER BY period_end DESC
     LIMIT 4
-  `;
+  `.catch(() => [] as ShareholdingRow[]);
 
   // Corporate actions (dividends — BSE serves the actual per-share amounts;
   // ~last 5 actions per stock, which in practice are dividends). Fail-soft: if
