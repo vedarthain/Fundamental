@@ -92,7 +92,7 @@ export default function ToolsLanding() {
           Tools
         </h1>
         <p className="muted-text mt-3 text-[15px] leading-[1.55]">
-          Three purpose-built tools for specific analysis jobs. If you just want
+          Purpose-built tools for specific analysis jobs. If you just want
           to browse the universe by sector and industry, use{" "}
           <Link href="/sectors" className="underline hover:no-underline">
             Sectors
