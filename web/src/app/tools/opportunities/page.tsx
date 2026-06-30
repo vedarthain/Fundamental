@@ -547,24 +547,29 @@ function RecoveryBadge({ signals, score }: { signals: SignalState[]; score: numb
     score >= 2 ? "#b45309" :
     "#6b7280";
 
+  const inactive = signals.filter((s) => !s.active);
+  const inactiveTitle = inactive.length
+    ? "Not firing: " + inactive.map((s) => s.label).join(" · ")
+    : "All signals firing";
+
   return (
-    <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-      {signals.map((s) => (
+    <div className="flex items-center gap-1 mt-1 flex-wrap">
+      {/* Only render ACTIVE chips — inactive ones add noise, the score covers them */}
+      {signals.filter((s) => s.active).map((s) => (
         <span
           key={s.key}
           title={s.label}
-          className="inline-block text-[8.5px] font-bold px-1.5 py-[2px] rounded cursor-default tracking-wide select-none"
-          style={s.active
-            ? { background: activeBg, color: "#fff" }
-            : { background: "transparent", color: "var(--color-border-default)", border: "1px solid var(--color-border-default)" }
-          }
+          className="inline-block text-[9px] font-bold px-1.5 py-[2px] rounded cursor-default tracking-wide select-none"
+          style={{ background: activeBg, color: "#fff" }}
         >
           {SIGNAL_LABELS[s.key] ?? s.key.toUpperCase()}
         </span>
       ))}
+      {/* Score — hover shows which signals are NOT firing */}
       <span
-        className="text-[9px] font-semibold tabular-nums"
+        className="text-[9px] font-semibold tabular-nums cursor-default"
         style={{ color: activeColor }}
+        title={inactiveTitle}
       >
         {score}/5
       </span>
