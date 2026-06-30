@@ -56,6 +56,8 @@ type Opportunity = {
   above_200sma: boolean | null;
   off_52w_low_pct: number | null;    // (current - 252-session low) / low
   accum_ratio_20d: number | null;    // up-day volume / down-day volume, last 20 sessions
+  // Fundamentals
+  np_yoy_q: number | null;           // latest quarter net profit YoY growth
 };
 
 type SortKey = "symbol" | "mcap" | "ret_1m" | "ret_3m" | "ret_6m" | "ret_12m" | "composite";
@@ -73,20 +75,25 @@ function priceReturn(current: number | null, anchor: number | null): number | nu
 
 // ── Recovery signals ──────────────────────────────────────────────────────────
 
-/** Returns the 5 individual signal states for a stock. */
+/** Price-action recovery signals (0–5). */
 function recoverySignals(r: Opportunity) {
   return [
-    { key: "sma",    label: "Above 200-day SMA",           active: r.above_200sma === true },
-    { key: "vol",    label: "Volume accumulation (20d)",   active: (r.accum_ratio_20d ?? 0) > 1.2 },
-    { key: "ema",    label: "Short-term EMA stack bullish", active: r.ema_stack_bull === true },
-    { key: "low",    label: "Off 52W low > 5%",            active: (r.off_52w_low_pct ?? 0) > 0.05 },
-    { key: "rel1m",  label: "Outperforming index (1M)",    active: (r.ret_1m_rel ?? -1) > 0 },
+    { key: "sma",   label: "Above 200-day SMA",            active: r.above_200sma === true },
+    { key: "vol",   label: "Volume accumulation (20d)",    active: (r.accum_ratio_20d ?? 0) > 1.2 },
+    { key: "ema",   label: "Short-term EMA stack bullish", active: r.ema_stack_bull === true },
+    { key: "low",   label: "Off 52W low > 5%",             active: (r.off_52w_low_pct ?? 0) > 0.05 },
+    { key: "rel1m", label: "Outperforming index (1M)",     active: (r.ret_1m_rel ?? -1) > 0 },
   ];
 }
 
-/** Count of firing recovery signals (0–5). */
+/** Count of firing price-action signals (0–5). */
 function recoveryScore(r: Opportunity): number {
   return recoverySignals(r).filter((s) => s.active).length;
+}
+
+/** True when latest quarter net profit grew YoY — fundamentals backing price recovery. */
+function earningsGrowing(r: Opportunity): boolean {
+  return (r.np_yoy_q ?? -Infinity) > 0;
 }
 
 // ── Return cell ───────────────────────────────────────────────────────────────
@@ -387,8 +394,12 @@ export default function OpportunitiesPage() {
                             ₹{r.current_price.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
                           </div>
                         )}
-                        {score > 0 && (
-                          <RecoveryBadge signals={recoverySignals(r)} score={score} />
+                        {(score > 0 || earningsGrowing(r)) && (
+                          <RecoveryBadge
+                            signals={recoverySignals(r)}
+                            score={score}
+                            earnings={earningsGrowing(r)}
+                          />
                         )}
                       </td>
 
@@ -428,8 +439,10 @@ export default function OpportunitiesPage() {
             <span style={{ color: "#b45309" }}>■</span> &gt;10% underperformance vs index
           </div>
           <div>
-            <span style={{ color: "#15803d" }} className="font-semibold">↗ N/5</span>
-            {" "}= recovery score (hover dots for detail) — signals: above 200d SMA · volume accumulation · EMA stack · off 52W low · outperforming index 1M
+            <span style={{ color: "#15803d" }} className="font-semibold">SMA VOL EMA 52W 1M↑</span>
+            {" "}= price recovery signals (N/5 score, hover for what&apos;s not firing) ·{" "}
+            <span style={{ color: "#4f46e5" }} className="font-semibold">Q↑</span>
+            {" "}= latest quarter profit grew YoY (fundamentals backing)
           </div>
         </div>
       )}
@@ -537,12 +550,18 @@ const SIGNAL_LABELS: Record<string, string> = {
   rel1m: "1M↑",
 };
 
-function RecoveryBadge({ signals, score }: { signals: SignalState[]; score: number }) {
-  const activeColor =
+function RecoveryBadge({
+  signals, score, earnings,
+}: {
+  signals: SignalState[];
+  score: number;
+  earnings: boolean;
+}) {
+  const priceColor =
     score >= 4 ? "#15803d" :
     score >= 2 ? "#b45309" :
     "#6b7280";
-  const activeBg =
+  const priceBg =
     score >= 4 ? "#15803d" :
     score >= 2 ? "#b45309" :
     "#6b7280";
@@ -550,29 +569,41 @@ function RecoveryBadge({ signals, score }: { signals: SignalState[]; score: numb
   const inactive = signals.filter((s) => !s.active);
   const inactiveTitle = inactive.length
     ? "Not firing: " + inactive.map((s) => s.label).join(" · ")
-    : "All signals firing";
+    : "All price signals firing";
 
   return (
     <div className="flex items-center gap-1 mt-1 flex-wrap">
-      {/* Only render ACTIVE chips — inactive ones add noise, the score covers them */}
+      {/* Active price-action chips */}
       {signals.filter((s) => s.active).map((s) => (
         <span
           key={s.key}
           title={s.label}
           className="inline-block text-[9px] font-bold px-1.5 py-[2px] rounded cursor-default tracking-wide select-none"
-          style={{ background: activeBg, color: "#fff" }}
+          style={{ background: priceBg, color: "#fff" }}
         >
           {SIGNAL_LABELS[s.key] ?? s.key.toUpperCase()}
         </span>
       ))}
-      {/* Score — hover shows which signals are NOT firing */}
-      <span
-        className="text-[9px] font-semibold tabular-nums cursor-default"
-        style={{ color: activeColor }}
-        title={inactiveTitle}
-      >
-        {score}/5
-      </span>
+      {/* Price score — hover lists what's not firing */}
+      {score > 0 && (
+        <span
+          className="text-[9px] font-semibold tabular-nums cursor-default"
+          style={{ color: priceColor }}
+          title={inactiveTitle}
+        >
+          {score}/5
+        </span>
+      )}
+      {/* Earnings chip — indigo, separate from price signals */}
+      {earnings && (
+        <span
+          title="Latest quarter net profit grew YoY — fundamentals backing the recovery"
+          className="inline-block text-[9px] font-bold px-1.5 py-[2px] rounded cursor-default tracking-wide select-none"
+          style={{ background: "#4f46e5", color: "#fff" }}
+        >
+          Q↑
+        </span>
+      )}
     </div>
   );
 }
