@@ -528,34 +528,46 @@ type SignalState = { key: string; label: string; active: boolean };
  * Shows a score pill (e.g. "↗ 3/5") + 5 coloured dots, one per recovery signal.
  * Each dot has a tooltip (title) naming the signal. Colour scales with score.
  */
+// Short labels shown inside each signal chip — must match the order in recoverySignals().
+const SIGNAL_LABELS: Record<string, string> = {
+  sma:   "SMA",
+  vol:   "VOL",
+  ema:   "EMA",
+  low:   "52W",
+  rel1m: "1M↑",
+};
+
 function RecoveryBadge({ signals, score }: { signals: SignalState[]; score: number }) {
-  const color =
+  const activeColor =
     score >= 4 ? "#15803d" :
     score >= 2 ? "#b45309" :
     "#6b7280";
-  const bg =
-    score >= 4 ? "rgba(22,163,74,0.14)" :
-    score >= 2 ? "rgba(180,83,9,0.12)" :
-    "rgba(107,114,128,0.10)";
+  const activeBg =
+    score >= 4 ? "#15803d" :
+    score >= 2 ? "#b45309" :
+    "#6b7280";
 
   return (
-    <div className="flex items-center gap-1.5 mt-1">
+    <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+      {signals.map((s) => (
+        <span
+          key={s.key}
+          title={s.label}
+          className="inline-block text-[8.5px] font-bold px-1.5 py-[2px] rounded cursor-default tracking-wide select-none"
+          style={s.active
+            ? { background: activeBg, color: "#fff" }
+            : { background: "transparent", color: "var(--color-border-default)", border: "1px solid var(--color-border-default)" }
+          }
+        >
+          {SIGNAL_LABELS[s.key] ?? s.key.toUpperCase()}
+        </span>
+      ))}
       <span
-        className="text-[9px] px-1.5 py-px rounded-full font-semibold whitespace-nowrap"
-        style={{ background: bg, color }}
+        className="text-[9px] font-semibold tabular-nums"
+        style={{ color: activeColor }}
       >
-        ↗ {score}/5
+        {score}/5
       </span>
-      <div className="flex gap-[3px] items-center">
-        {signals.map((s) => (
-          <span
-            key={s.key}
-            title={s.label}
-            className="w-[7px] h-[7px] rounded-full inline-block cursor-default"
-            style={{ background: s.active ? color : "var(--color-border-default)" }}
-          />
-        ))}
-      </div>
     </div>
   );
 }
