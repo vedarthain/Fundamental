@@ -97,12 +97,16 @@ export function StockPageTabs({
   actions: ReactNode;
 }) {
   // Default to "results" so visitors land on the freshest signal first.
-  // If the URL has #latest-result (chip click from a different tab), open
-  // the results tab too — and let the browser handle the scroll naturally.
+  // Deep-link support via URL hash (chip/link click from another page or tab):
+  //   #latest-result   → Results tab (browser scrolls to the anchor naturally)
+  //   #announcements   → Corporate actions tab (Announcements sub-tab is its
+  //                      default, so a filings link lands directly on the feed)
   const [active, setActive] = useState<TabKey>("results");
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (window.location.hash === "#latest-result") setActive("results");
+    const hash = window.location.hash;
+    if (hash === "#latest-result") setActive("results");
+    else if (hash === "#announcements") setActive("actions");
   }, []);
   const activeDef = TABS.find((t) => t.key === active)!;
 

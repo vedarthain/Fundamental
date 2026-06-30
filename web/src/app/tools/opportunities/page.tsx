@@ -378,6 +378,16 @@ export default function OpportunitiesPage() {
                           >
                             {r.symbol}
                           </Link>
+                          {/* Deep-link to the stock's exchange filings feed — see
+                              the actual catalyst (order wins, results, board outcomes)
+                              instead of a binary news chip. */}
+                          <Link
+                            href={`/stock/${r.symbol}#announcements`}
+                            className="text-[10px] muted-text hover:text-[var(--color-accent-600)] whitespace-nowrap"
+                            title="View latest exchange filings & announcements for this stock"
+                          >
+                            Filings ↗
+                          </Link>
                         </div>
                         <div className="text-[11px] muted-text truncate max-w-[200px] mt-0.5">
                           {displayCompanyName(r.company_name, r.symbol)}
