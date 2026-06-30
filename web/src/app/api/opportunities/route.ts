@@ -64,6 +64,11 @@ type Row = {
   above_200sma: boolean | null;
   off_52w_low_pct: number | null;
   accum_ratio_20d: number | null;
+  // Latest exchange filing (BSE announcement) — single most recent headline
+  filing_title: string | null;
+  filing_category: string | null;
+  filing_date: string | null;
+  filing_url: string | null;
 };
 
 type HistPrices = {
@@ -81,6 +86,14 @@ type RecoverySignals = {
   accum_ratio_20d: number | null;    // up-day vol / down-day vol over last 20 sessions
 };
 
+type LatestFiling = {
+  symbol: string;
+  filing_title: string | null;
+  filing_category: string | null;
+  filing_date: string | null;        // ISO timestamp
+  filing_url: string | null;         // BSE PDF attachment, when present
+};
+
 type NiftyReturns = {
   ret_1m: number | null;
   ret_3m: number | null;
@@ -91,10 +104,11 @@ type NiftyReturns = {
 type BenchmarkRow = NiftyReturns & { index_code: string };
 
 export async function GET() {
-  // Run all four queries in parallel — stocks, NIFTY benchmark, historical
-  // prices from golden for accurate "from ₹X" display, and recovery signals
-  // computed from 300 days of OHLCV in golden.price_history.
-  const [rows, niftyRows, histRows, recoveryRows] = await Promise.all([
+  // Run all five queries in parallel — stocks, NIFTY benchmark, historical
+  // prices from golden for accurate "from ₹X" display, recovery signals
+  // computed from 300 days of OHLCV in golden.price_history, and the single
+  // latest BSE filing per symbol for the inline headline.
+  const [rows, niftyRows, histRows, recoveryRows, filingRows] = await Promise.all([
     sql<Row[]>`
     WITH ranked AS (
       SELECT
@@ -305,15 +319,33 @@ export async function GET() {
       FROM agg
       WHERE current_adj IS NOT NULL
     `,
+
+    // Latest exchange filing per symbol (last 90 days) for the inline headline.
+    // DISTINCT ON + the (symbol, published_at DESC) index makes this one row
+    // per symbol cheaply. Fail-soft: if app.announcement is absent in this
+    // environment, fall back to an empty list rather than 500-ing the page.
+    sql<LatestFiling[]>`
+      SELECT DISTINCT ON (a.symbol)
+        a.symbol,
+        a.title              AS filing_title,
+        a.category           AS filing_category,
+        a.published_at::text AS filing_date,
+        a.pdf_url            AS filing_url
+      FROM app.announcement a
+      WHERE a.published_at > now() - interval '90 days'
+      ORDER BY a.symbol, a.published_at DESC NULLS LAST
+    `.catch(() => [] as LatestFiling[]),
   ]);
 
-  // Merge historical prices and recovery signals into each row by symbol.
+  // Merge historical prices, recovery signals and latest filing by symbol.
   const histMap     = new Map(histRows.map((h) => [h.symbol, h]));
   const recoveryMap = new Map(recoveryRows.map((rv) => [rv.symbol, rv]));
+  const filingMap   = new Map(filingRows.map((f) => [f.symbol, f]));
 
   const rowsWithPrices = rows.map((r) => {
     const h  = histMap.get(r.symbol);
     const rv = recoveryMap.get(r.symbol);
+    const f  = filingMap.get(r.symbol);
     return {
       ...r,
       price_1m_ago:     h?.price_1m_ago     ?? null,
@@ -323,6 +355,10 @@ export async function GET() {
       above_200sma:     rv?.above_200sma    ?? null,
       off_52w_low_pct:  rv?.off_52w_low_pct ?? null,
       accum_ratio_20d:  rv?.accum_ratio_20d ?? null,
+      filing_title:     f?.filing_title     ?? null,
+      filing_category:  f?.filing_category  ?? null,
+      filing_date:      f?.filing_date      ?? null,
+      filing_url:       f?.filing_url       ?? null,
     };
   });
 

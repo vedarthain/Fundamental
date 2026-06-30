@@ -58,6 +58,11 @@ type Opportunity = {
   accum_ratio_20d: number | null;    // up-day volume / down-day volume, last 20 sessions
   // Fundamentals
   np_yoy_q: number | null;           // latest quarter net profit YoY growth
+  // Latest exchange filing (BSE) — inline headline
+  filing_title: string | null;
+  filing_category: string | null;
+  filing_date: string | null;
+  filing_url: string | null;
 };
 
 type SortKey = "symbol" | "mcap" | "ret_1m" | "ret_3m" | "ret_6m" | "ret_12m" | "composite";
@@ -378,16 +383,6 @@ export default function OpportunitiesPage() {
                           >
                             {r.symbol}
                           </Link>
-                          {/* Deep-link to the stock's exchange filings feed — see
-                              the actual catalyst (order wins, results, board outcomes)
-                              instead of a binary news chip. */}
-                          <Link
-                            href={`/stock/${r.symbol}#announcements`}
-                            className="text-[10px] muted-text hover:text-[var(--color-accent-600)] whitespace-nowrap"
-                            title="View latest exchange filings & announcements for this stock"
-                          >
-                            Filings ↗
-                          </Link>
                         </div>
                         <div className="text-[11px] muted-text truncate max-w-[200px] mt-0.5">
                           {displayCompanyName(r.company_name, r.symbol)}
@@ -409,6 +404,16 @@ export default function OpportunitiesPage() {
                             signals={recoverySignals(r)}
                             score={score}
                             earnings={earningsGrowing(r)}
+                          />
+                        )}
+                        {/* Latest exchange filing — single most recent headline */}
+                        {r.filing_title && (
+                          <FilingLine
+                            title={r.filing_title}
+                            category={r.filing_category}
+                            date={r.filing_date}
+                            url={r.filing_url}
+                            symbol={r.symbol}
                           />
                         )}
                       </td>
@@ -667,6 +672,67 @@ function RecoveryBadge({
         </span>
       )}
     </div>
+  );
+}
+
+// ── Latest filing line ────────────────────────────────────────────────────────
+
+/** Colour a BSE category so the filing type scans at a glance. */
+function filingCatColor(category: string | null): string {
+  const c = (category || "").toLowerCase();
+  if (c.includes("result"))   return "var(--color-score-good)";
+  if (c.includes("board"))    return "var(--color-accent-600)";
+  if (c.includes("dividend")) return "var(--color-accent-700)";
+  if (c.includes("insider") || c.includes("sast")) return "var(--color-score-weak)";
+  return "var(--color-muted)";
+}
+
+function fmtFilingDate(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+}
+
+/**
+ * One-line latest exchange filing under each stock. Links straight to the BSE
+ * PDF when available (the actual document), else to the stock's filings feed.
+ * Truncates to a single line so the row stays compact.
+ */
+function FilingLine({
+  title, category, date, url, symbol,
+}: {
+  title: string;
+  category: string | null;
+  date: string | null;
+  url: string | null;
+  symbol: string;
+}) {
+  const color = filingCatColor(category);
+  const when  = fmtFilingDate(date);
+  const href  = url ?? `/stock/${symbol}#announcements`;
+  const external = !!url;
+
+  return (
+    <a
+      href={href}
+      target={external ? "_blank" : undefined}
+      rel={external ? "noopener noreferrer" : undefined}
+      title={title}
+      className="group mt-1.5 flex items-center gap-1.5 max-w-[240px] hover:text-[var(--color-accent-600)]"
+    >
+      <span
+        className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
+        style={{ background: color }}
+        aria-hidden
+      />
+      {when && (
+        <span className="text-[9.5px] muted-text tabular-nums shrink-0">{when}</span>
+      )}
+      <span className="text-[10px] muted-text truncate group-hover:text-[var(--color-accent-600)]">
+        {title}
+      </span>
+    </a>
   );
 }
 
