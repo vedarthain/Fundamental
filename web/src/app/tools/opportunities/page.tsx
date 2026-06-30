@@ -431,18 +431,70 @@ export default function OpportunitiesPage() {
 
       {/* ── Legend ─────────────────────────────────────────────────────── */}
       {!loading && !error && sorted.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-[11px] muted-text">
-          <div>Returns are <strong className="ink-text">absolute price returns</strong> — compare against the Nifty 500 strip above to gauge underperformance</div>
-          <div>
-            <span style={{ color: "#7f1d1d" }}>■</span> &gt;30% · {" "}
-            <span style={{ color: "#991b1b" }}>■</span> &gt;20% · {" "}
-            <span style={{ color: "#b45309" }}>■</span> &gt;10% underperformance vs index
-          </div>
-          <div>
-            <span style={{ color: "#15803d" }} className="font-semibold">SMA VOL EMA 52W 1M↑</span>
-            {" "}= price recovery signals (N/5 score, hover for what&apos;s not firing) ·{" "}
-            <span style={{ color: "#4f46e5" }} className="font-semibold">Q↑</span>
-            {" "}= latest quarter profit grew YoY (fundamentals backing)
+        <div
+          className="mt-4 rounded-lg border p-4"
+          style={{ background: "var(--color-paper)", borderColor: "var(--color-border-default)" }}
+        >
+          <p className="text-[10.5px] uppercase tracking-wide font-semibold muted-text mb-3">
+            How to read this table
+          </p>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3">
+
+            {/* Return colours */}
+            <div>
+              <p className="text-[11px] font-semibold ink-text mb-1.5">Return colour scale</p>
+              <div className="flex flex-col gap-1">
+                {[
+                  { bg: "rgba(220,38,38,0.18)",  color: "#7f1d1d", label: "> 30% fall" },
+                  { bg: "rgba(220,38,38,0.12)",  color: "#991b1b", label: "> 20% fall" },
+                  { bg: "rgba(217,119,6,0.11)",  color: "#b45309", label: "> 10% fall" },
+                  { bg: "rgba(22,163,74,0.09)",  color: "var(--color-score-good)", label: "> 10% gain" },
+                ].map(({ bg, color, label }) => (
+                  <div key={label} className="flex items-center gap-2">
+                    <span
+                      className="inline-block rounded px-2 py-0.5 text-[10px] font-semibold tabular-nums w-14 text-center"
+                      style={{ background: bg, color }}
+                    >
+                      −XX%
+                    </span>
+                    <span className="text-[11px] muted-text">{label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Recovery signals */}
+            <div>
+              <p className="text-[11px] font-semibold ink-text mb-1.5">Recovery signal chips</p>
+              <div className="flex flex-col gap-1.5">
+                {[
+                  { chip: "SMA",  color: "#15803d", bg: "#15803d", desc: "Price above 200-day moving average" },
+                  { chip: "VOL",  color: "#15803d", bg: "#15803d", desc: "Buying volume > selling volume (20 days)" },
+                  { chip: "EMA",  color: "#15803d", bg: "#15803d", desc: "Short-term EMAs re-stacking upward" },
+                  { chip: "52W",  color: "#15803d", bg: "#15803d", desc: "Price > 5% above 52-week low" },
+                  { chip: "1M↑",  color: "#15803d", bg: "#15803d", desc: "Outperforming the index this month" },
+                  { chip: "Q↑",   color: "#fff",    bg: "#4f46e5", desc: "Latest quarter profit grew YoY" },
+                ].map(({ chip, color, bg, desc }) => (
+                  <div key={chip} className="flex items-center gap-2">
+                    <span
+                      className="inline-block text-[9px] font-bold px-1.5 py-[2px] rounded shrink-0 w-9 text-center tracking-wide"
+                      style={{ background: bg, color }}
+                    >
+                      {chip}
+                    </span>
+                    <span className="text-[11px] muted-text">{desc}</span>
+                  </div>
+                ))}
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span className="inline-block text-[9px] font-semibold w-9 text-center tabular-nums" style={{ color: "#15803d" }}>
+                    N/5
+                  </span>
+                  <span className="text-[11px] muted-text">Score out of 5 price signals — hover to see what&apos;s not firing</span>
+                </div>
+              </div>
+            </div>
+
           </div>
         </div>
       )}
