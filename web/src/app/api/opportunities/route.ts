@@ -20,6 +20,18 @@ import { sql, golden } from "@/lib/db";
 export const runtime = "nodejs";
 export const revalidate = 86400;
 
+// Boilerplate-filing title patterns (POSIX regex, case-insensitive via !~*).
+// These are procedural compliance filings every company makes every quarter —
+// no catalyst value. Deliberately does NOT include "Regulation 30 (LODR)",
+// which is the clause half of ALL filings (including real news) are filed under.
+const FILING_NOISE_RE =
+  "(trading window|newspaper|(analyst|investor)\\s.{0,25}(call|meet|conference|presentation|interaction|day)" +
+  "|compliance certificate|certificate under reg|book closure|record date" +
+  "|loss of .{0,20}certificate|duplicate .{0,20}certificate|change of address|change in registrar" +
+  "|postal ballot|scrutinizer|esop|esps" +
+  "|allotment of (non.?convertible|ncd|debenture|commercial paper|warrant)" +
+  "|forfeiture|sub.?division|reconciliation of share)";
+
 type Row = {
   symbol: string;
   company_name: string;
@@ -320,10 +332,20 @@ export async function GET() {
       WHERE current_adj IS NOT NULL
     `,
 
-    // Latest exchange filing per symbol (last 90 days) for the inline headline.
-    // DISTINCT ON + the (symbol, published_at DESC) index makes this one row
-    // per symbol cheaply. Fail-soft: if app.announcement is absent in this
-    // environment, fall back to an empty list rather than 500-ing the page.
+    // Latest *substantive* exchange filing per symbol (last 90 days) for the
+    // inline headline. DISTINCT ON + the (symbol, published_at DESC) index makes
+    // this one row per symbol cheaply.
+    //
+    // Boilerplate filter: ~34% of BSE filings are pure procedural compliance —
+    // trading-window closures, newspaper-publication intimations, analyst-meet
+    // notices, ESOP/debt allotments, etc. Every company files these every
+    // quarter; they carry zero differentiating signal and would crowd out the
+    // one real catalyst. We exclude them by title pattern (NOT the "Regulation
+    // 30 (LODR)" clause itself — that wraps half of ALL filings including real
+    // news). If everything recent is boilerplate, the symbol shows no headline.
+    //
+    // Fail-soft: if app.announcement is absent in this environment, fall back to
+    // an empty list rather than 500-ing the page.
     sql<LatestFiling[]>`
       SELECT DISTINCT ON (a.symbol)
         a.symbol,
@@ -333,6 +355,7 @@ export async function GET() {
         a.pdf_url            AS filing_url
       FROM app.announcement a
       WHERE a.published_at > now() - interval '90 days'
+        AND a.title !~* ${FILING_NOISE_RE}
       ORDER BY a.symbol, a.published_at DESC NULLS LAST
     `.catch(() => [] as LatestFiling[]),
   ]);
