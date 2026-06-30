@@ -484,12 +484,12 @@ export default function OpportunitiesPage() {
               <p className="text-[11px] font-semibold ink-text mb-1.5">Recovery signal chips</p>
               <div className="flex flex-col gap-1.5">
                 {[
-                  { chip: "SMA",  color: "#15803d", bg: "#15803d", desc: "Price above 200-day moving average" },
-                  { chip: "VOL",  color: "#15803d", bg: "#15803d", desc: "Buying volume > selling volume (20 days)" },
-                  { chip: "EMA",  color: "#15803d", bg: "#15803d", desc: "Short-term EMAs re-stacking upward" },
-                  { chip: "52W",  color: "#15803d", bg: "#15803d", desc: "Price > 5% above 52-week low" },
-                  { chip: "1M↑",  color: "#15803d", bg: "#15803d", desc: "Outperforming the index this month" },
-                  { chip: "Q↑",   color: "#fff",    bg: "#4f46e5", desc: "Latest quarter profit grew YoY" },
+                  { chip: "SMA",  bg: "#475569", color: "#fff", desc: "Price above 200-day moving average" },
+                  { chip: "VOL",  bg: "#475569", color: "#fff", desc: "Buying volume > selling volume (20 days)" },
+                  { chip: "EMA",  bg: "#475569", color: "#fff", desc: "Short-term EMAs re-stacking upward" },
+                  { chip: "52W",  bg: "#475569", color: "#fff", desc: "Price > 5% above 52-week low" },
+                  { chip: "1M↑",  bg: "#475569", color: "#fff", desc: "Outperforming the index this month" },
+                  { chip: "Q↑",   bg: "#4f46e5", color: "#fff", desc: "Latest quarter profit grew YoY (fundamentals)" },
                 ].map(({ chip, color, bg, desc }) => (
                   <div key={chip} className="flex items-center gap-2">
                     <span
@@ -501,11 +501,15 @@ export default function OpportunitiesPage() {
                     <span className="text-[11px] muted-text">{desc}</span>
                   </div>
                 ))}
-                <div className="flex items-center gap-2 mt-0.5">
-                  <span className="inline-block text-[9px] font-semibold w-9 text-center tabular-nums" style={{ color: "#15803d" }}>
-                    N/5
+                {/* Chips are on/off labels — strength is the N/5 colour, not the chip colour */}
+                <div className="flex items-center gap-2 mt-1 pt-1.5" style={{ borderTop: "1px solid var(--color-border-default)" }}>
+                  <span className="inline-block text-[9px] font-semibold w-9 text-center tabular-nums shrink-0">N/5</span>
+                  <span className="text-[11px] muted-text">
+                    Price-signal score — colour shows strength:{" "}
+                    <span style={{ color: "#15803d" }} className="font-semibold">4–5</span> ·{" "}
+                    <span style={{ color: "#b45309" }} className="font-semibold">2–3</span> ·{" "}
+                    <span style={{ color: "#6b7280" }} className="font-semibold">1</span>. Hover to see what&apos;s not firing.
                   </span>
-                  <span className="text-[11px] muted-text">Score out of 5 price signals — hover to see what&apos;s not firing</span>
                 </div>
               </div>
             </div>
@@ -624,14 +628,13 @@ function RecoveryBadge({
   score: number;
   earnings: boolean;
 }) {
-  const priceColor =
-    score >= 4 ? "#15803d" :
-    score >= 2 ? "#b45309" :
-    "#6b7280";
-  const priceBg =
-    score >= 4 ? "#15803d" :
-    score >= 2 ? "#b45309" :
-    "#6b7280";
+  // Chips are pure on/off labels — one neutral colour, no per-chip meaning.
+  // Strength is carried only by the N/5 score text below.
+  const CHIP_BG = "#475569"; // slate-600
+  const scoreColor =
+    score >= 4 ? "#15803d" :   // green — strong
+    score >= 2 ? "#b45309" :   // amber — building
+    "#6b7280";                 // gray  — weak
 
   const inactive = signals.filter((s) => !s.active);
   const inactiveTitle = inactive.length
@@ -640,22 +643,22 @@ function RecoveryBadge({
 
   return (
     <div className="flex items-center gap-1 mt-1 flex-wrap">
-      {/* Active price-action chips */}
+      {/* Active price-action chips — neutral slate, label-only */}
       {signals.filter((s) => s.active).map((s) => (
         <span
           key={s.key}
           title={s.label}
           className="inline-block text-[9px] font-bold px-1.5 py-[2px] rounded cursor-default tracking-wide select-none"
-          style={{ background: priceBg, color: "#fff" }}
+          style={{ background: CHIP_BG, color: "#fff" }}
         >
           {SIGNAL_LABELS[s.key] ?? s.key.toUpperCase()}
         </span>
       ))}
-      {/* Price score — hover lists what's not firing */}
+      {/* Price score — colour encodes strength; hover lists what's not firing */}
       {score > 0 && (
         <span
           className="text-[9px] font-semibold tabular-nums cursor-default"
-          style={{ color: priceColor }}
+          style={{ color: scoreColor }}
           title={inactiveTitle}
         >
           {score}/5
