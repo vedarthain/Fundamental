@@ -30,7 +30,121 @@ const FILING_NOISE_RE =
   "|loss of .{0,20}certificate|duplicate .{0,20}certificate|change of address|change in registrar" +
   "|postal ballot|scrutinizer|esop|esps" +
   "|allotment of (non.?convertible|ncd|debenture|commercial paper|warrant)" +
-  "|forfeiture|sub.?division|reconciliation of share)";
+  "|forfeiture|sub.?division|reconciliation of share" +
+  "|secretarial compliance|compliances?.?reg|reg\\.?\\s?24" +
+  "|statement of deviation|transcript|earnings? call|conference call" +
+  "|determination of materiality|materiality of (information|an? event)" +
+  "|regulation 29|substantial acquisition of shares|regulation 31a|reclassification" +
+  "|share based employee benefit|esos|sweat equity" +
+  "|large corporate|initial disclosure|format of .{0,15}disclosure" +
+  "|prohibition of insider|insider trading|regulation 7.2" +
+  "|regulation 5[12]|regulation 3[36]|audited financial result|unmodified opinion" +
+  "|weblink|letters? to (share|member)|manager to the open offer|post.?offer" +
+  "|encumbrance|levy of fine|fines? imposed|waiver of fine|imposition of fine" +
+  "|deviation or variation|statement o[fn] deviation|regulation 32|penalty (paid|imposed|levied))";
+
+// Same patterns as a JS RegExp, for the final safety-net check after we may have
+// swapped in the headline (which the SQL title-filter never saw).
+const FILING_NOISE_JS = new RegExp(FILING_NOISE_RE, "i");
+
+// BSE's NEWSSUB ("title") field arrives in two unhelpful shapes, and which of
+// {title, headline} carries the real story FLIPS between them:
+//
+//   1. "Announcement under Regulation 30 (LODR)-<Subcategory>"  (~50% of filings)
+//      The prefix is a generic regulatory clause; the human-readable story lives
+//      in the HEADLINE field (a full sentence, e.g. "Sanction of Scheme of
+//      Arrangement... by NCLT Chennai") or, failing that, the subcategory suffix.
+//
+//   2. "Release - 'Company did X'"
+//      Descriptive — but BSE TITLE-CASES it (mangling "HCLTech" → "Hcltech"),
+//      wraps it in a "Release -" prefix and smart quotes. Here the headline is
+//      just cover-letter filler ("Enclosed please find a release...").
+//
+// cleanFilingTitle() normalises both to the most informative readable string.
+//
+// The SEBI/LODR citation appears in a dozen phrasings and positions — as a bare
+// prefix ("Announcement under Regulation 30 (LODR)-<subcat>"), a verbose
+// standalone title ("Intimation Under Regulation 30 Of SEBI (Listing
+// Obligations And Disclosure Requirements) Regulations, 2015"), a prefix with a
+// real suffix ("...Regulations, 2015 - Show Cause Notice From GST Authority"),
+// or even a trailing suffix. REG_CITATION_RE matches the whole citation shell
+// wherever it sits so we can strip it and keep the surrounding real content.
+const REG_CITATION_RE =
+  /(?:announcement(?:\s+of)?\s+under|intimation\s+under|disclosure\s+under|update\s+on\s+disclosure\s+under)?\s*(?:regulations?|reg\.?)\s*30\b(?:\s*of\s*(?:the\s*)?sebi)?\s*(?:\(listing obligations[^)]*\))?\s*(?:regulations?,?\s*\d{4})?\s*(?:\(lodr\))?/gi;
+const RELEASE_WRAP_RE = /^(press\s+)?release\s*[-:]\s*/i;
+// Headlines that are pure cover-letter boilerplate — never the actual news.
+const HEADLINE_FILLER_RE =
+  /^(enclosed|please (find|refer|note)|kindly|we (are pleased|enclose|wish|hereby|submit)|find enclosed|with reference|pursuant to|in (continuation|compliance|terms)|this is to inform|attached|further to|refer)\b/i;
+// Headlines that merely restate the SEBI regulation with no actual story — these
+// slip past the title noise-filter because they live in the HEADLINE field of a
+// Reg-30-prefixed filing. Reject them so we fall back to the subcategory suffix.
+const HEADLINE_BOILER_RE =
+  /(regulation 30 of|intimation under regulation|sebi \(listing|listing obligations and disclosure|disclosure of material event)/i;
+
+function normaliseFilingText(s: string): string {
+  let out = s
+    .replace(/<[^>]+>/g, " ") // HTML tags (some headlines embed tables/markup)
+    .replace(/[‘’‚‛]/g, "'") // smart single quotes
+    .replace(/[“”„]/g, '"') // smart double quotes
+    .replace(/[–—]/g, "-") // en/em dash
+    .replace(/_/g, " ") // underscore_joined subcategories
+    .replace(/\s+/g, " ")
+    .replace(/^["'\s-]+|["'\s]+$/g, "") // strip wrapping quotes/dashes
+    .trim();
+  // BSE frequently SHOUTS. Only soften strings with zero lowercase letters —
+  // they carry no case information to preserve, so Title-casing is neutral.
+  if (out.length > 0 && !/[a-z]/.test(out)) {
+    out = out.replace(/([A-Z])([A-Z]+)/g, (_, a, b) => a + b.toLowerCase());
+  }
+  return out;
+}
+
+// Remove the SEBI/LODR citation shell from a title, keeping the longest real
+// fragment around it. "Disclosure Under Regulation 30 ... 2015 - Show Cause
+// Notice From GST Authority" → "Show Cause Notice From GST Authority". A pure
+// citation with nothing else → "".
+function stripRegCitation(s: string): string {
+  return s
+    .split(REG_CITATION_RE)
+    .map((p) => p.replace(/^[\s\-:_.|]+|[\s\-:_.|]+$/g, "").trim())
+    // Drop leftover connector words the split leaves behind ("Disclosure Under").
+    .filter(
+      (p) =>
+        p.length > 0 &&
+        !/^(of|the|under|sebi|disclosure|intimation|announcement|update(\s+on)?|regulations?,?\s*\d{4}|listing obligations.*)$/i.test(p),
+    )
+    .sort((a, b) => b.length - a.length)[0] || "";
+}
+
+function cleanFilingTitle(title: string | null, headline: string | null): string | null {
+  const t0 = (title || "").trim();
+  const h0 = (headline || "").trim();
+  if (!t0 && !h0) return null;
+
+  const headlineUsable =
+    h0.length > 18 && !HEADLINE_FILLER_RE.test(h0) && !HEADLINE_BOILER_RE.test(h0);
+
+  // Both title and headline get the same treatment: drop the "Release -" wrapper
+  // and SEBI/LODR citation boilerplate, then normalise. Empty when it was pure
+  // citation. (The headline never passed through the SQL title-noise filter, so
+  // it needs its own cleanup.)
+  const titleContent = normaliseFilingText(stripRegCitation(t0.replace(RELEASE_WRAP_RE, "")));
+  const headlineText = headlineUsable
+    ? normaliseFilingText(stripRegCitation(h0.replace(RELEASE_WRAP_RE, "")))
+    : "";
+
+  // Prefer a descriptive headline only when it's materially richer than the
+  // title content (e.g. terse subcategory "Award of Order" vs. a full sentence).
+  let chosen: string;
+  if (headlineText && headlineText.length > titleContent.length + 10) chosen = headlineText;
+  else if (titleContent.length >= 6) chosen = titleContent;
+  else chosen = headlineText;
+
+  // Safety net: if what we'd show is itself procedural noise (common when the
+  // headline carried it, bypassing the SQL title-filter), show nothing.
+  if (!chosen || chosen.length < 6 || FILING_NOISE_JS.test(chosen)) return null;
+  return chosen;
+}
 
 type Row = {
   symbol: string;
@@ -101,6 +215,7 @@ type RecoverySignals = {
 type LatestFiling = {
   symbol: string;
   filing_title: string | null;
+  filing_headline: string | null;    // BSE HEADLINE — descriptive for Reg-30 filings
   filing_category: string | null;
   filing_date: string | null;        // ISO timestamp
   filing_url: string | null;         // BSE PDF attachment, when present
@@ -350,12 +465,14 @@ export async function GET() {
       SELECT DISTINCT ON (a.symbol)
         a.symbol,
         a.title              AS filing_title,
+        a.headline           AS filing_headline,
         a.category           AS filing_category,
         a.published_at::text AS filing_date,
         a.pdf_url            AS filing_url
       FROM app.announcement a
       WHERE a.published_at > now() - interval '90 days'
         AND a.title !~* ${FILING_NOISE_RE}
+        AND (a.headline IS NULL OR a.headline !~* ${FILING_NOISE_RE})
       ORDER BY a.symbol, a.published_at DESC NULLS LAST
     `.catch(() => [] as LatestFiling[]),
   ]);
@@ -378,7 +495,7 @@ export async function GET() {
       above_200sma:     rv?.above_200sma    ?? null,
       off_52w_low_pct:  rv?.off_52w_low_pct ?? null,
       accum_ratio_20d:  rv?.accum_ratio_20d ?? null,
-      filing_title:     f?.filing_title     ?? null,
+      filing_title:     cleanFilingTitle(f?.filing_title ?? null, f?.filing_headline ?? null),
       filing_category:  f?.filing_category  ?? null,
       filing_date:      f?.filing_date      ?? null,
       filing_url:       f?.filing_url       ?? null,
