@@ -22,6 +22,7 @@
  */
 import { sql } from "@/lib/db";
 import { unstable_cache } from "next/cache";
+import TodayCell from "@/components/TodayCell";
 
 type SnapshotStats = {
   latest: Date | null;          // weekly scoring snapshot date
@@ -133,9 +134,11 @@ function Sep() {
 export async function SnapshotRibbon() {
   const s = await getCachedSnapshot();
 
-  // Today's date in IST. Computed per request (not from the cached snapshot
-  // blob) so the leading cell always reads the current calendar day.
-  const todayIst = new Date().toLocaleDateString("en-GB", {
+  // Today's date in IST — seed value for SSR/static HTML. The ribbon is baked
+  // into every ISR page, so this server value can freeze at revalidation time
+  // (BUG-05). TodayCell recomputes it in the browser on mount, so the visible
+  // date is always the current calendar day regardless of ISR staleness.
+  const todayIstSeed = new Date().toLocaleDateString("en-GB", {
     timeZone: "Asia/Kolkata",
     weekday: "short",
     day: "numeric",
@@ -153,7 +156,7 @@ export async function SnapshotRibbon() {
       <div className="mx-auto max-w-[1300px] px-4 md:px-6 h-7 flex items-center gap-4 overflow-x-auto">
         {/* TODAY — current calendar date (IST). Leads the strip so users always
             see the current day at a glance. */}
-        <Cell label="TODAY">{todayIst}</Cell>
+        <Cell label="TODAY"><TodayCell initial={todayIstSeed} /></Cell>
         <Sep />
         {/* SNAPSHOT — weekly scoring snapshot date. Updates Fridays after
             close. Quality/Valuation/Momentum percentiles are pinned to this. */}
