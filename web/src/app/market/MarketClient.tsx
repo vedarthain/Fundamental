@@ -523,7 +523,7 @@ function HeroPanel({
               tick={{ fontSize: 9, fill: "var(--color-muted)" }} axisLine={false} tickLine={false}
               width={42} orientation="right" />
             <Tooltip cursor={{ stroke: "var(--color-border-default)" }} contentStyle={chartTooltipStyle}
-              labelFormatter={(l) => (isIntraday ? `${fmtClock(String(l ?? ""))} IST` : fmtFull(String(l ?? "")))}
+              labelFormatter={(l) => (isIntraday ? `${fmtClockDate(String(l ?? ""))} IST` : fmtFull(String(l ?? "")))}
               formatter={(v: unknown) => [
                 Number(v).toLocaleString("en-IN", { maximumFractionDigits: 1 }),
                 label,
@@ -1253,4 +1253,15 @@ function fmtClock(iso: string): string {
   return d.toLocaleTimeString("en-IN", {
     timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit", hour12: true,
   });
+}
+
+/** Date + IST clock, e.g. "1 Jul, 2:47 PM". Used in intraday chart tooltips so
+ *  the hover detail names the day the tick belongs to, not just the time. */
+function fmtClockDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const datePart = d.toLocaleDateString("en-IN", {
+    timeZone: "Asia/Kolkata", day: "numeric", month: "short",
+  });
+  return `${datePart}, ${fmtClock(iso)}`;
 }

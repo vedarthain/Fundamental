@@ -230,11 +230,16 @@ export function PriceChart({
             labelFormatter={(d) => {
               const s = String(d ?? "");
               if (range === "1D" && s.length > 10) {
-                // Live intraday point — show time in IST
-                return new Intl.DateTimeFormat("en-IN", {
-                  timeZone: "Asia/Kolkata",
-                  hour: "2-digit", minute: "2-digit", hour12: false,
-                }).format(new Date(s)) + " IST (live)";
+                // Live intraday point — show date + time in IST so the hover
+                // detail says which day the tick belongs to, not just the clock.
+                const dt = new Date(s);
+                const datePart = new Intl.DateTimeFormat("en-IN", {
+                  timeZone: "Asia/Kolkata", day: "numeric", month: "short",
+                }).format(dt);
+                const timePart = new Intl.DateTimeFormat("en-IN", {
+                  timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false,
+                }).format(dt);
+                return `${datePart}, ${timePart} IST (live)`;
               }
               return new Date(s).toLocaleDateString("en-IN", {
                 day: "numeric", month: "short", year: "numeric",
