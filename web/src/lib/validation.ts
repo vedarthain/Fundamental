@@ -107,15 +107,29 @@ function spearman(factor: (number | null)[], ret: number[]): number | null {
 }
 
 async function compute(): Promise<ValidationReport> {
-  // 1. All scored rows.
-  const scores = await sql<ScoreRow[]>`
-    SELECT symbol, snapshot_date::text AS snapshot_date,
-           composite_pct, quality_pct, valuation_pct, momentum_pct
+  // 1. All scored rows, loaded per snapshot. The old code pulled every symbol ×
+  //    every snapshot in one unbounded scan, which timed out on Neon; the error
+  //    was swallowed by a .catch, silently showing the desk as "not enough
+  //    data". Distinct snapshots first (cheap), then one bounded query each — no
+  //    .catch, so a genuine DB error propagates instead of faking an empty set.
+  const snapRows = await sql<{ snapshot_date: string }[]>`
+    SELECT DISTINCT snapshot_date::text AS snapshot_date
     FROM app.scores
     WHERE composite_pct IS NOT NULL
-  `.catch(() => [] as ScoreRow[]);
+    ORDER BY snapshot_date
+  `;
+  const snapshots = snapRows.map((s) => s.snapshot_date);
 
-  const snapshots = [...new Set(scores.map((s) => s.snapshot_date))].sort();
+  const scores: ScoreRow[] = [];
+  for (const snap of snapshots) {
+    const rows = await sql<ScoreRow[]>`
+      SELECT symbol, snapshot_date::text AS snapshot_date,
+             composite_pct, quality_pct, valuation_pct, momentum_pct
+      FROM app.scores
+      WHERE snapshot_date = ${snap} AND composite_pct IS NOT NULL
+    `;
+    for (const r of rows) scores.push(r);
+  }
   const symbols = [...new Set(scores.map((s) => s.symbol))];
 
   if (snapshots.length === 0 || symbols.length === 0) {

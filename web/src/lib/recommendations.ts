@@ -129,39 +129,50 @@ function firstIdxOnOrAfter(bars: Bar[], date: string): number {
  * archive is back-filled. Returns how many picks were newly inserted.
  */
 export async function generateCohorts(opts: { onlyLatest?: boolean } = {}): Promise<{
-  inserted: number; cohorts: string[]; skipped: number;
+  inserted: number; cohorts: string[]; skipped: number; snapshotsConsidered: number;
 }> {
-  const scores = await sql<ScoreRow[]>`
-    SELECT symbol, snapshot_date::text AS snapshot_date,
-           composite_pct, quality_pct, valuation_pct, momentum_pct
+  // Distinct snapshot dates only — a cheap, indexed query. (The old code pulled
+  // every symbol × every snapshot in one unbounded scan, which timed out on
+  // Neon and, because the error was swallowed, silently produced zero picks.)
+  // NOTE: no .catch here — a real DB error must propagate to the route so it
+  // returns a 500 with detail instead of pretending success.
+  const snapRows = await sql<{ snapshot_date: string }[]>`
+    SELECT DISTINCT snapshot_date::text AS snapshot_date
     FROM app.scores
     WHERE composite_pct IS NOT NULL
-  `.catch(() => [] as ScoreRow[]);
+    ORDER BY snapshot_date
+  `;
+  const snapshots = snapRows.map((s) => s.snapshot_date);
+  if (snapshots.length === 0) {
+    return { inserted: 0, cohorts: [], skipped: 0, snapshotsConsidered: 0 };
+  }
 
-  if (scores.length === 0) return { inserted: 0, cohorts: [], skipped: 0 };
-
-  const snapshots = [...new Set(scores.map((s) => s.snapshot_date))].sort();
   const targetSnaps = opts.onlyLatest ? snapshots.slice(-1) : snapshots;
 
-  // Prices for every scored symbol from the earliest target snapshot.
-  const allSymbols = [...new Set(scores.map((s) => s.symbol))];
-  const series = await loadSeries(allSymbols, targetSnaps[0]);
-
+  // For each target snapshot, fetch only that snapshot's top-N by composite —
+  // small, bounded queries instead of one whole-table scan.
   const bySnap = new Map<string, ScoreRow[]>();
-  for (const r of scores) {
-    let arr = bySnap.get(r.snapshot_date);
-    if (!arr) { arr = []; bySnap.set(r.snapshot_date, arr); }
-    arr.push(r);
+  for (const snap of targetSnaps) {
+    const top = await sql<ScoreRow[]>`
+      SELECT symbol, snapshot_date::text AS snapshot_date,
+             composite_pct, quality_pct, valuation_pct, momentum_pct
+      FROM app.scores
+      WHERE snapshot_date = ${snap} AND composite_pct IS NOT NULL
+      ORDER BY composite_pct DESC
+      LIMIT ${TOP_N}
+    `;
+    bySnap.set(snap, top);
   }
+
+  // Prices for just the picked symbols, from the earliest target snapshot.
+  const allSymbols = [...new Set([...bySnap.values()].flat().map((r) => r.symbol))];
+  const series = await loadSeries(allSymbols, targetSnaps[0]);
 
   let inserted = 0, skipped = 0;
   const cohorts: string[] = [];
 
   for (const snap of targetSnaps) {
-    const recs = (bySnap.get(snap) ?? [])
-      .filter((r) => r.composite_pct != null)
-      .sort((a, b) => (b.composite_pct! - a.composite_pct!));
-    const top = recs.slice(0, TOP_N);
+    const top = bySnap.get(snap) ?? [];
 
     let cohortHadPick = false;
     for (let rank = 0; rank < top.length; rank++) {
@@ -176,6 +187,8 @@ export async function generateCohorts(opts: { onlyLatest?: boolean } = {}): Prom
       const stop = entryPrice * (1 - STOP_PCT);
       const target = entryPrice * (1 + TARGET_PCT);
 
+      // No .catch — surface genuine insert failures. ON CONFLICT DO NOTHING
+      // already makes re-runs idempotent, so duplicates aren't errors.
       const res = await sql`
         INSERT INTO app.recommendations
           (cohort_date, symbol, rank, composite_pct, quality_pct, valuation_pct,
@@ -185,9 +198,9 @@ export async function generateCohorts(opts: { onlyLatest?: boolean } = {}): Prom
            ${r.valuation_pct}, ${r.momentum_pct}, ${entry.date}, ${entryPrice},
            ${stop}, ${target}, ${HORIZON_TD})
         ON CONFLICT (cohort_date, symbol) DO NOTHING
-      `.catch(() => null);
-      // postgres.js returns rows affected via .count on the result; guard for null.
-      const affected = res && typeof (res as { count?: number }).count === "number"
+      `;
+      // postgres.js exposes rows affected via .count on the result.
+      const affected = typeof (res as { count?: number }).count === "number"
         ? (res as { count: number }).count : 0;
       if (affected > 0) { inserted++; cohortHadPick = true; }
     }
@@ -196,7 +209,7 @@ export async function generateCohorts(opts: { onlyLatest?: boolean } = {}): Prom
 
   // Note: the read cache (getRecommendationReport) is invalidated by the caller
   // (the generate route) via revalidatePath, so a fresh backfill shows at once.
-  return { inserted, cohorts, skipped };
+  return { inserted, cohorts, skipped, snapshotsConsidered: targetSnaps.length };
 }
 
 type RecoRow = {
