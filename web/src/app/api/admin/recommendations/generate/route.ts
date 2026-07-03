@@ -6,7 +6,7 @@
  *
  * Query:
  *   ?mode=latest   (default) — only the most-recent score snapshot. This is the
- *                              weekly call (wire a cron to hit it each Friday).
+ *                              weekly call (Vercel Cron hits it every Saturday).
  *   ?mode=backfill           — every snapshot in the archive. Run once to seed
  *                              the ledger with history so the desk has a track
  *                              record from day one.
