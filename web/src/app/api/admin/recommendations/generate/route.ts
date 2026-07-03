@@ -21,8 +21,17 @@ import { generateCohorts } from "@/lib/recommendations";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+/** Vercel Cron invocations carry `Authorization: Bearer $CRON_SECRET` (when the
+ *  CRON_SECRET env var is set). This lets the weekly job run unattended without
+ *  an admin cookie, while still rejecting anonymous callers. */
+function isCronRequest(req: NextRequest): boolean {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return false;
+  return req.headers.get("authorization") === `Bearer ${secret}`;
+}
+
 export async function GET(req: NextRequest) {
-  if (!(await isAdminRequest())) {
+  if (!(await isAdminRequest()) && !isCronRequest(req)) {
     return NextResponse.json({ error: "admin only" }, { status: 401 });
   }
   const mode = req.nextUrl.searchParams.get("mode") ?? "latest";
