@@ -20,7 +20,7 @@ import {
   Award, Tag, Users, Globe2,
   Activity, Trophy, CalendarDays,
 } from "lucide-react";
-import { band, bandColor, tierLabel } from "@/lib/score";
+import { band, bandColor, tierLabel, hasScoreableHistory } from "@/lib/score";
 import { getOIAlerts } from "@/lib/oi-alerts";
 import { Sparkline, type SparkPoint } from "@/components/Sparkline";
 import { WatchlistButton } from "@/components/WatchlistButton";
@@ -44,6 +44,8 @@ type RawScoreRow = {
   industry_id: string;
   company_name: string;
   industry_name: string;
+  listing_date: string | null;
+  years_of_data: number | null;
 };
 
 type ShareSnap = {
@@ -165,6 +167,8 @@ async function loadIdeas(tier: IdxTier) {
       r.composite_pct, r.quality_pct, r.valuation_pct, r.momentum_pct,
       r.maturity_tier, r.cluster_id AS industry_id,
       u.company_name,
+      u.listing_date::text AS listing_date,
+      u.years_of_data,
       c.name AS industry_name
     FROM recent r
     JOIN app.universe u USING (symbol)
@@ -259,6 +263,10 @@ async function loadIdeas(tier: IdxTier) {
     const curr = srows.find((r) => r.rn === 1);
     const then = srows.find((r) => r.rn === windowBack) ?? srows[srows.length - 1];
     if (!curr || !then) continue;
+    // Minimum-history gate: keep fresh IPOs (< ~1yr of trading) out of every
+    // Ideas bucket. A 3-month listing can score top-decile on price noise; it
+    // has no business being surfaced as an idea until its record is trustable.
+    if (!hasScoreableHistory(curr.listing_date, curr.years_of_data)) continue;
     if (
       curr.composite_pct == null ||
       then.composite_pct == null ||

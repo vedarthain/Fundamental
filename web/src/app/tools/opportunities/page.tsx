@@ -241,8 +241,9 @@ export default function OpportunitiesPage() {
           </h1>
           <p className="mt-1.5 text-[13.5px] muted-text max-w-[560px]">
             Fundamentally strong stocks (Quality ≥ 55, Valuation ≥ 50) that have
-            underperformed the index. Returns show how much each stock fell relative
-            to the benchmark — not absolute price change.
+            sold off. The return columns are absolute price change over each window;
+            the benchmark strip below shows how the index moved over the same
+            periods, for comparison.
           </p>
         </div>
 
