@@ -116,19 +116,21 @@ export default async function RecommendationsPage({
           {/* Aggregate scorecard */}
           <section className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-6">
             <Stat label="Total picks" value={String(report.totalPicks)} />
-            <Stat label="Closed" value={String(report.nClosed)} />
-            <Stat label="Open" value={String(report.nOpen)} />
             <Stat label="Win rate (closed)"
               value={report.winRate == null ? "—" : (report.winRate * 100).toFixed(0) + "%"}
               color={report.winRate == null ? undefined : report.winRate >= 0.5 ? "#15803d" : "#dc2626"} />
             <Stat label="Avg return (closed)" value={fmtPct(report.avgRetClosed)} color={pctColor(report.avgRetClosed)} />
+            <Stat label={`${report.benchCode} (same windows)`} value={fmtPct(report.avgBenchClosed)} color={pctColor(report.avgBenchClosed)} />
+            <Stat label={`Alpha vs ${report.benchCode}`} value={fmtPct(report.avgAlphaClosed)} color={pctColor(report.avgAlphaClosed)} />
             <Stat label="Open unreal." value={fmtPct(report.avgRetOpenUnreal)} color={pctColor(report.avgRetOpenUnreal)} />
           </section>
 
           {report.nClosed > 0 && (
             <p className="muted-text text-[11.5px] mb-6 -mt-2">
               Closed best {fmtPct(report.bestClosed)} · worst {fmtPct(report.worstClosed)}.
-              Win rate is the share of closed picks that ended positive.
+              Win rate is the share of closed picks that ended positive.{" "}
+              <strong>Alpha</strong> = pick return minus a {report.benchCode} buy-and-hold over the
+              exact same holding window — the honest test of whether stock-picking beat the index fund.
             </p>
           )}
 
@@ -144,6 +146,7 @@ export default async function RecommendationsPage({
                   {c.nClosed}/{c.nPicks} closed · win {c.winRate == null ? "—" : (c.winRate * 100).toFixed(0) + "%"}
                   {" · "}
                   <span style={{ color: pctColor(c.avgRetClosed) }}>avg {fmtPct(c.avgRetClosed)}</span>
+                  {c.avgAlphaClosed != null && <> · <span style={{ color: pctColor(c.avgAlphaClosed) }}>α {fmtPct(c.avgAlphaClosed)}</span></>}
                   {c.nOpen > 0 && <> · <span style={{ color: pctColor(c.avgRetOpenUnreal) }}>open {fmtPct(c.avgRetOpenUnreal)}</span></>}
                 </div>
               </div>
@@ -159,6 +162,8 @@ export default async function RecommendationsPage({
                       <th className="px-3 py-2 text-right">Target</th>
                       <th className="px-3 py-2 text-right">Now / Exit</th>
                       <th className="px-3 py-2 text-right">Return</th>
+                      <th className="px-3 py-2 text-right">{report.benchCode}</th>
+                      <th className="px-3 py-2 text-right">Alpha</th>
                       <th className="px-3 py-2 text-right">Days</th>
                       <th className="px-3 py-2">Status</th>
                     </tr>
@@ -174,6 +179,8 @@ export default async function RecommendationsPage({
                         <td className="px-3 py-2 text-right tabular-nums muted-text">{fmtRs(p.targetPrice)}</td>
                         <td className="px-3 py-2 text-right tabular-nums">{fmtRs(p.markPrice)}</td>
                         <td className="px-3 py-2 text-right tabular-nums font-semibold" style={{ color: pctColor(p.retPct) }}>{fmtPct(p.retPct)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums muted-text">{fmtPct(p.benchRetPct)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums font-semibold" style={{ color: pctColor(p.alphaPct) }}>{fmtPct(p.alphaPct)}</td>
                         <td className="px-3 py-2 text-right tabular-nums muted-text">{p.daysHeldTd ?? "—"}</td>
                         <td className="px-3 py-2"><StatusBadge status={p.status} /></td>
                       </tr>

@@ -106,7 +106,7 @@ export default async function WatchlistPage() {
           Your watchlist
         </h1>
         <p className="muted-text text-[13px] mt-1">
-          Stocks you&apos;re tracking — refreshed with each weekly snapshot. Saved to your account.
+          Stocks you&apos;re tracking — refreshed with each weekly snapshot. Saved to your account when you&apos;re signed in, otherwise on this device.
         </p>
       </header>
       <WatchlistClient />

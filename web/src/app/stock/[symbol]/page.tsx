@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import type { Metadata } from "next";
 import { sql, golden } from "@/lib/db";
 import { band, bandColor, fmtPct, fmtRupeesCr, tierLabel, displayCompanyName, isRecentListing, listingYear, hasScoreableHistory, monthsSinceListing, ordinal, SMALL_CLUSTER_MAX } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
@@ -100,6 +101,63 @@ type Scorecard = {
   valuation: Record<string, number>;
   momentum: Record<string, number>;
 };
+
+/**
+ * Per-page SEO metadata (audit #6/#35). Every /stock/* route previously
+ * inherited the generic homepage <title>, so all ~2,200 stock pages were
+ * indistinguishable to Google. This gives each a unique title + description
+ * built from the company, its industry peer-group and (when the stock clears
+ * the history gate) its composite band — the same hasScoreableHistory rule the
+ * page body uses, so we never advertise a score we then suppress on the page.
+ */
+export async function generateMetadata(
+  { params }: { params: Promise<{ symbol: string }> },
+): Promise<Metadata> {
+  const { symbol } = await params;
+  const upper = symbol.toUpperCase();
+  const rows = await sql<{
+    company_name: string; industry_name: string; sector_name: string;
+    listing_date: string | null; years_of_data: number | null;
+    composite_pct: number | null; quality_pct: number | null;
+    valuation_pct: number | null; momentum_pct: number | null;
+  }[]>`
+    SELECT u.company_name, c.name AS industry_name, mc.name AS sector_name,
+           u.listing_date::text AS listing_date, u.years_of_data,
+           s.composite_pct, s.quality_pct, s.valuation_pct, s.momentum_pct
+    FROM app.scores s
+    JOIN app.universe u USING (symbol)
+    JOIN app.cluster c ON c.id = s.cluster_id
+    JOIN app.meta_cluster mc ON mc.id = c.meta_cluster_id
+    WHERE s.symbol = ${upper}
+    ORDER BY s.snapshot_date DESC
+    LIMIT 1
+  `.catch(() => []);
+
+  if (rows.length === 0) {
+    return { title: `${upper} — stock not found · EquityRoots` };
+  }
+  const r = rows[0];
+  const name = displayCompanyName(r.company_name, upper);
+  const scoreable = hasScoreableHistory(r.listing_date, r.years_of_data);
+
+  const title = scoreable && r.composite_pct != null
+    ? `${name} (${upper}) — Score ${r.composite_pct}, Quality · Valuation · Momentum · EquityRoots`
+    : `${name} (${upper}) — Quality, Valuation & Momentum vs peers · EquityRoots`;
+
+  const scorePhrase = scoreable && r.composite_pct != null
+    ? `Composite ${r.composite_pct}/100 (${band(r.composite_pct)}) — Quality ${r.quality_pct ?? "—"}, Valuation ${r.valuation_pct ?? "—"}, Momentum ${r.momentum_pct ?? "—"}.`
+    : `Fundamental profile — quality, valuation and momentum.`;
+  const description =
+    `${name} (${upper}) scored against its real industry peers in ${r.industry_name} (${r.sector_name}). ${scorePhrase} See the full breakdown, peer ranking and 10-year fundamentals on EquityRoots.`;
+
+  return {
+    title,
+    description,
+    alternates: { canonical: `/stock/${upper}` },
+    openGraph: { title, description, type: "website", url: `/stock/${upper}` },
+    twitter: { card: "summary", title, description },
+  };
+}
 
 async function loadStock(symbol: string) {
   const upper = symbol.toUpperCase();

@@ -1,7 +1,44 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import type { Metadata } from "next";
 import { sql } from "@/lib/db";
 import { band, bandColor, fmtPct, tierLabel, displayCompanyName } from "@/lib/score";
+
+/**
+ * Per-page SEO metadata (audit #35). Industry peer-group pages are high-value
+ * SEO surface ("best <industry> stocks") but previously served the generic
+ * homepage title. Give each a unique title + description from the cluster name,
+ * its sector and how many scored names it holds.
+ */
+export async function generateMetadata(
+  { params }: { params: Promise<{ id: string }> },
+): Promise<Metadata> {
+  const { id } = await params;
+  const rows = await sql<{ industry_name: string; sector_name: string; n: number }[]>`
+    SELECT c.name AS industry_name, mc.name AS sector_name,
+           (SELECT count(*)::int FROM app.scores s
+            WHERE s.cluster_id = c.id
+              AND s.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores WHERE cluster_id = c.id)
+           ) AS n
+    FROM app.cluster c
+    JOIN app.meta_cluster mc ON mc.id = c.meta_cluster_id
+    WHERE c.id = ${id}
+  `.catch(() => []);
+  if (rows.length === 0) {
+    return { title: `Industry peer group not found · EquityRoots` };
+  }
+  const { industry_name, sector_name, n } = rows[0];
+  const title = `${industry_name} — ${n} stocks scored & ranked (${sector_name}) · EquityRoots`;
+  const description =
+    `Every ${industry_name} stock in ${sector_name}, scored on quality, valuation and momentum and ranked against its real peers. Compare ${n} names side by side on EquityRoots.`;
+  return {
+    title,
+    description,
+    alternates: { canonical: `/industry/${id}` },
+    openGraph: { title, description, type: "website", url: `/industry/${id}` },
+    twitter: { card: "summary", title, description },
+  };
+}
 
 // Industry data changes weekly. 24h cache avoids hourly Neon wakes per cluster.
 export const revalidate = 86400;

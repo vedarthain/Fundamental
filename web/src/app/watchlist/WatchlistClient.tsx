@@ -235,7 +235,7 @@ function EmptyState() {
     <div className="card p-10 text-center">
       <div className="text-[20px] font-display mb-2">No stocks on your watchlist yet</div>
       <p className="muted-text text-[13.5px] max-w-md mx-auto mb-5">
-        Open any stock page and click <span className="font-medium">Watch</span> to add it here. Your list is saved on this device.
+        Open any stock page and click <span className="font-medium">Watch</span> to add it here. Your list is saved to your account when you&apos;re signed in, otherwise on this device.
       </p>
       <div className="flex flex-wrap items-center justify-center gap-2 text-[12.5px]">
         <Link

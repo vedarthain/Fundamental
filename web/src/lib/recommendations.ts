@@ -28,6 +28,8 @@ export const TOP_N = 10;          // picks per weekly cohort
 export const STOP_PCT = 0.08;     // stop-loss: -8% from entry
 export const TARGET_PCT = 0.15;   // target:   +15% from entry
 export const HORIZON_TD = 21;     // holding period in trading days (~1 month)
+export const BENCH_INDEX = "NIFTY50";       // benchmark code in app.market_index_history
+export const BENCH_LABEL = "NIFTY 50";      // human label for the desk
 
 export type RecoStatus = "OPEN" | "TARGET" | "STOPPED" | "EXPIRED" | "NO_DATA";
 
@@ -51,6 +53,9 @@ export type SettledPick = {
   exitDate: string | null;    // null while OPEN
   retPct: number | null;      // realised (closed) or unrealised (open) return
   daysHeldTd: number | null;  // trading days elapsed since entry
+  // Benchmark (NIFTY 50 buy-and-hold over the SAME entry→exit window):
+  benchRetPct: number | null; // NIFTY 50 return over the pick's holding window
+  alphaPct: number | null;    // retPct − benchRetPct (edge vs the index fund)
 };
 
 export type CohortSummary = {
@@ -65,6 +70,8 @@ export type CohortSummary = {
   winRate: number | null;     // over CLOSED picks: share with retPct > 0
   avgRetClosed: number | null;
   avgRetOpenUnreal: number | null;
+  avgBenchClosed: number | null;   // avg NIFTY 50 return over closed picks' windows
+  avgAlphaClosed: number | null;   // avg (pick − NIFTY 50) over closed picks
   picks: SettledPick[];
 };
 
@@ -80,6 +87,10 @@ export type RecoReport = {
   worstClosed: number | null;
   // Aggregate over all OPEN picks:
   avgRetOpenUnreal: number | null;
+  // Benchmark aggregates over all CLOSED picks (NIFTY 50, same windows):
+  avgBenchClosed: number | null;
+  avgAlphaClosed: number | null;
+  benchCode: string;          // which index the benchmark uses (e.g. "NIFTY 50")
   cohorts: CohortSummary[];   // newest first
   knobs: { topN: number; stopPct: number; targetPct: number; horizonTd: number };
 };
@@ -121,6 +132,38 @@ async function loadSeries(symbols: string[], fromDate: string): Promise<Map<stri
 function firstIdxOnOrAfter(bars: Bar[], date: string): number {
   for (let i = 0; i < bars.length; i++) if (bars[i].date >= date) return i;
   return -1;
+}
+
+/**
+ * Benchmark helper. Loads the NIFTY 50 daily close series (app DB, same as the
+ * ledger — no cross-DB) and returns an as-of return function: the index's
+ * buy-and-hold return between two dates, using the last close on/before each.
+ * This lets every pick be measured against "what if I'd just held the index
+ * over the exact same window?" — the honest alternative to stock-picking.
+ */
+async function loadBenchmark(fromDate: string): Promise<(from: string, to: string) => number | null> {
+  const rows = await sql<{ date: string; close: string }[]>`
+    SELECT date::text AS date, close::text AS close
+    FROM app.market_index_history
+    WHERE index_code = ${BENCH_INDEX} AND date >= ${fromDate} AND close IS NOT NULL
+    ORDER BY date
+  `.catch(() => [] as { date: string; close: string }[]);
+  const series: [string, number][] = rows.map((r) => [r.date, Number(r.close)]);
+
+  /** last close on/before `date` (−1 → none) */
+  function closeAsOf(date: string): number | null {
+    let ans: number | null = null;
+    for (let i = 0; i < series.length; i++) {
+      if (series[i][0] <= date) ans = series[i][1];
+      else break;
+    }
+    return ans && ans > 0 ? ans : null;
+  }
+  return (from: string, to: string): number | null => {
+    const a = closeAsOf(from), b = closeAsOf(to);
+    if (a == null || b == null) return null;
+    return b / a - 1;
+  };
 }
 
 /**
@@ -239,11 +282,16 @@ type RecoRow = {
  * EXPIRED at that close. If we haven't reached the horizon yet → OPEN, marked
  * to the latest close.
  */
-function settle(row: RecoRow, bars: Bar[] | undefined): SettledPick {
+function settle(
+  row: RecoRow,
+  bars: Bar[] | undefined,
+  benchRet: (from: string, to: string) => number | null,
+): SettledPick {
   const entryPrice = Number(row.entry_price);
   const stopPrice = Number(row.stop_price);
   const targetPrice = Number(row.target_price);
-  const base: Omit<SettledPick, "status" | "markPrice" | "exitDate" | "retPct" | "daysHeldTd"> = {
+  const base: Omit<SettledPick,
+    "status" | "markPrice" | "exitDate" | "retPct" | "daysHeldTd" | "benchRetPct" | "alphaPct"> = {
     id: row.id,
     cohortDate: row.cohort_date,
     symbol: row.symbol,
@@ -258,39 +306,53 @@ function settle(row: RecoRow, bars: Bar[] | undefined): SettledPick {
     targetPrice,
     horizonTd: row.horizon_td,
   };
+  const noBench = { benchRetPct: null, alphaPct: null };
 
   if (!bars) {
-    return { ...base, status: "NO_DATA", markPrice: null, exitDate: null, retPct: null, daysHeldTd: null };
+    return { ...base, status: "NO_DATA", markPrice: null, exitDate: null, retPct: null, daysHeldTd: null, ...noBench };
   }
   const i0 = firstIdxOnOrAfter(bars, row.entry_date);
   if (i0 < 0) {
-    return { ...base, status: "NO_DATA", markPrice: null, exitDate: null, retPct: null, daysHeldTd: null };
+    return { ...base, status: "NO_DATA", markPrice: null, exitDate: null, retPct: null, daysHeldTd: null, ...noBench };
   }
 
+  // Determine the outcome (status, mark, exit date, return, days held).
+  let status: RecoStatus, markPrice: number, exitDate: string | null, retPct: number, daysHeldTd: number;
+  let outDate: string;   // the date the holding window ends (for the benchmark)
+
   const lastIdx = Math.min(i0 + row.horizon_td, bars.length - 1);
+  let resolved = false;
+  status = "OPEN"; markPrice = 0; exitDate = null; retPct = 0; daysHeldTd = 0; outDate = bars[i0].date;
+
   for (let j = i0 + 1; j <= i0 + row.horizon_td && j < bars.length; j++) {
     const b = bars[j];
     if (b.low <= stopPrice) {
-      return { ...base, status: "STOPPED", markPrice: stopPrice, exitDate: b.date,
-        retPct: stopPrice / entryPrice - 1, daysHeldTd: j - i0 };
+      status = "STOPPED"; markPrice = stopPrice; exitDate = b.date;
+      retPct = stopPrice / entryPrice - 1; daysHeldTd = j - i0; outDate = b.date; resolved = true; break;
     }
     if (b.high >= targetPrice) {
-      return { ...base, status: "TARGET", markPrice: targetPrice, exitDate: b.date,
-        retPct: targetPrice / entryPrice - 1, daysHeldTd: j - i0 };
+      status = "TARGET"; markPrice = targetPrice; exitDate = b.date;
+      retPct = targetPrice / entryPrice - 1; daysHeldTd = j - i0; outDate = b.date; resolved = true; break;
     }
   }
 
-  // No stop/target hit. Did we reach the full horizon?
-  if (i0 + row.horizon_td < bars.length) {
-    const exit = bars[i0 + row.horizon_td];
-    return { ...base, status: "EXPIRED", markPrice: exit.close, exitDate: exit.date,
-      retPct: exit.close / entryPrice - 1, daysHeldTd: row.horizon_td };
+  if (!resolved) {
+    if (i0 + row.horizon_td < bars.length) {
+      const exit = bars[i0 + row.horizon_td];
+      status = "EXPIRED"; markPrice = exit.close; exitDate = exit.date;
+      retPct = exit.close / entryPrice - 1; daysHeldTd = row.horizon_td; outDate = exit.date;
+    } else {
+      const mark = bars[lastIdx];
+      status = "OPEN"; markPrice = mark.close; exitDate = null;
+      retPct = mark.close / entryPrice - 1; daysHeldTd = lastIdx - i0; outDate = mark.date;
+    }
   }
 
-  // Still within horizon — OPEN, mark to latest available close.
-  const mark = bars[lastIdx];
-  return { ...base, status: "OPEN", markPrice: mark.close, exitDate: null,
-    retPct: mark.close / entryPrice - 1, daysHeldTd: lastIdx - i0 };
+  // Benchmark over the SAME window (entry bar date → outDate). Alpha = pick − index.
+  const benchRetPct = benchRet(bars[i0].date, outDate);
+  const alphaPct = benchRetPct == null ? null : retPct - benchRetPct;
+
+  return { ...base, status, markPrice, exitDate, retPct, daysHeldTd, benchRetPct, alphaPct };
 }
 
 const mean = (xs: number[]): number | null =>
@@ -311,16 +373,20 @@ async function compute(): Promise<RecoReport> {
       generatedAt: new Date().toISOString(),
       totalPicks: 0, nClosed: 0, nOpen: 0,
       winRate: null, avgRetClosed: null, bestClosed: null, worstClosed: null,
-      avgRetOpenUnreal: null, cohorts: [],
+      avgRetOpenUnreal: null, avgBenchClosed: null, avgAlphaClosed: null,
+      benchCode: BENCH_LABEL, cohorts: [],
       knobs: { topN: TOP_N, stopPct: STOP_PCT, targetPct: TARGET_PCT, horizonTd: HORIZON_TD },
     };
   }
 
   const symbols = [...new Set(rows.map((r) => r.symbol))];
   const minEntry = rows.reduce((m, r) => (r.entry_date < m ? r.entry_date : m), rows[0].entry_date);
-  const series = await loadSeries(symbols, minEntry);
+  const [series, benchRet] = await Promise.all([
+    loadSeries(symbols, minEntry),
+    loadBenchmark(minEntry),
+  ]);
 
-  const settled = rows.map((r) => settle(r, series.get(r.symbol)));
+  const settled = rows.map((r) => settle(r, series.get(r.symbol), benchRet));
 
   // Group into cohorts (newest first — rows already sorted).
   const byCohort = new Map<string, SettledPick[]>();
@@ -346,6 +412,8 @@ async function compute(): Promise<RecoReport> {
       winRate: closedRets.length ? closedRets.filter((x) => x > 0).length / closedRets.length : null,
       avgRetClosed: mean(closedRets),
       avgRetOpenUnreal: mean(open.map((p) => p.retPct!).filter((x) => Number.isFinite(x))),
+      avgBenchClosed: mean(closed.map((p) => p.benchRetPct).filter((x): x is number => x != null)),
+      avgAlphaClosed: mean(closed.map((p) => p.alphaPct).filter((x): x is number => x != null)),
       picks,
     };
   });
@@ -364,6 +432,9 @@ async function compute(): Promise<RecoReport> {
     bestClosed: allClosedRets.length ? Math.max(...allClosedRets) : null,
     worstClosed: allClosedRets.length ? Math.min(...allClosedRets) : null,
     avgRetOpenUnreal: mean(allOpen.map((p) => p.retPct!).filter((x) => Number.isFinite(x))),
+    avgBenchClosed: mean(allClosed.map((p) => p.benchRetPct).filter((x): x is number => x != null)),
+    avgAlphaClosed: mean(allClosed.map((p) => p.alphaPct).filter((x): x is number => x != null)),
+    benchCode: BENCH_LABEL,
     cohorts,
     knobs: { topN: TOP_N, stopPct: STOP_PCT, targetPct: TARGET_PCT, horizonTd: HORIZON_TD },
   };
