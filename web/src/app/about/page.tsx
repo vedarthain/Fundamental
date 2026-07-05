@@ -466,7 +466,7 @@ function DataSourcesSection() {
       <p className="muted-text text-[14px] leading-relaxed mt-3 max-w-[640px]">
         Fundamentals are derived from publicly disclosed company filings.
         Daily prices and technical indicators are computed from open market data.
-        All scores recompute weekly after each Friday&apos;s market close.
+        All scores recompute weekly, every Sunday after the weekend fetch.
       </p>
 
       <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -499,8 +499,8 @@ function DataSourcesSection() {
           style={{ backgroundColor: "var(--color-score-excellent)" }}
         />
         <div className="text-[13px] leading-relaxed" style={{ color: "var(--color-accent-700)" }}>
-          <strong>Weekly cadence.</strong> Every Friday after market close, the
-          full universe is rescored. The previous snapshot is preserved — we
+          <strong>Weekly cadence.</strong> Every Sunday, after the weekend
+          fetch of fresh filings, the full universe is rescored. The previous snapshot is preserved — we
           never edit history. A score from week 1 is exactly what we said
           back then.
         </div>

@@ -12,8 +12,8 @@
  *   - Category tabs (All / Stocks / Policy / Macro / Markets) filter the feed
  *     client-side; categories are computed server-side.
  *
- * Headlines link straight to the source (external) — no source-name label,
- * just the age + an out-arrow.
+ * Headlines link straight to the source (external): age, a small outlet
+ * label (derived from the URL host), and an out-arrow.
  */
 
 import { useMemo, useState } from "react";
@@ -99,6 +99,33 @@ function ago(iso: string | null): string {
   const h = Math.floor(mins / 60);
   if (h < 24) return `${h}h`;
   return `${Math.floor(h / 24)}d`;
+}
+
+// Nice display names for the outlets we see most; anything unmapped falls back
+// to the bare domain (e.g. "example.com"). Derived from the article URL so we
+// don't store a separate source field.
+const SOURCE_NAMES: Record<string, string> = {
+  "cnbctv18.com": "CNBC-TV18",
+  "economictimes.indiatimes.com": "Economic Times",
+  "livemint.com": "Mint",
+  "moneycontrol.com": "Moneycontrol",
+  "business-standard.com": "Business Standard",
+  "thehindubusinessline.com": "Hindu BusinessLine",
+  "financialexpress.com": "Financial Express",
+  "reuters.com": "Reuters",
+  "bloomberg.com": "Bloomberg",
+  "ndtvprofit.com": "NDTV Profit",
+  "zeebiz.com": "Zee Business",
+  "businesstoday.in": "Business Today",
+};
+/** Human-readable outlet name parsed from an article URL, or null if unparseable. */
+function sourceLabel(url: string): string | null {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, "");
+    return SOURCE_NAMES[host] ?? host;
+  } catch {
+    return null;
+  }
 }
 
 export function NewsClient({
@@ -414,6 +441,9 @@ function NewsCard({ n }: { n: FeedItem }) {
           <SentimentDot s={n.sentiment} />
           {n.regulatory && <RegBadge />}
           <span className="tabular-nums shrink-0">{ago(n.published_at)} ago</span>
+          {sourceLabel(n.url) && (
+            <span className="shrink-0 truncate max-w-[120px] opacity-70">· {sourceLabel(n.url)}</span>
+          )}
           {n.related > 0 && <RelatedBadge n={n.related} />}
           {n.tags.length > 0 && <MetaChips tags={n.tags} max={2} />}
         </div>
@@ -450,6 +480,9 @@ function NewsRow({ n }: { n: FeedItem }) {
           <SentimentDot s={n.sentiment} />
           {n.regulatory && <RegBadge />}
           <span className="tabular-nums shrink-0">{ago(n.published_at)} ago</span>
+          {sourceLabel(n.url) && (
+            <span className="shrink-0 truncate max-w-[120px] opacity-70">· {sourceLabel(n.url)}</span>
+          )}
           {n.related > 0 && <RelatedBadge n={n.related} />}
           {n.tags.length > 0 && <MetaChips tags={n.tags} max={3} />}
         </div>

@@ -178,6 +178,7 @@ function SiteFooter() {
               { href: "/sectors",                  label: "Sectors" },
               { href: "/tools",                    label: "Tools" },
               { href: "/tools/screener",           label: "Stock Screener" },
+              { href: "/tools/opportunities",      label: "Opportunities" },
               { href: "/tools/investing-trials",   label: "Investing Trials" },
               { href: "/tools/peer-comparison",    label: "Peer Comparison" },
               { href: "/ideas",                    label: "Ideas" },
@@ -216,7 +217,7 @@ function SiteFooter() {
         </div>
 
         <div className="mt-10 pt-6 border-t hairline flex flex-wrap items-center justify-between gap-3 text-[11px] muted-text">
-          <span>Snapshots recompute every Friday after market close · Coverage: NSE actively-traded universe</span>
+          <span>Snapshots recompute every Sunday after the weekend fetch · Coverage: NSE actively-traded universe</span>
           <span className="flex items-center gap-3">
             <span>Built for thinking, not trading.</span>
             <VersionBadge />
