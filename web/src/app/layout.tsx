@@ -236,19 +236,15 @@ function SiteFooter() {
  * Useful when triaging bug reports / screenshots: the SHA pins the
  * report to a known build so we can diff what changed since. Zero
  * compute cost — pure env read, no DB.
+ *
+ * Rendered as plain text (no GitHub link) — the source repo is not
+ * publicly advertised from the footer.
  */
 function VersionBadge() {
   const sha = process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? "dev";
-  const commitUrl = process.env.VERCEL_GIT_COMMIT_SHA
-    ? `https://github.com/vedarthain/Fundamental/commit/${process.env.VERCEL_GIT_COMMIT_SHA}`
-    : undefined;
-  const className = "font-mono text-[10px] tabular-nums opacity-60 hover:opacity-100 transition-opacity";
-  return commitUrl ? (
-    <a href={commitUrl} target="_blank" rel="noopener noreferrer" className={className} title="View this build on GitHub">
-      v·{sha}
-    </a>
-  ) : (
-    <span className={className} title="Local dev build (no SHA)">
+  const className = "font-mono text-[10px] tabular-nums opacity-60";
+  return (
+    <span className={className} title="Build identifier">
       v·{sha}
     </span>
   );
