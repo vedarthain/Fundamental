@@ -25,7 +25,7 @@ export function bandColor(b: ScoreBand | null): string {
 
 export function tierLabel(t: string | null | undefined): string {
   switch (t) {
-    case "veteran": return "Long-term Compounder";
+    case "veteran": return "Long-established";
     case "mature":  return "Established";
     case "mid":     return "Emerging";
     case "new":     return "New Listing";
@@ -38,7 +38,7 @@ export function tierLabel(t: string | null | undefined): string {
  *  they stay as-is; only the count-noun labels pluralise. */
 export function tierLabelPlural(t: string | null | undefined): string {
   switch (t) {
-    case "veteran": return "Long-term Compounders";
+    case "veteran": return "Long-established";
     case "mature":  return "Established";
     case "mid":     return "Emerging";
     case "new":     return "New Listings";

@@ -276,7 +276,7 @@ function MaturitySection() {
   // Each tier shown as a horizontal bar whose length encodes years of history.
   // The widest gets the brand color, narrower tiers get progressively lighter.
   const tiers = [
-    { name: "Long-term Compounder", years: 10, label: "10+ years",   desc: "Richest set of long-window metrics; consistency-over-a-decade matters",  color: "var(--color-accent-600)", widthPct: 100 },
+    { name: "Long-established", years: 10, label: "10+ years",   desc: "Richest set of long-window metrics; a decade-plus of listed history",  color: "var(--color-accent-600)", widthPct: 100 },
     { name: "Established",          years: 7,  label: "7–9 years",   desc: "Base scorecard with full 5-year trends",                                  color: "var(--color-accent-500)", widthPct: 80 },
     { name: "Emerging",             years: 3,  label: "3–6 years",   desc: "Shorter-window metrics; momentum weighted slightly higher",               color: "var(--color-accent-400)", widthPct: 55 },
     { name: "New Listing",          years: 1,  label: "1–2 years",   desc: "Latest-year metrics + momentum-tilted weighting; listed in last 24 months", color: "var(--color-accent-300)", widthPct: 30 },

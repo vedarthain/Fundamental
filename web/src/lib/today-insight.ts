@@ -68,7 +68,7 @@ const TITLES: Record<InsightType, { title: string; subtitle: string; methodology
   cheap_compounders: {
     title: "Long-term compounders that look cheap",
     subtitle: "Veteran-tier stocks scoring well on both quality and valuation.",
-    methodology: "Long-term Compounder maturity, Quality ≥ 70 and Valuation ≥ 65 within their peer cluster. Sorted by composite score.",
+    methodology: "Long-established (10y+) maturity, Quality ≥ 70 and Valuation ≥ 65 within their peer cluster. Sorted by composite score.",
   },
   quality_value: {
     title: "Quality and value, both",

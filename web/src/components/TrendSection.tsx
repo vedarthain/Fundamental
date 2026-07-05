@@ -421,7 +421,7 @@ function bandLabel(pct: number): string {
 
 function tierLabelShort(t: string): string {
   switch (t) {
-    case "veteran": return "Long-term Compounder";
+    case "veteran": return "Long-established";
     case "mature":  return "Established";
     case "mid":     return "Emerging";
     case "new":     return "New Listing";

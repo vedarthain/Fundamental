@@ -9,7 +9,7 @@
  *   COVERAGE  → universe size scored this snapshot
  *   MOVERS    → count of stocks whose composite_pct moved ≥ 5 vs prior snapshot
  *   TOP MOVE  → biggest single-stock score jump or drop this snapshot
- *   ARCHIVE   → how many snapshots are stored (grows every Friday)
+ *   ARCHIVE   → how many snapshots are stored (grows every Sunday)
  *
  * Why not Nifty/Sensex/USD-INR like Bloomberg: golden_db has no index-level
  * data, and the docs (PITCH.md, MOAT.md) explicitly position the product
@@ -107,10 +107,10 @@ function Cell({
         style={
           highlight
             ? {
-                color: "var(--color-delta-up)",
+                // Emphasise via weight only — no colour/underline, which read
+                // as a broken link or error state (audit #29).
+                color: "var(--color-strip-fg)",
                 fontWeight: 700,
-                borderBottom: "1.5px solid var(--color-delta-up)",
-                paddingBottom: "1px",
               }
             : { color: "var(--color-strip-fg)" }
         }
@@ -158,8 +158,8 @@ export async function SnapshotRibbon() {
             see the current day at a glance. */}
         <Cell label="TODAY"><TodayCell initial={todayIstSeed} /></Cell>
         <Sep />
-        {/* SNAPSHOT — weekly scoring snapshot date. Updates Fridays after
-            close. Quality/Valuation/Momentum percentiles are pinned to this. */}
+        {/* SNAPSHOT — weekly scoring snapshot date. Updates Sundays after the
+            weekend fetch. Quality/Valuation/Momentum percentiles pin to this. */}
         <Cell label="SNAPSHOT" highlight>{formatSnapshotDate(s.latest)}</Cell>
         <Sep />
         <Cell label="COVERAGE">{s.coverage.toLocaleString("en-IN")}</Cell>

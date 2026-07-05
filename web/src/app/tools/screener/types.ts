@@ -77,7 +77,7 @@ export const PRESETS: Record<string, Weights & { label: string }> = {
 
 export const TIERS = ["veteran", "mature", "mid", "new"] as const;
 export const TIER_LABELS: Record<string, string> = {
-  veteran: "Long-term Compounder",
+  veteran: "Long-established",
   mature: "Established",
   mid: "Emerging",
   new: "New Listing",

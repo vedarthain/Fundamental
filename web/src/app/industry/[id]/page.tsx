@@ -109,7 +109,7 @@ async function loadCluster(id: string) {
 const TIER_ORDER = ["veteran", "mature", "mid", "new"] as const;
 const TIER_DISPLAY: Record<string, { label: string; sub: string }> = {
   veteran: {
-    label: "Long-term Compounders",
+    label: "Long-established",
     sub: "10+ years of fundamentals — the most credible scores",
   },
   mature: {

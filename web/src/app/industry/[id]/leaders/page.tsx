@@ -146,7 +146,7 @@ function Breadcrumb({ cluster }: { cluster: ClusterMeta }) {
 function TierBar({ id, tier }: { id: string; tier: TierOpt }) {
   const opts: { value: TierOpt; label: string }[] = [
     { value: "all", label: "All tiers" },
-    { value: "veteran", label: "Long-term Compounder" },
+    { value: "veteran", label: "Long-established" },
     { value: "mature", label: "Established" },
     { value: "mid", label: "Emerging" },
     { value: "new", label: "New Listing" },
