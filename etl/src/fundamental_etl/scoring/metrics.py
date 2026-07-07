@@ -80,13 +80,38 @@ def load_signals(conn_golden: psycopg.Connection, symbol: str) -> Optional[dict]
                 for k, v in row.items()}
 
 
+def load_split_factors(conn_golden: psycopg.Connection, symbol: str) -> list[tuple]:
+    """(ex_date, split_factor) rows for a symbol, ascending by ex_date.
+
+    split_factor is the multiplicative price adjustment applied ON ex_date
+    (post/pre): a 1:5 split ≈ 0.2, a 1:2 bonus ≈ 0.667. Used to back-adjust
+    historical closes so returns aren't polluted by cosmetic corporate actions.
+    """
+    g_symbol = f"{symbol}.NS"
+    with conn_golden.cursor() as cur:
+        cur.execute("""
+            SELECT ex_date, split_factor
+            FROM golden.corporate_actions
+            WHERE symbol = %s AND split_factor IS NOT NULL AND split_factor > 0
+            ORDER BY ex_date ASC
+        """, (g_symbol,))
+        return [(r["ex_date"], float(r["split_factor"])) for r in cur.fetchall()]
+
+
 def load_price_history(conn_golden: psycopg.Connection, symbol: str) -> list[dict]:
-    """1-year of daily closes for the symbol.
+    """1-year of daily closes for the symbol, back-adjusted for corporate actions.
 
     Filters close IS NOT NULL — golden.price_history can have rows where the
     daily ingest wrote the row but failed to populate close (e.g. partial
     yfinance fetch). Including those would make the most-recent row a NULL,
     breaking every relative-return formula downstream.
+
+    golden.price_history is RAW/unadjusted: on a split/bonus ex_date the close
+    steps down by the split factor. Comparing a pre-ex close to a post-ex close
+    (as every relative-return window does) would read that cosmetic step as a
+    real crash — e.g. KOTAKBANK's 1:5 split showed as −82% 12m return. We
+    back-adjust each historical close by the product of split_factors for every
+    ex_date AFTER it, putting the whole series on the latest (current) scale.
     """
     g_symbol = f"{symbol}.NS"
     with conn_golden.cursor() as cur:
@@ -98,7 +123,21 @@ def load_price_history(conn_golden: psycopg.Connection, symbol: str) -> list[dic
             LIMIT 260
         """, (g_symbol,))
         rows = cur.fetchall()
+
+    actions = load_split_factors(conn_golden, symbol)
+    if not actions:
         return [{"date": r["date"], "close": float(r["close"])} for r in rows]
+
+    out = []
+    for r in rows:
+        # Product of split factors for every action whose ex_date is strictly
+        # after this bar — brings a pre-split close onto the post-split scale.
+        factor = 1.0
+        for ex_date, sf in actions:
+            if ex_date > r["date"]:
+                factor *= sf
+        out.append({"date": r["date"], "close": float(r["close"]) * factor})
+    return out
 
 
 def load_above_200ema(conn_golden: psycopg.Connection, symbol: str) -> Optional[float]:
