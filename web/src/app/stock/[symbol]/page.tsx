@@ -1974,7 +1974,7 @@ function LatestResultCard({
           Progress
         </div>
         <div className="text-[13px] font-medium leading-snug" style={{ color: "var(--color-ink)" }}>
-          {interpretQuarter({ revYoY, opYoY, npYoY, opmDeltaBps })}
+          {interpretQuarter({ revYoY, opYoY, npYoY, opmDeltaBps, opQoQ, npQoQ })}
         </div>
         <ul className="mt-1.5 space-y-0.5 text-[12.5px] muted-text">
           {quarterProgressLines({ revYoY, revQoQ, npYoY, npQoQ, opmCur, opmDeltaBps }).map((l, i) => (
@@ -2229,12 +2229,14 @@ function fmtResultDate(iso: string): string {
 // deltas. We deliberately phrase observations, not recommendations, to stay
 // aligned with the "information surface, not advisory" disclaimer.
 function interpretQuarter({
-  revYoY, opYoY, npYoY, opmDeltaBps,
+  revYoY, opYoY, npYoY, opmDeltaBps, opQoQ, npQoQ,
 }: {
   revYoY: number | null;
   opYoY: number | null;
   npYoY: number | null;
   opmDeltaBps: number | null;
+  opQoQ: number | null;
+  npQoQ: number | null;
 }): string {
   // No YoY anchor available — fall back to a coverage note rather than
   // inventing direction.
@@ -2251,26 +2253,40 @@ function interpretQuarter({
   const marginUp = (opmDeltaBps ?? 0) > 25;
   const marginDown = (opmDeltaBps ?? 0) < -25;
 
-  if (revUp && opUp && npUp && !marginDown) {
-    return "Broad-based growth — sales, operating profit, and net profit all rose year-on-year, with margins holding or expanding.";
+  const base = (() => {
+    if (revUp && opUp && npUp && !marginDown) {
+      return "Broad-based growth — sales, operating profit, and net profit all rose year-on-year, with margins holding or expanding.";
+    }
+    if (revUp && (opDown || npDown || marginDown)) {
+      return "Top-line grew but profitability slipped — operating costs are rising faster than revenue this quarter.";
+    }
+    if (revDown && opDown) {
+      return "Revenue and operating profit both declined year-on-year — this is a weak quarter on the headline numbers.";
+    }
+    if (revDown && marginUp) {
+      return "Revenue fell but margins expanded — cost discipline cushioned the topline weakness this quarter.";
+    }
+    if (!revUp && !revDown && opUp && marginUp) {
+      return "Flat revenue but stronger operating profit — margin gains are doing the heavy lifting this quarter.";
+    }
+    if (revUp && opUp && marginUp) {
+      return "Sales, operating profit, and margins all expanded year-on-year — a quality growth quarter.";
+    }
+    // Fallback — neutral description.
+    return "Mixed quarter — see the deltas above for the precise direction on each line.";
+  })();
+
+  // Sequential (QoQ) context. A YoY headline can hide a sharp sequential move,
+  // which is exactly what a strong-base quarter looks like (audit #3/#20). We
+  // surface — but don't editorialise — a material sequential drop: a QoQ swing
+  // is often seasonal (e.g. jewellery Q3 festive vs Q4), so we state the number
+  // rather than call it deterioration.
+  const seqDrop = Math.min(npQoQ ?? 0, opQoQ ?? 0);
+  if (seqDrop <= -15) {
+    const which = (npQoQ ?? 0) <= (opQoQ ?? 0) ? "Net profit" : "Operating profit";
+    return `${base} ${which} fell ${Math.abs(Math.round(seqDrop))}% from the prior quarter, so the year-on-year gain overstates current momentum.`;
   }
-  if (revUp && (opDown || npDown || marginDown)) {
-    return "Top-line grew but profitability slipped — operating costs are rising faster than revenue this quarter.";
-  }
-  if (revDown && opDown) {
-    return "Revenue and operating profit both declined year-on-year — this is a weak quarter on the headline numbers.";
-  }
-  if (revDown && marginUp) {
-    return "Revenue fell but margins expanded — cost discipline cushioned the topline weakness this quarter.";
-  }
-  if (!revUp && !revDown && opUp && marginUp) {
-    return "Flat revenue but stronger operating profit — margin gains are doing the heavy lifting this quarter.";
-  }
-  if (revUp && opUp && marginUp) {
-    return "Sales, operating profit, and margins all expanded year-on-year — a quality growth quarter.";
-  }
-  // Fallback — neutral description.
-  return "Mixed quarter — see the deltas above for the precise direction on each line.";
+  return base;
 }
 
 /** A few plain-English lines on how the quarter progressed — phrasing the
@@ -2297,8 +2313,23 @@ function quarterProgressLines(p: {
   }
   const np = both(p.npYoY, p.npQoQ);
   if (np) {
-    const trend = (p.npYoY ?? 0) > 1 ? "higher" : (p.npYoY ?? 0) < -1 ? "lower" : "broadly flat";
-    lines.push(`Net profit is ${trend} year-on-year (${np}).`);
+    // When YoY and QoQ point opposite ways (up on a weak year-ago base, down
+    // sequentially), don't lead with "higher year-on-year" — that buries the
+    // sequential move. State both directions with equal billing (audit #3/#20).
+    const diverges =
+      p.npYoY != null && p.npQoQ != null &&
+      Math.sign(p.npYoY) !== Math.sign(p.npQoQ) &&
+      Math.abs(p.npQoQ) >= 10;
+    if (diverges) {
+      const yoy = p.npYoY as number, qoq = p.npQoQ as number;
+      lines.push(
+        `Net profit ${yoy >= 0 ? "up" : "down"} ${Math.abs(Math.round(yoy))}% year-on-year but ` +
+        `${qoq >= 0 ? "up" : "down"} ${Math.abs(Math.round(qoq))}% versus the prior quarter.`,
+      );
+    } else {
+      const trend = (p.npYoY ?? 0) > 1 ? "higher" : (p.npYoY ?? 0) < -1 ? "lower" : "broadly flat";
+      lines.push(`Net profit is ${trend} year-on-year (${np}).`);
+    }
   }
   if (p.opmCur != null) {
     let m = `Operating margin at ${p.opmCur.toFixed(1)}%`;
