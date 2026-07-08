@@ -66,11 +66,6 @@ type Stock = {
   valuation_components: Record<string, number>;
   momentum_components: Record<string, number>;
   score_status: string | null;
-  // Snapshot the displayed score belongs to, vs the newest snapshot on file.
-  // When they differ, the score is stale (symbol gated out of the latest run)
-  // and is withheld — see loadStock.
-  score_snapshot?: string | null;
-  latest_snapshot?: string | null;
 };
 
 type AnnualRow = {
@@ -129,12 +124,14 @@ export async function generateMetadata(
     SELECT u.company_name, c.name AS industry_name, mc.name AS sector_name,
            u.listing_date::text AS listing_date, u.years_of_data,
            s.composite_pct, s.quality_pct, s.valuation_pct, s.momentum_pct
-    FROM app.scores s
-    JOIN app.universe u USING (symbol)
-    JOIN app.cluster c ON c.id = s.cluster_id
+    FROM app.universe u
+    JOIN app.cluster_assignment ca USING (symbol)
+    JOIN app.cluster c ON c.id = ca.cluster_id
     JOIN app.meta_cluster mc ON mc.id = c.meta_cluster_id
-    WHERE s.symbol = ${upper}
-    ORDER BY s.snapshot_date DESC
+    LEFT JOIN app.scores s
+      ON s.symbol = u.symbol
+     AND s.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
+    WHERE u.symbol = ${upper} AND u.is_active
     LIMIT 1
   `.catch(() => []);
 
@@ -166,53 +163,50 @@ export async function generateMetadata(
 
 async function loadStock(symbol: string) {
   const upper = symbol.toUpperCase();
+  // Base identity (name, cluster/industry/sector, tier) comes from STABLE tables
+  // — app.universe + app.cluster_assignment — NOT app.scores. The score is
+  // LEFT-JOINed from the CURRENT snapshot only. This means a symbol gated out of
+  // the latest scoring run (stale/dormant filings — score_status "stale_data",
+  // no scores row) still renders its page (fundamentals, price, news) with the
+  // score cleanly withheld, instead of either 404-ing or falling back to a
+  // last-scored OLDER snapshot and showing a stale composite as if it were
+  // current. Verified scores.cluster_id/maturity_tier == cluster_assignment/
+  // universe for every scored symbol, so sourcing them here is equivalent.
   const rows = await sql<Stock[]>`
     SELECT
-      s.symbol, u.company_name, u.sector, u.industry, u.listing_date::text, u.years_of_data,
+      u.symbol, u.company_name, u.sector, u.industry, u.listing_date::text, u.years_of_data,
       u.business_summary, u.website, u.employees,
       u.ceo_name, u.ceo_title,
-      s.cluster_id AS industry_id, c.name AS industry_name, mc.id AS sector_id, mc.name AS sector_name,
-      s.maturity_tier, sm.market_cap_cr, sm.current_price,
+      ca.cluster_id AS industry_id, c.name AS industry_name, mc.id AS sector_id, mc.name AS sector_name,
+      u.maturity_tier, sm.market_cap_cr, sm.current_price,
       sm.price_fetched_at::text,
       s.composite_pct, s.quality_pct, s.valuation_pct, s.momentum_pct,
       s.quality_components, s.valuation_components, s.momentum_components,
-      s.score_status,
-      s.snapshot_date::text AS score_snapshot,
-      (SELECT MAX(snapshot_date) FROM app.scores)::text AS latest_snapshot
-    FROM app.scores s
-    JOIN app.universe u USING (symbol)
-    JOIN app.cluster c ON c.id = s.cluster_id
+      s.score_status
+    FROM app.universe u
+    JOIN app.cluster_assignment ca USING (symbol)
+    JOIN app.cluster c ON c.id = ca.cluster_id
     JOIN app.meta_cluster mc ON mc.id = c.meta_cluster_id
     LEFT JOIN app.screener_meta sm USING (symbol)
-    WHERE s.symbol = ${upper}
-    ORDER BY s.snapshot_date DESC
+    LEFT JOIN app.scores s
+      ON s.symbol = u.symbol
+     AND s.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
+    WHERE u.symbol = ${upper} AND u.is_active
     LIMIT 1
   `;
   if (rows.length === 0) return null;
   const stock = rows[0];
 
-  // Pin the displayed score to the CURRENT snapshot. A symbol gated out of the
-  // latest scoring run (e.g. stale/dormant filings — score_status "stale_data")
-  // gets no new app.scores row, so the query above falls back to its last-scored
-  // OLDER snapshot. Showing that stale composite as if it were current is exactly
-  // the confident-but-wrong signal the freshness gate exists to suppress. So when
-  // the row isn't from the newest snapshot, keep the page alive (fundamentals,
-  // price, news still render) but withhold the score: blank the percentiles and
-  // flag it, which the score UI already degrades on (percentiles are nullable).
-  if (
-    stock.score_snapshot &&
-    stock.latest_snapshot &&
-    stock.score_snapshot < stock.latest_snapshot
-  ) {
-    stock.composite_pct = null;
-    stock.quality_pct = null;
-    stock.valuation_pct = null;
-    stock.momentum_pct = null;
-    stock.quality_components = {};
-    stock.valuation_components = {};
-    stock.momentum_components = {};
+  // No score for the current snapshot → the symbol was gated (e.g. stale_data)
+  // or otherwise not scored this run. Surface the withheld state so the page
+  // shows the "scores withheld" notice (StatusCard) rather than a blank void.
+  // Percentiles are already null from the LEFT JOIN; the score UI is null-safe.
+  if (stock.composite_pct == null && !stock.score_status) {
     stock.score_status = "stale_data";
   }
+  stock.quality_components = stock.quality_components || {};
+  stock.valuation_components = stock.valuation_components || {};
+  stock.momentum_components = stock.momentum_components || {};
 
   // Last 10 fiscal years of annual fundamentals (extended cols for trend graphs).
   // Using a date filter (not LIMIT 10) so stocks with reporting gaps don't

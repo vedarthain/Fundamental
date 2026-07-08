@@ -219,6 +219,29 @@ def score_snapshot(conn: psycopg.Connection, snapshot_date: date) -> dict[str, i
         counts["scored"] += len(bucket_rows)
         counts["buckets"] += 1
 
+    # Authoritative cleanup: app.scores for a snapshot must contain EXACTLY the
+    # symbols eligible for scoring this run. The insert above only upserts the
+    # eligible set — it never removes a symbol that was scored in a PRIOR run but
+    # is now excluded (e.g. newly gated to stale_data/insufficient_data). Without
+    # this delete, such a symbol keeps its old composite row in the current
+    # snapshot and the web layer shows a stale, withheld-worthy score. `rows` is
+    # the eligible set (the SELECT already filters out excluded statuses), so we
+    # drop any scores row for this snapshot whose symbol isn't in it.
+    eligible = [r["symbol"] for r in rows]
+    # Guard: never run the delete with an empty eligible set — that would wipe
+    # the entire snapshot's scores. An empty `rows` means the metrics step
+    # produced nothing (upstream failure), in which case we leave existing
+    # scores untouched rather than nuke them.
+    if eligible:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM app.scores WHERE snapshot_date = %s AND NOT (symbol = ANY(%s))",
+                (snapshot_date, eligible),
+            )
+            counts["removed_ineligible"] = cur.rowcount
+    else:
+        counts["removed_ineligible"] = 0
+
     return counts
 
 
