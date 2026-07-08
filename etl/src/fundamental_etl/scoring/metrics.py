@@ -398,6 +398,28 @@ def _apply_oi_adjustment(
 
 # ----------------------- Compute -------------------------------------------
 
+def _freshest_period_end(annual: list[dict], quarterly: list[dict]) -> Optional[date]:
+    """Newest period_end across annual + quarterly rows, or None if neither has one.
+
+    Both lists are ordered period_end ASC by their loaders, so the last row is
+    the newest, but we scan defensively (period_end may be a date or ISO string).
+    """
+    candidates: list[date] = []
+    for rows in (annual, quarterly):
+        for r in rows:
+            pe = r.get("period_end")
+            if pe is None:
+                continue
+            if isinstance(pe, str):
+                try:
+                    pe = date.fromisoformat(pe[:10])
+                except ValueError:
+                    continue
+            if isinstance(pe, date):
+                candidates.append(pe)
+    return max(candidates) if candidates else None
+
+
 def compute_metrics_for_symbol(
     app_conn: psycopg.Connection,
     golden_conn: psycopg.Connection,
@@ -406,6 +428,7 @@ def compute_metrics_for_symbol(
     tier: str,
     nifty_returns: dict,
     scorecard_overrides: dict | None = None,
+    snapshot_date: date | None = None,
 ) -> tuple[dict, dict, str]:
     """Compute all metrics for one stock. Returns (cluster_metrics, meta, score_status)."""
     annual = load_annual(app_conn, symbol)
@@ -475,6 +498,19 @@ def compute_metrics_for_symbol(
     nonnull = sum(1 for v in out.values() if v is not None)
     if not needed_formulas:
         return out, meta_full, "no_scorecard"
+
+    # Freshness gate: a symbol whose newest fundamentals period_end is more than
+    # ~15 months before the snapshot is a stale/abandoned filer (e.g. a company
+    # that stopped reporting, or a pre-IPO annual-only shell). Scoring it against
+    # its peer group produces a confident-looking Q/V/M composite from data years
+    # out of date — worse than showing nothing. Gate it out of scoring entirely.
+    # 15 months = 5 quarters of slack: a normally-reporting company files within
+    # ~3 months of quarter-end, so this only trips on genuinely dormant filers.
+    if snapshot_date is not None:
+        freshest = _freshest_period_end(annual, quarterly)
+        if freshest is not None and (snapshot_date - freshest).days > 458:  # ~15 months
+            return out, meta_full, "stale_data"
+
     nonnull_share = nonnull / len(needed_formulas)
     if nonnull_share == 0:
         status = "insufficient_data"

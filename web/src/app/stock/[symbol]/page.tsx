@@ -66,6 +66,11 @@ type Stock = {
   valuation_components: Record<string, number>;
   momentum_components: Record<string, number>;
   score_status: string | null;
+  // Snapshot the displayed score belongs to, vs the newest snapshot on file.
+  // When they differ, the score is stale (symbol gated out of the latest run)
+  // and is withheld — see loadStock.
+  score_snapshot?: string | null;
+  latest_snapshot?: string | null;
 };
 
 type AnnualRow = {
@@ -171,7 +176,9 @@ async function loadStock(symbol: string) {
       sm.price_fetched_at::text,
       s.composite_pct, s.quality_pct, s.valuation_pct, s.momentum_pct,
       s.quality_components, s.valuation_components, s.momentum_components,
-      s.score_status
+      s.score_status,
+      s.snapshot_date::text AS score_snapshot,
+      (SELECT MAX(snapshot_date) FROM app.scores)::text AS latest_snapshot
     FROM app.scores s
     JOIN app.universe u USING (symbol)
     JOIN app.cluster c ON c.id = s.cluster_id
@@ -183,6 +190,29 @@ async function loadStock(symbol: string) {
   `;
   if (rows.length === 0) return null;
   const stock = rows[0];
+
+  // Pin the displayed score to the CURRENT snapshot. A symbol gated out of the
+  // latest scoring run (e.g. stale/dormant filings — score_status "stale_data")
+  // gets no new app.scores row, so the query above falls back to its last-scored
+  // OLDER snapshot. Showing that stale composite as if it were current is exactly
+  // the confident-but-wrong signal the freshness gate exists to suppress. So when
+  // the row isn't from the newest snapshot, keep the page alive (fundamentals,
+  // price, news still render) but withhold the score: blank the percentiles and
+  // flag it, which the score UI already degrades on (percentiles are nullable).
+  if (
+    stock.score_snapshot &&
+    stock.latest_snapshot &&
+    stock.score_snapshot < stock.latest_snapshot
+  ) {
+    stock.composite_pct = null;
+    stock.quality_pct = null;
+    stock.valuation_pct = null;
+    stock.momentum_pct = null;
+    stock.quality_components = {};
+    stock.valuation_components = {};
+    stock.momentum_components = {};
+    stock.score_status = "stale_data";
+  }
 
   // Last 10 fiscal years of annual fundamentals (extended cols for trend graphs).
   // Using a date filter (not LIMIT 10) so stocks with reporting gaps don't
@@ -2442,6 +2472,7 @@ function StatusCard({ status }: { status: string | null }) {
     "partial-data": "Some metrics unavailable for this stock.",
     "partial-balance-sheet": "Balance-sheet figure (book value) is null — valuation pillar partial.",
     "insufficient_data": "Too little history to compute scores.",
+    "stale_data": "Latest available filings are over a year old — scores withheld until fresh results arrive.",
   };
   return (
     <div className="card p-4 text-[12px]">

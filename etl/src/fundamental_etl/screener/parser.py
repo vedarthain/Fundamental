@@ -131,6 +131,43 @@ def _to_float(v) -> Optional[float]:
         return None
 
 
+def _merge_period_map(
+    primary: dict[date, dict[str, float]],
+    secondary: dict[date, dict[str, float]],
+) -> dict[date, dict[str, float]]:
+    """Union two {period_end: {col: val}} maps. Primary values win on overlap;
+    secondary only fills periods primary lacks and cols primary left empty."""
+    merged: dict[date, dict[str, float]] = {d: dict(cols) for d, cols in primary.items()}
+    for d, cols in secondary.items():
+        tgt = merged.setdefault(d, {})
+        for k, v in cols.items():
+            if tgt.get(k) is None:
+                tgt[k] = v
+    return merged
+
+
+def merge_parsed(primary: ParsedExport, secondary: ParsedExport) -> ParsedExport:
+    """Merge a secondary (e.g. standalone) parse into a primary (e.g. consolidated).
+
+    Consolidated is the authoritative view when present, but Screener sometimes
+    omits the Quarters section from the consolidated Data Sheet (or ships a
+    sparse one) while the standalone export carries full quarterly history. In
+    that case the consolidated annual figures should still win, and standalone
+    only backfills the missing quarterly periods (and any annual gaps). Primary
+    always wins on overlapping cells; secondary is pure fill.
+    """
+    out = ParsedExport(
+        company_name=primary.company_name or secondary.company_name,
+        face_value=primary.face_value if primary.face_value is not None else secondary.face_value,
+        current_price=primary.current_price if primary.current_price is not None else secondary.current_price,
+        market_cap=primary.market_cap if primary.market_cap is not None else secondary.market_cap,
+        annual=_merge_period_map(primary.annual, secondary.annual),
+        quarterly=_merge_period_map(primary.quarterly, secondary.quarterly),
+        annual_close_price={**secondary.annual_close_price, **primary.annual_close_price},
+    )
+    return out
+
+
 def parse_export(xlsx_bytes: bytes) -> ParsedExport:
     """Parse the Data Sheet tab and return a structured ParsedExport."""
     wb = load_workbook(io.BytesIO(xlsx_bytes), data_only=True, read_only=False)

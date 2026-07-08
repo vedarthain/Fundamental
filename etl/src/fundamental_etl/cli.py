@@ -21,7 +21,7 @@ from .db import golden_conn
 from .screener.scraper import (
     AuthFailed, NotFound, ScrapeError, fetch_company_export, make_client,
 )
-from .screener.parser import parse_export, ParseError
+from .screener.parser import parse_export, merge_parsed, ParseError
 from .screener.persist import (
     save_raw_export, save_parsed, update_meta_success, update_meta_failure,
 )
@@ -55,6 +55,72 @@ def fetch(
             update_meta_success(conn, symbol, info.export_id, len(data))
             conn.commit()
         log.info("persisted", symbol=symbol, annual_rows=ann, quarterly_rows=qtr)
+
+
+@app.command("fetch-nse")
+def fetch_nse(
+    only: Optional[str] = typer.Option(
+        None, help="Comma-separated symbols to gap-fill (e.g. BLUEJET,SASTASUNDR). "
+                   "If omitted, auto-detects gap symbols: active, listed, but with "
+                   "zero quarterly rows in app.fundamentals_quarterly."),
+    save: bool = typer.Option(True, help="Persist quarters to fundamental_app DB"),
+    throttle: float = typer.Option(1.5, help="Seconds to pause between symbols (NSE is rate-sensitive)"),
+):
+    """Gap-fill quarterly results from NSE for symbols Screener can't cover.
+
+    Last-resort authoritative source: NSE's corporate-filings API carries the
+    quarters that some recent-IPO exports miss on Screener. Values are converted
+    ₹lakh→₹cr to match our schema.
+
+    MUST run from a residential/desktop IP — NSE's Akamai edge 403s datacenter
+    and CI hosts. This is a manual, occasional command, not part of the weekly
+    automated pipeline.
+    """
+    from datetime import datetime, timezone
+    from .nse.results import fetch_nse_results, make_nse_client, NSEFetchError
+
+    configure_logging()
+
+    if only:
+        symbols = [s.strip().upper() for s in only.split(",") if s.strip()]
+    else:
+        with app_conn() as conn, conn.cursor() as cur:
+            cur.execute("""
+                SELECT u.symbol
+                FROM app.universe u
+                LEFT JOIN app.fundamentals_quarterly q ON q.symbol = u.symbol
+                WHERE u.is_active
+                GROUP BY u.symbol
+                HAVING COUNT(q.period_end) = 0
+                ORDER BY u.symbol
+            """)
+            symbols = [r["symbol"] for r in cur.fetchall()]
+
+    log.info("fetch_nse_start", n=len(symbols))
+    ok = fail = 0
+    client = make_nse_client()
+    try:
+        for i, sym in enumerate(symbols, 1):
+            try:
+                parsed = fetch_nse_results(sym, client=client)
+                if save:
+                    with app_conn() as conn:
+                        _, qtr = save_parsed(conn, sym, parsed, datetime.now(timezone.utc))
+                        conn.commit()
+                    log.info("nse_saved", symbol=sym, quarters=qtr)
+                else:
+                    log.info("nse_dry_run", symbol=sym, quarters=len(parsed.quarterly))
+                ok += 1
+            except NSEFetchError as e:
+                fail += 1
+                log.warning("nse_skip", symbol=sym, reason=str(e)[:160])
+            except Exception as e:
+                fail += 1
+                log.error("nse_error", symbol=sym, error=str(e)[:160])
+            time.sleep(throttle)
+    finally:
+        client.close()
+    log.info("fetch_nse_done", ok=ok, failed=fail, total=len(symbols))
 
 
 @app.command()
@@ -168,6 +234,27 @@ def fetch_many(
         try:
             info, data = fetch_company_export(symbol, client=client)
             parsed = parse_export(data)
+            # Standalone-quarterly fallback: Screener sometimes ships a
+            # consolidated Data Sheet with the Quarters section missing/empty
+            # (recent IPOs, companies whose consolidated view lags standalone),
+            # which downstream reads as "no latest result" and — worse — lets a
+            # stock be scored off stale annuals alone. If the primary
+            # (consolidated) parse has no quarterly rows, pull the standalone
+            # export and backfill the missing quarters. Consolidated annuals
+            # still win on any overlap; standalone is pure fill.
+            if not parsed.quarterly and info.variant == "consolidated":
+                try:
+                    s_info, s_data = fetch_company_export(
+                        symbol, client=client, prefer="standalone"
+                    )
+                    parsed = merge_parsed(parsed, parse_export(s_data))
+                    log.info("standalone_quarterly_merge", symbol=symbol,
+                             quarters=len(parsed.quarterly))
+                except (NotFound, ScrapeError, ParseError) as e:
+                    # Fallback is best-effort — a missing standalone view just
+                    # means we save what we have (consolidated annuals).
+                    log.warning("standalone_fallback_failed", symbol=symbol,
+                                error=str(e)[:120])
             with app_conn() as conn:
                 fetched_at = save_raw_export(conn, symbol, data)
                 ann, qtr = save_parsed(conn, symbol, parsed, fetched_at)
@@ -524,7 +611,7 @@ def compute_metrics_cmd(
                 try:
                     cm, meta, status = compute_metrics_for_symbol(
                         ac, gc, s["symbol"], s["cluster_id"], s["maturity_tier"], nifty,
-                        scorecard_overrides=overrides,
+                        scorecard_overrides=overrides, snapshot_date=snap,
                     )
                     persist_metrics(ac, s["symbol"], snap, cm, meta, s["maturity_tier"], status)
                     ok += 1

@@ -158,7 +158,7 @@ def score_snapshot(conn: psycopg.Connection, snapshot_date: date) -> dict[str, i
             JOIN app.cluster c ON c.id = ca.cluster_id
             WHERE m.snapshot_date = %s
               AND m.maturity_tier IN ('veteran','mature','mid','new')
-              AND m.score_status <> 'insufficient_data'
+              AND m.score_status NOT IN ('insufficient_data', 'stale_data')
         """, (snapshot_date,))
         rows = cur.fetchall()
 
