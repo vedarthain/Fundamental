@@ -239,7 +239,7 @@ async function loadStock(symbol: string) {
   // ~1996 for most NSE stocks. ~7K rows × 30 bytes ≈ 50KB gzipped, fine to
   // ship to the client so the chart can support 1D/1W/1M zoom client-side.
   const priceHistory = await golden<PricePoint[]>`
-    SELECT date::text, close::float
+    SELECT date::text, COALESCE(adj_close, close)::float AS close
     FROM golden.price_history
     WHERE symbol = ${upper + ".NS"} AND interval = '1d'
     ORDER BY date ASC

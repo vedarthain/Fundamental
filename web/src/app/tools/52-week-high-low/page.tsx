@@ -65,13 +65,15 @@ const loadWeekRange = unstable_cache(
         ),
         horizon AS (SELECT (SELECT latest FROM bounds) - INTERVAL '370 days' AS cutoff),
         yearly AS (
-          SELECT REPLACE(p.symbol, '.NS', '') AS symbol, MAX(p.close) AS hi, MIN(p.close) AS lo
+          SELECT REPLACE(p.symbol, '.NS', '') AS symbol,
+                 MAX(COALESCE(p.adj_close, p.close)) AS hi,
+                 MIN(COALESCE(p.adj_close, p.close)) AS lo
             FROM golden.price_history p, horizon h
            WHERE p.interval = '1d' AND p.date >= h.cutoff
            GROUP BY 1
         ),
         today AS (
-          SELECT REPLACE(symbol, '.NS', '') AS symbol, close
+          SELECT REPLACE(symbol, '.NS', '') AS symbol, COALESCE(adj_close, close) AS close
             FROM golden.price_history, bounds
            WHERE interval = '1d' AND date = bounds.latest
         )
