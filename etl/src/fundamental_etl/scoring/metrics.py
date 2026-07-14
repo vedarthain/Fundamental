@@ -19,12 +19,13 @@ from __future__ import annotations
 
 import io
 from datetime import date, datetime, timedelta, timezone
+from statistics import median
 from typing import Optional
 
 import psycopg
 from openpyxl import load_workbook
 
-from .formulas import REGISTRY as FORMULAS
+from .formulas import REGISTRY as FORMULAS, _VAL_RUNRATE_Q
 from .scorecards import get_scorecard, get_scorecard_from, load_db_overrides
 
 
@@ -396,6 +397,114 @@ def _apply_oi_adjustment(
     return adj_quarterly, adj_annual
 
 
+# ----------------------- Windfall Normalization (quality pillar) ------------
+#
+# Option 1 (formulas._ttm_valuation_base) floors the VALUATION denominators to a
+# run-rate so a fading one-off can't read as "cheap". But the QUALITY pillar
+# (np_cagr, roce, op_margin, rev_cagr) reads off ANNUAL rows, and a multi-year
+# super-cycle — e.g. NATCOPHARM's gRevlimid window, FY24-FY26 net profit ~3-4x the
+# pre-windfall base — inflates those too, floating a stock's composite on earning
+# power that is structurally reverting. We detect a *sustained, now-fading* plateau
+# and cap the elevated recent annual rows at the current run-rate before any
+# formula runs. In-memory only; DB rows are never touched.
+#
+# What we deliberately do NOT touch:
+#   • single exceptional quarters/years (a demerger gain, an asset sale) — those
+#     are 'oneoff_spike', left to the OI-spike stripper above / a dedicated
+#     exceptional-item path; capping a whole plateau would be wrong for them.
+#   • ordinary businesses and cyclical wobbles — a stock only qualifies if its
+#     recent multi-year plateau stepped up >= _WF_STEP x over its OWN older base
+#     AND has since faded below _WF_FADE x the plateau. A cyclical whose long-run
+#     average sits near current earnings never trips this (its step-up is < 2x).
+#
+# The step-up test uses ANNUAL history, not a trailing-quarters window: a windfall
+# that runs for two years makes an 8-quarter window look "normal" (the elevated
+# quarters ARE the window), so elevation must be measured against the pre-plateau
+# years to separate a true super-cycle from routine lumpiness.
+
+_WF_PLATEAU_YRS = 3     # recent annual window treated as the candidate plateau
+_WF_STEP        = 2.0   # plateau median must be >= this x the pre-plateau base median
+_WF_FADE        = 0.7   # current run-rate must be below this x the plateau to count as fading
+_WF_MIN_ANNUAL  = 6     # need this many annual years to judge a structural step-up
+_WF_QTR_FADE    = 0.7   # penultimate quarter must be below this x the plateau/4 (sustained-fade guard)
+
+
+def _annual_runrate(quarterly: list[dict], key: str) -> Optional[float]:
+    """Annualized run-rate of the latest _VAL_RUNRATE_Q quarters for `key`."""
+    vals = [q.get(key) for q in quarterly[-_VAL_RUNRATE_Q:]]
+    if len(vals) < _VAL_RUNRATE_Q or any(v is None for v in vals):
+        return None
+    return sum(float(v) for v in vals) / _VAL_RUNRATE_Q * 4
+
+
+def classify_earnings_profile(annual: list[dict], quarterly: list[dict]) -> str:
+    """'windfall_fading' | 'oneoff_spike' | 'normal' — see module note above."""
+    npv = [a.get("net_profit") for a in annual]
+    npv = [float(v) for v in npv if v is not None]
+    if len(npv) < _WF_MIN_ANNUAL:
+        return "normal"
+    recent = npv[-_WF_PLATEAU_YRS:]
+    hist = npv[:-_WF_PLATEAU_YRS]
+    if not hist:
+        return "normal"
+    plateau = median(recent)
+    base = median(hist)
+    rr = _annual_runrate(quarterly, "net_profit")
+    if plateau <= 0 or base <= 0 or rr is None or rr <= 0:
+        return "normal"
+    if plateau / base < _WF_STEP:        # no structural step-up -> ordinary/cyclical
+        return "normal"
+    if rr >= _WF_FADE * plateau:         # still earning at the plateau -> not fading
+        return "normal"
+    # Sustained-fade guard: the 2-quarter run-rate above can be dragged under the
+    # threshold by a single anomalous last quarter (a one-off impairment, an MTM
+    # loss, a seasonal trough), which would misclassify a still-healthy business
+    # as a fading windfall. Require the PENULTIMATE quarter to be independently
+    # soft too, so the fade is corroborated across both recent quarters rather
+    # than resting on one outlier.
+    if len(quarterly) < 2:
+        return "normal"
+    penult = quarterly[-2].get("net_profit")
+    if penult is None or float(penult) >= _WF_QTR_FADE * (plateau / 4):
+        return "normal"
+    peak = max(recent)
+    n_high = sum(1 for v in recent if v >= 0.6 * peak)
+    return "oneoff_spike" if n_high <= 1 else "windfall_fading"
+
+
+def _apply_windfall_normalization(
+    annual: list[dict], quarterly: list[dict]
+) -> tuple[list[dict], str]:
+    """Return (annual', label). For a 'windfall_fading' stock, cap each contiguous
+    recent annual row whose net_profit exceeds the run-rate — flooring net_profit,
+    profit_before_tax, operating_profit and sales to their own run-rates so the
+    quality formulas see sustainable, not windfall, earning power. Walking stops at
+    the first recent year already at/below the run-rate, so genuine pre-windfall
+    history is left intact. Original list is never mutated."""
+    label = classify_earnings_profile(annual, quarterly)
+    if label != "windfall_fading":
+        return annual, label
+    caps = {
+        k: _annual_runrate(quarterly, k)
+        for k in ("net_profit", "profit_before_tax", "operating_profit", "sales")
+    }
+    np_rr = caps["net_profit"]
+    if not np_rr or np_rr <= 0:
+        return annual, label
+    out = [dict(a) for a in annual]
+    for i in range(len(out) - 1, -1, -1):
+        npv = out[i].get("net_profit")
+        if npv is None or npv <= np_rr:
+            break
+        for k, cap in caps.items():
+            if cap is None:
+                continue
+            v = out[i].get(k)
+            if v is not None and v > cap:
+                out[i][k] = cap
+    return out, label
+
+
 # ----------------------- Compute -------------------------------------------
 
 def _freshest_period_end(annual: list[dict], quarterly: list[dict]) -> Optional[date]:
@@ -442,6 +551,13 @@ def compute_metrics_for_symbol(
     pbt_excess, np_excess = _oi_spike_adjustment(quarterly)
     if pbt_excess > 0:
         quarterly, annual = _apply_oi_adjustment(quarterly, annual, pbt_excess, np_excess)
+
+    # Cap a fading multi-year earnings windfall (e.g. a limited-competition drug)
+    # down to its current run-rate before the quality formulas see it, so that a
+    # peak that is already decaying out of the trailing window does not inflate
+    # margin/CAGR/RoCE durability metrics. Only fires for the 'windfall_fading'
+    # profile; compounders and cyclicals are left untouched.
+    annual, _wf_label = _apply_windfall_normalization(annual, quarterly)
 
     # Update screener_meta with the freshly-extracted meta fields.
     #

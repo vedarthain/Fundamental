@@ -89,6 +89,41 @@ def _ttm_sum(quarterly: list[dict], key: str, n: int = 4) -> float | None:
     return sum(float(v) for v in vals)
 
 
+# Windfall guard for TTM-based valuation ratios.
+#
+# pe_ttm, ev_ebitda_ttm and ev_sales_ttm divide market cap / EV by a trailing-
+# 12-month base. When a one-off super-cycle (a limited-competition drug launch,
+# a commodity spike) is decaying OUT of that trailing window, the TTM base is
+# still propped up by quarters that won't repeat, so the ratio reads artificially
+# "cheap" for ~3-4 quarters after the windfall ends — exactly when the stock
+# deserves the opposite. Verified on NATCOPHARM post-gRevlimid: pe_ttm read 11.8x
+# on TTM earnings already halved by the latest two quarters.
+#
+# Guard: also annualize the most recent _VAL_RUNRATE_Q quarters and, if that
+# run-rate falls BELOW the TTM base, use it instead. The min() is deliberately
+# asymmetric — a company whose recent quarters run ABOVE its TTM average (a
+# genuine growth ramp) keeps the higher TTM base and is NOT penalized; only a
+# fading one-off is docked. Scoped to valuation only; quality metrics
+# (np_cagr, roce, margins) still see raw TTM/annual and are addressed separately.
+_VAL_RUNRATE_Q = 2
+
+
+def _ttm_valuation_base(quarterly: list[dict], key: str, n: int = 4) -> float | None:
+    """TTM sum, floored by the annualized run-rate of the latest _VAL_RUNRATE_Q
+    quarters. Returns the earnings/sales base for a lower-is-better valuation
+    ratio, or None if the base is unavailable."""
+    ttm = _ttm_sum(quarterly, key, n)
+    if ttm is None:
+        return None
+    if len(quarterly) < _VAL_RUNRATE_Q:
+        return ttm
+    recent = [r.get(key) for r in quarterly[-_VAL_RUNRATE_Q:]]
+    if any(v is None for v in recent):
+        return ttm
+    runrate = sum(float(v) for v in recent) / _VAL_RUNRATE_Q * n
+    return min(ttm, runrate)
+
+
 # ---------- PROFITABILITY ----------------------------------------------
 
 @_higher
@@ -818,7 +853,7 @@ def capex_intensity_3y(annual, *_):
 @_lower
 def pe_ttm(annual, quarterly, meta, signals, nifty_returns):
     mc = meta.get("market_cap_cr")
-    np_ttm = _ttm_sum(quarterly, "net_profit")
+    np_ttm = _ttm_valuation_base(quarterly, "net_profit")
     if mc is None or np_ttm is None or np_ttm <= 0:
         return None
     return mc / np_ttm
@@ -844,7 +879,7 @@ def ev_ebitda_ttm(annual, quarterly, meta, signals, nifty_returns):
     r = annual[-1]
     borr = r.get("borrowings") or 0
     cash = r.get("cash_and_bank") or 0
-    op_ttm = _ttm_sum(quarterly, "operating_profit")
+    op_ttm = _ttm_valuation_base(quarterly, "operating_profit")
     # Approx EBITDA: add back annual-rate dep based on latest year to op_ttm
     if op_ttm is None or op_ttm <= 0:
         return None
@@ -928,7 +963,7 @@ def ev_sales_ttm(annual, quarterly, meta, signals, nifty_returns):
     r = annual[-1]
     borr = r.get("borrowings") or 0
     cash = r.get("cash_and_bank") or 0
-    sales_ttm = _ttm_sum(quarterly, "sales")
+    sales_ttm = _ttm_valuation_base(quarterly, "sales")
     if sales_ttm is None or sales_ttm <= 0:
         return None
     return (mc + borr - cash) / sales_ttm
