@@ -31,6 +31,14 @@ export const HORIZON_TD = 21;     // holding period in trading days (~1 month)
 export const BENCH_INDEX = "NIFTY50";       // benchmark code in app.market_index_history
 export const BENCH_LABEL = "NIFTY 50";      // human label for the desk
 
+// Liquidity floor (₹ crore market cap). composite_pct is a WITHIN-BUCKET
+// percentile that saturates at 100 for every peer group's leader — ~56 stocks
+// tie at 100 on a typical snapshot, and many are untradeable microcaps (down to
+// ₹9 Cr). Without a floor, "top 10 by composite" is a microcap lottery. We
+// require a minimum market cap so the paper desk only picks realistically
+// tradeable names. Tunable — raise for a stricter, more liquid roster.
+export const MIN_MARKET_CAP_CR = 1000;
+
 export type RecoStatus = "OPEN" | "TARGET" | "STOPPED" | "EXPIRED" | "NO_DATA";
 
 export type SettledPick = {
@@ -194,14 +202,28 @@ export async function generateCohorts(opts: { onlyLatest?: boolean } = {}): Prom
 
   // For each target snapshot, fetch only that snapshot's top-N by composite —
   // small, bounded queries instead of one whole-table scan.
+  //
+  // Selection (P0): apply a market-cap floor so untradeable microcap bucket-
+  // leaders can't enter, and add a DETERMINISTIC tie-break. composite_pct
+  // saturates at 100 for dozens of stocks, so `ORDER BY composite_pct DESC`
+  // alone leaves the top-10 to Postgres's arbitrary, run-to-run-unstable order.
+  // We break ties by market cap (prefer the larger, more liquid leader) then
+  // symbol (fully deterministic), so two generate runs always pick the same
+  // cohort. NOTE: this does NOT make composite_pct cross-bucket comparable —
+  // that's P1 (an absolute ranking key). This only stops the microcap lottery
+  // and the nondeterminism.
   const bySnap = new Map<string, ScoreRow[]>();
   for (const snap of targetSnaps) {
     const top = await sql<ScoreRow[]>`
-      SELECT symbol, snapshot_date::text AS snapshot_date,
-             composite_pct, quality_pct, valuation_pct, momentum_pct
-      FROM app.scores
-      WHERE snapshot_date = ${snap} AND composite_pct IS NOT NULL
-      ORDER BY composite_pct DESC
+      SELECT s.symbol, s.snapshot_date::text AS snapshot_date,
+             s.composite_pct, s.quality_pct, s.valuation_pct, s.momentum_pct
+      FROM app.scores s
+      JOIN app.metrics_snapshot m
+        ON m.symbol = s.symbol AND m.snapshot_date = s.snapshot_date
+      WHERE s.snapshot_date = ${snap}
+        AND s.composite_pct IS NOT NULL
+        AND m.market_cap >= ${MIN_MARKET_CAP_CR}
+      ORDER BY s.composite_pct DESC, m.market_cap DESC, s.symbol ASC
       LIMIT ${TOP_N}
     `;
     bySnap.set(snap, top);

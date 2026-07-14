@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { sql, golden } from "@/lib/db";
-import { band, bandColor, fmtPct, fmtRupeesCr, tierLabel, displayCompanyName, isRecentListing, listingYear, hasScoreableHistory, monthsSinceListing, ordinal, SMALL_CLUSTER_MAX } from "@/lib/score";
+import { band, bandColor, fmtPct, fmtRupeesCr, tierLabel, displayCompanyName, isRecentListing, listingYear, hasScoreableHistory, monthsSinceListing, ordinal } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { PriceChart, type PricePoint } from "@/components/PriceChart";
 import type { SparkPoint } from "@/components/Sparkline";
@@ -487,16 +487,6 @@ export default async function StockPage({
   // math is untouched; we just don't present a misleading number.
   const scoreable = hasScoreableHistory(stock.listing_date, stock.years_of_data);
   const listedMonths = monthsSinceListing(stock.listing_date);
-  // Small-cluster false precision: in a <20-name industry each rank is worth
-  // several percentile points, so a bare "92" overstates resolution. When the
-  // peer group is small we lead with the concrete rank and mark the percentile
-  // approximate. Needs a real rank + a peer count in the small band.
-  const smallCluster =
-    scoreable &&
-    rankInIndustry != null &&
-    industryPeerCount != null &&
-    industryPeerCount > 1 &&
-    industryPeerCount < SMALL_CLUSTER_MAX;
 
   // Pillar data for the Strengths & gaps tab (graphs-first StrengthsPanel).
   const pillarTabs: PillarTabContent[] = [
@@ -663,12 +653,18 @@ export default async function StockPage({
           )}
         </div>
 
-        {/* Percentile badge — right-aligned on desktop, left-aligned on mobile
-            (so it follows the stacked name block flush-left). */}
+        {/* Peer-rank badge — right-aligned on desktop, left-aligned on mobile
+            (so it follows the stacked name block flush-left).
+
+            Rank is the single hero across every maturity tier and cluster
+            size. We deliberately do NOT also show the composite percentile
+            or an "Industry Score" number: the score IS a within-bucket
+            percentile, so for a peer-relative metric it restates the rank,
+            and a percentile ("≈100 pctile", "Top 1%") overstates precision
+            in a 15-stock group. One honest unit — "#N of M" — with the peer
+            count always visible so the reader can calibrate. */}
         <div className="text-left md:text-right shrink-0">
-          {scoreable && smallCluster ? (
-            /* Small cluster: lead with the concrete rank; percentile is shown
-               small and flagged approximate (see footnote). */
+          {scoreable && rankInIndustry != null && industryPeerCount != null && industryPeerCount > 1 ? (
             <div
               className="inline-block px-4 py-2 rounded-md"
               style={{ backgroundColor: compositeBg, color: compositeBand === "neutral" ? "var(--color-ink)" : "white" }}
@@ -677,16 +673,13 @@ export default async function StockPage({
                 Industry Rank
               </div>
               <div className="text-[28px] font-medium tabular-nums leading-none mt-1">
-                {ordinal(rankInIndustry!)}
+                {ordinal(rankInIndustry)}
                 <span className="text-[13px] font-normal opacity-80"> of {industryPeerCount}</span>
               </div>
-              {stock.composite_pct != null && (
-                <div className="text-[10.5px] tabular-nums opacity-80 mt-1">
-                  ≈{Math.round(stock.composite_pct)} pctile
-                </div>
-              )}
             </div>
           ) : scoreable ? (
+            /* Sole name in its peer group (or rank unavailable): no meaningful
+               "#1 of 1" to show, so fall back to the composite band number. */
             <div
               className="inline-block px-4 py-2 rounded-md"
               style={{ backgroundColor: compositeBg, color: compositeBand === "neutral" ? "var(--color-ink)" : "white" }}
@@ -711,24 +704,6 @@ export default async function StockPage({
               </div>
             </div>
           )}
-          {/* The wordy "Above median in … not a buy/sell" description used
-              to live here.  Moved down to a single asterisked footnote
-              under the score badge column so the header sits tighter and
-              the tab bar reaches the eye sooner. */}
-          {/* Rank-in-cluster pill — explicit position within the peer group,
-              complementing the abstract percentile. "Rank 3 of 12" reads
-              more concretely than "Top 18%". */}
-          {scoreable && !smallCluster && rankInIndustry != null && industryPeerCount != null && industryPeerCount > 1 && (
-            <div
-              className="inline-flex items-center gap-1.5 mt-2 px-2 py-0.5 rounded-full border hairline text-[11px] tabular-nums"
-              style={{ backgroundColor: "var(--color-card)" }}
-              title={`Position within ${stock.industry_name} · ${tierLabel(stock.maturity_tier)} at this snapshot`}
-            >
-              <span className="muted-text">Rank</span>
-              <span className="font-medium ink-text">{rankInIndustry}</span>
-              <span className="muted-text">of {industryPeerCount}</span>
-            </div>
-          )}
         </div>
       </header>
 
@@ -737,14 +712,10 @@ export default async function StockPage({
           where possible, italic so it reads as an annotation. */}
       {scoreable && stock.composite_pct != null && (
         <p className="text-[11px] muted-text italic mt-2 leading-snug">
-          * {percentileLabel(stock.composite_pct)} in {stock.industry_name} ·{" "}
-          {tierLabel(stock.maturity_tier)} — where this stock ranks within its
-          industry, not the whole market. Not a buy/sell recommendation.
-          {smallCluster && industryPeerCount != null && (
-            <> Only {industryPeerCount} names in this group, so each rank is worth
-            ~{Math.round(100 / industryPeerCount)} percentile points — read the
-            rank as exact and the percentile as approximate.</>
-          )}
+          * Ranked within {stock.industry_name} · {tierLabel(stock.maturity_tier)}
+          {industryPeerCount != null && industryPeerCount > 1 ? ` (${industryPeerCount}-stock peer group)` : ""} —
+          position among peers in the same industry and maturity, not the whole
+          market. Not a buy/sell recommendation.
         </p>
       )}
       {!scoreable && (
@@ -997,21 +968,6 @@ function PillarBreakdown(props: {
       </div>
     </div>
   );
-}
-
-/** Phrase a percentile as a peer-relative rank label.
- * pct=95 → "Top 5%"; pct=50 → "Median"; pct=5 → "Bottom 5%".
- * Uses round-number bands at the extremes so badges read cleanly.
- */
-function percentileLabel(pct: number): string {
-  const p = Math.round(pct);
-  if (p >= 90) return `Top ${Math.max(1, 100 - p)}%`;
-  if (p >= 75) return `Top quartile`;
-  if (p >= 60) return `Above median`;
-  if (p >= 40) return `Mid-pack`;
-  if (p >= 25) return `Below median`;
-  if (p >= 10) return `Bottom quartile`;
-  return `Bottom ${Math.max(1, p)}%`;
 }
 
 /* ----------------------------- Business description ---------------- */
