@@ -33,6 +33,7 @@ function fmtRs(v: number | null): string {
 
 const STATUS_STYLE: Record<RecoStatus, { label: string; bg: string; fg: string }> = {
   TARGET:  { label: "TARGET",  bg: "color-mix(in srgb, #15803d 14%, transparent)", fg: "#15803d" },
+  TRAILED: { label: "TRAILED", bg: "color-mix(in srgb, #15803d 14%, transparent)", fg: "#166534" },
   STOPPED: { label: "STOPPED", bg: "color-mix(in srgb, #dc2626 14%, transparent)", fg: "#dc2626" },
   EXPIRED: { label: "EXPIRED", bg: "color-mix(in srgb, #64748b 16%, transparent)", fg: "#475569" },
   OPEN:    { label: "OPEN",    bg: "color-mix(in srgb, #d97706 16%, transparent)", fg: "#92400e" },
@@ -87,9 +88,10 @@ export default async function RecommendationsPage({
         <div className="text-[11px] uppercase tracking-wide muted-text mb-1">Private · paper only · not advice</div>
         <h1 className="font-display text-[26px] tracking-tight">Recommendation desk</h1>
         <p className="muted-text text-[12.5px] mt-1">
-          Locked weekly cohorts — top {k.topN} by composite score, entry at first close,
-          stop −{(k.stopPct * 100).toFixed(0)}% / target +{(k.targetPct * 100).toFixed(0)}%,
-          {" "}{k.horizonTd} trading-day horizon. Outcomes settle from OHLC on every view.
+          Locked monthly cohorts — top {k.topN} by a 5-leg absolute key, entry at first close,
+          −{(k.hardStopPct * 100).toFixed(0)}% hard stop / {(k.trailPct * 100).toFixed(0)}% trailing stop,
+          {" "}{k.horizonTd} trading-day (~1yr) horizon. Outcomes settle from OHLC on every view.
+          Headline stats cover the current strategy (v{report.headlineVersion}); legacy cohorts show per-cohort.
         </p>
       </header>
 
@@ -140,7 +142,9 @@ export default async function RecommendationsPage({
               <div className="px-4 py-2.5 border-b hairline flex flex-wrap items-baseline justify-between gap-2">
                 <div className="font-display text-[14px]">
                   Cohort {c.cohortDate}
-                  <span className="muted-text text-[11px] font-normal"> · entry {c.entryDate ?? "—"}</span>
+                  <span className="muted-text text-[11px] font-normal">
+                    {" "}· {c.strategyVersion >= 2 ? "go-big v2" : "legacy v1"} · entry {c.entryDate ?? "—"}
+                  </span>
                 </div>
                 <div className="muted-text text-[11px] tabular-nums">
                   {c.nClosed}/{c.nPicks} closed · win {c.winRate == null ? "—" : (c.winRate * 100).toFixed(0) + "%"}
@@ -193,8 +197,9 @@ export default async function RecommendationsPage({
 
           <p className="muted-text text-[11px]">
             Generated {new Date(report.generatedAt).toLocaleString("en-IN")}. Cached 1h.
-            Stop/target hits detected from daily high/low; if both trip same day we assume the
-            stop filled first (conservative). Entry/stop/target are immutable once stamped.
+            v2 exits detected from daily low: max(−{(k.hardStopPct * 100).toFixed(0)}% hard stop,
+            {" "}{(k.trailPct * 100).toFixed(0)}% off peak-close). Legacy v1 uses fixed stop/target,
+            stop wins a same-day tie (conservative). Entry/stop are immutable once stamped.
           </p>
         </>
       )}

@@ -3,7 +3,7 @@
   "crons": [
     {
       "path": "/api/admin/recommendations/generate?mode=latest",
-      "schedule": "0 6 * * 6"
+      "schedule": "0 6 1 * *"
     }
   ]
 }

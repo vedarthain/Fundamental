@@ -6,7 +6,7 @@
  *
  * Query:
  *   ?mode=latest   (default) — only the most-recent score snapshot. This is the
- *                              weekly call (Vercel Cron hits it every Saturday).
+ *                              monthly call (Vercel Cron hits it on the 1st).
  *   ?mode=backfill           — every snapshot in the archive. Run once to seed
  *                              the ledger with history so the desk has a track
  *                              record from day one.
@@ -22,7 +22,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /** Vercel Cron invocations carry `Authorization: Bearer $CRON_SECRET` (when the
- *  CRON_SECRET env var is set). This lets the weekly job run unattended without
+ *  CRON_SECRET env var is set). This lets the monthly job run unattended without
  *  an admin cookie, while still rejecting anonymous callers. */
 function isCronRequest(req: NextRequest): boolean {
   const secret = process.env.CRON_SECRET;
