@@ -24,6 +24,8 @@ const NAVY = "FF1E2761";
 const GREEN = "FF15803D";
 const RED = "FFDC2626";
 const RET_FMT = "+0.0;-0.0";
+// Numeric cell, but displays 8.5M / 234K / 900 (stays sortable/filterable).
+const VOL_FMT = '[>=1000000]#,##0.0,,"M";[>=1000]#,##0,"K";#,##0';
 
 type Row = {
   peer_rank: number | null;
@@ -39,6 +41,7 @@ type Row = {
   comp: number | null;
   mcap: number | null;
   price: number | null;
+  vol: number | null; // latest daily volume (shares)
   d1: number | null; // 1D %, already ×100
   r1w: number | null; // ×100
   r1m: number | null;
@@ -104,9 +107,11 @@ async function loadRows(): Promise<{ rows: Row[]; snapshot: string | null }> {
 
   // 1D % from golden: latest close / prior close − 1, per symbol.
   const gsyms = raw.map((r) => r.symbol + ".NS");
-  const gp = await golden<{ symbol: string; close: string; rn: number }[]>`
-    SELECT symbol, close::text AS close, rn FROM (
-      SELECT symbol, close,
+  const gp = await golden<
+    { symbol: string; close: string; volume: string | null; rn: string }[]
+  >`
+    SELECT symbol, close::text AS close, volume::text AS volume, rn FROM (
+      SELECT symbol, close, volume,
              row_number() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
       FROM golden.price_history_1d
       WHERE symbol = ANY(${gsyms}) AND close IS NOT NULL
@@ -114,9 +119,16 @@ async function loadRows(): Promise<{ rows: Row[]; snapshot: string | null }> {
   `;
   const last = new Map<string, number>();
   const prev = new Map<string, number>();
+  const vol = new Map<string, number>();
   for (const g of gp) {
     const bare = g.symbol.endsWith(".NS") ? g.symbol.slice(0, -3) : g.symbol;
-    (g.rn === 1 ? last : prev).set(bare, Number(g.close));
+    // rn is bigint → postgres.js returns it as a string; coerce before compare.
+    if (Number(g.rn) === 1) {
+      last.set(bare, Number(g.close));
+      if (g.volume != null) vol.set(bare, Number(g.volume));
+    } else {
+      prev.set(bare, Number(g.close));
+    }
   }
 
   const snapshot = raw.find((r) => r.snapshot_date)?.snapshot_date ?? null;
@@ -141,6 +153,7 @@ async function loadRows(): Promise<{ rows: Row[]; snapshot: string | null }> {
       comp: num(r.composite_pct),
       mcap: num(r.market_cap),
       price: num(r.current_price),
+      vol: vol.get(r.symbol) ?? null,
       d1,
       r1w: pctx(r.ret_1w),
       r1m: pctx(r.ret_1m),
@@ -170,7 +183,7 @@ export async function buildNifty500Workbook(): Promise<{
   const ws = wb.addWorksheet("NIFTY 500", { views: [{ state: "frozen", ySplit: 2 }] });
   const H1 = [
     "Industry Rank", "Peer Group", "Symbol", "Company", "Q", "V", "M", "Composite",
-    "Mkt Cap (Cr)", "Price (Rs)", "1D %", "1W %", "1M %", "1Y %", "Sector", "Industry", "Category",
+    "Mkt Cap (Cr)", "Price (Rs)", "Vol", "1D %", "1W %", "1M %", "1Y %", "Sector", "Industry", "Category",
   ];
   const title = `NIFTY 500 — Scorecard | snapshot ${snapshot ?? "?"} | matches equityroots.in | 1D from live golden close`;
   ws.mergeCells(1, 1, 1, H1.length);
@@ -197,7 +210,7 @@ export async function buildNifty500Workbook(): Promise<{
   for (const r of flat) {
     const row = ws.addRow([
       r.peer_rank, r.peer_count, r.symbol, r.company, r.q, r.v, r.m, r.comp,
-      r.mcap, r.price, r.d1, r.r1w, r.r1m, r.r1y, r.sector, r.industry, r.category,
+      r.mcap, r.price, r.vol, r.d1, r.r1w, r.r1m, r.r1y, r.sector, r.industry, r.category,
     ]);
     row.eachCell((c) => (c.border = { bottom: { style: "thin", color: { argb: "FFD9DCE3" } } }));
     ["A", "B", "E", "F", "G", "H"].forEach((col) => (row.getCell(col).alignment = { horizontal: "center" }));
@@ -206,8 +219,10 @@ export async function buildNifty500Workbook(): Promise<{
     row.getCell("I").alignment = { horizontal: "right" };
     row.getCell("J").numFmt = "#,##0.00";
     row.getCell("J").alignment = { horizontal: "right" };
-    // 1D..1Y are columns K,L,M,N
-    (["K", "L", "M", "N"] as const).forEach((col) => {
+    row.getCell("K").numFmt = VOL_FMT; // Vol
+    row.getCell("K").alignment = { horizontal: "right" };
+    // 1D..1Y are columns L,M,N,O
+    (["L", "M", "N", "O"] as const).forEach((col) => {
       const cell = row.getCell(col);
       cell.numFmt = RET_FMT;
       cell.alignment = { horizontal: "right" };
@@ -216,7 +231,7 @@ export async function buildNifty500Workbook(): Promise<{
       if (color) cell.font = { color };
     });
   }
-  ([13, 11, 13, 34, 5, 5, 5, 10, 12, 11, 8, 8, 8, 8, 22, 26, 16] as const).forEach(
+  ([13, 11, 13, 34, 5, 5, 5, 10, 12, 11, 10, 8, 8, 8, 8, 22, 26, 16] as const).forEach(
     (w, i) => (ws.getColumn(i + 1).width = w),
   );
   ws.autoFilter = { from: { row: 2, column: 1 }, to: { row: 2 + flat.length, column: H1.length } };
@@ -227,7 +242,7 @@ export async function buildNifty500Workbook(): Promise<{
   ws2.properties.outlineProperties = { summaryBelow: false, summaryRight: false };
   const PH = [
     "Sector", "Industry", "Category", "Company",
-    "Industry Rank", "Price (Rs)", "1D %", "1W %", "1M %", "1Y %", "Q", "V", "M",
+    "Industry Rank", "Price (Rs)", "Vol", "1D %", "1W %", "1M %", "1Y %", "Q", "V", "M",
   ];
   ws2.mergeCells(1, 1, 1, PH.length);
   const t2 = ws2.getCell(1, 1);
@@ -249,8 +264,11 @@ export async function buildNifty500Workbook(): Promise<{
     row.getCell(6).value = r.price;
     row.getCell(6).numFmt = "#,##0.00";
     row.getCell(6).alignment = { horizontal: "right" };
+    row.getCell(7).value = r.vol;
+    row.getCell(7).numFmt = VOL_FMT;
+    row.getCell(7).alignment = { horizontal: "right" };
     (["d1", "r1w", "r1m", "r1y"] as const).forEach((k, idx) => {
-      const cell = row.getCell(7 + idx);
+      const cell = row.getCell(8 + idx);
       cell.value = r[k];
       cell.numFmt = RET_FMT;
       cell.alignment = { horizontal: "right" };
@@ -258,7 +276,7 @@ export async function buildNifty500Workbook(): Promise<{
       if (color) cell.font = { color };
     });
     (["q", "v", "m"] as const).forEach((k, idx) => {
-      const cell = row.getCell(11 + idx);
+      const cell = row.getCell(12 + idx);
       cell.value = r[k];
       cell.alignment = { horizontal: "center" };
     });
@@ -290,7 +308,7 @@ export async function buildNifty500Workbook(): Promise<{
       }
     }
   }
-  ([16, 26, 16, 34, 12, 11, 8, 8, 8, 8, 5, 5, 5] as const).forEach(
+  ([16, 26, 16, 34, 12, 11, 10, 8, 8, 8, 8, 5, 5, 5] as const).forEach(
     (w, i) => (ws2.getColumn(i + 1).width = w),
   );
 
