@@ -448,6 +448,14 @@ function PopupSheet({
                     active={isActive(pathname, "/admin/upstox")}
                     onClose={onClose}
                   />
+                  <PopupLink
+                    href="/admin/reports"
+                    label="Reports"
+                    sublabel="Generate NIFTY 500 scorecard export"
+                    badge="ADMIN"
+                    active={isActive(pathname, "/admin/reports")}
+                    onClose={onClose}
+                  />
                   <button
                     type="button"
                     onClick={onPurgeCache}
