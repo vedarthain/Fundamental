@@ -24,8 +24,19 @@ const NAVY = "FF1E2761";
 const GREEN = "FF15803D";
 const RED = "FFDC2626";
 const RET_FMT = "+0.0;-0.0";
-// Numeric cell, but displays 8.5M / 234K / 900 (stays sortable/filterable).
-const VOL_FMT = '[>=1000000]#,##0.0,,"M";[>=1000]#,##0,"K";#,##0';
+
+/** Indian short-scale volume: crore (C, 1e7), lakh (L, 1e5), thousand (K, 1e3).
+ *  Excel number formats can't scale by 1e5/1e7, so this returns a text string —
+ *  the cell is no longer sortable as a number, which is the cost of K/L/C. */
+function fmtVol(v: number | null): string | null {
+  if (v == null) return null;
+  const a = Math.abs(v);
+  const trim = (n: number) => (Math.round(n * 10) / 10).toString();
+  if (a >= 1e7) return trim(v / 1e7) + "C";
+  if (a >= 1e5) return trim(v / 1e5) + "L";
+  if (a >= 1e3) return Math.round(v / 1e3) + "K";
+  return Math.round(v).toString();
+}
 
 type Row = {
   peer_rank: number | null;
@@ -210,7 +221,7 @@ export async function buildNifty500Workbook(): Promise<{
   for (const r of flat) {
     const row = ws.addRow([
       r.peer_rank, r.peer_count, r.symbol, r.company, r.q, r.v, r.m, r.comp,
-      r.mcap, r.price, r.vol, r.d1, r.r1w, r.r1m, r.r1y, r.sector, r.industry, r.category,
+      r.mcap, r.price, fmtVol(r.vol), r.d1, r.r1w, r.r1m, r.r1y, r.sector, r.industry, r.category,
     ]);
     row.eachCell((c) => (c.border = { bottom: { style: "thin", color: { argb: "FFD9DCE3" } } }));
     ["A", "B", "E", "F", "G", "H"].forEach((col) => (row.getCell(col).alignment = { horizontal: "center" }));
@@ -219,8 +230,7 @@ export async function buildNifty500Workbook(): Promise<{
     row.getCell("I").alignment = { horizontal: "right" };
     row.getCell("J").numFmt = "#,##0.00";
     row.getCell("J").alignment = { horizontal: "right" };
-    row.getCell("K").numFmt = VOL_FMT; // Vol
-    row.getCell("K").alignment = { horizontal: "right" };
+    row.getCell("K").alignment = { horizontal: "right" }; // Vol (text)
     // 1D..1Y are columns L,M,N,O
     (["L", "M", "N", "O"] as const).forEach((col) => {
       const cell = row.getCell(col);
@@ -264,8 +274,7 @@ export async function buildNifty500Workbook(): Promise<{
     row.getCell(6).value = r.price;
     row.getCell(6).numFmt = "#,##0.00";
     row.getCell(6).alignment = { horizontal: "right" };
-    row.getCell(7).value = r.vol;
-    row.getCell(7).numFmt = VOL_FMT;
+    row.getCell(7).value = fmtVol(r.vol);
     row.getCell(7).alignment = { horizontal: "right" };
     (["d1", "r1w", "r1m", "r1y"] as const).forEach((k, idx) => {
       const cell = row.getCell(8 + idx);
