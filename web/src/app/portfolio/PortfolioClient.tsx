@@ -13,7 +13,7 @@
  */
 
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { Fragment, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -365,13 +365,83 @@ function Donut({ title, data, total }: { title: string; data: { label: string; v
 
 // ─────────────────────────── holdings table ────────────────────────────────
 
+type GroupMode = "sector" | "industry" | "flat";
+const UNSCORED_GROUP = "ETFs & funds (unscored)";
+
+type Group = {
+  label: string;
+  instruments: Instrument[];
+  value: number;
+  invested: number;
+  pnl: number;
+  dayChange: number;
+};
+
+function buildGroups(instruments: Instrument[], mode: GroupMode): Group[] {
+  if (mode === "flat") {
+    return [
+      {
+        label: "",
+        instruments,
+        value: instruments.reduce((s, i) => s + i.currentValue, 0),
+        invested: instruments.reduce((s, i) => s + i.invested, 0),
+        pnl: instruments.reduce((s, i) => s + i.pnl, 0),
+        dayChange: instruments.reduce((s, i) => s + (i.dayChangeValue ?? 0), 0),
+      },
+    ];
+  }
+  const map = new Map<string, Instrument[]>();
+  for (const ins of instruments) {
+    const key = !ins.isMapped
+      ? UNSCORED_GROUP
+      : (mode === "sector" ? ins.sector : ins.industry) ?? "Uncategorised";
+    (map.get(key) ?? map.set(key, []).get(key)!).push(ins);
+  }
+  const groups: Group[] = [...map.entries()].map(([label, list]) => ({
+    label,
+    instruments: [...list].sort((a, b) => b.currentValue - a.currentValue),
+    value: list.reduce((s, i) => s + i.currentValue, 0),
+    invested: list.reduce((s, i) => s + i.invested, 0),
+    pnl: list.reduce((s, i) => s + i.pnl, 0),
+    dayChange: list.reduce((s, i) => s + (i.dayChangeValue ?? 0), 0),
+  }));
+  // Value-desc, but always park the unscored bucket last.
+  return groups.sort((a, b) => {
+    if (a.label === UNSCORED_GROUP) return 1;
+    if (b.label === UNSCORED_GROUP) return -1;
+    return b.value - a.value;
+  });
+}
+
 function HoldingsTable({ instruments, totalValue }: { instruments: Instrument[]; totalValue: number }) {
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [mode, setMode] = useState<GroupMode>("sector");
+  const groups = buildGroups(instruments, mode);
+
   return (
     <div className="card mt-6 overflow-hidden">
-      <div className="px-4 py-3 border-b hairline flex items-baseline justify-between">
+      <div className="px-4 py-3 border-b hairline flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-[14px] font-semibold">Holdings ({instruments.length})</h2>
-        <span className="text-[11px] muted-text">clubbed per instrument · tap a row for per-broker split</span>
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] muted-text hidden sm:inline">group by</span>
+          <div className="inline-flex rounded-md border overflow-hidden" style={{ borderColor: "var(--color-border-default)" }}>
+            {(["sector", "industry", "flat"] as GroupMode[]).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setMode(m)}
+                className="px-2.5 py-1 text-[11.5px] font-medium capitalize transition-colors"
+                style={
+                  mode === m
+                    ? { background: "var(--color-accent-600)", color: "white" }
+                    : { background: "transparent", color: "var(--color-muted)" }
+                }
+              >
+                {m}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-[12.5px]">
@@ -390,17 +460,42 @@ function HoldingsTable({ instruments, totalValue }: { instruments: Instrument[];
             </tr>
           </thead>
           <tbody>
-            {instruments.map((ins) => {
-              const isOpen = expanded === ins.key;
-              const wt = totalValue > 0 ? Math.round((ins.currentValue / totalValue) * 1000) / 10 : 0;
+            {groups.map((g) => {
+              const gWt = totalValue > 0 ? Math.round((g.value / totalValue) * 1000) / 10 : 0;
               return (
-                <FragmentRow
-                  key={ins.key}
-                  ins={ins}
-                  wt={wt}
-                  isOpen={isOpen}
-                  onToggle={() => setExpanded(isOpen ? null : ins.key)}
-                />
+                <Fragment key={g.label || "all"}>
+                  {mode !== "flat" && (
+                    <tr className="border-b hairline" style={{ background: "var(--color-paper)" }}>
+                      <td className="px-3 py-1.5 font-semibold text-[12px]">
+                        {g.label}{" "}
+                        <span className="muted-text font-normal">({g.instruments.length})</span>
+                      </td>
+                      <td colSpan={3} />
+                      <td className="px-2 py-1.5 text-right tabular-nums font-semibold">{inr(g.value)}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums" style={{ color: up(g.dayChange) ? GREEN : RED }}>
+                        {signed(g.dayChange)}
+                      </td>
+                      <td className="px-2 py-1.5 text-right tabular-nums font-semibold" style={{ color: up(g.pnl) ? GREEN : RED }}>
+                        {signed(g.pnl)}
+                      </td>
+                      <td colSpan={2} />
+                      <td className="px-3 py-1.5 text-right tabular-nums muted-text">{gWt}%</td>
+                    </tr>
+                  )}
+                  {g.instruments.map((ins) => {
+                    const isOpen = expanded === ins.key;
+                    const wt = totalValue > 0 ? Math.round((ins.currentValue / totalValue) * 1000) / 10 : 0;
+                    return (
+                      <FragmentRow
+                        key={ins.key}
+                        ins={ins}
+                        wt={wt}
+                        isOpen={isOpen}
+                        onToggle={() => setExpanded(isOpen ? null : ins.key)}
+                      />
+                    );
+                  })}
+                </Fragment>
               );
             })}
           </tbody>
