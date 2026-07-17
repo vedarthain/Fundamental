@@ -183,12 +183,12 @@ function ImportPanel({
         </div>
         <div className="flex-1 min-w-[200px]">
           <label className="block text-[11px] font-semibold muted-text uppercase tracking-wide mb-1">
-            Holdings file (.csv or .xlsx)
+            Holdings file (.csv, .xlsx or .xls)
           </label>
           <input
             ref={fileRef}
             type="file"
-            accept=".csv,.xlsx"
+            accept=".csv,.xlsx,.xls"
             className="block w-full text-[13px] file:mr-3 file:rounded-md file:border-0 file:px-3 file:py-1.5 file:text-[12px] file:font-medium file:bg-[var(--color-accent-600)] file:text-white"
           />
         </div>
@@ -203,9 +203,9 @@ function ImportPanel({
         </button>
       </div>
       <p className="muted-text text-[11.5px] mt-2 leading-snug">
-        Re-importing a broker <strong>replaces</strong> that broker&apos;s holdings. 5paisa
-        exports a legacy <code>.xls</code> — open it and re-save as <code>.csv</code> or{" "}
-        <code>.xlsx</code> first.
+        Re-importing a broker <strong>replaces</strong> that broker&apos;s holdings. Upload the
+        broker&apos;s holdings export as-is — <code>.csv</code>, <code>.xlsx</code> and 5paisa&apos;s
+        legacy <code>.xls</code> are all accepted.
       </p>
 
       {result && (

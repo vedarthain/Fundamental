@@ -17,6 +17,7 @@
  */
 import "server-only";
 import ExcelJS from "exceljs";
+import * as XLSX from "xlsx";
 
 export const BROKERS = ["upstox", "zerodha", "fyers", "fivepaisa", "groww"] as const;
 export type Broker = (typeof BROKERS)[number];
@@ -124,14 +125,37 @@ function cellToString(v: ExcelJS.CellValue): string {
   return String(v).trim();
 }
 
-/** Turn an uploaded file into a cell matrix, from filename + bytes. */
+/** Read a legacy binary .xls into the matrix shape. exceljs can't parse .xls
+ *  (BIFF), so SheetJS handles it. `raw:false` yields formatted string cells;
+ *  `defval:""` keeps empty cells so column indices stay aligned. */
+function xlsToMatrix(buf: ArrayBuffer): string[][] {
+  const wb = XLSX.read(buf, { type: "array" });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  if (!ws) return [];
+  const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, {
+    header: 1,
+    blankrows: true,
+    raw: false,
+    defval: "",
+  });
+  return rows.map((r) => r.map((c) => String(c ?? "").trim()));
+}
+
+/** Turn an uploaded file into a cell matrix, from filename + bytes.
+ *  Some brokers hand out a .xls that's really an HTML table or a CSV with an
+ *  .xls extension — SheetJS auto-detects the true format, so we route by the
+ *  "is this a real spreadsheet" question, not just the extension. */
 export async function fileToMatrix(filename: string, buf: ArrayBuffer): Promise<string[][]> {
   const lower = filename.toLowerCase();
   if (lower.endsWith(".xlsx")) return xlsxToMatrix(buf);
   if (lower.endsWith(".xls")) {
-    throw new PortfolioImportError(
-      "Legacy .xls files aren't supported. Open it in Excel/Sheets and re-save as .csv or .xlsx, then upload again.",
-    );
+    try {
+      return xlsToMatrix(buf);
+    } catch {
+      throw new PortfolioImportError(
+        "Couldn't read that .xls file — try opening it and re-saving as .xlsx or .csv.",
+      );
+    }
   }
   // default: treat as CSV (also covers .txt exports)
   const text = new TextDecoder("utf-8").decode(buf);
