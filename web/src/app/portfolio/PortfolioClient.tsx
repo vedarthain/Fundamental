@@ -513,6 +513,12 @@ function HoldingsTable({ instruments, totalValue }: { instruments: Instrument[];
                       <td className="px-3 py-1.5 font-semibold text-[12px]">
                         <span className="inline-flex items-center gap-1.5">
                           <span className="text-[9px] muted-text w-2 inline-block transition-transform" style={{ transform: isCollapsed ? "none" : "rotate(90deg)" }}>▸</span>
+                          <span
+                            className="inline-flex items-center justify-center w-5 h-5 rounded-md shrink-0"
+                            style={{ background: "color-mix(in srgb, var(--color-accent-600) 12%, transparent)", color: "var(--color-accent-700)" }}
+                          >
+                            {groupIcon(g.label)}
+                          </span>
                           {g.label}{" "}
                           <span className="muted-text font-normal">({g.instruments.length})</span>
                         </span>
@@ -664,6 +670,42 @@ const IconList = ({ className, size }: IconProps) =>
   svg(size, className, <><path d="M8 6h13M8 12h13M8 18h13" /><path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01" /></>);
 const IconUpload = ({ className, size }: IconProps) =>
   svg(size, className, <><path d="M12 15V4" /><path d="m8 8 4-4 4 4" /><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" /></>);
+// Sector/industry glyphs for the holdings group headers.
+const IconFactory = ({ className, size }: IconProps) =>
+  svg(size, className, <><path d="M3 21V10l6 4V10l6 4V7l6 4v10Z" /><path d="M3 21h18" /></>);
+const IconChip = ({ className, size }: IconProps) =>
+  svg(size, className, <><rect x="7" y="7" width="10" height="10" rx="1" /><path d="M10 3v2M14 3v2M10 19v2M14 19v2M3 10h2M3 14h2M19 10h2M19 14h2" /></>);
+const IconHealth = ({ className, size }: IconProps) =>
+  svg(size, className, <><path d="M12 4v16M4 12h16" /><rect x="3" y="3" width="18" height="18" rx="4" /></>);
+const IconCart = ({ className, size }: IconProps) =>
+  svg(size, className, <><path d="M3 4h2l2.4 12.4a1 1 0 0 0 1 .8h9.2a1 1 0 0 0 1-.8L21 8H6" /><circle cx="9" cy="20" r="1" /><circle cx="18" cy="20" r="1" /></>);
+const IconEnergy = ({ className, size }: IconProps) =>
+  svg(size, className, <path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z" />);
+const IconCar = ({ className, size }: IconProps) =>
+  svg(size, className, <><path d="M4 13l1.5-4.5A2 2 0 0 1 7.4 7h9.2a2 2 0 0 1 1.9 1.5L20 13" /><path d="M3 13h18v4a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-1H6v1a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1Z" /><circle cx="7" cy="16" r="0.6" fill="currentColor" /><circle cx="17" cy="16" r="0.6" fill="currentColor" /></>);
+const IconBuilding = ({ className, size }: IconProps) =>
+  svg(size, className, <><rect x="5" y="3" width="14" height="18" rx="1" /><path d="M9 7h.01M15 7h.01M9 11h.01M15 11h.01M9 15h.01M15 15h.01" /><path d="M3 21h18" /></>);
+const IconFlask = ({ className, size }: IconProps) =>
+  svg(size, className, <><path d="M9 3h6M10 3v6l-5 9a1 1 0 0 0 .9 1.5h12.2A1 1 0 0 0 19 18l-5-9V3" /><path d="M7.5 14h9" /></>);
+const IconLayers = ({ className, size }: IconProps) =>
+  svg(size, className, <><path d="m12 3 9 5-9 5-9-5 9-5Z" /><path d="m3 13 9 5 9-5" /></>);
+
+/** Keyword-matched icon for a sector / industry group header. */
+function groupIcon(label: string): React.ReactNode {
+  const s = label.toLowerCase();
+  const has = (...w: string[]) => w.some((x) => s.includes(x));
+  if (has("etf", "fund", "unscored")) return <IconLayers size={13} />;
+  if (has("bank", "financ", "nbfc", "insur", "capital market", "broking")) return <IconBank size={13} />;
+  if (has("it ", "software", "tech", "semiconduct", "electronic", "hardware", "internet", "telecom")) return <IconChip size={13} />;
+  if (has("pharma", "health", "hospital", "medic", "diagnost", "biotech")) return <IconHealth size={13} />;
+  if (has("auto", "vehicle", "tyre", "oem")) return <IconCar size={13} />;
+  if (has("energy", "oil", "gas", "power", "utilit", "coal", "petro")) return <IconEnergy size={13} />;
+  if (has("chemical", "fertil", "paint", "agro")) return <IconFlask size={13} />;
+  if (has("realty", "real estate", "cement", "construct", "infra", "housing")) return <IconBuilding size={13} />;
+  if (has("consum", "fmcg", "retail", "food", "beverage", "apparel", "textile", "durable", "staple")) return <IconCart size={13} />;
+  if (has("industrial", "manufactur", "metal", "steel", "machin", "capital good", "engineer", "product")) return <IconFactory size={13} />;
+  return <IconList size={13} />;
+}
 
 /** Section heading with a tinted icon chip — the repeated visual motif. */
 function SectionHead({ icon, title, right }: { icon: React.ReactNode; title: string; right?: React.ReactNode }) {
