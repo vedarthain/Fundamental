@@ -196,9 +196,10 @@ function ImportPanel({
           type="button"
           onClick={onUpload}
           disabled={busy}
-          className="px-4 py-2 rounded-md font-medium text-[13px] transition-colors disabled:opacity-60"
+          className="px-4 py-2 rounded-md font-medium text-[13px] transition-colors disabled:opacity-60 inline-flex items-center gap-1.5"
           style={{ backgroundColor: "var(--color-accent-600)", color: "white" }}
         >
+          <IconUpload size={15} />
           {busy ? "Importing…" : "Import"}
         </button>
       </div>
@@ -246,14 +247,16 @@ function ImportPanel({
 function SummaryCards({ t, snapshot }: { t: Portfolio["totals"]; snapshot: string | null }) {
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-6">
-      <Card label="Current value" value={inr(t.currentValue)} sub={`${t.holdingCount} instruments · ${t.mappedCount} scored`} />
-      <Card label="Invested" value={inr(t.invested)} sub={snapshot ? `scores @ ${snapshot}` : undefined} />
+      <Card label="Current value" value={inr(t.currentValue)} sub={`${t.holdingCount} instruments · ${t.mappedCount} scored`} icon={<IconWallet size={15} />} />
+      <Card label="Invested" value={inr(t.invested)} sub={snapshot ? `scores @ ${snapshot}` : undefined} icon={<IconDeposit size={15} />} />
       <Card
         label="Total P&L"
         value={signed(t.pnl)}
         valueColor={up(t.pnl) ? GREEN : RED}
         sub={pct(t.pnlPct)}
         subColor={up(t.pnlPct) ? GREEN : RED}
+        icon={<IconTrendUp size={15} />}
+        accent={up(t.pnl) ? GREEN : RED}
       />
       <Card
         label="Day change"
@@ -261,19 +264,33 @@ function SummaryCards({ t, snapshot }: { t: Portfolio["totals"]; snapshot: strin
         valueColor={up(t.dayChangeValue) ? GREEN : RED}
         sub={pct(t.dayChangePct)}
         subColor={up(t.dayChangePct) ? GREEN : RED}
+        icon={<IconPulse size={15} />}
+        accent={up(t.dayChangeValue) ? GREEN : RED}
       />
     </div>
   );
 }
 
 function Card({
-  label, value, sub, valueColor, subColor,
+  label, value, sub, valueColor, subColor, icon, accent,
 }: {
   label: string; value: string; sub?: string; valueColor?: string; subColor?: string;
+  icon?: React.ReactNode; accent?: string;
 }) {
+  const chipColor = accent ?? "var(--color-accent-700)";
   return (
     <div className="card p-4">
-      <div className="text-[11px] font-semibold muted-text uppercase tracking-wide">{label}</div>
+      <div className="flex items-center justify-between">
+        <div className="text-[11px] font-semibold muted-text uppercase tracking-wide">{label}</div>
+        {icon && (
+          <span
+            className="inline-flex items-center justify-center w-6 h-6 rounded-md shrink-0"
+            style={{ background: `color-mix(in srgb, ${chipColor} 12%, transparent)`, color: chipColor }}
+          >
+            {icon}
+          </span>
+        )}
+      </div>
       <div className="text-[20px] md:text-[22px] font-semibold tabular-nums mt-1" style={valueColor ? { color: valueColor } : undefined}>
         {value}
       </div>
@@ -292,7 +309,7 @@ function EquityCurve({ curve }: { curve: CurvePoint[] }) {
   if (curve.length < 2) {
     return (
       <div className="card p-5 mt-6">
-        <h2 className="text-[14px] font-semibold mb-1">Performance vs NIFTY 500</h2>
+        <SectionHead icon={<IconChart size={15} />} title="Performance vs NIFTY 500" />
         <p className="muted-text text-[12.5px]">
           {curve.length === 0
             ? "Your equity curve starts accruing from your first daily snapshot. Check back tomorrow — a holdings export has no back-history, so the curve grows forward from onboarding."
@@ -303,10 +320,11 @@ function EquityCurve({ curve }: { curve: CurvePoint[] }) {
   }
   return (
     <div className="card p-4 md:p-5 mt-6">
-      <div className="flex items-baseline justify-between mb-3">
-        <h2 className="text-[14px] font-semibold">Performance vs NIFTY 500</h2>
-        <span className="text-[11px] muted-text">rebased to 100 at {curve[0].date}</span>
-      </div>
+      <SectionHead
+        icon={<IconChart size={15} />}
+        title="Performance vs NIFTY 500"
+        right={<span className="text-[11px] muted-text">rebased to 100 at {curve[0].date}</span>}
+      />
       <div style={{ width: "100%", height: 280 }}>
         <ResponsiveContainer>
           <LineChart data={curve} margin={{ top: 4, right: 8, bottom: 4, left: 8 }}>
@@ -335,7 +353,10 @@ function Donut({ title, data, total }: { title: string; data: { label: string; v
   const slices = restSum > 0 ? [...top, { label: "Other", value: restSum }] : top;
   return (
     <div className="card p-4 md:p-5">
-      <h2 className="text-[14px] font-semibold mb-2">{title}</h2>
+      <SectionHead
+        icon={title.toLowerCase().includes("broker") ? <IconBank size={15} /> : <IconPie size={15} />}
+        title={title}
+      />
       <div className="flex items-center gap-4">
         <div style={{ width: 150, height: 150, flexShrink: 0 }}>
           <ResponsiveContainer>
@@ -416,12 +437,29 @@ function buildGroups(instruments: Instrument[], mode: GroupMode): Group[] {
 function HoldingsTable({ instruments, totalValue }: { instruments: Instrument[]; totalValue: number }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [mode, setMode] = useState<GroupMode>("sector");
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const groups = buildGroups(instruments, mode);
+
+  const toggleGroup = (label: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(label)) next.delete(label);
+      else next.add(label);
+      return next;
+    });
 
   return (
     <div className="card mt-6 overflow-hidden">
       <div className="px-4 py-3 border-b hairline flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-[14px] font-semibold">Holdings ({instruments.length})</h2>
+        <div className="flex items-center gap-2">
+          <span
+            className="inline-flex items-center justify-center w-6 h-6 rounded-md shrink-0"
+            style={{ background: "color-mix(in srgb, var(--color-accent-600) 12%, transparent)", color: "var(--color-accent-700)" }}
+          >
+            <IconList size={15} />
+          </span>
+          <h2 className="text-[14px] font-semibold">Holdings ({instruments.length})</h2>
+        </div>
         <div className="flex items-center gap-2">
           <span className="text-[11px] muted-text hidden sm:inline">group by</span>
           <div className="inline-flex rounded-md border overflow-hidden" style={{ borderColor: "var(--color-border-default)" }}>
@@ -462,13 +500,22 @@ function HoldingsTable({ instruments, totalValue }: { instruments: Instrument[];
           <tbody>
             {groups.map((g) => {
               const gWt = totalValue > 0 ? Math.round((g.value / totalValue) * 1000) / 10 : 0;
+              const grouped = mode !== "flat";
+              const isCollapsed = grouped && collapsed.has(g.label);
               return (
                 <Fragment key={g.label || "all"}>
-                  {mode !== "flat" && (
-                    <tr className="border-b hairline" style={{ background: "var(--color-paper)" }}>
+                  {grouped && (
+                    <tr
+                      className="border-b hairline cursor-pointer select-none hover:brightness-95"
+                      style={{ background: "var(--color-paper)" }}
+                      onClick={() => toggleGroup(g.label)}
+                    >
                       <td className="px-3 py-1.5 font-semibold text-[12px]">
-                        {g.label}{" "}
-                        <span className="muted-text font-normal">({g.instruments.length})</span>
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className="text-[9px] muted-text w-2 inline-block transition-transform" style={{ transform: isCollapsed ? "none" : "rotate(90deg)" }}>▸</span>
+                          {g.label}{" "}
+                          <span className="muted-text font-normal">({g.instruments.length})</span>
+                        </span>
                       </td>
                       <td colSpan={3} />
                       <td className="px-2 py-1.5 text-right tabular-nums font-semibold">{inr(g.value)}</td>
@@ -482,7 +529,7 @@ function HoldingsTable({ instruments, totalValue }: { instruments: Instrument[];
                       <td className="px-3 py-1.5 text-right tabular-nums muted-text">{gWt}%</td>
                     </tr>
                   )}
-                  {g.instruments.map((ins) => {
+                  {!isCollapsed && g.instruments.map((ins) => {
                     const isOpen = expanded === ins.key;
                     const wt = totalValue > 0 ? Math.round((ins.currentValue / totalValue) * 1000) / 10 : 0;
                     return (
@@ -582,4 +629,56 @@ function FragmentRow({
 
 function fmtScore(v: number | null): string {
   return v == null ? "—" : Math.round(v).toString();
+}
+
+// ─────────────────────────── icons (inline SVG) ────────────────────────────
+// Lucide-style 1.6px stroke, sized 1em so they scale with surrounding text.
+
+type IconProps = { className?: string; size?: number };
+function svg(size: number | undefined, className: string | undefined, children: React.ReactNode) {
+  return (
+    <svg
+      width={size ?? 16} height={size ?? 16} viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round"
+      className={className} aria-hidden
+    >
+      {children}
+    </svg>
+  );
+}
+const IconWallet = ({ className, size }: IconProps) =>
+  svg(size, className, <><path d="M3 7a2 2 0 0 1 2-2h13a1 1 0 0 1 1 1v2" /><path d="M3 7v10a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-3" /><path d="M20 9h-4a2 2 0 0 0 0 6h4a1 1 0 0 0 1-1v-4a1 1 0 0 0-1-1Z" /><circle cx="16.5" cy="12" r="0.6" fill="currentColor" /></>);
+const IconDeposit = ({ className, size }: IconProps) =>
+  svg(size, className, <><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></>);
+const IconTrendUp = ({ className, size }: IconProps) =>
+  svg(size, className, <><path d="M3 17l6-6 4 4 7-7" /><path d="M17 8h4v4" /></>);
+const IconPulse = ({ className, size }: IconProps) =>
+  svg(size, className, <path d="M3 12h4l2-6 4 12 2-6h6" />);
+const IconChart = ({ className, size }: IconProps) =>
+  svg(size, className, <><path d="M4 4v15a1 1 0 0 0 1 1h15" /><path d="m7 14 3-4 3 3 4-6" /></>);
+const IconBank = ({ className, size }: IconProps) =>
+  svg(size, className, <><path d="m3 9 9-5 9 5" /><path d="M4 9h16v2H4z" /><path d="M6 11v7M10 11v7M14 11v7M18 11v7" /><path d="M3 21h18" /></>);
+const IconPie = ({ className, size }: IconProps) =>
+  svg(size, className, <><path d="M12 3a9 9 0 1 0 9 9h-9Z" /><path d="M12 3v9" /></>);
+const IconList = ({ className, size }: IconProps) =>
+  svg(size, className, <><path d="M8 6h13M8 12h13M8 18h13" /><path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01" /></>);
+const IconUpload = ({ className, size }: IconProps) =>
+  svg(size, className, <><path d="M12 15V4" /><path d="m8 8 4-4 4 4" /><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" /></>);
+
+/** Section heading with a tinted icon chip — the repeated visual motif. */
+function SectionHead({ icon, title, right }: { icon: React.ReactNode; title: string; right?: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-2 mb-3">
+      <div className="flex items-center gap-2">
+        <span
+          className="inline-flex items-center justify-center w-6 h-6 rounded-md shrink-0"
+          style={{ background: "color-mix(in srgb, var(--color-accent-600) 12%, transparent)", color: "var(--color-accent-700)" }}
+        >
+          {icon}
+        </span>
+        <h2 className="text-[14px] font-semibold">{title}</h2>
+      </div>
+      {right}
+    </div>
+  );
 }
