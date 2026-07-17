@@ -81,6 +81,9 @@ export function TopNavLinks() {
             : <DesktopLink key={l.href} href={l.href} label={l.label} active={active} />;
         })}
         {showWatchlist && (
+          <DesktopLink href="/portfolio" label="Portfolio" active={isActive(pathname, "/portfolio")} />
+        )}
+        {showWatchlist && (
           <DesktopLink href="/watchlist" label="Watchlist" active={isActive(pathname, "/watchlist")} />
         )}
         {showSignIn && (
@@ -258,8 +261,8 @@ function MobileTabBar({ pathname, user, isAdmin, showWatchlist, showSignIn }: Mo
 
   const segmentsActive = ["/indices", "/sectors"].some((p) => isActive(pathname, p));
   const toolsActive = isActive(pathname, "/tools") || isActive(pathname, "/ideas") || (TOOLS_LINK.submenu ?? []).some((s) => isActive(pathname, s.href));
-  const accountActive = isActive(pathname, "/watchlist") || isActive(pathname, "/login") ||
-                        isActive(pathname, "/admin");
+  const accountActive = isActive(pathname, "/watchlist") || isActive(pathname, "/portfolio") ||
+                        isActive(pathname, "/login") || isActive(pathname, "/admin");
 
   return (
     <div ref={ref} className="md:hidden relative">
@@ -429,6 +432,15 @@ function PopupSheet({
                 </div>
                 <div className="text-[13.5px] font-medium truncate mt-0.5">{user.email}</div>
               </div>
+              {showWatchlist && (
+                <PopupLink
+                  href="/portfolio"
+                  label="Your portfolio"
+                  sublabel="Broker holdings, valued & scored"
+                  active={isActive(pathname, "/portfolio")}
+                  onClose={onClose}
+                />
+              )}
               {showWatchlist && (
                 <PopupLink
                   href="/watchlist"

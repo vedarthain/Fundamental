@@ -157,6 +157,14 @@ export function UserMenu({ email, displayName, isAdmin = false }: Props) {
             </div>
           </div>
           <Link
+            href="/portfolio"
+            role="menuitem"
+            onClick={() => setOpen(false)}
+            className="block px-4 py-2.5 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
+          >
+            Your portfolio
+          </Link>
+          <Link
             href="/watchlist"
             role="menuitem"
             onClick={() => setOpen(false)}

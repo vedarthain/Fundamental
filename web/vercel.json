@@ -4,6 +4,10 @@
     {
       "path": "/api/admin/recommendations/generate?mode=latest",
       "schedule": "0 6 1 * *"
+    },
+    {
+      "path": "/api/cron/portfolio-snapshot",
+      "schedule": "30 12 * * 1-5"
     }
   ]
 }
