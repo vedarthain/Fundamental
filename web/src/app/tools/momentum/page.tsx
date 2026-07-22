@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { loadLatestMomentum } from "@/lib/momentum";
 import { loadLatestTrendLeaders } from "@/lib/trendLeaders";
-import { loadLatestBacktest } from "@/lib/backtest";
 import ScannerTabs from "./ScannerTabs";
 
 export const dynamic = "force-dynamic";
@@ -17,10 +16,9 @@ export const metadata: Metadata = {
 //   Trend Leaders  → app.trend_leader_signal (fresh golden cross, slow burn)
 // Both caches are cron-built post-close; this page just reads the latest of each.
 export default async function MomentumPage() {
-  const [momentum, trend, backtest] = await Promise.all([
+  const [momentum, trend] = await Promise.all([
     loadLatestMomentum(),
     loadLatestTrendLeaders(),
-    loadLatestBacktest(),
   ]);
   return (
     <ScannerTabs
@@ -28,8 +26,6 @@ export default async function MomentumPage() {
       momentumSignals={momentum.signals}
       trendSnapDate={trend.snapDate}
       trendSignals={trend.signals}
-      backtestRunDate={backtest.runDate}
-      backtestRows={backtest.rows}
     />
   );
 }
