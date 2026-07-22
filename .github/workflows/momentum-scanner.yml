@@ -1,4 +1,4 @@
-# Daily scanners — fire the two post-close scanner crons and surface the result
+# Momentum scanner — fire the two post-close scanner crons and surface the result
 # in the Actions tab (better run history / manual re-run than Vercel Cron).
 #
 # WHY GitHub instead of Vercel Cron:
@@ -23,7 +23,7 @@
 # Required secret (already set in this repo): REVALIDATE_TOKEN — must match the
 # same-named Production env var on Vercel.
 
-name: Daily scanners
+name: Momentum scanner
 
 on:
   schedule:
@@ -43,7 +43,7 @@ on:
           - trend-leaders
 
 concurrency:
-  group: daily-scanners
+  group: momentum-scanner
   cancel-in-progress: false
 
 jobs:
