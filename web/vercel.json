@@ -15,7 +15,7 @@
     },
     {
       "path": "/api/cron/trend-leaders",
-      "schedule": "15 15 * * 1-5"
+      "schedule": "0 16 * * 1-5"
     }
   ]
 }
