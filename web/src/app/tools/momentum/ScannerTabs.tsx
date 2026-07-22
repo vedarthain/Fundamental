@@ -14,27 +14,34 @@
 import { useState } from "react";
 import type { MomentumSignal } from "@/lib/momentum";
 import type { TrendLeaderSignal } from "@/lib/trendLeaders";
+import type { BacktestRow } from "@/lib/backtest";
 import MomentumClient from "./MomentumClient";
 import TrendLeadersClient from "./TrendLeadersClient";
+import BacktestClient from "./BacktestClient";
 
-type Tab = "igniting" | "trend";
+type Tab = "igniting" | "trend" | "backtest";
 
 export default function ScannerTabs({
   momentumSnapDate,
   momentumSignals,
   trendSnapDate,
   trendSignals,
+  backtestRunDate,
+  backtestRows,
 }: {
   momentumSnapDate: string | null;
   momentumSignals: MomentumSignal[];
   trendSnapDate: string | null;
   trendSignals: TrendLeaderSignal[];
+  backtestRunDate: string | null;
+  backtestRows: BacktestRow[];
 }) {
   const [tab, setTab] = useState<Tab>("igniting");
 
-  const tabs: { id: Tab; label: string; count: number }[] = [
+  const tabs: { id: Tab; label: string; count: number | null }[] = [
     { id: "igniting", label: "Igniting today", count: momentumSignals.length },
     { id: "trend", label: "Trend Leaders", count: trendSignals.length },
+    { id: "backtest", label: "Backtest", count: null },
   ];
 
   return (
@@ -56,21 +63,27 @@ export default function ScannerTabs({
               }
             >
               {t.label}
-              <span
-                className="ml-1.5 text-[11px] tabular-nums"
-                style={{ opacity: active ? 0.85 : 0.6 }}
-              >
-                {t.count}
-              </span>
+              {t.count != null && (
+                <span
+                  className="ml-1.5 text-[11px] tabular-nums"
+                  style={{ opacity: active ? 0.85 : 0.6 }}
+                >
+                  {t.count}
+                </span>
+              )}
             </button>
           );
         })}
       </div>
 
-      {tab === "igniting" ? (
+      {tab === "igniting" && (
         <MomentumClient snapDate={momentumSnapDate} signals={momentumSignals} />
-      ) : (
+      )}
+      {tab === "trend" && (
         <TrendLeadersClient snapDate={trendSnapDate} signals={trendSignals} />
+      )}
+      {tab === "backtest" && (
+        <BacktestClient runDate={backtestRunDate} rows={backtestRows} />
       )}
     </div>
   );

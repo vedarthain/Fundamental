@@ -1,0 +1,86 @@
+# Daily scanners — fire the two post-close scanner crons and surface the result
+# in the Actions tab (better run history / manual re-run than Vercel Cron).
+#
+# WHY GitHub instead of Vercel Cron:
+#   - Monitoring: every run's ok/written/symbols JSON is in the step log, with
+#     a green/red status and email-on-failure. Vercel Hobby's cron log is
+#     12h-windowed and shows only duration, not the payload.
+#   - Manual backfill: the "Run workflow" button re-fires either scanner on
+#     demand — no local curl, no fishing for the token.
+#
+# HOW: we DON'T re-implement the ruleset here. The compute lives once, in the
+# Next.js routes (/api/cron/momentum-signals, /api/cron/trend-leaders), which
+# query Neon and write the cache tables. This workflow just calls them with the
+# existing REVALIDATE_TOKEN bearer (the routes accept CRON_SECRET OR
+# REVALIDATE_TOKEN). Single source of truth for the SQL.
+#
+# RELIABILITY CAVEAT: GitHub's `schedule:` is best-effort — top-of-hour events
+# get load-shed and an occasional daily run may not fire. For a daily watchlist
+# that's acceptable (next day catches up), and workflow_dispatch is always
+# available for a manual re-run. If guaranteed timing is ever needed, point an
+# external pinger (cron-job.org) at this workflow's dispatch API.
+#
+# Required secret (already set in this repo): REVALIDATE_TOKEN — must match the
+# same-named Production env var on Vercel.
+
+name: Daily scanners
+
+on:
+  schedule:
+    # Post-close on IST weekdays. 15:00 UTC = 20:30 IST (momentum), then
+    # trend-leaders right after. One run, both scanners, sequential.
+    - cron: '0 15 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      which:
+        description: 'Which scanner to run'
+        required: false
+        default: 'both'
+        type: choice
+        options:
+          - both
+          - momentum
+          - trend-leaders
+
+concurrency:
+  group: daily-scanners
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Momentum Radar (volume-ignition)
+        if: ${{ github.event_name == 'schedule' || github.event.inputs.which == 'both' || github.event.inputs.which == 'momentum' }}
+        env:
+          TOKEN: ${{ secrets.REVALIDATE_TOKEN }}
+        run: |
+          set +e
+          BODY=$(mktemp)
+          CODE=$(curl -sS -o "$BODY" -w "%{http_code}" --max-time 120 \
+            "https://equityroots.in/api/cron/momentum-signals" \
+            -H "Authorization: Bearer $TOKEN")
+          echo "HTTP $CODE"; cat "$BODY"; echo
+          if [ "$CODE" != "200" ]; then
+            echo "::error::momentum-signals failed (HTTP $CODE) — check REVALIDATE_TOKEN matches Vercel."
+            exit 1
+          fi
+          grep -q '"ok":true' "$BODY" || { echo "::error::momentum-signals returned ok:false"; exit 1; }
+
+      - name: Trend Leaders (fresh golden cross)
+        if: ${{ github.event_name == 'schedule' || github.event.inputs.which == 'both' || github.event.inputs.which == 'trend-leaders' }}
+        env:
+          TOKEN: ${{ secrets.REVALIDATE_TOKEN }}
+        run: |
+          set +e
+          BODY=$(mktemp)
+          CODE=$(curl -sS -o "$BODY" -w "%{http_code}" --max-time 120 \
+            "https://equityroots.in/api/cron/trend-leaders" \
+            -H "Authorization: Bearer $TOKEN")
+          echo "HTTP $CODE"; cat "$BODY"; echo
+          if [ "$CODE" != "200" ]; then
+            echo "::error::trend-leaders failed (HTTP $CODE) — check REVALIDATE_TOKEN matches Vercel."
+            exit 1
+          fi
+          grep -q '"ok":true' "$BODY" || { echo "::error::trend-leaders returned ok:false"; exit 1; }
