@@ -67,7 +67,7 @@ export default function MomentumClient({
     : null;
 
   return (
-    <div className="theme-indigo mx-auto max-w-[1100px] px-6 py-10">
+    <>
       <header className="max-w-[720px]">
         <div className="eyebrow mb-3 flex items-center gap-2">
           <span
@@ -193,6 +193,6 @@ export default function MomentumClient({
           <li><span className="ink-text font-medium">Delivery</span> is context, not a filter — it routinely collapses on genuine catalyst days as intraday traders pile in.</li>
         </ul>
       </section>
-    </div>
+    </>
   );
 }

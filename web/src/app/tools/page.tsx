@@ -71,13 +71,13 @@ const TOOLS: ToolCard[] = [
   {
     href: "/tools/momentum",
     title: "Momentum Radar",
-    tagline: "Stocks igniting today, with the catalyst",
+    tagline: "Where's the move — today's spike or a new trend",
     body:
-      "The daily volume-ignition scanner: stocks up ≥6% on ≥3× normal volume that broke a fresh 60-day high — the first day of a run, not the aftermath. Each is cross-checked against its news catalyst and fundamental score, so a big move with no catalyst and a weak score stands out as a pump to verify.",
+      "Two daily scanners under one roof. Igniting today: stocks up ≥6% on ≥3× normal volume that broke a fresh 60-day high, each cross-checked against its news catalyst so pumps stand out. Trend Leaders: durable uptrends caught at the start — a 50-day average that just crossed above a rising 200-day (fresh golden cross) near the 52-week high, the FEDERALBNK-at-₹65 signal.",
     useFor: [
       "Catch breakouts early, on the ignition day",
-      "Separate results-driven moves from pumps",
-      "Filter momentum through fundamental quality",
+      "Spot durable trends at initiation, not mid-run",
+      "Filter both through fundamental quality",
     ],
     accent: "var(--color-accent-600)",
   },
@@ -142,9 +142,9 @@ export default function ToolsLanding() {
             — same scorecard, side by side.
           </li>
           <li>
-            <span className="ink-text font-medium">Want today&apos;s breakouts?</span> Use{" "}
+            <span className="ink-text font-medium">Want today&apos;s breakouts or a trend at its start?</span> Use{" "}
             <Link href="/tools/momentum" className="underline">Momentum Radar</Link>{" "}
-            — stocks igniting on volume right now, each with its news catalyst and score so pumps stand out.
+            — two tabs: stocks igniting on volume right now (with catalyst + score), and fresh golden crosses just beginning a durable uptrend.
           </li>
           <li>
             <span className="ink-text font-medium">Looking for post-correction re-entry setups?</span> Use{" "}
