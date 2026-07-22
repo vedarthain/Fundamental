@@ -69,6 +69,19 @@ const TOOLS: ToolCard[] = [
     accent: "var(--color-score-good)",
   },
   {
+    href: "/tools/momentum",
+    title: "Momentum Radar",
+    tagline: "Stocks igniting today, with the catalyst",
+    body:
+      "The daily volume-ignition scanner: stocks up ≥6% on ≥3× normal volume that broke a fresh 60-day high — the first day of a run, not the aftermath. Each is cross-checked against its news catalyst and fundamental score, so a big move with no catalyst and a weak score stands out as a pump to verify.",
+    useFor: [
+      "Catch breakouts early, on the ignition day",
+      "Separate results-driven moves from pumps",
+      "Filter momentum through fundamental quality",
+    ],
+    accent: "var(--color-accent-600)",
+  },
+  {
     href: "/tools/opportunities",
     title: "Correction Opportunities",
     tagline: "Strong businesses temporarily beaten down",
@@ -127,6 +140,11 @@ export default function ToolsLanding() {
             <span className="ink-text font-medium">Narrowed to a few candidates?</span> Use{" "}
             <Link href="/tools/peer-comparison" className="underline">Peer Comparison</Link>{" "}
             — same scorecard, side by side.
+          </li>
+          <li>
+            <span className="ink-text font-medium">Want today&apos;s breakouts?</span> Use{" "}
+            <Link href="/tools/momentum" className="underline">Momentum Radar</Link>{" "}
+            — stocks igniting on volume right now, each with its news catalyst and score so pumps stand out.
           </li>
           <li>
             <span className="ink-text font-medium">Looking for post-correction re-entry setups?</span> Use{" "}

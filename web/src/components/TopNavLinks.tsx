@@ -46,6 +46,7 @@ const LINKS: NavLink[] = [
     label: "Tools",
     submenu: [
       { href: "/tools/screener",          label: "Stock Screener",     description: "Filter by criteria, see ranked matches" },
+      { href: "/tools/momentum",          label: "Momentum Radar",     description: "Stocks igniting today, with the catalyst" },
       { href: "/tools/opportunities",     label: "Opportunities",      description: "Strong fundamentals that have sold off" },
       { href: "/tools/investing-trials",  label: "Investing Trials",   description: "Set your own Q/V/M weights" },
       { href: "/tools/peer-comparison",   label: "Peer Comparison",    description: "Stack 2-5 stocks side by side" },

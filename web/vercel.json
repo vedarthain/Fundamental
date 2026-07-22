@@ -8,6 +8,10 @@
     {
       "path": "/api/cron/portfolio-snapshot",
       "schedule": "30 12 * * 1-5"
+    },
+    {
+      "path": "/api/cron/momentum-signals",
+      "schedule": "0 15 * * 1-5"
     }
   ]
 }
