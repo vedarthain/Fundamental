@@ -110,7 +110,6 @@ export default function MomentumClient({
                   <th className="text-right px-2 py-2.5">Day</th>
                   <th className="text-right px-2 py-2.5" title="Volume ÷ 50-day average volume">Vol ×</th>
                   <th className="text-right px-2 py-2.5">Price</th>
-                  <th className="text-right px-2 py-2.5" title="Delivery % — context only, not a filter">Dlv</th>
                   <th className="text-right px-2 py-2.5" title="Industry Score percentile (fundamental)">Score</th>
                   <th className="text-left  px-3 py-2.5">Catalyst</th>
                 </tr>
@@ -136,9 +135,6 @@ export default function MomentumClient({
                       </td>
                       <td className="px-2 py-2.5 text-right tabular-nums font-semibold">{s.volX.toFixed(1)}×</td>
                       <td className="px-2 py-2.5 text-right tabular-nums">{inr(s.close)}</td>
-                      <td className="px-2 py-2.5 text-right tabular-nums muted-text">
-                        {s.deliveryPct == null ? "—" : `${Math.round(s.deliveryPct)}%`}
-                      </td>
                       <td className="px-2 py-2.5 text-right tabular-nums font-medium" style={{ color: scoreColor(s.compositePct) }}>
                         {s.compositePct == null ? "—" : Math.round(s.compositePct)}
                       </td>
@@ -190,7 +186,6 @@ export default function MomentumClient({
           <li><span className="ink-text font-medium">Vol ×</span> — how many times the day&apos;s volume beat the stock&apos;s own 50-day average. The engine of the signal.</li>
           <li><span className="ink-text font-medium">Score</span> — the platform&apos;s fundamental Industry Score percentile. High move + high score = quality breakout; high move + low score = momentum only.</li>
           <li><span className="ink-text font-medium">Catalyst</span> — the news/result that likely drove the move. <span style={{ color: RED }}>No catalyst + weak score</span> is the pump-shaped case to verify before acting.</li>
-          <li><span className="ink-text font-medium">Delivery</span> is context, not a filter — it routinely collapses on genuine catalyst days as intraday traders pile in.</li>
         </ul>
       </section>
     </>

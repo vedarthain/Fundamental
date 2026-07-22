@@ -6,10 +6,11 @@
  * Kalyan Jewellers (+18% on 11.7x volume, Jul 9) and a full latest-day sweep
  * where every hit was a real results/order catalyst — zero pump-and-dumps.
  *
- * The delivery-% "pump filter" was deliberately DROPPED: it false-flagged all
- * five genuine winners (heavy intraday churn is normal on a catalyst day). The
- * real pump-guard is the CATALYST column — a blank headline is the human flag,
- * never an automatic reject.
+ * The delivery-% signal was removed entirely: as a "pump filter" it false-
+ * flagged all five genuine winners (heavy intraday churn is normal on a
+ * catalyst day), so it was never a filter — only a display column — and the
+ * prod golden DB doesn't even carry delivery_pct. The real pump-guard is the
+ * CATALYST column: a blank headline is the human flag, never an auto-reject.
  *
  * Two-DB shape (mirrors portfolio.ts): the price screen runs on `golden`, then
  * fundamental rank + catalyst enrichment come from `app`, merged in JS.
@@ -21,7 +22,6 @@ export type MomentumSignal = {
   close: number;
   retPct: number;
   volX: number;
-  deliveryPct: number | null;
   newHigh: boolean;
   marketCapCr: number | null;
   compositePct: number | null;
@@ -46,7 +46,6 @@ type GoldenRow = {
   close: number;
   ret_pct: number;
   vol_x: number;
-  delivery_pct: number | null;
   new_high: boolean;
 };
 
@@ -66,13 +65,13 @@ async function screenGolden(): Promise<{ snapDate: string; rows: GoldenRow[] }> 
   // and 50-day avg-volume windows with margin, cheaply.
   const rows = await golden<GoldenRow[]>`
     WITH r AS (
-      SELECT symbol, date, close, volume, high, delivery_pct,
+      SELECT symbol, date, close, volume, high,
              close / NULLIF(LAG(close) OVER (PARTITION BY symbol ORDER BY date), 0) - 1 AS ret1
       FROM golden.price_history_1d
       WHERE interval = '1d' AND date > (${snapDate}::date - 120)
     ),
     b AS (
-      SELECT symbol, date, close, volume, ret1, delivery_pct,
+      SELECT symbol, date, close, volume, ret1,
              AVG(volume) OVER (PARTITION BY symbol ORDER BY date ROWS BETWEEN 50 PRECEDING AND 1 PRECEDING) AS avg_vol50,
              MAX(high)   OVER (PARTITION BY symbol ORDER BY date ROWS BETWEEN 60 PRECEDING AND 1 PRECEDING) AS hi60
       FROM r
@@ -81,7 +80,6 @@ async function screenGolden(): Promise<{ snapDate: string; rows: GoldenRow[] }> 
            close::float8                                     AS close,
            (ret1 * 100)::float8                              AS ret_pct,
            (volume / NULLIF(avg_vol50, 0))::float8           AS vol_x,
-           delivery_pct::float8                              AS delivery_pct,
            (close > hi60)                                    AS new_high
     FROM b
     WHERE date = ${snapDate}::date
@@ -146,7 +144,6 @@ async function enrich(snapDate: string, rows: GoldenRow[]): Promise<MomentumSign
       close: r.close,
       retPct: r.ret_pct,
       volX: r.vol_x,
-      deliveryPct: r.delivery_pct,
       newHigh: r.new_high,
       marketCapCr: c?.market_cap_cr ?? null,
       compositePct: c?.composite_pct ?? null,
@@ -175,11 +172,11 @@ export async function persistMomentumSignals(snapDate: string, signals: Momentum
     for (const s of signals) {
       await tx`
         INSERT INTO app.momentum_signal
-          (snap_date, symbol, close, ret_pct, vol_x, delivery_pct, new_high,
+          (snap_date, symbol, close, ret_pct, vol_x, new_high,
            market_cap_cr, composite_pct, quality_pct, momentum_pct, is_scored,
            catalyst_title, catalyst_url, catalyst_source, catalyst_at)
         VALUES
-          (${snapDate}, ${s.symbol}, ${s.close}, ${s.retPct}, ${s.volX}, ${s.deliveryPct}, ${s.newHigh},
+          (${snapDate}, ${s.symbol}, ${s.close}, ${s.retPct}, ${s.volX}, ${s.newHigh},
            ${s.marketCapCr}, ${s.compositePct}, ${s.qualityPct}, ${s.momentumPct}, ${s.isScored},
            ${s.catalystTitle}, ${s.catalystUrl}, ${s.catalystSource}, ${s.catalystAt})
       `;
@@ -202,7 +199,6 @@ export async function loadLatestMomentum(): Promise<{ snapDate: string | null; s
            close::float8         AS close,
            ret_pct::float8       AS "retPct",
            vol_x::float8         AS "volX",
-           delivery_pct::float8  AS "deliveryPct",
            new_high,
            market_cap_cr::float8 AS "marketCapCr",
            composite_pct::float8 AS "compositePct",
@@ -222,7 +218,6 @@ export async function loadLatestMomentum(): Promise<{ snapDate: string | null; s
     close: r.close,
     retPct: r.retPct,
     volX: r.volX,
-    deliveryPct: r.deliveryPct,
     newHigh: r.new_high,
     marketCapCr: r.marketCapCr,
     compositePct: r.compositePct,
