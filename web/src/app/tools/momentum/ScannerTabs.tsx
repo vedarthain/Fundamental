@@ -108,29 +108,39 @@ export default function ScannerTabs({
           </nav>
 
           <div className="mt-5 pt-4 border-t hairline px-1">
-            <button
-              type="button"
-              role="switch"
-              aria-checked={n500Only}
-              onClick={() => setN500Only((v) => !v)}
-              className="inline-flex items-center gap-2 text-[13px] font-medium transition-colors"
-              style={{ color: n500Only ? "var(--color-accent-700)" : "var(--color-muted)" }}
-              title="Show only NIFTY 500 constituents"
+            <div className="text-[11px] uppercase tracking-wide muted-text mb-2">Universe</div>
+            <div
+              className="inline-flex items-center gap-1 rounded-lg p-1 border hairline"
+              role="group"
+              aria-label="Universe scope"
             >
-              <span
-                className="relative inline-block h-[18px] w-[32px] rounded-full transition-colors"
-                style={{ background: n500Only ? "var(--color-accent-600)" : "var(--color-border)" }}
-              >
-                <span
-                  className="absolute top-[2px] h-[14px] w-[14px] rounded-full bg-white transition-all"
-                  style={{ left: n500Only ? "16px" : "2px" }}
-                />
-              </span>
-              NIFTY 500 only
-            </button>
+              {([
+                { on: false, label: "All NSE" },
+                { on: true, label: "NIFTY 500" },
+              ] as const).map((opt) => {
+                const active = n500Only === opt.on;
+                return (
+                  <button
+                    key={opt.label}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => setN500Only(opt.on)}
+                    className="px-3 py-1.5 rounded-md text-[12.5px] font-medium transition-colors"
+                    style={
+                      active
+                        ? { background: "var(--color-accent-600)", color: "#fff" }
+                        : { color: "var(--color-muted)" }
+                    }
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
             <p className="text-[11.5px] muted-text mt-2 leading-[1.5]">
-              Narrows every scanner to large/mid-cap index names. Off by default — the small-cap
-              tail is where these signals earn their edge.
+              <strong>All NSE</strong> is the default — the small-cap tail is where these signals
+              earn their edge. <strong>NIFTY 500</strong> narrows every scanner to large/mid-cap
+              index names.
             </p>
           </div>
         </aside>
