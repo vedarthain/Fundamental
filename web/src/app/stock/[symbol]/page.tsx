@@ -27,6 +27,19 @@ import { AlertTriangle } from "lucide-react";
 // previous setting caused up to 4,000 DB wakes/day from ISR alone.
 export const revalidate = 21600;
 
+// Next.js delivers dynamic route params URL-ENCODED — a symbol like "M&MFIN"
+// (Mahindra & Mahindra Financial) arrives as "M%26MFIN". Querying that literal
+// against app.universe never matches, so the page 404s. Decode once here so
+// '&'-bearing symbols (M&M, M&MFIN, …) resolve. Guarded against malformed
+// escapes so a stray '%' can't throw.
+function decodeSymbolParam(raw: string): string {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
 type ShareholdingRow = {
   period_end: string;
   pledge_pct?: number | null;
@@ -114,7 +127,7 @@ export async function generateMetadata(
   { params }: { params: Promise<{ symbol: string }> },
 ): Promise<Metadata> {
   const { symbol } = await params;
-  const upper = symbol.toUpperCase();
+  const upper = decodeSymbolParam(symbol).toUpperCase();
   const rows = await sql<{
     company_name: string; industry_name: string; sector_name: string;
     listing_date: string | null; years_of_data: number | null;
@@ -442,7 +455,8 @@ export default async function StockPage({
 }: {
   params: Promise<{ symbol: string }>;
 }) {
-  const { symbol } = await params;
+  const { symbol: rawSymbol } = await params;
+  const symbol = decodeSymbolParam(rawSymbol);
   const [data, persistence] = await Promise.all([
     loadStock(symbol),
     loadPersistenceForSymbol(symbol),
