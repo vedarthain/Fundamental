@@ -78,7 +78,7 @@ export default function MomentumClient({
           </span>
           Daily scanner
         </div>
-        <h1 className="font-display text-[36px] tracking-tight leading-tight">Momentum Radar</h1>
+        <h1 className="font-display text-[36px] tracking-tight leading-tight">Scanner</h1>
         <p className="muted-text mt-3 text-[15px] leading-[1.55]">
           Stocks igniting today — a <strong>≥6% up-day on ≥3× normal volume</strong> that broke a{" "}
           <strong>fresh 60-day high</strong>. Each is cross-checked against its news catalyst and

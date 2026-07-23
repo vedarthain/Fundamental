@@ -70,7 +70,7 @@ const TOOLS: ToolCard[] = [
   },
   {
     href: "/tools/momentum",
-    title: "Momentum Radar",
+    title: "Scanner",
     tagline: "Where's the move — today's spike or a new trend",
     body:
       "Two daily scanners under one roof. Igniting today: stocks up ≥6% on ≥3× normal volume that broke a fresh 60-day high, each cross-checked against its news catalyst so pumps stand out. Trend Leaders: durable uptrends caught at the start — a 50-day average that just crossed above a rising 200-day (fresh golden cross) near the 52-week high, the FEDERALBNK-at-₹65 signal.",
@@ -143,7 +143,7 @@ export default function ToolsLanding() {
           </li>
           <li>
             <span className="ink-text font-medium">Want today&apos;s breakouts or a trend at its start?</span> Use{" "}
-            <Link href="/tools/momentum" className="underline">Momentum Radar</Link>{" "}
+            <Link href="/tools/momentum" className="underline">Scanner</Link>{" "}
             — two tabs: stocks igniting on volume right now (with catalyst + score), and fresh golden crosses just beginning a durable uptrend.
           </li>
           <li>
