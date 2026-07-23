@@ -41,6 +41,7 @@ on:
           - both
           - momentum
           - trend-leaders
+          - support-floor
 
 concurrency:
   group: momentum-scanner
@@ -84,3 +85,20 @@ jobs:
             exit 1
           fi
           grep -q '"ok":true' "$BODY" || { echo "::error::trend-leaders returned ok:false"; exit 1; }
+
+      - name: At Support (multi-year tested floor)
+        if: ${{ github.event_name == 'schedule' || github.event.inputs.which == 'both' || github.event.inputs.which == 'support-floor' }}
+        env:
+          TOKEN: ${{ secrets.REVALIDATE_TOKEN }}
+        run: |
+          set +e
+          BODY=$(mktemp)
+          CODE=$(curl -sS -o "$BODY" -w "%{http_code}" --max-time 120 \
+            "https://equityroots.in/api/cron/support-floor" \
+            -H "Authorization: Bearer $TOKEN")
+          echo "HTTP $CODE"; cat "$BODY"; echo
+          if [ "$CODE" != "200" ]; then
+            echo "::error::support-floor failed (HTTP $CODE) — check REVALIDATE_TOKEN matches Vercel."
+            exit 1
+          fi
+          grep -q '"ok":true' "$BODY" || { echo "::error::support-floor returned ok:false"; exit 1; }

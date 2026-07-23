@@ -14,22 +14,28 @@
 import { useMemo, useState } from "react";
 import type { MomentumSignal } from "@/lib/momentum";
 import type { TrendLeaderSignal } from "@/lib/trendLeaders";
+import type { SupportFloorSignal } from "@/lib/supportFloor";
 import MomentumClient from "./MomentumClient";
 import TrendLeadersClient from "./TrendLeadersClient";
+import SupportFloorClient from "./SupportFloorClient";
 
-type Tab = "igniting" | "trend";
+type Tab = "igniting" | "trend" | "floor";
 
 export default function ScannerTabs({
   momentumSnapDate,
   momentumSignals,
   trendSnapDate,
   trendSignals,
+  floorSnapDate,
+  floorSignals,
   nifty500,
 }: {
   momentumSnapDate: string | null;
   momentumSignals: MomentumSignal[];
   trendSnapDate: string | null;
   trendSignals: TrendLeaderSignal[];
+  floorSnapDate: string | null;
+  floorSignals: SupportFloorSignal[];
   nifty500: string[];
 }) {
   const [tab, setTab] = useState<Tab>("igniting");
@@ -41,10 +47,12 @@ export default function ScannerTabs({
   const n500 = useMemo(() => new Set(nifty500), [nifty500]);
   const momentum = n500Only ? momentumSignals.filter((s) => n500.has(s.symbol)) : momentumSignals;
   const trend = n500Only ? trendSignals.filter((s) => n500.has(s.symbol)) : trendSignals;
+  const floor = n500Only ? floorSignals.filter((s) => n500.has(s.symbol)) : floorSignals;
 
   const tabs: { id: Tab; label: string; count: number | null }[] = [
     { id: "igniting", label: "Igniting today", count: momentum.length },
     { id: "trend", label: "Trend Leaders", count: trend.length },
+    { id: "floor", label: "At Support", count: floor.length },
   ];
 
   return (
@@ -107,6 +115,9 @@ export default function ScannerTabs({
       )}
       {tab === "trend" && (
         <TrendLeadersClient snapDate={trendSnapDate} signals={trend} />
+      )}
+      {tab === "floor" && (
+        <SupportFloorClient snapDate={floorSnapDate} signals={floor} />
       )}
     </div>
   );
