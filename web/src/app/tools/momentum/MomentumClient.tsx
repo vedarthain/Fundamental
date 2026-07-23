@@ -12,6 +12,7 @@
 
 import Link from "next/link";
 import type { MomentumSignal } from "@/lib/momentum";
+import { Pager, usePager } from "./Pager";
 
 const GREEN = "var(--color-delta-up, #0a0)";
 const RED = "var(--color-delta-down, #b00)";
@@ -66,6 +67,8 @@ export default function MomentumClient({
     ? new Date(snapDate).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "long", year: "numeric" })
     : null;
 
+  const pager = usePager(signals);
+
   return (
     <>
       <header className="max-w-[720px]">
@@ -78,13 +81,7 @@ export default function MomentumClient({
           </span>
           Daily scanner
         </div>
-        <h1 className="font-display text-[36px] tracking-tight leading-tight">Scanner</h1>
-        <p className="muted-text mt-3 text-[15px] leading-[1.55]">
-          Stocks igniting today — a <strong>≥6% up-day on ≥3× normal volume</strong> that broke a{" "}
-          <strong>fresh 60-day high</strong>. Each is cross-checked against its news catalyst and
-          fundamental score. A big move with <em>no catalyst and a weak score</em> is the
-          pump-shaped thing to be wary of — it&apos;s shown, not hidden.
-        </p>
+        <h1 className="font-display text-[36px] tracking-tight leading-tight">Igniting today</h1>
         {dateLabel && (
           <p className="mt-2 text-[12.5px] muted-text">
             Latest scan · <span className="ink-text font-medium">{dateLabel}</span> · {signals.length} ignitions
@@ -115,7 +112,7 @@ export default function MomentumClient({
                 </tr>
               </thead>
               <tbody>
-                {signals.map((s) => {
+                {pager.pageItems.map((s) => {
                   const suspicious = !s.catalystTitle && (s.compositePct == null || s.compositePct < 40);
                   return (
                     <tr key={s.symbol} className="border-b hairline align-top hover:bg-[var(--color-paper)] transition-colors">
@@ -177,11 +174,21 @@ export default function MomentumClient({
               </tbody>
             </table>
           </div>
+          <div className="px-3 pb-3">
+            <Pager {...pager} noun="ignitions" />
+          </div>
         </div>
       )}
 
       <section className="mt-8 card p-5 max-w-[820px]">
-        <div className="text-[11px] uppercase tracking-wide muted-text mb-2">How to read this</div>
+        <div className="text-[11px] uppercase tracking-wide muted-text mb-2">About this scanner</div>
+        <p className="text-[13.5px] leading-[1.55]">
+          Stocks igniting today — a <strong>≥6% up-day on ≥3× normal volume</strong> that broke a{" "}
+          <strong>fresh 60-day high</strong>. Each is cross-checked against its news catalyst and
+          fundamental score. A big move with <em>no catalyst and a weak score</em> is the
+          pump-shaped thing to be wary of — it&apos;s shown, not hidden.
+        </p>
+        <div className="text-[11px] uppercase tracking-wide muted-text mt-4 mb-2">How to read this</div>
         <ul className="space-y-1.5 text-[13.5px] leading-[1.55]">
           <li><span className="ink-text font-medium">Vol ×</span> — how many times the day&apos;s volume beat the stock&apos;s own 50-day average. The engine of the signal.</li>
           <li><span className="ink-text font-medium">Score</span> — the platform&apos;s fundamental Industry Score percentile. High move + high score = quality breakout; high move + low score = momentum only.</li>

@@ -13,6 +13,7 @@
 
 import Link from "next/link";
 import type { SupportFloorSignal } from "@/lib/supportFloor";
+import { Pager, usePager } from "./Pager";
 
 const GREEN = "var(--color-delta-up, #0a0)";
 const RED = "var(--color-delta-down, #b00)";
@@ -63,6 +64,8 @@ export default function SupportFloorClient({
     ? new Date(snapDate).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "long", year: "numeric" })
     : null;
 
+  const pager = usePager(signals);
+
   return (
     <>
       <header className="max-w-[720px]">
@@ -76,14 +79,6 @@ export default function SupportFloorClient({
           Daily scanner
         </div>
         <h1 className="font-display text-[36px] tracking-tight leading-tight">At Support</h1>
-        <p className="muted-text mt-3 text-[15px] leading-[1.55]">
-          Stocks sitting on a <strong>multi-year floor they&apos;ve bounced off before</strong>: a
-          price band tested <strong>≥3 times over 13+ months</strong>, with price now within{" "}
-          <strong>~12% above it</strong>. This is the opposite of a breakout — these names are near
-          their <em>lows</em>. It finds <strong>location, not direction</strong>: a tested floor can
-          bounce or break. The fundamental score is the real filter — a quality name at a floor is
-          interesting; a weak one is a falling knife.
-        </p>
         {dateLabel && (
           <p className="mt-2 text-[12.5px] muted-text">
             Latest scan · <span className="ink-text font-medium">{dateLabel}</span> · {signals.length} at support
@@ -115,7 +110,7 @@ export default function SupportFloorClient({
                 </tr>
               </thead>
               <tbody>
-                {signals.map((s) => {
+                {pager.pageItems.map((s) => {
                   const heavilyTested = s.nTouch >= 6;
                   return (
                     <tr key={s.symbol} className="border-b hairline align-top hover:bg-[var(--color-paper)] transition-colors">
@@ -146,11 +141,23 @@ export default function SupportFloorClient({
               </tbody>
             </table>
           </div>
+          <div className="px-3 pb-3">
+            <Pager {...pager} noun="at support" />
+          </div>
         </div>
       )}
 
       <section className="mt-8 card p-5 max-w-[820px]">
-        <div className="text-[11px] uppercase tracking-wide muted-text mb-2">How to read this</div>
+        <div className="text-[11px] uppercase tracking-wide muted-text mb-2">About this scanner</div>
+        <p className="text-[13.5px] leading-[1.55]">
+          Stocks sitting on a <strong>multi-year floor they&apos;ve bounced off before</strong>: a
+          price band tested <strong>≥3 times over 13+ months</strong>, with price now within{" "}
+          <strong>~12% above it</strong>. This is the opposite of a breakout — these names are near
+          their <em>lows</em>. It finds <strong>location, not direction</strong>: a tested floor can
+          bounce or break. The fundamental score is the real filter — a quality name at a floor is
+          interesting; a weak one is a falling knife.
+        </p>
+        <div className="text-[11px] uppercase tracking-wide muted-text mt-4 mb-2">How to read this</div>
         <ul className="space-y-1.5 text-[13.5px] leading-[1.55]">
           <li><span className="ink-text font-medium">Floor</span> — a price the stock has fallen to and bounced from repeatedly. &ldquo;Above&rdquo; is how close today&apos;s price sits to it; near-zero means it&apos;s right on the floor now.</li>
           <li><span className="ink-text font-medium">Tests</span> — how many times the floor held. <span style={{ color: RED }}>More is a warning, not a virtue</span> — every retest spends buyers, so a floor tested many times is closer to breaking.</li>

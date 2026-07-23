@@ -11,6 +11,7 @@
 
 import Link from "next/link";
 import type { TrendLeaderSignal } from "@/lib/trendLeaders";
+import { Pager, usePager } from "./Pager";
 
 const GREEN = "var(--color-delta-up, #0a0)";
 const RED = "var(--color-delta-down, #b00)";
@@ -65,6 +66,8 @@ export default function TrendLeadersClient({
     ? new Date(snapDate).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "long", year: "numeric" })
     : null;
 
+  const pager = usePager(signals);
+
   return (
     <>
       <header className="max-w-[720px]">
@@ -78,14 +81,6 @@ export default function TrendLeadersClient({
           Daily scanner
         </div>
         <h1 className="font-display text-[36px] tracking-tight leading-tight">Trend Leaders</h1>
-        <p className="muted-text mt-3 text-[15px] leading-[1.55]">
-          Durable uptrends caught <strong>at the start</strong>: a stock whose{" "}
-          <strong>50-day average just crossed above a rising 200-day average</strong>{" "}
-          (a fresh golden cross) within the last ~30 sessions, trading near its 52-week
-          high. This is the FEDERALBNK-at-₹65 signal — the <em>initiation</em>, not the
-          crowded &ldquo;already trending&rdquo; stack. The fundamental score sits alongside so a
-          fresh cross on a weak business stands out.
-        </p>
         {dateLabel && (
           <p className="mt-2 text-[12.5px] muted-text">
             Latest scan · <span className="ink-text font-medium">{dateLabel}</span> · {signals.length} fresh crosses
@@ -117,7 +112,7 @@ export default function TrendLeadersClient({
                 </tr>
               </thead>
               <tbody>
-                {signals.map((s) => {
+                {pager.pageItems.map((s) => {
                   const d = daysSince(s.crossDate);
                   return (
                     <tr key={s.symbol} className="border-b hairline align-top hover:bg-[var(--color-paper)] transition-colors">
@@ -149,11 +144,23 @@ export default function TrendLeadersClient({
               </tbody>
             </table>
           </div>
+          <div className="px-3 pb-3">
+            <Pager {...pager} noun="crosses" />
+          </div>
         </div>
       )}
 
       <section className="mt-8 card p-5 max-w-[820px]">
-        <div className="text-[11px] uppercase tracking-wide muted-text mb-2">How to read this</div>
+        <div className="text-[11px] uppercase tracking-wide muted-text mb-2">About this scanner</div>
+        <p className="text-[13.5px] leading-[1.55]">
+          Durable uptrends caught <strong>at the start</strong>: a stock whose{" "}
+          <strong>50-day average just crossed above a rising 200-day average</strong>{" "}
+          (a fresh golden cross) within the last ~30 sessions, trading near its 52-week
+          high. This is the FEDERALBNK-at-₹65 signal — the <em>initiation</em>, not the
+          crowded &ldquo;already trending&rdquo; stack. The fundamental score sits alongside so a
+          fresh cross on a weak business stands out.
+        </p>
+        <div className="text-[11px] uppercase tracking-wide muted-text mt-4 mb-2">How to read this</div>
         <ul className="space-y-1.5 text-[13.5px] leading-[1.55]">
           <li><span className="ink-text font-medium">Cross</span> — the day the 50-day average crossed above the 200-day (a golden cross). Fresher is earlier in the trend; the whole list is within ~30 sessions.</li>
           <li><span className="ink-text font-medium">Since</span> — how far price has already run since the cross. A small number means you&apos;re early; a large one means the easy part may be gone.</li>
