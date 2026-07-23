@@ -34,6 +34,13 @@ type TabDef = {
 
 const TABS: TabDef[] = [
   {
+    key: "about",
+    label: "About",
+    icon: <Info size={14} strokeWidth={1.8} />,
+    stripe: "var(--color-accent-400)",
+    tint: "var(--color-tab-tint-about)",
+  },
+  {
     key: "results",
     label: "Latest result",
     icon: <Activity size={14} strokeWidth={1.8} />,
@@ -41,13 +48,6 @@ const TABS: TabDef[] = [
     // visually links the badge in the header to its expanded content here.
     stripe: "var(--color-delta-up)",
     tint: "var(--color-tab-tint-strength)",
-  },
-  {
-    key: "about",
-    label: "About",
-    icon: <Info size={14} strokeWidth={1.8} />,
-    stripe: "var(--color-accent-400)",
-    tint: "var(--color-tab-tint-about)",
   },
   {
     key: "strengths",
@@ -96,12 +96,12 @@ export function StockPageTabs({
   numbers: ReactNode;
   actions: ReactNode;
 }) {
-  // Default to "results" so visitors land on the freshest signal first.
+  // Default to "about" so every visitor lands on the company overview first.
   // Deep-link support via URL hash (chip/link click from another page or tab):
   //   #latest-result   → Results tab (browser scrolls to the anchor naturally)
   //   #announcements   → Corporate actions tab (Announcements sub-tab is its
   //                      default, so a filings link lands directly on the feed)
-  const [active, setActive] = useState<TabKey>("results");
+  const [active, setActive] = useState<TabKey>("about");
   useEffect(() => {
     if (typeof window === "undefined") return;
     const hash = window.location.hash;

@@ -13,7 +13,7 @@ matching is whole-word, case-insensitive, with a stoplist for ambiguous tokens.
 
 USAGE:
   etl/.venv/bin/python scripts/fetch-news.py
-Runs on a short cron (RSS is free) — keep ~30 days, prune the rest.
+Runs on a short cron (RSS is free) — keep ~6 months, prune the rest.
 """
 from __future__ import annotations
 
@@ -51,7 +51,10 @@ FEEDS: dict[str, str] = {
     "NDTV Profit":        "https://feeds.feedburner.com/ndtvprofit-latest",
 }
 
-KEEP_DAYS = 30
+# Retain ~6 months so the per-stock news tab has real history, not just the
+# last few weeks. RSS only serves recent items, so this window fills forward
+# from the day it's raised — there's no backfill of already-pruned rows.
+KEEP_DAYS = 180
 
 # Drop obvious non-market noise that the broader "latest" feeds (NDTV Profit,
 # CNBC, Moneycontrol) carry — sports, entertainment, lifestyle, viral. Keeps the

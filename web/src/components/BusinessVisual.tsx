@@ -237,7 +237,7 @@ export function BusinessVisual({
   return (
     <RevealOnScroll threshold={0.05}>
       <section
-        className="mt-8 card overflow-hidden max-w-[1100px] relative"
+        className="card overflow-hidden relative"
         style={{
           background:
             "linear-gradient(135deg, var(--color-card) 0%, var(--color-paper) 100%)",

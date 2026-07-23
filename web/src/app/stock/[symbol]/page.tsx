@@ -14,6 +14,7 @@ import {
   qualityNarration, valuationNarration, momentumNarration,
 } from "@/lib/companyNarration";
 import { BusinessVisual } from "@/components/BusinessVisual";
+import { AboutTabs } from "@/components/AboutTabs";
 import { StockPageTabs } from "@/components/StockPageTabs";
 import { StockActionsTabs } from "@/components/StockActionsTabs";
 import { TrendSection, TrendCommentary } from "@/components/TrendSection";
@@ -388,13 +389,15 @@ async function loadStock(symbol: string) {
   type StockNews = { title: string; source: string; url: string; published_at: string | null };
   let stockNews: StockNews[] = [];
   try {
-    stockNews = await sql<StockNews[]>`
+    const rawNews = await sql<StockNews[]>`
       SELECT n.title, n.source, n.url, n.published_at::text
         FROM app.news_stock ns JOIN app.news n ON n.id = ns.news_id
        WHERE ns.symbol = ${upper}
+         AND n.published_at > now() - interval '6 months'
        ORDER BY n.published_at DESC NULLS LAST
-       LIMIT 6
+       LIMIT 80
     `;
+    stockNews = cleanStockNews(rawNews);
   } catch {
     stockNews = [];
   }
@@ -803,22 +806,32 @@ export default async function StockPage({
         }
         about={
           <>
-            {stock.business_summary && (
-              <BusinessVisual
-                companyName={stock.company_name}
-                symbol={stock.symbol}
-                sector={stock.sector}
-                industry={stock.industry}
-                summary={stock.business_summary}
-                website={stock.website}
-                employees={stock.employees}
-                ceoName={stock.ceo_name}
-                ceoTitle={stock.ceo_title}
-                shareholding={shareholding}
-              />
-            )}
-            <div className="mt-8 grid grid-cols-1 lg:grid-cols-[1fr_2fr] gap-6">
-              <AboutCard stock={stock} priceHistoryStart={priceHistory[0]?.date ?? null} />
+            {/* About on the left (with an Overview / Further details sub-tab),
+                price chart pinned top-right. */}
+            <div className="mt-4 grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-6 items-start">
+              <div className="min-w-0">
+                {stock.business_summary ? (
+                  <AboutTabs
+                    overview={
+                      <BusinessVisual
+                        companyName={stock.company_name}
+                        symbol={stock.symbol}
+                        sector={stock.sector}
+                        industry={stock.industry}
+                        summary={stock.business_summary}
+                        website={stock.website}
+                        employees={stock.employees}
+                        ceoName={stock.ceo_name}
+                        ceoTitle={stock.ceo_title}
+                        shareholding={shareholding}
+                      />
+                    }
+                    details={<AboutCard stock={stock} priceHistoryStart={priceHistory[0]?.date ?? null} />}
+                  />
+                ) : (
+                  <AboutCard stock={stock} priceHistoryStart={priceHistory[0]?.date ?? null} />
+                )}
+              </div>
               <PriceChartCard symbol={stock.symbol} history={priceHistory} intraday={intradayTicks} currentPrice={stock.current_price} priceFetchedAt={stock.price_fetched_at} />
             </div>
             {stockNews.length > 0 && (
@@ -1247,6 +1260,36 @@ function AnnouncementsCard({
 
 /* ------------------------------ In the news ------------------------ */
 
+// Listicle / recommendation headlines to drop from a stock's news feed — these
+// are "stocks to watch/buy today" filler, not news about the company. Mirrors
+// DISPLAY_RECO_RE in the /news feed, plus the bare "stocks to watch" form
+// (no leading number) so "Stocks to watch today: X, Y, Z" is caught too.
+const STOCK_RECO_RE =
+  /\b(?:stocks?|shares?)\s+to\s+(?:buy|sell|bet|grab|add|watch)\b|\b\d+\s+(?:stocks?|shares?)\s+to\s+(?:buy|sell|bet|grab|add|watch)\b|\btop\s+(?:stock\s+)?picks?\b|\bstock\s+picks?\b|\bbuy\s+or\s+sell\b|\bshould\s+you\s+(?:buy|sell|invest)\b|\bmulti-?bagger\w*|\bstock\s+tips?\b|\b(?:stock|share)\s+recommendations?\b|\btrade\s+setups?\b|\btrading\s+guide\b|\bintraday\s+(?:pick|tip|trade)\w*|\bbuy\s+this\s+stock\b|\bbest\s+(?:stocks?|shares?)\s+to\b|\bhot\s+stocks?\b|\bstocks?\s+to\s+watch\s+today\b/i;
+
+/** Normalised title key for dedup — case/punctuation/whitespace-insensitive so
+ *  the same story syndicated across sources collapses to one row. */
+function newsKey(title: string): string {
+  return title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+/** Drop recommendation filler, then de-duplicate by normalised title (keeping
+ *  the most recent, since the query is already ordered newest-first). */
+function cleanStockNews(
+  rows: { title: string; source: string; url: string; published_at: string | null }[],
+): { title: string; source: string; url: string; published_at: string | null }[] {
+  const seen = new Set<string>();
+  const out: typeof rows = [];
+  for (const n of rows) {
+    if (!n.title || STOCK_RECO_RE.test(n.title)) continue;
+    const key = newsKey(n.title);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(n);
+  }
+  return out;
+}
+
 function StockNewsCard({
   news,
 }: {
@@ -1255,33 +1298,38 @@ function StockNewsCard({
   const ago = (iso: string | null) => {
     if (!iso) return "";
     const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
-    if (m < 60) return `${Math.max(1, m)}m`;
-    if (m < 1440) return `${Math.floor(m / 60)}h`;
-    return `${Math.floor(m / 1440)}d`;
+    if (m < 60) return `${Math.max(1, m)}m ago`;
+    if (m < 1440) return `${Math.floor(m / 60)}h ago`;
+    const d = Math.floor(m / 1440);
+    if (d < 30) return `${d}d ago`;
+    return `${Math.floor(d / 30)}mo ago`;
   };
+  const shown = news.slice(0, 12);
   return (
-    <section className="card p-5">
-      <div className="flex items-baseline justify-between mb-3">
+    <section className="card p-6">
+      <div className="flex items-baseline justify-between mb-4">
         <div>
           <div className="text-[11px] uppercase tracking-wide muted-text">In the news</div>
-          <div className="font-display text-[18px] mt-0.5">Recent headlines</div>
+          <div className="font-display text-[20px] mt-0.5">Recent headlines</div>
         </div>
-        <span className="text-[10.5px] muted-text">aggregated · headlines link to source</span>
+        <span className="text-[10.5px] muted-text">
+          {news.length} stor{news.length === 1 ? "y" : "ies"} · deduplicated · links open source
+        </span>
       </div>
-      <div className="space-y-2">
-        {news.map((n, i) => (
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1">
+        {shown.map((n, i) => (
           <a
             key={`${n.url}-${i}`}
             href={n.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="block rounded-md px-2 py-1.5 -mx-2 hover:bg-[var(--color-paper)] transition-colors"
+            className="block rounded-md px-2.5 py-2 -mx-2 border-b hairline hover:bg-[var(--color-paper)] transition-colors"
           >
             <div className="flex items-center gap-2 text-[10px] muted-text mb-0.5">
               <span className="font-medium uppercase tracking-wide" style={{ color: "var(--color-accent-700)" }}>{n.source}</span>
-              <span className="tabular-nums">· {ago(n.published_at)} ago</span>
+              <span className="tabular-nums">· {ago(n.published_at)}</span>
             </div>
-            <div className="text-[13px] leading-snug">{n.title}</div>
+            <div className="text-[13.5px] leading-snug">{n.title}</div>
           </a>
         ))}
       </div>
