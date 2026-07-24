@@ -121,6 +121,11 @@ export default function SupportFloorClient({
                         <div className="text-[10.5px] muted-text">
                           {s.isScored ? capLabel(s.marketCapCr) : "unscored"}
                         </div>
+                        {(s.sector || s.industry) && (
+                          <div className="text-[10.5px] muted-text mt-0.5">
+                            {[s.sector, s.industry].filter(Boolean).join(" · ")}
+                          </div>
+                        )}
                       </td>
                       <td className="px-2 py-2.5 text-right tabular-nums">{inr(s.close)}</td>
                       <td className="px-2 py-2.5 text-right tabular-nums muted-text">{inr(s.floorPx)}</td>

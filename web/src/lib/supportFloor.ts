@@ -33,6 +33,10 @@ export type SupportFloorSignal = {
   qualityPct: number | null;
   momentumPct: number | null;
   isScored: boolean;
+  /** Broad sector (meta_cluster.name). */
+  sector: string | null;
+  /** Peer group (cluster.name) — the scoring cluster the stock sits in. */
+  industry: string | null;
 };
 
 // Ruleset knobs.
@@ -126,16 +130,22 @@ async function enrich(rows: GoldenRow[]): Promise<SupportFloorSignal[]> {
       composite_pct: number | null;
       quality_pct: number | null;
       momentum_pct: number | null;
+      sector: string | null;
+      industry: string | null;
     }[]
   >`
-    SELECT symbol,
-           market_cap_cr::float8 AS market_cap_cr,
-           composite_pct::float8 AS composite_pct,
-           quality_pct::float8   AS quality_pct,
-           momentum_pct::float8  AS momentum_pct
-    FROM app.cluster_stocks_panel_cache
-    WHERE snapshot_date = (SELECT max(snapshot_date) FROM app.cluster_stocks_panel_cache)
-      AND symbol = ANY(${symbols})
+    SELECT p.symbol,
+           p.market_cap_cr::float8 AS market_cap_cr,
+           p.composite_pct::float8 AS composite_pct,
+           p.quality_pct::float8   AS quality_pct,
+           p.momentum_pct::float8  AS momentum_pct,
+           mc.name                 AS sector,
+           c.name                  AS industry
+    FROM app.cluster_stocks_panel_cache p
+    LEFT JOIN app.cluster c       ON c.id = p.cluster_id
+    LEFT JOIN app.meta_cluster mc ON mc.id = c.meta_cluster_id
+    WHERE p.snapshot_date = (SELECT max(snapshot_date) FROM app.cluster_stocks_panel_cache)
+      AND p.symbol = ANY(${symbols})
   `;
   const cacheBy = new Map(cache.map((c) => [c.symbol, c]));
   return rows.map((r) => {
@@ -155,6 +165,8 @@ async function enrich(rows: GoldenRow[]): Promise<SupportFloorSignal[]> {
       qualityPct: c?.quality_pct ?? null,
       momentumPct: c?.momentum_pct ?? null,
       isScored: !!c,
+      sector: c?.sector ?? null,
+      industry: c?.industry ?? null,
     };
   });
 }
@@ -226,6 +238,21 @@ export async function loadLatestSupportFloor(): Promise<{ snapDate: string | nul
     WHERE snap_date = ${snapDate}
     ORDER BY pct_above ASC, n_touch DESC
   `;
+
+  // Sector / peer-group joined from the scoring panel at read time.
+  const clsSymbols = rows.map((r) => r.symbol);
+  const cls = clsSymbols.length
+    ? await sql<{ symbol: string; sector: string | null; industry: string | null }[]>`
+        SELECT p.symbol, mc.name AS sector, c.name AS industry
+        FROM app.cluster_stocks_panel_cache p
+        LEFT JOIN app.cluster c       ON c.id = p.cluster_id
+        LEFT JOIN app.meta_cluster mc ON mc.id = c.meta_cluster_id
+        WHERE p.snapshot_date = (SELECT max(snapshot_date) FROM app.cluster_stocks_panel_cache)
+          AND p.symbol = ANY(${clsSymbols})
+      `
+    : [];
+  const clsBy = new Map(cls.map((x) => [x.symbol, x]));
+
   const signals: SupportFloorSignal[] = rows.map((r) => ({
     symbol: r.symbol,
     close: r.close,
@@ -241,6 +268,8 @@ export async function loadLatestSupportFloor(): Promise<{ snapDate: string | nul
     qualityPct: r.qualityPct,
     momentumPct: r.momentumPct,
     isScored: r.is_scored,
+    sector: clsBy.get(r.symbol)?.sector ?? null,
+    industry: clsBy.get(r.symbol)?.industry ?? null,
   }));
   return { snapDate, signals };
 }

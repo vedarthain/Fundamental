@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { loadLatestMomentum } from "@/lib/momentum";
 import { loadLatestTrendLeaders } from "@/lib/trendLeaders";
 import { loadLatestSupportFloor } from "@/lib/supportFloor";
+import { loadRotation } from "@/lib/rotation";
 import { sql } from "@/lib/db";
 import ScannerTabs from "./ScannerTabs";
 
@@ -18,10 +19,11 @@ export const metadata: Metadata = {
 //   Trend Leaders  → app.trend_leader_signal (fresh golden cross, slow burn)
 // Both caches are cron-built post-close; this page just reads the latest of each.
 export default async function MomentumPage() {
-  const [momentum, trend, floor, n500] = await Promise.all([
+  const [momentum, trend, floor, rotation, n500] = await Promise.all([
     loadLatestMomentum(),
     loadLatestTrendLeaders(),
     loadLatestSupportFloor(),
+    loadRotation(),
     sql<{ symbol: string }[]>`SELECT symbol FROM app.index_constituent WHERE index_code = 'NIFTY500'`,
   ]);
   return (
@@ -32,6 +34,7 @@ export default async function MomentumPage() {
       trendSignals={trend.signals}
       floorSnapDate={floor.snapDate}
       floorSignals={floor.signals}
+      rotation={rotation}
       nifty500={n500.map((r) => r.symbol)}
     />
   );

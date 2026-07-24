@@ -15,11 +15,13 @@ import { useMemo, useState } from "react";
 import type { MomentumSignal } from "@/lib/momentum";
 import type { TrendLeaderSignal } from "@/lib/trendLeaders";
 import type { SupportFloorSignal } from "@/lib/supportFloor";
+import type { RotationData } from "@/lib/rotation";
 import MomentumClient from "./MomentumClient";
 import TrendLeadersClient from "./TrendLeadersClient";
 import SupportFloorClient from "./SupportFloorClient";
+import RotationClient from "./RotationClient";
 
-type Tab = "igniting" | "trend" | "floor";
+type Tab = "igniting" | "trend" | "floor" | "sectors" | "peers";
 
 export default function ScannerTabs({
   momentumSnapDate,
@@ -28,6 +30,7 @@ export default function ScannerTabs({
   trendSignals,
   floorSnapDate,
   floorSignals,
+  rotation,
   nifty500,
 }: {
   momentumSnapDate: string | null;
@@ -36,6 +39,7 @@ export default function ScannerTabs({
   trendSignals: TrendLeaderSignal[];
   floorSnapDate: string | null;
   floorSignals: SupportFloorSignal[];
+  rotation: RotationData;
   nifty500: string[];
 }) {
   const [tab, setTab] = useState<Tab>("igniting");
@@ -49,10 +53,17 @@ export default function ScannerTabs({
   const trend = n500Only ? trendSignals.filter((s) => n500.has(s.symbol)) : trendSignals;
   const floor = n500Only ? floorSignals.filter((s) => n500.has(s.symbol)) : floorSignals;
 
+  // Rotation views are pre-aggregated server-side for both universes; the
+  // toggle just picks which cut to show (see loadRotation).
+  const sectors = n500Only ? rotation.sectorsN500 : rotation.sectorsAll;
+  const peers = n500Only ? rotation.peersN500 : rotation.peersAll;
+
   const tabs: { id: Tab; label: string; sub: string; count: number | null }[] = [
     { id: "igniting", label: "Igniting today", sub: "Volume breakouts", count: momentum.length },
     { id: "trend", label: "Trend Leaders", sub: "Fresh golden crosses", count: trend.length },
     { id: "floor", label: "At Support", sub: "Multi-year tested floors", count: floor.length },
+    { id: "peers", label: "Peer groups", sub: "Cluster rotation", count: peers.length },
+    { id: "sectors", label: "Sectors", sub: "Sector rotation", count: sectors.length },
   ];
 
   return (
@@ -155,6 +166,42 @@ export default function ScannerTabs({
           )}
           {tab === "floor" && (
             <SupportFloorClient snapDate={floorSnapDate} signals={floor} />
+          )}
+          {tab === "peers" && (
+            <RotationClient
+              snapDate={rotation.snapDate}
+              rows={peers}
+              title="Peer groups"
+              eyebrow="Rotation map"
+              groupLabel="Peer group"
+              noun="peer groups"
+              intro={
+                <>
+                  The scoring peer clusters (~46 of them) ranked by <strong>median 1-week return</strong>,
+                  so you can see <strong>which pockets are being bid up</strong> and which are being sold.
+                  Peer groups are tighter than sectors — they&apos;re the same clusters the platform
+                  scores stocks within — so this is the granular read on rotation.
+                </>
+              }
+            />
+          )}
+          {tab === "sectors" && (
+            <RotationClient
+              snapDate={rotation.snapDate}
+              rows={sectors}
+              title="Sectors"
+              eyebrow="Rotation map"
+              groupLabel="Sector"
+              noun="sectors"
+              intro={
+                <>
+                  Broad sectors ranked by <strong>median 1-week return</strong> — the top-down
+                  complement to the per-stock scanners. It answers <strong>where the money is
+                  rotating</strong> before you drill into single names. Read breadth alongside the
+                  median: a green sector on thin breadth is a couple of names, not a wave.
+                </>
+              }
+            />
           )}
         </div>
       </div>
