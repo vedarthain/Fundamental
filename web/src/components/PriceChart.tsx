@@ -22,6 +22,28 @@ const RANGE_DAYS: Record<Exclude<Range, "1D" | "ALL">, number> = {
 
 const RANGES: Range[] = ["1D", "1W", "1M", "3M", "1Y", "3Y", "5Y", "10Y", "ALL"];
 
+/** Human label per range — used under the headline return when the visible
+ *  span is under a year (CAGR isn't meaningful there). */
+const RANGE_LABEL: Record<Range, string> = {
+  "1D": "1 day", "1W": "1 week", "1M": "1 month", "3M": "3 months",
+  "1Y": "1 year", "3Y": "3 years", "5Y": "5 years", "10Y": "10 years",
+  "ALL": "all time",
+};
+
+/** Date-span label for the visible data — moves with the selected range.
+ *  ≥2y → year range ("2002–2026"); shorter → "Mon YY – Mon YY". */
+function spanLabel(first: PricePoint | undefined, last: PricePoint | undefined, spanYears: number): string {
+  if (!first || !last) return "—";
+  if (spanYears >= 2) {
+    const a = first.date.slice(0, 4);
+    const b = last.date.slice(0, 4);
+    return a === b ? a : `${a}–${b}`;
+  }
+  const fmt = (d: string) =>
+    new Date(d).toLocaleDateString("en-IN", { month: "short", year: "2-digit" });
+  return `${fmt(first.date)} – ${fmt(last.date)}`;
+}
+
 /** IST calendar date ("YYYY-MM-DD") of a timestamp — used to anchor the 1D
  *  curve on the close of the day before the intraday ticks. */
 function istDayOf(iso: string): string {
@@ -36,8 +58,11 @@ export function PriceChart({
   currentPrice,
   priceFetchedAt,
   prefix = "₹",
+  symbol,
 }: {
   data: PricePoint[];
+  /** Optional identity label shown in the card header (e.g. "3MINDIA"). */
+  symbol?: string;
   /** Today's intraday ticks (oldest-first), used to draw a real 1D curve
    *  instead of a straight yesterday-close → current-price line. */
   intraday?: { ts: string; ltp: number }[];
@@ -101,6 +126,24 @@ export function PriceChart({
   const changeAbs = last != null && first != null ? last - first : null;
   const changePct = changeAbs != null && first ? (changeAbs / first) * 100 : null;
 
+  // Header stats — computed from the VISIBLE range so the identity line, the
+  // headline return and CAGR all move with the selected timeframe (instead of
+  // being pinned to the full 24y history).
+  const spanFirst = filtered[0];
+  const spanLast = filtered[filtered.length - 1];
+  const spanYears =
+    spanFirst && spanLast
+      ? (new Date(spanLast.date).getTime() - new Date(spanFirst.date).getTime()) /
+        (365.25 * 24 * 3600 * 1000)
+      : 0;
+  const periodCagr =
+    changePct != null && spanYears > 1 && spanFirst && spanFirst.close > 0 && spanLast
+      ? (Math.pow(spanLast.close / spanFirst.close, 1 / spanYears) - 1) * 100
+      : null;
+  const subLabel = spanLabel(spanFirst, spanLast, spanYears);
+  const cagrLabel =
+    periodCagr != null ? `${periodCagr.toFixed(1)}% CAGR · ${spanYears.toFixed(0)}y` : RANGE_LABEL[range];
+
   if (data.length === 0) {
     return (
       <div className="h-[260px] flex items-center justify-center muted-text text-[13px]">
@@ -111,7 +154,29 @@ export function PriceChart({
 
   return (
     <div className="w-full">
-      {/* Range tabs + headline stats */}
+      {/* Identity + headline period return — both track the selected range. */}
+      <div className="flex items-start justify-between gap-3 mb-2">
+        <div>
+          <div className="text-[11px] uppercase tracking-wide muted-text">Price history</div>
+          <div className="font-display text-[18px] mt-0.5">
+            {symbol && <>{symbol} · </>}
+            <span className="muted-text">{subLabel}</span>
+          </div>
+        </div>
+        {changePct != null && (
+          <div className="text-right shrink-0">
+            <div
+              className="font-display text-[20px] tabular-nums leading-none"
+              style={{ color: changePct >= 0 ? "var(--color-score-good)" : "var(--color-score-poor)" }}
+            >
+              {changePct >= 0 ? "+" : ""}{changePct.toFixed(changePct >= 100 ? 0 : 2)}%
+            </div>
+            <div className="text-[10px] muted-text mt-1">{cagrLabel}</div>
+          </div>
+        )}
+      </div>
+
+      {/* Current price + absolute change, then range tabs. */}
       <div className="flex flex-wrap items-end justify-between gap-3 mb-3">
         <div>
           {last != null && (
@@ -119,20 +184,15 @@ export function PriceChart({
               <span className="text-[18px] font-medium tabular-nums">
                 {prefix}{last.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
               </span>
-              {changeAbs != null && changePct != null && (
+              {changeAbs != null && (
                 <span
                   className="text-[12px] font-medium tabular-nums"
                   style={{ color: stroke }}
                 >
                   {changeAbs >= 0 ? "+" : ""}
                   {changeAbs.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
-                  {"  "}
-                  ({changePct >= 0 ? "+" : ""}{changePct.toFixed(2)}%)
                 </span>
               )}
-              <span className="text-[10.5px] muted-text uppercase tracking-wide">
-                {range === "1D" ? "1 day" : range === "ALL" ? "all time" : range}
-              </span>
             </div>
           )}
         </div>

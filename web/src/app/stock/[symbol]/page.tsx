@@ -808,7 +808,7 @@ export default async function StockPage({
           <>
             {/* About on the left (with an Overview / Further details sub-tab),
                 price chart pinned top-right. */}
-            <div className="mt-4 grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-6 items-start">
+            <div className="mt-4 grid grid-cols-1 lg:grid-cols-[3fr_2fr] gap-6 items-start">
               <div className="min-w-0">
                 {stock.business_summary ? (
                   <AboutTabs
@@ -1342,53 +1342,12 @@ function StockNewsCard({
 function PriceChartCard({
   symbol, history, intraday, currentPrice, priceFetchedAt,
 }: { symbol: string; history: PricePoint[]; intraday?: { ts: string; ltp: number }[]; currentPrice?: number | null; priceFetchedAt?: string | null }) {
-  const first = history[0];
-  const last = history[history.length - 1];
-  const totalReturn = first && last && first.close > 0
-    ? (last.close / first.close - 1) * 100
-    : null;
-  const years = first
-    ? (Date.now() - new Date(first.date).getTime()) / (365.25 * 24 * 3600 * 1000)
-    : 0;
-  const cagr = totalReturn != null && years > 1
-    ? (Math.pow(last.close / first.close, 1 / years) - 1) * 100
-    : null;
-
+  // Header (identity line + headline return + CAGR) is rendered inside
+  // PriceChart so it can react to the selected timeframe rather than being
+  // pinned to the full history.
   return (
     <section className="card p-5">
-      <div className="flex items-baseline justify-between mb-2">
-        <div>
-          <div className="text-[11px] uppercase tracking-wide muted-text">Price history</div>
-          <div className="font-display text-[18px] mt-0.5">
-            {symbol} ·{" "}
-            <span className="muted-text">
-              monthly close,{" "}
-              {history.length > 0
-                ? first?.date.slice(0, 4) === last?.date.slice(0, 4)
-                  ? first?.date.slice(0, 4)                              // single year: "2026"
-                  : `${first?.date.slice(0, 4)}–${last?.date.slice(0, 4)}`  // range: "2019–2026"
-                : "—"}
-            </span>
-          </div>
-        </div>
-        {totalReturn != null && (
-          <div className="text-right">
-            <div
-              className="font-display text-[20px] tabular-nums leading-none"
-              style={{
-                color: totalReturn >= 0 ? "var(--color-score-good)" : "var(--color-score-poor)",
-              }}
-            >
-              {totalReturn >= 0 ? "+" : ""}
-              {totalReturn.toFixed(0)}%
-            </div>
-            <div className="text-[10px] muted-text mt-1">
-              {cagr != null ? `${cagr.toFixed(1)}% CAGR · ${years.toFixed(0)}y` : "Total return"}
-            </div>
-          </div>
-        )}
-      </div>
-      <PriceChart data={history} intraday={intraday} currentPrice={currentPrice ?? undefined} priceFetchedAt={priceFetchedAt ?? undefined} />
+      <PriceChart symbol={symbol} data={history} intraday={intraday} currentPrice={currentPrice ?? undefined} priceFetchedAt={priceFetchedAt ?? undefined} />
     </section>
   );
 }
