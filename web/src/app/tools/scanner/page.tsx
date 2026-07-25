@@ -3,6 +3,7 @@ import { loadLatestMomentum } from "@/lib/momentum";
 import { loadLatestTrendLeaders } from "@/lib/trendLeaders";
 import { loadLatestSupportFloor } from "@/lib/supportFloor";
 import { loadRotation } from "@/lib/rotation";
+import { loadAllStocks } from "@/lib/allStocks";
 import { sql } from "@/lib/db";
 import ScannerTabs, { type Tab } from "./ScannerTabs";
 
@@ -11,7 +12,7 @@ export const dynamic = "force-dynamic";
 // Defined server-side, NOT imported from the "use client" ScannerTabs module:
 // value exports from a client module become client-reference proxies in a
 // Server Component, so `.includes` would be undefined at runtime.
-const SCANNER_TABS: readonly Tab[] = ["igniting", "trend", "floor", "fallen", "sectors", "peers"];
+const SCANNER_TABS: readonly Tab[] = ["igniting", "trend", "floor", "fallen", "sectors", "peers", "all"];
 
 export const metadata: Metadata = {
   title: "Scanner — EquityRoots",
@@ -37,11 +38,12 @@ export default async function MomentumPage({
   const sp = await searchParams;
   const tabParam = one(sp.tab);
   const initialTab: Tab = SCANNER_TABS.includes(tabParam as Tab) ? (tabParam as Tab) : "igniting";
-  const [momentum, trend, floor, rotation, n500] = await Promise.all([
+  const [momentum, trend, floor, rotation, allStocks, n500] = await Promise.all([
     loadLatestMomentum(one(sp.mDate)),
     loadLatestTrendLeaders(one(sp.tDate)),
     loadLatestSupportFloor(one(sp.fDate)),
     loadRotation(one(sp.rDate)),
+    loadAllStocks(),
     sql<{ symbol: string }[]>`SELECT symbol FROM app.index_constituent WHERE index_code = 'NIFTY500'`,
   ]);
   return (
@@ -56,6 +58,8 @@ export default async function MomentumPage({
       floorSignals={floor.signals}
       floorDates={floor.dates}
       rotation={rotation}
+      allStocksSnapDate={allStocks.snapDate}
+      allStocks={allStocks.rows}
       nifty500={n500.map((r) => r.symbol)}
       initialTab={initialTab}
     />

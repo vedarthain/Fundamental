@@ -16,14 +16,16 @@ import type { MomentumSignal } from "@/lib/momentum";
 import type { TrendLeaderSignal } from "@/lib/trendLeaders";
 import type { SupportFloorSignal } from "@/lib/supportFloor";
 import type { RotationData } from "@/lib/rotation";
+import type { AllStockRow } from "@/lib/allStocks";
 import MomentumClient from "./MomentumClient";
 import TrendLeadersClient from "./TrendLeadersClient";
 import SupportFloorClient from "./SupportFloorClient";
 import RotationClient from "./RotationClient";
 import FallenLeadersClient from "./FallenLeadersClient";
+import AllStocksClient from "./AllStocksClient";
 import ScannerDatePicker from "./ScannerDatePicker";
 
-export type Tab = "igniting" | "trend" | "floor" | "fallen" | "sectors" | "peers";
+export type Tab = "igniting" | "trend" | "floor" | "fallen" | "sectors" | "peers" | "all";
 
 export default function ScannerTabs({
   momentumSnapDate,
@@ -36,6 +38,8 @@ export default function ScannerTabs({
   floorSignals,
   floorDates,
   rotation,
+  allStocksSnapDate,
+  allStocks,
   nifty500,
   initialTab = "igniting",
 }: {
@@ -49,6 +53,8 @@ export default function ScannerTabs({
   floorSignals: SupportFloorSignal[];
   floorDates: string[];
   rotation: RotationData;
+  allStocksSnapDate: string | null;
+  allStocks: AllStockRow[];
   nifty500: string[];
   initialTab?: Tab;
 }) {
@@ -68,6 +74,8 @@ export default function ScannerTabs({
   const sectors = n500Only ? rotation.sectorsN500 : rotation.sectorsAll;
   const peers = n500Only ? rotation.peersN500 : rotation.peersAll;
 
+  const allCount = n500Only ? allStocks.filter((r) => r.is_n500).length : allStocks.length;
+
   const tabs: { id: Tab; label: string; sub: string; count: number | null }[] = [
     { id: "igniting", label: "Igniting today", sub: "Volume breakouts", count: momentum.length },
     { id: "trend", label: "Trend Leaders", sub: "Fresh golden crosses", count: trend.length },
@@ -75,6 +83,7 @@ export default function ScannerTabs({
     { id: "fallen", label: "Fallen Leaders", sub: "Beaten-down quality", count: null },
     { id: "peers", label: "Peer groups", sub: "Cluster rotation", count: peers.length },
     { id: "sectors", label: "Sectors", sub: "Sector rotation", count: sectors.length },
+    { id: "all", label: "All stocks", sub: "Full universe · sortable", count: allCount },
   ];
 
   return (
@@ -191,6 +200,9 @@ export default function ScannerTabs({
             />
           )}
           {tab === "fallen" && <FallenLeadersClient n500Only={n500Only} />}
+          {tab === "all" && (
+            <AllStocksClient snapDate={allStocksSnapDate} rows={allStocks} n500Only={n500Only} />
+          )}
           {tab === "peers" && (
             <RotationClient
               snapDate={rotation.snapDate}

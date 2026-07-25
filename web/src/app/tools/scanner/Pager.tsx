@@ -13,7 +13,7 @@ import { useEffect, useMemo, useState } from "react";
 
 export const PAGE_SIZE = 10;
 
-export function usePager<T>(items: T[]): {
+export function usePager<T>(items: T[], pageSize: number = PAGE_SIZE): {
   page: number;
   setPage: (p: number) => void;
   pageCount: number;
@@ -24,7 +24,7 @@ export function usePager<T>(items: T[]): {
 } {
   const [page, setPage] = useState(1);
   const total = items.length;
-  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
 
   // Reset to page 1 whenever the underlying list changes (e.g. NIFTY 500 filter
   // toggles or a fresh scan loads) so we never strand the viewer on an empty page.
@@ -34,8 +34,8 @@ export function usePager<T>(items: T[]): {
 
   const clamped = Math.min(page, pageCount);
   const pageItems = useMemo(
-    () => items.slice((clamped - 1) * PAGE_SIZE, clamped * PAGE_SIZE),
-    [items, clamped],
+    () => items.slice((clamped - 1) * pageSize, clamped * pageSize),
+    [items, clamped, pageSize],
   );
 
   return {
@@ -43,8 +43,8 @@ export function usePager<T>(items: T[]): {
     setPage,
     pageCount,
     pageItems,
-    rangeStart: total === 0 ? 0 : (clamped - 1) * PAGE_SIZE + 1,
-    rangeEnd: Math.min(clamped * PAGE_SIZE, total),
+    rangeStart: total === 0 ? 0 : (clamped - 1) * pageSize + 1,
+    rangeEnd: Math.min(clamped * pageSize, total),
     total,
   };
 }
@@ -68,7 +68,22 @@ export function Pager({
 }) {
   if (pageCount <= 1) return null;
 
-  const pages = Array.from({ length: pageCount }, (_, i) => i + 1);
+  // Windowed page list: 1 … (page-1) page (page+1) … last. Keeps the control
+  // compact when a table runs to dozens of pages (e.g. the full universe).
+  const pages: (number | "ellipsis")[] = (() => {
+    if (pageCount <= 7) return Array.from({ length: pageCount }, (_, i) => i + 1);
+    const nums = [...new Set([1, page - 1, page, page + 1, pageCount])]
+      .filter((n) => n >= 1 && n <= pageCount)
+      .sort((a, b) => a - b);
+    const out: (number | "ellipsis")[] = [];
+    let prev = 0;
+    for (const n of nums) {
+      if (n - prev > 1) out.push("ellipsis");
+      out.push(n);
+      prev = n;
+    }
+    return out;
+  })();
 
   return (
     <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
@@ -85,25 +100,28 @@ export function Pager({
         >
           ‹ Prev
         </button>
-        {pages.map((p) => {
-          const active = p === page;
-          return (
+        {pages.map((p, i) =>
+          p === "ellipsis" ? (
+            <span key={`e${i}`} className="px-1 text-[12.5px] muted-text select-none">
+              …
+            </span>
+          ) : (
             <button
               key={p}
               type="button"
               onClick={() => setPage(p)}
-              aria-current={active ? "page" : undefined}
+              aria-current={p === page ? "page" : undefined}
               className="min-w-[28px] px-2 py-1 rounded-md text-[12.5px] font-medium tabular-nums transition-colors"
               style={
-                active
+                p === page
                   ? { background: "var(--color-accent-600)", color: "#fff" }
                   : { color: "var(--color-muted)" }
               }
             >
               {p}
             </button>
-          );
-        })}
+          ),
+        )}
         <button
           type="button"
           onClick={() => setPage(page + 1)}
