@@ -37,6 +37,12 @@ export type Instrument = {
   currentValue: number;
   pnl: number;
   pnlPct: number | null;
+  // ── Portfolio discipline overlays (rules, not market data) ──
+  targetPrice: number | null; // avgCost × 1.25 (+25% profit target)
+  targetHit: boolean; // live price ≥ targetPrice
+  firstImported: string | null; // MIN(imported_at) across broker lots (ISO)
+  monthsHeld: number | null; // months since firstImported (import-date proxy)
+  overHoldLimit: boolean; // monthsHeld ≥ 4
   dayChangePct: number | null;
   dayChangeValue: number | null;
   sector: string | null;
@@ -88,6 +94,7 @@ type HoldingRow = {
   broker_ltp: string | null;
   broker_cur_value: string | null;
   broker_day_pct: string | null;
+  imported_at: string | null;
 };
 
 type CacheRow = {
@@ -186,7 +193,7 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
   const holdings = await sql<HoldingRow[]>`
     SELECT broker, raw_symbol, isin, symbol, is_mapped, quantity::text,
            avg_cost::text, broker_ltp::text, broker_cur_value::text,
-           broker_day_pct::text
+           broker_day_pct::text, imported_at::text
       FROM app.portfolio_holding
      WHERE user_id = ${userId}
   `;
@@ -273,6 +280,7 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
     costQty: number; // Σ qty where avgCost known (for blended)
     brokerCurValueSum: number; // Σ broker current value (unmapped fallback)
     brokerDayValueSum: number; // Σ broker day-change value (unmapped fallback)
+    firstImported: number | null; // MIN(imported_at) epoch ms across lots
     lots: BrokerLot[];
   };
   const aggs = new Map<string, Agg>();
@@ -290,6 +298,7 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
         rawName: bareSymbol(h.raw_symbol),
         qty: 0, costSum: 0, costQty: 0,
         brokerCurValueSum: 0, brokerDayValueSum: 0,
+        firstImported: null,
         lots: [],
       };
       aggs.set(key, a);
@@ -307,6 +316,10 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
     if (bcv != null && bdp != null) {
       const prevVal = bcv / (1 + bdp / 100);
       a.brokerDayValueSum += bcv - prevVal;
+    }
+    if (h.imported_at) {
+      const t = Date.parse(h.imported_at);
+      if (!Number.isNaN(t)) a.firstImported = a.firstImported == null ? t : Math.min(a.firstImported, t);
     }
     a.lots.push({
       broker: h.broker,
@@ -354,6 +367,20 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
     const pnl = currentValue - invested;
     const pnlPct = invested > 0 ? Math.round((pnl / invested) * 1000) / 10 : null;
 
+    // +25% profit target off blended avg cost. Only meaningful for mapped
+    // equities where we have a live price to compare against.
+    const targetPrice = blendedAvg != null ? Math.round(blendedAvg * 1.25 * 100) / 100 : null;
+    const targetHit = targetPrice != null && price != null && price >= targetPrice;
+
+    // Holding period ≈ months since first import. NOTE: broker exports carry no
+    // purchase date, and re-importing a broker resets imported_at — so this
+    // measures "tracked since", not true buy date. Honest proxy, flagged in UI.
+    const firstImported = a.firstImported == null ? null : new Date(a.firstImported).toISOString();
+    const monthsHeld = a.firstImported == null
+      ? null
+      : Math.round(((Date.now() - a.firstImported) / (1000 * 60 * 60 * 24 * 30.44)) * 10) / 10;
+    const overHoldLimit = monthsHeld != null && monthsHeld >= 4;
+
     instruments.push({
       key: a.key,
       symbol: a.symbol,
@@ -366,6 +393,11 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
       currentValue: Math.round(currentValue * 100) / 100,
       pnl: Math.round(pnl * 100) / 100,
       pnlPct,
+      targetPrice,
+      targetHit,
+      firstImported,
+      monthsHeld,
+      overHoldLimit,
       dayChangePct,
       dayChangeValue: dayChangeValue == null ? null : Math.round(dayChangeValue * 100) / 100,
       sector: c?.sector ?? null,

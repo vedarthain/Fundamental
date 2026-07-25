@@ -489,11 +489,13 @@ function HoldingsTable({ instruments, totalValue }: { instruments: Instrument[];
               <th className="text-right font-semibold px-2 py-2">Qty</th>
               <th className="text-right font-semibold px-2 py-2">Avg</th>
               <th className="text-right font-semibold px-2 py-2">Price</th>
+              <th className="text-right font-semibold px-2 py-2" title="Profit target: avg cost +25%">Target</th>
               <th className="text-right font-semibold px-2 py-2">Value</th>
               <th className="text-right font-semibold px-2 py-2">Day</th>
               <th className="text-right font-semibold px-2 py-2">P&L</th>
               <th className="text-center font-semibold px-2 py-2">Q/V/M</th>
               <th className="text-center font-semibold px-2 py-2">Rank</th>
+              <th className="text-right font-semibold px-2 py-2" title="Time held (approx — measured from import date, not actual purchase date). Flags at 4 months.">Held</th>
               <th className="text-right font-semibold px-3 py-2">Wt</th>
             </tr>
           </thead>
@@ -523,7 +525,7 @@ function HoldingsTable({ instruments, totalValue }: { instruments: Instrument[];
                           <span className="muted-text font-normal">({g.instruments.length})</span>
                         </span>
                       </td>
-                      <td colSpan={3} />
+                      <td colSpan={4} />
                       <td className="px-2 py-1.5 text-right tabular-nums font-semibold">{inr(g.value)}</td>
                       <td className="px-2 py-1.5 text-right tabular-nums" style={{ color: up(g.dayChange) ? GREEN : RED }}>
                         {signed(g.dayChange)}
@@ -531,7 +533,7 @@ function HoldingsTable({ instruments, totalValue }: { instruments: Instrument[];
                       <td className="px-2 py-1.5 text-right tabular-nums font-semibold" style={{ color: up(g.pnl) ? GREEN : RED }}>
                         {signed(g.pnl)}
                       </td>
-                      <td colSpan={2} />
+                      <td colSpan={3} />
                       <td className="px-3 py-1.5 text-right tabular-nums muted-text">{gWt}%</td>
                     </tr>
                   )}
@@ -590,6 +592,20 @@ function FragmentRow({
         <td className="px-2 py-2 text-right tabular-nums">{ins.quantity}</td>
         <td className="px-2 py-2 text-right tabular-nums">{ins.avgCost != null ? ins.avgCost.toLocaleString("en-IN") : "—"}</td>
         <td className="px-2 py-2 text-right tabular-nums">{ins.price != null ? ins.price.toLocaleString("en-IN") : "—"}</td>
+        <td
+          className="px-2 py-2 text-right tabular-nums"
+          style={{ color: ins.targetHit ? GREEN : undefined, fontWeight: ins.targetHit ? 600 : undefined }}
+          title={ins.targetPrice != null ? `Profit target +25% off avg cost${ins.targetHit ? " — reached" : ""}` : undefined}
+        >
+          {ins.targetPrice != null ? (
+            <span className="inline-flex items-center justify-end gap-1">
+              {ins.targetHit && <span aria-hidden>✓</span>}
+              {ins.targetPrice.toLocaleString("en-IN")}
+            </span>
+          ) : (
+            "—"
+          )}
+        </td>
         <td className="px-2 py-2 text-right tabular-nums font-medium">{inr(ins.currentValue)}</td>
         <td className="px-2 py-2 text-right tabular-nums" style={{ color: ins.dayChangePct == null ? undefined : up(ins.dayChangePct) ? GREEN : RED }}>
           {pct(ins.dayChangePct)}
@@ -614,11 +630,22 @@ function FragmentRow({
             <span className="muted-text">—</span>
           )}
         </td>
+        <td
+          className="px-2 py-2 text-right tabular-nums"
+          style={{ color: ins.overHoldLimit ? RED : "var(--color-muted)" }}
+          title={
+            ins.monthsHeld != null
+              ? `~${ins.monthsHeld} months since first tracked (import date, not actual buy date)${ins.overHoldLimit ? " — past 4-month limit" : ""}`
+              : "No import date on record"
+          }
+        >
+          {ins.monthsHeld != null ? `${ins.monthsHeld}m` : "—"}
+        </td>
         <td className="px-3 py-2 text-right tabular-nums muted-text">{wt}%</td>
       </tr>
       {isOpen && ins.brokers.length > 1 && (
         <tr className="border-b hairline" style={{ background: "var(--color-paper)" }}>
-          <td colSpan={10} className="px-3 py-2">
+          <td colSpan={12} className="px-3 py-2">
             <div className="flex flex-wrap gap-x-6 gap-y-1 text-[11.5px] pl-6">
               {ins.brokers.map((b, i) => (
                 <span key={i} className="tabular-nums">
