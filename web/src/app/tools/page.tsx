@@ -71,28 +71,15 @@ const TOOLS: ToolCard[] = [
   {
     href: "/tools/scanner",
     title: "Scanner",
-    tagline: "Where's the move — today's spike or a new trend",
+    tagline: "Where's the move — spikes, trends, floors, fallen quality & rotation",
     body:
-      "Two daily scanners under one roof. Igniting today: stocks up ≥6% on ≥3× normal volume that broke a fresh 60-day high, each cross-checked against its news catalyst so pumps stand out. Trend Leaders: durable uptrends caught at the start — a 50-day average that just crossed above a rising 200-day (fresh golden cross) near the 52-week high, the FEDERALBNK-at-₹65 signal.",
+      "Every daily scanner under one roof. Igniting today: stocks up ≥6% on ≥3× normal volume that broke a fresh 60-day high, cross-checked against news so pumps stand out. Trend Leaders: durable uptrends caught at the start (fresh golden cross near the 52-week high). At Support: names sitting on a multi-year tested floor. Fallen Leaders: quality businesses temporarily beaten down. Plus sector and peer-group rotation maps.",
     useFor: [
       "Catch breakouts early, on the ignition day",
       "Spot durable trends at initiation, not mid-run",
-      "Filter both through fundamental quality",
+      "Find beaten-down quality and see where money is rotating",
     ],
     accent: "var(--color-accent-600)",
-  },
-  {
-    href: "/tools/scanner?tab=fallen",
-    title: "Fallen Leaders",
-    tagline: "Strong businesses temporarily beaten down",
-    body:
-      "Quality stocks the market has been selling off — high Quality score confirms fundamentals are intact, high Valuation score means they are now cheap vs peers, low Momentum score is the correction signal. Filter by correction depth (6M vs market, 200d EMA trend) and growth rate to find genuine re-entry setups.",
-    useFor: [
-      "Find quality stocks at post-correction prices",
-      "Filter by correction depth + profit growth",
-      "Spot early recovery signals (EMA re-stack)",
-    ],
-    accent: "#dc2626",
   },
 ];
 
@@ -142,14 +129,9 @@ export default function ToolsLanding() {
             — same scorecard, side by side.
           </li>
           <li>
-            <span className="ink-text font-medium">Want today&apos;s breakouts or a trend at its start?</span> Use{" "}
+            <span className="ink-text font-medium">Want today&apos;s breakouts, a trend at its start, or beaten-down quality?</span> Use{" "}
             <Link href="/tools/scanner" className="underline">Scanner</Link>{" "}
-            — two tabs: stocks igniting on volume right now (with catalyst + score), and fresh golden crosses just beginning a durable uptrend.
-          </li>
-          <li>
-            <span className="ink-text font-medium">Looking for post-correction re-entry setups?</span> Use{" "}
-            <Link href="/tools/scanner?tab=fallen" className="underline">Fallen Leaders</Link>{" "}
-            — quality stocks that have corrected, with depth and growth metrics to distinguish setups from traps.
+            — tabs for stocks igniting on volume now (with catalyst + score), fresh golden crosses, stocks at multi-year support, Fallen Leaders (corrected quality), and sector/peer rotation.
           </li>
         </ul>
       </section>
