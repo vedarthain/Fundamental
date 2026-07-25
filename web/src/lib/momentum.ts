@@ -239,7 +239,7 @@ export async function persistMomentumSignals(snapDate: string, signals: Momentum
 }
 
 /**
- * Read a stored snapshot for the /tools/momentum page. Pass `targetDate` to
+ * Read a stored snapshot for the /tools/scanner page. Pass `targetDate` to
  * browse history (the scanner keeps ~1 year of daily snapshots); omit it for
  * the latest. Returns the list of available dates so the page can render a
  * date-picker. An invalid/absent targetDate falls back to the latest.

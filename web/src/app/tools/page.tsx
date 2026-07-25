@@ -69,7 +69,7 @@ const TOOLS: ToolCard[] = [
     accent: "var(--color-score-good)",
   },
   {
-    href: "/tools/momentum",
+    href: "/tools/scanner",
     title: "Scanner",
     tagline: "Where's the move — today's spike or a new trend",
     body:
@@ -82,7 +82,7 @@ const TOOLS: ToolCard[] = [
     accent: "var(--color-accent-600)",
   },
   {
-    href: "/tools/momentum?tab=fallen",
+    href: "/tools/scanner?tab=fallen",
     title: "Fallen Leaders",
     tagline: "Strong businesses temporarily beaten down",
     body:
@@ -143,12 +143,12 @@ export default function ToolsLanding() {
           </li>
           <li>
             <span className="ink-text font-medium">Want today&apos;s breakouts or a trend at its start?</span> Use{" "}
-            <Link href="/tools/momentum" className="underline">Scanner</Link>{" "}
+            <Link href="/tools/scanner" className="underline">Scanner</Link>{" "}
             — two tabs: stocks igniting on volume right now (with catalyst + score), and fresh golden crosses just beginning a durable uptrend.
           </li>
           <li>
             <span className="ink-text font-medium">Looking for post-correction re-entry setups?</span> Use{" "}
-            <Link href="/tools/momentum?tab=fallen" className="underline">Fallen Leaders</Link>{" "}
+            <Link href="/tools/scanner?tab=fallen" className="underline">Fallen Leaders</Link>{" "}
             — quality stocks that have corrected, with depth and growth metrics to distinguish setups from traps.
           </li>
         </ul>

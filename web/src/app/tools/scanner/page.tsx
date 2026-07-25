@@ -4,9 +4,14 @@ import { loadLatestTrendLeaders } from "@/lib/trendLeaders";
 import { loadLatestSupportFloor } from "@/lib/supportFloor";
 import { loadRotation } from "@/lib/rotation";
 import { sql } from "@/lib/db";
-import ScannerTabs, { SCANNER_TABS, type Tab } from "./ScannerTabs";
+import ScannerTabs, { type Tab } from "./ScannerTabs";
 
 export const dynamic = "force-dynamic";
+
+// Defined server-side, NOT imported from the "use client" ScannerTabs module:
+// value exports from a client module become client-reference proxies in a
+// Server Component, so `.includes` would be undefined at runtime.
+const SCANNER_TABS: readonly Tab[] = ["igniting", "trend", "floor", "fallen", "sectors", "peers"];
 
 export const metadata: Metadata = {
   title: "Scanner — EquityRoots",
@@ -14,7 +19,7 @@ export const metadata: Metadata = {
     "Two daily scanners: stocks igniting today on abnormal volume, and durable uptrends caught at the start (fresh golden cross) — each with its fundamental score so pumps and weak trends stand out.",
 };
 
-// /tools/momentum — daily scanners under one tabbed roof, each cron-built
+// /tools/scanner — daily scanners under one tabbed roof, each cron-built
 // post-close. Each scanner keeps ~1 year of daily snapshots and can browse its
 // own history via an independent search-param (the loaders fall back to the
 // latest when the param is absent):

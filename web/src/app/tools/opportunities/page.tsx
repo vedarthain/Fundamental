@@ -6,5 +6,5 @@ import { redirect } from "next/navigation";
 export const dynamic = "force-static";
 
 export default function OpportunitiesRedirect() {
-  redirect("/tools/momentum?tab=fallen");
+  redirect("/tools/scanner?tab=fallen");
 }

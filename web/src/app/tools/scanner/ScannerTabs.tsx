@@ -24,7 +24,6 @@ import FallenLeadersClient from "./FallenLeadersClient";
 import ScannerDatePicker from "./ScannerDatePicker";
 
 export type Tab = "igniting" | "trend" | "floor" | "fallen" | "sectors" | "peers";
-export const SCANNER_TABS: Tab[] = ["igniting", "trend", "floor", "fallen", "sectors", "peers"];
 
 export default function ScannerTabs({
   momentumSnapDate,
