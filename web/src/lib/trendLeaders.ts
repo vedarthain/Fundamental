@@ -190,12 +190,18 @@ export async function persistTrendLeaders(snapDate: string, signals: TrendLeader
   });
 }
 
-export async function loadLatestTrendLeaders(): Promise<{ snapDate: string | null; signals: TrendLeaderSignal[] }> {
-  const dateRow = await sql<{ d: string | null }[]>`
-    SELECT max(snap_date)::text AS d FROM app.trend_leader_signal
+export async function loadLatestTrendLeaders(
+  targetDate?: string | null,
+): Promise<{ snapDate: string | null; signals: TrendLeaderSignal[]; dates: string[] }> {
+  const dateRows = await sql<{ d: string }[]>`
+    SELECT DISTINCT snap_date::text AS d
+    FROM app.trend_leader_signal
+    WHERE snap_date >= (CURRENT_DATE - 400)
+    ORDER BY d DESC
   `;
-  const snapDate = dateRow[0]?.d ?? null;
-  if (!snapDate) return { snapDate: null, signals: [] };
+  const dates = dateRows.map((r) => r.d);
+  const snapDate = targetDate && dates.includes(targetDate) ? targetDate : dates[0] ?? null;
+  if (!snapDate) return { snapDate: null, signals: [], dates };
 
   const rows = await sql<
     {
@@ -263,5 +269,10 @@ export async function loadLatestTrendLeaders(): Promise<{ snapDate: string | nul
     sector: clsBy.get(r.symbol)?.sector ?? null,
     industry: clsBy.get(r.symbol)?.industry ?? null,
   }));
-  return { snapDate, signals };
+  return { snapDate, signals, dates };
+}
+
+/** Prune snapshots older than `keepDays` so the history table stays bounded. */
+export async function pruneTrendLeaderHistory(keepDays = 400): Promise<void> {
+  await sql`DELETE FROM app.trend_leader_signal WHERE snap_date < (CURRENT_DATE - ${keepDays}::int)`;
 }

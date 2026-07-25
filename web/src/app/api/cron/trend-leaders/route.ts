@@ -12,7 +12,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "crypto";
-import { computeTrendLeaders, persistTrendLeaders } from "@/lib/trendLeaders";
+import { computeTrendLeaders, persistTrendLeaders, pruneTrendLeaderHistory } from "@/lib/trendLeaders";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -49,6 +49,7 @@ async function run(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: false, error: "no price data" }, { status: 500 });
   }
   await persistTrendLeaders(snapDate, signals);
+  await pruneTrendLeaderHistory(); // keep ~1 year of daily snapshots
 
   return NextResponse.json({
     ok: true,

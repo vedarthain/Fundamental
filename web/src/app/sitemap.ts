@@ -38,7 +38,6 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { path: "/tools", priority: 0.6, freq: "weekly" },
     { path: "/tools/screener", priority: 0.6, freq: "weekly" },
     { path: "/tools/peer-comparison", priority: 0.6, freq: "weekly" },
-    { path: "/tools/opportunities", priority: 0.6, freq: "weekly" },
     { path: "/tools/52-week-high-low", priority: 0.6, freq: "daily" },
     { path: "/tools/investing-trials", priority: 0.5, freq: "monthly" },
     { path: "/glossary", priority: 0.4, freq: "monthly" },

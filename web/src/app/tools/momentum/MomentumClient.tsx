@@ -59,9 +59,11 @@ const IconAlert = ({ size }: IconProps) =>
 export default function MomentumClient({
   snapDate,
   signals,
+  datePicker,
 }: {
   snapDate: string | null;
   signals: MomentumSignal[];
+  datePicker?: React.ReactNode;
 }) {
   const dateLabel = snapDate
     ? new Date(snapDate).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "long", year: "numeric" })
@@ -82,11 +84,14 @@ export default function MomentumClient({
           Daily scanner
         </div>
         <h1 className="font-display text-[36px] tracking-tight leading-tight">Igniting today</h1>
-        {dateLabel && (
-          <p className="mt-2 text-[12.5px] muted-text">
-            Latest scan · <span className="ink-text font-medium">{dateLabel}</span> · {signals.length} ignitions
-          </p>
-        )}
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+          {dateLabel && (
+            <p className="text-[12.5px] muted-text">
+              <span className="ink-text font-medium">{dateLabel}</span> · {signals.length} ignitions
+            </p>
+          )}
+          {datePicker}
+        </div>
       </header>
 
       {signals.length === 0 ? (

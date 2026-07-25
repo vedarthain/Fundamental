@@ -11,7 +11,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "crypto";
-import { computeSupportFloor, persistSupportFloor } from "@/lib/supportFloor";
+import { computeSupportFloor, persistSupportFloor, pruneSupportFloorHistory } from "@/lib/supportFloor";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,6 +48,7 @@ async function run(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: false, error: "no price data" }, { status: 500 });
   }
   await persistSupportFloor(snapDate, signals);
+  await pruneSupportFloorHistory(); // keep ~1 year of daily snapshots
 
   return NextResponse.json({
     ok: true,

@@ -13,7 +13,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "crypto";
-import { computeMomentumSignals, persistMomentumSignals } from "@/lib/momentum";
+import { computeMomentumSignals, persistMomentumSignals, pruneMomentumHistory } from "@/lib/momentum";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,6 +50,7 @@ async function run(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: false, error: "no price data" }, { status: 500 });
   }
   await persistMomentumSignals(snapDate, signals);
+  await pruneMomentumHistory(); // keep ~1 year of daily snapshots
 
   return NextResponse.json({
     ok: true,

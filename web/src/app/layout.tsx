@@ -178,7 +178,7 @@ function SiteFooter() {
               { href: "/sectors",                  label: "Sectors" },
               { href: "/tools",                    label: "Tools" },
               { href: "/tools/screener",           label: "Stock Screener" },
-              { href: "/tools/opportunities",      label: "Opportunities" },
+              { href: "/tools/momentum?tab=fallen", label: "Fallen Leaders" },
               { href: "/tools/investing-trials",   label: "Investing Trials" },
               { href: "/tools/peer-comparison",    label: "Peer Comparison" },
               { href: "/ideas",                    label: "Ideas" },

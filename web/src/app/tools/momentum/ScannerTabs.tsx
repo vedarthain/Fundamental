@@ -20,29 +20,40 @@ import MomentumClient from "./MomentumClient";
 import TrendLeadersClient from "./TrendLeadersClient";
 import SupportFloorClient from "./SupportFloorClient";
 import RotationClient from "./RotationClient";
+import FallenLeadersClient from "./FallenLeadersClient";
+import ScannerDatePicker from "./ScannerDatePicker";
 
-type Tab = "igniting" | "trend" | "floor" | "sectors" | "peers";
+export type Tab = "igniting" | "trend" | "floor" | "fallen" | "sectors" | "peers";
+export const SCANNER_TABS: Tab[] = ["igniting", "trend", "floor", "fallen", "sectors", "peers"];
 
 export default function ScannerTabs({
   momentumSnapDate,
   momentumSignals,
+  momentumDates,
   trendSnapDate,
   trendSignals,
+  trendDates,
   floorSnapDate,
   floorSignals,
+  floorDates,
   rotation,
   nifty500,
+  initialTab = "igniting",
 }: {
   momentumSnapDate: string | null;
   momentumSignals: MomentumSignal[];
+  momentumDates: string[];
   trendSnapDate: string | null;
   trendSignals: TrendLeaderSignal[];
+  trendDates: string[];
   floorSnapDate: string | null;
   floorSignals: SupportFloorSignal[];
+  floorDates: string[];
   rotation: RotationData;
   nifty500: string[];
+  initialTab?: Tab;
 }) {
-  const [tab, setTab] = useState<Tab>("igniting");
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [n500Only, setN500Only] = useState(false);
 
   // NIFTY 500 membership as a fast lookup; the toggle narrows both scanners to
@@ -62,6 +73,7 @@ export default function ScannerTabs({
     { id: "igniting", label: "Igniting today", sub: "Volume breakouts", count: momentum.length },
     { id: "trend", label: "Trend Leaders", sub: "Fresh golden crosses", count: trend.length },
     { id: "floor", label: "At Support", sub: "Multi-year tested floors", count: floor.length },
+    { id: "fallen", label: "Fallen Leaders", sub: "Beaten-down quality", count: null },
     { id: "peers", label: "Peer groups", sub: "Cluster rotation", count: peers.length },
     { id: "sectors", label: "Sectors", sub: "Sector rotation", count: sectors.length },
   ];
@@ -159,14 +171,27 @@ export default function ScannerTabs({
         {/* Right panel: the selected scanner's table up top, its description below. */}
         <div className="min-w-0 flex-1">
           {tab === "igniting" && (
-            <MomentumClient snapDate={momentumSnapDate} signals={momentum} />
+            <MomentumClient
+              snapDate={momentumSnapDate}
+              signals={momentum}
+              datePicker={<ScannerDatePicker param="mDate" dates={momentumDates} selected={momentumSnapDate} />}
+            />
           )}
           {tab === "trend" && (
-            <TrendLeadersClient snapDate={trendSnapDate} signals={trend} />
+            <TrendLeadersClient
+              snapDate={trendSnapDate}
+              signals={trend}
+              datePicker={<ScannerDatePicker param="tDate" dates={trendDates} selected={trendSnapDate} />}
+            />
           )}
           {tab === "floor" && (
-            <SupportFloorClient snapDate={floorSnapDate} signals={floor} />
+            <SupportFloorClient
+              snapDate={floorSnapDate}
+              signals={floor}
+              datePicker={<ScannerDatePicker param="fDate" dates={floorDates} selected={floorSnapDate} />}
+            />
           )}
+          {tab === "fallen" && <FallenLeadersClient n500Only={n500Only} />}
           {tab === "peers" && (
             <RotationClient
               snapDate={rotation.snapDate}
@@ -175,6 +200,7 @@ export default function ScannerTabs({
               eyebrow="Rotation map"
               groupLabel="Peer group"
               noun="peer groups"
+              datePicker={<ScannerDatePicker param="rDate" dates={rotation.dates} selected={rotation.snapDate} />}
               intro={
                 <>
                   The scoring peer clusters (~46 of them) ranked by <strong>median 1-week return</strong>,
@@ -193,6 +219,7 @@ export default function ScannerTabs({
               eyebrow="Rotation map"
               groupLabel="Sector"
               noun="sectors"
+              datePicker={<ScannerDatePicker param="rDate" dates={rotation.dates} selected={rotation.snapDate} />}
               intro={
                 <>
                   Broad sectors ranked by <strong>median 1-week return</strong> — the top-down

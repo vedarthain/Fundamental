@@ -41,6 +41,22 @@ function daysSince(iso: string | null): number | null {
   return Math.round((Date.now() - new Date(iso).getTime()) / 86400000);
 }
 
+// "Since" is how far price has already run since the golden cross. The whole
+// point of this scanner is catching the trend AT THE START, so a fresh cross
+// that has already run a long way is a WORSE entry, not a better one. Encode
+// that: small run = early (the sweet spot), large run = extended (you're late).
+const SINCE_EARLY = 8; //     <= +8% since the cross = still early
+const SINCE_EXTENDED = 25; // >= +25% = the first leg is largely gone
+function sinceStyle(p: number | null): { color: string; tag: string | null; tip: string } {
+  if (p == null) return { color: "var(--color-muted)", tag: null, tip: "" };
+  if (p < 0) return { color: RED, tag: "pulled back", tip: "Price is below the cross level — the trend is being tested." };
+  if (p <= SINCE_EARLY)
+    return { color: GREEN, tag: "early", tip: "Only a small run since the cross — you're early in the trend, the sweet spot." };
+  if (p >= SINCE_EXTENDED)
+    return { color: "var(--color-score-weak, #b7791f)", tag: "extended", tip: "Already run hard since the cross — the fresh cross is real but the easy leg is largely gone." };
+  return { color: "var(--color-ink)", tag: null, tip: "Moderate run since the cross." };
+}
+
 type IconProps = { size?: number };
 function svg(size: number | undefined, children: React.ReactNode) {
   return (
@@ -58,9 +74,11 @@ const IconTrend = ({ size }: IconProps) =>
 export default function TrendLeadersClient({
   snapDate,
   signals,
+  datePicker,
 }: {
   snapDate: string | null;
   signals: TrendLeaderSignal[];
+  datePicker?: React.ReactNode;
 }) {
   const dateLabel = snapDate
     ? new Date(snapDate).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "long", year: "numeric" })
@@ -81,11 +99,14 @@ export default function TrendLeadersClient({
           Daily scanner
         </div>
         <h1 className="font-display text-[36px] tracking-tight leading-tight">Trend Leaders</h1>
-        {dateLabel && (
-          <p className="mt-2 text-[12.5px] muted-text">
-            Latest scan · <span className="ink-text font-medium">{dateLabel}</span> · {signals.length} fresh crosses
-          </p>
-        )}
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+          {dateLabel && (
+            <p className="text-[12.5px] muted-text">
+              <span className="ink-text font-medium">{dateLabel}</span> · {signals.length} fresh crosses
+            </p>
+          )}
+          {datePicker}
+        </div>
       </header>
 
       {signals.length === 0 ? (
@@ -133,9 +154,19 @@ export default function TrendLeadersClient({
                         {ago(s.crossDate)}
                         {d != null && <div className="text-[10px] muted-text">{d}d ago</div>}
                       </td>
-                      <td className="px-2 py-2.5 text-right tabular-nums font-semibold" style={{ color: (s.pctSinceCross ?? 0) >= 0 ? GREEN : RED }}>
-                        {s.pctSinceCross == null ? "—" : `${s.pctSinceCross >= 0 ? "+" : ""}${s.pctSinceCross.toFixed(1)}%`}
-                      </td>
+                      {(() => {
+                        const st = sinceStyle(s.pctSinceCross);
+                        return (
+                          <td className="px-2 py-2.5 text-right tabular-nums" title={st.tip}>
+                            <span className="font-semibold" style={{ color: st.color }}>
+                              {s.pctSinceCross == null ? "—" : `${s.pctSinceCross >= 0 ? "+" : ""}${s.pctSinceCross.toFixed(1)}%`}
+                            </span>
+                            {st.tag && (
+                              <div className="text-[9.5px] font-medium" style={{ color: st.color }}>{st.tag}</div>
+                            )}
+                          </td>
+                        );
+                      })()}
                       <td className="px-2 py-2.5 text-right tabular-nums">{inr(s.close)}</td>
                       <td className="px-2 py-2.5 text-right tabular-nums muted-text">
                         {s.pctBelowHigh == null ? "—" : `-${s.pctBelowHigh.toFixed(1)}%`}
@@ -168,7 +199,7 @@ export default function TrendLeadersClient({
         <div className="text-[11px] uppercase tracking-wide muted-text mt-4 mb-2">How to read this</div>
         <ul className="space-y-1.5 text-[13.5px] leading-[1.55]">
           <li><span className="ink-text font-medium">Cross</span> — the day the 50-day average crossed above the 200-day (a golden cross). Fresher is earlier in the trend; the whole list is within ~30 sessions.</li>
-          <li><span className="ink-text font-medium">Since</span> — how far price has already run since the cross. A small number means you&apos;re early; a large one means the easy part may be gone.</li>
+          <li><span className="ink-text font-medium">Since</span> — how far price has already run since the cross. This is the entry-quality gauge: <span style={{ color: GREEN }}>≤8% (&ldquo;early&rdquo;)</span> is the sweet spot — you&apos;re near the start; <span style={{ color: "var(--color-score-weak, #b7791f)" }}>≥25% (&ldquo;extended&rdquo;)</span> means the cross is fresh but the first leg is largely gone, so you&apos;re late.</li>
           <li><span className="ink-text font-medium">vs High</span> — distance below the 52-week high. Near-zero confirms the trend is intact, not fading.</li>
           <li><span className="ink-text font-medium">Score</span> — fundamental Industry Score percentile. A fresh cross on a <span style={{ color: GREEN }}>high score</span> is a quality trend starting; on a <span style={{ color: RED }}>low score</span> it&apos;s price-only — verify before acting.</li>
         </ul>

@@ -38,6 +38,36 @@ export type MomentumSignal = {
   catalystAt: string | null;
 };
 
+/**
+ * Circular / price-move headlines carry no catalyst value: they just restate
+ * the move the scanner already detected ("Here's why shares of Max India gained
+ * up to 10%", "Stock jumps 12% intraday", "Top gainers today"). We reject these
+ * so the catalyst column shows the REASON (results, order win, deal) rather than
+ * the effect. If every candidate is circular we fall back to the newest so the
+ * cell isn't empty — but a real headline is always preferred.
+ */
+const CIRCULAR_CATALYST_RE = new RegExp(
+  [
+    "here'?s why",
+    "^why (did|is|are|has|do|does)\\b",
+    "shares? of .+\\b(gain|gains|gained|ros[e]|rise|rises|jump|jumps|jumped|surge|surges|surged|rall|fall|falls|fell|drop|drops|dropped|slump|tank|plunge|slip|slid|zoom|soar|spike|end|ended|clos)",
+    "\\bstock\\b.+\\b(jump|jumps|jumped|surge|surges|surged|rall|gain|gains|gained|rise|rises|ros[e]|fall|falls|fell|drop|drops|dropped|slump|tank|plunge|zoom|soar|climb|spike|edge|end|ended)",
+    "top (gainers|losers)",
+    "\\d+(\\.\\d+)?\\s*% (intraday|today|this week|in early trade|in trade|on (mon|tues|wednes|thurs|fri)day)",
+    "\\bbuzzing\\b",
+    "hits? (a )?(fresh |new |record )?(all.?time |52.?week |multi.?year )?(high|low)",
+    "52.?week (high|low)",
+    "movers?( and shakers)?\\b",
+    "\\bin focus\\b.*\\b(gain|surge|jump|rally|fall|drop)\\b",
+  ].join("|"),
+  "i",
+);
+
+/** True when a headline is a circular price-move restatement, not a catalyst. */
+function isCircularHeadline(title: string | null): boolean {
+  return !!title && CIRCULAR_CATALYST_RE.test(title);
+}
+
 /** Ruleset knobs — one place to tune the screen. */
 const RET_MIN = 0.06; //  >= 6% up-day
 const VOL_MULT = 3; //    >= 3x its own 50-day average volume
@@ -132,19 +162,31 @@ async function enrich(snapDate: string, rows: GoldenRow[]): Promise<MomentumSign
   `;
   const cacheBy = new Map(cache.map((c) => [c.symbol, c]));
 
-  // Latest headline tagged to each symbol within 2 days of the ignition.
+  // Pull the recent headlines per symbol (within 3 days of the ignition), then
+  // pick the most SUBSTANTIVE one in JS — preferring a real catalyst over a
+  // circular "stock jumped X%" restatement. Ordered newest-first so ties break
+  // to the freshest.
   const news = await sql<
     { symbol: string; title: string; url: string; source: string; published_at: string }[]
   >`
-    SELECT DISTINCT ON (ns.symbol)
-           ns.symbol, n.title, n.url, n.source, n.published_at::text AS published_at
+    SELECT ns.symbol, n.title, n.url, n.source, n.published_at::text AS published_at
     FROM app.news_stock ns
     JOIN app.news n ON n.id = ns.news_id
     WHERE ns.symbol = ANY(${symbols})
-      AND n.published_at >= (${snapDate}::date - 2)
+      AND n.published_at >= (${snapDate}::date - 3)
     ORDER BY ns.symbol, n.published_at DESC
   `;
-  const newsBy = new Map(news.map((x) => [x.symbol, x]));
+  // First non-circular headline per symbol (newest-first); fall back to the
+  // newest of any kind so the cell isn't left blank.
+  const newsBy = new Map<string, (typeof news)[number]>();
+  const newsFallback = new Map<string, (typeof news)[number]>();
+  for (const x of news) {
+    if (!newsFallback.has(x.symbol)) newsFallback.set(x.symbol, x);
+    if (!newsBy.has(x.symbol) && !isCircularHeadline(x.title)) newsBy.set(x.symbol, x);
+  }
+  for (const [sym, x] of newsFallback) {
+    if (!newsBy.has(sym)) newsBy.set(sym, x);
+  }
 
   return rows.map((r) => {
     const c = cacheBy.get(r.symbol);
@@ -196,13 +238,24 @@ export async function persistMomentumSignals(snapDate: string, signals: Momentum
   });
 }
 
-/** Read the latest stored snapshot for the /tools/momentum page. */
-export async function loadLatestMomentum(): Promise<{ snapDate: string | null; signals: MomentumSignal[] }> {
-  const dateRow = await sql<{ d: string | null }[]>`
-    SELECT max(snap_date)::text AS d FROM app.momentum_signal
+/**
+ * Read a stored snapshot for the /tools/momentum page. Pass `targetDate` to
+ * browse history (the scanner keeps ~1 year of daily snapshots); omit it for
+ * the latest. Returns the list of available dates so the page can render a
+ * date-picker. An invalid/absent targetDate falls back to the latest.
+ */
+export async function loadLatestMomentum(
+  targetDate?: string | null,
+): Promise<{ snapDate: string | null; signals: MomentumSignal[]; dates: string[] }> {
+  const dateRows = await sql<{ d: string }[]>`
+    SELECT DISTINCT snap_date::text AS d
+    FROM app.momentum_signal
+    WHERE snap_date >= (CURRENT_DATE - 400)
+    ORDER BY d DESC
   `;
-  const snapDate = dateRow[0]?.d ?? null;
-  if (!snapDate) return { snapDate: null, signals: [] };
+  const dates = dateRows.map((r) => r.d);
+  const snapDate = targetDate && dates.includes(targetDate) ? targetDate : dates[0] ?? null;
+  if (!snapDate) return { snapDate: null, signals: [], dates };
 
   const rows = await sql<
     (Omit<MomentumSignal, "newHigh" | "isScored"> & { new_high: boolean; is_scored: boolean })[]
@@ -259,5 +312,10 @@ export async function loadLatestMomentum(): Promise<{ snapDate: string | null; s
     catalystSource: r.catalystSource,
     catalystAt: r.catalystAt,
   }));
-  return { snapDate, signals };
+  return { snapDate, signals, dates };
+}
+
+/** Prune snapshots older than `keepDays` so the history table stays bounded. */
+export async function pruneMomentumHistory(keepDays = 400): Promise<void> {
+  await sql`DELETE FROM app.momentum_signal WHERE snap_date < (CURRENT_DATE - ${keepDays}::int)`;
 }

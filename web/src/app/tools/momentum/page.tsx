@@ -4,7 +4,7 @@ import { loadLatestTrendLeaders } from "@/lib/trendLeaders";
 import { loadLatestSupportFloor } from "@/lib/supportFloor";
 import { loadRotation } from "@/lib/rotation";
 import { sql } from "@/lib/db";
-import ScannerTabs from "./ScannerTabs";
+import ScannerTabs, { SCANNER_TABS, type Tab } from "./ScannerTabs";
 
 export const dynamic = "force-dynamic";
 
@@ -14,28 +14,45 @@ export const metadata: Metadata = {
     "Two daily scanners: stocks igniting today on abnormal volume, and durable uptrends caught at the start (fresh golden cross) — each with its fundamental score so pumps and weak trends stand out.",
 };
 
-// /tools/momentum — two daily scanners under one tabbed roof:
-//   Igniting today → app.momentum_signal   (one-day volume explosion)
-//   Trend Leaders  → app.trend_leader_signal (fresh golden cross, slow burn)
-// Both caches are cron-built post-close; this page just reads the latest of each.
-export default async function MomentumPage() {
+// /tools/momentum — daily scanners under one tabbed roof, each cron-built
+// post-close. Each scanner keeps ~1 year of daily snapshots and can browse its
+// own history via an independent search-param (the loaders fall back to the
+// latest when the param is absent):
+//   mDate → Igniting today   tDate → Trend Leaders   fDate → At Support
+//   rDate → Sectors / Peer groups (rotation)
+function one(v: string | string[] | undefined): string | null {
+  return typeof v === "string" ? v : null;
+}
+
+export default async function MomentumPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const sp = await searchParams;
+  const tabParam = one(sp.tab);
+  const initialTab: Tab = SCANNER_TABS.includes(tabParam as Tab) ? (tabParam as Tab) : "igniting";
   const [momentum, trend, floor, rotation, n500] = await Promise.all([
-    loadLatestMomentum(),
-    loadLatestTrendLeaders(),
-    loadLatestSupportFloor(),
-    loadRotation(),
+    loadLatestMomentum(one(sp.mDate)),
+    loadLatestTrendLeaders(one(sp.tDate)),
+    loadLatestSupportFloor(one(sp.fDate)),
+    loadRotation(one(sp.rDate)),
     sql<{ symbol: string }[]>`SELECT symbol FROM app.index_constituent WHERE index_code = 'NIFTY500'`,
   ]);
   return (
     <ScannerTabs
       momentumSnapDate={momentum.snapDate}
       momentumSignals={momentum.signals}
+      momentumDates={momentum.dates}
       trendSnapDate={trend.snapDate}
       trendSignals={trend.signals}
+      trendDates={trend.dates}
       floorSnapDate={floor.snapDate}
       floorSignals={floor.signals}
+      floorDates={floor.dates}
       rotation={rotation}
       nifty500={n500.map((r) => r.symbol)}
+      initialTab={initialTab}
     />
   );
 }

@@ -38,6 +38,8 @@ export type RotationRow = {
 
 export type RotationData = {
   snapDate: string | null;
+  /** Available panel snapshot dates (most recent first) for the date-picker. */
+  dates: string[];
   sectorsAll: RotationRow[];
   sectorsN500: RotationRow[];
   peersAll: RotationRow[];
@@ -103,7 +105,32 @@ function rollup(rows: PanelRow[], pick: (r: PanelRow) => string | null): Rotatio
   return out;
 }
 
-export async function loadRotation(): Promise<RotationData> {
+export async function loadRotation(targetDate?: string | null): Promise<RotationData> {
+  const empty: RotationData = {
+    snapDate: null,
+    dates: [],
+    sectorsAll: [],
+    sectorsN500: [],
+    peersAll: [],
+    peersN500: [],
+  };
+
+  let dates: string[];
+  try {
+    const dateRows = await sql<{ d: string }[]>`
+      SELECT DISTINCT snapshot_date::text AS d
+      FROM app.cluster_stocks_panel_cache
+      WHERE snapshot_date >= (CURRENT_DATE - 400)
+      ORDER BY d DESC
+    `;
+    dates = dateRows.map((r) => r.d);
+  } catch {
+    return empty;
+  }
+
+  const snapDate = targetDate && dates.includes(targetDate) ? targetDate : dates[0] ?? null;
+  if (!snapDate) return empty;
+
   let rows: PanelRow[];
   try {
     rows = await sql<PanelRow[]>`
@@ -122,19 +149,16 @@ export async function loadRotation(): Promise<RotationData> {
         LEFT JOIN app.meta_cluster mc ON mc.id = c.meta_cluster_id
         LEFT JOIN app.index_constituent ic
                ON ic.symbol = p.symbol AND ic.index_code = 'NIFTY500'
-       WHERE p.snapshot_date = (SELECT max(snapshot_date) FROM app.cluster_stocks_panel_cache)
+       WHERE p.snapshot_date = ${snapDate}::date
     `;
   } catch {
-    return { snapDate: null, sectorsAll: [], sectorsN500: [], peersAll: [], peersN500: [] };
+    return { ...empty, dates };
   }
-
-  const snap = await sql<{ d: string | null }[]>`
-    SELECT max(snapshot_date)::text AS d FROM app.cluster_stocks_panel_cache
-  `;
 
   const n500 = rows.filter((r) => r.is_n500);
   return {
-    snapDate: snap[0]?.d ?? null,
+    snapDate,
+    dates,
     sectorsAll: rollup(rows, (r) => r.sector),
     sectorsN500: rollup(n500, (r) => r.sector),
     peersAll: rollup(rows, (r) => r.industry),

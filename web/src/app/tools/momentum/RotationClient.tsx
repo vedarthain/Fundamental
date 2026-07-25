@@ -54,6 +54,7 @@ export default function RotationClient({
   intro,
   groupLabel,
   noun,
+  datePicker,
 }: {
   snapDate: string | null;
   rows: RotationRow[];
@@ -64,6 +65,7 @@ export default function RotationClient({
   groupLabel: string;
   /** Pager noun (e.g. "sectors" / "peer groups"). */
   noun: string;
+  datePicker?: React.ReactNode;
 }) {
   const dateLabel = snapDate
     ? new Date(snapDate).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "long", year: "numeric" })
@@ -84,11 +86,14 @@ export default function RotationClient({
           {eyebrow}
         </div>
         <h1 className="font-display text-[36px] tracking-tight leading-tight">{title}</h1>
-        {dateLabel && (
-          <p className="mt-2 text-[12.5px] muted-text">
-            Latest panel · <span className="ink-text font-medium">{dateLabel}</span> · {rows.length} {noun}
-          </p>
-        )}
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+          {dateLabel && (
+            <p className="text-[12.5px] muted-text">
+              <span className="ink-text font-medium">{dateLabel}</span> · {rows.length} {noun}
+            </p>
+          )}
+          {datePicker}
+        </div>
       </header>
 
       {rows.length === 0 ? (
