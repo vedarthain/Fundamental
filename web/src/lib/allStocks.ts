@@ -2,13 +2,14 @@
  * allStocks.ts — the full scored universe with multi-window performance, for
  * the Scanner's "All stocks" tab (a sortable, paginated reference table).
  *
- * Two round-trips, run in parallel by the caller:
- *   • app.cluster_stocks_panel_cache (latest snapshot) → identity, sector,
- *     peer group, composite score, and the 1W / 1M / 1Y returns (stored as
- *     FRACTIONS in the panel; scaled to percent here).
- *   • golden.price_history_1d (last two closes per symbol) → the 1D return,
- *     which the panel doesn't carry. Restricted to the last ~2 weeks so the
- *     window scan stays cheap.
+ * Identity (sector, peer group, score, NIFTY-500 membership) comes from the
+ * latest scoring panel snapshot. The RETURNS, however, are computed from
+ * golden's SPLIT/BONUS-ADJUSTED close (`adj_close`), NOT the panel's cached
+ * ret_* columns — those store an unadjusted 1y-ago basis for names with a
+ * corporate action, which blows the 1Y return up (e.g. ANGELONE showed
+ * +1119% off an unadjusted ~₹25 base instead of +20% off the real ~₹256).
+ * Using adj_close makes this table agree with the stock-page price chart,
+ * which is also adj_close-based.
  *
  *   sector    = meta_cluster.name  (broad grouping)
  *   peerGroup = cluster.name       (the scoring peer cluster)
@@ -40,13 +41,20 @@ type PanelRow = {
   company_name: string | null;
   sector: string | null;
   peer_group: string | null;
-  current_price: number | null;
-  ret_1w: number | null;
-  ret_1m: number | null;
-  ret_1y: number | null;
+  cache_price: number | null;
   composite_pct: number | null;
   is_n500: boolean;
 };
+
+/** Strip the NSE ".NS" suffix golden uses so keys match the bare panel symbol. */
+function bare(sym: string): string {
+  return sym.endsWith(".NS") ? sym.slice(0, -3) : sym;
+}
+
+function pctChange(last: number | undefined, base: number | undefined): number | null {
+  if (last == null || base == null || base === 0) return null;
+  return Math.round((last / base - 1) * 1000) / 10;
+}
 
 export async function loadAllStocks(): Promise<AllStocksData> {
   const empty: AllStocksData = { snapDate: null, rows: [] };
@@ -69,11 +77,7 @@ export async function loadAllStocks(): Promise<AllStocksData> {
              u.company_name,
              mc.name AS sector,
              c.name  AS peer_group,
-             p.current_price::float8 AS current_price,
-             -- ret_* are stored as FRACTIONS (0.09 = +9%); scale to percent.
-             (p.ret_1w::float8 * 100) AS ret_1w,
-             (p.ret_1m::float8 * 100) AS ret_1m,
-             (p.ret_1y::float8 * 100) AS ret_1y,
+             p.current_price::float8 AS cache_price,
              p.composite_pct::float8 AS composite_pct,
              (ic.symbol IS NOT NULL) AS is_n500
         FROM app.cluster_stocks_panel_cache p
@@ -88,46 +92,73 @@ export async function loadAllStocks(): Promise<AllStocksData> {
     return empty;
   }
 
-  // 1D return from golden — last two daily closes per symbol. One windowed
-  // query over the last ~2 weeks (covers long weekends / holidays).
-  const gLast = new Map<string, number>();
-  const gPrev = new Map<string, number>();
+  // ── Returns from golden's ADJUSTED close (matches the price chart) ──
+  // last + prev (for 1D) from a small 2-row window; then the nearest close
+  // on/before ~1W / ~1M / ~1Y ago via DISTINCT ON over bounded date windows.
+  const last = new Map<string, number>();
+  const prev = new Map<string, number>();
+  const wAgo = new Map<string, number>();
+  const mAgo = new Map<string, number>();
+  const yAgo = new Map<string, number>();
+
   try {
-    const gp = await golden<{ symbol: string; close: string; rn: string }[]>`
-      SELECT symbol, close::text AS close, rn FROM (
-        SELECT symbol, close,
-               row_number() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
-        FROM golden.price_history_1d
-        WHERE close IS NOT NULL AND date >= CURRENT_DATE - 16
-      ) t WHERE rn <= 2
-    `;
-    for (const g of gp) {
-      const bare = g.symbol.endsWith(".NS") ? g.symbol.slice(0, -3) : g.symbol;
-      if (Number(g.rn) === 1) gLast.set(bare, Number(g.close));
-      else gPrev.set(bare, Number(g.close));
+    const [last2, w, m, y] = await Promise.all([
+      golden<{ symbol: string; c: string; rn: string }[]>`
+        SELECT symbol, c, rn FROM (
+          SELECT symbol, COALESCE(adj_close, close)::text AS c,
+                 row_number() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
+          FROM golden.price_history
+          WHERE interval = '1d' AND COALESCE(adj_close, close) IS NOT NULL
+            AND date >= CURRENT_DATE - 16
+        ) t WHERE rn <= 2
+      `,
+      golden<{ symbol: string; c: string }[]>`
+        SELECT DISTINCT ON (symbol) symbol, COALESCE(adj_close, close)::text AS c
+        FROM golden.price_history
+        WHERE interval = '1d' AND COALESCE(adj_close, close) IS NOT NULL
+          AND date <= CURRENT_DATE - 7 AND date >= CURRENT_DATE - 24
+        ORDER BY symbol, date DESC
+      `,
+      golden<{ symbol: string; c: string }[]>`
+        SELECT DISTINCT ON (symbol) symbol, COALESCE(adj_close, close)::text AS c
+        FROM golden.price_history
+        WHERE interval = '1d' AND COALESCE(adj_close, close) IS NOT NULL
+          AND date <= CURRENT_DATE - 30 AND date >= CURRENT_DATE - 60
+        ORDER BY symbol, date DESC
+      `,
+      golden<{ symbol: string; c: string }[]>`
+        SELECT DISTINCT ON (symbol) symbol, COALESCE(adj_close, close)::text AS c
+        FROM golden.price_history
+        WHERE interval = '1d' AND COALESCE(adj_close, close) IS NOT NULL
+          AND date <= CURRENT_DATE - 365 AND date >= CURRENT_DATE - 400
+        ORDER BY symbol, date DESC
+      `,
+    ]);
+    for (const r of last2) {
+      const k = bare(r.symbol);
+      if (Number(r.rn) === 1) last.set(k, Number(r.c));
+      else prev.set(k, Number(r.c));
     }
+    for (const r of w) wAgo.set(bare(r.symbol), Number(r.c));
+    for (const r of m) mAgo.set(bare(r.symbol), Number(r.c));
+    for (const r of y) yAgo.set(bare(r.symbol), Number(r.c));
   } catch {
-    // Non-fatal: table renders with 1D as "—".
+    // Non-fatal: returns render as "—", table still lists the universe.
   }
 
   const rows: AllStockRow[] = panel.map((p) => {
-    const last = gLast.get(p.symbol);
-    const prev = gPrev.get(p.symbol);
-    const ret1d =
-      last != null && prev != null && prev !== 0
-        ? Math.round((last / prev - 1) * 1000) / 10
-        : null;
-    const price = last ?? p.current_price ?? null;
+    const lastPx = last.get(p.symbol);
+    const price = lastPx ?? p.cache_price ?? null;
     return {
       symbol: p.symbol,
       company_name: p.company_name,
       sector: p.sector,
       peer_group: p.peer_group,
       current_price: price == null ? null : Math.round(price * 100) / 100,
-      ret_1d: ret1d,
-      ret_1w: p.ret_1w == null ? null : Math.round(p.ret_1w * 10) / 10,
-      ret_1m: p.ret_1m == null ? null : Math.round(p.ret_1m * 10) / 10,
-      ret_1y: p.ret_1y == null ? null : Math.round(p.ret_1y * 10) / 10,
+      ret_1d: pctChange(lastPx, prev.get(p.symbol)),
+      ret_1w: pctChange(lastPx, wAgo.get(p.symbol)),
+      ret_1m: pctChange(lastPx, mAgo.get(p.symbol)),
+      ret_1y: pctChange(lastPx, yAgo.get(p.symbol)),
       composite_pct: p.composite_pct == null ? null : Math.round(p.composite_pct),
       is_n500: p.is_n500,
     };
