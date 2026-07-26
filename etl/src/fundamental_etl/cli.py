@@ -707,50 +707,6 @@ def _refresh_cluster_cache(conn, snap: "_date") -> int:
         return cur.rowcount
 
 
-def _load_corp_actions(golden_c, symbols) -> dict:
-    """Bulk-load corporate actions for a set of bare symbols.
-
-    Returns {bare_symbol: [(ex_date, split_factor), ...]} ascending by ex_date.
-    split_factor is the on-ex-date price multiplier (1:5 split ≈ 0.2, 1:2
-    bonus ≈ 0.667) — the same field metrics.load_split_factors uses. One
-    query for the whole universe instead of a per-symbol roundtrip.
-    """
-    sym_ns = [f"{s}.NS" for s in symbols]
-    out: dict = {}
-    if not sym_ns:
-        return out
-    with golden_c.cursor() as cur:
-        cur.execute("""
-            SELECT REPLACE(symbol, '.NS', '') AS symbol, ex_date, split_factor
-              FROM golden.corporate_actions
-             WHERE symbol = ANY(%s)
-               AND split_factor IS NOT NULL AND split_factor > 0
-             ORDER BY ex_date ASC
-        """, (sym_ns,))
-        for r in cur.fetchall():
-            out.setdefault(r["symbol"], []).append((r["ex_date"], float(r["split_factor"])))
-    return out
-
-
-def _adjust_close(price, price_date, actions):
-    """Back-adjust a historical close onto the current (post-split) scale.
-
-    golden.price_history is RAW: on a split/bonus ex_date the close steps
-    down by the split factor. Comparing a pre-ex close to a post-ex close
-    (as every N-day return does) reads that cosmetic step as a real crash —
-    e.g. KOTAKBANK's 1:5 split showed as −82% instead of ~−11%. We multiply
-    the close by the product of split_factors for every ex_date STRICTLY
-    AFTER its bar, matching metrics.load_price_history's semantics.
-    """
-    if price is None or price_date is None or not actions:
-        return price
-    factor = 1.0
-    for ex_date, sf in actions:
-        if ex_date > price_date:
-            factor *= sf
-    return price * factor
-
-
 def _refresh_cluster_returns(app_c, golden_c, snap: "_date") -> int:
     """Compute market-cap-weighted 1W / 1M / 1Y cluster returns and write
     them to app.cluster_composite_cache.
@@ -800,13 +756,13 @@ def _refresh_cluster_returns(app_c, golden_c, snap: "_date") -> int:
             syms AS (SELECT unnest(%s::text[]) AS symbol)
             SELECT
                 REPLACE(s.symbol, '.NS', '') AS symbol,
-                (SELECT close::float FROM golden.price_history p
+                (SELECT COALESCE(adj_close, close)::float FROM golden.price_history p
                   WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
                   ORDER BY p.date DESC LIMIT 1) AS p_now,
                 (SELECT date FROM golden.price_history p
                   WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
                   ORDER BY p.date DESC LIMIT 1) AS d_now,
-                (SELECT close::float FROM golden.price_history p
+                (SELECT COALESCE(adj_close, close)::float FROM golden.price_history p
                   WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
                     AND p.date <= (SELECT d FROM latest_d) - INTERVAL '7 days'
                   ORDER BY p.date DESC LIMIT 1) AS p_w1,
@@ -814,7 +770,7 @@ def _refresh_cluster_returns(app_c, golden_c, snap: "_date") -> int:
                   WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
                     AND p.date <= (SELECT d FROM latest_d) - INTERVAL '7 days'
                   ORDER BY p.date DESC LIMIT 1) AS d_w1,
-                (SELECT close::float FROM golden.price_history p
+                (SELECT COALESCE(adj_close, close)::float FROM golden.price_history p
                   WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
                     AND p.date <= (SELECT d FROM latest_d) - INTERVAL '30 days'
                   ORDER BY p.date DESC LIMIT 1) AS p_m1,
@@ -822,7 +778,7 @@ def _refresh_cluster_returns(app_c, golden_c, snap: "_date") -> int:
                   WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
                     AND p.date <= (SELECT d FROM latest_d) - INTERVAL '30 days'
                   ORDER BY p.date DESC LIMIT 1) AS d_m1,
-                (SELECT close::float FROM golden.price_history p
+                (SELECT COALESCE(adj_close, close)::float FROM golden.price_history p
                   WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
                     AND p.date <= (SELECT d FROM latest_d) - INTERVAL '365 days'
                   ORDER BY p.date DESC LIMIT 1) AS p_y1,
@@ -834,10 +790,11 @@ def _refresh_cluster_returns(app_c, golden_c, snap: "_date") -> int:
         """, (sym_ns_list,))
         prices = {r["symbol"]: r for r in cur.fetchall()}
 
-    # Corporate-action adjustment: back-adjust every close onto the current
-    # scale before computing returns, so a split/bonus ex_date inside a window
-    # isn't read as a real move (see _adjust_close).
-    corp_actions = _load_corp_actions(golden_c, list(sym_meta))
+    # Returns use golden's split/bonus-ADJUSTED close (adj_close, selected
+    # above) directly, so an ex_date inside a window isn't read as a real move.
+    # This is the same series the price chart reads. (We previously back-adjusted
+    # raw close via golden.corporate_actions, but that table was incomplete for
+    # some names — e.g. ANGELONE's 1Y read +1119% instead of +20%.)
 
     # ── 3. Aggregate per cluster (market-cap-weighted) ───────────────────
     #
@@ -853,11 +810,10 @@ def _refresh_cluster_returns(app_c, golden_c, snap: "_date") -> int:
         row = prices.get(sym)
         if row is None or row["p_now"] is None or mcap <= 0:
             continue
-        acts = corp_actions.get(sym)
-        p_now = _adjust_close(row["p_now"], row.get("d_now"), acts)
+        p_now = row["p_now"]
         bucket = cluster_acc.setdefault(cluster_id, {h: (0.0, 0.0) for h in horizons})
         for h in horizons:
-            p_past = _adjust_close(row.get(f"p_{h}"), row.get(f"d_{h}"), acts)
+            p_past = row.get(f"p_{h}")
             if p_past is None or p_past <= 0:
                 continue
             ret = p_now / p_past - 1.0
@@ -941,13 +897,13 @@ def _refresh_stocks_panel_cache(app_c, golden_c, snap: "_date") -> int:
             syms AS (SELECT unnest(%s::text[]) AS symbol)
             SELECT
                 REPLACE(s.symbol, '.NS', '') AS symbol,
-                (SELECT close::float FROM golden.price_history p
+                (SELECT COALESCE(adj_close, close)::float FROM golden.price_history p
                   WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
                   ORDER BY p.date DESC LIMIT 1) AS p_now,
                 (SELECT date FROM golden.price_history p
                   WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
                   ORDER BY p.date DESC LIMIT 1) AS d_now,
-                (SELECT close::float FROM golden.price_history p
+                (SELECT COALESCE(adj_close, close)::float FROM golden.price_history p
                   WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
                     AND p.date <= (SELECT d FROM latest_d) - INTERVAL '7 days'
                   ORDER BY p.date DESC LIMIT 1) AS p_w1,
@@ -955,7 +911,7 @@ def _refresh_stocks_panel_cache(app_c, golden_c, snap: "_date") -> int:
                   WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
                     AND p.date <= (SELECT d FROM latest_d) - INTERVAL '7 days'
                   ORDER BY p.date DESC LIMIT 1) AS d_w1,
-                (SELECT close::float FROM golden.price_history p
+                (SELECT COALESCE(adj_close, close)::float FROM golden.price_history p
                   WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
                     AND p.date <= (SELECT d FROM latest_d) - INTERVAL '30 days'
                   ORDER BY p.date DESC LIMIT 1) AS p_m1,
@@ -963,7 +919,7 @@ def _refresh_stocks_panel_cache(app_c, golden_c, snap: "_date") -> int:
                   WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
                     AND p.date <= (SELECT d FROM latest_d) - INTERVAL '30 days'
                   ORDER BY p.date DESC LIMIT 1) AS d_m1,
-                (SELECT close::float FROM golden.price_history p
+                (SELECT COALESCE(adj_close, close)::float FROM golden.price_history p
                   WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
                     AND p.date <= (SELECT d FROM latest_d) - INTERVAL '365 days'
                   ORDER BY p.date DESC LIMIT 1) AS p_y1,
@@ -975,9 +931,11 @@ def _refresh_stocks_panel_cache(app_c, golden_c, snap: "_date") -> int:
         """, (sym_ns_list,))
         prices = {r["symbol"]: r for r in cur.fetchall()}
 
-    # Back-adjust closes for splits/bonuses before computing returns (see
-    # _adjust_close) so an ex_date inside a window isn't read as a real move.
-    corp_actions = _load_corp_actions(golden_c, [r["symbol"] for r in score_rows])
+    # Returns use golden's split/bonus-ADJUSTED close (adj_close, selected in
+    # the query above) directly — the same series the price chart reads — so an
+    # ex_date inside a window isn't read as a real move. (We previously
+    # back-adjusted raw close via golden.corporate_actions, but that table was
+    # incomplete for some names — e.g. ANGELONE's 1Y read +1119% instead of +20%.)
 
     # ── 3. Compute per-stock returns + assemble rows ─────────────────────
     def _ret(now, past):
@@ -988,16 +946,15 @@ def _refresh_stocks_panel_cache(app_c, golden_c, snap: "_date") -> int:
     rows = []
     for r in score_rows:
         p = prices.get(r["symbol"])
-        acts = corp_actions.get(r["symbol"])
-        p_now = _adjust_close(p["p_now"], p.get("d_now"), acts) if p else None
+        p_now = p["p_now"] if p else None
         rows.append((
             snap, r["cluster_id"], r["symbol"], r["company_name"],
             r["market_cap_cr"], r["current_price"],
             r["composite_pct"], r["quality_pct"], r["valuation_pct"], r["momentum_pct"],
             r["maturity_tier"],
-            _ret(p_now, _adjust_close(p["p_w1"], p.get("d_w1"), acts)) if p else None,
-            _ret(p_now, _adjust_close(p["p_m1"], p.get("d_m1"), acts)) if p else None,
-            _ret(p_now, _adjust_close(p["p_y1"], p.get("d_y1"), acts)) if p else None,
+            _ret(p_now, p["p_w1"]) if p else None,
+            _ret(p_now, p["p_m1"]) if p else None,
+            _ret(p_now, p["p_y1"]) if p else None,
         ))
 
     # ── 4. DELETE this snapshot's old rows + bulk INSERT ─────────────────
