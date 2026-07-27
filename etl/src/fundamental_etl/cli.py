@@ -543,8 +543,15 @@ def sync_universe_cmd(
         False, "--dry-run", help="Report the diff and write nothing."),
     deactivate: bool = typer.Option(
         False, "--deactivate", help="Also flip is_active=false for universe names that "
-               "have gone dark on NSE (no recent .NS bar). Off by default — a trading "
-               "halt or a stale bhavcopy day shouldn't silently retire a name."),
+               "have gone dark on NSE (no .NS bar within --deactivate-days). Off by "
+               "default — a trading halt or a stale bhavcopy day shouldn't silently "
+               "retire a name; run this deliberately (e.g. the monthly cron)."),
+    deactivate_days: int = typer.Option(
+        60, help="Retire a universe name only after it's had NO .NS daily bar for this "
+                 "many days. Deliberately longer than --min-price-days so onboarding is "
+                 "fast (30d) while retirement is slow (60d) — a name dark 30–60 days "
+                 "sits in a buffer: neither re-onboarded nor retired. Only used with "
+                 "--deactivate."),
 ):
     """Reconcile app.universe against golden's live NSE listing master.
 
@@ -563,26 +570,32 @@ def sync_universe_cmd(
     where present, else the bare symbol stands in until fetch-business-info runs.
     """
     configure_logging()
-    log.info("sync_universe_start", min_price_days=min_price_days, dry_run=dry_run)
+    log.info("sync_universe_start", min_price_days=min_price_days,
+             deactivate=deactivate, deactivate_days=deactivate_days, dry_run=dry_run)
 
     # ── 1. golden: live NSE symbols (recent .NS bar) + best identity row ──
+    # One pass over the wider of the two windows: keep each symbol's most-recent
+    # .NS bar date so we can classify onboarding (≤ min_price_days) and
+    # retirement (> deactivate_days) from the same fetch.
+    window = max(min_price_days, deactivate_days if deactivate else min_price_days)
     with golden_conn() as gc, gc.cursor() as cur:
         cur.execute("""
             WITH live AS (
-                SELECT DISTINCT REPLACE(symbol, '.NS', '') AS sym
+                SELECT REPLACE(symbol, '.NS', '') AS sym, MAX(date) AS last_bar
                   FROM golden.price_history
                  WHERE symbol LIKE '%%.NS' AND interval = '1d'
                    AND date >= CURRENT_DATE - %s
+                 GROUP BY 1
             )
             SELECT DISTINCT ON (l.sym)
-                   l.sym,
+                   l.sym, l.last_bar,
                    s.company_name, s.sector, s.industry, s.isin, s.listing_date
               FROM live l
               LEFT JOIN golden.stocks s
                      ON (s.nse_symbol = l.sym OR REPLACE(s.symbol, '.NS', '') = l.sym)
                     AND (s.exchange = 'NSE' OR s.nse_symbol IS NOT NULL)
              ORDER BY l.sym, (s.exchange = 'NSE') DESC NULLS LAST, s.created_at DESC NULLS LAST
-        """, (min_price_days,))
+        """, (window,))
         live = {r["sym"]: r for r in cur.fetchall()}
 
     if not live:
@@ -590,19 +603,29 @@ def sync_universe_cmd(
         print("No live NSE symbols found in golden — aborting (nothing written).")
         return
 
+    # Onboarding uses the tight window; a symbol only counts as "live for
+    # onboarding" if its last bar is within min_price_days.
+    from datetime import timedelta
+    onboard_cutoff = _date.today() - timedelta(days=min_price_days)
+    deact_cutoff = _date.today() - timedelta(days=deactivate_days)
+    live_onboard = {s for s, r in live.items() if r["last_bar"] >= onboard_cutoff}
+    # "Still trading" for retirement purposes = a bar within deactivate_days.
+    live_for_retire = {s for s, r in live.items() if r["last_bar"] >= deact_cutoff}
+
     # ── 2. app: current universe membership ──────────────────────────────
     with app_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT symbol, is_active FROM app.universe")
             existing = {r["symbol"]: r["is_active"] for r in cur.fetchall()}
 
-        new_syms = sorted(set(live) - set(existing))
-        gone = sorted(s for s, act in existing.items() if act and s not in live)
+        new_syms = sorted(live_onboard - set(existing))
+        # Retire only names with NO bar inside the (longer) deactivate window.
+        gone = sorted(s for s, act in existing.items() if act and s not in live_for_retire)
 
-        print(f"golden live NSE symbols: {len(live)}")
+        print(f"golden live NSE symbols (≤{min_price_days}d): {len(live_onboard)}")
         print(f"app.universe rows:       {len(existing)}")
         print(f"NEW to onboard:          {len(new_syms)}")
-        print(f"gone-dark (active→?):    {len(gone)}"
+        print(f"gone-dark (>{deactivate_days}d, active): {len(gone)}"
               f"{'  (use --deactivate to retire)' if gone and not deactivate else ''}")
         for s in new_syms[:40]:
             nm = (live[s]["company_name"] or s)

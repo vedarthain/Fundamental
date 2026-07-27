@@ -1,0 +1,59 @@
+# Monthly universe reconciliation — onboard + RETIRE.
+#
+# The weekly-fetch job already runs `sync-universe` (onboard-only) every
+# Saturday, so new IPOs enter fast. This monthly job additionally passes
+# --deactivate, which retires names that have had NO NSE .NS bar for
+# --deactivate-days (default 60) — genuine delistings / mergers / long
+# suspensions (e.g. CIGNITITEC→Coforge, GSPL merger).
+#
+# Why retirement is monthly + slow (60d), not weekly + fast:
+#   Flipping is_active=false drops a name from scoring, scanners, and every
+#   web surface. A trading halt or a stale bhavcopy day must NOT trigger that.
+#   The 60-day window means a name is only retired after two full months dark,
+#   and running monthly (not weekly) adds a second layer of deliberateness.
+#   Onboarding stays on the weekly job at 30d; the 30–60d gap is an intentional
+#   buffer — a name dark in that band is neither re-onboarded nor retired.
+#
+# Idempotent + safe to re-run: onboarding is ON CONFLICT DO NOTHING, and
+# retirement only touches rows still is_active. Dry-run locally first with:
+#   sync-universe --deactivate --dry-run
+#
+# Secrets: same NEON_APP_URL / NEON_GOLDEN_URL as the weekly jobs.
+
+name: Sync universe (monthly, with retire)
+
+on:
+  schedule:
+    # 1st of each month, 06:00 UTC = 11:30 IST — off-market, and clear of
+    # refresh-corporate-actions (04:30 UTC 1st) and refresh-constituents (Sun 04:00).
+    - cron: '0 6 1 * *'
+  workflow_dispatch: {}
+
+# Never overlap with itself (a manual run + the scheduled run would both
+# read-modify-write app.universe.is_active).
+concurrency:
+  group: sync-universe-monthly
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install fundamental-etl
+        run: pip install -e ./etl
+
+      - name: Sync universe (onboard new + retire 60d-dark)
+        env:
+          APP_DB_URL:       ${{ secrets.NEON_APP_URL }}
+          GOLDEN_DB_URL:    ${{ secrets.NEON_GOLDEN_URL }}
+          PYTHONUNBUFFERED: "1"
+        run: python -m fundamental_etl.cli sync-universe --deactivate --deactivate-days 60
