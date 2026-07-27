@@ -534,6 +534,127 @@ def repair_cmd(
         log.info("rescore_done")
 
 
+@app.command("sync-universe")
+def sync_universe_cmd(
+    min_price_days: int = typer.Option(
+        30, help="A symbol counts as live-on-NSE if golden has a .NS daily bar "
+                 "within this many days. 30 tolerates a fresh IPO's first sparse weeks."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Report the diff and write nothing."),
+    deactivate: bool = typer.Option(
+        False, "--deactivate", help="Also flip is_active=false for universe names that "
+               "have gone dark on NSE (no recent .NS bar). Off by default — a trading "
+               "halt or a stale bhavcopy day shouldn't silently retire a name."),
+):
+    """Reconcile app.universe against golden's live NSE listing master.
+
+    golden ingests the NSE Bhavcopy daily (data_source='nse_bhav'), so a new
+    IPO lands in golden.price_history / golden.stocks within a day of listing —
+    we don't parse the bhavcopy ourselves. This command diffs that master
+    against app.universe and INSERTS the new NSE-listed equities, so the weekly
+    Screener fetch → compute → score chain absorbs them automatically on its
+    next run (a day-1 IPO enters as a low-maturity name and its score fills in
+    as Screener history accrues).
+
+    Live-on-NSE is defined by a recent .NS daily bar — NOT golden.stocks'
+    series/exchange metadata, which is inconsistent on exactly the dual-listed
+    megacaps (RELIANCE/TCS/INFY/HDFCBANK/ICICIBANK) we most need to keep.
+    Identity (name/sector/isin/listing_date) is enriched from golden.stocks
+    where present, else the bare symbol stands in until fetch-business-info runs.
+    """
+    configure_logging()
+    log.info("sync_universe_start", min_price_days=min_price_days, dry_run=dry_run)
+
+    # ── 1. golden: live NSE symbols (recent .NS bar) + best identity row ──
+    with golden_conn() as gc, gc.cursor() as cur:
+        cur.execute("""
+            WITH live AS (
+                SELECT DISTINCT REPLACE(symbol, '.NS', '') AS sym
+                  FROM golden.price_history
+                 WHERE symbol LIKE '%%.NS' AND interval = '1d'
+                   AND date >= CURRENT_DATE - %s
+            )
+            SELECT DISTINCT ON (l.sym)
+                   l.sym,
+                   s.company_name, s.sector, s.industry, s.isin, s.listing_date
+              FROM live l
+              LEFT JOIN golden.stocks s
+                     ON (s.nse_symbol = l.sym OR REPLACE(s.symbol, '.NS', '') = l.sym)
+                    AND (s.exchange = 'NSE' OR s.nse_symbol IS NOT NULL)
+             ORDER BY l.sym, (s.exchange = 'NSE') DESC NULLS LAST, s.created_at DESC NULLS LAST
+        """, (min_price_days,))
+        live = {r["sym"]: r for r in cur.fetchall()}
+
+    if not live:
+        log.warning("sync_universe_no_live_symbols")
+        print("No live NSE symbols found in golden — aborting (nothing written).")
+        return
+
+    # ── 2. app: current universe membership ──────────────────────────────
+    with app_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT symbol, is_active FROM app.universe")
+            existing = {r["symbol"]: r["is_active"] for r in cur.fetchall()}
+
+        new_syms = sorted(set(live) - set(existing))
+        gone = sorted(s for s, act in existing.items() if act and s not in live)
+
+        print(f"golden live NSE symbols: {len(live)}")
+        print(f"app.universe rows:       {len(existing)}")
+        print(f"NEW to onboard:          {len(new_syms)}")
+        print(f"gone-dark (active→?):    {len(gone)}"
+              f"{'  (use --deactivate to retire)' if gone and not deactivate else ''}")
+        for s in new_syms[:40]:
+            nm = (live[s]["company_name"] or s)
+            print(f"  + {s:16} {nm}")
+        if len(new_syms) > 40:
+            print(f"  … and {len(new_syms) - 40} more")
+
+        if dry_run:
+            print("\n--dry-run: no rows written.")
+            log.info("sync_universe_dry_run", new=len(new_syms), gone=len(gone))
+            return
+
+        # ── 3. INSERT new rows (identity from golden; name falls back to symbol) ──
+        inserted = 0
+        if new_syms:
+            payload = [(
+                s,
+                (live[s]["company_name"] or s),
+                live[s]["sector"], live[s]["industry"],
+                live[s]["isin"], live[s]["listing_date"],
+            ) for s in new_syms]
+            with conn.cursor() as cur:
+                cur.executemany("""
+                    INSERT INTO app.universe
+                        (symbol, company_name, sector, industry, isin, listing_date,
+                         is_active, synced_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, true, now())
+                    ON CONFLICT (symbol) DO NOTHING
+                """, payload)
+                inserted = cur.rowcount
+            conn.commit()
+
+        # ── 4. Optionally retire names that have gone dark on NSE ─────────────
+        retired = 0
+        if deactivate and gone:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE app.universe SET is_active = false, synced_at = now() "
+                    "WHERE symbol = ANY(%s) AND is_active",
+                    (gone,),
+                )
+                retired = cur.rowcount
+            conn.commit()
+
+    log.info("sync_universe_done", inserted=inserted, retired=retired,
+             new_detected=len(new_syms), gone_detected=len(gone))
+    print(f"\nInserted {inserted} new symbol(s); retired {retired}.")
+    if inserted:
+        print("Next: fetch-many --only … → compute-metrics → assign-clusters → score "
+              "(or just let the weekly fetch+compute cron absorb them).")
+
+
 @app.command("assign-clusters")
 def assign_clusters_cmd():
     """Assign cluster_id + maturity_tier for every active stock."""

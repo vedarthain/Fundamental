@@ -71,6 +71,19 @@ jobs:
       - name: Install fundamental-etl
         run: pip install -e ./etl
 
+      # Onboard new NSE listings BEFORE the scrape so a fresh IPO enters
+      # app.universe here and gets its fundamentals in the same run (then
+      # weekly-compute scores it the next day). golden already carries the IPO
+      # from the daily bhavcopy; this only diffs golden's live-NSE master into
+      # app.universe. --deactivate is intentionally omitted: retiring a name is
+      # a human decision (merger vs. trading halt vs. stale bhavcopy day).
+      - name: Sync universe (onboard new NSE listings)
+        env:
+          APP_DB_URL:     ${{ secrets.NEON_APP_URL }}
+          GOLDEN_DB_URL:  ${{ secrets.NEON_GOLDEN_URL }}
+          PYTHONUNBUFFERED: "1"
+        run: python -m fundamental_etl.cli sync-universe
+
       # Scrape Screener → fundamentals + raw blobs on Neon. Expiry HALTS the
       # run (rotate cue → freshness-check alerts). --max-runtime-min caps a
       # throttled week so it stops gracefully; unscraped symbols resume next
