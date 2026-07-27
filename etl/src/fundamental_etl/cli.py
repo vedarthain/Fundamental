@@ -707,6 +707,28 @@ def _refresh_cluster_cache(conn, snap: "_date") -> int:
         return cur.rowcount
 
 
+# Per-horizon plausibility caps on a computed return (as a fraction: 2.0 = +200%).
+# Even after switching to adj_close, golden's price_history has a handful of names
+# whose split adjustment is internally inconsistent — the 1y-ago adj_close sits on
+# a different scale than today's, implying physically impossible moves (TVSMOTOR
+# read +3358%, CUPID +3525%). That's an upstream golden data-quality defect we
+# can't repair here; the least-wrong thing is to refuse to publish an absurd
+# number rather than render one bad vendor bar as a headline return. Caps are set
+# well above any real move over the window (India's daily circuit is ±20%), so a
+# genuine multi-bagger micro-cap still passes; only data errors get nulled.
+_RET_CAP = {"w1": 2.0, "m1": 3.0, "y1": 5.0}
+
+
+def _sane_ret(ret: "float | None", horizon: str) -> "float | None":
+    """Return `ret` unless it exceeds the horizon's plausibility cap → None."""
+    if ret is None:
+        return None
+    cap = _RET_CAP.get(horizon)
+    if cap is not None and abs(ret) > cap:
+        return None
+    return ret
+
+
 def _refresh_cluster_returns(app_c, golden_c, snap: "_date") -> int:
     """Compute market-cap-weighted 1W / 1M / 1Y cluster returns and write
     them to app.cluster_composite_cache.
@@ -816,7 +838,9 @@ def _refresh_cluster_returns(app_c, golden_c, snap: "_date") -> int:
             p_past = row.get(f"p_{h}")
             if p_past is None or p_past <= 0:
                 continue
-            ret = p_now / p_past - 1.0
+            ret = _sane_ret(p_now / p_past - 1.0, h)
+            if ret is None:  # implausible → drop this symbol from the cluster avg
+                continue
             sw, sm = bucket[h]
             bucket[h] = (sw + mcap * ret, sm + mcap)
 
@@ -938,10 +962,12 @@ def _refresh_stocks_panel_cache(app_c, golden_c, snap: "_date") -> int:
     # incomplete for some names — e.g. ANGELONE's 1Y read +1119% instead of +20%.)
 
     # ── 3. Compute per-stock returns + assemble rows ─────────────────────
-    def _ret(now, past):
+    # _ret is horizon-aware so it can drop physically-impossible moves that
+    # come from golden's occasional split-scale defects (see _sane_ret / _RET_CAP).
+    def _ret(now, past, horizon):
         if now is None or past is None or past <= 0:
             return None
-        return now / past - 1.0
+        return _sane_ret(now / past - 1.0, horizon)
 
     rows = []
     for r in score_rows:
@@ -952,9 +978,9 @@ def _refresh_stocks_panel_cache(app_c, golden_c, snap: "_date") -> int:
             r["market_cap_cr"], r["current_price"],
             r["composite_pct"], r["quality_pct"], r["valuation_pct"], r["momentum_pct"],
             r["maturity_tier"],
-            _ret(p_now, p["p_w1"]) if p else None,
-            _ret(p_now, p["p_m1"]) if p else None,
-            _ret(p_now, p["p_y1"]) if p else None,
+            _ret(p_now, p["p_w1"], "w1") if p else None,
+            _ret(p_now, p["p_m1"], "m1") if p else None,
+            _ret(p_now, p["p_y1"], "y1") if p else None,
         ))
 
     # ── 4. DELETE this snapshot's old rows + bulk INSERT ─────────────────

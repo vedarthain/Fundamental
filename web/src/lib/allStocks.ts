@@ -51,9 +51,30 @@ function bare(sym: string): string {
   return sym.endsWith(".NS") ? sym.slice(0, -3) : sym;
 }
 
-function pctChange(last: number | undefined, base: number | undefined): number | null {
+// Per-window plausibility caps (in PERCENT). golden's price_history has a few
+// names whose split adjustment is internally inconsistent — the N-ago adj_close
+// sits on a different scale than today's, implying impossible moves (TVSMOTOR
+// read +3358% for 1Y). That's an upstream golden defect the ETL guard (_RET_CAP
+// in cli.py) also filters; mirror it here so the live All-stocks table never
+// renders one bad vendor bar as a headline return. Caps sit well above any real
+// move over the window (India's daily circuit is ±20%), so a genuine multi-
+// bagger still shows; only data errors collapse to "—".
+const PCT_CAP: Record<"1d" | "1w" | "1m" | "1y", number> = {
+  "1d": 60,
+  "1w": 200,
+  "1m": 300,
+  "1y": 500,
+};
+
+function pctChange(
+  last: number | undefined,
+  base: number | undefined,
+  window: "1d" | "1w" | "1m" | "1y",
+): number | null {
   if (last == null || base == null || base === 0) return null;
-  return Math.round((last / base - 1) * 1000) / 10;
+  const pct = Math.round((last / base - 1) * 1000) / 10;
+  if (Math.abs(pct) > PCT_CAP[window]) return null;
+  return pct;
 }
 
 export async function loadAllStocks(): Promise<AllStocksData> {
@@ -155,10 +176,10 @@ export async function loadAllStocks(): Promise<AllStocksData> {
       sector: p.sector,
       peer_group: p.peer_group,
       current_price: price == null ? null : Math.round(price * 100) / 100,
-      ret_1d: pctChange(lastPx, prev.get(p.symbol)),
-      ret_1w: pctChange(lastPx, wAgo.get(p.symbol)),
-      ret_1m: pctChange(lastPx, mAgo.get(p.symbol)),
-      ret_1y: pctChange(lastPx, yAgo.get(p.symbol)),
+      ret_1d: pctChange(lastPx, prev.get(p.symbol), "1d"),
+      ret_1w: pctChange(lastPx, wAgo.get(p.symbol), "1w"),
+      ret_1m: pctChange(lastPx, mAgo.get(p.symbol), "1m"),
+      ret_1y: pctChange(lastPx, yAgo.get(p.symbol), "1y"),
       composite_pct: p.composite_pct == null ? null : Math.round(p.composite_pct),
       is_n500: p.is_n500,
     };
