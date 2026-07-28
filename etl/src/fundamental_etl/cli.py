@@ -425,6 +425,17 @@ def fetch_many(
         **{f"status_{k}": v for k, v in counter["by_status"].items()},
     )
 
+    # Fail LOUD on cookie expiry. Without this the graceful halt exits 0 and the
+    # GitHub "Weekly Fetch" badge stays GREEN even though we scraped nothing —
+    # the failure was silent for a full weekend once (2026-07-25). A halt driven
+    # by auth_failed means the Screener cookies died mid-run: exit non-zero so the
+    # workflow itself goes red, instead of relying solely on the 12h freshness
+    # watchdog to notice hours later. KeyboardInterrupt (no auth_failed) still
+    # exits 0 — a human stopping the run is not a failure.
+    if stop_on_auth_fail and counter["by_status"].get("auth_failed", 0) > 0:
+        log.error("exit_nonzero", reason="screener cookies expired — run halted, rotate SCREENER_* secrets")
+        raise typer.Exit(code=1)
+
 
 @app.command("repair")
 def repair_cmd(
