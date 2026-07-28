@@ -73,7 +73,17 @@ const RET_MIN = 0.06; //  >= 6% up-day
 const VOL_MULT = 3; //    >= 3x its own 50-day average volume
 const PRICE_FLOOR = 30; // >= Rs 30 (no penny junk)
 const TURNOVER_FLOOR = 1e7; // >= Rs 1 cr average daily turnover (liquidity)
-const MAX_ROWS = 20; //   store the top N by volume multiple
+const MAX_ROWS = 20; //   final N stored/shown, ranked by composite (see below)
+// Golden-side candidate pool. We can't rank by composite_pct here (that lives in
+// app, added during enrich), so we take a generous pool by volume, THEN re-rank
+// the enriched pool by composite and keep MAX_ROWS. Why not cap by volume as the
+// final rank: a 6749-event / 2.5yr backtest showed vol_x is INVERSELY related to
+// forward return — the 10x+ spikes (which a vol_x-DESC cap keeps) were the worst
+// bucket (T+20 mean +0.27%) while 3-5x names were best (+2.49%). Ranking the
+// stored set by volume literally surfaced the worst performers first and, on
+// busy days, dropped the better moderate-volume names. 60 comfortably exceeds a
+// typical day's ignition count so the pool rarely truncates real candidates.
+const CANDIDATE_POOL = 60;
 
 type GoldenRow = {
   symbol: string;
@@ -123,7 +133,7 @@ async function screenGolden(): Promise<{ snapDate: string; rows: GoldenRow[] }> 
       AND close >= ${PRICE_FLOOR}
       AND avg_vol50 * close >= ${TURNOVER_FLOOR}
     ORDER BY vol_x DESC
-    LIMIT ${MAX_ROWS}
+    LIMIT ${CANDIDATE_POOL}
   `;
   return { snapDate, rows };
 }
@@ -212,10 +222,21 @@ async function enrich(snapDate: string, rows: GoldenRow[]): Promise<MomentumSign
   });
 }
 
-/** Compute today's signals end-to-end (screen + enrich). Used by the cron. */
+/**
+ * Compute today's signals end-to-end (screen + enrich). Used by the cron.
+ *
+ * Ranking: the golden screen returns a volume-ranked POOL; here we re-rank the
+ * enriched pool by composite_pct (quality first, unscored last) and keep the top
+ * MAX_ROWS. This replaces the old vol_x-DESC cap, which the backtest showed was
+ * inverted — it surfaced exhaustion spikes and dropped better moderate-volume
+ * names. Ties (and unscored names) fall back to vol_x so ordering stays stable.
+ */
 export async function computeMomentumSignals(): Promise<{ snapDate: string; signals: MomentumSignal[] }> {
   const { snapDate, rows } = await screenGolden();
-  const signals = await enrich(snapDate, rows);
+  const enriched = await enrich(snapDate, rows);
+  const signals = enriched
+    .sort((a, b) => (b.compositePct ?? -1) - (a.compositePct ?? -1) || b.volX - a.volX)
+    .slice(0, MAX_ROWS);
   return { snapDate, signals };
 }
 
@@ -276,7 +297,11 @@ export async function loadLatestMomentum(
            catalyst_at::text     AS "catalystAt"
     FROM app.momentum_signal
     WHERE snap_date = ${snapDate}
-    ORDER BY vol_x DESC
+    -- Quality-first: composite_pct DESC (unscored last), vol_x as tiebreak.
+    -- Ranking by vol_x is inverted vs forward return (see momentum.ts header),
+    -- so it must not be the primary sort. Applies to already-stored rows too,
+    -- so the page reorders immediately without waiting for a cron recompute.
+    ORDER BY composite_pct DESC NULLS LAST, vol_x DESC
   `;
 
   // Sector / peer-group aren't stored on the signal cache; join the scoring
