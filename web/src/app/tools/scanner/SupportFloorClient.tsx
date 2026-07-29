@@ -13,6 +13,8 @@
 
 import Link from "next/link";
 import type { SupportFloorSignal } from "@/lib/supportFloor";
+import type { SparkPoint } from "@/components/Sparkline";
+import { RowSparkline } from "./RowSparkline";
 import { Pager, usePager } from "./Pager";
 
 const GREEN = "var(--color-delta-up, #0a0)";
@@ -56,10 +58,12 @@ const IconFloor = ({ size }: IconProps) =>
 export default function SupportFloorClient({
   snapDate,
   signals,
+  spark,
   datePicker,
 }: {
   snapDate: string | null;
   signals: SupportFloorSignal[];
+  spark?: Record<string, SparkPoint[]>;
   datePicker?: React.ReactNode;
 }) {
   const dateLabel = snapDate
@@ -112,6 +116,7 @@ export default function SupportFloorClient({
                   <th className="text-right px-2 py-2.5" title="Times the floor was tested — MORE IS A WARNING, a heavily-tested floor is closer to breaking">Tests</th>
                   <th className="text-right px-2 py-2.5" title="Most recent test of the floor">Last test</th>
                   <th className="text-right px-2 py-2.5" title="Industry Score percentile (fundamental)">Score</th>
+                  <th className="text-center px-2 py-2.5" title="Adjusted-close over ~7 months; dashed line marks the tested floor">vs Floor</th>
                 </tr>
               </thead>
               <tbody>
@@ -144,6 +149,9 @@ export default function SupportFloorClient({
                       <td className="px-2 py-2.5 text-right tabular-nums muted-text">{ago(s.lastTouch)}</td>
                       <td className="px-2 py-2.5 text-right tabular-nums font-medium" style={{ color: scoreColor(s.compositePct) }}>
                         {s.compositePct == null ? "—" : Math.round(s.compositePct)}
+                      </td>
+                      <td className="px-2 py-2.5 text-center">
+                        <div className="inline-flex"><RowSparkline series={spark?.[s.symbol]} floor={s.floorPx} /></div>
                       </td>
                     </tr>
                   );

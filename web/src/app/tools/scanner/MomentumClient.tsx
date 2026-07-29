@@ -12,6 +12,8 @@
 
 import Link from "next/link";
 import type { MomentumSignal } from "@/lib/momentum";
+import type { SparkPoint } from "@/components/Sparkline";
+import { RowSparkline } from "./RowSparkline";
 import { Pager, usePager } from "./Pager";
 
 const GREEN = "var(--color-delta-up, #0a0)";
@@ -59,10 +61,12 @@ const IconAlert = ({ size }: IconProps) =>
 export default function MomentumClient({
   snapDate,
   signals,
+  spark,
   datePicker,
 }: {
   snapDate: string | null;
   signals: MomentumSignal[];
+  spark?: Record<string, SparkPoint[]>;
   datePicker?: React.ReactNode;
 }) {
   const dateLabel = snapDate
@@ -113,6 +117,7 @@ export default function MomentumClient({
                   <th className="text-right px-2 py-2.5" title="Volume ÷ 50-day average volume">Vol ×</th>
                   <th className="text-right px-2 py-2.5">Price</th>
                   <th className="text-right px-2 py-2.5" title="Industry Score percentile (fundamental)">Score</th>
+                  <th className="text-center px-2 py-2.5" title="Adjusted-close price over the last ~3 months — the base and the breakout">3-mo</th>
                   <th className="text-left  px-3 py-2.5">Catalyst</th>
                 </tr>
               </thead>
@@ -144,6 +149,9 @@ export default function MomentumClient({
                       <td className="px-2 py-2.5 text-right tabular-nums">{inr(s.close)}</td>
                       <td className="px-2 py-2.5 text-right tabular-nums font-medium" style={{ color: scoreColor(s.compositePct) }}>
                         {s.compositePct == null ? "—" : Math.round(s.compositePct)}
+                      </td>
+                      <td className="px-2 py-2.5 text-center">
+                        <div className="inline-flex"><RowSparkline series={spark?.[s.symbol]} /></div>
                       </td>
                       <td className="px-3 py-2.5 max-w-[340px]">
                         {s.catalystTitle ? (

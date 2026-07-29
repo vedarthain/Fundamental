@@ -17,6 +17,7 @@ import type { TrendLeaderSignal } from "@/lib/trendLeaders";
 import type { SupportFloorSignal } from "@/lib/supportFloor";
 import type { RotationData } from "@/lib/rotation";
 import type { AllStockRow } from "@/lib/allStocks";
+import type { SparkPoint } from "@/components/Sparkline";
 import MomentumClient from "./MomentumClient";
 import TrendLeadersClient from "./TrendLeadersClient";
 import SupportFloorClient from "./SupportFloorClient";
@@ -31,12 +32,15 @@ export default function ScannerTabs({
   momentumSnapDate,
   momentumSignals,
   momentumDates,
+  momentumSpark,
   trendSnapDate,
   trendSignals,
   trendDates,
+  trendSpark,
   floorSnapDate,
   floorSignals,
   floorDates,
+  floorSpark,
   rotation,
   allStocksSnapDate,
   allStocks,
@@ -46,12 +50,15 @@ export default function ScannerTabs({
   momentumSnapDate: string | null;
   momentumSignals: MomentumSignal[];
   momentumDates: string[];
+  momentumSpark: Record<string, SparkPoint[]>;
   trendSnapDate: string | null;
   trendSignals: TrendLeaderSignal[];
   trendDates: string[];
+  trendSpark: Record<string, SparkPoint[]>;
   floorSnapDate: string | null;
   floorSignals: SupportFloorSignal[];
   floorDates: string[];
+  floorSpark: Record<string, SparkPoint[]>;
   rotation: RotationData;
   allStocksSnapDate: string | null;
   allStocks: AllStockRow[];
@@ -182,6 +189,7 @@ export default function ScannerTabs({
             <MomentumClient
               snapDate={momentumSnapDate}
               signals={momentum}
+              spark={momentumSpark}
               datePicker={<ScannerDatePicker param="mDate" dates={momentumDates} selected={momentumSnapDate} />}
             />
           )}
@@ -189,6 +197,7 @@ export default function ScannerTabs({
             <TrendLeadersClient
               snapDate={trendSnapDate}
               signals={trend}
+              spark={trendSpark}
               datePicker={<ScannerDatePicker param="tDate" dates={trendDates} selected={trendSnapDate} />}
             />
           )}
@@ -196,6 +205,7 @@ export default function ScannerTabs({
             <SupportFloorClient
               snapDate={floorSnapDate}
               signals={floor}
+              spark={floorSpark}
               datePicker={<ScannerDatePicker param="fDate" dates={floorDates} selected={floorSnapDate} />}
             />
           )}

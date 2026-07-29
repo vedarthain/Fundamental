@@ -11,6 +11,8 @@
 
 import Link from "next/link";
 import type { TrendLeaderSignal } from "@/lib/trendLeaders";
+import type { SparkPoint } from "@/components/Sparkline";
+import { RowSparkline } from "./RowSparkline";
 import { Pager, usePager } from "./Pager";
 
 const GREEN = "var(--color-delta-up, #0a0)";
@@ -74,10 +76,12 @@ const IconTrend = ({ size }: IconProps) =>
 export default function TrendLeadersClient({
   snapDate,
   signals,
+  spark,
   datePicker,
 }: {
   snapDate: string | null;
   signals: TrendLeaderSignal[];
+  spark?: Record<string, SparkPoint[]>;
   datePicker?: React.ReactNode;
 }) {
   const dateLabel = snapDate
@@ -130,6 +134,7 @@ export default function TrendLeadersClient({
                   <th className="text-right px-2 py-2.5">Price</th>
                   <th className="text-right px-2 py-2.5" title="Distance below the 52-week high">vs High</th>
                   <th className="text-right px-2 py-2.5" title="Industry Score percentile (fundamental)">Score</th>
+                  <th className="text-center px-2 py-2.5" title="Adjusted-close price over the last year — the trend in one glance">1-yr</th>
                 </tr>
               </thead>
               <tbody>
@@ -173,6 +178,9 @@ export default function TrendLeadersClient({
                       </td>
                       <td className="px-2 py-2.5 text-right tabular-nums font-medium" style={{ color: scoreColor(s.compositePct) }}>
                         {s.compositePct == null ? "—" : Math.round(s.compositePct)}
+                      </td>
+                      <td className="px-2 py-2.5 text-center">
+                        <div className="inline-flex"><RowSparkline series={spark?.[s.symbol]} /></div>
                       </td>
                     </tr>
                   );

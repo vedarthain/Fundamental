@@ -4,6 +4,7 @@ import { loadLatestTrendLeaders } from "@/lib/trendLeaders";
 import { loadLatestSupportFloor } from "@/lib/supportFloor";
 import { loadRotation } from "@/lib/rotation";
 import { loadAllStocks } from "@/lib/allStocks";
+import { loadSparklines } from "@/lib/sparklines";
 import { sql } from "@/lib/db";
 import ScannerTabs, { type Tab } from "./ScannerTabs";
 
@@ -46,17 +47,31 @@ export default async function MomentumPage({
     loadAllStocks(),
     sql<{ symbol: string }[]>`SELECT symbol FROM app.index_constituent WHERE index_code = 'NIFTY500'`,
   ]);
+
+  // Per-row mini price charts — one batched golden query per tab, each on the
+  // window that matches that scanner's clock: Igniting shows the base → the
+  // breakout (~3M), Trend shows the whole uptrend (1Y), At Support shows the
+  // approach to the tested floor (~7M). Rendered inline in each table row.
+  const [momentumSpark, trendSpark, floorSpark] = await Promise.all([
+    loadSparklines(momentum.signals.map((s) => s.symbol), 95),
+    loadSparklines(trend.signals.map((s) => s.symbol), 365),
+    loadSparklines(floor.signals.map((s) => s.symbol), 210),
+  ]);
+
   return (
     <ScannerTabs
       momentumSnapDate={momentum.snapDate}
       momentumSignals={momentum.signals}
       momentumDates={momentum.dates}
+      momentumSpark={momentumSpark}
       trendSnapDate={trend.snapDate}
       trendSignals={trend.signals}
       trendDates={trend.dates}
+      trendSpark={trendSpark}
       floorSnapDate={floor.snapDate}
       floorSignals={floor.signals}
       floorDates={floor.dates}
+      floorSpark={floorSpark}
       rotation={rotation}
       allStocksSnapDate={allStocks.snapDate}
       allStocks={allStocks.rows}

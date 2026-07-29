@@ -10,6 +10,7 @@ export function Sparkline({
   fill = false,
   overlay,
   overlayStroke = "var(--color-muted)",
+  showBaseline = true,
 }: {
   data: SparkPoint[];
   width?: number;
@@ -18,6 +19,10 @@ export function Sparkline({
   /** Stretch to the container's width (svg width=100%) instead of a fixed px
    *  width. `width` still defines the coordinate space. */
   fill?: boolean;
+  /** Draw the dashed mid-line when there's no overlay. Set false for tiny inline
+   *  row sparklines where the mid-line is just clutter (or could be mistaken for
+   *  a level). Ignored when `overlay` is present. */
+  showBaseline?: boolean;
   /** Optional second series drawn on the SAME y-scale as `data`, as a dashed
    *  muted line with no end dot. Used to overlay a peer/cluster baseline so the
    *  reader sees the stock's path RELATIVE to its peers, not just in absolute
@@ -65,7 +70,7 @@ export function Sparkline({
     >
       {overlayPath ? (
         <path d={overlayPath} fill="none" stroke={overlayStroke} strokeWidth={1} strokeDasharray="2.5 2.5" strokeLinejoin="round" vectorEffect="non-scaling-stroke" opacity={0.7} />
-      ) : (
+      ) : showBaseline ? (
         <line
           x1={pad}
           y1={y((min + max) / 2)}
@@ -76,7 +81,7 @@ export function Sparkline({
           strokeWidth={1}
           opacity={0.6}
         />
-      )}
+      ) : null}
       <path d={path} fill="none" stroke={stroke} strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
       <circle cx={xN(points.length - 1, points.length)} cy={y(last.value)} r={2.5} fill={stroke} />
       {/* axis labels */}
