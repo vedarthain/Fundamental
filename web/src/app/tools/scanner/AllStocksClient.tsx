@@ -23,7 +23,7 @@ import { Pager, usePager } from "./Pager";
 
 const GREEN = "var(--color-delta-up, #0a0)";
 const RED = "var(--color-delta-down, #b00)";
-const PAGE_SIZE = 30;
+const PAGE_SIZE = 50;
 
 type SortKey =
   | "symbol"
@@ -123,12 +123,12 @@ export default function AllStocksClient({
         <div className="eyebrow mb-3">Full universe</div>
         <h1 className="font-display text-[36px] tracking-tight leading-tight">All stocks</h1>
         <p className="mt-2 text-[12.5px] muted-text">
-          Every scored NSE name with 1D / 1W / 1M / 1Y performance · {sorted.length} names
-          {snapDate && <> · panel {snapDate}</>}
+          Every scored NSE name — returns, fundamental score, industry rank and a price trend ·{" "}
+          {sorted.length} names{snapDate && <> · panel {snapDate}</>}
         </p>
       </header>
 
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+      <div className="mt-4 flex flex-wrap items-center gap-3">
         <input
           type="search"
           value={q}
@@ -136,6 +136,7 @@ export default function AllStocksClient({
           placeholder="Filter by symbol or company…"
           className="w-full max-w-[320px] rounded-lg border hairline px-3 py-1.5 text-[13px] bg-transparent"
         />
+        <span className="text-[11px] uppercase tracking-wide muted-text">Trend</span>
         <WindowPicker
           options={ALLSTOCKS_WINDOWS}
           days={windowDays}
@@ -242,7 +243,7 @@ export default function AllStocksClient({
         <div className="text-[11px] uppercase tracking-wide muted-text mb-2">About this tab</div>
         <p className="text-[13.5px] leading-[1.55]">
           The whole scored universe in one place — sort by any column (click a header to toggle
-          ascending / descending) and page through 30 at a time. <strong>1W / 1M / 1Y</strong> come
+          ascending / descending) and page through 50 at a time. <strong>1W / 1M / 1Y</strong> come
           from the weekly scoring panel; <strong>1D</strong> is the latest daily close vs. the prior
           one. <strong>Score</strong> is the fundamental Industry-Score percentile and{" "}
           <strong>Ind. rank</strong> is that score turned into a position within the stock&apos;s own peer
