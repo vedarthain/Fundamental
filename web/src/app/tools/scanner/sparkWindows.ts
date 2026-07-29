@@ -35,7 +35,18 @@ export const FLOOR_WINDOWS: WindowOpt[] = [
   { label: "ALL", days: 20000 },
 ];
 
+// All stocks is a browse table over the full universe, so it offers the wide
+// momentum→multi-year spread (no 1M — that tab is for standing, not day-trades).
+export const ALLSTOCKS_WINDOWS: WindowOpt[] = [
+  { label: "3M", days: 95 },
+  { label: "6M", days: 190 },
+  { label: "1Y", days: 365 },
+  { label: "3Y", days: 1100 },
+  { label: "5Y", days: 1830 },
+];
+
 // First-paint window per tab (must be one of the tab's option `days`).
 export const IGNITING_DEFAULT_DAYS = 95; // 3M
 export const TREND_DEFAULT_DAYS = 365; //  1Y
 export const FLOOR_DEFAULT_DAYS = 365; //  1Y
+export const ALLSTOCKS_DEFAULT_DAYS = 365; // 1Y

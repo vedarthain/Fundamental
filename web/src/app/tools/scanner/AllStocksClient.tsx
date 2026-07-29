@@ -15,6 +15,10 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { displayCompanyName } from "@/lib/score";
 import type { AllStockRow } from "@/lib/allStocks";
+import { RowSparkline } from "./RowSparkline";
+import { WindowPicker } from "./WindowPicker";
+import { usePagedSparklines } from "./usePagedSparklines";
+import { ALLSTOCKS_WINDOWS, ALLSTOCKS_DEFAULT_DAYS } from "./sparkWindows";
 import { Pager, usePager } from "./Pager";
 
 const GREEN = "var(--color-delta-up, #0a0)";
@@ -30,9 +34,12 @@ type SortKey =
   | "ret_1w"
   | "ret_1m"
   | "ret_1y"
-  | "composite_pct";
+  | "composite_pct"
+  | "composite_rank";
 
 const TEXT_KEYS: ReadonlySet<SortKey> = new Set(["symbol", "sector", "peer_group"]);
+// Columns that read best low→high on first click (rank #1 = best on top).
+const ASC_FIRST_KEYS: ReadonlySet<SortKey> = new Set(["composite_rank"]);
 
 function retFmt(pct: number | null): { text: string; color: string } {
   if (pct == null) return { text: "—", color: "var(--color-muted)" };
@@ -64,8 +71,8 @@ export default function AllStocksClient({
       setDir((d) => (d === "asc" ? "desc" : "asc"));
     } else {
       setSortKey(k);
-      // Text columns read best A→Z; return/score columns best high→low.
-      setDir(TEXT_KEYS.has(k) ? "asc" : "desc");
+      // Text columns read best A→Z; rank best low→high; returns/score high→low.
+      setDir(TEXT_KEYS.has(k) || ASC_FIRST_KEYS.has(k) ? "asc" : "desc");
     }
   }
 
@@ -101,6 +108,12 @@ export default function AllStocksClient({
 
   const pager = usePager(sorted, PAGE_SIZE);
 
+  // Mini price charts are fetched lazily for the visible page only (the universe
+  // is far too large to batch up front); switching the window refetches.
+  const [windowDays, setWindowDays] = useState(ALLSTOCKS_DEFAULT_DAYS);
+  const pageSymbols = useMemo(() => pager.pageItems.map((r) => r.symbol), [pager.pageItems]);
+  const spark = usePagedSparklines(pageSymbols, windowDays);
+
   const arrow = (k: SortKey) => (k === sortKey ? (dir === "asc" ? " ▲" : " ▼") : "");
   const thBtn = "cursor-pointer select-none hover:text-[var(--color-ink)] transition-colors";
 
@@ -115,13 +128,19 @@ export default function AllStocksClient({
         </p>
       </header>
 
-      <div className="mt-4">
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
         <input
           type="search"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Filter by symbol or company…"
           className="w-full max-w-[320px] rounded-lg border hairline px-3 py-1.5 text-[13px] bg-transparent"
+        />
+        <WindowPicker
+          options={ALLSTOCKS_WINDOWS}
+          days={windowDays}
+          onSelect={setWindowDays}
+          loading={spark.loading}
         />
       </div>
 
@@ -160,9 +179,13 @@ export default function AllStocksClient({
                   <th className={`text-right px-2 py-2.5 ${thBtn}`} title="1-year price return" onClick={() => toggleSort("ret_1y")}>
                     1Y{arrow("ret_1y")}
                   </th>
-                  <th className={`text-right px-3 py-2.5 ${thBtn}`} title="Industry Score percentile (fundamental)" onClick={() => toggleSort("composite_pct")}>
+                  <th className={`text-right px-2 py-2.5 ${thBtn}`} title="Industry Score percentile (fundamental)" onClick={() => toggleSort("composite_pct")}>
                     Score{arrow("composite_pct")}
                   </th>
+                  <th className={`text-right px-2 py-2.5 ${thBtn}`} title="Composite rank across the whole scored universe (#1 = best)" onClick={() => toggleSort("composite_rank")}>
+                    Rank{arrow("composite_rank")}
+                  </th>
+                  <th className="text-center px-3 py-2.5" title="Adjusted-close price over the selected window">Trend</th>
                 </tr>
               </thead>
               <tbody>
@@ -189,8 +212,16 @@ export default function AllStocksClient({
                         </td>
                       );
                     })}
-                    <td className="px-3 py-2.5 text-right tabular-nums font-semibold" style={{ color: scoreColor(r.composite_pct) }}>
+                    <td className="px-2 py-2.5 text-right tabular-nums font-semibold" style={{ color: scoreColor(r.composite_pct) }}>
                       {r.composite_pct == null ? "—" : r.composite_pct}
+                    </td>
+                    <td className="px-2 py-2.5 text-right tabular-nums muted-text">
+                      {r.composite_rank == null ? "—" : `#${r.composite_rank}`}
+                    </td>
+                    <td className="px-3 py-2.5 text-center">
+                      <div className="inline-flex transition-opacity" style={{ opacity: spark.loading ? 0.4 : 1 }}>
+                        <RowSparkline series={spark.data[r.symbol]} />
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -209,7 +240,10 @@ export default function AllStocksClient({
           The whole scored universe in one place — sort by any column (click a header to toggle
           ascending / descending) and page through 30 at a time. <strong>1W / 1M / 1Y</strong> come
           from the weekly scoring panel; <strong>1D</strong> is the latest daily close vs. the prior
-          one. <strong>Score</strong> is the fundamental Industry-Score percentile. Use the All-NSE /
+          one. <strong>Score</strong> is the fundamental Industry-Score percentile and{" "}
+          <strong>Rank</strong> is that score turned into an absolute market position (#1 = best,
+          fixed across sorts and the universe toggle). <strong>Trend</strong> is a split-adjusted mini
+          price chart — switch it between 3M and 5Y with the toggle above. Use the All-NSE /
           NIFTY-500 toggle on the left to switch the universe.
         </p>
       </section>

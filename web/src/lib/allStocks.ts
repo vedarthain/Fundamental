@@ -28,6 +28,7 @@ export type AllStockRow = {
   ret_1m: number | null; // percent
   ret_1y: number | null; // percent
   composite_pct: number | null;
+  composite_rank: number | null; // 1 = best composite in the scored universe
   is_n500: boolean;
 };
 
@@ -167,6 +168,16 @@ export async function loadAllStocks(): Promise<AllStocksData> {
     // Non-fatal: returns render as "—", table still lists the universe.
   }
 
+  // Absolute composite rank across the whole scored universe (1 = best), so a
+  // stock's "#" is a fixed market standing that doesn't shift with the table's
+  // sort/filter or the NIFTY-500 toggle. Unscored names get no rank. Ties break
+  // by symbol so the ordinal is deterministic snapshot to snapshot.
+  const rankOf = new Map<string, number>();
+  panel
+    .filter((p) => p.composite_pct != null)
+    .sort((a, b) => (b.composite_pct as number) - (a.composite_pct as number) || a.symbol.localeCompare(b.symbol))
+    .forEach((p, i) => rankOf.set(p.symbol, i + 1));
+
   const rows: AllStockRow[] = panel.map((p) => {
     const lastPx = last.get(p.symbol);
     const price = lastPx ?? p.cache_price ?? null;
@@ -181,6 +192,7 @@ export async function loadAllStocks(): Promise<AllStocksData> {
       ret_1m: pctChange(lastPx, mAgo.get(p.symbol), "1m"),
       ret_1y: pctChange(lastPx, yAgo.get(p.symbol), "1y"),
       composite_pct: p.composite_pct == null ? null : Math.round(p.composite_pct),
+      composite_rank: rankOf.get(p.symbol) ?? null,
       is_n500: p.is_n500,
     };
   });
