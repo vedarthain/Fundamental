@@ -93,8 +93,13 @@ export default function ScannerTabs({
     { id: "all", label: "All stocks", sub: "Full universe · sortable", count: allCount },
   ];
 
+  // All-stocks is a 10-column browse table; give it the full width so it uses
+  // the side gutters instead of scrolling. The other tabs are narrow tables and
+  // read better kept in the tighter reading column.
+  const wide = tab === "all";
+
   return (
-    <div className="theme-indigo mx-auto max-w-[1180px] px-6 py-10">
+    <div className={`theme-indigo mx-auto px-6 py-10 ${wide ? "max-w-[1560px]" : "max-w-[1180px]"}`}>
       <div className="flex flex-col gap-8 md:flex-row md:items-start md:gap-8">
         {/* Left rail: vertical scanner nav + NIFTY 500 toggle pinned at the bottom. */}
         <aside className="w-full md:w-[232px] md:shrink-0">

@@ -29,7 +29,7 @@ export function usePagedSparklines(symbols: string[], days: number) {
 
   useEffect(() => {
     const ck = (s: string) => `${s}|${days}`;
-    const viewFromCache = (): SparkMap => {
+    const cachedFor = (): SparkMap => {
       const v: SparkMap = {};
       for (const s of symbols) {
         const hit = cache.current.get(ck(s));
@@ -39,7 +39,12 @@ export function usePagedSparklines(symbols: string[], days: number) {
     };
 
     const missing = symbols.filter((s) => !cache.current.has(ck(s)));
-    setData(viewFromCache()); // paint whatever we already have immediately
+
+    // MERGE, never blank: keep whatever's already on screen (the prior page or
+    // the prior window's series, keyed by symbol) and layer the freshly-cached
+    // entries on top. Switching 3M→5Y then keeps every chart visible (dimmed by
+    // `loading`) and swaps it in place when the fetch lands — no flash to "—".
+    setData((prev) => ({ ...prev, ...cachedFor() }));
 
     if (missing.length === 0) {
       setLoading(false);
@@ -54,7 +59,7 @@ export function usePagedSparklines(symbols: string[], days: number) {
       .then((j: { data: SparkMap }) => {
         if (token !== reqToken.current) return; // superseded — drop stale reply
         for (const [s, series] of Object.entries(j.data)) cache.current.set(ck(s), series);
-        setData(viewFromCache());
+        setData((prev) => ({ ...prev, ...cachedFor() }));
         setLoading(false);
       })
       .catch(() => {
