@@ -155,75 +155,74 @@ export default function AllStocksClient({
             <table className="w-full text-[13px]">
               <thead>
                 <tr className="border-b hairline text-[11px] uppercase tracking-wide muted-text">
-                  <th className={`text-left px-3 py-2.5 ${thBtn}`} onClick={() => toggleSort("symbol")}>
+                  <th className={`text-left px-3 py-2 ${thBtn}`} onClick={() => toggleSort("symbol")}>
                     Stock{arrow("symbol")}
                   </th>
-                  <th className={`text-left px-2 py-2.5 ${thBtn}`} onClick={() => toggleSort("sector")}>
-                    Sector{arrow("sector")}
+                  <th className={`text-left px-2 py-2 ${thBtn}`} title="Broad sector (top) · scoring peer group (bottom)" onClick={() => toggleSort("sector")}>
+                    Sector / Industry{arrow("sector")}
                   </th>
-                  <th className={`text-left px-2 py-2.5 ${thBtn}`} onClick={() => toggleSort("peer_group")}>
-                    Peer group{arrow("peer_group")}
-                  </th>
-                  <th className={`text-right px-2 py-2.5 ${thBtn}`} onClick={() => toggleSort("current_price")}>
+                  <th className={`text-right px-2 py-2 ${thBtn}`} onClick={() => toggleSort("current_price")}>
                     Price{arrow("current_price")}
                   </th>
-                  <th className={`text-right px-2 py-2.5 ${thBtn}`} title="1-day price return" onClick={() => toggleSort("ret_1d")}>
+                  <th className={`text-right px-1.5 py-2 ${thBtn}`} title="1-day price return" onClick={() => toggleSort("ret_1d")}>
                     1D{arrow("ret_1d")}
                   </th>
-                  <th className={`text-right px-2 py-2.5 ${thBtn}`} title="1-week price return" onClick={() => toggleSort("ret_1w")}>
+                  <th className={`text-right px-1.5 py-2 ${thBtn}`} title="1-week price return" onClick={() => toggleSort("ret_1w")}>
                     1W{arrow("ret_1w")}
                   </th>
-                  <th className={`text-right px-2 py-2.5 ${thBtn}`} title="1-month price return" onClick={() => toggleSort("ret_1m")}>
+                  <th className={`text-right px-1.5 py-2 ${thBtn}`} title="1-month price return" onClick={() => toggleSort("ret_1m")}>
                     1M{arrow("ret_1m")}
                   </th>
-                  <th className={`text-right px-2 py-2.5 ${thBtn}`} title="1-year price return" onClick={() => toggleSort("ret_1y")}>
+                  <th className={`text-right px-1.5 py-2 ${thBtn}`} title="1-year price return" onClick={() => toggleSort("ret_1y")}>
                     1Y{arrow("ret_1y")}
                   </th>
-                  <th className={`text-right px-2 py-2.5 ${thBtn}`} title="Industry Score percentile (fundamental)" onClick={() => toggleSort("composite_pct")}>
+                  <th className={`text-right px-1.5 py-2 ${thBtn}`} title="Industry Score percentile (fundamental)" onClick={() => toggleSort("composite_pct")}>
                     Score{arrow("composite_pct")}
                   </th>
-                  <th className={`text-right px-2 py-2.5 ${thBtn}`} title="Composite rank within the stock's peer group (#1 = best in its industry)" onClick={() => toggleSort("industry_rank")}>
-                    Ind. rank{arrow("industry_rank")}
+                  <th className={`text-right px-1.5 py-2 ${thBtn}`} title="Composite rank within the stock's peer group (#1 = best in its industry)" onClick={() => toggleSort("industry_rank")}>
+                    Ind.{arrow("industry_rank")}
                   </th>
-                  <th className="text-center px-3 py-2.5" title="Adjusted-close price over the selected window">Trend</th>
+                  <th className="text-center px-2 py-2" title="Adjusted-close price over the selected window">Trend</th>
                 </tr>
               </thead>
               <tbody>
                 {pager.pageItems.map((r) => (
                   <tr key={r.symbol} className="border-b hairline hover:bg-[var(--color-paper)] transition-colors">
-                    <td className="px-3 py-2.5">
+                    <td className="px-3 py-2">
                       <Link href={`/stock/${r.symbol}`} className="font-semibold hover:underline">
                         {r.symbol}
                       </Link>
-                      <div className="text-[10.5px] muted-text truncate max-w-[190px]">
+                      <div className="text-[10.5px] muted-text truncate max-w-[150px]">
                         {displayCompanyName(r.company_name ?? "", r.symbol)}
                       </div>
                     </td>
-                    <td className="px-2 py-2.5 muted-text truncate max-w-[150px]">{r.sector ?? "—"}</td>
-                    <td className="px-2 py-2.5 muted-text truncate max-w-[170px]">{r.peer_group ?? "—"}</td>
-                    <td className="px-2 py-2.5 text-right tabular-nums">
+                    <td className="px-2 py-2 muted-text max-w-[180px]">
+                      <div className="truncate">{r.sector ?? "—"}</div>
+                      <div className="truncate text-[10.5px] opacity-70">{r.peer_group ?? "—"}</div>
+                    </td>
+                    <td className="px-2 py-2 text-right tabular-nums">
                       {r.current_price == null ? "—" : `₹${r.current_price.toLocaleString("en-IN")}`}
                     </td>
                     {[r.ret_1d, r.ret_1w, r.ret_1m, r.ret_1y].map((v, i) => {
                       const s = retFmt(v);
                       return (
-                        <td key={i} className="px-2 py-2.5 text-right tabular-nums font-medium" style={{ color: s.color }}>
+                        <td key={i} className="px-1.5 py-2 text-right tabular-nums font-medium" style={{ color: s.color }}>
                           {s.text}
                         </td>
                       );
                     })}
-                    <td className="px-2 py-2.5 text-right tabular-nums font-semibold" style={{ color: scoreColor(r.composite_pct) }}>
+                    <td className="px-1.5 py-2 text-right tabular-nums font-semibold" style={{ color: scoreColor(r.composite_pct) }}>
                       {r.composite_pct == null ? "—" : r.composite_pct}
                     </td>
                     <td
-                      className="px-2 py-2.5 text-right tabular-nums muted-text"
+                      className="px-1.5 py-2 text-right tabular-nums muted-text whitespace-nowrap"
                       title={r.industry_rank != null && r.peer_group ? `#${r.industry_rank} of ${r.industry_count} in ${r.peer_group}` : undefined}
                     >
                       {r.industry_rank == null ? "—" : (
                         <>#{r.industry_rank}<span className="text-[10.5px] opacity-60">/{r.industry_count}</span></>
                       )}
                     </td>
-                    <td className="px-3 py-2.5 text-center">
+                    <td className="px-2 py-2 text-center">
                       <div className="inline-flex transition-opacity" style={{ opacity: spark.loading ? 0.4 : 1 }}>
                         <RowSparkline series={spark.data[r.symbol]} />
                       </div>
