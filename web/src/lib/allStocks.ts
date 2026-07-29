@@ -27,6 +27,7 @@ export type AllStockRow = {
   ret_1w: number | null; // percent
   ret_1m: number | null; // percent
   ret_1y: number | null; // percent
+  ret_3y: number | null; // percent
   composite_pct: number | null;
   industry_rank: number | null; // 1 = best composite within the stock's peer group
   industry_count: number | null; // scored peers in that group (the "of N")
@@ -61,17 +62,21 @@ function bare(sym: string): string {
 // renders one bad vendor bar as a headline return. Caps sit well above any real
 // move over the window (India's daily circuit is ±20%), so a genuine multi-
 // bagger still shows; only data errors collapse to "—".
-const PCT_CAP: Record<"1d" | "1w" | "1m" | "1y", number> = {
+// 3Y caps far higher: a genuine multi-year multibagger (5–15×) is real and
+// should show, so only an outright data error (100×+ from a broken split basis)
+// gets nulled.
+const PCT_CAP: Record<"1d" | "1w" | "1m" | "1y" | "3y", number> = {
   "1d": 60,
   "1w": 200,
   "1m": 300,
   "1y": 500,
+  "3y": 2000,
 };
 
 function pctChange(
   last: number | undefined,
   base: number | undefined,
-  window: "1d" | "1w" | "1m" | "1y",
+  window: "1d" | "1w" | "1m" | "1y" | "3y",
 ): number | null {
   if (last == null || base == null || base === 0) return null;
   const pct = Math.round((last / base - 1) * 1000) / 10;
@@ -123,9 +128,10 @@ export async function loadAllStocks(): Promise<AllStocksData> {
   const wAgo = new Map<string, number>();
   const mAgo = new Map<string, number>();
   const yAgo = new Map<string, number>();
+  const y3Ago = new Map<string, number>();
 
   try {
-    const [last2, w, m, y] = await Promise.all([
+    const [last2, w, m, y, y3] = await Promise.all([
       golden<{ symbol: string; c: string; rn: string }[]>`
         SELECT symbol, c, rn FROM (
           SELECT symbol, COALESCE(adj_close, close)::text AS c,
@@ -156,6 +162,13 @@ export async function loadAllStocks(): Promise<AllStocksData> {
           AND date <= CURRENT_DATE - 365 AND date >= CURRENT_DATE - 400
         ORDER BY symbol, date DESC
       `,
+      golden<{ symbol: string; c: string }[]>`
+        SELECT DISTINCT ON (symbol) symbol, COALESCE(adj_close, close)::text AS c
+        FROM golden.price_history
+        WHERE interval = '1d' AND COALESCE(adj_close, close) IS NOT NULL
+          AND date <= CURRENT_DATE - 1095 AND date >= CURRENT_DATE - 1200
+        ORDER BY symbol, date DESC
+      `,
     ]);
     for (const r of last2) {
       const k = bare(r.symbol);
@@ -165,6 +178,7 @@ export async function loadAllStocks(): Promise<AllStocksData> {
     for (const r of w) wAgo.set(bare(r.symbol), Number(r.c));
     for (const r of m) mAgo.set(bare(r.symbol), Number(r.c));
     for (const r of y) yAgo.set(bare(r.symbol), Number(r.c));
+    for (const r of y3) y3Ago.set(bare(r.symbol), Number(r.c));
   } catch {
     // Non-fatal: returns render as "—", table still lists the universe.
   }
@@ -205,6 +219,7 @@ export async function loadAllStocks(): Promise<AllStocksData> {
       ret_1w: pctChange(lastPx, wAgo.get(p.symbol), "1w"),
       ret_1m: pctChange(lastPx, mAgo.get(p.symbol), "1m"),
       ret_1y: pctChange(lastPx, yAgo.get(p.symbol), "1y"),
+      ret_3y: pctChange(lastPx, y3Ago.get(p.symbol), "3y"),
       composite_pct: p.composite_pct == null ? null : Math.round(p.composite_pct),
       industry_rank: rankOf.get(p.symbol) ?? null,
       industry_count: countOf.get(p.symbol) ?? null,

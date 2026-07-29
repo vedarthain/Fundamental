@@ -34,6 +34,7 @@ type SortKey =
   | "ret_1w"
   | "ret_1m"
   | "ret_1y"
+  | "ret_3y"
   | "composite_pct"
   | "industry_rank";
 
@@ -177,6 +178,9 @@ export default function AllStocksClient({
                   <th className={`text-right px-1.5 py-2 ${thBtn}`} title="1-year price return" onClick={() => toggleSort("ret_1y")}>
                     1Y{arrow("ret_1y")}
                   </th>
+                  <th className={`text-right px-1.5 py-2 ${thBtn}`} title="3-year price return (split-adjusted)" onClick={() => toggleSort("ret_3y")}>
+                    3Y{arrow("ret_3y")}
+                  </th>
                   <th className={`text-right px-1.5 py-2 ${thBtn}`} title="Industry Score percentile (fundamental)" onClick={() => toggleSort("composite_pct")}>
                     Score{arrow("composite_pct")}
                   </th>
@@ -204,7 +208,7 @@ export default function AllStocksClient({
                     <td className="px-2 py-2 text-right tabular-nums">
                       {r.current_price == null ? "—" : `₹${r.current_price.toLocaleString("en-IN")}`}
                     </td>
-                    {[r.ret_1d, r.ret_1w, r.ret_1m, r.ret_1y].map((v, i) => {
+                    {[r.ret_1d, r.ret_1w, r.ret_1m, r.ret_1y, r.ret_3y].map((v, i) => {
                       const s = retFmt(v);
                       return (
                         <td key={i} className="px-1.5 py-2 text-right tabular-nums font-medium" style={{ color: s.color }}>
