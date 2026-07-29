@@ -68,6 +68,19 @@ export default function ScannerTabs({
   const [tab, setTab] = useState<Tab>(initialTab);
   const [n500Only, setN500Only] = useState(false);
 
+  // Mirror the active tab into the URL (?tab=) so a refresh reopens the same
+  // scanner instead of snapping back to "Igniting today". Use history.replaceState
+  // rather than the Next router so we don't trigger an RSC refetch of all the
+  // scanner data on every tab click — the page already reads ?tab= on load.
+  function selectTab(next: Tab) {
+    setTab(next);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("tab", next);
+      window.history.replaceState(null, "", url);
+    }
+  }
+
   // NIFTY 500 membership as a fast lookup; the toggle narrows both scanners to
   // large/mid-cap index names. Default OFF — the igniting scanner's edge is the
   // sub-500 small-caps, so the filter is opt-in, not a gate.
@@ -112,7 +125,7 @@ export default function ScannerTabs({
                   key={t.id}
                   role="tab"
                   aria-selected={active}
-                  onClick={() => setTab(t.id)}
+                  onClick={() => selectTab(t.id)}
                   className="w-full text-left rounded-lg px-3 py-2.5 transition-colors border"
                   style={
                     active
