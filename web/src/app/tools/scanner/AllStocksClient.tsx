@@ -194,7 +194,12 @@ export default function AllStocksClient({
                 {pager.pageItems.map((r) => (
                   <tr key={r.symbol} className="border-b hairline hover:bg-[var(--color-paper)] transition-colors">
                     <td className="px-3 py-2">
-                      <Link href={`/stock/${r.symbol}`} className="font-semibold hover:underline">
+                      <Link
+                        href={`/stock/${r.symbol}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-semibold hover:underline"
+                      >
                         {r.symbol}
                       </Link>
                       <div className="text-[10.5px] muted-text truncate max-w-[150px]">
