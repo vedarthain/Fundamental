@@ -79,6 +79,7 @@ export default function MomentumClient({
   const pager = usePager(signals);
   const symbols = signals.map((s) => s.symbol);
   const win = useSparklineWindow(symbols, IGNITING_DEFAULT_DAYS, spark ?? {});
+  const winLabel = IGNITING_WINDOWS.find((o) => o.days === win.days)?.label ?? "";
 
   return (
     <>
@@ -125,7 +126,7 @@ export default function MomentumClient({
                   <th className="text-right px-2 py-2.5" title="Volume ÷ 50-day average volume">Vol ×</th>
                   <th className="text-right px-2 py-2.5">Price</th>
                   <th className="text-right px-2 py-2.5" title="Industry Score percentile (fundamental)">Score</th>
-                  <th className="text-center px-2 py-2.5" title="Adjusted-close price over the selected window — the base and the breakout">Trend</th>
+                  <th className="text-center px-2 py-2.5" title={`Adjusted-close price over ${winLabel} — the base and the breakout`}>Trend</th>
                   <th className="text-left  px-3 py-2.5">Catalyst</th>
                 </tr>
               </thead>

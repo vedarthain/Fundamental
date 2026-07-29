@@ -94,6 +94,7 @@ export default function TrendLeadersClient({
   const pager = usePager(signals);
   const symbols = signals.map((s) => s.symbol);
   const win = useSparklineWindow(symbols, TREND_DEFAULT_DAYS, spark ?? {});
+  const winLabel = TREND_WINDOWS.find((o) => o.days === win.days)?.label ?? "";
 
   return (
     <>
@@ -142,7 +143,7 @@ export default function TrendLeadersClient({
                   <th className="text-right px-2 py-2.5">Price</th>
                   <th className="text-right px-2 py-2.5" title="Distance below the 52-week high">vs High</th>
                   <th className="text-right px-2 py-2.5" title="Industry Score percentile (fundamental)">Score</th>
-                  <th className="text-center px-2 py-2.5" title="Adjusted-close price over the selected window — the trend in one glance">Trend</th>
+                  <th className="text-center px-2 py-2.5" title={`Adjusted-close price over ${winLabel} — the trend in one glance`}>Trend</th>
                 </tr>
               </thead>
               <tbody>

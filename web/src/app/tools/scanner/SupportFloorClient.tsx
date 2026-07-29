@@ -76,6 +76,7 @@ export default function SupportFloorClient({
   const pager = usePager(signals);
   const symbols = signals.map((s) => s.symbol);
   const win = useSparklineWindow(symbols, FLOOR_DEFAULT_DAYS, spark ?? {});
+  const winLabel = FLOOR_WINDOWS.find((o) => o.days === win.days)?.label ?? "";
 
   return (
     <>
@@ -124,7 +125,7 @@ export default function SupportFloorClient({
                   <th className="text-right px-2 py-2.5" title="Times the floor was tested — MORE IS A WARNING, a heavily-tested floor is closer to breaking">Tests</th>
                   <th className="text-right px-2 py-2.5" title="Most recent test of the floor">Last test</th>
                   <th className="text-right px-2 py-2.5" title="Industry Score percentile (fundamental)">Score</th>
-                  <th className="text-center px-2 py-2.5" title="Adjusted-close over ~7 months; dashed line marks the tested floor">vs Floor</th>
+                  <th className="text-center px-2 py-2.5" title={`Adjusted-close over ${winLabel}; dashed line marks the tested floor`}>vs Floor</th>
                 </tr>
               </thead>
               <tbody>
