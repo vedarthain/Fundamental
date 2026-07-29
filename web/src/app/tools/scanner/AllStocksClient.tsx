@@ -35,11 +35,11 @@ type SortKey =
   | "ret_1m"
   | "ret_1y"
   | "composite_pct"
-  | "composite_rank";
+  | "industry_rank";
 
 const TEXT_KEYS: ReadonlySet<SortKey> = new Set(["symbol", "sector", "peer_group"]);
 // Columns that read best low→high on first click (rank #1 = best on top).
-const ASC_FIRST_KEYS: ReadonlySet<SortKey> = new Set(["composite_rank"]);
+const ASC_FIRST_KEYS: ReadonlySet<SortKey> = new Set(["industry_rank"]);
 
 function retFmt(pct: number | null): { text: string; color: string } {
   if (pct == null) return { text: "—", color: "var(--color-muted)" };
@@ -182,8 +182,8 @@ export default function AllStocksClient({
                   <th className={`text-right px-2 py-2.5 ${thBtn}`} title="Industry Score percentile (fundamental)" onClick={() => toggleSort("composite_pct")}>
                     Score{arrow("composite_pct")}
                   </th>
-                  <th className={`text-right px-2 py-2.5 ${thBtn}`} title="Composite rank across the whole scored universe (#1 = best)" onClick={() => toggleSort("composite_rank")}>
-                    Rank{arrow("composite_rank")}
+                  <th className={`text-right px-2 py-2.5 ${thBtn}`} title="Composite rank within the stock's peer group (#1 = best in its industry)" onClick={() => toggleSort("industry_rank")}>
+                    Ind. rank{arrow("industry_rank")}
                   </th>
                   <th className="text-center px-3 py-2.5" title="Adjusted-close price over the selected window">Trend</th>
                 </tr>
@@ -215,8 +215,13 @@ export default function AllStocksClient({
                     <td className="px-2 py-2.5 text-right tabular-nums font-semibold" style={{ color: scoreColor(r.composite_pct) }}>
                       {r.composite_pct == null ? "—" : r.composite_pct}
                     </td>
-                    <td className="px-2 py-2.5 text-right tabular-nums muted-text">
-                      {r.composite_rank == null ? "—" : `#${r.composite_rank}`}
+                    <td
+                      className="px-2 py-2.5 text-right tabular-nums muted-text"
+                      title={r.industry_rank != null && r.peer_group ? `#${r.industry_rank} of ${r.industry_count} in ${r.peer_group}` : undefined}
+                    >
+                      {r.industry_rank == null ? "—" : (
+                        <>#{r.industry_rank}<span className="text-[10.5px] opacity-60">/{r.industry_count}</span></>
+                      )}
                     </td>
                     <td className="px-3 py-2.5 text-center">
                       <div className="inline-flex transition-opacity" style={{ opacity: spark.loading ? 0.4 : 1 }}>
@@ -241,8 +246,8 @@ export default function AllStocksClient({
           ascending / descending) and page through 30 at a time. <strong>1W / 1M / 1Y</strong> come
           from the weekly scoring panel; <strong>1D</strong> is the latest daily close vs. the prior
           one. <strong>Score</strong> is the fundamental Industry-Score percentile and{" "}
-          <strong>Rank</strong> is that score turned into an absolute market position (#1 = best,
-          fixed across sorts and the universe toggle). <strong>Trend</strong> is a split-adjusted mini
+          <strong>Ind. rank</strong> is that score turned into a position within the stock&apos;s own peer
+          group (#1 = best in its industry, shown as rank / group size). <strong>Trend</strong> is a split-adjusted mini
           price chart — switch it between 3M and 5Y with the toggle above. Use the All-NSE /
           NIFTY-500 toggle on the left to switch the universe.
         </p>

@@ -28,7 +28,8 @@ export type AllStockRow = {
   ret_1m: number | null; // percent
   ret_1y: number | null; // percent
   composite_pct: number | null;
-  composite_rank: number | null; // 1 = best composite in the scored universe
+  industry_rank: number | null; // 1 = best composite within the stock's peer group
+  industry_count: number | null; // scored peers in that group (the "of N")
   is_n500: boolean;
 };
 
@@ -168,15 +169,28 @@ export async function loadAllStocks(): Promise<AllStocksData> {
     // Non-fatal: returns render as "—", table still lists the universe.
   }
 
-  // Absolute composite rank across the whole scored universe (1 = best), so a
-  // stock's "#" is a fixed market standing that doesn't shift with the table's
-  // sort/filter or the NIFTY-500 toggle. Unscored names get no rank. Ties break
-  // by symbol so the ordinal is deterministic snapshot to snapshot.
+  // Industry rank: a stock's composite standing WITHIN its own peer group
+  // (cluster), which is the population the score is actually measured against —
+  // "#26 of 44 in Media & Entertainment" is far more meaningful than a #1220
+  // absolute-universe ordinal. Group by peer_group, sort by composite desc, ties
+  // break by symbol for determinism. Names with no peer group or no score get no
+  // rank. `industry_count` is the scored-peer denominator for the "of N".
   const rankOf = new Map<string, number>();
-  panel
-    .filter((p) => p.composite_pct != null)
-    .sort((a, b) => (b.composite_pct as number) - (a.composite_pct as number) || a.symbol.localeCompare(b.symbol))
-    .forEach((p, i) => rankOf.set(p.symbol, i + 1));
+  const countOf = new Map<string, number>();
+  const byGroup = new Map<string, PanelRow[]>();
+  for (const p of panel) {
+    if (p.composite_pct == null || !p.peer_group) continue;
+    let g = byGroup.get(p.peer_group);
+    if (!g) byGroup.set(p.peer_group, (g = []));
+    g.push(p);
+  }
+  for (const group of byGroup.values()) {
+    group.sort((a, b) => (b.composite_pct as number) - (a.composite_pct as number) || a.symbol.localeCompare(b.symbol));
+    group.forEach((p, i) => {
+      rankOf.set(p.symbol, i + 1);
+      countOf.set(p.symbol, group.length);
+    });
+  }
 
   const rows: AllStockRow[] = panel.map((p) => {
     const lastPx = last.get(p.symbol);
@@ -192,7 +206,8 @@ export async function loadAllStocks(): Promise<AllStocksData> {
       ret_1m: pctChange(lastPx, mAgo.get(p.symbol), "1m"),
       ret_1y: pctChange(lastPx, yAgo.get(p.symbol), "1y"),
       composite_pct: p.composite_pct == null ? null : Math.round(p.composite_pct),
-      composite_rank: rankOf.get(p.symbol) ?? null,
+      industry_rank: rankOf.get(p.symbol) ?? null,
+      industry_count: countOf.get(p.symbol) ?? null,
       is_n500: p.is_n500,
     };
   });
