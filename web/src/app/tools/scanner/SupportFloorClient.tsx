@@ -134,7 +134,7 @@ export default function SupportFloorClient({
                   return (
                     <tr key={s.symbol} className="border-b hairline align-top hover:bg-[var(--color-paper)] transition-colors">
                       <td className="px-3 py-2.5">
-                        <Link href={`/stock/${s.symbol}`} className="font-semibold hover:underline">
+                        <Link href={`/stock/${s.symbol}`} target="_blank" rel="noopener noreferrer" className="font-semibold hover:underline">
                           {s.symbol}
                         </Link>
                         <div className="text-[10.5px] muted-text">
