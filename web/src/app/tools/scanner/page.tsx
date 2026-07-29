@@ -5,6 +5,7 @@ import { loadLatestSupportFloor } from "@/lib/supportFloor";
 import { loadRotation } from "@/lib/rotation";
 import { loadAllStocks } from "@/lib/allStocks";
 import { loadSparklines } from "@/lib/sparklines";
+import { IGNITING_DEFAULT_DAYS, TREND_DEFAULT_DAYS, FLOOR_DEFAULT_DAYS } from "./sparkWindows";
 import { sql } from "@/lib/db";
 import ScannerTabs, { type Tab } from "./ScannerTabs";
 
@@ -48,14 +49,14 @@ export default async function MomentumPage({
     sql<{ symbol: string }[]>`SELECT symbol FROM app.index_constituent WHERE index_code = 'NIFTY500'`,
   ]);
 
-  // Per-row mini price charts — one batched golden query per tab, each on the
-  // window that matches that scanner's clock: Igniting shows the base → the
-  // breakout (~3M), Trend shows the whole uptrend (1Y), At Support shows the
-  // approach to the tested floor (~7M). Rendered inline in each table row.
+  // Per-row mini price charts — one batched golden query per tab, each on that
+  // tab's DEFAULT window (from sparkWindows.ts, the single source of truth the
+  // client toggle also imports). This renders first paint; the WindowPicker in
+  // each client refetches /api/scanner/sparklines when the user changes window.
   const [momentumSpark, trendSpark, floorSpark] = await Promise.all([
-    loadSparklines(momentum.signals.map((s) => s.symbol), 95),
-    loadSparklines(trend.signals.map((s) => s.symbol), 365),
-    loadSparklines(floor.signals.map((s) => s.symbol), 210),
+    loadSparklines(momentum.signals.map((s) => s.symbol), IGNITING_DEFAULT_DAYS),
+    loadSparklines(trend.signals.map((s) => s.symbol), TREND_DEFAULT_DAYS),
+    loadSparklines(floor.signals.map((s) => s.symbol), FLOOR_DEFAULT_DAYS),
   ]);
 
   return (

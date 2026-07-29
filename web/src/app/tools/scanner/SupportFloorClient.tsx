@@ -15,6 +15,9 @@ import Link from "next/link";
 import type { SupportFloorSignal } from "@/lib/supportFloor";
 import type { SparkPoint } from "@/components/Sparkline";
 import { RowSparkline } from "./RowSparkline";
+import { WindowPicker } from "./WindowPicker";
+import { useSparklineWindow } from "./useSparklineWindow";
+import { FLOOR_WINDOWS, FLOOR_DEFAULT_DAYS } from "./sparkWindows";
 import { Pager, usePager } from "./Pager";
 
 const GREEN = "var(--color-delta-up, #0a0)";
@@ -71,6 +74,8 @@ export default function SupportFloorClient({
     : null;
 
   const pager = usePager(signals);
+  const symbols = signals.map((s) => s.symbol);
+  const win = useSparklineWindow(symbols, FLOOR_DEFAULT_DAYS, spark ?? {});
 
   return (
     <>
@@ -91,7 +96,10 @@ export default function SupportFloorClient({
               <span className="ink-text font-medium">{dateLabel}</span> · {signals.length} at support
             </p>
           )}
-          {datePicker}
+          <div className="flex items-center gap-3">
+            <WindowPicker options={FLOOR_WINDOWS} days={win.days} onSelect={win.select} loading={win.loading} />
+            {datePicker}
+          </div>
         </div>
       </header>
 
@@ -151,7 +159,9 @@ export default function SupportFloorClient({
                         {s.compositePct == null ? "—" : Math.round(s.compositePct)}
                       </td>
                       <td className="px-2 py-2.5 text-center">
-                        <div className="inline-flex"><RowSparkline series={spark?.[s.symbol]} floor={s.floorPx} /></div>
+                        <div className="inline-flex transition-opacity" style={{ opacity: win.loading ? 0.4 : 1 }}>
+                          <RowSparkline series={win.data[s.symbol]} floor={s.floorPx} />
+                        </div>
                       </td>
                     </tr>
                   );

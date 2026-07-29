@@ -14,6 +14,9 @@ import Link from "next/link";
 import type { MomentumSignal } from "@/lib/momentum";
 import type { SparkPoint } from "@/components/Sparkline";
 import { RowSparkline } from "./RowSparkline";
+import { WindowPicker } from "./WindowPicker";
+import { useSparklineWindow } from "./useSparklineWindow";
+import { IGNITING_WINDOWS, IGNITING_DEFAULT_DAYS } from "./sparkWindows";
 import { Pager, usePager } from "./Pager";
 
 const GREEN = "var(--color-delta-up, #0a0)";
@@ -74,6 +77,8 @@ export default function MomentumClient({
     : null;
 
   const pager = usePager(signals);
+  const symbols = signals.map((s) => s.symbol);
+  const win = useSparklineWindow(symbols, IGNITING_DEFAULT_DAYS, spark ?? {});
 
   return (
     <>
@@ -94,7 +99,10 @@ export default function MomentumClient({
               <span className="ink-text font-medium">{dateLabel}</span> · {signals.length} ignitions
             </p>
           )}
-          {datePicker}
+          <div className="flex items-center gap-3">
+            <WindowPicker options={IGNITING_WINDOWS} days={win.days} onSelect={win.select} loading={win.loading} />
+            {datePicker}
+          </div>
         </div>
       </header>
 
@@ -117,7 +125,7 @@ export default function MomentumClient({
                   <th className="text-right px-2 py-2.5" title="Volume ÷ 50-day average volume">Vol ×</th>
                   <th className="text-right px-2 py-2.5">Price</th>
                   <th className="text-right px-2 py-2.5" title="Industry Score percentile (fundamental)">Score</th>
-                  <th className="text-center px-2 py-2.5" title="Adjusted-close price over the last ~3 months — the base and the breakout">3-mo</th>
+                  <th className="text-center px-2 py-2.5" title="Adjusted-close price over the selected window — the base and the breakout">Trend</th>
                   <th className="text-left  px-3 py-2.5">Catalyst</th>
                 </tr>
               </thead>
@@ -151,7 +159,9 @@ export default function MomentumClient({
                         {s.compositePct == null ? "—" : Math.round(s.compositePct)}
                       </td>
                       <td className="px-2 py-2.5 text-center">
-                        <div className="inline-flex"><RowSparkline series={spark?.[s.symbol]} /></div>
+                        <div className="inline-flex transition-opacity" style={{ opacity: win.loading ? 0.4 : 1 }}>
+                          <RowSparkline series={win.data[s.symbol]} />
+                        </div>
                       </td>
                       <td className="px-3 py-2.5 max-w-[340px]">
                         {s.catalystTitle ? (

@@ -13,6 +13,9 @@ import Link from "next/link";
 import type { TrendLeaderSignal } from "@/lib/trendLeaders";
 import type { SparkPoint } from "@/components/Sparkline";
 import { RowSparkline } from "./RowSparkline";
+import { WindowPicker } from "./WindowPicker";
+import { useSparklineWindow } from "./useSparklineWindow";
+import { TREND_WINDOWS, TREND_DEFAULT_DAYS } from "./sparkWindows";
 import { Pager, usePager } from "./Pager";
 
 const GREEN = "var(--color-delta-up, #0a0)";
@@ -89,6 +92,8 @@ export default function TrendLeadersClient({
     : null;
 
   const pager = usePager(signals);
+  const symbols = signals.map((s) => s.symbol);
+  const win = useSparklineWindow(symbols, TREND_DEFAULT_DAYS, spark ?? {});
 
   return (
     <>
@@ -109,7 +114,10 @@ export default function TrendLeadersClient({
               <span className="ink-text font-medium">{dateLabel}</span> · {signals.length} fresh crosses
             </p>
           )}
-          {datePicker}
+          <div className="flex items-center gap-3">
+            <WindowPicker options={TREND_WINDOWS} days={win.days} onSelect={win.select} loading={win.loading} />
+            {datePicker}
+          </div>
         </div>
       </header>
 
@@ -134,7 +142,7 @@ export default function TrendLeadersClient({
                   <th className="text-right px-2 py-2.5">Price</th>
                   <th className="text-right px-2 py-2.5" title="Distance below the 52-week high">vs High</th>
                   <th className="text-right px-2 py-2.5" title="Industry Score percentile (fundamental)">Score</th>
-                  <th className="text-center px-2 py-2.5" title="Adjusted-close price over the last year — the trend in one glance">1-yr</th>
+                  <th className="text-center px-2 py-2.5" title="Adjusted-close price over the selected window — the trend in one glance">Trend</th>
                 </tr>
               </thead>
               <tbody>
@@ -180,7 +188,9 @@ export default function TrendLeadersClient({
                         {s.compositePct == null ? "—" : Math.round(s.compositePct)}
                       </td>
                       <td className="px-2 py-2.5 text-center">
-                        <div className="inline-flex"><RowSparkline series={spark?.[s.symbol]} /></div>
+                        <div className="inline-flex transition-opacity" style={{ opacity: win.loading ? 0.4 : 1 }}>
+                          <RowSparkline series={win.data[s.symbol]} />
+                        </div>
                       </td>
                     </tr>
                   );
