@@ -161,9 +161,16 @@ export default function AllStocksClient({
           <p className="muted-text mt-2 text-[13.5px]">Clear the filter or widen to All NSE.</p>
         </div>
       ) : (
-        <div className="mt-5 card overflow-hidden">
-          <div className="overflow-auto max-h-[75vh]">
-            <table className="w-full text-[13px] sticky-head">
+        <div className="mt-5 card">
+          {/* No overflow wrapper here: an overflow container would trap the
+              sticky header inside it, so it would scroll away with the box.
+              Kept at page level so the header pins below the site nav (ribbon
+              28px + header 56px = 84px) and stays visible on long scrolls. */}
+          <div>
+            <table
+              className="w-full text-[13px] sticky-head"
+              style={{ ["--sticky-head-top" as string]: "84px" }}
+            >
               <thead>
                 <tr className="border-b hairline text-[11px] uppercase tracking-wide muted-text">
                   <th className={`text-left px-3 py-2 ${thBtn}`} onClick={() => toggleSort("symbol")}>

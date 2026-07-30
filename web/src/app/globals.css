@@ -115,7 +115,7 @@ td, th { font-variant-numeric: tabular-nums; }
    keeps the hairline rule visible (a <tr> border-b can drop out under sticky). */
 .sticky-head thead th {
   position: sticky;
-  top: 0;
+  top: var(--sticky-head-top, 0);
   z-index: 10;
   background: var(--color-card);
   box-shadow: inset 0 -1px 0 var(--color-border-default);
