@@ -21,7 +21,7 @@
  * a refresh. Acceptable for v1; can add via BroadcastChannel later.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 
 const STORAGE_KEY = "equityroots:watchlist:v1";
 const MAX_SYMBOLS = 100;
@@ -126,119 +126,124 @@ export async function mergeLocalWatchlistIntoServer(): Promise<void> {
   }
 }
 
+// ── Shared store ───────────────────────────────────────────────────────
+//
+// Every WatchlistButton (there can be dozens on the scanner) used to call
+// useWatchlist independently, and each instance fired its OWN /api/watchlist
+// request on mount — N identical DB-backed round-trips per page, and the
+// heart only filled once each button's own fetch resolved.
+//
+// This module-level store collapses that to a SINGLE fetch shared by all
+// hook instances: the first mount kicks off `ensureLoaded()`, subsequent
+// mounts reuse the same in-flight promise (or the already-loaded state).
+// Mutations update the shared snapshot and notify every subscriber, so a
+// heart toggled on one button reflects on all of them immediately — which
+// also fixes the previous cross-component desync.
+
+type WatchState = { symbols: string[]; hydrated: boolean; signedIn: boolean };
+
+let state: WatchState = { symbols: [], hydrated: false, signedIn: false };
+const listeners = new Set<() => void>();
+let loadPromise: Promise<void> | null = null;
+
+function emit(): void {
+  for (const l of listeners) l();
+}
+
+function setState(patch: Partial<WatchState>): void {
+  state = { ...state, ...patch };
+  emit();
+}
+
+/** Fire the one-and-only server fetch. Deduped: concurrent callers share it. */
+function ensureLoaded(): void {
+  if (state.hydrated || loadPromise) return;
+  loadPromise = (async () => {
+    const { signedIn, symbols } = await fetchServerWatchlist();
+    setState({
+      signedIn,
+      symbols: signedIn ? symbols : readLocal(),
+      hydrated: true,
+    });
+  })();
+}
+
+// Signed-out cross-tab sync: mirror localStorage writes into the store.
+// One shared handler, attached while any subscriber is mounted.
+function onStorage(e: StorageEvent): void {
+  if (e.key !== STORAGE_KEY) return;
+  if (!state.signedIn) setState({ symbols: readLocal() });
+}
+
+function subscribe(cb: () => void): () => void {
+  if (listeners.size === 0) window.addEventListener("storage", onStorage);
+  listeners.add(cb);
+  ensureLoaded();
+  return () => {
+    listeners.delete(cb);
+    if (listeners.size === 0) window.removeEventListener("storage", onStorage);
+  };
+}
+
+// Server snapshot: the store is inert during SSR, so return a stable empty.
+const SERVER_STATE: WatchState = { symbols: [], hydrated: false, signedIn: false };
+function getSnapshot(): WatchState {
+  return state;
+}
+function getServerSnapshot(): WatchState {
+  return SERVER_STATE;
+}
+
+// ── Mutations (operate on the shared store) ────────────────────────────
+
+function mutateAdd(upper: string): void {
+  if (state.symbols.includes(upper)) return;
+  const next = [...state.symbols, upper].slice(0, MAX_SYMBOLS);
+  setState({ symbols: next });
+  if (state.signedIn) serverAdd(upper).catch((e) => console.error("watchlist add failed", e));
+  else writeLocal(next);
+}
+
+function mutateRemove(upper: string): void {
+  if (!state.symbols.includes(upper)) return;
+  const next = state.symbols.filter((s) => s !== upper);
+  setState({ symbols: next });
+  if (state.signedIn) serverRemove(upper).catch((e) => console.error("watchlist remove failed", e));
+  else writeLocal(next);
+}
+
 // ── Hook ───────────────────────────────────────────────────────────────
 
 /**
  * Hook: returns the current watchlist + mutation helpers.
  *
- * Mode (server vs local) is decided by the first /api/watchlist call on
- * mount, which also reports signedIn=true|false. From then on, mutations
- * are routed to the correct backend.
+ * All instances share one module-level store (see above), so the server is
+ * hit exactly once per page load regardless of how many buttons render.
+ * Mode (server vs local) is decided by that single /api/watchlist call.
  */
 export function useWatchlist() {
-  const [symbols, setSymbols] = useState<string[]>([]);
-  const [hydrated, setHydrated] = useState(false);
-  const [signedIn, setSignedIn] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const { signedIn: si, symbols: serverSyms } = await fetchServerWatchlist();
-      if (cancelled) return;
-      if (si) {
-        setSignedIn(true);
-        setSymbols(serverSyms);
-      } else {
-        setSignedIn(false);
-        setSymbols(readLocal());
-      }
-      setHydrated(true);
-    })();
-
-    const onStorage = (e: StorageEvent) => {
-      // Only relevant for signed-out mode. Signed-in mode ignores
-      // localStorage writes.
-      if (e.key !== STORAGE_KEY) return;
-      if (!signedIn) setSymbols(readLocal());
-    };
-    window.addEventListener("storage", onStorage);
-    return () => {
-      cancelled = true;
-      window.removeEventListener("storage", onStorage);
-    };
-    // We intentionally only run this on mount. signedIn changes are driven
-    // by the broadcastSessionChange flow which triggers a page navigation,
-    // remounting the hook.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const snap = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  const { symbols, hydrated, signedIn } = snap;
 
   const isWatched = useCallback(
     (sym: string) => symbols.includes(sym.toUpperCase()),
     [symbols],
   );
 
-  const add = useCallback(
-    (sym: string) => {
-      const upper = sym.toUpperCase();
-      setSymbols((prev) => {
-        if (prev.includes(upper)) return prev;
-        const next = [...prev, upper].slice(0, MAX_SYMBOLS);
-        if (signedIn) {
-          serverAdd(upper).catch((e) => console.error("watchlist add failed", e));
-        } else {
-          writeLocal(next);
-        }
-        return next;
-      });
-    },
-    [signedIn],
-  );
+  const add = useCallback((sym: string) => mutateAdd(sym.toUpperCase()), []);
+  const remove = useCallback((sym: string) => mutateRemove(sym.toUpperCase()), []);
+  const toggle = useCallback((sym: string) => {
+    const upper = sym.toUpperCase();
+    if (state.symbols.includes(upper)) mutateRemove(upper);
+    else mutateAdd(upper);
+  }, []);
 
-  const remove = useCallback(
-    (sym: string) => {
-      const upper = sym.toUpperCase();
-      setSymbols((prev) => {
-        if (!prev.includes(upper)) return prev;
-        const next = prev.filter((s) => s !== upper);
-        if (signedIn) {
-          serverRemove(upper).catch((e) => console.error("watchlist remove failed", e));
-        } else {
-          writeLocal(next);
-        }
-        return next;
-      });
-    },
-    [signedIn],
-  );
-
-  const toggle = useCallback(
-    (sym: string) => {
-      const upper = sym.toUpperCase();
-      setSymbols((prev) => {
-        const has = prev.includes(upper);
-        const next = has ? prev.filter((s) => s !== upper) : [...prev, upper].slice(0, MAX_SYMBOLS);
-        if (signedIn) {
-          (has ? serverRemove(upper) : serverAdd(upper)).catch((e) =>
-            console.error("watchlist toggle failed", e),
-          );
-        } else {
-          writeLocal(next);
-        }
-        return next;
-      });
-    },
-    [signedIn],
-  );
-
-  const set = useCallback(
-    (next: string[]) => {
-      const deduped = Array.from(new Set(next.map((s) => s.toUpperCase()))).slice(0, MAX_SYMBOLS);
-      setSymbols(deduped);
-      if (!signedIn) writeLocal(deduped);
-      // No bulk-replace endpoint server-side; v1 doesn't need it.
-    },
-    [signedIn],
-  );
+  const set = useCallback((next: string[]) => {
+    const deduped = Array.from(new Set(next.map((s) => s.toUpperCase()))).slice(0, MAX_SYMBOLS);
+    setState({ symbols: deduped });
+    if (!state.signedIn) writeLocal(deduped);
+    // No bulk-replace endpoint server-side; v1 doesn't need it.
+  }, []);
 
   return {
     symbols,
