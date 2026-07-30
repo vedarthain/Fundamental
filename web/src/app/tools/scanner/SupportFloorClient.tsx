@@ -14,6 +14,7 @@
 import Link from "next/link";
 import type { SupportFloorSignal } from "@/lib/supportFloor";
 import type { SparkPoint } from "@/components/Sparkline";
+import { WatchlistButton } from "@/components/WatchlistButton";
 import { RowSparkline } from "./RowSparkline";
 import { WindowPicker } from "./WindowPicker";
 import { useSparklineWindow } from "./useSparklineWindow";
@@ -134,17 +135,22 @@ export default function SupportFloorClient({
                   return (
                     <tr key={s.symbol} className="border-b hairline align-top hover:bg-[var(--color-paper)] transition-colors">
                       <td className="px-3 py-2.5">
-                        <Link href={`/stock/${s.symbol}`} target="_blank" rel="noopener noreferrer" className="font-semibold hover:underline">
-                          {s.symbol}
-                        </Link>
-                        <div className="text-[10.5px] muted-text">
-                          {s.isScored ? capLabel(s.marketCapCr) : "unscored"}
-                        </div>
-                        {(s.sector || s.industry) && (
-                          <div className="text-[10.5px] muted-text mt-0.5">
-                            {[s.sector, s.industry].filter(Boolean).join(" · ")}
+                        <div className="flex items-start gap-1.5">
+                          <WatchlistButton symbol={s.symbol} variant="icon" className="-ml-1 shrink-0" />
+                          <div className="min-w-0">
+                            <Link href={`/stock/${s.symbol}`} target="_blank" rel="noopener noreferrer" className="font-semibold hover:underline">
+                              {s.symbol}
+                            </Link>
+                            <div className="text-[10.5px] muted-text">
+                              {s.isScored ? capLabel(s.marketCapCr) : "unscored"}
+                            </div>
+                            {(s.sector || s.industry) && (
+                              <div className="text-[10.5px] muted-text mt-0.5">
+                                {[s.sector, s.industry].filter(Boolean).join(" · ")}
+                              </div>
+                            )}
                           </div>
-                        )}
+                        </div>
                       </td>
                       <td className="px-2 py-2.5 text-right tabular-nums">{inr(s.close)}</td>
                       <td className="px-2 py-2.5 text-right tabular-nums muted-text">{inr(s.floorPx)}</td>
