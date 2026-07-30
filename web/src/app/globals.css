@@ -109,6 +109,18 @@ td, th { font-variant-numeric: tabular-nums; }
 
 .muted-text { color: var(--color-muted); }
 
+/* Sticky table header — for tables inside a bounded scroll box (overflow-auto
+   + max-height). The header pins to the top of the box while rows scroll under
+   it. Background is opaque so rows don't bleed through; a bottom inset shadow
+   keeps the hairline rule visible (a <tr> border-b can drop out under sticky). */
+.sticky-head thead th {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--color-card);
+  box-shadow: inset 0 -1px 0 var(--color-border-default);
+}
+
 .score-bg-excellent { background-color: var(--color-score-excellent); color: white; }
 .score-bg-good      { background-color: var(--color-score-good); color: white; }
 .score-bg-neutral   { background-color: var(--color-score-neutral); color: var(--color-ink); }

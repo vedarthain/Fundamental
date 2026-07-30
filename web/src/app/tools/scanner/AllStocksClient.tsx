@@ -162,8 +162,8 @@ export default function AllStocksClient({
         </div>
       ) : (
         <div className="mt-5 card overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-[13px]">
+          <div className="overflow-auto max-h-[75vh]">
+            <table className="w-full text-[13px] sticky-head">
               <thead>
                 <tr className="border-b hairline text-[11px] uppercase tracking-wide muted-text">
                   <th className={`text-left px-3 py-2 ${thBtn}`} onClick={() => toggleSort("symbol")}>
