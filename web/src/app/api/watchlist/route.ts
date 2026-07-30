@@ -23,11 +23,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { loadPersistenceForSymbols } from "@/lib/persistence";
+import { loadQuotes, loadCloseOnAdd } from "@/lib/watchlistQuote";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_SYMBOLS = 100;
+const NOTE_MAX = 500;
 const SYMBOL_RE = /^[A-Z0-9&-]+$/;
 
 type WatchRow = {
@@ -51,6 +53,25 @@ type WatchRow = {
   cluster_avg_delta: number | null;
   cluster_adjusted: number | null;
   snaps_improving: number;
+  /** Per-user watchlist metadata (signed-in only; null otherwise). */
+  added_at: string | null;
+  close_on_add: number | null;
+  close_on_add_date: string | null;
+  note: string | null;
+  /** Fresh daily quote from golden (split-adjusted). */
+  ltp: number | null;
+  ret_1d: number | null;
+  high_52w: number | null;
+  low_52w: number | null;
+  from_high_pct: number | null;
+  from_low_pct: number | null;
+};
+
+type WatchMeta = {
+  added_at: string | null;
+  close_on_add: number | null;
+  close_on_add_date: string | null;
+  note: string | null;
 };
 
 function cleanSymbol(raw: string): string | null {
@@ -96,6 +117,37 @@ async function loadRows(symbols: string[]): Promise<WatchRow[]> {
   `;
 }
 
+/** Per-user watchlist metadata (added_at, cost-basis snapshot, note) keyed by
+ *  symbol. Empty when signed out — those fields have no home in localStorage. */
+async function loadMeta(
+  userId: number,
+  symbols: string[],
+): Promise<Map<string, WatchMeta>> {
+  const out = new Map<string, WatchMeta>();
+  if (symbols.length === 0) return out;
+  const rows = await sql<
+    { symbol: string; added_at: string; close_on_add: number | null; close_on_add_date: string | null; note: string | null }[]
+  >`
+    SELECT symbol,
+           added_at::text          AS added_at,
+           close_on_add::float     AS close_on_add,
+           close_on_add_date::text AS close_on_add_date,
+           note
+      FROM app.user_watchlist
+     WHERE user_id = ${userId}
+       AND symbol = ANY(${symbols})
+  `;
+  for (const r of rows) {
+    out.set(r.symbol, {
+      added_at: r.added_at,
+      close_on_add: r.close_on_add,
+      close_on_add_date: r.close_on_add_date,
+      note: r.note,
+    });
+  }
+  return out;
+}
+
 async function loadSnapshotDate(): Promise<string | null> {
   // Pulled separately so it returns even when the user has zero saved
   // symbols (loadRows would otherwise short-circuit before we knew).
@@ -126,21 +178,41 @@ export async function GET(req: NextRequest) {
     symbols = rows.map((r) => r.symbol);
   }
 
-  const [rows, snapshotDate, persistence] = await Promise.all([
+  const [rows, snapshotDate, persistence, quotes, meta] = await Promise.all([
     loadRows(symbols),
     loadSnapshotDate(),
     // Multi-snapshot trend per symbol. Two cheap reads regardless of
     // watchlist size, then merged in Node.
     loadPersistenceForSymbols(symbols),
+    // Fresh daily quote (LTP, 1D move, 52W high/low) from golden.
+    loadQuotes(symbols),
+    // Per-user cost-basis snapshot + note. Empty when signed out.
+    session
+      ? loadMeta(session.userId, symbols)
+      : Promise.resolve(new Map<string, WatchMeta>()),
   ]);
-  // Splice the persistence fields into each row so the client renders
-  // them in the same iteration as the rest of the watchlist data.
+  // Splice the persistence, quote and per-user fields into each row so the
+  // client renders them in the same iteration as the rest of the data.
   for (const row of rows) {
     const p = persistence.get(row.symbol);
     row.raw_delta         = p?.raw_delta         ?? null;
     row.cluster_avg_delta = p?.cluster_avg_delta ?? null;
     row.cluster_adjusted  = p?.cluster_adjusted  ?? null;
     row.snaps_improving   = p?.snaps_improving   ?? 0;
+
+    const q = quotes.get(row.symbol);
+    row.ltp           = q?.ltp           ?? null;
+    row.ret_1d        = q?.ret_1d        ?? null;
+    row.high_52w      = q?.high_52w      ?? null;
+    row.low_52w       = q?.low_52w       ?? null;
+    row.from_high_pct = q?.from_high_pct ?? null;
+    row.from_low_pct  = q?.from_low_pct  ?? null;
+
+    const m = meta.get(row.symbol);
+    row.added_at          = m?.added_at          ?? null;
+    row.close_on_add      = m?.close_on_add      ?? null;
+    row.close_on_add_date = m?.close_on_add_date ?? null;
+    row.note              = m?.note              ?? null;
   }
   return NextResponse.json({
     rows,
@@ -196,13 +268,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "watchlist full" }, { status: 409 });
   }
 
+  // Capture the latest close per symbol as the "closing rate when added"
+  // reference point (best-effort — golden hiccup just leaves it null).
+  const closeMap = await loadCloseOnAdd(toInsert);
+  const closes = toInsert.map((s) => closeMap.get(s)?.close ?? null);
+  const dates = toInsert.map((s) => closeMap.get(s)?.date ?? null);
+
   // Batch insert with ON CONFLICT DO NOTHING — duplicates are silently
   // dropped, so callers can safely re-POST the same symbol without an
-  // error path to handle.
+  // error path to handle. close_on_add/date are frozen at first add; a
+  // re-POST of an existing name does NOT overwrite the original snapshot.
   await sql`
-    INSERT INTO app.user_watchlist (user_id, symbol)
-    SELECT ${session.userId}, sym
-      FROM unnest(${toInsert}::text[]) AS sym
+    INSERT INTO app.user_watchlist (user_id, symbol, close_on_add, close_on_add_date)
+    SELECT ${session.userId}, sym, cl, dt
+      FROM unnest(${toInsert}::text[], ${closes}::numeric[], ${dates}::date[])
+        AS t(sym, cl, dt)
     ON CONFLICT (user_id, symbol) DO NOTHING
   `;
 
@@ -225,4 +305,40 @@ export async function DELETE(req: NextRequest) {
        AND symbol  = ${sym}
   `;
   return NextResponse.json({ ok: true });
+}
+
+/**
+ * PATCH — body { symbol, note } — sets the free-text note on a watched name.
+ * An empty/whitespace note clears it (stored as NULL). Signed-out → 401.
+ */
+export async function PATCH(req: NextRequest) {
+  const session = await getSession();
+  if (!session) {
+    return NextResponse.json({ error: "sign in required" }, { status: 401 });
+  }
+
+  let body: { symbol?: unknown; note?: unknown };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "invalid json" }, { status: 400 });
+  }
+
+  const sym = typeof body.symbol === "string" ? cleanSymbol(body.symbol) : null;
+  if (!sym) {
+    return NextResponse.json({ error: "invalid symbol" }, { status: 400 });
+  }
+
+  const raw = typeof body.note === "string" ? body.note.trim().slice(0, NOTE_MAX) : "";
+  const note = raw.length === 0 ? null : raw;
+
+  // Only touches the caller's own row; a non-existent (user, symbol) is a
+  // silent no-op (0 rows updated) rather than an error.
+  await sql`
+    UPDATE app.user_watchlist
+       SET note = ${note}
+     WHERE user_id = ${session.userId}
+       AND symbol  = ${sym}
+  `;
+  return NextResponse.json({ ok: true, note });
 }

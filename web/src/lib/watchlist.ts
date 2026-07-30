@@ -89,6 +89,23 @@ async function serverRemove(symbol: string): Promise<void> {
 }
 
 /**
+ * Persist a free-text note for a watched symbol (signed-in only — the note
+ * lives on the server watchlist row). Fire-and-forget from the caller's view;
+ * returns the saved value (server trims + caps it) or throws on a hard failure
+ * so the UI can surface a retry. Signed-out callers get a 401 and should not
+ * call this (the note editor is hidden when signed out).
+ */
+export async function saveWatchlistNote(symbol: string, note: string): Promise<void> {
+  const r = await fetch("/api/watchlist", {
+    method: "PATCH",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ symbol: symbol.toUpperCase(), note }),
+  });
+  if (!r.ok) throw new Error(`note save failed: ${r.status}`);
+}
+
+/**
  * One-time merge: push any localStorage symbols to the server, then drop
  * the local copy. Safe to call repeatedly — if the local list is empty
  * this is a no-op. Call after successful login/signup.

@@ -13,9 +13,9 @@
  *   - error: friendly retry button
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useWatchlist } from "@/lib/watchlist";
+import { useWatchlist, saveWatchlistNote } from "@/lib/watchlist";
 import { band, bandColor, tierLabelPlural } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
 
@@ -40,12 +40,24 @@ type Row = {
   cluster_avg_delta: number | null;
   cluster_adjusted: number | null;
   snaps_improving: number;
+  /** Per-user metadata (signed-in only). */
+  added_at: string | null;
+  close_on_add: number | null;
+  close_on_add_date: string | null;
+  note: string | null;
+  /** Fresh daily quote from golden. */
+  ltp: number | null;
+  ret_1d: number | null;
+  high_52w: number | null;
+  low_52w: number | null;
+  from_high_pct: number | null;
+  from_low_pct: number | null;
 };
 
 const TIER_ORDER = ["veteran", "mature", "mid", "new"] as const;
 
 export function WatchlistClient() {
-  const { symbols, hydrated, remove, count } = useWatchlist();
+  const { symbols, hydrated, remove, count, signedIn } = useWatchlist();
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -157,7 +169,12 @@ export function WatchlistClient() {
             <TierHeader tier={tier} count={bucket.length} />
             <div className="divide-y hairline">
               {bucket.map((r) => (
-                <WatchRow key={r.symbol} row={r} onRemove={() => remove(r.symbol)} />
+                <WatchRow
+                  key={r.symbol}
+                  row={r}
+                  signedIn={signedIn}
+                  onRemove={() => remove(r.symbol)}
+                />
               ))}
             </div>
           </section>
@@ -279,9 +296,18 @@ function TierHeader({ tier, count }: { tier: string; count: number }) {
   );
 }
 
-function WatchRow({ row, onRemove }: { row: Row; onRemove: () => void }) {
+function WatchRow({
+  row,
+  signedIn,
+  onRemove,
+}: {
+  row: Row;
+  signedIn: boolean;
+  onRemove: () => void;
+}) {
   const compositeBand = band(row.composite_pct);
   const compositeColor = bandColor(compositeBand);
+  const ltp = row.ltp ?? row.current_price;
   return (
     <div className="px-4 md:px-5 py-3 hover:bg-[var(--color-paper)]/60 transition-colors">
       <div className="flex items-start gap-3">
@@ -291,10 +317,7 @@ function WatchRow({ row, onRemove }: { row: Row; onRemove: () => void }) {
             <span className="muted-text text-[12px] truncate">{row.company_name}</span>
           </div>
           <div className="text-[10.5px] muted-text mt-0.5">
-            {row.sector_name} · {row.industry_name}
-            {row.current_price != null && (
-              <> · ₹{row.current_price.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</>
-            )}
+            {row.sector_name ?? "—"} · {row.industry_name ?? "—"}
           </div>
         </Link>
 
@@ -324,8 +347,52 @@ function WatchRow({ row, onRemove }: { row: Row; onRemove: () => void }) {
         </button>
       </div>
 
-      {/* Returns row */}
-      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[10.5px] tabular-nums">
+      {/* Price context strip: what you added at, where it is now, and how far
+          it sits from its 52-week extremes. */}
+      <div className="mt-2.5 grid grid-cols-3 sm:grid-cols-6 gap-x-3 gap-y-2 tabular-nums">
+        <Metric
+          label="Added"
+          title={row.added_at ? `Added ${formatSnapshotDate(row.added_at.slice(0, 10))}` : undefined}
+          value={row.added_at ? formatShortDate(row.added_at.slice(0, 10)) : "—"}
+        />
+        <Metric
+          label="Close @ add"
+          title={
+            row.close_on_add_date
+              ? `Closing price on ${formatSnapshotDate(row.close_on_add_date)} — your reference point`
+              : "Captured when you added the stock"
+          }
+          value={fmtPrice(row.close_on_add)}
+        />
+        <Metric label="LTP" title="Latest daily close (split-adjusted)" value={fmtPrice(ltp)} />
+        <Metric
+          label="Day"
+          title="Latest close vs. the prior session"
+          value={fmtSignedPct(row.ret_1d)}
+          color={deltaColor(row.ret_1d)}
+        />
+        <Metric
+          label="From 52W H"
+          title={
+            row.high_52w != null
+              ? `52-week high ₹${row.high_52w.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`
+              : undefined
+          }
+          value={fmtSignedPct(row.from_high_pct)}
+        />
+        <Metric
+          label="From 52W L"
+          title={
+            row.low_52w != null
+              ? `52-week low ₹${row.low_52w.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`
+              : undefined
+          }
+          value={fmtSignedPct(row.from_low_pct)}
+        />
+      </div>
+
+      {/* Scores + longer-horizon returns (weekly panel). */}
+      <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-[10.5px] tabular-nums">
         <ReturnPill label="Q" value={row.quality_pct}   pct />
         <ReturnPill label="V" value={row.valuation_pct} pct />
         <ReturnPill label="M" value={row.momentum_pct}  pct />
@@ -334,6 +401,17 @@ function WatchRow({ row, onRemove }: { row: Row; onRemove: () => void }) {
         <ReturnPill label="1M" value={row.ret_1m} signed />
         <ReturnPill label="1Y" value={row.ret_1y} signed />
       </div>
+
+      {/* Editable note — signed-in only (it lives on the server row). */}
+      {signedIn ? (
+        <NoteEditor symbol={row.symbol} initial={row.note} />
+      ) : (
+        row.note == null && (
+          <div className="mt-2 text-[10.5px] muted-text italic">
+            Sign in to record a reference note and your add-day price for this stock.
+          </div>
+        )
+      )}
 
       {/* Persistence row — multi-snapshot trend.  Frames as "context for
           review", not a buy/sell signal: muted color, no green/red,
@@ -370,6 +448,119 @@ function WatchRow({ row, onRemove }: { row: Row; onRemove: () => void }) {
           </span>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Metric cell + formatters ────────────────────────────────────────────────
+
+function Metric({
+  label,
+  value,
+  title,
+  color,
+}: {
+  label: string;
+  value: string;
+  title?: string;
+  color?: string;
+}) {
+  return (
+    <div className="min-w-0" title={title}>
+      <div className="text-[9.5px] uppercase tracking-wide muted-text leading-tight">{label}</div>
+      <div className="text-[12px] font-medium leading-tight mt-0.5" style={color ? { color } : undefined}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+/** ₹-prefixed price with up to 2 decimals; "—" when null. */
+function fmtPrice(v: number | null): string {
+  if (v == null) return "—";
+  return `₹${v.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+}
+
+/** Signed percent (+/−, 1 dp), "—" when null. */
+function fmtSignedPct(v: number | null): string {
+  if (v == null) return "—";
+  return `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`;
+}
+
+function deltaColor(v: number | null): string | undefined {
+  if (v == null || v === 0) return undefined;
+  return v > 0 ? "var(--color-delta-up)" : "var(--color-delta-down)";
+}
+
+/** YYYY-MM-DD → "24 May '26" (compact, for the metric strip). */
+function formatShortDate(iso: string): string {
+  const d = new Date(`${iso}T12:00:00Z`);
+  if (Number.isNaN(d.getTime())) return iso;
+  const day = d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", timeZone: "UTC" });
+  const yr = d.toLocaleDateString("en-IN", { year: "2-digit", timeZone: "UTC" });
+  return `${day} '${yr}`;
+}
+
+// ── Editable note ────────────────────────────────────────────────────────────
+
+function NoteEditor({ symbol, initial }: { symbol: string; initial: string | null }) {
+  const [val, setVal] = useState(initial ?? "");
+  const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSaved = useRef(initial ?? "");
+
+  useEffect(() => {
+    return () => {
+      if (timer.current) clearTimeout(timer.current);
+    };
+  }, []);
+
+  const flush = (next: string) => {
+    if (next === lastSaved.current) return;
+    setStatus("saving");
+    saveWatchlistNote(symbol, next)
+      .then(() => {
+        lastSaved.current = next;
+        setStatus("saved");
+      })
+      .catch(() => setStatus("error"));
+  };
+
+  const onChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const next = e.target.value.slice(0, 500);
+    setVal(next);
+    setStatus("idle");
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => flush(next), 800);
+  };
+
+  const onBlur = () => {
+    if (timer.current) clearTimeout(timer.current);
+    flush(val);
+  };
+
+  return (
+    <div className="mt-2.5">
+      <div className="flex items-center justify-between mb-1">
+        <label className="text-[9.5px] uppercase tracking-wide muted-text" htmlFor={`note-${symbol}`}>
+          Note
+        </label>
+        <span className="text-[9.5px] muted-text tabular-nums">
+          {status === "saving" && "saving…"}
+          {status === "saved" && "saved ✓"}
+          {status === "error" && <span style={{ color: "var(--color-delta-down)" }}>save failed</span>}
+        </span>
+      </div>
+      <textarea
+        id={`note-${symbol}`}
+        value={val}
+        onChange={onChange}
+        onBlur={onBlur}
+        rows={2}
+        maxLength={500}
+        placeholder="Why you're watching this — thesis, level to buy, catalyst to wait for…"
+        className="w-full rounded-md border hairline bg-transparent px-2.5 py-1.5 text-[12px] leading-[1.5] resize-y focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-600)]"
+      />
     </div>
   );
 }
