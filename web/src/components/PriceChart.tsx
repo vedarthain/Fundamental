@@ -130,9 +130,27 @@ export function PriceChart({
   const stroke = positive ? "var(--color-score-excellent)" : "var(--color-score-poor)";
   const fillStop = positive ? "var(--color-score-good)" : "var(--color-score-weak)";
 
+  // Return anchor — the "N ago" reference point. The scanner measures from the
+  // most recent close ON OR BEFORE the target date; match that here (instead of
+  // filtered[0], the first point on/after) so the chart's headline return and
+  // the scanner's row agree for the same stock + timeframe. Falls back to the
+  // first visible point when the stock is younger than the window. `data` is
+  // date-ascending from SQL. 1D/ALL keep the visible-range anchor.
+  const headAnchor = useMemo<PricePoint | undefined>(() => {
+    if (range === "1D" || range === "ALL") return filtered[0];
+    const days = RANGE_DAYS[range];
+    const cutoff = Date.now() - days * 86_400_000;
+    let onOrBefore: PricePoint | undefined;
+    for (const p of data) {
+      if (new Date(p.date).getTime() <= cutoff) onOrBefore = p;
+      else break;
+    }
+    return onOrBefore ?? filtered[0];
+  }, [data, range, filtered]);
+
   // Headline numbers — current price + period change.
   const last = filtered[filtered.length - 1]?.close;
-  const first = filtered[0]?.close;
+  const first = headAnchor?.close;
   const changeAbs = last != null && first != null ? last - first : null;
   const rawChangePct = changeAbs != null && first ? (changeAbs / first) * 100 : null;
   // Suppress a physically-impossible headline return (upstream broken split
@@ -146,7 +164,7 @@ export function PriceChart({
   // Header stats — computed from the VISIBLE range so the identity line, the
   // headline return and CAGR all move with the selected timeframe (instead of
   // being pinned to the full 24y history).
-  const spanFirst = filtered[0];
+  const spanFirst = headAnchor;
   const spanLast = filtered[filtered.length - 1];
   const spanYears =
     spanFirst && spanLast
