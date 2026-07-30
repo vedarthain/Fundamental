@@ -43,9 +43,17 @@ const TEXT_KEYS: ReadonlySet<SortKey> = new Set(["symbol", "sector", "peer_group
 // Columns that read best low→high on first click (rank #1 = best on top).
 const ASC_FIRST_KEYS: ReadonlySet<SortKey> = new Set(["industry_rank"]);
 
+// Above this, a percentage stops being readable ("+1243.5%") — a multibagger
+// reads far cleaner as a multiple ("13.4×"), which is how investors talk. Below
+// it, keep the signed percent. Only positive returns cross this (a loss can't
+// exceed −100%), so the × form is always a gain.
+const RET_MULTIPLE_AT = 300; // %
 function retFmt(pct: number | null): { text: string; color: string } {
   if (pct == null) return { text: "—", color: "var(--color-muted)" };
-  const text = (pct >= 0 ? "+" : "") + pct.toFixed(1) + "%";
+  const text =
+    pct >= RET_MULTIPLE_AT
+      ? (1 + pct / 100).toFixed(1) + "×"
+      : (pct >= 0 ? "+" : "") + pct.toFixed(1) + "%";
   return { text, color: pct > 0 ? GREEN : pct < 0 ? RED : "var(--color-muted)" };
 }
 function scoreColor(p: number | null): string {
