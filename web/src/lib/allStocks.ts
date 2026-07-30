@@ -16,6 +16,7 @@
  */
 
 import { sql, golden } from "@/lib/db";
+import { guardedPctChange } from "@/lib/returnGuards";
 
 export type AllStockRow = {
   symbol: string;
@@ -55,34 +56,10 @@ function bare(sym: string): string {
 }
 
 // Per-window plausibility caps (in PERCENT). golden's price_history has a few
-// names whose split adjustment is internally inconsistent — the N-ago adj_close
-// sits on a different scale than today's, implying impossible moves (TVSMOTOR
-// read +3358% for 1Y). That's an upstream golden defect the ETL guard (_RET_CAP
-// in cli.py) also filters; mirror it here so the live All-stocks table never
-// renders one bad vendor bar as a headline return. Caps sit well above any real
-// move over the window (India's daily circuit is ±20%), so a genuine multi-
-// bagger still shows; only data errors collapse to "—".
-// 3Y caps far higher: a genuine multi-year multibagger (5–15×) is real and
-// should show, so only an outright data error (100×+ from a broken split basis)
-// gets nulled.
-const PCT_CAP: Record<"1d" | "1w" | "1m" | "1y" | "3y", number> = {
-  "1d": 60,
-  "1w": 200,
-  "1m": 300,
-  "1y": 500,
-  "3y": 2000,
-};
-
-function pctChange(
-  last: number | undefined,
-  base: number | undefined,
-  window: "1d" | "1w" | "1m" | "1y" | "3y",
-): number | null {
-  if (last == null || base == null || base === 0) return null;
-  const pct = Math.round((last / base - 1) * 1000) / 10;
-  if (Math.abs(pct) > PCT_CAP[window]) return null;
-  return pct;
-}
+// Return plausibility caps + the pctChange guard now live in one shared module
+// (returnGuards) so the scanner and the stock-page price chart apply the exact
+// same rule — which is also what keeps the two surfaces' returns consistent.
+const pctChange = guardedPctChange;
 
 export async function loadAllStocks(): Promise<AllStocksData> {
   const empty: AllStocksData = { snapDate: null, rows: [] };

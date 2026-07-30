@@ -3,10 +3,20 @@ import { useState, useMemo } from "react";
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from "recharts";
+import { PCT_CAP, type RetWindow } from "@/lib/returnGuards";
 
 export type PricePoint = { date: string; close: number };
 
 type Range = "1D" | "1W" | "1M" | "3M" | "1Y" | "3Y" | "5Y" | "10Y" | "ALL";
+
+// Ranges that have a shared plausibility cap (see returnGuards). A broken split
+// basis upstream can make a short-horizon return physically impossible; when it
+// exceeds the cap we suppress the headline number rather than print garbage.
+// 3M / 5Y / 10Y / ALL have no cap (no scanner equivalent, and long-horizon real
+// multibaggers are genuinely huge), so they render as-is.
+const RANGE_TO_CAP: Partial<Record<Range, RetWindow>> = {
+  "1D": "1d", "1W": "1w", "1M": "1m", "1Y": "1y", "3Y": "3y",
+};
 
 /** Lookback in calendar days. 1D is special-cased below to grab the last 2
  *  daily closes so we always have at least a 2-point line. */
@@ -124,7 +134,14 @@ export function PriceChart({
   const last = filtered[filtered.length - 1]?.close;
   const first = filtered[0]?.close;
   const changeAbs = last != null && first != null ? last - first : null;
-  const changePct = changeAbs != null && first ? (changeAbs / first) * 100 : null;
+  const rawChangePct = changeAbs != null && first ? (changeAbs / first) * 100 : null;
+  // Suppress a physically-impossible headline return (upstream broken split
+  // basis) so the chart never prints garbage — same guard the scanner uses.
+  const capWin = RANGE_TO_CAP[range];
+  const changePct =
+    rawChangePct != null && capWin != null && Math.abs(rawChangePct) > PCT_CAP[capWin]
+      ? null
+      : rawChangePct;
 
   // Header stats — computed from the VISIBLE range so the identity line, the
   // headline return and CAGR all move with the selected timeframe (instead of
