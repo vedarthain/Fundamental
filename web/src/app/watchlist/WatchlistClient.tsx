@@ -308,6 +308,12 @@ function WatchRow({
   const compositeBand = band(row.composite_pct);
   const compositeColor = bandColor(compositeBand);
   const ltp = row.ltp ?? row.current_price;
+  // Performance since you added the stock: LTP vs the close captured on add-day.
+  // 0% on the day you add (LTP == close_on_add), then moves with the stock.
+  const sinceAdd =
+    ltp != null && row.close_on_add != null && row.close_on_add !== 0
+      ? Math.round((ltp / row.close_on_add - 1) * 1000) / 10
+      : null;
   return (
     <div className="px-4 md:px-5 py-3 hover:bg-[var(--color-paper)]/60 transition-colors">
       <div className="flex items-start gap-3">
@@ -366,10 +372,14 @@ function WatchRow({
         />
         <Metric label="LTP" title="Latest daily close (split-adjusted)" value={fmtPrice(ltp)} />
         <Metric
-          label="Day"
-          title="Latest close vs. the prior session"
-          value={fmtSignedPct(row.ret_1d)}
-          color={deltaColor(row.ret_1d)}
+          label="Since add"
+          title={
+            row.close_on_add != null
+              ? `LTP vs your add-day close ₹${row.close_on_add.toLocaleString("en-IN", { maximumFractionDigits: 2 })} — your P&L since watching`
+              : "Set when you add the stock"
+          }
+          value={fmtSignedPct(sinceAdd)}
+          color={deltaColor(sinceAdd)}
         />
         <Metric
           label="From 52W H"
@@ -397,6 +407,7 @@ function WatchRow({
         <ReturnPill label="V" value={row.valuation_pct} pct />
         <ReturnPill label="M" value={row.momentum_pct}  pct />
         <span className="muted-text">·</span>
+        <ReturnPill label="1D" value={row.ret_1d == null ? null : row.ret_1d / 100} signed />
         <ReturnPill label="1W" value={row.ret_1w} signed />
         <ReturnPill label="1M" value={row.ret_1m} signed />
         <ReturnPill label="1Y" value={row.ret_1y} signed />
