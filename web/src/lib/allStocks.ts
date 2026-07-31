@@ -23,6 +23,7 @@ export type AllStockRow = {
   company_name: string | null;
   sector: string | null; // meta_cluster.name
   peer_group: string | null; // cluster.name
+  maturity_tier: string | null; // veteran | mature | mid | new (years of financial history)
   current_price: number | null;
   ret_1d: number | null; // percent
   ret_1w: number | null; // percent
@@ -45,6 +46,7 @@ type PanelRow = {
   company_name: string | null;
   sector: string | null;
   peer_group: string | null;
+  maturity_tier: string | null;
   cache_price: number | null;
   composite_pct: number | null;
   is_n500: boolean;
@@ -82,6 +84,7 @@ export async function loadAllStocks(): Promise<AllStocksData> {
              u.company_name,
              mc.name AS sector,
              c.name  AS peer_group,
+             u.maturity_tier,
              p.current_price::float8 AS cache_price,
              p.composite_pct::float8 AS composite_pct,
              (ic.symbol IS NOT NULL) AS is_n500
@@ -191,6 +194,7 @@ export async function loadAllStocks(): Promise<AllStocksData> {
       company_name: p.company_name,
       sector: p.sector,
       peer_group: p.peer_group,
+      maturity_tier: p.maturity_tier,
       current_price: price == null ? null : Math.round(price * 100) / 100,
       ret_1d: pctChange(lastPx, prev.get(p.symbol), "1d"),
       ret_1w: pctChange(lastPx, wAgo.get(p.symbol), "1w"),

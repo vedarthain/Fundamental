@@ -13,7 +13,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { displayCompanyName } from "@/lib/score";
+import { displayCompanyName, tierLabel } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import type { AllStockRow } from "@/lib/allStocks";
 import { RowSparkline } from "./RowSparkline";
@@ -56,6 +56,11 @@ function retFmt(pct: number | null): { text: string; color: string } {
       : (pct >= 0 ? "+" : "") + pct.toFixed(1) + "%";
   return { text, color: pct > 0 ? GREEN : pct < 0 ? RED : "var(--color-muted)" };
 }
+// Maturity tiers, oldest → youngest. Whitelist filter: an empty selection
+// means "show all"; selecting some restricts to those (so avoiding Emerging /
+// New Listing is just picking Established + Long-established).
+const TIERS = ["veteran", "mature", "mid", "new"] as const;
+
 // Numeric columns that carry a per-column filter box under their label.
 const NUMERIC_FILTER_KEYS = [
   "current_price",
@@ -132,6 +137,8 @@ export default function AllStocksClient({
   const [q, setQ] = useState("");
   // Quality/momentum screen toggles — each ANDs into the filter, so a strict
   // "top-ranked + high-score + all-green" list is one to three clicks away.
+  // Maturity whitelist — empty means no restriction.
+  const [tiers, setTiers] = useState<Set<string>>(new Set());
   // Per-column numeric filters: raw text per column (e.g. ">90", "90-95").
   const [numFilters, setNumFilters] = useState<Partial<Record<NumFilterKey, string>>>({});
 
@@ -161,6 +168,7 @@ export default function AllStocksClient({
     const needle = q.trim().toLowerCase();
     return rows.filter((r) => {
       if (n500Only && !r.is_n500) return false;
+      if (tiers.size > 0 && (r.maturity_tier == null || !tiers.has(r.maturity_tier))) return false;
       for (const k of NUMERIC_FILTER_KEYS) {
         const pred = numPreds[k];
         if (pred && !pred(r[k] as number | null)) return false;
@@ -171,7 +179,7 @@ export default function AllStocksClient({
       }
       return true;
     });
-  }, [rows, n500Only, q, numPreds]);
+  }, [rows, n500Only, q, tiers, numPreds]);
 
   const sorted = useMemo(() => {
     const numeric = !TEXT_KEYS.has(sortKey);
@@ -221,6 +229,14 @@ export default function AllStocksClient({
   const thBtn = "cursor-pointer select-none hover:text-[var(--color-ink)] transition-colors";
 
   const anyNumFilter = NUMERIC_FILTER_KEYS.some((k) => (numFilters[k] ?? "").trim() !== "");
+
+  const toggleTier = (t: string) =>
+    setTiers((prev) => {
+      const next = new Set(prev);
+      if (next.has(t)) next.delete(t);
+      else next.add(t);
+      return next;
+    });
 
   // A column's filter box, stacked under its label inside the same <th> so the
   // sticky header stays one row (a separate filter row would need fragile
@@ -275,7 +291,38 @@ export default function AllStocksClient({
         </div>
       </header>
 
-      <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] muted-text">
+      <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5">
+        <span className="text-[11px] uppercase tracking-wide muted-text mr-1">Maturity</span>
+        {TIERS.map((t) => {
+          const active = tiers.has(t);
+          return (
+            <button
+              key={t}
+              type="button"
+              onClick={() => toggleTier(t)}
+              aria-pressed={active}
+              className={`rounded-full border px-2.5 py-0.5 text-[12px] font-medium transition-colors ${
+                active
+                  ? "border-transparent bg-[var(--color-ink)] text-[var(--color-paper)]"
+                  : "hairline muted-text hover:text-[var(--color-ink)]"
+              }`}
+            >
+              {tierLabel(t)}
+            </button>
+          );
+        })}
+        {tiers.size > 0 && (
+          <button
+            type="button"
+            onClick={() => setTiers(new Set())}
+            className="text-[12px] underline muted-text hover:text-[var(--color-ink)]"
+          >
+            All
+          </button>
+        )}
+      </div>
+
+      <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] muted-text">
         <span>
           Column filters (under each number): <code>&gt;90</code>, <code>&lt;10</code>,{" "}
           <code>90-95</code> for a range, or a bare number for a minimum (≥ · Ind. is ≤ top-N).
