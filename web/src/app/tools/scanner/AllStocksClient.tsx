@@ -84,6 +84,51 @@ function FilterChip({
   );
 }
 
+// Numeric columns that carry a per-column filter box under their label.
+const NUMERIC_FILTER_KEYS = [
+  "current_price",
+  "ret_1d",
+  "ret_1w",
+  "ret_1m",
+  "ret_1y",
+  "ret_3y",
+  "composite_pct",
+  "industry_rank",
+] as const;
+type NumFilterKey = (typeof NUMERIC_FILTER_KEYS)[number];
+
+// Per-column numeric filter grammar (kept deliberately small + predictable):
+//   >90  >=90  <10  <=10   → open comparisons
+//   90-95  or  90..95      → inclusive range (order-insensitive)
+//   90                     → bare number == minimum threshold (>= 90)
+// Anything else is unparseable → returns null (caller treats a non-empty
+// unparseable box as "invalid", shown with a red border, and applies no
+// filter so the table isn't silently emptied by a typo).
+const NUM = "(-?\\d+(?:\\.\\d+)?)";
+function parseNumFilter(expr: string): ((v: number | null) => boolean) | null {
+  const s = expr.trim();
+  if (!s) return null;
+  let m: RegExpMatchArray | null;
+  if ((m = s.match(new RegExp(`^(>=|<=|>|<|=)\\s*${NUM}$`)))) {
+    const op = m[1];
+    const t = Number(m[2]);
+    return (v) =>
+      v != null &&
+      (op === ">" ? v > t : op === ">=" ? v >= t : op === "<" ? v < t : op === "<=" ? v <= t : v === t);
+  }
+  if ((m = s.match(new RegExp(`^${NUM}\\s*(?:\\.\\.|-)\\s*${NUM}$`)))) {
+    const a = Number(m[1]);
+    const b = Number(m[2]);
+    const [lo, hi] = a <= b ? [a, b] : [b, a];
+    return (v) => v != null && v >= lo && v <= hi;
+  }
+  if ((m = s.match(new RegExp(`^${NUM}$`)))) {
+    const t = Number(m[1]);
+    return (v) => v != null && v >= t; // bare number = minimum threshold
+  }
+  return null;
+}
+
 function scoreColor(p: number | null): string {
   if (p == null) return "var(--color-muted)";
   if (p >= 66) return GREEN;
@@ -108,6 +153,20 @@ export default function AllStocksClient({
   const [topN, setTopN] = useState<0 | 1 | 3 | 5>(0); // 0 = off; else top-N within industry
   const [score90, setScore90] = useState(false); // Industry Score > 90
   const [allGreen, setAllGreen] = useState(false); // 1D/1W/1M/1Y all positive
+  // Per-column numeric filters: raw text per column (e.g. ">90", "90-95").
+  const [numFilters, setNumFilters] = useState<Partial<Record<NumFilterKey, string>>>({});
+
+  // Compile the raw filter text into predicates once per change. A non-empty
+  // box that fails to parse is dropped here (no predicate) so it doesn't empty
+  // the table; the input itself flags it red.
+  const numPreds = useMemo(() => {
+    const out: Partial<Record<NumFilterKey, (v: number | null) => boolean>> = {};
+    for (const k of NUMERIC_FILTER_KEYS) {
+      const p = parseNumFilter(numFilters[k] ?? "");
+      if (p) out[k] = p;
+    }
+    return out;
+  }, [numFilters]);
 
   function toggleSort(k: SortKey) {
     if (k === sortKey) {
@@ -135,13 +194,17 @@ export default function AllStocksClient({
         )
       )
         return false;
+      for (const k of NUMERIC_FILTER_KEYS) {
+        const pred = numPreds[k];
+        if (pred && !pred(r[k] as number | null)) return false;
+      }
       if (needle) {
         const hay = `${r.symbol} ${r.company_name ?? ""}`.toLowerCase();
         if (!hay.includes(needle)) return false;
       }
       return true;
     });
-  }, [rows, n500Only, q, topN, score90, allGreen]);
+  }, [rows, n500Only, q, topN, score90, allGreen, numPreds]);
 
   const sorted = useMemo(() => {
     const numeric = !TEXT_KEYS.has(sortKey);
@@ -189,6 +252,29 @@ export default function AllStocksClient({
 
   const arrow = (k: SortKey) => (k === sortKey ? (dir === "asc" ? " ▲" : " ▼") : "");
   const thBtn = "cursor-pointer select-none hover:text-[var(--color-ink)] transition-colors";
+
+  const anyNumFilter = NUMERIC_FILTER_KEYS.some((k) => (numFilters[k] ?? "").trim() !== "");
+
+  // A column's filter box, stacked under its label inside the same <th> so the
+  // sticky header stays one row (a separate filter row would need fragile
+  // per-row top offsets). stopPropagation keeps a click in the box from firing
+  // the header's sort toggle.
+  const numInput = (k: NumFilterKey) => {
+    const raw = numFilters[k] ?? "";
+    const invalid = raw.trim() !== "" && parseNumFilter(raw) == null;
+    return (
+      <input
+        value={raw}
+        onChange={(e) => setNumFilters((f) => ({ ...f, [k]: e.target.value }))}
+        onClick={(e) => e.stopPropagation()}
+        placeholder="—"
+        title="e.g. >90, <10, 90-95, or a bare number for ≥"
+        className={`mt-1 w-full rounded border bg-transparent px-1 py-0.5 text-right text-[11px] font-normal normal-case tracking-normal tabular-nums ${
+          invalid ? "border-[var(--color-delta-down)]" : "hairline"
+        }`}
+      />
+    );
+  };
 
   return (
     <>
@@ -239,13 +325,14 @@ export default function AllStocksClient({
         <FilterChip active={allGreen} onClick={() => setAllGreen((v) => !v)} title="1D, 1W, 1M and 1Y returns all positive">
           All up (1D·1W·1M·1Y)
         </FilterChip>
-        {(topN !== 0 || score90 || allGreen) && (
+        {(topN !== 0 || score90 || allGreen || anyNumFilter) && (
           <button
             type="button"
             onClick={() => {
               setTopN(0);
               setScore90(false);
               setAllGreen(false);
+              setNumFilters({});
             }}
             className="text-[12px] underline muted-text hover:text-[var(--color-ink)]"
           >
@@ -253,6 +340,11 @@ export default function AllStocksClient({
           </button>
         )}
       </div>
+
+      <p className="mt-2 text-[11px] muted-text">
+        Column filters (under each number): <code>&gt;90</code>, <code>&lt;10</code>,{" "}
+        <code>90-95</code> for a range, or a bare number for a minimum (≥).
+      </p>
 
       {sorted.length === 0 ? (
         <div className="mt-5 card p-8 text-center">
@@ -271,36 +363,44 @@ export default function AllStocksClient({
               style={{ ["--sticky-head-top" as string]: "84px" }}
             >
               <thead>
-                <tr className="border-b hairline text-[11px] uppercase tracking-wide muted-text">
+                <tr className="border-b hairline text-[11px] uppercase tracking-wide muted-text align-top">
                   <th className={`text-left px-3 py-2 ${thBtn}`} onClick={() => toggleSort("symbol")}>
                     Stock{arrow("symbol")}
                   </th>
                   <th className={`text-left px-2 py-2 ${thBtn}`} title="Broad sector (top) · scoring peer group (bottom)" onClick={() => toggleSort("sector")}>
                     Sector / Industry{arrow("sector")}
                   </th>
-                  <th className={`text-right px-2 py-2 ${thBtn}`} onClick={() => toggleSort("current_price")}>
-                    Price{arrow("current_price")}
+                  <th className="text-right px-2 py-2">
+                    <div className={thBtn} onClick={() => toggleSort("current_price")}>Price{arrow("current_price")}</div>
+                    {numInput("current_price")}
                   </th>
-                  <th className={`text-right px-1.5 py-2 ${thBtn}`} title="1-day price return" onClick={() => toggleSort("ret_1d")}>
-                    1D{arrow("ret_1d")}
+                  <th className="text-right px-1.5 py-2" title="1-day price return">
+                    <div className={thBtn} onClick={() => toggleSort("ret_1d")}>1D{arrow("ret_1d")}</div>
+                    {numInput("ret_1d")}
                   </th>
-                  <th className={`text-right px-1.5 py-2 ${thBtn}`} title="1-week price return" onClick={() => toggleSort("ret_1w")}>
-                    1W{arrow("ret_1w")}
+                  <th className="text-right px-1.5 py-2" title="1-week price return">
+                    <div className={thBtn} onClick={() => toggleSort("ret_1w")}>1W{arrow("ret_1w")}</div>
+                    {numInput("ret_1w")}
                   </th>
-                  <th className={`text-right px-1.5 py-2 ${thBtn}`} title="1-month price return" onClick={() => toggleSort("ret_1m")}>
-                    1M{arrow("ret_1m")}
+                  <th className="text-right px-1.5 py-2" title="1-month price return">
+                    <div className={thBtn} onClick={() => toggleSort("ret_1m")}>1M{arrow("ret_1m")}</div>
+                    {numInput("ret_1m")}
                   </th>
-                  <th className={`text-right px-1.5 py-2 ${thBtn}`} title="1-year price return" onClick={() => toggleSort("ret_1y")}>
-                    1Y{arrow("ret_1y")}
+                  <th className="text-right px-1.5 py-2" title="1-year price return">
+                    <div className={thBtn} onClick={() => toggleSort("ret_1y")}>1Y{arrow("ret_1y")}</div>
+                    {numInput("ret_1y")}
                   </th>
-                  <th className={`text-right px-1.5 py-2 ${thBtn}`} title="3-year price return (split-adjusted)" onClick={() => toggleSort("ret_3y")}>
-                    3Y{arrow("ret_3y")}
+                  <th className="text-right px-1.5 py-2" title="3-year price return (split-adjusted)">
+                    <div className={thBtn} onClick={() => toggleSort("ret_3y")}>3Y{arrow("ret_3y")}</div>
+                    {numInput("ret_3y")}
                   </th>
-                  <th className={`text-right px-1.5 py-2 ${thBtn}`} title="Industry Score percentile (fundamental)" onClick={() => toggleSort("composite_pct")}>
-                    Score{arrow("composite_pct")}
+                  <th className="text-right px-1.5 py-2" title="Industry Score percentile (fundamental)">
+                    <div className={thBtn} onClick={() => toggleSort("composite_pct")}>Score{arrow("composite_pct")}</div>
+                    {numInput("composite_pct")}
                   </th>
-                  <th className={`text-right px-1.5 py-2 ${thBtn}`} title="Composite rank within the stock's peer group (#1 = best in its industry)" onClick={() => toggleSort("industry_rank")}>
-                    Ind.{arrow("industry_rank")}
+                  <th className="text-right px-1.5 py-2" title="Composite rank within the stock's peer group (#1 = best in its industry)">
+                    <div className={thBtn} onClick={() => toggleSort("industry_rank")}>Ind.{arrow("industry_rank")}</div>
+                    {numInput("industry_rank")}
                   </th>
                   <th className="text-center px-2 py-2" title="Adjusted-close price over the selected window">Trend</th>
                 </tr>
