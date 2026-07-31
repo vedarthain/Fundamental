@@ -182,7 +182,7 @@ export default function SupportFloorClient({
                       </td>
                       <td className="px-2 py-2.5 text-center">
                         <div className="inline-flex transition-opacity" style={{ opacity: win.loading ? 0.4 : 1 }}>
-                          <RowSparkline series={win.data[s.symbol]} floor={s.floorPx} />
+                          <RowSparkline series={win.data[s.symbol]} floor={s.floorPx} showHiLo />
                         </div>
                       </td>
                     </tr>

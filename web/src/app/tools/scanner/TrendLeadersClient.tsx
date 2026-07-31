@@ -211,7 +211,7 @@ export default function TrendLeadersClient({
                       </td>
                       <td className="px-2 py-2.5 text-center">
                         <div className="inline-flex transition-opacity" style={{ opacity: win.loading ? 0.4 : 1 }}>
-                          <RowSparkline series={win.data[s.symbol]} />
+                          <RowSparkline series={win.data[s.symbol]} showHiLo />
                         </div>
                       </td>
                     </tr>

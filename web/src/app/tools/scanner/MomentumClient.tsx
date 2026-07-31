@@ -10,6 +10,7 @@
  * surface it, we don't hide it.
  */
 
+import { Fragment, useState } from "react";
 import Link from "next/link";
 import type { MomentumSignal } from "@/lib/momentum";
 import type { SparkPoint } from "@/components/Sparkline";
@@ -19,6 +20,7 @@ import { WindowPicker } from "./WindowPicker";
 import { useSparklineWindow } from "./useSparklineWindow";
 import { IGNITING_WINDOWS, IGNITING_DEFAULT_DAYS } from "./sparkWindows";
 import { Pager, usePager } from "./Pager";
+import { orderBySector, useSectorCounts, SectorHeaderRow, GroupBySectorToggle } from "./sectorGroup";
 
 const GREEN = "var(--color-delta-up, #0a0)";
 const RED = "var(--color-delta-down, #b00)";
@@ -77,7 +79,11 @@ export default function MomentumClient({
     ? new Date(snapDate).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "long", year: "numeric" })
     : null;
 
-  const pager = usePager(signals);
+  const [groupSector, setGroupSector] = useState(false);
+  const sectorOf = (s: MomentumSignal) => s.sector;
+  const ordered = groupSector ? orderBySector(signals, sectorOf) : signals;
+  const sectorCounts = useSectorCounts(signals, sectorOf);
+  const pager = usePager(ordered);
   const symbols = signals.map((s) => s.symbol);
   const win = useSparklineWindow(symbols, IGNITING_DEFAULT_DAYS, spark ?? {});
   const winLabel = IGNITING_WINDOWS.find((o) => o.days === win.days)?.label ?? "";
@@ -102,6 +108,7 @@ export default function MomentumClient({
             </p>
           )}
           <div className="flex items-center gap-3">
+            <GroupBySectorToggle on={groupSector} onToggle={() => setGroupSector((v) => !v)} />
             <WindowPicker options={IGNITING_WINDOWS} days={win.days} onSelect={win.select} loading={win.loading} />
             {datePicker}
           </div>
@@ -132,10 +139,18 @@ export default function MomentumClient({
                 </tr>
               </thead>
               <tbody>
-                {pager.pageItems.map((s) => {
+                {pager.pageItems.map((s, i) => {
                   const suspicious = !s.catalystTitle && (s.compositePct == null || s.compositePct < 40);
+                  const prev = i > 0 ? pager.pageItems[i - 1] : undefined;
+                  const showHeader =
+                    groupSector && (i === 0 || sectorOf(prev!) !== sectorOf(s));
+                  const secKey = (sectorOf(s) || "").trim() || "—";
                   return (
-                    <tr key={s.symbol} className="border-b hairline align-top hover:bg-[var(--color-paper)] transition-colors">
+                    <Fragment key={s.symbol}>
+                    {showHeader && (
+                      <SectorHeaderRow label={secKey} count={sectorCounts.get(secKey) ?? 0} colSpan={7} />
+                    )}
+                    <tr className="border-b hairline align-top hover:bg-[var(--color-paper)] transition-colors">
                       <td className="px-3 py-2.5">
                         <div className="flex items-start gap-1.5">
                           <WatchlistButton symbol={s.symbol} variant="icon" className="-ml-1 shrink-0" />
@@ -167,7 +182,7 @@ export default function MomentumClient({
                       </td>
                       <td className="px-2 py-2.5 text-center">
                         <div className="inline-flex transition-opacity" style={{ opacity: win.loading ? 0.4 : 1 }}>
-                          <RowSparkline series={win.data[s.symbol]} />
+                          <RowSparkline series={win.data[s.symbol]} showHiLo />
                         </div>
                       </td>
                       <td className="px-3 py-2.5 max-w-[340px]">
@@ -204,6 +219,7 @@ export default function MomentumClient({
                         )}
                       </td>
                     </tr>
+                    </Fragment>
                   );
                 })}
               </tbody>
