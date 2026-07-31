@@ -310,7 +310,8 @@ export default function AllStocksClient({
               <thead>
                 <tr className="border-b hairline text-[11px] uppercase tracking-wide muted-text align-top">
                   <th className={`text-left px-3 py-2 ${thBtn}`} onClick={() => toggleSort("symbol")}>
-                    Stock{arrow("symbol")}
+                    Stock <span className="normal-case opacity-70">({sorted.length})</span>
+                    {arrow("symbol")}
                   </th>
                   <th className={`text-left px-2 py-2 ${thBtn}`} title="Broad sector (top) · scoring peer group (bottom)" onClick={() => toggleSort("sector")}>
                     Sector / Industry{arrow("sector")}
