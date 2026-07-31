@@ -105,7 +105,7 @@ export default function AllStocksClient({
   const [q, setQ] = useState("");
   // Quality/momentum screen toggles — each ANDs into the filter, so a strict
   // "top-ranked + high-score + all-green" list is one to three clicks away.
-  const [topOnly, setTopOnly] = useState(false); // #1 within its industry
+  const [topN, setTopN] = useState<0 | 1 | 3 | 5>(0); // 0 = off; else top-N within industry
   const [score90, setScore90] = useState(false); // Industry Score > 90
   const [allGreen, setAllGreen] = useState(false); // 1D/1W/1M/1Y all positive
 
@@ -123,7 +123,7 @@ export default function AllStocksClient({
     const needle = q.trim().toLowerCase();
     return rows.filter((r) => {
       if (n500Only && !r.is_n500) return false;
-      if (topOnly && r.industry_rank !== 1) return false;
+      if (topN && (r.industry_rank == null || r.industry_rank > topN)) return false;
       if (score90 && (r.composite_pct == null || r.composite_pct <= 90)) return false;
       if (
         allGreen &&
@@ -141,7 +141,7 @@ export default function AllStocksClient({
       }
       return true;
     });
-  }, [rows, n500Only, q, topOnly, score90, allGreen]);
+  }, [rows, n500Only, q, topN, score90, allGreen]);
 
   const sorted = useMemo(() => {
     const numeric = !TEXT_KEYS.has(sortKey);
@@ -220,20 +220,30 @@ export default function AllStocksClient({
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <span className="text-[11px] uppercase tracking-wide muted-text mr-1">Screen</span>
-        <FilterChip active={topOnly} onClick={() => setTopOnly((v) => !v)} title="Ranked #1 within its industry peer group">
-          Top-ranked
-        </FilterChip>
+        <span className="inline-flex items-center gap-1">
+          <span className="text-[12px] muted-text">Top</span>
+          {([1, 3, 5] as const).map((n) => (
+            <FilterChip
+              key={n}
+              active={topN === n}
+              onClick={() => setTopN((v) => (v === n ? 0 : n))}
+              title={`Ranked in the top ${n} within its industry peer group`}
+            >
+              {n}
+            </FilterChip>
+          ))}
+        </span>
         <FilterChip active={score90} onClick={() => setScore90((v) => !v)} title="Industry Score above 90">
           Score &gt; 90
         </FilterChip>
         <FilterChip active={allGreen} onClick={() => setAllGreen((v) => !v)} title="1D, 1W, 1M and 1Y returns all positive">
           All up (1D·1W·1M·1Y)
         </FilterChip>
-        {(topOnly || score90 || allGreen) && (
+        {(topN !== 0 || score90 || allGreen) && (
           <button
             type="button"
             onClick={() => {
-              setTopOnly(false);
+              setTopN(0);
               setScore90(false);
               setAllGreen(false);
             }}
