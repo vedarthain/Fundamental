@@ -482,7 +482,7 @@ export default function AllStocksClient({
                     <div className={thBtn} onClick={() => toggleSort("industry_rank")}>Ind.{arrow("industry_rank")}</div>
                     {numInput("industry_rank")}
                   </th>
-                  <th className="text-center px-2 py-2" title="Adjusted-close price over the selected window">Trend</th>
+                  <th className="text-center px-2 py-2" title="Adjusted-close price over the selected window; dotted lines mark the window high (green) and low (red)">Trend</th>
                 </tr>
               </thead>
               <tbody>
@@ -544,7 +544,7 @@ export default function AllStocksClient({
                     </td>
                     <td className="px-2 py-2 text-center">
                       <div className="inline-flex transition-opacity" style={{ opacity: spark.loading ? 0.4 : 1 }}>
-                        <RowSparkline series={spark.data[r.symbol]} />
+                        <RowSparkline series={spark.data[r.symbol]} showHiLo />
                       </div>
                     </td>
                   </tr>

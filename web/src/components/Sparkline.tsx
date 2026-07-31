@@ -11,6 +11,7 @@ export function Sparkline({
   overlay,
   overlayStroke = "var(--color-muted)",
   showBaseline = true,
+  showHiLo = false,
 }: {
   data: SparkPoint[];
   width?: number;
@@ -30,6 +31,11 @@ export function Sparkline({
    *  When provided it replaces the static mid-line. */
   overlay?: SparkPoint[];
   overlayStroke?: string;
+  /** Draw two faint dotted horizontal rules at the window's high and low (the
+   *  chart's y-scale bounds). Because the sparkline auto-scales to its own
+   *  min/max, these sit at the top and bottom edges — full-width reference lines
+   *  that let the reader read pull-back-from-high / rise-from-low at a glance. */
+  showHiLo?: boolean;
 }) {
   const points = data.filter((d) => d.value != null) as { label: string; value: number }[];
   if (points.length < 2) {
@@ -82,6 +88,12 @@ export function Sparkline({
           opacity={0.6}
         />
       ) : null}
+      {showHiLo && (
+        <>
+          <line x1={pad} y1={y(max)} x2={width - pad} y2={y(max)} stroke="var(--color-delta-up, #0a0)" strokeDasharray="2 2" strokeWidth={1} opacity={0.45} />
+          <line x1={pad} y1={y(min)} x2={width - pad} y2={y(min)} stroke="var(--color-delta-down, #b00)" strokeDasharray="2 2" strokeWidth={1} opacity={0.45} />
+        </>
+      )}
       <path d={path} fill="none" stroke={stroke} strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
       <circle cx={xN(points.length - 1, points.length)} cy={y(last.value)} r={2.5} fill={stroke} />
       {/* axis labels */}

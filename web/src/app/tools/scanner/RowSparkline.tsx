@@ -14,11 +14,14 @@ const RED = "var(--color-delta-down, #b00)";
 export function RowSparkline({
   series,
   floor,
+  showHiLo = false,
   width = 96,
   height = 30,
 }: {
   series?: SparkPoint[];
   floor?: number | null;
+  /** Overlay dotted high/low rules at the window's extremes (see Sparkline). */
+  showHiLo?: boolean;
   width?: number;
   height?: number;
 }) {
@@ -39,6 +42,7 @@ export function RowSparkline({
       height={height}
       stroke={color}
       showBaseline={false}
+      showHiLo={showHiLo}
     />
   );
 }
