@@ -11,7 +11,7 @@
  * universe toggle narrows the list here too.
  */
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { displayCompanyName } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
@@ -56,34 +56,6 @@ function retFmt(pct: number | null): { text: string; color: string } {
       : (pct >= 0 ? "+" : "") + pct.toFixed(1) + "%";
   return { text, color: pct > 0 ? GREEN : pct < 0 ? RED : "var(--color-muted)" };
 }
-function FilterChip({
-  active,
-  onClick,
-  title,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  title?: string;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title}
-      aria-pressed={active}
-      className={`rounded-full border px-3 py-1 text-[12px] font-medium transition-colors ${
-        active
-          ? "border-transparent bg-[var(--color-ink)] text-[var(--color-paper)]"
-          : "hairline muted-text hover:text-[var(--color-ink)]"
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
-
 // Numeric columns that carry a per-column filter box under their label.
 const NUMERIC_FILTER_KEYS = [
   "current_price",
@@ -100,12 +72,18 @@ type NumFilterKey = (typeof NUMERIC_FILTER_KEYS)[number];
 // Per-column numeric filter grammar (kept deliberately small + predictable):
 //   >90  >=90  <10  <=10   → open comparisons
 //   90-95  or  90..95      → inclusive range (order-insensitive)
-//   90                     → bare number == minimum threshold (>= 90)
+//   90                     → bare number == threshold; direction is `bareOp`,
+//                            a minimum (>=) for most columns but a MAXIMUM
+//                            (<=) for Ind. rank, where #1 is best so "5" means
+//                            top-5.
 // Anything else is unparseable → returns null (caller treats a non-empty
 // unparseable box as "invalid", shown with a red border, and applies no
 // filter so the table isn't silently emptied by a typo).
 const NUM = "(-?\\d+(?:\\.\\d+)?)";
-function parseNumFilter(expr: string): ((v: number | null) => boolean) | null {
+function parseNumFilter(
+  expr: string,
+  bareOp: ">=" | "<=" = ">=",
+): ((v: number | null) => boolean) | null {
   const s = expr.trim();
   if (!s) return null;
   let m: RegExpMatchArray | null;
@@ -124,10 +102,14 @@ function parseNumFilter(expr: string): ((v: number | null) => boolean) | null {
   }
   if ((m = s.match(new RegExp(`^${NUM}$`)))) {
     const t = Number(m[1]);
-    return (v) => v != null && v >= t; // bare number = minimum threshold
+    return (v) => v != null && (bareOp === "<=" ? v <= t : v >= t);
   }
   return null;
 }
+
+// Columns whose bare-number filter means "at most N" instead of "at least N".
+const BARE_MAX_KEYS: ReadonlySet<NumFilterKey> = new Set(["industry_rank"]);
+const bareOpFor = (k: NumFilterKey): ">=" | "<=" => (BARE_MAX_KEYS.has(k) ? "<=" : ">=");
 
 function scoreColor(p: number | null): string {
   if (p == null) return "var(--color-muted)";
@@ -150,9 +132,6 @@ export default function AllStocksClient({
   const [q, setQ] = useState("");
   // Quality/momentum screen toggles — each ANDs into the filter, so a strict
   // "top-ranked + high-score + all-green" list is one to three clicks away.
-  const [topN, setTopN] = useState<0 | 1 | 3 | 5>(0); // 0 = off; else top-N within industry
-  const [score90, setScore90] = useState(false); // Industry Score > 90
-  const [allGreen, setAllGreen] = useState(false); // 1D/1W/1M/1Y all positive
   // Per-column numeric filters: raw text per column (e.g. ">90", "90-95").
   const [numFilters, setNumFilters] = useState<Partial<Record<NumFilterKey, string>>>({});
 
@@ -162,7 +141,7 @@ export default function AllStocksClient({
   const numPreds = useMemo(() => {
     const out: Partial<Record<NumFilterKey, (v: number | null) => boolean>> = {};
     for (const k of NUMERIC_FILTER_KEYS) {
-      const p = parseNumFilter(numFilters[k] ?? "");
+      const p = parseNumFilter(numFilters[k] ?? "", bareOpFor(k));
       if (p) out[k] = p;
     }
     return out;
@@ -182,18 +161,6 @@ export default function AllStocksClient({
     const needle = q.trim().toLowerCase();
     return rows.filter((r) => {
       if (n500Only && !r.is_n500) return false;
-      if (topN && (r.industry_rank == null || r.industry_rank > topN)) return false;
-      if (score90 && (r.composite_pct == null || r.composite_pct <= 90)) return false;
-      if (
-        allGreen &&
-        !(
-          (r.ret_1d ?? 0) > 0 &&
-          (r.ret_1w ?? 0) > 0 &&
-          (r.ret_1m ?? 0) > 0 &&
-          (r.ret_1y ?? 0) > 0
-        )
-      )
-        return false;
       for (const k of NUMERIC_FILTER_KEYS) {
         const pred = numPreds[k];
         if (pred && !pred(r[k] as number | null)) return false;
@@ -204,7 +171,7 @@ export default function AllStocksClient({
       }
       return true;
     });
-  }, [rows, n500Only, q, topN, score90, allGreen, numPreds]);
+  }, [rows, n500Only, q, numPreds]);
 
   const sorted = useMemo(() => {
     const numeric = !TEXT_KEYS.has(sortKey);
@@ -261,14 +228,15 @@ export default function AllStocksClient({
   // the header's sort toggle.
   const numInput = (k: NumFilterKey) => {
     const raw = numFilters[k] ?? "";
-    const invalid = raw.trim() !== "" && parseNumFilter(raw) == null;
+    const invalid = raw.trim() !== "" && parseNumFilter(raw, bareOpFor(k)) == null;
+    const bareHint = bareOpFor(k) === "<=" ? "a bare number for ≤ (top-N)" : "a bare number for ≥";
     return (
       <input
         value={raw}
         onChange={(e) => setNumFilters((f) => ({ ...f, [k]: e.target.value }))}
         onClick={(e) => e.stopPropagation()}
         placeholder="—"
-        title="e.g. >90, <10, 90-95, or a bare number for ≥"
+        title={`e.g. >90, <10, 90-95, or ${bareHint}`}
         className={`mt-1 w-full rounded border bg-transparent px-1 py-0.5 text-right text-[11px] font-normal normal-case tracking-normal tabular-nums ${
           invalid ? "border-[var(--color-delta-down)]" : "hairline"
         }`}
@@ -278,81 +246,58 @@ export default function AllStocksClient({
 
   return (
     <>
-      <header className="max-w-[720px]">
-        <div className="eyebrow mb-3">Full universe</div>
-        <h1 className="font-display text-[36px] tracking-tight leading-tight">All stocks</h1>
-        <p className="mt-2 text-[12.5px] muted-text">
-          Every scored NSE name — returns, fundamental score, industry rank and a price trend ·{" "}
-          {sorted.length} names{snapDate && <> · panel {snapDate}</>}
-        </p>
+      {/* Title on the left, search + trend on the right — filling the wide
+          band beside the heading so the table can start higher up. */}
+      <header className="flex flex-wrap items-end justify-between gap-x-8 gap-y-4">
+        <div className="max-w-[620px]">
+          <div className="eyebrow mb-2">Full universe</div>
+          <h1 className="font-display text-[32px] tracking-tight leading-tight">All stocks</h1>
+          <p className="mt-1.5 text-[12.5px] muted-text">
+            Every scored NSE name — returns, fundamental score, industry rank and a price trend ·{" "}
+            {sorted.length} names{snapDate && <> · panel {snapDate}</>}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <input
+            type="search"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Filter by symbol or company…"
+            className="w-full max-w-[280px] rounded-lg border hairline px-3 py-1.5 text-[13px] bg-transparent"
+          />
+          <span className="text-[11px] uppercase tracking-wide muted-text">Trend</span>
+          <WindowPicker
+            options={ALLSTOCKS_WINDOWS}
+            days={windowDays}
+            onSelect={setWindowDays}
+            loading={spark.loading}
+          />
+        </div>
       </header>
 
-      <div className="mt-4 flex flex-wrap items-center gap-3">
-        <input
-          type="search"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Filter by symbol or company…"
-          className="w-full max-w-[320px] rounded-lg border hairline px-3 py-1.5 text-[13px] bg-transparent"
-        />
-        <span className="text-[11px] uppercase tracking-wide muted-text">Trend</span>
-        <WindowPicker
-          options={ALLSTOCKS_WINDOWS}
-          days={windowDays}
-          onSelect={setWindowDays}
-          loading={spark.loading}
-        />
-      </div>
-
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <span className="text-[11px] uppercase tracking-wide muted-text mr-1">Screen</span>
-        <span className="inline-flex items-center gap-1">
-          <span className="text-[12px] muted-text">Top</span>
-          {([1, 3, 5] as const).map((n) => (
-            <FilterChip
-              key={n}
-              active={topN === n}
-              onClick={() => setTopN((v) => (v === n ? 0 : n))}
-              title={`Ranked in the top ${n} within its industry peer group`}
-            >
-              {n}
-            </FilterChip>
-          ))}
+      <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] muted-text">
+        <span>
+          Column filters (under each number): <code>&gt;90</code>, <code>&lt;10</code>,{" "}
+          <code>90-95</code> for a range, or a bare number for a minimum (≥ · Ind. is ≤ top-N).
         </span>
-        <FilterChip active={score90} onClick={() => setScore90((v) => !v)} title="Industry Score above 90">
-          Score &gt; 90
-        </FilterChip>
-        <FilterChip active={allGreen} onClick={() => setAllGreen((v) => !v)} title="1D, 1W, 1M and 1Y returns all positive">
-          All up (1D·1W·1M·1Y)
-        </FilterChip>
-        {(topN !== 0 || score90 || allGreen || anyNumFilter) && (
+        {anyNumFilter && (
           <button
             type="button"
-            onClick={() => {
-              setTopN(0);
-              setScore90(false);
-              setAllGreen(false);
-              setNumFilters({});
-            }}
-            className="text-[12px] underline muted-text hover:text-[var(--color-ink)]"
+            onClick={() => setNumFilters({})}
+            className="underline hover:text-[var(--color-ink)]"
           >
-            Clear
+            Clear filters
           </button>
         )}
       </div>
 
-      <p className="mt-2 text-[11px] muted-text">
-        Column filters (under each number): <code>&gt;90</code>, <code>&lt;10</code>,{" "}
-        <code>90-95</code> for a range, or a bare number for a minimum (≥).
-      </p>
-
       {sorted.length === 0 ? (
-        <div className="mt-5 card p-8 text-center">
+        <div className="mt-4 card p-8 text-center">
           <div className="text-[15px] font-medium">No stocks match.</div>
           <p className="muted-text mt-2 text-[13.5px]">Clear the filter or widen to All NSE.</p>
         </div>
       ) : (
-        <div className="mt-5 card">
+        <div className="mt-4 card">
           {/* No overflow wrapper here: an overflow container would trap the
               sticky header inside it, so it would scroll away with the box.
               Kept at page level so the header pins below the site nav (ribbon
