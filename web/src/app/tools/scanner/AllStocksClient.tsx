@@ -72,8 +72,8 @@ export default function AllStocksClient({
   rows: AllStockRow[];
   n500Only: boolean;
 }) {
-  const [sortKey, setSortKey] = useState<SortKey>("ret_1d");
-  const [dir, setDir] = useState<"asc" | "desc">("desc");
+  const [sortKey, setSortKey] = useState<SortKey>("sector");
+  const [dir, setDir] = useState<"asc" | "desc">("asc");
   const [q, setQ] = useState("");
 
   function toggleSort(k: SortKey) {
@@ -101,13 +101,31 @@ export default function AllStocksClient({
   const sorted = useMemo(() => {
     const numeric = !TEXT_KEYS.has(sortKey);
     const arr = [...filtered];
-    arr.sort((a, b) => {
-      const av = a[sortKey];
-      const bv = b[sortKey];
-      // Nulls always sink to the bottom, regardless of sort direction.
+    // Nulls always sink to the bottom, regardless of sort direction.
+    const nullCmp = (av: unknown, bv: unknown): number | null => {
       if (av == null && bv == null) return 0;
       if (av == null) return 1;
       if (bv == null) return -1;
+      return null;
+    };
+    arr.sort((a, b) => {
+      // Sorting by Sector groups the whole universe by sector, then orders
+      // the industries (peer groups) within each sector, then symbol — so
+      // every industry stays contiguous under its sector rather than
+      // interleaving on a flat sector-name compare.
+      if (sortKey === "sector") {
+        const secN = nullCmp(a.sector, b.sector);
+        const secCmp = secN ?? String(a.sector).localeCompare(String(b.sector));
+        if (secCmp !== 0) return dir === "asc" ? secCmp : -secCmp;
+        const grpN = nullCmp(a.peer_group, b.peer_group);
+        const grpCmp = grpN ?? String(a.peer_group).localeCompare(String(b.peer_group));
+        if (grpCmp !== 0) return dir === "asc" ? grpCmp : -grpCmp;
+        return a.symbol.localeCompare(b.symbol);
+      }
+      const av = a[sortKey];
+      const bv = b[sortKey];
+      const n = nullCmp(av, bv);
+      if (n !== null) return n;
       const cmp = numeric
         ? (av as number) - (bv as number)
         : String(av).localeCompare(String(bv));
