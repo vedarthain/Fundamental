@@ -11,7 +11,7 @@
  * universe toggle narrows the list here too.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { displayCompanyName, tierLabel } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
@@ -56,6 +56,18 @@ function retFmt(pct: number | null): { text: string; color: string } {
       : (pct >= 0 ? "+" : "") + pct.toFixed(1) + "%";
   return { text, color: pct > 0 ? GREEN : pct < 0 ? RED : "var(--color-muted)" };
 }
+// Single saved-filter slot (per-browser). Deb wants exactly one saved screen,
+// not a named-presets system, so this is one localStorage key that Save
+// overwrites and Apply restores.
+const SAVED_KEY = "equityroots:allstocks:filter:v1";
+type SavedFilter = {
+  q: string;
+  tiers: string[];
+  numFilters: Record<string, string>;
+  sortKey: SortKey;
+  dir: "asc" | "desc";
+};
+
 // Maturity tiers, oldest → youngest. Whitelist filter: an empty selection
 // means "show all"; selecting some restricts to those (so avoiding Emerging /
 // New Listing is just picking Established + Long-established).
@@ -238,6 +250,51 @@ export default function AllStocksClient({
       return next;
     });
 
+  // Saved-filter slot. `hasSaved` gates the Apply/Delete buttons; read once on
+  // mount (localStorage is client-only, and this is a "use client" component).
+  const [hasSaved, setHasSaved] = useState(false);
+  useEffect(() => {
+    try {
+      setHasSaved(!!window.localStorage.getItem(SAVED_KEY));
+    } catch {
+      /* private mode / disabled storage — leave hasSaved false */
+    }
+  }, []);
+
+  const saveFilter = () => {
+    const payload: SavedFilter = { q, tiers: [...tiers], numFilters, sortKey, dir };
+    try {
+      window.localStorage.setItem(SAVED_KEY, JSON.stringify(payload));
+      setHasSaved(true);
+    } catch {
+      /* ignore quota / disabled storage */
+    }
+  };
+
+  const applyFilter = () => {
+    try {
+      const raw = window.localStorage.getItem(SAVED_KEY);
+      if (!raw) return;
+      const s = JSON.parse(raw) as SavedFilter;
+      setQ(s.q ?? "");
+      setTiers(new Set(s.tiers ?? []));
+      setNumFilters(s.numFilters ?? {});
+      setSortKey(s.sortKey ?? "sector");
+      setDir(s.dir === "desc" ? "desc" : "asc");
+    } catch {
+      /* corrupt payload — do nothing */
+    }
+  };
+
+  const deleteSaved = () => {
+    try {
+      window.localStorage.removeItem(SAVED_KEY);
+    } catch {
+      /* ignore */
+    }
+    setHasSaved(false);
+  };
+
   // A column's filter box, stacked under its label inside the same <th> so the
   // sticky header stays one row (a separate filter row would need fragile
   // per-row top offsets). stopPropagation keeps a click in the box from firing
@@ -288,6 +345,36 @@ export default function AllStocksClient({
             onSelect={setWindowDays}
             loading={spark.loading}
           />
+          <span className="mx-1 h-4 w-px bg-[var(--color-border-default)]" aria-hidden />
+          <button
+            type="button"
+            onClick={saveFilter}
+            title="Save the current filters, sort and search to this browser"
+            className="rounded-lg border hairline px-2.5 py-1.5 text-[12px] font-medium muted-text hover:text-[var(--color-ink)] transition-colors"
+          >
+            Save filter
+          </button>
+          {hasSaved && (
+            <button
+              type="button"
+              onClick={applyFilter}
+              title="Re-apply your saved filter"
+              className="rounded-lg border border-transparent bg-[var(--color-ink)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--color-paper)] transition-colors"
+            >
+              Apply saved
+            </button>
+          )}
+          {hasSaved && (
+            <button
+              type="button"
+              onClick={deleteSaved}
+              title="Delete saved filter"
+              aria-label="Delete saved filter"
+              className="px-1 text-[14px] leading-none muted-text hover:text-[var(--color-ink)]"
+            >
+              ×
+            </button>
+          )}
         </div>
       </header>
 
