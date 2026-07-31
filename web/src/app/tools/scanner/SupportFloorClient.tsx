@@ -11,6 +11,7 @@
  * touches is flagged as a WARNING, not a virtue.
  */
 
+import { Fragment, useState } from "react";
 import Link from "next/link";
 import type { SupportFloorSignal } from "@/lib/supportFloor";
 import type { SparkPoint } from "@/components/Sparkline";
@@ -20,6 +21,7 @@ import { WindowPicker } from "./WindowPicker";
 import { useSparklineWindow } from "./useSparklineWindow";
 import { FLOOR_WINDOWS, FLOOR_DEFAULT_DAYS } from "./sparkWindows";
 import { Pager, usePager } from "./Pager";
+import { orderBySector, useSectorCounts, SectorHeaderRow, GroupBySectorToggle } from "./sectorGroup";
 
 const GREEN = "var(--color-delta-up, #0a0)";
 const RED = "var(--color-delta-down, #b00)";
@@ -74,7 +76,11 @@ export default function SupportFloorClient({
     ? new Date(snapDate).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "long", year: "numeric" })
     : null;
 
-  const pager = usePager(signals);
+  const [groupSector, setGroupSector] = useState(false);
+  const sectorOf = (s: SupportFloorSignal) => s.sector;
+  const ordered = groupSector ? orderBySector(signals, sectorOf) : signals;
+  const sectorCounts = useSectorCounts(signals, sectorOf);
+  const pager = usePager(ordered);
   const symbols = signals.map((s) => s.symbol);
   const win = useSparklineWindow(symbols, FLOOR_DEFAULT_DAYS, spark ?? {});
   const winLabel = FLOOR_WINDOWS.find((o) => o.days === win.days)?.label ?? "";
@@ -99,6 +105,7 @@ export default function SupportFloorClient({
             </p>
           )}
           <div className="flex items-center gap-3">
+            <GroupBySectorToggle on={groupSector} onToggle={() => setGroupSector((v) => !v)} />
             <WindowPicker options={FLOOR_WINDOWS} days={win.days} onSelect={win.select} loading={win.loading} />
             {datePicker}
           </div>
@@ -130,10 +137,18 @@ export default function SupportFloorClient({
                 </tr>
               </thead>
               <tbody>
-                {pager.pageItems.map((s) => {
+                {pager.pageItems.map((s, i) => {
                   const heavilyTested = s.nTouch >= 6;
+                  const prev = i > 0 ? pager.pageItems[i - 1] : undefined;
+                  const showHeader =
+                    groupSector && (i === 0 || sectorOf(prev!) !== sectorOf(s));
+                  const secKey = (sectorOf(s) || "").trim() || "—";
                   return (
-                    <tr key={s.symbol} className="border-b hairline align-top hover:bg-[var(--color-paper)] transition-colors">
+                    <Fragment key={s.symbol}>
+                    {showHeader && (
+                      <SectorHeaderRow label={secKey} count={sectorCounts.get(secKey) ?? 0} colSpan={8} />
+                    )}
+                    <tr className="border-b hairline align-top hover:bg-[var(--color-paper)] transition-colors">
                       <td className="px-3 py-2.5">
                         <div className="flex items-start gap-1.5">
                           <WatchlistButton symbol={s.symbol} variant="icon" className="-ml-1 shrink-0" />
@@ -171,6 +186,7 @@ export default function SupportFloorClient({
                         </div>
                       </td>
                     </tr>
+                    </Fragment>
                   );
                 })}
               </tbody>

@@ -14,11 +14,12 @@
  * The scanner's All-NSE / NIFTY-500 toggle drives the universe here too.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { tierLabel, displayCompanyName } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { Pager, usePager } from "./Pager";
+import { orderBySector, useSectorCounts, SectorHeaderRow, GroupBySectorToggle } from "./sectorGroup";
 
 const GREEN = "var(--color-delta-up, #0a0)";
 const RED = "var(--color-delta-down, #b00)";
@@ -174,7 +175,15 @@ export default function FallenLeadersClient({ n500Only }: { n500Only: boolean })
   );
 
   const recoveryCount = useMemo(() => base.filter((r) => recoveryScore(r) >= 2).length, [base]);
-  const pager = usePager(sorted);
+
+  const [groupSector, setGroupSector] = useState(false);
+  const sectorOf = (r: Opportunity) => r.sector_name;
+  const ordered = useMemo(
+    () => (groupSector ? orderBySector(sorted, sectorOf) : sorted),
+    [groupSector, sorted],
+  );
+  const sectorCounts = useSectorCounts(sorted, sectorOf);
+  const pager = usePager(ordered);
 
   return (
     <>
@@ -217,6 +226,7 @@ export default function FallenLeadersClient({ n500Only }: { n500Only: boolean })
           <span className="text-[11.5px] muted-text">
             {recoveryWatch ? "≥ 2 of 5 recovery signals firing" : "Show only names where the sell-off is easing"}
           </span>
+          <GroupBySectorToggle on={groupSector} onToggle={() => setGroupSector((v) => !v)} />
         </div>
       )}
 
@@ -248,11 +258,19 @@ export default function FallenLeadersClient({ n500Only }: { n500Only: boolean })
                 </tr>
               </thead>
               <tbody>
-                {pager.pageItems.map((r) => {
+                {pager.pageItems.map((r, i) => {
                   const score = recoveryScore(r);
                   const active = recoverySignals(r).filter((s) => s.active);
+                  const prev = i > 0 ? pager.pageItems[i - 1] : undefined;
+                  const showHeader =
+                    groupSector && (i === 0 || sectorOf(prev!) !== sectorOf(r));
+                  const secKey = (sectorOf(r) || "").trim() || "—";
                   return (
-                    <tr key={r.symbol} className="border-b hairline align-top hover:bg-[var(--color-paper)] transition-colors">
+                    <Fragment key={r.symbol}>
+                    {showHeader && (
+                      <SectorHeaderRow label={secKey} count={sectorCounts.get(secKey) ?? 0} colSpan={7} />
+                    )}
+                    <tr className="border-b hairline align-top hover:bg-[var(--color-paper)] transition-colors">
                       <td className="px-3 py-2.5">
                         <div className="flex items-start gap-1.5">
                           <WatchlistButton symbol={r.symbol} variant="icon" className="-ml-1 shrink-0" />
@@ -320,6 +338,7 @@ export default function FallenLeadersClient({ n500Only }: { n500Only: boolean })
                         )}
                       </td>
                     </tr>
+                    </Fragment>
                   );
                 })}
               </tbody>

@@ -9,6 +9,7 @@
  * a low-quality name is the thing to be sceptical of — surfaced, not filtered.
  */
 
+import { Fragment, useState } from "react";
 import Link from "next/link";
 import type { TrendLeaderSignal } from "@/lib/trendLeaders";
 import type { SparkPoint } from "@/components/Sparkline";
@@ -18,6 +19,7 @@ import { WindowPicker } from "./WindowPicker";
 import { useSparklineWindow } from "./useSparklineWindow";
 import { TREND_WINDOWS, TREND_DEFAULT_DAYS } from "./sparkWindows";
 import { Pager, usePager } from "./Pager";
+import { orderBySector, useSectorCounts, SectorHeaderRow, GroupBySectorToggle } from "./sectorGroup";
 
 const GREEN = "var(--color-delta-up, #0a0)";
 const RED = "var(--color-delta-down, #b00)";
@@ -92,7 +94,11 @@ export default function TrendLeadersClient({
     ? new Date(snapDate).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "long", year: "numeric" })
     : null;
 
-  const pager = usePager(signals);
+  const [groupSector, setGroupSector] = useState(false);
+  const sectorOf = (s: TrendLeaderSignal) => s.sector;
+  const ordered = groupSector ? orderBySector(signals, sectorOf) : signals;
+  const sectorCounts = useSectorCounts(signals, sectorOf);
+  const pager = usePager(ordered);
   const symbols = signals.map((s) => s.symbol);
   const win = useSparklineWindow(symbols, TREND_DEFAULT_DAYS, spark ?? {});
   const winLabel = TREND_WINDOWS.find((o) => o.days === win.days)?.label ?? "";
@@ -117,6 +123,7 @@ export default function TrendLeadersClient({
             </p>
           )}
           <div className="flex items-center gap-3">
+            <GroupBySectorToggle on={groupSector} onToggle={() => setGroupSector((v) => !v)} />
             <WindowPicker options={TREND_WINDOWS} days={win.days} onSelect={win.select} loading={win.loading} />
             {datePicker}
           </div>
@@ -148,10 +155,18 @@ export default function TrendLeadersClient({
                 </tr>
               </thead>
               <tbody>
-                {pager.pageItems.map((s) => {
+                {pager.pageItems.map((s, i) => {
                   const d = daysSince(s.crossDate);
+                  const prev = i > 0 ? pager.pageItems[i - 1] : undefined;
+                  const showHeader =
+                    groupSector && (i === 0 || sectorOf(prev!) !== sectorOf(s));
+                  const secKey = (sectorOf(s) || "").trim() || "—";
                   return (
-                    <tr key={s.symbol} className="border-b hairline align-top hover:bg-[var(--color-paper)] transition-colors">
+                    <Fragment key={s.symbol}>
+                    {showHeader && (
+                      <SectorHeaderRow label={secKey} count={sectorCounts.get(secKey) ?? 0} colSpan={7} />
+                    )}
+                    <tr className="border-b hairline align-top hover:bg-[var(--color-paper)] transition-colors">
                       <td className="px-3 py-2.5">
                         <div className="flex items-start gap-1.5">
                           <WatchlistButton symbol={s.symbol} variant="icon" className="-ml-1 shrink-0" />
@@ -200,6 +215,7 @@ export default function TrendLeadersClient({
                         </div>
                       </td>
                     </tr>
+                    </Fragment>
                   );
                 })}
               </tbody>
