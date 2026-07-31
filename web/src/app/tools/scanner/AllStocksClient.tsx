@@ -11,7 +11,7 @@
  * universe toggle narrows the list here too.
  */
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { displayCompanyName } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
@@ -56,6 +56,34 @@ function retFmt(pct: number | null): { text: string; color: string } {
       : (pct >= 0 ? "+" : "") + pct.toFixed(1) + "%";
   return { text, color: pct > 0 ? GREEN : pct < 0 ? RED : "var(--color-muted)" };
 }
+function FilterChip({
+  active,
+  onClick,
+  title,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  title?: string;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      aria-pressed={active}
+      className={`rounded-full border px-3 py-1 text-[12px] font-medium transition-colors ${
+        active
+          ? "border-transparent bg-[var(--color-ink)] text-[var(--color-paper)]"
+          : "hairline muted-text hover:text-[var(--color-ink)]"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
 function scoreColor(p: number | null): string {
   if (p == null) return "var(--color-muted)";
   if (p >= 66) return GREEN;
@@ -75,6 +103,11 @@ export default function AllStocksClient({
   const [sortKey, setSortKey] = useState<SortKey>("sector");
   const [dir, setDir] = useState<"asc" | "desc">("asc");
   const [q, setQ] = useState("");
+  // Quality/momentum screen toggles — each ANDs into the filter, so a strict
+  // "top-ranked + high-score + all-green" list is one to three clicks away.
+  const [topOnly, setTopOnly] = useState(false); // #1 within its industry
+  const [score90, setScore90] = useState(false); // Industry Score > 90
+  const [allGreen, setAllGreen] = useState(false); // 1D/1W/1M/1Y all positive
 
   function toggleSort(k: SortKey) {
     if (k === sortKey) {
@@ -90,13 +123,25 @@ export default function AllStocksClient({
     const needle = q.trim().toLowerCase();
     return rows.filter((r) => {
       if (n500Only && !r.is_n500) return false;
+      if (topOnly && r.industry_rank !== 1) return false;
+      if (score90 && (r.composite_pct == null || r.composite_pct <= 90)) return false;
+      if (
+        allGreen &&
+        !(
+          (r.ret_1d ?? 0) > 0 &&
+          (r.ret_1w ?? 0) > 0 &&
+          (r.ret_1m ?? 0) > 0 &&
+          (r.ret_1y ?? 0) > 0
+        )
+      )
+        return false;
       if (needle) {
         const hay = `${r.symbol} ${r.company_name ?? ""}`.toLowerCase();
         if (!hay.includes(needle)) return false;
       }
       return true;
     });
-  }, [rows, n500Only, q]);
+  }, [rows, n500Only, q, topOnly, score90, allGreen]);
 
   const sorted = useMemo(() => {
     const numeric = !TEXT_KEYS.has(sortKey);
@@ -171,6 +216,32 @@ export default function AllStocksClient({
           onSelect={setWindowDays}
           loading={spark.loading}
         />
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <span className="text-[11px] uppercase tracking-wide muted-text mr-1">Screen</span>
+        <FilterChip active={topOnly} onClick={() => setTopOnly((v) => !v)} title="Ranked #1 within its industry peer group">
+          Top-ranked
+        </FilterChip>
+        <FilterChip active={score90} onClick={() => setScore90((v) => !v)} title="Industry Score above 90">
+          Score &gt; 90
+        </FilterChip>
+        <FilterChip active={allGreen} onClick={() => setAllGreen((v) => !v)} title="1D, 1W, 1M and 1Y returns all positive">
+          All up (1D·1W·1M·1Y)
+        </FilterChip>
+        {(topOnly || score90 || allGreen) && (
+          <button
+            type="button"
+            onClick={() => {
+              setTopOnly(false);
+              setScore90(false);
+              setAllGreen(false);
+            }}
+            className="text-[12px] underline muted-text hover:text-[var(--color-ink)]"
+          >
+            Clear
+          </button>
+        )}
       </div>
 
       {sorted.length === 0 ? (
