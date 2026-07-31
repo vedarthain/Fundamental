@@ -405,14 +405,24 @@ export default function AllStocksClient({
                       <div className="flex items-center gap-1.5">
                         <WatchlistButton symbol={r.symbol} variant="icon" className="-ml-1 shrink-0" />
                         <div className="min-w-0">
-                          <Link
-                            href={`/stock/${r.symbol}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="font-semibold hover:underline"
-                          >
-                            {r.symbol}
-                          </Link>
+                          <div className="flex items-center gap-1.5">
+                            <Link
+                              href={`/stock/${r.symbol}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="font-semibold hover:underline"
+                            >
+                              {r.symbol}
+                            </Link>
+                            {r.is_ipo && (
+                              <span
+                                title="Recent IPO — listed within the last 12 months"
+                                className="rounded-sm px-1 py-px text-[9px] font-bold uppercase tracking-wide leading-none text-[var(--color-paper)] bg-[var(--color-accent,#b45309)]"
+                              >
+                                IPO
+                              </span>
+                            )}
+                          </div>
                           <div className="text-[10.5px] muted-text truncate max-w-[150px]">
                             {displayCompanyName(r.company_name ?? "", r.symbol)}
                           </div>

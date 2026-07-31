@@ -17,6 +17,7 @@
 
 import { sql, golden } from "@/lib/db";
 import { guardedPctChange } from "@/lib/returnGuards";
+import { hasScoreableHistory } from "@/lib/score";
 
 export type AllStockRow = {
   symbol: string;
@@ -34,6 +35,7 @@ export type AllStockRow = {
   industry_rank: number | null; // 1 = best composite within the stock's peer group
   industry_count: number | null; // scored peers in that group (the "of N")
   is_n500: boolean;
+  is_ipo: boolean; // listed within ~12 months AND a short fundamental record
 };
 
 export type AllStocksData = {
@@ -47,6 +49,8 @@ type PanelRow = {
   sector: string | null;
   peer_group: string | null;
   maturity_tier: string | null;
+  listing_date: string | null;
+  years_of_data: number | null;
   cache_price: number | null;
   composite_pct: number | null;
   is_n500: boolean;
@@ -85,6 +89,8 @@ export async function loadAllStocks(): Promise<AllStocksData> {
              mc.name AS sector,
              c.name  AS peer_group,
              u.maturity_tier,
+             u.listing_date::text AS listing_date,
+             u.years_of_data::float8 AS years_of_data,
              p.current_price::float8 AS cache_price,
              p.composite_pct::float8 AS composite_pct,
              (ic.symbol IS NOT NULL) AS is_n500
@@ -205,6 +211,7 @@ export async function loadAllStocks(): Promise<AllStocksData> {
       industry_rank: rankOf.get(p.symbol) ?? null,
       industry_count: countOf.get(p.symbol) ?? null,
       is_n500: p.is_n500,
+      is_ipo: !hasScoreableHistory(p.listing_date, p.years_of_data),
     };
   });
 
