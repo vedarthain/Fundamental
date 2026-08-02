@@ -17,6 +17,14 @@ const GREEN = "var(--color-delta-up, #0a0)";
 const RED = "var(--color-delta-down, #b00)";
 const AXIS = "var(--color-muted, #7a8894)";
 const GRID = "var(--color-border-default, #e5e5e5)";
+const CARD = "var(--color-card, #fff)";
+
+// Shared plot margins — used both by renderChart and the hover hit-test so a
+// mouse-x maps to the same slot the candles were drawn in.
+const mL = 46; // y-axis price gutter
+const mR = 8;
+const mT = 8;
+const mB = 20; // x-axis date gutter
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -53,9 +61,16 @@ function fmtDate(iso: string, longSpan: boolean): string {
   return longSpan ? `${mon} '${y.slice(2)}` : `${+d} ${mon}`;
 }
 
-export function CandleChart({ candles }: { candles?: Candle[] }) {
+export function CandleChart({
+  candles,
+  interactive = false,
+}: {
+  candles?: Candle[];
+  interactive?: boolean;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
+  const [hover, setHover] = useState<number | null>(null);
 
   useEffect(() => {
     const el = ref.current;
@@ -71,24 +86,38 @@ export function CandleChart({ candles }: { candles?: Candle[] }) {
     (c) => c.o != null && c.h != null && c.l != null && c.c != null,
   );
 
+  // Map cursor-x → nearest candle slot using the same geometry renderChart uses.
+  function onMove(e: React.MouseEvent<HTMLDivElement>) {
+    const el = ref.current;
+    if (!el || data.length < 2) return;
+    const rect = el.getBoundingClientRect();
+    const plotW = size.w - mR - mL;
+    if (plotW <= 0) return;
+    const slot = plotW / data.length;
+    const idx = Math.floor((e.clientX - rect.left - mL) / slot);
+    setHover(Math.max(0, Math.min(data.length - 1, idx)));
+  }
+
   return (
-    <div ref={ref} className="h-full w-full">
+    <div
+      ref={ref}
+      className="h-full w-full"
+      style={interactive ? { cursor: "crosshair" } : undefined}
+      onMouseMove={interactive ? onMove : undefined}
+      onMouseLeave={interactive ? () => setHover(null) : undefined}
+    >
       {data.length < 2 ? (
         <div className="flex h-full w-full items-center justify-center muted-text text-[11px] italic">
           no price history
         </div>
       ) : size.w > 20 && size.h > 20 ? (
-        renderChart(data, size.w, size.h)
+        renderChart(data, size.w, size.h, interactive ? hover : null)
       ) : null}
     </div>
   );
 }
 
-function renderChart(data: Candle[], W: number, H: number) {
-  const mL = 46; // y-axis price gutter
-  const mR = 8;
-  const mT = 8;
-  const mB = 20; // x-axis date gutter
+function renderChart(data: Candle[], W: number, H: number, hoverIdx: number | null) {
   const plotL = mL;
   const plotR = W - mR;
   const plotW = plotR - plotL;
@@ -184,6 +213,43 @@ function renderChart(data: Candle[], W: number, H: number) {
           </text>
         );
       })}
+
+      {/* hover crosshair + per-bar OHLCV tooltip (interactive mode only) */}
+      {hoverIdx != null && data[hoverIdx] && (() => {
+        const c = data[hoverIdx];
+        const hx = cx(hoverIdx);
+        const up = c.c >= c.o;
+        const [yy, mm, dd] = c.d.split("-");
+        const dateLbl = `${+dd} ${MONTHS[(+mm || 1) - 1]} '${yy.slice(2)}`;
+        const boxW = 108;
+        const boxH = 86;
+        // Put the readout on the side opposite the cursor so it never hides bars.
+        const bx = hx > (plotL + plotR) / 2 ? plotL + 6 : plotR - boxW - 6;
+        const by = priceTop + 4;
+        const lines: [string, string, string][] = [
+          ["O", fmtPrice(c.o), AXIS],
+          ["H", fmtPrice(c.h), GREEN],
+          ["L", fmtPrice(c.l), RED],
+          ["C", fmtPrice(c.c), up ? GREEN : RED],
+          ["Vol", fmtVol(c.v || 0), AXIS],
+        ];
+        return (
+          <g pointerEvents="none">
+            <line x1={hx} y1={priceTop} x2={hx} y2={volBot} stroke={AXIS} strokeWidth={1} strokeDasharray="2 3" opacity={0.55} />
+            <circle cx={hx} cy={yP(c.c)} r={2.6} fill={up ? GREEN : RED} />
+            <rect x={bx} y={by} width={boxW} height={boxH} rx={5} fill={CARD} stroke={GRID} strokeWidth={1} opacity={0.97} />
+            <text x={bx + 8} y={by + 15} fontSize={10} fontWeight={600} fill="var(--color-ink, #111)">
+              {dateLbl}
+            </text>
+            {lines.map(([k, v, color], j) => (
+              <g key={k}>
+                <text x={bx + 8} y={by + 30 + j * 12} fontSize={9.5} fill={AXIS}>{k}</text>
+                <text x={bx + boxW - 8} y={by + 30 + j * 12} textAnchor="end" fontSize={9.5} fontWeight={600} fill={color}>{v}</text>
+              </g>
+            ))}
+          </g>
+        );
+      })()}
 
       <title>{`${data[0].d} → ${last.d} · ${n} sessions`}</title>
     </svg>

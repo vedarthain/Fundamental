@@ -12,7 +12,7 @@
  * whole universe. See useGraphCandles + /api/scanner/ohlc.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { displayCompanyName } from "@/lib/score";
 import type { GraphUniverse, GraphSector, GraphIndustry, GraphStock } from "@/lib/graphUniverse";
@@ -113,6 +113,17 @@ export default function GraphClient({
   const [page, setPage] = useState(0);
   const [days, setDays] = useState<number>(180);
   const [treeOpen, setTreeOpen] = useState(true);
+  const [focus, setFocus] = useState<GraphStock | null>(null);
+
+  // Esc closes the focus (expanded chart) overlay.
+  useEffect(() => {
+    if (!focus) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFocus(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [focus]);
 
   // Tree open-state: sectors expanded, and industries expanded to reveal stocks.
   const [openSectors, setOpenSectors] = useState<Set<string>>(
@@ -396,17 +407,108 @@ export default function GraphClient({
                     )}
                   </div>
                 </div>
-                <div
-                  className="flex-1 min-h-0 transition-opacity"
+                <button
+                  type="button"
+                  onClick={() => series && series.length >= 2 && setFocus(st)}
+                  className="flex-1 min-h-0 transition-opacity text-left cursor-zoom-in"
                   style={{ opacity: candles.loading && !series ? 0.4 : 1 }}
+                  title="Expand chart"
+                  aria-label={`Expand ${st.symbol} chart`}
                 >
                   <CandleChart candles={series} />
-                </div>
+                </button>
               </div>
             );
           })}
         </div>
       </div>
+
+      {/* ── Focus overlay: one expanded, interactive chart ── */}
+      {focus && (() => {
+        const series = candles.data[focus.symbol];
+        const first = series?.[0];
+        const last = series?.[series.length - 1];
+        const chg = first && last && first.c > 0 ? (last.c / first.c - 1) * 100 : null;
+        const chgColor = chg == null ? "var(--color-muted)" : chg >= 0 ? GREEN : RED;
+        const hi = series && series.length ? Math.max(...series.map((c) => c.h)) : null;
+        const lo = series && series.length ? Math.min(...series.map((c) => c.l)) : null;
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 sm:p-8"
+            onClick={() => setFocus(null)}
+            role="dialog"
+            aria-modal="true"
+            aria-label={`${focus.symbol} expanded chart`}
+          >
+            <div
+              className="relative flex h-[88vh] w-[94vw] max-w-[1280px] flex-col rounded-2xl border hairline shadow-2xl"
+              style={{ background: "var(--color-card, #fff)" }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-3 border-b hairline px-4 py-3">
+                <WatchlistButton symbol={focus.symbol} variant="icon" className="shrink-0" />
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <Link
+                      href={`/stock/${focus.symbol}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-semibold text-[15px] hover:underline truncate"
+                    >
+                      {focus.symbol}
+                    </Link>
+                    {focus.composite_pct != null && (
+                      <span
+                        className="text-[11px] tabular-nums font-medium shrink-0"
+                        style={{ color: scoreColor(focus.composite_pct) }}
+                        title="Industry Score percentile"
+                      >
+                        {Math.round(focus.composite_pct)}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[11px] muted-text truncate">
+                    {displayCompanyName(focus.name, focus.symbol)}
+                  </div>
+                </div>
+                <div className="ml-auto flex items-center gap-4">
+                  <div className="text-right leading-tight">
+                    <div className="text-[15px] tabular-nums font-semibold">
+                      {last ? inr(last.c) : "—"}
+                    </div>
+                    <div className="text-[11px] tabular-nums font-medium" style={{ color: chgColor }}>
+                      {chg == null ? "" : `${chg >= 0 ? "+" : ""}${chg.toFixed(1)}%`}
+                      {hi != null && lo != null && (
+                        <span className="muted-text font-normal">
+                          {"  "}
+                          <span style={{ color: GREEN }}>H</span> {inr(hi)}{"  "}
+                          <span style={{ color: RED }}>L</span> {inr(lo)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <WindowPicker options={GRAPH_WINDOWS} days={days} onSelect={setDays} loading={candles.loading} />
+                  <button
+                    type="button"
+                    onClick={() => setFocus(null)}
+                    className="rounded-md border hairline px-2.5 py-1.5 text-[13px] font-medium hover:bg-[var(--color-paper)] transition-colors"
+                    aria-label="Close expanded chart"
+                    title="Close (Esc)"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+              <div
+                className="flex-1 min-h-0 p-2 transition-opacity"
+                style={{ opacity: candles.loading && !series ? 0.4 : 1 }}
+              >
+                <CandleChart candles={series} interactive />
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
