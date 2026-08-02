@@ -13,6 +13,9 @@
  * into WEEKLY candles so long windows stay readable (see WEEKLY_THRESHOLD_DAYS).
  */
 import { golden } from "@/lib/db";
+import { WEEKLY_THRESHOLD_DAYS } from "@/lib/candleConfig";
+
+export { WEEKLY_THRESHOLD_DAYS };
 
 export type Candle = {
   d: string; // ISO date
@@ -27,11 +30,6 @@ export type Candle = {
 function bare(sym: string): string {
   return sym.endsWith(".NS") ? sym.slice(0, -3) : sym;
 }
-
-// Beyond ~2 years, daily candles crush into an unreadable block in a small
-// cell (10Y ≈ 2,470 bars). Past this lookback we roll days up into WEEKLY
-// candles — far fewer bars, smaller payload, same shape at that zoom.
-export const WEEKLY_THRESHOLD_DAYS = 730;
 
 /** Monday-anchored ISO week bucket key for a "YYYY-MM-DD" date. */
 function weekKey(iso: string): string {

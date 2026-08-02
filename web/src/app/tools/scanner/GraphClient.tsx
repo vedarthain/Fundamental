@@ -21,7 +21,7 @@ import { WindowPicker } from "./WindowPicker";
 import type { WindowOpt } from "./sparkWindows";
 import { CandleChart } from "./CandleChart";
 import { useGraphCandles } from "./useGraphCandles";
-import { WEEKLY_THRESHOLD_DAYS } from "@/lib/candles";
+import { WEEKLY_THRESHOLD_DAYS } from "@/lib/candleConfig";
 
 const GREEN = "var(--color-delta-up, #0a0)";
 const RED = "var(--color-delta-down, #b00)";
