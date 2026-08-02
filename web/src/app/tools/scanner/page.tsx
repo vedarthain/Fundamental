@@ -4,6 +4,7 @@ import { loadLatestTrendLeaders } from "@/lib/trendLeaders";
 import { loadLatestSupportFloor } from "@/lib/supportFloor";
 import { loadRotation } from "@/lib/rotation";
 import { loadAllStocks } from "@/lib/allStocks";
+import { loadGraphUniverse } from "@/lib/graphUniverse";
 import { loadSparklines } from "@/lib/sparklines";
 import { IGNITING_DEFAULT_DAYS, TREND_DEFAULT_DAYS, FLOOR_DEFAULT_DAYS } from "./sparkWindows";
 import { sql } from "@/lib/db";
@@ -14,7 +15,7 @@ export const dynamic = "force-dynamic";
 // Defined server-side, NOT imported from the "use client" ScannerTabs module:
 // value exports from a client module become client-reference proxies in a
 // Server Component, so `.includes` would be undefined at runtime.
-const SCANNER_TABS: readonly Tab[] = ["igniting", "trend", "floor", "fallen", "sectors", "peers", "all"];
+const SCANNER_TABS: readonly Tab[] = ["igniting", "trend", "floor", "fallen", "sectors", "peers", "all", "graph"];
 
 export const metadata: Metadata = {
   title: "Scanner — EquityRoots",
@@ -40,12 +41,13 @@ export default async function MomentumPage({
   const sp = await searchParams;
   const tabParam = one(sp.tab);
   const initialTab: Tab = SCANNER_TABS.includes(tabParam as Tab) ? (tabParam as Tab) : "igniting";
-  const [momentum, trend, floor, rotation, allStocks, n500] = await Promise.all([
+  const [momentum, trend, floor, rotation, allStocks, graphUniverse, n500] = await Promise.all([
     loadLatestMomentum(one(sp.mDate)),
     loadLatestTrendLeaders(one(sp.tDate)),
     loadLatestSupportFloor(one(sp.fDate)),
     loadRotation(one(sp.rDate)),
     loadAllStocks(),
+    loadGraphUniverse(),
     sql<{ symbol: string }[]>`SELECT symbol FROM app.index_constituent WHERE index_code = 'NIFTY500'`,
   ]);
 
@@ -76,6 +78,7 @@ export default async function MomentumPage({
       rotation={rotation}
       allStocksSnapDate={allStocks.snapDate}
       allStocks={allStocks.rows}
+      graphUniverse={graphUniverse}
       nifty500={n500.map((r) => r.symbol)}
       initialTab={initialTab}
     />

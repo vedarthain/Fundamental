@@ -17,8 +17,10 @@ import type { TrendLeaderSignal } from "@/lib/trendLeaders";
 import type { SupportFloorSignal } from "@/lib/supportFloor";
 import type { RotationData } from "@/lib/rotation";
 import type { AllStockRow } from "@/lib/allStocks";
+import type { GraphUniverse } from "@/lib/graphUniverse";
 import type { SparkPoint } from "@/components/Sparkline";
 import MomentumClient from "./MomentumClient";
+import GraphClient from "./GraphClient";
 import TrendLeadersClient from "./TrendLeadersClient";
 import SupportFloorClient from "./SupportFloorClient";
 import RotationClient from "./RotationClient";
@@ -26,7 +28,7 @@ import FallenLeadersClient from "./FallenLeadersClient";
 import AllStocksClient from "./AllStocksClient";
 import ScannerDatePicker from "./ScannerDatePicker";
 
-export type Tab = "igniting" | "trend" | "floor" | "fallen" | "sectors" | "peers" | "all";
+export type Tab = "igniting" | "trend" | "floor" | "fallen" | "sectors" | "peers" | "all" | "graph";
 
 export default function ScannerTabs({
   momentumSnapDate,
@@ -44,6 +46,7 @@ export default function ScannerTabs({
   rotation,
   allStocksSnapDate,
   allStocks,
+  graphUniverse,
   nifty500,
   initialTab = "igniting",
 }: {
@@ -62,6 +65,7 @@ export default function ScannerTabs({
   rotation: RotationData;
   allStocksSnapDate: string | null;
   allStocks: AllStockRow[];
+  graphUniverse: GraphUniverse;
   nifty500: string[];
   initialTab?: Tab;
 }) {
@@ -103,13 +107,14 @@ export default function ScannerTabs({
     { id: "fallen", label: "Fallen Leaders", sub: "Beaten-down quality", count: null },
     { id: "peers", label: "Peer groups", sub: "Cluster rotation", count: peers.length },
     { id: "sectors", label: "Sectors", sub: "Sector rotation", count: sectors.length },
+    { id: "graph", label: "Graph", sub: "Candles by industry", count: null },
     { id: "all", label: "All stocks", sub: "Full universe · sortable", count: allCount },
   ];
 
   // All-stocks is a 10-column browse table; give it the full width so it uses
   // the side gutters instead of scrolling. The other tabs are narrow tables and
   // read better kept in the tighter reading column.
-  const wide = tab === "all";
+  const wide = tab === "all" || tab === "graph";
 
   return (
     <div className={`theme-indigo mx-auto px-6 py-10 ${wide ? "max-w-[1560px]" : "max-w-[1180px]"}`}>
@@ -231,6 +236,7 @@ export default function ScannerTabs({
           {tab === "all" && (
             <AllStocksClient snapDate={allStocksSnapDate} rows={allStocks} n500Only={n500Only} />
           )}
+          {tab === "graph" && <GraphClient universe={graphUniverse} />}
           {tab === "peers" && (
             <RotationClient
               snapDate={rotation.snapDate}
