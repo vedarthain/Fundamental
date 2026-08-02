@@ -77,7 +77,7 @@ export async function loadCandles(
         AND symbol = ANY(${ns})
         AND close IS NOT NULL AND open IS NOT NULL
         AND high IS NOT NULL AND low IS NOT NULL
-        AND date >= CURRENT_DATE - ${days}
+        AND date >= CURRENT_DATE - ${days}::int
       ORDER BY symbol, date ASC
     `;
   } catch {

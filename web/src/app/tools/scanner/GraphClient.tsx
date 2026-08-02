@@ -71,6 +71,7 @@ export default function GraphClient({ universe }: { universe: GraphUniverse }) {
   const [selectedInd, setSelectedInd] = useState<string>(firstIndustry);
   const [page, setPage] = useState(0);
   const [days, setDays] = useState<number>(180);
+  const [treeOpen, setTreeOpen] = useState(true);
 
   // Tree open-state: sectors expanded, and industries expanded to reveal stocks.
   const [openSectors, setOpenSectors] = useState<Set<string>>(
@@ -166,8 +167,37 @@ export default function GraphClient({ universe }: { universe: GraphUniverse }) {
       </header>
 
       <div className="flex gap-4 h-[calc(100vh-230px)] min-h-[540px]">
-        {/* ── Left: sector → industry → stock tree ── */}
+        {/* ── Left: collapsible sector → industry → stock tree ── */}
+        {!treeOpen && (
+          <button
+            type="button"
+            onClick={() => setTreeOpen(true)}
+            className="shrink-0 self-start rounded-lg border hairline px-2 py-2 hover:bg-[var(--color-paper)] transition-colors"
+            aria-label="Show industry tree"
+            title="Show industry tree"
+          >
+            <Chevron open />
+          </button>
+        )}
+        {treeOpen && (
         <aside className="w-[248px] shrink-0 overflow-y-auto rounded-xl border hairline p-2 text-[12.5px]">
+          <div className="flex items-center justify-between px-1 pb-2 mb-1 border-b hairline">
+            <span className="text-[11px] uppercase tracking-wide muted-text">Industries</span>
+            <button
+              type="button"
+              onClick={() => setTreeOpen(false)}
+              className="rounded p-1 hover:bg-[var(--color-border)] transition-colors"
+              aria-label="Hide industry tree"
+              title="Hide tree"
+            >
+              <svg
+                width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden
+              >
+                <path d="M15 6l-6 6 6 6" />
+              </svg>
+            </button>
+          </div>
           {sectors.map((s) => {
             const open = openSectors.has(s.name);
             return (
@@ -243,6 +273,7 @@ export default function GraphClient({ universe }: { universe: GraphUniverse }) {
             );
           })}
         </aside>
+        )}
 
         {/* ── Right: 2×2 candlestick grid ── */}
         <div className="min-w-0 flex-1 grid grid-cols-2 grid-rows-2 gap-3">
