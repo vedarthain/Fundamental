@@ -9,7 +9,8 @@
  * shape (body/wick proportions) while placing it on the split-safe scale.
  *
  * ONE query per page of charts (≤4 symbols), never per-chart. Keyed by the BARE
- * symbol the scanners use (no ".NS").
+ * symbol the scanners use (no ".NS"). Lookbacks beyond ~2 years are rolled up
+ * into WEEKLY candles so long windows stay readable (see WEEKLY_THRESHOLD_DAYS).
  */
 import { golden } from "@/lib/db";
 
@@ -25,6 +26,46 @@ export type Candle = {
 /** Strip the NSE ".NS" suffix golden uses so keys match the bare scanner symbol. */
 function bare(sym: string): string {
   return sym.endsWith(".NS") ? sym.slice(0, -3) : sym;
+}
+
+// Beyond ~2 years, daily candles crush into an unreadable block in a small
+// cell (10Y ≈ 2,470 bars). Past this lookback we roll days up into WEEKLY
+// candles — far fewer bars, smaller payload, same shape at that zoom.
+const WEEKLY_THRESHOLD_DAYS = 730;
+
+/** Monday-anchored ISO week bucket key for a "YYYY-MM-DD" date. */
+function weekKey(iso: string): string {
+  const dt = new Date(`${iso}T00:00:00Z`);
+  const dow = (dt.getUTCDay() + 6) % 7; // Mon=0 … Sun=6
+  dt.setUTCDate(dt.getUTCDate() - dow);
+  return dt.toISOString().slice(0, 10);
+}
+
+/**
+ * Roll an ascending daily series up to weekly OHLCV: open = first day's open,
+ * high/low = week extremes, close = last day's close, volume = sum. Each weekly
+ * bar is labelled by its LAST trading day so the rightmost candle tracks the
+ * latest date. Inputs are already split-adjusted, so week extremes stay correct.
+ */
+function toWeekly(daily: Candle[]): Candle[] {
+  const out: Candle[] = [];
+  let cur: Candle | null = null;
+  let curKey = "";
+  for (const c of daily) {
+    const key = weekKey(c.d);
+    if (key !== curKey) {
+      cur = { d: c.d, o: c.o, h: c.h, l: c.l, c: c.c, v: c.v };
+      out.push(cur);
+      curKey = key;
+    } else if (cur) {
+      cur.h = Math.max(cur.h, c.h);
+      cur.l = Math.min(cur.l, c.l);
+      cur.c = c.c;
+      cur.d = c.d; // advance label to the week's latest day
+      cur.v += c.v;
+    }
+  }
+  return out;
 }
 
 /**
@@ -96,6 +137,11 @@ export async function loadCandles(
       c: r.c * factor,
       v: r.v ?? 0,
     });
+  }
+
+  // Long lookbacks → weekly candles (fewer bars, smaller payload).
+  if (days > WEEKLY_THRESHOLD_DAYS) {
+    for (const k of Object.keys(out)) out[k] = toWeekly(out[k]);
   }
   return out;
 }
