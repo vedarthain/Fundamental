@@ -25,8 +25,8 @@
 #   NEON_APP_URL        — fundamental_app on Neon
 #   NEON_GOLDEN_URL     — golden_db on Neon
 #   REVALIDATE_TOKEN    — bearer for the /api/revalidate cache purge
-#   (No SCREENER_* needed — dummies below satisfy pydantic-settings; these steps
-#    don't scrape.)
+#   (No SCREENER_* needed — config.py defaults them to "", and only the scraper
+#    enforces their presence; these steps don't scrape.)
 
 name: Weekly Compute + Score
 
@@ -70,13 +70,11 @@ jobs:
         run: pip install -e ./etl
 
       # compute-metrics reads the fresh blobs (from weekly-fetch), so valuation
-      # populates correctly. SCREENER_* dummies satisfy pydantic-settings.
+      # populates correctly. No SCREENER_* needed — this path never scrapes.
       - name: Compute metrics + score
         env:
           APP_DB_URL:           ${{ secrets.NEON_APP_URL }}
           GOLDEN_DB_URL:        ${{ secrets.NEON_GOLDEN_URL }}
-          SCREENER_SESSIONID:   "unused-in-score"
-          SCREENER_CSRFTOKEN:   "unused-in-score"
           PYTHONUNBUFFERED:     "1"
         run: |
           SNAP_ARG=""

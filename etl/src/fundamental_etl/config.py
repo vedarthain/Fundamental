@@ -17,8 +17,14 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    screener_sessionid: str
-    screener_csrftoken: str
+    # Screener session cookies are OPTIONAL at the config level so that
+    # non-scraping commands (sync-universe, scoring, snapshot builds…) can
+    # import this module without carrying a browser session they never use.
+    # Presence is enforced lazily in the scraper (see screener/scraper.py),
+    # which is the only code path that actually needs them. This decouples
+    # every CLI command from the monthly-rotating Screener cookie.
+    screener_sessionid: str = ""
+    screener_csrftoken: str = ""
     golden_db_url: str
     app_db_url: str
     anthropic_api_key: str = ""

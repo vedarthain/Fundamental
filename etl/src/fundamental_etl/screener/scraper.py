@@ -68,6 +68,15 @@ def _client() -> httpx.Client:
     # bind to an IPv6 target, so httpcore moves on to the A record). `retries`
     # adds transport-level retry on connect errors, on top of the @retry
     # decorators that already cover TransportError mid-request.
+    # Cookies are optional at config load (so unrelated commands can import
+    # freely) but MANDATORY here — a scrape without a valid session silently
+    # gets logged-out HTML. Fail loud and early with an actionable message.
+    if not settings.screener_sessionid or not settings.screener_csrftoken:
+        raise RuntimeError(
+            "Screener session cookies are missing. Set SCREENER_SESSIONID and "
+            "SCREENER_CSRFTOKEN (Screener.in → DevTools → Application → Cookies). "
+            "These rotate ~monthly; refresh them if the weekly fetch started failing."
+        )
     transport = httpx.HTTPTransport(local_address="0.0.0.0", retries=3)
     # Browser-like default headers. Bot detectors usually look at the full
     # combination (UA + Accept + Accept-Language), not just User-Agent —
