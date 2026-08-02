@@ -71,6 +71,7 @@ export default function ScannerTabs({
 }) {
   const [tab, setTab] = useState<Tab>(initialTab);
   const [n500Only, setN500Only] = useState(false);
+  const [railOpen, setRailOpen] = useState(true);
 
   // Mirror the active tab into the URL (?tab=) so a refresh reopens the same
   // scanner instead of snapping back to "Igniting today". Use history.replaceState
@@ -119,9 +120,39 @@ export default function ScannerTabs({
   return (
     <div className={`theme-indigo mx-auto px-6 py-10 ${wide ? "max-w-[1560px]" : "max-w-[1180px]"}`}>
       <div className="flex flex-col gap-8 md:flex-row md:items-start md:gap-8">
+        {/* Collapsed rail: a slim button to reveal the scanner nav again. */}
+        {!railOpen && (
+          <button
+            type="button"
+            onClick={() => setRailOpen(true)}
+            className="flex shrink-0 self-start items-center gap-1.5 rounded-lg border hairline px-2.5 py-2 hover:bg-[var(--color-paper)] transition-colors"
+            aria-label="Show scanners"
+            title="Show scanners"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M9 6l6 6-6 6" />
+            </svg>
+            <span className="text-[11px] uppercase tracking-wide muted-text md:hidden">Scanners</span>
+          </button>
+        )}
+
         {/* Left rail: vertical scanner nav + NIFTY 500 toggle pinned at the bottom. */}
+        {railOpen && (
         <aside className="w-full md:w-[232px] md:shrink-0">
-          <div className="text-[11px] uppercase tracking-wide muted-text mb-2 px-1">Scanners</div>
+          <div className="flex items-center justify-between mb-2 px-1">
+            <span className="text-[11px] uppercase tracking-wide muted-text">Scanners</span>
+            <button
+              type="button"
+              onClick={() => setRailOpen(false)}
+              className="rounded p-1 hover:bg-[var(--color-border)] transition-colors"
+              aria-label="Hide scanners"
+              title="Hide scanners"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M15 6l-6 6 6 6" />
+              </svg>
+            </button>
+          </div>
           <nav className="flex flex-col gap-1" role="tablist" aria-orientation="vertical">
             {tabs.map((t) => {
               const active = tab === t.id;
@@ -205,6 +236,7 @@ export default function ScannerTabs({
             </p>
           </div>
         </aside>
+        )}
 
         {/* Right panel: the selected scanner's table up top, its description below. */}
         <div className="min-w-0 flex-1">

@@ -15,8 +15,8 @@ import { loadCandles } from "@/lib/candles";
 export const dynamic = "force-dynamic";
 
 const MAX_SYMBOLS = 8;
-const MIN_DAYS = 30;
-const MAX_DAYS = 1825;
+const MIN_DAYS = 5; // 1W window
+const MAX_DAYS = 3660; // 10Y window
 
 export async function GET(req: Request) {
   const url = new URL(req.url);

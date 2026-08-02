@@ -57,6 +57,9 @@ export function CandleChart({ candles }: { candles?: Candle[] }) {
 
   const last = data[data.length - 1];
   const lastY = yP(last.c);
+  // Period high / low guide rules (the true extremes, before the 4% padding).
+  const hiY = yP(pMax);
+  const loY = yP(pMin);
 
   return (
     <svg
@@ -76,6 +79,29 @@ export function CandleChart({ candles }: { candles?: Candle[] }) {
         strokeDasharray="2 4"
         strokeWidth={1}
         opacity={0.5}
+        vectorEffect="non-scaling-stroke"
+      />
+      {/* period high (green) and low (red) rules */}
+      <line
+        x1={PAD_X}
+        y1={hiY}
+        x2={W - PAD_X}
+        y2={hiY}
+        stroke={GREEN}
+        strokeDasharray="3 3"
+        strokeWidth={1}
+        opacity={0.55}
+        vectorEffect="non-scaling-stroke"
+      />
+      <line
+        x1={PAD_X}
+        y1={loY}
+        x2={W - PAD_X}
+        y2={loY}
+        stroke={RED}
+        strokeDasharray="3 3"
+        strokeWidth={1}
+        opacity={0.55}
         vectorEffect="non-scaling-stroke"
       />
       {data.map((c, i) => {

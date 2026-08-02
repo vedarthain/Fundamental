@@ -27,10 +27,14 @@ const RED = "var(--color-delta-down, #b00)";
 const PER_PAGE = 4;
 
 const GRAPH_WINDOWS: WindowOpt[] = [
+  { label: "1W", days: 7 },
   { label: "3M", days: 90 },
   { label: "6M", days: 180 },
   { label: "1Y", days: 365 },
   { label: "2Y", days: 730 },
+  { label: "3Y", days: 1100 },
+  { label: "5Y", days: 1830 },
+  { label: "10Y", days: 3660 },
 ];
 
 function inr(n: number): string {
@@ -287,6 +291,8 @@ export default function GraphClient({ universe }: { universe: GraphUniverse }) {
             const series = candles.data[st.symbol];
             const first = series?.[0];
             const last = series?.[series.length - 1];
+            const hi = series && series.length ? Math.max(...series.map((c) => c.h)) : null;
+            const lo = series && series.length ? Math.min(...series.map((c) => c.l)) : null;
             const chg = first && last && first.c > 0 ? (last.c / first.c - 1) * 100 : null;
             const chgColor = chg == null ? "var(--color-muted)" : chg >= 0 ? GREEN : RED;
             return (
@@ -324,6 +330,13 @@ export default function GraphClient({ universe }: { universe: GraphUniverse }) {
                     <div className="text-[10.5px] tabular-nums font-medium" style={{ color: chgColor }}>
                       {chg == null ? "" : `${chg >= 0 ? "+" : ""}${chg.toFixed(1)}%`}
                     </div>
+                    {hi != null && lo != null && (
+                      <div className="text-[9.5px] tabular-nums muted-text mt-0.5" title="Period high / low">
+                        <span style={{ color: GREEN }}>H</span> {inr(hi)}
+                        {"  "}
+                        <span style={{ color: RED }}>L</span> {inr(lo)}
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div
