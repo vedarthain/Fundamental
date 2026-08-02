@@ -64,9 +64,11 @@ function fmtDate(iso: string, longSpan: boolean): string {
 export function CandleChart({
   candles,
   interactive = false,
+  weekly = false,
 }: {
   candles?: Candle[];
   interactive?: boolean;
+  weekly?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -111,13 +113,13 @@ export function CandleChart({
           no price history
         </div>
       ) : size.w > 20 && size.h > 20 ? (
-        renderChart(data, size.w, size.h, interactive ? hover : null)
+        renderChart(data, size.w, size.h, interactive ? hover : null, weekly)
       ) : null}
     </div>
   );
 }
 
-function renderChart(data: Candle[], W: number, H: number, hoverIdx: number | null) {
+function renderChart(data: Candle[], W: number, H: number, hoverIdx: number | null, weekly: boolean) {
   const plotL = mL;
   const plotR = W - mR;
   const plotW = plotR - plotL;
@@ -200,7 +202,7 @@ function renderChart(data: Candle[], W: number, H: number, hoverIdx: number | nu
         {fmtVol(vMax)}
       </text>
       <text x={plotL - 5} y={volBot - 1} textAnchor="end" fontSize={8.5} fill={AXIS} fontWeight={600}>
-        Vol
+        {weekly ? "Vol/wk" : "Vol"}
       </text>
 
       {/* date (X) labels */}
@@ -231,7 +233,7 @@ function renderChart(data: Candle[], W: number, H: number, hoverIdx: number | nu
           ["H", fmtPrice(c.h), GREEN],
           ["L", fmtPrice(c.l), RED],
           ["C", fmtPrice(c.c), up ? GREEN : RED],
-          ["Vol", fmtVol(c.v || 0), AXIS],
+          [weekly ? "Vol/wk" : "Vol", fmtVol(c.v || 0), AXIS],
         ];
         return (
           <g pointerEvents="none">

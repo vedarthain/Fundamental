@@ -21,6 +21,7 @@ import { WindowPicker } from "./WindowPicker";
 import type { WindowOpt } from "./sparkWindows";
 import { CandleChart } from "./CandleChart";
 import { useGraphCandles } from "./useGraphCandles";
+import { WEEKLY_THRESHOLD_DAYS } from "@/lib/candles";
 
 const GREEN = "var(--color-delta-up, #0a0)";
 const RED = "var(--color-delta-down, #b00)";
@@ -142,6 +143,9 @@ export default function GraphClient({
   const pageSymbols = pageStocks.map((s) => s.symbol);
 
   const candles = useGraphCandles(pageSymbols, days);
+  // Beyond ~2Y the loader rolls daily bars up to weekly, so volume is a weekly
+  // sum — label it "/wk" everywhere so the number's unit is unambiguous.
+  const weekly = days > WEEKLY_THRESHOLD_DAYS;
 
   function selectIndustry(id: string) {
     setSelectedInd(id);
@@ -396,7 +400,7 @@ export default function GraphClient({
                         className="text-[9.5px] tabular-nums muted-text mt-0.5"
                         title="Latest session volume · multiple of period average"
                       >
-                        Vol {fmtVol(lastVol)}
+                        {weekly ? "Vol/wk" : "Vol"} {fmtVol(lastVol)}
                         {volMult != null && (
                           <span style={volMult >= 1.5 ? { color: GREEN, fontWeight: 600 } : undefined}>
                             {" "}
@@ -415,7 +419,7 @@ export default function GraphClient({
                   title="Expand chart"
                   aria-label={`Expand ${st.symbol} chart`}
                 >
-                  <CandleChart candles={series} />
+                  <CandleChart candles={series} weekly={weekly} />
                 </button>
               </div>
             );
@@ -503,7 +507,7 @@ export default function GraphClient({
                 className="flex-1 min-h-0 p-2 transition-opacity"
                 style={{ opacity: candles.loading && !series ? 0.4 : 1 }}
               >
-                <CandleChart candles={series} interactive />
+                <CandleChart candles={series} interactive weekly={weekly} />
               </div>
             </div>
           </div>

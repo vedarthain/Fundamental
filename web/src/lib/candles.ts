@@ -31,7 +31,7 @@ function bare(sym: string): string {
 // Beyond ~2 years, daily candles crush into an unreadable block in a small
 // cell (10Y ≈ 2,470 bars). Past this lookback we roll days up into WEEKLY
 // candles — far fewer bars, smaller payload, same shape at that zoom.
-const WEEKLY_THRESHOLD_DAYS = 730;
+export const WEEKLY_THRESHOLD_DAYS = 730;
 
 /** Monday-anchored ISO week bucket key for a "YYYY-MM-DD" date. */
 function weekKey(iso: string): string {
