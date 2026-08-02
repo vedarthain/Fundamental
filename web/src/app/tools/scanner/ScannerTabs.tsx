@@ -268,7 +268,9 @@ export default function ScannerTabs({
           {tab === "all" && (
             <AllStocksClient snapDate={allStocksSnapDate} rows={allStocks} n500Only={n500Only} />
           )}
-          {tab === "graph" && <GraphClient universe={graphUniverse} />}
+          {tab === "graph" && (
+            <GraphClient universe={graphUniverse} nifty500={nifty500} n500Only={n500Only} />
+          )}
           {tab === "peers" && (
             <RotationClient
               snapDate={rotation.snapDate}

@@ -15,7 +15,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { displayCompanyName } from "@/lib/score";
-import type { GraphUniverse, GraphIndustry, GraphStock } from "@/lib/graphUniverse";
+import type { GraphUniverse, GraphSector, GraphIndustry, GraphStock } from "@/lib/graphUniverse";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { WindowPicker } from "./WindowPicker";
 import type { WindowOpt } from "./sparkWindows";
@@ -62,8 +62,38 @@ function Chevron({ open }: { open: boolean }) {
   );
 }
 
-export default function GraphClient({ universe }: { universe: GraphUniverse }) {
-  const { sectors, snapDate } = universe;
+export default function GraphClient({
+  universe,
+  nifty500,
+  n500Only,
+}: {
+  universe: GraphUniverse;
+  nifty500: string[];
+  n500Only: boolean;
+}) {
+  const { snapDate } = universe;
+
+  // When the NIFTY 500 toggle is on, narrow the tree to index members: filter
+  // each industry's stocks, recompute counts, and drop industries/sectors that
+  // empty out — so the tree shows ~500 names instead of the full ~2,100.
+  const n500 = useMemo(() => new Set(nifty500), [nifty500]);
+  const sectors = useMemo<GraphSector[]>(() => {
+    if (!n500Only) return universe.sectors;
+    const out: GraphSector[] = [];
+    for (const s of universe.sectors) {
+      const inds: GraphIndustry[] = [];
+      let count = 0;
+      for (const ind of s.industries) {
+        const stocks = ind.stocks.filter((st) => n500.has(st.symbol));
+        if (stocks.length) {
+          inds.push({ ...ind, stocks });
+          count += stocks.length;
+        }
+      }
+      if (inds.length) out.push({ ...s, count, industries: inds });
+    }
+    return out;
+  }, [universe.sectors, n500, n500Only]);
 
   // Flat lookup: industry_id → { industry, sectorName }.
   const industryById = useMemo(() => {
@@ -84,7 +114,10 @@ export default function GraphClient({ universe }: { universe: GraphUniverse }) {
   );
   const [openIndustries, setOpenIndustries] = useState<Set<string>>(() => new Set());
 
-  const selected = industryById.get(selectedInd);
+  // Toggling the N500 filter can drop the selected industry from the tree; fall
+  // back to the first still-present industry so the grid never goes blank.
+  const activeInd = industryById.has(selectedInd) ? selectedInd : firstIndustry;
+  const selected = industryById.get(activeInd);
   const stocks: GraphStock[] = selected?.ind.stocks ?? [];
   const pageCount = Math.max(1, Math.ceil(stocks.length / PER_PAGE));
   const safePage = Math.min(page, pageCount - 1);
@@ -216,7 +249,7 @@ export default function GraphClient({ universe }: { universe: GraphUniverse }) {
                 {open && (
                   <div className="ml-2 border-l hairline pl-1.5">
                     {s.industries.map((ind) => {
-                      const isSel = ind.id === selectedInd;
+                      const isSel = ind.id === activeInd;
                       const stocksOpen = openIndustries.has(ind.id);
                       return (
                         <div key={ind.id}>
