@@ -28,6 +28,7 @@ const PER_PAGE = 4;
 
 const GRAPH_WINDOWS: WindowOpt[] = [
   { label: "1W", days: 7 },
+  { label: "1M", days: 30 },
   { label: "3M", days: 90 },
   { label: "6M", days: 180 },
   { label: "1Y", days: 365 },
@@ -123,12 +124,10 @@ export default function GraphClient({ universe }: { universe: GraphUniverse }) {
 
   return (
     <div className="flex flex-col">
-      <header className="mb-4">
-        <div className="eyebrow mb-2">Graph</div>
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="font-display text-[30px] tracking-tight leading-tight">Charts by industry</h1>
-            <p className="mt-1 text-[12.5px] muted-text">
+      <header className="mb-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <div className="min-w-0">
+            <h1 className="font-display text-[20px] tracking-tight leading-tight">Charts by industry</h1>
+            <p className="text-[12px] muted-text">
               {selected ? (
                 <>
                   <span className="ink-text font-medium">{selected.sector}</span> ·{" "}
@@ -167,10 +166,9 @@ export default function GraphClient({ universe }: { universe: GraphUniverse }) {
               </button>
             </div>
           </div>
-        </div>
       </header>
 
-      <div className="flex gap-4 h-[calc(100vh-230px)] min-h-[540px]">
+      <div className="flex gap-3 h-[calc(100vh-158px)] min-h-[560px]">
         {/* ── Left: collapsible sector → industry → stock tree ── */}
         {!treeOpen && (
           <button
