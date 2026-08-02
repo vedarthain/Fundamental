@@ -41,6 +41,12 @@ const GRAPH_WINDOWS: WindowOpt[] = [
 function inr(n: number): string {
   return "₹" + n.toLocaleString("en-IN", { maximumFractionDigits: 2 });
 }
+function fmtVol(v: number): string {
+  if (v >= 1e7) return `${(v / 1e7).toFixed(1)}Cr`;
+  if (v >= 1e5) return `${(v / 1e5).toFixed(1)}L`;
+  if (v >= 1e3) return `${(v / 1e3).toFixed(0)}K`;
+  return String(Math.round(v));
+}
 function scoreColor(p: number | null): string {
   if (p == null) return "var(--color-muted)";
   if (p >= 66) return GREEN;
@@ -326,6 +332,12 @@ export default function GraphClient({
             const lo = series && series.length ? Math.min(...series.map((c) => c.l)) : null;
             const chg = first && last && first.c > 0 ? (last.c / first.c - 1) * 100 : null;
             const chgColor = chg == null ? "var(--color-muted)" : chg >= 0 ? GREEN : RED;
+            const lastVol = last?.v ?? null;
+            const avgVol =
+              series && series.length
+                ? series.reduce((a, c) => a + (c.v || 0), 0) / series.length
+                : null;
+            const volMult = lastVol != null && avgVol && avgVol > 0 ? lastVol / avgVol : null;
             return (
               <div key={st.symbol} className="flex flex-col rounded-xl border hairline overflow-hidden">
                 <div className="flex items-center gap-2 border-b hairline px-3 py-2">
@@ -366,6 +378,20 @@ export default function GraphClient({
                         <span style={{ color: GREEN }}>H</span> {inr(hi)}
                         {"  "}
                         <span style={{ color: RED }}>L</span> {inr(lo)}
+                      </div>
+                    )}
+                    {lastVol != null && (
+                      <div
+                        className="text-[9.5px] tabular-nums muted-text mt-0.5"
+                        title="Latest session volume · multiple of period average"
+                      >
+                        Vol {fmtVol(lastVol)}
+                        {volMult != null && (
+                          <span style={volMult >= 1.5 ? { color: GREEN, fontWeight: 600 } : undefined}>
+                            {" "}
+                            {volMult.toFixed(1)}×
+                          </span>
+                        )}
                       </div>
                     )}
                   </div>
