@@ -40,6 +40,13 @@ function fmtPrice(v: number): string {
   return v.toFixed(2);
 }
 
+function fmtVol(v: number): string {
+  if (v >= 1e7) return `${(v / 1e7).toFixed(1)}Cr`;
+  if (v >= 1e5) return `${(v / 1e5).toFixed(1)}L`;
+  if (v >= 1e3) return `${(v / 1e3).toFixed(0)}K`;
+  return String(Math.round(v));
+}
+
 function fmtDate(iso: string, longSpan: boolean): string {
   const [y, m, d] = iso.split("-");
   const mon = MONTHS[(+m || 1) - 1];
@@ -152,13 +159,20 @@ function renderChart(data: Candle[], W: number, H: number) {
           <g key={c.d}>
             <line x1={x} y1={yP(c.h)} x2={x} y2={yP(c.l)} stroke={color} strokeWidth={1} />
             <rect x={x - bodyW / 2} y={top} width={bodyW} height={bh} fill={color} opacity={up ? 0.85 : 0.9} />
-            <rect x={x - bodyW / 2} y={vt} width={bodyW} height={Math.max(0, volBot - vt)} fill={color} opacity={0.38} />
+            <rect x={x - bodyW / 2} y={vt} width={bodyW} height={Math.max(0, volBot - vt)} fill={color} opacity={0.62} />
           </g>
         );
       })}
 
-      {/* volume baseline */}
+      {/* volume panel: top separator, baseline, and gutter labels */}
+      <line x1={plotL} y1={volTop} x2={plotR} y2={volTop} stroke={GRID} strokeWidth={1} opacity={0.5} />
       <line x1={plotL} y1={volBot} x2={plotR} y2={volBot} stroke={GRID} strokeWidth={1} opacity={0.7} />
+      <text x={plotL - 5} y={volTop + 8} textAnchor="end" fontSize={8.5} fill={AXIS}>
+        {fmtVol(vMax)}
+      </text>
+      <text x={plotL - 5} y={volBot - 1} textAnchor="end" fontSize={8.5} fill={AXIS} fontWeight={600}>
+        Vol
+      </text>
 
       {/* date (X) labels */}
       {xIdx.map((i, k) => {
