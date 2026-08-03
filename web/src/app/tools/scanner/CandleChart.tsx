@@ -70,21 +70,16 @@ export function CandleChart({
   candles,
   interactive = false,
   weekly = false,
-  measureMode = false,
 }: {
   candles?: Candle[];
   interactive?: boolean;
   weekly?: boolean;
-  /** When true the chart is armed for drag-to-measure (ruler tool). */
-  measureMode?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [hover, setHover] = useState<number | null>(null);
   const [measure, setMeasure] = useState<Measure | null>(null);
-  // Two-click placement (not drag): "placing" = first point set, second click
-  // pending; "done" = both points fixed; next click starts fresh.
-  const phaseRef = useRef<"idle" | "placing" | "done">("idle");
+  const draggingRef = useRef(false);
 
   useEffect(() => {
     const el = ref.current;
@@ -96,14 +91,6 @@ export function CandleChart({
     return () => ro.disconnect();
   }, []);
 
-  // Disarming the ruler clears any drawn measurement.
-  useEffect(() => {
-    if (!measureMode) {
-      setMeasure(null);
-      phaseRef.current = "idle";
-    }
-  }, [measureMode]);
-
   const data = (candles ?? []).filter(
     (c) => c.o != null && c.h != null && c.l != null && c.c != null,
   );
@@ -113,20 +100,15 @@ export function CandleChart({
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }
 
-  const armed = interactive || measureMode;
-
+  // Map cursor-x → nearest candle slot using the same geometry renderChart uses.
   function onMove(e: React.MouseEvent<HTMLDivElement>) {
     const el = ref.current;
     if (!el || data.length < 2) return;
-    // Ruler in "placing" mode: the second point tracks the cursor live until the
-    // next click fixes it. No mouse button needs to be held.
-    if (measureMode && phaseRef.current === "placing") {
+    if (draggingRef.current) {
       const p = localPos(e);
       setMeasure((m) => (m ? { ...m, x1: p.x, y1: p.y } : null));
       return;
     }
-    if (!interactive || measureMode) return;
-    // Plain hover crosshair (interactive, ruler not armed).
     const rect = el.getBoundingClientRect();
     const plotW = size.w - mR - mL;
     if (plotW <= 0) return;
@@ -135,36 +117,39 @@ export function CandleChart({
     setHover(Math.max(0, Math.min(data.length - 1, idx)));
   }
 
-  // Click to drop a point. First click sets the start, second click fixes the
-  // end, a third click starts a fresh measurement.
-  function onClick(e: React.MouseEvent<HTMLDivElement>) {
-    if (!measureMode || data.length < 2) return;
+  function onDown(e: React.MouseEvent<HTMLDivElement>) {
+    if (!interactive || data.length < 2) return;
+    e.preventDefault();
     const p = localPos(e);
-    if (phaseRef.current === "placing") {
-      setMeasure((m) => (m ? { ...m, x1: p.x, y1: p.y } : null));
-      phaseRef.current = "done";
-    } else {
-      setHover(null);
-      setMeasure({ x0: p.x, y0: p.y, x1: p.x, y1: p.y });
-      phaseRef.current = "placing";
-    }
+    draggingRef.current = true;
+    setHover(null);
+    setMeasure({ x0: p.x, y0: p.y, x1: p.x, y1: p.y });
+  }
+  function onUp() {
+    if (!draggingRef.current) return;
+    draggingRef.current = false;
+    // A click (no real drag) clears any existing measurement.
+    setMeasure((m) =>
+      m && Math.abs(m.x1 - m.x0) < 4 && Math.abs(m.y1 - m.y0) < 4 ? null : m,
+    );
   }
 
   return (
     <div
       ref={ref}
-      className={`h-full w-full ${armed ? "select-none" : ""}`}
-      style={armed ? { cursor: "crosshair" } : undefined}
-      onMouseMove={armed ? onMove : undefined}
-      onClick={measureMode ? onClick : undefined}
-      onMouseLeave={interactive && !measureMode ? () => setHover(null) : undefined}
+      className={`h-full w-full ${interactive ? "select-none" : ""}`}
+      style={interactive ? { cursor: "crosshair" } : undefined}
+      onMouseMove={interactive ? onMove : undefined}
+      onMouseDown={interactive ? onDown : undefined}
+      onMouseUp={interactive ? onUp : undefined}
+      onMouseLeave={interactive ? () => { setHover(null); onUp(); } : undefined}
     >
       {data.length < 2 ? (
         <div className="flex h-full w-full items-center justify-center muted-text text-[11px] italic">
           no price history
         </div>
       ) : size.w > 20 && size.h > 20 ? (
-        renderChart(data, size.w, size.h, interactive && !measureMode ? hover : null, weekly, measure)
+        renderChart(data, size.w, size.h, interactive && !measure ? hover : null, weekly, measure)
       ) : null}
     </div>
   );

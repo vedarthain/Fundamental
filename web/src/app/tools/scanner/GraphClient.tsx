@@ -58,19 +58,6 @@ function scoreColor(p: number | null): string {
   return RED;
 }
 
-// Ruler / measure-tool glyph.
-function RulerIcon({ size = 12 }: { size?: number }) {
-  return (
-    <svg
-      width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
-      strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden
-    >
-      <path d="M2 12l10-10 10 10-10 10z" />
-      <path d="M8 6l2 2M6 8l2 2M11 9l2 2M9 11l2 2M14 12l2 2M12 14l2 2" />
-    </svg>
-  );
-}
-
 function Chevron({ open }: { open: boolean }) {
   return (
     <svg
@@ -161,17 +148,10 @@ export default function GraphClient({
   const [days, setDays] = useState<number>(180);
   const [treeOpen, setTreeOpen] = useState(true);
   const [focus, setFocus] = useState<GraphStock | null>(null);
-  // Ruler tool: which grid box is armed (by symbol), and whether the expanded
-  // (focus) chart is armed. Only one grid box measures at a time.
-  const [measureSym, setMeasureSym] = useState<string | null>(null);
-  const [focusMeasure, setFocusMeasure] = useState(false);
 
   // Esc closes the focus (expanded chart) overlay.
   useEffect(() => {
-    if (!focus) {
-      setFocusMeasure(false);
-      return;
-    }
+    if (!focus) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setFocus(null);
     };
@@ -411,9 +391,8 @@ export default function GraphClient({
         </aside>
         )}
 
-        {/* ── Right: 2×3 candlestick grid — 6 at a time, the two extra rows
-            stacked below the original four (2 columns, 3 rows). ── */}
-        <div className="min-w-0 flex-1 grid grid-cols-2 grid-rows-3 gap-3">
+        {/* ── Right: 3×2 candlestick grid (6 at a time) ── */}
+        <div className="min-w-0 flex-1 grid grid-cols-3 grid-rows-2 gap-3">
           {Array.from({ length: PER_PAGE }).map((_, i) => {
             const st = pageStocks[i];
             if (!st) {
@@ -515,30 +494,9 @@ export default function GraphClient({
                   className="flex-1 min-h-0 transition-opacity"
                   style={{ opacity: candles.loading && !series ? 0.4 : 1 }}
                 >
-                  <CandleChart candles={series} weekly={weekly} measureMode={measureSym === st.symbol} />
+                  <CandleChart candles={series} weekly={weekly} />
                 </div>
-                <div className="flex items-center justify-end gap-1 border-t hairline px-2 py-1">
-                  {measureSym === st.symbol && (
-                    <span className="mr-auto text-[10px] muted-text italic">Click 2 points</span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setMeasureSym((cur) => (cur === st.symbol ? null : st.symbol))
-                    }
-                    disabled={!series || series.length < 2}
-                    className="inline-flex items-center gap-1 rounded-md border hairline px-2 py-1 text-[10.5px] font-medium disabled:opacity-40 hover:bg-[var(--color-paper)] transition-colors"
-                    style={
-                      measureSym === st.symbol
-                        ? { borderColor: "var(--color-accent-600)", color: "var(--color-accent-700)", background: "color-mix(in srgb, var(--color-accent-600) 10%, transparent)" }
-                        : undefined
-                    }
-                    aria-pressed={measureSym === st.symbol}
-                    title="Measure price move between two points"
-                  >
-                    <RulerIcon size={11} />
-                    Measure
-                  </button>
+                <div className="flex justify-end border-t hairline px-2 py-1">
                   <button
                     type="button"
                     onClick={() => series && series.length >= 2 && setFocus(st)}
@@ -609,21 +567,9 @@ export default function GraphClient({
                   </div>
                 </div>
                 <div className="ml-auto flex items-center gap-4">
-                  <button
-                    type="button"
-                    onClick={() => setFocusMeasure((v) => !v)}
-                    className="inline-flex items-center gap-1.5 rounded-md border hairline px-2.5 py-1.5 text-[12px] font-medium hover:bg-[var(--color-paper)] transition-colors"
-                    style={
-                      focusMeasure
-                        ? { borderColor: "var(--color-accent-600)", color: "var(--color-accent-700)", background: "color-mix(in srgb, var(--color-accent-600) 10%, transparent)" }
-                        : undefined
-                    }
-                    aria-pressed={focusMeasure}
-                    title="Measure price move between two points"
-                  >
-                    <RulerIcon size={13} />
-                    {focusMeasure ? "Click 2 points" : "Measure"}
-                  </button>
+                  <span className="hidden lg:inline text-[10.5px] muted-text italic">
+                    Drag on chart to measure
+                  </span>
                   <div className="text-right leading-tight">
                     <div className="text-[15px] tabular-nums font-semibold">
                       {last ? inr(last.c) : "—"}
@@ -655,7 +601,7 @@ export default function GraphClient({
                 className="flex-1 min-h-0 p-2 transition-opacity"
                 style={{ opacity: candles.loading && !series ? 0.4 : 1 }}
               >
-                <CandleChart candles={series} interactive weekly={weekly} measureMode={focusMeasure} />
+                <CandleChart candles={series} interactive weekly={weekly} />
               </div>
             </div>
           </div>
