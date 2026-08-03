@@ -20,6 +20,7 @@ import { tierLabel, displayCompanyName } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { Pager, usePager } from "./Pager";
 import { orderBySector, useSectorCounts, SectorHeaderRow, GroupBySectorToggle } from "./sectorGroup";
+import { useScannerTree, ScannerTree } from "./scannerTree";
 
 const GREEN = "var(--color-delta-up, #0a0)";
 const RED = "var(--color-delta-down, #b00)";
@@ -102,6 +103,11 @@ function scoreColor(p: number | null): string {
 
 const SIGNAL_LABELS: Record<string, string> = { sma: "SMA", vol: "VOL", ema: "EMA", low: "52W", rel1m: "1M↑" };
 
+const FALLEN_TREE = {
+  sectorOf: (r: Opportunity) => r.sector_name,
+  industryOf: (r: Opportunity) => r.industry_name,
+};
+
 type IconProps = { size?: number };
 function svg(size: number | undefined, children: React.ReactNode) {
   return (
@@ -176,13 +182,16 @@ export default function FallenLeadersClient({ n500Only }: { n500Only: boolean })
 
   const recoveryCount = useMemo(() => base.filter((r) => recoveryScore(r) >= 2).length, [base]);
 
+  const tree = useScannerTree(sorted, FALLEN_TREE);
+  const treeFiltered = tree.filtered;
+
   const [groupSector, setGroupSector] = useState(false);
   const sectorOf = (r: Opportunity) => r.sector_name;
   const ordered = useMemo(
-    () => (groupSector ? orderBySector(sorted, sectorOf) : sorted),
-    [groupSector, sorted],
+    () => (groupSector ? orderBySector(treeFiltered, sectorOf) : treeFiltered),
+    [groupSector, treeFiltered],
   );
-  const sectorCounts = useSectorCounts(sorted, sectorOf);
+  const sectorCounts = useSectorCounts(treeFiltered, sectorOf);
   const pager = usePager(ordered);
 
   return (
@@ -243,7 +252,9 @@ export default function FallenLeadersClient({ n500Only }: { n500Only: boolean })
           </p>
         </div>
       ) : (
-        <div className="mt-5 card overflow-hidden">
+      <div className="mt-5 flex gap-3 items-start">
+        <ScannerTree {...tree} total={sorted.length} />
+        <div className="min-w-0 flex-1 card overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-[13px]">
               <thead>
@@ -348,6 +359,7 @@ export default function FallenLeadersClient({ n500Only }: { n500Only: boolean })
             <Pager {...pager} noun="names" />
           </div>
         </div>
+      </div>
       )}
 
       <section className="mt-8 card p-5 max-w-[820px]">

@@ -21,9 +21,15 @@ import { useSparklineWindow } from "./useSparklineWindow";
 import { IGNITING_WINDOWS, IGNITING_DEFAULT_DAYS } from "./sparkWindows";
 import { Pager, usePager } from "./Pager";
 import { orderBySector, useSectorCounts, SectorHeaderRow, GroupBySectorToggle } from "./sectorGroup";
+import { useScannerTree, ScannerTree } from "./scannerTree";
 
 const GREEN = "var(--color-delta-up, #0a0)";
 const RED = "var(--color-delta-down, #b00)";
+
+const MOMENTUM_TREE = {
+  sectorOf: (s: MomentumSignal) => s.sector,
+  industryOf: (s: MomentumSignal) => s.industry,
+};
 
 function inr(n: number): string {
   return "₹" + Math.round(n).toLocaleString("en-IN");
@@ -79,10 +85,13 @@ export default function MomentumClient({
     ? new Date(snapDate).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "long", year: "numeric" })
     : null;
 
+  const tree = useScannerTree(signals, MOMENTUM_TREE);
+  const filtered = tree.filtered;
+
   const [groupSector, setGroupSector] = useState(false);
   const sectorOf = (s: MomentumSignal) => s.sector;
-  const ordered = groupSector ? orderBySector(signals, sectorOf) : signals;
-  const sectorCounts = useSectorCounts(signals, sectorOf);
+  const ordered = groupSector ? orderBySector(filtered, sectorOf) : filtered;
+  const sectorCounts = useSectorCounts(filtered, sectorOf);
   const pager = usePager(ordered);
   const symbols = signals.map((s) => s.symbol);
   const win = useSparklineWindow(symbols, IGNITING_DEFAULT_DAYS, spark ?? {});
@@ -124,7 +133,9 @@ export default function MomentumClient({
           </p>
         </div>
       ) : (
-        <div className="mt-7 card overflow-hidden">
+      <div className="mt-7 flex gap-3 items-start">
+        <ScannerTree {...tree} total={signals.length} />
+        <div className="min-w-0 flex-1 card overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-[13px]">
               <thead>
@@ -229,6 +240,7 @@ export default function MomentumClient({
             <Pager {...pager} noun="ignitions" />
           </div>
         </div>
+      </div>
       )}
 
       <section className="mt-8 card p-5 max-w-[820px]">

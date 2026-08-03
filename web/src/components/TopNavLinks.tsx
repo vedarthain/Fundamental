@@ -47,6 +47,7 @@ const LINKS: NavLink[] = [
     submenu: [
       { href: "/tools/screener",          label: "Stock Screener",     description: "Filter by criteria, see ranked matches" },
       { href: "/tools/scanner",          label: "Scanner",            description: "Igniting today, trend leaders, fallen leaders + rotation" },
+      { href: "/tools/dividends",         label: "Dividend Scanner",   description: "Income by sector — payout, trailing yield & quality" },
       { href: "/tools/investing-trials",  label: "Investing Trials",   description: "Set your own Q/V/M weights" },
       { href: "/tools/peer-comparison",   label: "Peer Comparison",    description: "Stack 2-5 stocks side by side" },
       { href: "/today",                   label: "Today's Signal",     description: "Auto-generated daily stock insight" },

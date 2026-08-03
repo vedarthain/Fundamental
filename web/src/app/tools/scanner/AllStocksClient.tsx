@@ -21,10 +21,16 @@ import { WindowPicker } from "./WindowPicker";
 import { usePagedSparklines } from "./usePagedSparklines";
 import { ALLSTOCKS_WINDOWS, ALLSTOCKS_DEFAULT_DAYS } from "./sparkWindows";
 import { Pager, usePager } from "./Pager";
+import { useScannerTree, ScannerTree } from "./scannerTree";
 
 const GREEN = "var(--color-delta-up, #0a0)";
 const RED = "var(--color-delta-down, #b00)";
 const PAGE_SIZE = 50;
+
+const ALLSTOCKS_TREE = {
+  sectorOf: (r: AllStockRow) => r.sector,
+  industryOf: (r: AllStockRow) => r.peer_group,
+};
 
 type SortKey =
   | "symbol"
@@ -193,9 +199,14 @@ export default function AllStocksClient({
     });
   }, [rows, n500Only, q, tiers, numPreds]);
 
+  // Sector → industry (peer group) tree, built from the post-filter set so its
+  // counts track the active filters; selecting a branch narrows the table.
+  const tree = useScannerTree(filtered, ALLSTOCKS_TREE);
+  const treeFiltered = tree.filtered;
+
   const sorted = useMemo(() => {
     const numeric = !TEXT_KEYS.has(sortKey);
-    const arr = [...filtered];
+    const arr = [...treeFiltered];
     // Nulls always sink to the bottom, regardless of sort direction.
     const nullCmp = (av: unknown, bv: unknown): number | null => {
       if (av == null && bv == null) return 0;
@@ -227,7 +238,7 @@ export default function AllStocksClient({
       return dir === "asc" ? cmp : -cmp;
     });
     return arr;
-  }, [filtered, sortKey, dir]);
+  }, [treeFiltered, sortKey, dir]);
 
   const pager = usePager(sorted, PAGE_SIZE);
 
@@ -431,7 +442,11 @@ export default function AllStocksClient({
           <p className="muted-text mt-2 text-[13.5px]">Clear the filter or widen to All NSE.</p>
         </div>
       ) : (
-        <div className="mt-4 card">
+      <div className="mt-4 flex gap-3 items-start">
+        <div className="sticky top-[84px]">
+          <ScannerTree {...tree} total={filtered.length} />
+        </div>
+        <div className="min-w-0 flex-1 card">
           {/* No overflow wrapper here: an overflow container would trap the
               sticky header inside it, so it would scroll away with the box.
               Kept at page level so the header pins below the site nav (ribbon
@@ -556,6 +571,7 @@ export default function AllStocksClient({
             <Pager {...pager} noun="stocks" />
           </div>
         </div>
+      </div>
       )}
 
       <section className="mt-8 card p-5 max-w-[820px]">
