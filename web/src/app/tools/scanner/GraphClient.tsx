@@ -28,7 +28,7 @@ import { WEEKLY_THRESHOLD_DAYS } from "@/lib/candleConfig";
 
 const GREEN = "var(--color-delta-up, #0a0)";
 const RED = "var(--color-delta-down, #b00)";
-const PER_PAGE = 4;
+const PER_PAGE = 6;
 
 const GRAPH_WINDOWS: WindowOpt[] = [
   { label: "1W", days: 7 },
@@ -105,35 +105,30 @@ export default function GraphClient({
     return out;
   }, [universe.sectors, n500, n500Only]);
 
-  // Starred stocks: a local-only favourites list (see @/lib/starred). Two jobs
-  // here — (1) float starred names to the TOP of every industry, above the
-  // alphabetical default; (2) power the "Favourites only" filter that hides all
-  // non-starred names. Distinct from the watchlist heart: purely a Graph-tab
-  // scan/ordering aid, no server, no auth.
+  // Starred stocks: a local-only favourites list (see @/lib/starred). One job
+  // here — power the "Favourites only" filter that hides all non-starred names.
+  // Deliberately does NOT reorder the default view: starring a stock leaves it
+  // exactly where it is (the user asked not to be yanked to the top), so they
+  // can star in place and recall the set later via the Favourites toggle.
+  // Distinct from the watchlist heart: purely a Graph-tab scan aid, no server.
   const { symbols: starredSyms, hydrated: starHydrated } = useStarred();
   const starSet = useMemo(() => new Set(starredSyms), [starredSyms]);
   const [favOnly, setFavOnly] = useState(false);
 
   // Apply favourites → the tree/grid actually rendered. In fav-only mode we drop
-  // non-starred stocks (and any industry/sector that empties out); otherwise we
-  // keep everything but stably reorder starred-first. Array.sort is stable, so
-  // ties preserve the incoming alphabetical order.
+  // non-starred stocks (and any industry/sector that empties out). Order is
+  // preserved from the source (composite-desc) — no starred-first shuffle.
   const viewSectors = useMemo<GraphSector[]>(() => {
-    // Nothing starred + not filtering → no work; return as-is.
-    if (starSet.size === 0 && !favOnly) return sectors;
+    if (!favOnly) return sectors;
     const out: GraphSector[] = [];
     for (const s of sectors) {
       const inds: GraphIndustry[] = [];
       let count = 0;
       for (const ind of s.industries) {
-        let stocks = ind.stocks;
-        if (favOnly) stocks = stocks.filter((st) => starSet.has(st.symbol));
+        const stocks = ind.stocks.filter((st) => starSet.has(st.symbol));
         if (!stocks.length) continue;
-        const ordered = [...stocks].sort(
-          (a, b) => (starSet.has(b.symbol) ? 1 : 0) - (starSet.has(a.symbol) ? 1 : 0),
-        );
-        inds.push({ ...ind, stocks: ordered });
-        count += ordered.length;
+        inds.push({ ...ind, stocks });
+        count += stocks.length;
       }
       if (inds.length) out.push({ ...s, count, industries: inds });
     }
@@ -266,7 +261,7 @@ export default function GraphClient({
                 onClick={() => setPage((p) => Math.max(0, p - 1))}
                 disabled={safePage <= 0}
                 className="rounded-md border hairline px-2.5 py-1.5 text-[12px] font-medium disabled:opacity-40 hover:bg-[var(--color-paper)] transition-colors"
-                aria-label="Previous 4"
+                aria-label="Previous page"
               >
                 ‹
               </button>
@@ -278,7 +273,7 @@ export default function GraphClient({
                 onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
                 disabled={safePage >= pageCount - 1}
                 className="rounded-md border hairline px-2.5 py-1.5 text-[12px] font-medium disabled:opacity-40 hover:bg-[var(--color-paper)] transition-colors"
-                aria-label="Next 4"
+                aria-label="Next page"
               >
                 ›
               </button>
@@ -396,8 +391,8 @@ export default function GraphClient({
         </aside>
         )}
 
-        {/* ── Right: 2×2 candlestick grid ── */}
-        <div className="min-w-0 flex-1 grid grid-cols-2 grid-rows-2 gap-3">
+        {/* ── Right: 3×2 candlestick grid (6 at a time) ── */}
+        <div className="min-w-0 flex-1 grid grid-cols-3 grid-rows-2 gap-3">
           {Array.from({ length: PER_PAGE }).map((_, i) => {
             const st = pageStocks[i];
             if (!st) {
@@ -448,8 +443,26 @@ export default function GraphClient({
                     </div>
                   </div>
                   <div className="text-right shrink-0">
-                    <div className="text-[12.5px] tabular-nums font-semibold">
-                      {last ? inr(last.c) : "—"}
+                    <div className="flex items-center justify-end gap-2.5">
+                      {(st.quality_pct != null || st.value_pct != null) && (
+                        <div className="flex items-center gap-1.5 text-[10px] tabular-nums font-medium">
+                          <span title="Quality percentile">
+                            <span className="muted-text">Q</span>{" "}
+                            <span style={{ color: scoreColor(st.quality_pct) }}>
+                              {st.quality_pct != null ? Math.round(st.quality_pct) : "—"}
+                            </span>
+                          </span>
+                          <span title="Valuation percentile">
+                            <span className="muted-text">V</span>{" "}
+                            <span style={{ color: scoreColor(st.value_pct) }}>
+                              {st.value_pct != null ? Math.round(st.value_pct) : "—"}
+                            </span>
+                          </span>
+                        </div>
+                      )}
+                      <div className="text-[12.5px] tabular-nums font-semibold">
+                        {last ? inr(last.c) : "—"}
+                      </div>
                     </div>
                     <div className="text-[10.5px] tabular-nums font-medium" style={{ color: chgColor }}>
                       {chg == null ? "" : `${chg >= 0 ? "+" : ""}${chg.toFixed(1)}%`}
@@ -477,16 +490,27 @@ export default function GraphClient({
                     )}
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => series && series.length >= 2 && setFocus(st)}
-                  className="flex-1 min-h-0 transition-opacity text-left cursor-zoom-in"
+                <div
+                  className="flex-1 min-h-0 transition-opacity"
                   style={{ opacity: candles.loading && !series ? 0.4 : 1 }}
-                  title="Expand chart"
-                  aria-label={`Expand ${st.symbol} chart`}
                 >
                   <CandleChart candles={series} weekly={weekly} />
-                </button>
+                </div>
+                <div className="flex justify-end border-t hairline px-2 py-1">
+                  <button
+                    type="button"
+                    onClick={() => series && series.length >= 2 && setFocus(st)}
+                    disabled={!series || series.length < 2}
+                    className="inline-flex items-center gap-1 rounded-md border hairline px-2 py-1 text-[10.5px] font-medium disabled:opacity-40 hover:bg-[var(--color-paper)] transition-colors"
+                    title="Expand chart"
+                    aria-label={`Expand ${st.symbol} chart`}
+                  >
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+                    </svg>
+                    Expand
+                  </button>
+                </div>
               </div>
             );
           })}
@@ -543,6 +567,9 @@ export default function GraphClient({
                   </div>
                 </div>
                 <div className="ml-auto flex items-center gap-4">
+                  <span className="hidden lg:inline text-[10.5px] muted-text italic">
+                    Drag on chart to measure
+                  </span>
                   <div className="text-right leading-tight">
                     <div className="text-[15px] tabular-nums font-semibold">
                       {last ? inr(last.c) : "—"}

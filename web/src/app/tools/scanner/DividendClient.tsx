@@ -318,7 +318,22 @@ export default function DividendClient({
 
         {/* ── Right: sortable dividend table ── */}
         <div className="min-w-0 flex-1 overflow-auto rounded-xl border hairline">
-          <table className="w-full text-[12.5px] border-collapse">
+          <table className="w-full table-fixed text-[12.5px] border-collapse">
+            {/* Fixed layout with an explicit colgroup so the numeric columns get
+                equal, predictable widths instead of the auto-layout algorithm
+                handing most of the width to the Stock column and squeezing the
+                FY/Yield/Next cells unevenly. Stock takes the slack; every data
+                column is a fixed slice. */}
+            <colgroup>
+              <col style={{ width: "auto" }} />
+              <col style={{ width: "76px" }} />
+              {fyLabels.map((fy) => (
+                <col key={fy} style={{ width: "78px" }} />
+              ))}
+              <col style={{ width: "72px" }} />
+              <col style={{ width: "96px" }} />
+              <col style={{ width: "88px" }} />
+            </colgroup>
             <thead className="sticky top-0 z-10 bg-[var(--color-card,#fff)] border-b hairline text-[11px] uppercase tracking-wide muted-text">
               <tr>
                 <th className="px-3 py-2 text-left font-medium">Stock</th>
@@ -334,7 +349,7 @@ export default function DividendClient({
             <tbody>
               {stocks.map((s) => (
                 <tr key={s.symbol} className="border-b hairline hover:bg-[var(--color-paper)] transition-colors">
-                  <td className="px-3 py-2">
+                  <td className="px-3 py-2 align-top">
                     <Link
                       href={`/stock/${s.symbol}`}
                       target="_blank"
@@ -348,7 +363,7 @@ export default function DividendClient({
                       <span className="opacity-70"> · {s.sector} · {s.industry}</span>
                     </div>
                   </td>
-                  <td className="px-2 py-2 text-right tabular-nums">{s.ltp != null ? inr(s.ltp) : "—"}</td>
+                  <td className="px-2 py-2 text-right tabular-nums align-top">{s.ltp != null ? inr(s.ltp) : "—"}</td>
                   {s.dps.map((d, i) => {
                     const y = s.dpsYield[i];
                     return (
@@ -371,7 +386,7 @@ export default function DividendClient({
                       </td>
                     );
                   })}
-                  <td className="px-2 py-2 text-right tabular-nums font-medium">
+                  <td className="px-2 py-2 text-right tabular-nums font-medium align-top">
                     {s.divYield != null ? (
                       <span style={s.divYield >= 3 ? { color: GREEN, fontWeight: 600 } : undefined}>
                         {s.divYield.toFixed(2)}%
@@ -394,7 +409,7 @@ export default function DividendClient({
                       <span className="muted-text">—</span>
                     )}
                   </td>
-                  <td className="px-2 py-2 text-right tabular-nums font-semibold" style={{ color: scoreColor(s.composite_pct) }}>
+                  <td className="px-2 py-2 text-right tabular-nums font-semibold align-top" style={{ color: scoreColor(s.composite_pct) }}>
                     {s.composite_pct != null ? Math.round(s.composite_pct) : "—"}
                   </td>
                 </tr>

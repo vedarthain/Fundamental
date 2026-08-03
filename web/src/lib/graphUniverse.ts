@@ -16,6 +16,8 @@ export type GraphStock = {
   symbol: string;
   name: string | null;
   composite_pct: number | null;
+  quality_pct: number | null;
+  value_pct: number | null;
 };
 export type GraphIndustry = {
   id: string;
@@ -39,6 +41,8 @@ type Row = {
   symbol: string;
   name: string | null;
   composite_pct: number | null;
+  quality_pct: number | null;
+  value_pct: number | null;
 };
 
 export async function loadGraphUniverse(): Promise<GraphUniverse> {
@@ -63,7 +67,9 @@ export async function loadGraphUniverse(): Promise<GraphUniverse> {
              c.name  AS industry,
              p.symbol,
              u.company_name AS name,
-             p.composite_pct::float8 AS composite_pct
+             p.composite_pct::float8 AS composite_pct,
+             p.quality_pct::float8 AS quality_pct,
+             p.valuation_pct::float8 AS value_pct
         FROM app.cluster_stocks_panel_cache p
         JOIN app.cluster c        ON c.id = p.cluster_id
         JOIN app.meta_cluster mc  ON mc.id = c.meta_cluster_id
@@ -96,7 +102,13 @@ export async function loadGraphUniverse(): Promise<GraphUniverse> {
       industryMap.set(r.industry_id, industry);
       sector.industries.push(industry);
     }
-    industry.stocks.push({ symbol: r.symbol, name: r.name, composite_pct: r.composite_pct });
+    industry.stocks.push({
+      symbol: r.symbol,
+      name: r.name,
+      composite_pct: r.composite_pct,
+      quality_pct: r.quality_pct,
+      value_pct: r.value_pct,
+    });
     sector.count += 1;
   }
 

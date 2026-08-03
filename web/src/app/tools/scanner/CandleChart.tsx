@@ -61,6 +61,11 @@ function fmtDate(iso: string, longSpan: boolean): string {
   return longSpan ? `${mon} '${y.slice(2)}` : `${+d} ${mon}`;
 }
 
+// A drag-selection in pixel coords (relative to the chart container). Powers the
+// TradingView-style measure tool: press → drag → release marks a rectangle; the
+// price move, %, bar/day count and summed volume across it are read out.
+type Measure = { x0: number; y0: number; x1: number; y1: number };
+
 export function CandleChart({
   candles,
   interactive = false,
@@ -73,13 +78,15 @@ export function CandleChart({
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [hover, setHover] = useState<number | null>(null);
+  const [measure, setMeasure] = useState<Measure | null>(null);
+  const draggingRef = useRef(false);
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const measure = () => setSize({ w: el.clientWidth, h: el.clientHeight });
-    measure();
-    const ro = new ResizeObserver(measure);
+    const measureFn = () => setSize({ w: el.clientWidth, h: el.clientHeight });
+    measureFn();
+    const ro = new ResizeObserver(measureFn);
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
@@ -88,10 +95,20 @@ export function CandleChart({
     (c) => c.o != null && c.h != null && c.l != null && c.c != null,
   );
 
+  function localPos(e: React.MouseEvent<HTMLDivElement>) {
+    const rect = ref.current!.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  }
+
   // Map cursor-x → nearest candle slot using the same geometry renderChart uses.
   function onMove(e: React.MouseEvent<HTMLDivElement>) {
     const el = ref.current;
     if (!el || data.length < 2) return;
+    if (draggingRef.current) {
+      const p = localPos(e);
+      setMeasure((m) => (m ? { ...m, x1: p.x, y1: p.y } : null));
+      return;
+    }
     const rect = el.getBoundingClientRect();
     const plotW = size.w - mR - mL;
     if (plotW <= 0) return;
@@ -100,26 +117,45 @@ export function CandleChart({
     setHover(Math.max(0, Math.min(data.length - 1, idx)));
   }
 
+  function onDown(e: React.MouseEvent<HTMLDivElement>) {
+    if (!interactive || data.length < 2) return;
+    e.preventDefault();
+    const p = localPos(e);
+    draggingRef.current = true;
+    setHover(null);
+    setMeasure({ x0: p.x, y0: p.y, x1: p.x, y1: p.y });
+  }
+  function onUp() {
+    if (!draggingRef.current) return;
+    draggingRef.current = false;
+    // A click (no real drag) clears any existing measurement.
+    setMeasure((m) =>
+      m && Math.abs(m.x1 - m.x0) < 4 && Math.abs(m.y1 - m.y0) < 4 ? null : m,
+    );
+  }
+
   return (
     <div
       ref={ref}
-      className="h-full w-full"
+      className={`h-full w-full ${interactive ? "select-none" : ""}`}
       style={interactive ? { cursor: "crosshair" } : undefined}
       onMouseMove={interactive ? onMove : undefined}
-      onMouseLeave={interactive ? () => setHover(null) : undefined}
+      onMouseDown={interactive ? onDown : undefined}
+      onMouseUp={interactive ? onUp : undefined}
+      onMouseLeave={interactive ? () => { setHover(null); onUp(); } : undefined}
     >
       {data.length < 2 ? (
         <div className="flex h-full w-full items-center justify-center muted-text text-[11px] italic">
           no price history
         </div>
       ) : size.w > 20 && size.h > 20 ? (
-        renderChart(data, size.w, size.h, interactive ? hover : null, weekly)
+        renderChart(data, size.w, size.h, interactive && !measure ? hover : null, weekly, measure)
       ) : null}
     </div>
   );
 }
 
-function renderChart(data: Candle[], W: number, H: number, hoverIdx: number | null, weekly: boolean) {
+function renderChart(data: Candle[], W: number, H: number, hoverIdx: number | null, weekly: boolean, measure?: Measure | null) {
   const plotL = mL;
   const plotR = W - mR;
   const plotW = plotR - plotL;
@@ -249,6 +285,58 @@ function renderChart(data: Candle[], W: number, H: number, hoverIdx: number | nu
                 <text x={bx + boxW - 8} y={by + 30 + j * 12} textAnchor="end" fontSize={9.5} fontWeight={600} fill={color}>{v}</text>
               </g>
             ))}
+          </g>
+        );
+      })()}
+
+      {/* measure tool: drag-selected range → price move, %, bars/days, volume */}
+      {measure && (() => {
+        const { x0, y0, x1, y1 } = measure;
+        // Invert yP to read the price under the cursor at each end.
+        const priceAt = (y: number) => lo + (1 - (y - priceTop) / (priceBot - priceTop)) * (hi - lo);
+        const p0 = priceAt(y0);
+        const p1 = priceAt(y1);
+        const chg = p1 - p0;
+        const pct = p0 !== 0 ? (chg / p0) * 100 : 0;
+        const up = chg >= 0;
+        const clampIdx = (x: number) => Math.max(0, Math.min(n - 1, Math.floor((x - plotL) / slot)));
+        const iA = Math.min(clampIdx(x0), clampIdx(x1));
+        const iB = Math.max(clampIdx(x0), clampIdx(x1));
+        const bars = iB - iA + 1;
+        const days = Math.round(
+          Math.abs(new Date(data[iB].d).getTime() - new Date(data[iA].d).getTime()) / 86_400_000,
+        );
+        let vol = 0;
+        for (let i = iA; i <= iB; i++) vol += data[i].v || 0;
+
+        const rx = Math.min(x0, x1);
+        const ry = Math.min(y0, y1);
+        const rw = Math.abs(x1 - x0);
+        const rh = Math.abs(y1 - y0);
+        const col = up ? GREEN : RED;
+        const cxm = rx + rw / 2;
+
+        const boxW = 150;
+        const boxH = 50;
+        let bx = cxm - boxW / 2;
+        bx = Math.max(plotL + 2, Math.min(plotR - boxW - 2, bx));
+        let by = ry - boxH - 6;
+        if (by < priceTop + 2) by = Math.min(y0, y1) + rh + 6; // flip below if no room above
+        const sign = up ? "+" : "";
+        const l1 = `${sign}${chg.toFixed(2)} (${sign}${pct.toFixed(2)}%)`;
+        const l2 = `${bars} bars, ${days}d`;
+        const l3 = `Vol ${fmtVol(vol)}`;
+
+        return (
+          <g pointerEvents="none">
+            <rect x={rx} y={ry} width={rw} height={rh} fill={col} fillOpacity={0.12} stroke={col} strokeOpacity={0.5} strokeWidth={1} />
+            {/* directional guides: vertical = price move, horizontal = time */}
+            <line x1={cxm} y1={y0} x2={cxm} y2={y1} stroke={col} strokeWidth={1.2} opacity={0.8} />
+            <line x1={x0} y1={ry + rh / 2} x2={x1} y2={ry + rh / 2} stroke={col} strokeWidth={1} opacity={0.6} strokeDasharray="3 3" />
+            <rect x={bx} y={by} width={boxW} height={boxH} rx={5} fill={col} opacity={0.95} />
+            <text x={bx + boxW / 2} y={by + 16} textAnchor="middle" fontSize={11} fontWeight={700} fill="#fff">{l1}</text>
+            <text x={bx + boxW / 2} y={by + 30} textAnchor="middle" fontSize={9.5} fill="#fff" opacity={0.92}>{l2}</text>
+            <text x={bx + boxW / 2} y={by + 43} textAnchor="middle" fontSize={9.5} fill="#fff" opacity={0.92}>{l3}</text>
           </g>
         );
       })()}
