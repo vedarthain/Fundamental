@@ -25,6 +25,7 @@ export type DivStock = {
   industry: string;
   ltp: number | null;
   dps: (number | null)[]; // aligned to DividendUniverse.fyLabels, newest FY first
+  dpsYield: (number | null)[]; // %, per-FY: that year's DPS ÷ that year's price
   divYield: number | null; // %, trailing (newest non-null DPS ÷ LTP)
   composite_pct: number | null;
 };
@@ -133,10 +134,11 @@ export async function loadDividendUniverse(): Promise<DividendUniverse> {
     .sort((a, b) => Number(b.slice(2)) - Number(a.slice(2)))
     .slice(0, N_YEARS);
 
+  const ns = symbols.map((s) => `${s.toUpperCase()}.NS`);
+
   // 3) LTP: latest close per symbol from golden (separate pool → merge in JS).
   const ltpBySym = new Map<string, number>();
   try {
-    const ns = symbols.map((s) => `${s.toUpperCase()}.NS`);
     const prows = await golden<{ symbol: string; c: number | null }[]>`
       SELECT DISTINCT ON (symbol) symbol, close::float8 AS c
         FROM golden.price_history_1d
@@ -148,6 +150,39 @@ export async function loadDividendUniverse(): Promise<DividendUniverse> {
     for (const r of prows) if (r.c != null) ltpBySym.set(bare(r.symbol), r.c);
   } catch {
     // LTP optional — yield just goes null where price is missing.
+  }
+
+  // 3b) Per-FY price: the close nearest each fiscal-year end (~31 Mar) so we can
+  // show a TRUE point-in-time yield in every column — that year's DPS ÷ that
+  // year's own price, not today's. FY26 → target 2026-03-31; we take the last
+  // trade on or just before it (20-day back-window covers the Mar-end holidays).
+  const priceByFy = new Map<string, Map<string, number>>(); // symbol → (FY → price)
+  const fyTargets = fyLabels.map((fy) => `${2000 + Number(fy.slice(2))}-03-31`);
+  const targetToFy = new Map(fyTargets.map((t, i) => [t, fyLabels[i]]));
+  try {
+    const prows = await golden<{ symbol: string; target: string; c: number | null }[]>`
+      SELECT DISTINCT ON (p.symbol, t.d) p.symbol, t.d::text AS target, p.close::float8 AS c
+        FROM golden.price_history_1d p
+        JOIN unnest(${fyTargets}::date[]) AS t(d)
+          ON p.date <= t.d AND p.date > t.d - 20
+       WHERE p.interval = '1d'
+         AND p.symbol = ANY(${ns})
+       ORDER BY p.symbol, t.d, p.date DESC
+    `;
+    for (const r of prows) {
+      if (r.c == null) continue;
+      const fy = targetToFy.get(r.target);
+      if (!fy) continue;
+      const key = bare(r.symbol);
+      let m = priceByFy.get(key);
+      if (!m) {
+        m = new Map();
+        priceByFy.set(key, m);
+      }
+      m.set(fy, r.c);
+    }
+  } catch {
+    // Historical prices optional — per-year yields just go null where missing.
   }
 
   // 4) Nest into sectors[industries[stocks]], attaching dividend fields.
@@ -171,6 +206,12 @@ export async function loadDividendUniverse(): Promise<DividendUniverse> {
     const dpsMap = dpsBySym.get(r.symbol);
     const dps = fyLabels.map((fy) => dpsMap?.get(fy) ?? null);
     const ltp = ltpBySym.get(r.symbol) ?? null;
+    const priceMap = priceByFy.get(r.symbol);
+    const dpsYield = fyLabels.map((fy, i) => {
+      const d = dps[i];
+      const px = priceMap?.get(fy) ?? null;
+      return d != null && px != null && px > 0 ? (d / px) * 100 : null;
+    });
     const latestDps = dps.find((v) => v != null) ?? null;
     const divYield =
       latestDps != null && ltp != null && ltp > 0 ? (latestDps / ltp) * 100 : null;
@@ -182,6 +223,7 @@ export async function loadDividendUniverse(): Promise<DividendUniverse> {
       industry: iName,
       ltp,
       dps,
+      dpsYield,
       divYield,
       composite_pct: r.composite_pct,
     });

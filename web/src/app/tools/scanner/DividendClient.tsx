@@ -212,7 +212,7 @@ export default function DividendClient({
                 <span className="ink-text font-medium">{selLabel}</span>
               </>
             )}{" "}
-            · {stocks.length} names · dividend per share by fiscal year
+            · {stocks.length} names · DPS ₹ with that year&apos;s yield below
             {snapDate ? <> · panel {snapDate}</> : null}
           </p>
         </div>
@@ -343,11 +343,28 @@ export default function DividendClient({
                     </div>
                   </td>
                   <td className="px-2 py-2 text-right tabular-nums">{s.ltp != null ? inr(s.ltp) : "—"}</td>
-                  {s.dps.map((d, i) => (
-                    <td key={i} className="px-2 py-2 text-right tabular-nums">
-                      {d != null ? d.toFixed(2) : <span className="muted-text">—</span>}
-                    </td>
-                  ))}
+                  {s.dps.map((d, i) => {
+                    const y = s.dpsYield[i];
+                    return (
+                      <td key={i} className="px-2 py-2 text-right tabular-nums align-top">
+                        {d != null ? (
+                          <>
+                            <div>{d.toFixed(2)}</div>
+                            {y != null ? (
+                              <div
+                                className="text-[10px] leading-tight"
+                                style={y >= 3 ? { color: GREEN, fontWeight: 600 } : { color: "var(--color-muted)" }}
+                              >
+                                {y.toFixed(1)}%
+                              </div>
+                            ) : null}
+                          </>
+                        ) : (
+                          <span className="muted-text">—</span>
+                        )}
+                      </td>
+                    );
+                  })}
                   <td className="px-2 py-2 text-right tabular-nums font-medium">
                     {s.divYield != null ? (
                       <span style={s.divYield >= 3 ? { color: GREEN, fontWeight: 600 } : undefined}>
