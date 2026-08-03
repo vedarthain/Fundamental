@@ -14,9 +14,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { Star } from "lucide-react";
 import { displayCompanyName } from "@/lib/score";
 import type { GraphUniverse, GraphSector, GraphIndustry, GraphStock } from "@/lib/graphUniverse";
 import { WatchlistButton } from "@/components/WatchlistButton";
+import { StarButton } from "@/components/StarButton";
+import { useStarred } from "@/lib/starred";
 import { WindowPicker } from "./WindowPicker";
 import type { WindowOpt } from "./sparkWindows";
 import { CandleChart } from "./CandleChart";
@@ -102,14 +105,49 @@ export default function GraphClient({
     return out;
   }, [universe.sectors, n500, n500Only]);
 
+  // Starred stocks: a local-only favourites list (see @/lib/starred). Two jobs
+  // here — (1) float starred names to the TOP of every industry, above the
+  // alphabetical default; (2) power the "Favourites only" filter that hides all
+  // non-starred names. Distinct from the watchlist heart: purely a Graph-tab
+  // scan/ordering aid, no server, no auth.
+  const { symbols: starredSyms, hydrated: starHydrated } = useStarred();
+  const starSet = useMemo(() => new Set(starredSyms), [starredSyms]);
+  const [favOnly, setFavOnly] = useState(false);
+
+  // Apply favourites → the tree/grid actually rendered. In fav-only mode we drop
+  // non-starred stocks (and any industry/sector that empties out); otherwise we
+  // keep everything but stably reorder starred-first. Array.sort is stable, so
+  // ties preserve the incoming alphabetical order.
+  const viewSectors = useMemo<GraphSector[]>(() => {
+    // Nothing starred + not filtering → no work; return as-is.
+    if (starSet.size === 0 && !favOnly) return sectors;
+    const out: GraphSector[] = [];
+    for (const s of sectors) {
+      const inds: GraphIndustry[] = [];
+      let count = 0;
+      for (const ind of s.industries) {
+        let stocks = ind.stocks;
+        if (favOnly) stocks = stocks.filter((st) => starSet.has(st.symbol));
+        if (!stocks.length) continue;
+        const ordered = [...stocks].sort(
+          (a, b) => (starSet.has(b.symbol) ? 1 : 0) - (starSet.has(a.symbol) ? 1 : 0),
+        );
+        inds.push({ ...ind, stocks: ordered });
+        count += ordered.length;
+      }
+      if (inds.length) out.push({ ...s, count, industries: inds });
+    }
+    return out;
+  }, [sectors, starSet, favOnly]);
+
   // Flat lookup: industry_id → { industry, sectorName }.
   const industryById = useMemo(() => {
     const m = new Map<string, { ind: GraphIndustry; sector: string }>();
-    for (const s of sectors) for (const ind of s.industries) m.set(ind.id, { ind, sector: s.name });
+    for (const s of viewSectors) for (const ind of s.industries) m.set(ind.id, { ind, sector: s.name });
     return m;
-  }, [sectors]);
+  }, [viewSectors]);
 
-  const firstIndustry = sectors[0]?.industries[0]?.id ?? "";
+  const firstIndustry = viewSectors[0]?.industries[0]?.id ?? "";
   const [selectedInd, setSelectedInd] = useState<string>(firstIndustry);
   const [page, setPage] = useState(0);
   const [days, setDays] = useState<number>(180);
@@ -195,6 +233,32 @@ export default function GraphClient({
             </p>
           </div>
           <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => { setFavOnly((v) => !v); setPage(0); }}
+              disabled={!favOnly && starSet.size === 0}
+              className="inline-flex items-center gap-1.5 rounded-md border hairline px-2.5 py-1.5 text-[12px] font-medium transition-colors disabled:opacity-40 hover:bg-[var(--color-paper)]"
+              style={
+                favOnly
+                  ? {
+                      borderColor: "#e8a838",
+                      backgroundColor: "color-mix(in srgb, #e8a838 12%, transparent)",
+                      color: "#e8a838",
+                    }
+                  : undefined
+              }
+              aria-pressed={favOnly}
+              title={
+                starSet.size === 0
+                  ? "Star some stocks first"
+                  : favOnly
+                    ? "Showing favourites only — click for all"
+                    : "Show favourites only"
+              }
+            >
+              <Star size={13} fill={favOnly ? "#e8a838" : "none"} strokeWidth={2} />
+              <span>Favourites{starHydrated && starSet.size > 0 ? ` · ${starSet.size}` : ""}</span>
+            </button>
             <WindowPicker options={GRAPH_WINDOWS} days={days} onSelect={setDays} loading={candles.loading} />
             <div className="flex items-center gap-1">
               <button
@@ -254,7 +318,7 @@ export default function GraphClient({
               </svg>
             </button>
           </div>
-          {sectors.map((s) => {
+          {viewSectors.map((s) => {
             const open = openSectors.has(s.name);
             return (
               <div key={s.name} className="mb-0.5">
@@ -306,11 +370,12 @@ export default function GraphClient({
                                 const onPage =
                                   isSel && i >= safePage * PER_PAGE && i < safePage * PER_PAGE + PER_PAGE;
                                 return (
-                                  <li key={st.symbol}>
+                                  <li key={st.symbol} className="flex items-center gap-0.5">
+                                    <StarButton symbol={st.symbol} variant="icon" className="!w-6 !h-6 shrink-0" />
                                     <button
                                       type="button"
                                       onClick={() => jumpToStock(ind.id, i)}
-                                      className="w-full flex items-center gap-1.5 rounded px-1.5 py-1 text-left hover:bg-[var(--color-paper)] transition-colors"
+                                      className="flex-1 min-w-0 flex items-center gap-1.5 rounded px-1.5 py-1 text-left hover:bg-[var(--color-paper)] transition-colors"
                                       style={onPage ? { color: "var(--color-accent-700)", fontWeight: 600 } : undefined}
                                     >
                                       <span className="text-[11.5px] tabular-nums truncate">{st.symbol}</span>
@@ -356,6 +421,7 @@ export default function GraphClient({
             return (
               <div key={st.symbol} className="flex flex-col rounded-xl border hairline overflow-hidden">
                 <div className="flex items-center gap-2 border-b hairline px-3 py-2">
+                  <StarButton symbol={st.symbol} variant="icon" className="-ml-1 shrink-0" />
                   <WatchlistButton symbol={st.symbol} variant="icon" className="-ml-1 shrink-0" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
@@ -450,6 +516,7 @@ export default function GraphClient({
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center gap-3 border-b hairline px-4 py-3">
+                <StarButton symbol={focus.symbol} variant="icon" className="shrink-0" />
                 <WatchlistButton symbol={focus.symbol} variant="icon" className="shrink-0" />
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
