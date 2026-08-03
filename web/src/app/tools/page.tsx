@@ -73,24 +73,12 @@ const TOOLS: ToolCard[] = [
     title: "Scanner",
     tagline: "Where's the move — spikes, trends, floors, fallen quality & rotation",
     body:
-      "Every daily scanner under one roof. Igniting today: stocks up ≥6% on ≥3× normal volume that broke a fresh 60-day high, cross-checked against news so pumps stand out. Trend Leaders: durable uptrends caught at the start (fresh golden cross near the 52-week high). At Support: names sitting on a multi-year tested floor. Fallen Leaders: quality businesses temporarily beaten down. Plus sector and peer-group rotation maps.",
+      "Every daily scanner under one roof. Igniting today: stocks up ≥6% on ≥3× normal volume that broke a fresh 60-day high, cross-checked against news so pumps stand out. Trend Leaders: durable uptrends caught at the start (fresh golden cross near the 52-week high). At Support: names sitting on a multi-year tested floor. Fallen Leaders: quality businesses temporarily beaten down. Dividends: income by sector — per-share payout over four fiscal years, trailing yield & composite. Plus sector and peer-group rotation maps.",
     useFor: [
       "Catch breakouts early, on the ignition day",
       "Spot durable trends at initiation, not mid-run",
       "Find beaten-down quality and see where money is rotating",
-    ],
-    accent: "var(--color-accent-600)",
-  },
-  {
-    href: "/tools/scanner?tab=dividends",
-    title: "Dividend Scanner",
-    tagline: "Income by sector — per-share payout, trailing yield & quality side by side",
-    body:
-      "Browse the universe by sector and peer industry to compare dividends. Each name shows its last four fiscal years of dividend per share, a trailing dividend yield (latest payout ÷ current price), the live price, and the fundamental composite — so a fat yield backed by a weak business stands apart from durable income. Sort any column: yield, price, per-year payout, or composite. (Annual, per-share — the only dividend granularity in the data; no ex-dates or quarterly splits.)",
-    useFor: [
-      "Find high, sustainable dividend yields, not yield traps",
-      "Compare payout trajectories across a peer group",
-      "Screen income names by fundamental quality (composite)",
+      "Hunt sustainable dividend yields, not yield traps",
     ],
     accent: "var(--color-accent-600)",
   },
@@ -144,12 +132,7 @@ export default function ToolsLanding() {
           <li>
             <span className="ink-text font-medium">Want today&apos;s breakouts, a trend at its start, or beaten-down quality?</span> Use{" "}
             <Link href="/tools/scanner" className="underline">Scanner</Link>{" "}
-            — tabs for stocks igniting on volume now (with catalyst + score), fresh golden crosses, stocks at multi-year support, Fallen Leaders (corrected quality), and sector/peer rotation.
-          </li>
-          <li>
-            <span className="ink-text font-medium">Hunting for income?</span> Use{" "}
-            <Link href="/tools/scanner?tab=dividends" className="underline">Dividend Scanner</Link>{" "}
-            — per-share payout over four fiscal years, trailing yield, and composite, browsable by sector and peer industry.
+            — tabs for stocks igniting on volume now (with catalyst + score), fresh golden crosses, stocks at multi-year support, Fallen Leaders (corrected quality), dividends by sector, and sector/peer rotation.
           </li>
         </ul>
       </section>
