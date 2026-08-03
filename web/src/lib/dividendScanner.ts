@@ -96,17 +96,29 @@ export async function loadDividendUniverse(): Promise<DividendUniverse> {
 
   const symbols = Array.from(new Set(rows.map((r) => r.symbol)));
 
-  // 2) Per-symbol fiscal-year DPS from the annual dividend total ÷ shares.
+  // 2) Per-symbol fiscal-year DPS from the annual dividend total ÷ shares, plus
+  // that FY's own close (annual_close_price, the Screener per-FY price) so we can
+  // show a point-in-time yield per column. Reading the FY close from the SAME
+  // fundamentals_annual row we already fetch avoids a separate, very expensive
+  // range-join against golden.price_history_1d (was ~2.3s across the universe).
   const dpsBySym = new Map<string, Map<string, number>>(); // symbol → (FY → DPS)
+  const priceByFy = new Map<string, Map<string, number>>(); // symbol → (FY → FY-end close)
   const fySet = new Set<string>();
   try {
     const drows = await sql<
-      { symbol: string; period_end: string; amt: number | null; shares: number | null }[]
+      {
+        symbol: string;
+        period_end: string;
+        amt: number | null;
+        shares: number | null;
+        close: number | null;
+      }[]
     >`
       SELECT symbol,
              period_end::text AS period_end,
              dividend_amount::float8   AS amt,
-             no_of_equity_shares::float8 AS shares
+             no_of_equity_shares::float8 AS shares,
+             annual_close_price::float8  AS close
         FROM app.fundamentals_annual
        WHERE symbol = ANY(${symbols})
          AND dividend_amount IS NOT NULL
@@ -124,6 +136,14 @@ export async function loadDividendUniverse(): Promise<DividendUniverse> {
         dpsBySym.set(r.symbol, m);
       }
       if (!m.has(fy)) m.set(fy, dps); // newest row per FY wins (rows are desc)
+      if (r.close != null && r.close > 0) {
+        let pm = priceByFy.get(r.symbol);
+        if (!pm) {
+          pm = new Map();
+          priceByFy.set(r.symbol, pm);
+        }
+        if (!pm.has(fy)) pm.set(fy, r.close);
+      }
     }
   } catch {
     // Dividends optional — fall through with empty maps (all cells show "—").
@@ -150,39 +170,6 @@ export async function loadDividendUniverse(): Promise<DividendUniverse> {
     for (const r of prows) if (r.c != null) ltpBySym.set(bare(r.symbol), r.c);
   } catch {
     // LTP optional — yield just goes null where price is missing.
-  }
-
-  // 3b) Per-FY price: the close nearest each fiscal-year end (~31 Mar) so we can
-  // show a TRUE point-in-time yield in every column — that year's DPS ÷ that
-  // year's own price, not today's. FY26 → target 2026-03-31; we take the last
-  // trade on or just before it (20-day back-window covers the Mar-end holidays).
-  const priceByFy = new Map<string, Map<string, number>>(); // symbol → (FY → price)
-  const fyTargets = fyLabels.map((fy) => `${2000 + Number(fy.slice(2))}-03-31`);
-  const targetToFy = new Map(fyTargets.map((t, i) => [t, fyLabels[i]]));
-  try {
-    const prows = await golden<{ symbol: string; target: string; c: number | null }[]>`
-      SELECT DISTINCT ON (p.symbol, t.d) p.symbol, t.d::text AS target, p.close::float8 AS c
-        FROM golden.price_history_1d p
-        JOIN unnest(${fyTargets}::date[]) AS t(d)
-          ON p.date <= t.d AND p.date > t.d - 20
-       WHERE p.interval = '1d'
-         AND p.symbol = ANY(${ns})
-       ORDER BY p.symbol, t.d, p.date DESC
-    `;
-    for (const r of prows) {
-      if (r.c == null) continue;
-      const fy = targetToFy.get(r.target);
-      if (!fy) continue;
-      const key = bare(r.symbol);
-      let m = priceByFy.get(key);
-      if (!m) {
-        m = new Map();
-        priceByFy.set(key, m);
-      }
-      m.set(fy, r.c);
-    }
-  } catch {
-    // Historical prices optional — per-year yields just go null where missing.
   }
 
   // 4) Nest into sectors[industries[stocks]], attaching dividend fields.
