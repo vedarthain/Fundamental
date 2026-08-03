@@ -12,6 +12,7 @@
  */
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import type { MomentumSignal } from "@/lib/momentum";
 import type { TrendLeaderSignal } from "@/lib/trendLeaders";
 import type { SupportFloorSignal } from "@/lib/supportFloor";
@@ -113,9 +114,18 @@ export default function ScannerTabs({
   ];
 
   // All-stocks is a 10-column browse table; give it the full width so it uses
-  // the side gutters instead of scrolling. The other tabs are narrow tables and
-  // read better kept in the tighter reading column.
-  const wide = tab === "all" || tab === "graph";
+  // the side gutters instead of scrolling. The per-stock scanners now carry a
+  // sector→industry tree on the left, so they need the wide layout too — the
+  // tree eats ~230px and the table would otherwise be squeezed. Only the
+  // rotation tabs (Sectors / Peers), which have no tree, stay in the tighter
+  // reading column.
+  const wide =
+    tab === "all" ||
+    tab === "graph" ||
+    tab === "igniting" ||
+    tab === "trend" ||
+    tab === "floor" ||
+    tab === "fallen";
 
   return (
     <div className={`theme-indigo mx-auto px-6 py-10 ${wide ? "max-w-[1560px]" : "max-w-[1180px]"}`}>
@@ -198,6 +208,24 @@ export default function ScannerTabs({
               );
             })}
           </nav>
+
+          {/* Dividend Scanner is a separate full page (its own sector tree +
+              dividend table), not a tab here — link out to it so it's
+              discoverable from the scanner rail where the name implies. */}
+          <div className="mt-2 pt-2 border-t hairline">
+            <Link
+              href="/tools/dividends"
+              className="group w-full flex items-center justify-between gap-2 rounded-lg px-3 py-2.5 border border-transparent hover:bg-[var(--color-paper)] transition-colors"
+            >
+              <div className="min-w-0">
+                <span className="text-[13.5px] font-semibold">Dividend Scanner</span>
+                <div className="text-[11.5px] muted-text mt-0.5">Income by sector · yield</div>
+              </div>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" className="shrink-0 muted-text group-hover:text-[var(--color-ink)]" aria-hidden>
+                <path d="M7 17 17 7M9 7h8v8" />
+              </svg>
+            </Link>
+          </div>
 
           <div className="mt-5 pt-4 border-t hairline px-1">
             <div className="text-[11px] uppercase tracking-wide muted-text mb-2">Universe</div>
