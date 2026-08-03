@@ -11,7 +11,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { displayCompanyName } from "@/lib/score";
-import type { DividendUniverse, DivStock } from "@/lib/dividendScanner";
+import type { DividendUniverse, DivSector, DivStock } from "@/lib/dividendScanner";
 
 const GREEN = "var(--color-delta-up, #0a0)";
 const RED = "var(--color-delta-down, #b00)";
@@ -79,10 +79,38 @@ function SortHead({
   );
 }
 
-export default function DividendClient({ universe }: { universe: DividendUniverse }) {
-  const { sectors, fyLabels, snapDate } = universe;
+export default function DividendClient({
+  universe,
+  nifty500,
+}: {
+  universe: DividendUniverse;
+  nifty500: string[];
+}) {
+  const { fyLabels, snapDate } = universe;
 
+  const [n500Only, setN500Only] = useState(false);
   const [treeOpen, setTreeOpen] = useState(true);
+
+  // NIFTY 500 filter: narrow every industry's stocks to index members, recompute
+  // counts, and drop industries/sectors that empty out (mirrors the Graph tab).
+  const n500 = useMemo(() => new Set(nifty500), [nifty500]);
+  const sectors = useMemo<DivSector[]>(() => {
+    if (!n500Only) return universe.sectors;
+    const out: DivSector[] = [];
+    for (const s of universe.sectors) {
+      const inds = [];
+      let count = 0;
+      for (const ind of s.industries) {
+        const stocks = ind.stocks.filter((st) => n500.has(st.symbol));
+        if (stocks.length) {
+          inds.push({ ...ind, stocks });
+          count += stocks.length;
+        }
+      }
+      if (inds.length) out.push({ ...s, count, industries: inds });
+    }
+    return out;
+  }, [universe.sectors, n500, n500Only]);
   const [openSectors, setOpenSectors] = useState<Set<string>>(
     () => new Set(sectors[0] ? [sectors[0].name] : []),
   );
@@ -103,12 +131,20 @@ export default function DividendClient({ universe }: { universe: DividendUnivers
     return m;
   }, [sectors]);
 
+  // Toggling N500 can drop the selected sector/industry from the tree; fall back
+  // to the first surviving sector so the table never goes blank.
+  const activeSel: Selection = useMemo(() => {
+    if (selected.type === "industry" && industryById.has(selected.key)) return selected;
+    if (selected.type === "sector" && sectorByName.has(selected.key)) return selected;
+    return sectors[0] ? { type: "sector", key: sectors[0].name } : selected;
+  }, [selected, industryById, sectorByName, sectors]);
+
   // Stocks in the current selection (a whole sector, or one industry).
   const baseStocks: DivStock[] = useMemo(() => {
-    if (selected.type === "industry") return industryById.get(selected.key)?.stocks ?? [];
-    const sec = sectorByName.get(selected.key);
+    if (activeSel.type === "industry") return industryById.get(activeSel.key)?.stocks ?? [];
+    const sec = sectorByName.get(activeSel.key);
     return sec ? sec.industries.flatMap((i) => i.stocks) : [];
-  }, [selected, industryById, sectorByName]);
+  }, [activeSel, industryById, sectorByName]);
 
   function sortVal(s: DivStock, key: SortKey): number | null {
     if (key === "composite") return s.composite_pct;
@@ -147,13 +183,13 @@ export default function DividendClient({ universe }: { universe: DividendUnivers
   }
 
   const selLabel =
-    selected.type === "industry"
-      ? industryById.get(selected.key)?.name ?? "—"
-      : selected.key;
+    activeSel.type === "industry"
+      ? industryById.get(activeSel.key)?.name ?? "—"
+      : activeSel.key;
   const selSector =
-    selected.type === "industry" ? industryById.get(selected.key)?.sector ?? "" : selected.key;
+    activeSel.type === "industry" ? industryById.get(activeSel.key)?.sector ?? "" : activeSel.key;
 
-  if (sectors.length === 0) {
+  if (universe.sectors.length === 0) {
     return <div className="muted-text text-[13px] italic">No dividend data available.</div>;
   }
 
@@ -164,7 +200,7 @@ export default function DividendClient({ universe }: { universe: DividendUnivers
           <h1 className="font-display text-[20px] tracking-tight leading-tight">Dividend Scanner</h1>
           <p className="text-[12px] muted-text">
             <span className="ink-text font-medium">{selSector}</span>
-            {selected.type === "industry" && (
+            {activeSel.type === "industry" && (
               <>
                 {" · "}
                 <span className="ink-text font-medium">{selLabel}</span>
@@ -173,6 +209,29 @@ export default function DividendClient({ universe }: { universe: DividendUnivers
             · {stocks.length} names · dividend per share by fiscal year
             {snapDate ? <> · panel {snapDate}</> : null}
           </p>
+        </div>
+        <div className="inline-flex items-center rounded-lg border hairline p-0.5 text-[12px]">
+          {[
+            { on: false, label: "All stocks" },
+            { on: true, label: "NIFTY 500" },
+          ].map((opt) => {
+            const active = n500Only === opt.on;
+            return (
+              <button
+                key={opt.label}
+                type="button"
+                onClick={() => setN500Only(opt.on)}
+                className="rounded-md px-2.5 py-1 font-medium transition-colors"
+                style={
+                  active
+                    ? { background: "var(--color-accent-600)", color: "#fff" }
+                    : { color: "var(--color-muted)" }
+                }
+              >
+                {opt.label}
+              </button>
+            );
+          })}
         </div>
       </header>
 
@@ -210,7 +269,7 @@ export default function DividendClient({ universe }: { universe: DividendUnivers
             </div>
             {sectors.map((s) => {
               const open = openSectors.has(s.name);
-              const secSel = selected.type === "sector" && selected.key === s.name;
+              const secSel = activeSel.type === "sector" && activeSel.key === s.name;
               return (
                 <div key={s.name} className="mb-0.5">
                   <div
@@ -242,7 +301,7 @@ export default function DividendClient({ universe }: { universe: DividendUnivers
                   {open && (
                     <div className="ml-2 border-l hairline pl-1.5">
                       {s.industries.map((ind) => {
-                        const isSel = selected.type === "industry" && selected.key === ind.id;
+                        const isSel = activeSel.type === "industry" && activeSel.key === ind.id;
                         return (
                           <button
                             key={ind.id}
