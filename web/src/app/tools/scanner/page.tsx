@@ -9,9 +9,35 @@ import { loadDividendUniverse } from "@/lib/dividendScanner";
 import { loadSparklines } from "@/lib/sparklines";
 import { IGNITING_DEFAULT_DAYS, TREND_DEFAULT_DAYS, FLOOR_DEFAULT_DAYS } from "./sparkWindows";
 import { sql } from "@/lib/db";
+import { unstable_cache } from "next/cache";
 import ScannerTabs, { type Tab } from "./ScannerTabs";
 
 export const dynamic = "force-dynamic";
+
+// The Scanner is a post-close daily tool built from app.cluster_stocks_panel_cache
+// and the per-scanner snapshot tables — none of it changes within a session. Yet
+// the page is force-dynamic (each tab keeps its own history search-param), so
+// WITHOUT caching every visit re-ran all eight tab loaders + three sparkline
+// batches against Neon: ~10s per click. Wrap each loader in the Data Cache
+// instead — keyed by its date arg, revalidated hourly, and tagged "panel-cache"
+// so the daily cron purge (see /api/revalidate) busts it the moment new scores
+// land. The page stays dynamic; only the DB round-trips are memoised.
+const CACHE_TAGS = ["scanner", "panel-cache"];
+const HOUR = 3600;
+
+const cachedMomentum = unstable_cache(loadLatestMomentum, ["scanner:momentum:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
+const cachedTrend = unstable_cache(loadLatestTrendLeaders, ["scanner:trend:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
+const cachedFloor = unstable_cache(loadLatestSupportFloor, ["scanner:floor:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
+const cachedRotation = unstable_cache(loadRotation, ["scanner:rotation:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
+const cachedAllStocks = unstable_cache(loadAllStocks, ["scanner:allStocks:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
+const cachedGraphUniverse = unstable_cache(loadGraphUniverse, ["scanner:graph:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
+const cachedDividendUniverse = unstable_cache(loadDividendUniverse, ["scanner:dividends:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
+const cachedSparklines = unstable_cache(loadSparklines, ["scanner:sparklines:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
+const cachedN500 = unstable_cache(
+  async () => sql<{ symbol: string }[]>`SELECT symbol FROM app.index_constituent WHERE index_code = 'NIFTY500'`,
+  ["scanner:n500:v1"],
+  { revalidate: HOUR, tags: CACHE_TAGS },
+);
 
 // Defined server-side, NOT imported from the "use client" ScannerTabs module:
 // value exports from a client module become client-reference proxies in a
@@ -43,14 +69,14 @@ export default async function MomentumPage({
   const tabParam = one(sp.tab);
   const initialTab: Tab = SCANNER_TABS.includes(tabParam as Tab) ? (tabParam as Tab) : "igniting";
   const [momentum, trend, floor, rotation, allStocks, graphUniverse, dividendUniverse, n500] = await Promise.all([
-    loadLatestMomentum(one(sp.mDate)),
-    loadLatestTrendLeaders(one(sp.tDate)),
-    loadLatestSupportFloor(one(sp.fDate)),
-    loadRotation(one(sp.rDate)),
-    loadAllStocks(),
-    loadGraphUniverse(),
-    loadDividendUniverse(),
-    sql<{ symbol: string }[]>`SELECT symbol FROM app.index_constituent WHERE index_code = 'NIFTY500'`,
+    cachedMomentum(one(sp.mDate)),
+    cachedTrend(one(sp.tDate)),
+    cachedFloor(one(sp.fDate)),
+    cachedRotation(one(sp.rDate)),
+    cachedAllStocks(),
+    cachedGraphUniverse(),
+    cachedDividendUniverse(),
+    cachedN500(),
   ]);
 
   // Per-row mini price charts — one batched golden query per tab, each on that
@@ -58,9 +84,9 @@ export default async function MomentumPage({
   // client toggle also imports). This renders first paint; the WindowPicker in
   // each client refetches /api/scanner/sparklines when the user changes window.
   const [momentumSpark, trendSpark, floorSpark] = await Promise.all([
-    loadSparklines(momentum.signals.map((s) => s.symbol), IGNITING_DEFAULT_DAYS),
-    loadSparklines(trend.signals.map((s) => s.symbol), TREND_DEFAULT_DAYS),
-    loadSparklines(floor.signals.map((s) => s.symbol), FLOOR_DEFAULT_DAYS),
+    cachedSparklines(momentum.signals.map((s) => s.symbol), IGNITING_DEFAULT_DAYS),
+    cachedSparklines(trend.signals.map((s) => s.symbol), TREND_DEFAULT_DAYS),
+    cachedSparklines(floor.signals.map((s) => s.symbol), FLOOR_DEFAULT_DAYS),
   ]);
 
   return (
