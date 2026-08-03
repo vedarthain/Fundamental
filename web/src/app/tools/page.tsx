@@ -82,7 +82,7 @@ const TOOLS: ToolCard[] = [
     accent: "var(--color-accent-600)",
   },
   {
-    href: "/tools/dividends",
+    href: "/tools/scanner?tab=dividends",
     title: "Dividend Scanner",
     tagline: "Income by sector — per-share payout, trailing yield & quality side by side",
     body:
@@ -148,7 +148,7 @@ export default function ToolsLanding() {
           </li>
           <li>
             <span className="ink-text font-medium">Hunting for income?</span> Use{" "}
-            <Link href="/tools/dividends" className="underline">Dividend Scanner</Link>{" "}
+            <Link href="/tools/scanner?tab=dividends" className="underline">Dividend Scanner</Link>{" "}
             — per-share payout over four fiscal years, trailing yield, and composite, browsable by sector and peer industry.
           </li>
         </ul>

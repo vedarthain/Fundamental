@@ -12,16 +12,17 @@
  */
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
 import type { MomentumSignal } from "@/lib/momentum";
 import type { TrendLeaderSignal } from "@/lib/trendLeaders";
 import type { SupportFloorSignal } from "@/lib/supportFloor";
 import type { RotationData } from "@/lib/rotation";
 import type { AllStockRow } from "@/lib/allStocks";
 import type { GraphUniverse } from "@/lib/graphUniverse";
+import type { DividendUniverse } from "@/lib/dividendScanner";
 import type { SparkPoint } from "@/components/Sparkline";
 import MomentumClient from "./MomentumClient";
 import GraphClient from "./GraphClient";
+import DividendClient from "./DividendClient";
 import TrendLeadersClient from "./TrendLeadersClient";
 import SupportFloorClient from "./SupportFloorClient";
 import RotationClient from "./RotationClient";
@@ -29,7 +30,7 @@ import FallenLeadersClient from "./FallenLeadersClient";
 import AllStocksClient from "./AllStocksClient";
 import ScannerDatePicker from "./ScannerDatePicker";
 
-export type Tab = "igniting" | "trend" | "floor" | "fallen" | "sectors" | "peers" | "all" | "graph";
+export type Tab = "igniting" | "trend" | "floor" | "fallen" | "sectors" | "peers" | "all" | "graph" | "dividends";
 
 export default function ScannerTabs({
   momentumSnapDate,
@@ -48,6 +49,7 @@ export default function ScannerTabs({
   allStocksSnapDate,
   allStocks,
   graphUniverse,
+  dividendUniverse,
   nifty500,
   initialTab = "igniting",
 }: {
@@ -67,6 +69,7 @@ export default function ScannerTabs({
   allStocksSnapDate: string | null;
   allStocks: AllStockRow[];
   graphUniverse: GraphUniverse;
+  dividendUniverse: DividendUniverse;
   nifty500: string[];
   initialTab?: Tab;
 }) {
@@ -110,6 +113,7 @@ export default function ScannerTabs({
     { id: "peers", label: "Peer groups", sub: "Cluster rotation", count: peers.length },
     { id: "sectors", label: "Sectors", sub: "Sector rotation", count: sectors.length },
     { id: "graph", label: "Graph", sub: "Candles by industry", count: null },
+    { id: "dividends", label: "Dividend Scanner", sub: "Income by sector · yield", count: null },
     { id: "all", label: "All stocks", sub: "Full universe · sortable", count: allCount },
   ];
 
@@ -122,6 +126,7 @@ export default function ScannerTabs({
   const wide =
     tab === "all" ||
     tab === "graph" ||
+    tab === "dividends" ||
     tab === "igniting" ||
     tab === "trend" ||
     tab === "floor" ||
@@ -166,9 +171,12 @@ export default function ScannerTabs({
           <nav className="flex flex-col gap-1" role="tablist" aria-orientation="vertical">
             {tabs.map((t) => {
               const active = tab === t.id;
+              // "All stocks" is the full-universe browse surface, not a caught
+              // signal — set it off below a partition from the scanners above.
+              const partitionBefore = t.id === "all";
               return (
+                <div key={t.id} className={partitionBefore ? "mt-2 pt-2 border-t hairline" : undefined}>
                 <button
-                  key={t.id}
                   role="tab"
                   aria-selected={active}
                   onClick={() => selectTab(t.id)}
@@ -205,27 +213,10 @@ export default function ScannerTabs({
                   </div>
                   <div className="text-[11.5px] muted-text mt-0.5">{t.sub}</div>
                 </button>
+                </div>
               );
             })}
           </nav>
-
-          {/* Dividend Scanner is a separate full page (its own sector tree +
-              dividend table), not a tab here — link out to it so it's
-              discoverable from the scanner rail where the name implies. */}
-          <div className="mt-2 pt-2 border-t hairline">
-            <Link
-              href="/tools/dividends"
-              className="group w-full flex items-center justify-between gap-2 rounded-lg px-3 py-2.5 border border-transparent hover:bg-[var(--color-paper)] transition-colors"
-            >
-              <div className="min-w-0">
-                <span className="text-[13.5px] font-semibold">Dividend Scanner</span>
-                <div className="text-[11.5px] muted-text mt-0.5">Income by sector · yield</div>
-              </div>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" className="shrink-0 muted-text group-hover:text-[var(--color-ink)]" aria-hidden>
-                <path d="M7 17 17 7M9 7h8v8" />
-              </svg>
-            </Link>
-          </div>
 
           <div className="mt-5 pt-4 border-t hairline px-1">
             <div className="text-[11px] uppercase tracking-wide muted-text mb-2">Universe</div>
@@ -298,6 +289,9 @@ export default function ScannerTabs({
           )}
           {tab === "graph" && (
             <GraphClient universe={graphUniverse} nifty500={nifty500} n500Only={n500Only} />
+          )}
+          {tab === "dividends" && (
+            <DividendClient universe={dividendUniverse} nifty500={nifty500} n500Only={n500Only} />
           )}
           {tab === "peers" && (
             <RotationClient

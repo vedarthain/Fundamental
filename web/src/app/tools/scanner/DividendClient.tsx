@@ -1,11 +1,16 @@
 "use client";
 
 /**
- * DividendClient — the Dividend Scanner UI. Left: a collapsible sector →
- * industry tree (click a sector to see all its names, or an industry to narrow).
- * Right: a sortable table of LTP, last-4-FY dividend-per-share, trailing yield,
- * and composite. The whole universe ships with the page, so filtering/sorting is
+ * DividendClient — the Dividend Scanner tab. Cloned from the Graph tab's format:
+ * a header on top, then a collapsible sector → industry tree on the left and the
+ * content pane on the right filling the viewport. Here the right pane is a
+ * sortable table of LTP, last-4-FY dividend-per-share, trailing yield, and
+ * composite. The whole universe ships with the page, so filtering/sorting is
  * instant and client-side — no refetching.
+ *
+ * The NIFTY-500 scope comes from the scanner shell's shared toggle (n500Only
+ * prop), the same way GraphClient consumes it — so there's one universe switch
+ * for the whole Scanner surface, not a per-tab one.
  */
 
 import { useMemo, useState } from "react";
@@ -82,13 +87,14 @@ function SortHead({
 export default function DividendClient({
   universe,
   nifty500,
+  n500Only,
 }: {
   universe: DividendUniverse;
   nifty500: string[];
+  n500Only: boolean;
 }) {
   const { fyLabels, snapDate } = universe;
 
-  const [n500Only, setN500Only] = useState(false);
   const [treeOpen, setTreeOpen] = useState(true);
 
   // NIFTY 500 filter: narrow every industry's stocks to index members, recompute
@@ -209,29 +215,6 @@ export default function DividendClient({
             · {stocks.length} names · dividend per share by fiscal year
             {snapDate ? <> · panel {snapDate}</> : null}
           </p>
-        </div>
-        <div className="inline-flex items-center rounded-lg border hairline p-0.5 text-[12px]">
-          {[
-            { on: false, label: "All stocks" },
-            { on: true, label: "NIFTY 500" },
-          ].map((opt) => {
-            const active = n500Only === opt.on;
-            return (
-              <button
-                key={opt.label}
-                type="button"
-                onClick={() => setN500Only(opt.on)}
-                className="rounded-md px-2.5 py-1 font-medium transition-colors"
-                style={
-                  active
-                    ? { background: "var(--color-accent-600)", color: "#fff" }
-                    : { color: "var(--color-muted)" }
-                }
-              >
-                {opt.label}
-              </button>
-            );
-          })}
         </div>
       </header>
 
