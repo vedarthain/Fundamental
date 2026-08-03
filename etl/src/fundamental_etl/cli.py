@@ -24,6 +24,7 @@ from .screener.scraper import (
 from .screener.parser import parse_export, merge_parsed, ParseError
 from .screener.persist import (
     save_raw_export, save_parsed, update_meta_success, update_meta_failure,
+    save_dividend_only_meta, save_dividend_only_annual,
 )
 from .scoring.metrics import compute_metrics_for_symbol, persist_metrics, load_nifty_returns
 from .scoring.scorecards import load_db_overrides
@@ -55,6 +56,82 @@ def fetch(
             update_meta_success(conn, symbol, info.export_id, len(data))
             conn.commit()
         log.info("persisted", symbol=symbol, annual_rows=ann, quarterly_rows=qtr)
+
+
+@app.command("fetch-dividend-only")
+def fetch_dividend_only(
+    only: Optional[str] = typer.Option(
+        None, help="Comma-separated symbols to limit to (default: the whole curated list)"),
+    throttle: float = typer.Option(2.0, help="Seconds to pause between symbols"),
+    save: bool = typer.Option(True, help="Persist to fundamental_app DB"),
+):
+    """Scrape dividends for the curated InvIT/REIT register (dividends only).
+
+    These names live OUTSIDE app.universe (so they never enter scoring). For
+    each: scrape the same Screener export the equity path uses, write its
+    dividend history to app.dividend_only_annual, and upsert its display
+    metadata + current-price snapshot to app.dividend_only. Neither table
+    FK-references app.universe, and golden is never touched — these symbols
+    aren't in the price feed, so LTP comes from the export.
+
+    Units gotcha: Screener leaves 'No. of Equity Shares' blank for some trusts
+    (observed for PGINVIT), which would null out DPS. We backfill units from
+    market_cap / current_price so per-unit distribution still computes.
+    """
+    from .dividend_only import DIVIDEND_ONLY, SECTOR
+
+    configure_logging()
+    wanted = None
+    if only:
+        wanted = {s.strip().upper() for s in only.split(",") if s.strip()}
+    names = [n for n in DIVIDEND_ONLY if wanted is None or n.symbol in wanted]
+    log.info("fetch_dividend_only_start", n=len(names))
+
+    ok = fail = 0
+    client = make_client()
+    try:
+        for i, n in enumerate(names, 1):
+            try:
+                info, data = fetch_company_export(n.symbol, client=client)
+                parsed = parse_export(data)
+
+                # Units fallback: fill missing no_of_equity_shares from
+                # market_cap (₹cr → ₹) / current_price so DPS = dividend_amount
+                # ÷ units still resolves for trusts that omit the shares row.
+                units = None
+                if parsed.market_cap and parsed.current_price and parsed.current_price > 0:
+                    units = parsed.market_cap * 1e7 / parsed.current_price
+                if units:
+                    for fields in parsed.annual.values():
+                        if fields.get("no_of_equity_shares") is None:
+                            fields["no_of_equity_shares"] = units
+
+                log.info("dividend_only_parsed", symbol=n.symbol, variant=info.variant,
+                         annual_periods=len(parsed.annual), units=units,
+                         current_price=parsed.current_price)
+                if save:
+                    from datetime import datetime as _dt, timezone as _tz
+                    fetched_at = _dt.now(_tz.utc)
+                    with app_conn() as conn:
+                        # Meta row first — dividend_only_annual FK-references it.
+                        save_dividend_only_meta(
+                            conn, n.symbol,
+                            parsed.company_name or n.company_name,
+                            SECTOR, n.industry,
+                            parsed.current_price, fetched_at,
+                        )
+                        rows = save_dividend_only_annual(conn, n.symbol, parsed, fetched_at)
+                        conn.commit()
+                    log.info("dividend_only_persisted", symbol=n.symbol, annual_rows=rows)
+                ok += 1
+            except (AuthFailed, NotFound, ScrapeError, ParseError) as e:
+                fail += 1
+                log.warning("dividend_only_failed", symbol=n.symbol, error=str(e))
+            if i < len(names):
+                time.sleep(throttle)
+    finally:
+        client.close()
+    log.info("fetch_dividend_only_done", ok=ok, failed=fail, total=len(names))
 
 
 @app.command("fetch-nse")

@@ -231,5 +231,114 @@ export async function loadDividendUniverse(): Promise<DividendUniverse> {
   }
 
   const sectors = Array.from(sectorMap.values()).sort((a, b) => b.count - a.count);
+
+  // 5) Dividend-only names (InvITs/REITs) — a hand-curated register kept OUTSIDE
+  // the scored universe (app.dividend_only + app.dividend_only_annual, no golden
+  // dependency). They carry a distribution history and their own price snapshot
+  // but NO composite (they aren't scored). We align them to the same fyLabels
+  // and append their sector(s) at the end so they read as a distinct asset class.
+  try {
+    const drows = await sql<
+      {
+        symbol: string;
+        company_name: string | null;
+        sector: string;
+        industry: string;
+        current_price: number | null;
+        period_end: string | null;
+        dividend_amount: number | null;
+        no_of_equity_shares: number | null;
+        annual_close_price: number | null;
+      }[]
+    >`
+      SELECT d.symbol, d.company_name, d.sector, d.industry,
+             d.current_price::float8       AS current_price,
+             a.period_end::text            AS period_end,
+             a.dividend_amount::float8     AS dividend_amount,
+             a.no_of_equity_shares::float8 AS no_of_equity_shares,
+             a.annual_close_price::float8  AS annual_close_price
+        FROM app.dividend_only d
+        LEFT JOIN app.dividend_only_annual a ON a.symbol = d.symbol
+       ORDER BY d.sector ASC, d.industry ASC, d.symbol ASC
+    `;
+
+    // symbol → { meta, (FY → {dpu, price}) }
+    type DivAgg = {
+      name: string | null;
+      sector: string;
+      industry: string;
+      ltp: number | null;
+      byFy: Map<string, { dpu: number | null; price: number | null }>;
+    };
+    const bySym = new Map<string, DivAgg>();
+    for (const r of drows) {
+      let agg = bySym.get(r.symbol);
+      if (!agg) {
+        agg = {
+          name: r.company_name,
+          sector: (r.sector || "—").trim() || "—",
+          industry: (r.industry || "—").trim() || "—",
+          ltp: r.current_price,
+          byFy: new Map(),
+        };
+        bySym.set(r.symbol, agg);
+      }
+      if (r.period_end) {
+        const fy = fyLabel(r.period_end);
+        const units = r.no_of_equity_shares;
+        const dpu =
+          r.dividend_amount != null && units != null && units > 0
+            ? (r.dividend_amount * 1e7) / units
+            : null;
+        agg.byFy.set(fy, { dpu, price: r.annual_close_price });
+      }
+    }
+
+    // Nest into the same sector → industry → stock shape, composite = null.
+    const doSectorMap = new Map<string, DivSector>();
+    const doIndustryMap = new Map<string, DivIndustry>();
+    for (const [symbol, agg] of bySym) {
+      let sector = doSectorMap.get(agg.sector);
+      if (!sector) {
+        sector = { name: agg.sector, count: 0, industries: [] };
+        doSectorMap.set(agg.sector, sector);
+      }
+      const indKey = `${agg.sector}|${agg.industry}`;
+      let industry = doIndustryMap.get(indKey);
+      if (!industry) {
+        industry = { id: `divonly:${indKey}`, name: agg.industry, stocks: [] };
+        doIndustryMap.set(indKey, industry);
+        sector.industries.push(industry);
+      }
+
+      const dps = fyLabels.map((fy) => agg.byFy.get(fy)?.dpu ?? null);
+      const dpsYield = fyLabels.map((fy, i) => {
+        const d = dps[i];
+        const px = agg.byFy.get(fy)?.price ?? null;
+        return d != null && px != null && px > 0 ? (d / px) * 100 : null;
+      });
+      const latestDps = dps.find((v) => v != null) ?? null;
+      const divYield =
+        latestDps != null && agg.ltp != null && agg.ltp > 0 ? (latestDps / agg.ltp) * 100 : null;
+
+      industry.stocks.push({
+        symbol,
+        name: agg.name,
+        sector: agg.sector,
+        industry: agg.industry,
+        ltp: agg.ltp,
+        dps,
+        dpsYield,
+        divYield,
+        composite_pct: null,
+      });
+      sector.count += 1;
+    }
+    // Append after the scored equity sectors (they read as a separate class).
+    sectors.push(...Array.from(doSectorMap.values()).sort((a, b) => b.count - a.count));
+  } catch {
+    // Dividend-only register is optional — absent table just means no InvITs.
+  }
+
   return { snapDate, fyLabels, sectors };
 }

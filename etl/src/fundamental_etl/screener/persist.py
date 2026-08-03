@@ -77,6 +77,69 @@ def save_parsed(conn: psycopg.Connection, symbol: str, parsed: ParsedExport, fet
     return annual_n, quarter_n
 
 
+DIVIDEND_ONLY_ANNUAL_COLUMNS = [
+    "dividend_amount", "no_of_equity_shares", "annual_close_price",
+]
+
+
+def save_dividend_only_annual(
+    conn: psycopg.Connection, symbol: str, parsed: ParsedExport, fetched_at: datetime,
+) -> int:
+    """Write per-FY dividend rows to app.dividend_only_annual (FK-free of
+    app.universe). Only the three columns the Dividend Scanner needs are
+    persisted; the rest of the parse is discarded. Returns rows written."""
+    n = 0
+    with conn.cursor() as cur:
+        for period_end, fields in parsed.annual.items():
+            cols = ["symbol", "period_end"] + DIVIDEND_ONLY_ANNUAL_COLUMNS + ["source_fetched_at"]
+            vals = [symbol, period_end] + [fields.get(c) for c in DIVIDEND_ONLY_ANNUAL_COLUMNS] + [fetched_at]
+            placeholders = ",".join(["%s"] * len(cols))
+            updates = ",".join(f"{c}=EXCLUDED.{c}" for c in DIVIDEND_ONLY_ANNUAL_COLUMNS + ["source_fetched_at"])
+            cur.execute(
+                f"""
+                INSERT INTO app.dividend_only_annual ({','.join(cols)})
+                VALUES ({placeholders})
+                ON CONFLICT (symbol, period_end) DO UPDATE SET {updates}
+                """,
+                vals,
+            )
+            n += 1
+    return n
+
+
+def save_dividend_only_meta(
+    conn: psycopg.Connection,
+    symbol: str,
+    company_name: str | None,
+    sector: str,
+    industry: str,
+    current_price: float | None,
+    fetched_at: datetime,
+) -> None:
+    """Upsert the display-metadata + LTP-snapshot row for a dividend-only
+    (InvIT/REIT) name. Dividend history itself is written to
+    app.fundamentals_annual via save_parsed; this row only carries what the
+    Dividend Scanner needs that the export doesn't put in fundamentals_annual:
+    a coarse sector/industry for tree grouping and a current price (golden has
+    no bars for these symbols, so LTP comes from the export)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO app.dividend_only
+                (symbol, company_name, sector, industry, current_price, price_fetched_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (symbol) DO UPDATE SET
+                company_name = EXCLUDED.company_name,
+                sector = EXCLUDED.sector,
+                industry = EXCLUDED.industry,
+                current_price = EXCLUDED.current_price,
+                price_fetched_at = EXCLUDED.price_fetched_at,
+                updated_at = EXCLUDED.updated_at
+            """,
+            (symbol, company_name, sector, industry, current_price, fetched_at, fetched_at),
+        )
+
+
 def update_meta_success(conn: psycopg.Connection, symbol: str, export_id: str, size: int) -> None:
     with conn.cursor() as cur:
         cur.execute(

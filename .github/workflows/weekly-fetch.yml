@@ -99,6 +99,19 @@ jobs:
           python -m fundamental_etl.cli fetch-many --max-runtime-min 180
           ${{ github.event.inputs.force_full_fetch == 'true' && '--skip-recent-hours 0' || '' }}
 
+      # Dividend-only register (InvITs/REITs) — a tiny curated list scraped the
+      # same way, but written to app.dividend_only[_annual] OUTSIDE the scored
+      # universe. Kept separate from fetch-many so a Screener hiccup on these
+      # never eats into the main fetch's runtime budget.
+      - name: Fetch dividend-only names (InvITs/REITs)
+        env:
+          APP_DB_URL:           ${{ secrets.NEON_APP_URL }}
+          GOLDEN_DB_URL:        ${{ secrets.NEON_GOLDEN_URL }}
+          SCREENER_SESSIONID:   ${{ secrets.SCREENER_SESSIONID }}
+          SCREENER_CSRFTOKEN:   ${{ secrets.SCREENER_CSRFTOKEN }}
+          PYTHONUNBUFFERED:     "1"
+        run: python -m fundamental_etl.cli fetch-dividend-only
+
       # Keep only the latest raw blob per symbol — bounds Neon storage.
       - name: Prune old raw blobs
         env:
