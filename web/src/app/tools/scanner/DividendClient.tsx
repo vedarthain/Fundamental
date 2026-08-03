@@ -22,11 +22,15 @@ const GREEN = "var(--color-delta-up, #0a0)";
 const RED = "var(--color-delta-down, #b00)";
 
 type Selection = { type: "sector" | "industry"; key: string };
-type SortKey = "composite" | "ltp" | "yield" | `fy${number}`;
+type SortKey = "composite" | "ltp" | "yield" | "next" | `fy${number}`;
 type SortDir = "asc" | "desc";
 
 function inr(n: number): string {
   return "₹" + n.toLocaleString("en-IN", { maximumFractionDigits: 2 });
+}
+/** "12 Sep" — compact ex-date / board-meeting date. */
+function fmtEventDate(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 }
 function scoreColor(p: number | null): string {
   if (p == null) return "var(--color-muted)";
@@ -156,6 +160,7 @@ export default function DividendClient({
     if (key === "composite") return s.composite_pct;
     if (key === "ltp") return s.ltp;
     if (key === "yield") return s.divYield;
+    if (key === "next") return s.nextEvent ? Date.parse(s.nextEvent.date) : null;
     const idx = Number(key.slice(2)); // "fy0" → 0
     return s.dps[idx] ?? null;
   }
@@ -212,7 +217,7 @@ export default function DividendClient({
                 <span className="ink-text font-medium">{selLabel}</span>
               </>
             )}{" "}
-            · {stocks.length} names · DPS ₹ with that year&apos;s yield below
+            · {stocks.length} names · DPS ₹ with that year&apos;s yield below · Next = upcoming ex-date / board meeting
             {snapDate ? <> · panel {snapDate}</> : null}
           </p>
         </div>
@@ -322,6 +327,7 @@ export default function DividendClient({
                   <SortHead key={fy} label={fy} k={`fy${i}` as SortKey} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                 ))}
                 <SortHead label="Yield" k="yield" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                <SortHead label="Next" k="next" className="text-left" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                 <SortHead label="Composite" k="composite" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
               </tr>
             </thead>
@@ -374,6 +380,20 @@ export default function DividendClient({
                       <span className="muted-text">—</span>
                     )}
                   </td>
+                  <td className="px-2 py-2 text-left align-top whitespace-nowrap">
+                    {s.nextEvent ? (
+                      <>
+                        <div className="tabular-nums font-medium">{fmtEventDate(s.nextEvent.date)}</div>
+                        <div className="text-[10px] leading-tight muted-text">
+                          {s.nextEvent.type === "dividend"
+                            ? `Ex-div${s.nextEvent.amount != null ? ` ₹${s.nextEvent.amount.toFixed(2)}` : ""}`
+                            : s.nextEvent.purpose}
+                        </div>
+                      </>
+                    ) : (
+                      <span className="muted-text">—</span>
+                    )}
+                  </td>
                   <td className="px-2 py-2 text-right tabular-nums font-semibold" style={{ color: scoreColor(s.composite_pct) }}>
                     {s.composite_pct != null ? Math.round(s.composite_pct) : "—"}
                   </td>
@@ -381,7 +401,7 @@ export default function DividendClient({
               ))}
               {stocks.length === 0 && (
                 <tr>
-                  <td colSpan={4 + fyLabels.length} className="px-3 py-6 text-center muted-text italic">
+                  <td colSpan={5 + fyLabels.length} className="px-3 py-6 text-center muted-text italic">
                     No stocks in this selection.
                   </td>
                 </tr>

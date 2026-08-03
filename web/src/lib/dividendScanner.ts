@@ -26,8 +26,16 @@ export type DivStock = {
   ltp: number | null;
   dps: (number | null)[]; // aligned to DividendUniverse.fyLabels, newest FY first
   dpsYield: (number | null)[]; // %, per-FY: that year's DPS ÷ that year's price
-  divYield: number | null; // %, trailing (newest non-null DPS ÷ LTP)
+  divYield: number | null; // %, current FY only (dps[0] ÷ LTP); null if unpaid this FY
   composite_pct: number | null;
+  nextEvent: NextEvent | null; // soonest upcoming ex-date / board meeting, if any
+};
+/** The next dated corporate action from app.corporate_action (BSE + indianapi). */
+export type NextEvent = {
+  date: string; // ex-date (dividends) or meeting date (board meetings), ISO
+  type: "dividend" | "board_meeting";
+  purpose: string; // e.g. "Final Dividend", "Quarterly Results"
+  amount: number | null; // ₹/share for dividends, else null
 };
 export type DivIndustry = { id: string; name: string; stocks: DivStock[] };
 export type DivSector = { name: string; count: number; industries: DivIndustry[] };
@@ -172,6 +180,42 @@ export async function loadDividendUniverse(): Promise<DividendUniverse> {
     // LTP optional — yield just goes null where price is missing.
   }
 
+  // 3c) The soonest UPCOMING dated event per symbol, from app.corporate_action
+  // (populated by the BSE fetch twice-weekly + indianapi monthly). This is the
+  // only forward-looking signal the app has: a declared dividend's ex-date, or a
+  // scheduled board meeting to consider results/dividend. fundamentals_annual is
+  // purely historical, so we merge this in by bare symbol. Restricted to the two
+  // relevant types; splits/bonus/rights are out of scope for a dividend view.
+  const nextBySym = new Map<string, NextEvent>();
+  try {
+    const erows = await sql<
+      { symbol: string; date: string; action_type: string; purpose: string | null; amount: number | null }[]
+    >`
+      SELECT DISTINCT ON (symbol)
+             symbol,
+             ex_date::text            AS date,
+             action_type,
+             purpose,
+             amount::float8           AS amount
+        FROM app.corporate_action
+       WHERE symbol = ANY(${symbols})
+         AND ex_date >= CURRENT_DATE
+         AND action_type IN ('dividend', 'board_meeting')
+       ORDER BY symbol, ex_date ASC
+    `;
+    for (const r of erows) {
+      const type = r.action_type === "dividend" ? "dividend" : "board_meeting";
+      nextBySym.set(r.symbol, {
+        date: r.date,
+        type,
+        purpose: (r.purpose || (type === "dividend" ? "Dividend" : "Board meeting")).trim(),
+        amount: r.amount,
+      });
+    }
+  } catch {
+    // corporate_action optional — no upcoming column where the table's absent.
+  }
+
   // 4) Nest into sectors[industries[stocks]], attaching dividend fields.
   const sectorMap = new Map<string, DivSector>();
   const industryMap = new Map<string, DivIndustry>();
@@ -199,9 +243,13 @@ export async function loadDividendUniverse(): Promise<DividendUniverse> {
       const px = priceMap?.get(fy) ?? null;
       return d != null && px != null && px > 0 ? (d / px) * 100 : null;
     });
-    const latestDps = dps.find((v) => v != null) ?? null;
+    // Yield = the CURRENT fiscal year's DPS ÷ today's LTP. Only when the newest
+    // FY column (dps[0]) actually paid — we deliberately do NOT fall back to an
+    // older year, which would pair a stale payout with a live price and read as
+    // current when it isn't. Blank until this year's dividend is on the books.
+    const currentDps = dps[0];
     const divYield =
-      latestDps != null && ltp != null && ltp > 0 ? (latestDps / ltp) * 100 : null;
+      currentDps != null && ltp != null && ltp > 0 ? (currentDps / ltp) * 100 : null;
 
     industry.stocks.push({
       symbol: r.symbol,
@@ -213,6 +261,7 @@ export async function loadDividendUniverse(): Promise<DividendUniverse> {
       dpsYield,
       divYield,
       composite_pct: r.composite_pct,
+      nextEvent: nextBySym.get(r.symbol) ?? null,
     });
     sector.count += 1;
   }
@@ -304,9 +353,9 @@ export async function loadDividendUniverse(): Promise<DividendUniverse> {
         const px = agg.byFy.get(fy)?.price ?? null;
         return d != null && px != null && px > 0 ? (d / px) * 100 : null;
       });
-      const latestDps = dps.find((v) => v != null) ?? null;
+      const currentDps = dps[0]; // current-FY only; no stale fallback (see above)
       const divYield =
-        latestDps != null && agg.ltp != null && agg.ltp > 0 ? (latestDps / agg.ltp) * 100 : null;
+        currentDps != null && agg.ltp != null && agg.ltp > 0 ? (currentDps / agg.ltp) * 100 : null;
 
       industry.stocks.push({
         symbol,
@@ -318,6 +367,7 @@ export async function loadDividendUniverse(): Promise<DividendUniverse> {
         dpsYield,
         divYield,
         composite_pct: null,
+        nextEvent: null, // InvIT/REIT register isn't in app.corporate_action
       });
       sector.count += 1;
     }
