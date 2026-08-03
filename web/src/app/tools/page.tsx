@@ -81,6 +81,19 @@ const TOOLS: ToolCard[] = [
     ],
     accent: "var(--color-accent-600)",
   },
+  {
+    href: "/tools/dividends",
+    title: "Dividend Scanner",
+    tagline: "Income by sector — per-share payout, trailing yield & quality side by side",
+    body:
+      "Browse the universe by sector and peer industry to compare dividends. Each name shows its last four fiscal years of dividend per share, a trailing dividend yield (latest payout ÷ current price), the live price, and the fundamental composite — so a fat yield backed by a weak business stands apart from durable income. Sort any column: yield, price, per-year payout, or composite. (Annual, per-share — the only dividend granularity in the data; no ex-dates or quarterly splits.)",
+    useFor: [
+      "Find high, sustainable dividend yields, not yield traps",
+      "Compare payout trajectories across a peer group",
+      "Screen income names by fundamental quality (composite)",
+    ],
+    accent: "var(--color-accent-600)",
+  },
 ];
 
 export default function ToolsLanding() {
@@ -132,6 +145,11 @@ export default function ToolsLanding() {
             <span className="ink-text font-medium">Want today&apos;s breakouts, a trend at its start, or beaten-down quality?</span> Use{" "}
             <Link href="/tools/scanner" className="underline">Scanner</Link>{" "}
             — tabs for stocks igniting on volume now (with catalyst + score), fresh golden crosses, stocks at multi-year support, Fallen Leaders (corrected quality), and sector/peer rotation.
+          </li>
+          <li>
+            <span className="ink-text font-medium">Hunting for income?</span> Use{" "}
+            <Link href="/tools/dividends" className="underline">Dividend Scanner</Link>{" "}
+            — per-share payout over four fiscal years, trailing yield, and composite, browsable by sector and peer industry.
           </li>
         </ul>
       </section>
