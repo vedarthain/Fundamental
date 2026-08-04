@@ -283,6 +283,10 @@ export default function GraphClient({
 
   const rangeStart = curPage ? curPage.chunkStart : 0;
   const rangeEnd = curPage ? curPage.chunkStart + pageStocks.length - 1 : 0;
+  // Page position WITHIN the current industry (header), distinct from the
+  // sector-wide page position shown in the pager on the right.
+  const indPageCount = curPage ? Math.ceil(curPage.indTotal / PER_PAGE) : 0;
+  const indPageIdx = curPage ? Math.floor((curPage.chunkStart - 1) / PER_PAGE) + 1 : 0;
 
   return (
     <div className="flex flex-col">
@@ -294,7 +298,7 @@ export default function GraphClient({
                 <>
                   <span className="ink-text font-medium">{activeSectorName}</span> ·{" "}
                   <span className="ink-text font-medium">{curPage.indName}</span> ·{" "}
-                  {curPage.indTotal} names · showing {rangeStart}–{rangeEnd}
+                  {curPage.indTotal} names · showing {rangeStart}–{rangeEnd} : {indPageIdx}/{indPageCount}
                 </>
               ) : (
                 <>Pick an industry from the tree{snapDate ? <> · panel {snapDate}</> : null}</>
