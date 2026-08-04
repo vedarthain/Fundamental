@@ -30,6 +30,16 @@ const GREEN = "var(--color-delta-up, #0a0)";
 const RED = "var(--color-delta-down, #b00)";
 const PER_PAGE = 6;
 
+// One grid page: a chunk of a single industry within the active sector. Paging
+// walks these in order so the grid rolls from one industry into the next.
+type SecPage = {
+  indId: string;
+  indName: string;
+  stocks: GraphStock[];
+  chunkStart: number; // 1-based index of the first stock (within the industry)
+  indTotal: number;   // total stocks in this industry
+};
+
 const GRAPH_WINDOWS: WindowOpt[] = [
   { label: "1W", days: 7 },
   { label: "1M", days: 30 },
@@ -184,14 +194,43 @@ export default function GraphClient({
   );
   const [openIndustries, setOpenIndustries] = useState<Set<string>>(() => new Set());
 
-  // Toggling the N500 filter can drop the selected industry from the tree; fall
-  // back to the first still-present industry so the grid never goes blank.
-  const activeInd = industryById.has(selectedInd) ? selectedInd : firstIndustry;
-  const selected = industryById.get(activeInd);
-  const stocks: GraphStock[] = selected?.ind.stocks ?? [];
-  const pageCount = Math.max(1, Math.ceil(stocks.length / PER_PAGE));
-  const safePage = Math.min(page, pageCount - 1);
-  const pageStocks = stocks.slice(safePage * PER_PAGE, safePage * PER_PAGE + PER_PAGE);
+  // Sector-wide paging. The grid pages across the WHOLE sector, not just the
+  // selected industry: each page is a slice of a SINGLE industry (never
+  // straddling two), so when one industry runs out, Next rolls into the next
+  // industry in the sector. Paging only stops at the sector's first/last page —
+  // no hard stop per industry. `selectedInd` anchors WHICH sector we're in; the
+  // "current industry" shown is derived from whichever page you're on.
+  const activeAnchor = industryById.has(selectedInd) ? selectedInd : firstIndustry;
+  const activeSectorName = industryById.get(activeAnchor)?.sector ?? viewSectors[0]?.name ?? "";
+  const activeSector = useMemo(
+    () => viewSectors.find((s) => s.name === activeSectorName),
+    [viewSectors, activeSectorName],
+  );
+
+  const sectorPages = useMemo<SecPage[]>(() => {
+    const out: SecPage[] = [];
+    if (!activeSector) return out;
+    for (const ind of activeSector.industries) {
+      const total = ind.stocks.length;
+      if (total === 0) continue;
+      for (let i = 0; i < total; i += PER_PAGE) {
+        out.push({
+          indId: ind.id,
+          indName: ind.name,
+          stocks: ind.stocks.slice(i, i + PER_PAGE),
+          chunkStart: i + 1,
+          indTotal: total,
+        });
+      }
+    }
+    return out;
+  }, [activeSector]);
+
+  const pageCount = Math.max(1, sectorPages.length);
+  const safePage = Math.min(Math.max(0, page), pageCount - 1);
+  const curPage = sectorPages[safePage];
+  const activeInd = curPage?.indId ?? activeAnchor;
+  const pageStocks: GraphStock[] = curPage?.stocks ?? [];
   const pageSymbols = pageStocks.map((s) => s.symbol);
 
   const candles = useGraphCandles(pageSymbols, days);
@@ -199,9 +238,25 @@ export default function GraphClient({
   // sum — label it "/wk" everywhere so the number's unit is unambiguous.
   const weekly = days > WEEKLY_THRESHOLD_DAYS;
 
+  // Absolute page index of an industry's first chunk within its own sector — so
+  // clicking an industry (or a stock) in the tree lands exactly on it, then
+  // rolls forward through the rest of the sector from there.
+  function pageOffsetOfIndustry(sectorName: string, indId: string): number {
+    const sec = viewSectors.find((s) => s.name === sectorName);
+    if (!sec) return 0;
+    let idx = 0;
+    for (const ind of sec.industries) {
+      if (ind.stocks.length === 0) continue;
+      if (ind.id === indId) return idx;
+      idx += Math.ceil(ind.stocks.length / PER_PAGE);
+    }
+    return 0;
+  }
+
   function selectIndustry(id: string) {
+    const sector = industryById.get(id)?.sector ?? "";
     setSelectedInd(id);
-    setPage(0);
+    setPage(pageOffsetOfIndustry(sector, id));
     setOpenIndustries((prev) => new Set(prev).add(id));
   }
   function toggleSector(name: string) {
@@ -221,12 +276,13 @@ export default function GraphClient({
     });
   }
   function jumpToStock(id: string, idx: number) {
+    const sector = industryById.get(id)?.sector ?? "";
     setSelectedInd(id);
-    setPage(Math.floor(idx / PER_PAGE));
+    setPage(pageOffsetOfIndustry(sector, id) + Math.floor(idx / PER_PAGE));
   }
 
-  const rangeStart = stocks.length === 0 ? 0 : safePage * PER_PAGE + 1;
-  const rangeEnd = Math.min(stocks.length, safePage * PER_PAGE + PER_PAGE);
+  const rangeStart = curPage ? curPage.chunkStart : 0;
+  const rangeEnd = curPage ? curPage.chunkStart + pageStocks.length - 1 : 0;
 
   return (
     <div className="flex flex-col">
@@ -234,12 +290,11 @@ export default function GraphClient({
           <div className="min-w-0">
             <h1 className="font-display text-[20px] tracking-tight leading-tight">Charts by industry</h1>
             <p className="text-[12px] muted-text">
-              {selected ? (
+              {curPage ? (
                 <>
-                  <span className="ink-text font-medium">{selected.sector}</span> ·{" "}
-                  <span className="ink-text font-medium">{selected.ind.name}</span> ·{" "}
-                  {stocks.length} names
-                  {stocks.length > 0 && <> · showing {rangeStart}–{rangeEnd}</>}
+                  <span className="ink-text font-medium">{activeSectorName}</span> ·{" "}
+                  <span className="ink-text font-medium">{curPage.indName}</span> ·{" "}
+                  {curPage.indTotal} names · showing {rangeStart}–{rangeEnd}
                 </>
               ) : (
                 <>Pick an industry from the tree{snapDate ? <> · panel {snapDate}</> : null}</>
@@ -382,7 +437,9 @@ export default function GraphClient({
                             <ul className="ml-6 mb-1">
                               {ind.stocks.map((st, i) => {
                                 const onPage =
-                                  isSel && i >= safePage * PER_PAGE && i < safePage * PER_PAGE + PER_PAGE;
+                                  isSel && curPage != null &&
+                                  i >= curPage.chunkStart - 1 &&
+                                  i < curPage.chunkStart - 1 + pageStocks.length;
                                 return (
                                   <li key={st.symbol} className="flex items-center gap-0.5">
                                     <StarButton symbol={st.symbol} variant="icon" className="!w-6 !h-6 shrink-0" />
