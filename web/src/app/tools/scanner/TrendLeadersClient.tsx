@@ -128,7 +128,7 @@ export default function TrendLeadersClient({
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
           {dateLabel && (
             <p className="text-[12.5px] muted-text">
-              <span className="ink-text font-medium">{dateLabel}</span> · {signals.length} fresh crosses
+              <span className="ink-text font-medium">{dateLabel}</span> · {signals.length} fresh crosses · golden cross within the last 25 days
             </p>
           )}
           <div className="flex items-center gap-3">
@@ -244,14 +244,14 @@ export default function TrendLeadersClient({
         <p className="text-[13.5px] leading-[1.55]">
           Durable uptrends caught <strong>at the start</strong>: a stock whose{" "}
           <strong>50-day average just crossed above a rising 200-day average</strong>{" "}
-          (a fresh golden cross) within the last ~30 sessions, trading near its 52-week
+          (a fresh golden cross) within the last 25 days, trading near its 52-week
           high. This is the FEDERALBNK-at-₹65 signal — the <em>initiation</em>, not the
           crowded &ldquo;already trending&rdquo; stack. The fundamental score sits alongside so a
           fresh cross on a weak business stands out.
         </p>
         <div className="text-[11px] uppercase tracking-wide muted-text mt-4 mb-2">How to read this</div>
         <ul className="space-y-1.5 text-[13.5px] leading-[1.55]">
-          <li><span className="ink-text font-medium">Cross</span> — the day the 50-day average crossed above the 200-day (a golden cross). Fresher is earlier in the trend; the whole list is within ~30 sessions.</li>
+          <li><span className="ink-text font-medium">Cross</span> — the day the 50-day average crossed above the 200-day (a golden cross). Fresher is earlier in the trend; the whole list is within the last 25 days.</li>
           <li><span className="ink-text font-medium">Since</span> — how far price has already run since the cross. This is the entry-quality gauge: <span style={{ color: GREEN }}>≤8% (&ldquo;early&rdquo;)</span> is the sweet spot — you&apos;re near the start; <span style={{ color: "var(--color-score-weak, #b7791f)" }}>≥25% (&ldquo;extended&rdquo;)</span> means the cross is fresh but the first leg is largely gone, so you&apos;re late.</li>
           <li><span className="ink-text font-medium">vs High</span> — distance below the 52-week high. Near-zero confirms the trend is intact, not fading.</li>
           <li><span className="ink-text font-medium">Score</span> — fundamental Industry Score percentile. A fresh cross on a <span style={{ color: GREEN }}>high score</span> is a quality trend starting; on a <span style={{ color: RED }}>low score</span> it&apos;s price-only — verify before acting.</li>
