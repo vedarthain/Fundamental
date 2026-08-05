@@ -473,13 +473,7 @@ export default function GraphClient({
 
         {/* ── Right: 3×2 candlestick grid (6 at a time) ── */}
         <div className="min-w-0 flex-1 grid grid-cols-3 grid-rows-2 gap-3">
-          {Array.from({ length: PER_PAGE }).map((_, i) => {
-            const st = pageStocks[i];
-            if (!st) {
-              return (
-                <div key={`empty-${i}`} className="rounded-xl border hairline bg-[var(--color-paper)]/40" />
-              );
-            }
+          {pageStocks.map((st) => {
             const series = candles.data[st.symbol];
             const first = series?.[0];
             const last = series?.[series.length - 1];
