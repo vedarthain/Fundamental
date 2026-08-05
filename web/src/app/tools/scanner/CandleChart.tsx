@@ -18,6 +18,8 @@ const RED = "var(--color-delta-down, #b00)";
 const AXIS = "var(--color-muted, #7a8894)";
 const GRID = "var(--color-border-default, #e5e5e5)";
 const CARD = "var(--color-card, #fff)";
+const ACCENT = "var(--color-accent-600, #2563eb)";
+const EMPTY_DRAWINGS: Drawing[] = [];
 
 // Shared plot margins — used both by renderChart and the hover hit-test so a
 // mouse-x maps to the same slot the candles were drawn in.
@@ -66,25 +68,106 @@ function fmtDate(iso: string, longSpan: boolean): string {
 // point — the price move, %, bar/day count and summed volume are read out.
 type Measure = { x0: number; y0: number; x1: number; y1: number };
 
+// Persistable drawings. Anchored to PRICE / DATE (never pixels) so a line drawn
+// on one timeframe re-projects correctly on any other timeframe or chart size.
+//  - hline: a single price level (rendered on every chart, incl. the small grid)
+//  - trend: two (date, price) anchors → a sloped segment (expanded chart only)
+export type Drawing =
+  | { kind: "hline"; price: number }
+  | { kind: "trend"; d0: string; p0: number; d1: string; p1: number };
+
+// Which drawing/measure tool is armed on an interactive chart.
+export type ChartTool = "none" | "measure" | "hline" | "trend";
+
+// Shared price/x geometry — the single source of truth used by both renderChart
+// (to draw) and the click handler (to invert a pixel back to a price/date).
+function computeGeom(data: Candle[], W: number, H: number) {
+  const plotL = mL;
+  const plotR = W - mR;
+  const plotW = plotR - plotL;
+  const priceTop = mT;
+  const priceBot = mT + (H - mT - mB) * 0.7;
+  const volTop = priceBot + 12;
+  const volBot = H - mB;
+  const n = data.length;
+  let pMin = Math.min(...data.map((c) => c.l));
+  let pMax = Math.max(...data.map((c) => c.h));
+  if (pMin === pMax) {
+    pMin -= 1;
+    pMax += 1;
+  }
+  const pad = (pMax - pMin) * 0.04;
+  const lo = pMin - pad;
+  const hi = pMax + pad;
+  const vMax = Math.max(1, ...data.map((c) => c.v || 0));
+  const slot = plotW / n;
+  const bodyW = Math.max(1, slot * 0.62);
+  const cx = (i: number) => plotL + slot * (i + 0.5);
+  const yP = (v: number) => priceTop + (1 - (v - lo) / (hi - lo)) * (priceBot - priceTop);
+  const yV = (v: number) => volBot - (v / vMax) * (volBot - volTop);
+  const priceAt = (y: number) => lo + (1 - (y - priceTop) / (priceBot - priceTop)) * (hi - lo);
+  const idxAt = (x: number) => Math.max(0, Math.min(n - 1, Math.floor((x - plotL) / slot)));
+  return { plotL, plotR, plotW, priceTop, priceBot, volTop, volBot, n, pMin, pMax, lo, hi, vMax, slot, bodyW, cx, yP, yV, priceAt, idxAt };
+}
+
+// Map a stored anchor date back to a bar index in the current window. Exact match
+// preferred; otherwise the nearest bar by calendar date (so a trend line drawn on
+// a 3Y window still lands sensibly if the window changes).
+function idxForDate(data: Candle[], d: string): number {
+  let exact = -1;
+  for (let i = 0; i < data.length; i++) {
+    if (data[i].d === d) {
+      exact = i;
+      break;
+    }
+  }
+  if (exact >= 0) return exact;
+  const t = new Date(d).getTime();
+  let best = 0;
+  let bestDiff = Infinity;
+  for (let i = 0; i < data.length; i++) {
+    const diff = Math.abs(new Date(data[i].d).getTime() - t);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = i;
+    }
+  }
+  return best;
+}
+
+// Live preview of the tool being drawn (pixel coords). sx/sy set = trend in
+// progress (first point placed); null = hline follows cursor Y.
+type Draft = { tool: ChartTool; x: number; y: number; sx: number | null; sy: number | null };
+
 export function CandleChart({
   candles,
   interactive = false,
   weekly = false,
-  measureMode = false,
+  tool = "none",
+  drawings = EMPTY_DRAWINGS,
+  onAddDrawing,
 }: {
   candles?: Candle[];
   interactive?: boolean;
   weekly?: boolean;
-  /** When true the chart is armed for the two-click ruler tool. */
-  measureMode?: boolean;
+  /** Armed drawing/measure tool (interactive charts only). */
+  tool?: ChartTool;
+  /** Persisted drawings for this symbol (price/date anchored). */
+  drawings?: Drawing[];
+  /** Commit a newly placed drawing up to the parent (which persists it). */
+  onAddDrawing?: (d: Drawing) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [hover, setHover] = useState<number | null>(null);
   const [measure, setMeasure] = useState<Measure | null>(null);
+  // Live draft while drawing an hline/trend (pixel coords).
+  const [draft, setDraft] = useState<Draft | null>(null);
   // Two-click placement (not drag): "placing" = first point set, second click
   // pending; "done" = both points fixed; next click starts fresh.
   const phaseRef = useRef<"idle" | "placing" | "done">("idle");
+
+  const measureMode = tool === "measure";
 
   useEffect(() => {
     const el = ref.current;
@@ -96,13 +179,12 @@ export function CandleChart({
     return () => ro.disconnect();
   }, []);
 
-  // Disarming the ruler clears any drawn measurement.
+  // Switching tool (or disarming) clears the transient measure + draft state.
   useEffect(() => {
-    if (!measureMode) {
-      setMeasure(null);
-      phaseRef.current = "idle";
-    }
-  }, [measureMode]);
+    setMeasure(null);
+    setDraft(null);
+    phaseRef.current = "idle";
+  }, [tool]);
 
   const data = (candles ?? []).filter(
     (c) => c.o != null && c.h != null && c.l != null && c.c != null,
@@ -113,7 +195,8 @@ export function CandleChart({
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }
 
-  const armed = interactive || measureMode;
+  const drawMode = tool === "hline" || tool === "trend";
+  const armed = interactive || tool !== "none";
 
   function onMove(e: React.MouseEvent<HTMLDivElement>) {
     const el = ref.current;
@@ -125,8 +208,14 @@ export function CandleChart({
       setMeasure((m) => (m ? { ...m, x1: p.x, y1: p.y } : null));
       return;
     }
-    if (!interactive || measureMode) return;
-    // Plain hover crosshair (interactive, ruler not armed).
+    // hline / trend draft: preview follows the cursor.
+    if (drawMode) {
+      const p = localPos(e);
+      setDraft((d) => ({ tool, x: p.x, y: p.y, sx: d?.sx ?? null, sy: d?.sy ?? null }));
+      return;
+    }
+    if (!interactive) return;
+    // Plain hover crosshair (interactive, no tool armed).
     const rect = el.getBoundingClientRect();
     const plotW = size.w - mR - mL;
     if (plotW <= 0) return;
@@ -135,18 +224,46 @@ export function CandleChart({
     setHover(Math.max(0, Math.min(data.length - 1, idx)));
   }
 
-  // Click to drop a point. First click sets the start, second click fixes the
-  // end, a third click starts a fresh measurement.
+  // Click to drop a point. Behaviour depends on the armed tool.
   function onClick(e: React.MouseEvent<HTMLDivElement>) {
-    if (!measureMode || data.length < 2) return;
+    if (data.length < 2 || size.w <= 20 || size.h <= 20) return;
     const p = localPos(e);
-    if (phaseRef.current === "placing") {
-      setMeasure((m) => (m ? { ...m, x1: p.x, y1: p.y } : null));
-      phaseRef.current = "done";
-    } else {
-      setHover(null);
-      setMeasure({ x0: p.x, y0: p.y, x1: p.x, y1: p.y });
-      phaseRef.current = "placing";
+    const geom = computeGeom(data, size.w, size.h);
+
+    if (tool === "measure") {
+      if (phaseRef.current === "placing") {
+        setMeasure((m) => (m ? { ...m, x1: p.x, y1: p.y } : null));
+        phaseRef.current = "done";
+      } else {
+        setHover(null);
+        setMeasure({ x0: p.x, y0: p.y, x1: p.x, y1: p.y });
+        phaseRef.current = "placing";
+      }
+      return;
+    }
+
+    if (tool === "hline") {
+      onAddDrawing?.({ kind: "hline", price: geom.priceAt(p.y) });
+      return;
+    }
+
+    if (tool === "trend") {
+      if (draft?.sx == null) {
+        // First point: remember it; the segment previews to the cursor.
+        setDraft({ tool, x: p.x, y: p.y, sx: p.x, sy: p.y });
+      } else {
+        const i0 = geom.idxAt(draft.sx);
+        const i1 = geom.idxAt(p.x);
+        onAddDrawing?.({
+          kind: "trend",
+          d0: data[i0].d,
+          p0: geom.priceAt(draft.sy!),
+          d1: data[i1].d,
+          p1: geom.priceAt(p.y),
+        });
+        setDraft(null);
+      }
+      return;
     }
   }
 
@@ -156,21 +273,43 @@ export function CandleChart({
       className={`h-full w-full ${armed ? "select-none" : ""}`}
       style={armed ? { cursor: "crosshair" } : undefined}
       onMouseMove={armed ? onMove : undefined}
-      onClick={measureMode ? onClick : undefined}
-      onMouseLeave={interactive && !measureMode ? () => setHover(null) : undefined}
+      onClick={interactive && tool !== "none" ? onClick : undefined}
+      onMouseLeave={
+        interactive ? () => { setHover(null); setDraft(null); } : undefined
+      }
     >
       {data.length < 2 ? (
         <div className="flex h-full w-full items-center justify-center muted-text text-[11px] italic">
           no price history
         </div>
       ) : size.w > 20 && size.h > 20 ? (
-        renderChart(data, size.w, size.h, interactive && !measureMode ? hover : null, weekly, measure)
+        renderChart(
+          data,
+          size.w,
+          size.h,
+          interactive && tool === "none" ? hover : null,
+          weekly,
+          measure,
+          drawings,
+          interactive,
+          drawMode ? draft : null,
+        )
       ) : null}
     </div>
   );
 }
 
-function renderChart(data: Candle[], W: number, H: number, hoverIdx: number | null, weekly: boolean, measure?: Measure | null) {
+function renderChart(
+  data: Candle[],
+  W: number,
+  H: number,
+  hoverIdx: number | null,
+  weekly: boolean,
+  measure?: Measure | null,
+  drawings: Drawing[] = EMPTY_DRAWINGS,
+  showTrend = false,
+  draft: Draft | null = null,
+) {
   const plotL = mL;
   const plotR = W - mR;
   const plotW = plotR - plotL;
@@ -266,6 +405,38 @@ function renderChart(data: Candle[], W: number, H: number, hoverIdx: number | nu
           </text>
         );
       })}
+
+      {/* saved drawings: hlines everywhere, trend lines on the expanded chart */}
+      {drawings.map((d, i) => {
+        if (d.kind === "hline") {
+          const y = yP(d.price);
+          if (y < priceTop - 1 || y > priceBot + 1) return null; // off current price window
+          const tag = fmtPrice(d.price);
+          const tw = 6.6 * tag.length + 12;
+          return (
+            <g key={`dl-${i}`} pointerEvents="none">
+              <line x1={plotL} y1={y} x2={plotR} y2={y} stroke={ACCENT} strokeWidth={1.2} strokeDasharray="5 3" opacity={0.85} />
+              <rect x={plotR - tw} y={y - 8} width={tw} height={16} rx={3} fill={ACCENT} opacity={0.95} />
+              <text x={plotR - tw / 2} y={y + 3.5} textAnchor="middle" fontSize={9.5} fontWeight={700} fill="#fff">{tag}</text>
+            </g>
+          );
+        }
+        if (d.kind === "trend" && showTrend) {
+          const x0 = cx(idxForDate(data, d.d0));
+          const x1 = cx(idxForDate(data, d.d1));
+          return (
+            <line key={`dl-${i}`} pointerEvents="none" x1={x0} y1={yP(d.p0)} x2={x1} y2={yP(d.p1)} stroke={ACCENT} strokeWidth={1.6} opacity={0.9} />
+          );
+        }
+        return null;
+      })}
+
+      {/* live draft preview while placing an hline / trend */}
+      {draft && (draft.tool === "hline" ? (
+        <line pointerEvents="none" x1={plotL} y1={draft.y} x2={plotR} y2={draft.y} stroke={ACCENT} strokeWidth={1.2} strokeDasharray="5 3" opacity={0.6} />
+      ) : draft.tool === "trend" && draft.sx != null ? (
+        <line pointerEvents="none" x1={draft.sx} y1={draft.sy!} x2={draft.x} y2={draft.y} stroke={ACCENT} strokeWidth={1.4} strokeDasharray="4 3" opacity={0.7} />
+      ) : null)}
 
       {/* hover crosshair + per-bar OHLCV tooltip (interactive mode only) */}
       {hoverIdx != null && data[hoverIdx] && (() => {

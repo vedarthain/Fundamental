@@ -12,7 +12,7 @@
  * whole universe. See useGraphCandles + /api/scanner/ohlc.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Star } from "lucide-react";
 import { displayCompanyName } from "@/lib/score";
@@ -22,7 +22,7 @@ import { StarButton } from "@/components/StarButton";
 import { useStarred } from "@/lib/starred";
 import { WindowPicker } from "./WindowPicker";
 import type { WindowOpt } from "./sparkWindows";
-import { CandleChart } from "./CandleChart";
+import { CandleChart, type ChartTool, type Drawing } from "./CandleChart";
 import { useGraphCandles } from "./useGraphCandles";
 import { WEEKLY_THRESHOLD_DAYS } from "@/lib/candleConfig";
 
@@ -77,6 +77,32 @@ function RulerIcon({ size = 13 }: { size?: number }) {
     >
       <path d="M2 12l10-10 10 10-10 10z" />
       <path d="M8 6l2 2M6 8l2 2M11 9l2 2M9 11l2 2M14 12l2 2M12 14l2 2" />
+    </svg>
+  );
+}
+
+function HLineIcon({ size = 13 }: { size?: number }) {
+  return (
+    <svg
+      width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden
+    >
+      <path d="M3 12h18" />
+      <circle cx="7" cy="12" r="1.6" fill="currentColor" stroke="none" />
+      <circle cx="17" cy="12" r="1.6" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function TrendIcon({ size = 13 }: { size?: number }) {
+  return (
+    <svg
+      width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden
+    >
+      <path d="M4 19L20 5" />
+      <circle cx="4" cy="19" r="1.8" fill="currentColor" stroke="none" />
+      <circle cx="20" cy="5" r="1.8" fill="currentColor" stroke="none" />
     </svg>
   );
 }
@@ -171,14 +197,46 @@ export default function GraphClient({
   const [days, setDays] = useState<number>(180);
   const [treeOpen, setTreeOpen] = useState(true);
   const [focus, setFocus] = useState<GraphStock | null>(null);
-  // Ruler tool on the expanded chart: armed via the Measure toggle in the
-  // overlay header. Reset whenever the overlay closes.
-  const [focusMeasure, setFocusMeasure] = useState(false);
+  // Drawing/measure tool armed on the expanded chart, via the overlay toolbar.
+  // Reset whenever the overlay closes.
+  const [tool, setTool] = useState<ChartTool>("none");
+
+  // Persisted chart drawings, keyed by symbol. Hlines show on every chart
+  // (incl. the small grid); trend lines only on the expanded chart. Stored in
+  // localStorage so they survive reloads.
+  const DRAW_KEY = "er:chartDrawings:v1";
+  const [drawings, setDrawings] = useState<Record<string, Drawing[]>>({});
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(DRAW_KEY);
+      if (raw) setDrawings(JSON.parse(raw));
+    } catch {
+      /* ignore corrupt/unavailable storage */
+    }
+  }, []);
+  useEffect(() => {
+    try {
+      localStorage.setItem(DRAW_KEY, JSON.stringify(drawings));
+    } catch {
+      /* ignore quota/unavailable storage */
+    }
+  }, [drawings]);
+  const addDrawing = useCallback((symbol: string, d: Drawing) => {
+    setDrawings((prev) => ({ ...prev, [symbol]: [...(prev[symbol] ?? []), d] }));
+  }, []);
+  const clearDrawings = useCallback((symbol: string) => {
+    setDrawings((prev) => {
+      if (!prev[symbol]?.length) return prev;
+      const next = { ...prev };
+      delete next[symbol];
+      return next;
+    });
+  }, []);
 
   // Esc closes the focus (expanded chart) overlay.
   useEffect(() => {
     if (!focus) {
-      setFocusMeasure(false);
+      setTool("none");
       return;
     }
     const onKey = (e: KeyboardEvent) => {
@@ -568,7 +626,7 @@ export default function GraphClient({
                   className="flex-1 min-h-0 transition-opacity"
                   style={{ opacity: candles.loading && !series ? 0.4 : 1 }}
                 >
-                  <CandleChart candles={series} weekly={weekly} />
+                  <CandleChart candles={series} weekly={weekly} drawings={drawings[st.symbol]} />
                 </div>
                 <div className="flex justify-end border-t hairline px-2 py-1">
                   <button
@@ -641,21 +699,49 @@ export default function GraphClient({
                   </div>
                 </div>
                 <div className="ml-auto flex items-center gap-4">
-                  <button
-                    type="button"
-                    onClick={() => setFocusMeasure((v) => !v)}
-                    className="inline-flex items-center gap-1.5 rounded-md border hairline px-2.5 py-1.5 text-[12px] font-medium hover:bg-[var(--color-paper)] transition-colors"
-                    style={
-                      focusMeasure
-                        ? { borderColor: "var(--color-accent-600)", color: "var(--color-accent-700)", background: "color-mix(in srgb, var(--color-accent-600) 10%, transparent)" }
-                        : undefined
-                    }
-                    aria-pressed={focusMeasure}
-                    title="Measure price move between two points"
-                  >
-                    <RulerIcon size={13} />
-                    {focusMeasure ? "Click 2 points" : "Measure"}
-                  </button>
+                  <div className="flex items-center gap-1 rounded-lg border hairline p-0.5">
+                    {([
+                      { id: "measure", label: "Measure", icon: <RulerIcon size={13} />, hint: "Measure price move between two points" },
+                      { id: "hline", label: "H-line", icon: <HLineIcon size={13} />, hint: "Add a horizontal price line (shows on all charts)" },
+                      { id: "trend", label: "Trend", icon: <TrendIcon size={13} />, hint: "Draw a trend line between two points" },
+                    ] as const).map((t) => {
+                      const active = tool === t.id;
+                      return (
+                        <button
+                          key={t.id}
+                          type="button"
+                          onClick={() => setTool((cur) => (cur === t.id ? "none" : t.id))}
+                          className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[12px] font-medium hover:bg-[var(--color-paper)] transition-colors"
+                          style={
+                            active
+                              ? { color: "var(--color-accent-700)", background: "color-mix(in srgb, var(--color-accent-600) 12%, transparent)" }
+                              : undefined
+                          }
+                          aria-pressed={active}
+                          title={t.hint}
+                        >
+                          {t.icon}
+                          {t.label}
+                        </button>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      onClick={() => clearDrawings(focus.symbol)}
+                      disabled={!drawings[focus.symbol]?.length}
+                      className="inline-flex items-center rounded-md px-2 py-1 text-[12px] font-medium text-[var(--color-muted)] hover:bg-[var(--color-paper)] hover:text-[var(--color-ink)] disabled:opacity-40 transition-colors"
+                      title="Remove all drawings on this stock"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                  {tool !== "none" && (
+                    <span className="text-[11px] muted-text">
+                      {tool === "hline"
+                        ? "Click to place the line"
+                        : "Click 2 points"}
+                    </span>
+                  )}
                   <div className="text-right leading-tight">
                     <div className="text-[15px] tabular-nums font-semibold">
                       {last ? inr(last.c) : "—"}
@@ -687,7 +773,14 @@ export default function GraphClient({
                 className="flex-1 min-h-0 p-2 transition-opacity"
                 style={{ opacity: candles.loading && !series ? 0.4 : 1 }}
               >
-                <CandleChart candles={series} interactive weekly={weekly} measureMode={focusMeasure} />
+                <CandleChart
+                  candles={series}
+                  interactive
+                  weekly={weekly}
+                  tool={tool}
+                  drawings={drawings[focus.symbol]}
+                  onAddDrawing={(d) => addDrawing(focus.symbol, d)}
+                />
               </div>
             </div>
           </div>
