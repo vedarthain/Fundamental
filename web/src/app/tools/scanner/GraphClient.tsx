@@ -163,18 +163,24 @@ export default function GraphClient({
   const { symbols: starredSyms, hydrated: starHydrated } = useStarred();
   const starSet = useMemo(() => new Set(starredSyms), [starredSyms]);
   const [favOnly, setFavOnly] = useState(false);
+  // Minimum Industry Score (composite percentile) filter. null = off. When set,
+  // only stocks with composite_pct >= this value survive.
+  const [minComposite, setMinComposite] = useState<number | null>(null);
 
-  // Apply favourites → the tree/grid actually rendered. In fav-only mode we drop
-  // non-starred stocks (and any industry/sector that empties out). Order is
+  // Apply favourites + score floor → the tree/grid actually rendered. We drop
+  // non-matching stocks (and any industry/sector that empties out). Order is
   // preserved from the source (composite-desc) — no starred-first shuffle.
   const viewSectors = useMemo<GraphSector[]>(() => {
-    if (!favOnly) return sectors;
+    if (!favOnly && minComposite == null) return sectors;
+    const keep = (st: GraphStock) =>
+      (!favOnly || starSet.has(st.symbol)) &&
+      (minComposite == null || (st.composite_pct != null && st.composite_pct >= minComposite));
     const out: GraphSector[] = [];
     for (const s of sectors) {
       const inds: GraphIndustry[] = [];
       let count = 0;
       for (const ind of s.industries) {
-        const stocks = ind.stocks.filter((st) => starSet.has(st.symbol));
+        const stocks = ind.stocks.filter(keep);
         if (!stocks.length) continue;
         inds.push({ ...ind, stocks });
         count += stocks.length;
@@ -182,7 +188,7 @@ export default function GraphClient({
       if (inds.length) out.push({ ...s, count, industries: inds });
     }
     return out;
-  }, [sectors, starSet, favOnly]);
+  }, [sectors, starSet, favOnly, minComposite]);
 
   // Flat lookup: industry_id → { industry, sectorName }.
   const industryById = useMemo(() => {
@@ -390,6 +396,45 @@ export default function GraphClient({
               <Star size={13} fill={favOnly ? "#e8a838" : "none"} strokeWidth={2} />
               <span>Favourites{starHydrated && starSet.size > 0 ? ` · ${starSet.size}` : ""}</span>
             </button>
+            <div
+              className="inline-flex items-center gap-1 rounded-md border hairline px-2 py-1 text-[12px] font-medium transition-colors"
+              style={
+                minComposite != null
+                  ? { borderColor: "var(--color-accent-600)", color: "var(--color-accent-700)", background: "color-mix(in srgb, var(--color-accent-600) 10%, transparent)" }
+                  : undefined
+              }
+              title="Show only stocks with Industry Score ≥ this value"
+            >
+              <span className="muted-text whitespace-nowrap">Score ≥</span>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                inputMode="numeric"
+                placeholder="all"
+                value={minComposite ?? ""}
+                onChange={(e) => {
+                  const v = e.target.value.trim();
+                  if (v === "") { setMinComposite(null); setPage(0); return; }
+                  const n = Math.max(0, Math.min(100, Math.round(Number(v))));
+                  setMinComposite(Number.isFinite(n) ? n : null);
+                  setPage(0);
+                }}
+                className="w-12 bg-transparent text-right tabular-nums outline-none placeholder:text-[var(--color-muted)] placeholder:font-normal"
+                aria-label="Minimum Industry Score"
+              />
+              {minComposite != null && (
+                <button
+                  type="button"
+                  onClick={() => { setMinComposite(null); setPage(0); }}
+                  className="ml-0.5 rounded px-1 text-[var(--color-muted)] hover:text-[var(--color-ink)]"
+                  aria-label="Clear score filter"
+                  title="Clear score filter"
+                >
+                  ×
+                </button>
+              )}
+            </div>
             <WindowPicker options={GRAPH_WINDOWS} days={days} onSelect={setDays} loading={candles.loading} />
             <div className="flex items-center gap-1">
               <button
