@@ -77,7 +77,7 @@ export type Drawing =
   | { kind: "trend"; d0: string; p0: number; d1: string; p1: number };
 
 // Which drawing/measure tool is armed on an interactive chart.
-export type ChartTool = "none" | "measure" | "hline" | "trend";
+export type ChartTool = "none" | "measure" | "hline" | "trend" | "erase";
 
 // Shared price/x geometry — the single source of truth used by both renderChart
 // (to draw) and the click handler (to invert a pixel back to a price/date).
@@ -135,6 +135,18 @@ function idxForDate(data: Candle[], d: string): number {
   return best;
 }
 
+// Perpendicular distance (px) from point (px,py) to the segment (ax,ay)-(bx,by).
+// Used by the eraser to find the drawing nearest a click.
+function distToSegment(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
+  const cx = ax + t * dx;
+  const cy = ay + t * dy;
+  return Math.hypot(px - cx, py - cy);
+}
+
 // Live preview of the tool being drawn (pixel coords). sx/sy set = trend in
 // progress (first point placed); null = hline follows cursor Y.
 type Draft = { tool: ChartTool; x: number; y: number; sx: number | null; sy: number | null };
@@ -146,6 +158,7 @@ export function CandleChart({
   tool = "none",
   drawings = EMPTY_DRAWINGS,
   onAddDrawing,
+  onDeleteDrawing,
 }: {
   candles?: Candle[];
   interactive?: boolean;
@@ -156,6 +169,8 @@ export function CandleChart({
   drawings?: Drawing[];
   /** Commit a newly placed drawing up to the parent (which persists it). */
   onAddDrawing?: (d: Drawing) => void;
+  /** Delete the drawing at this index (eraser tool). */
+  onDeleteDrawing?: (index: number) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -263,6 +278,31 @@ export function CandleChart({
         });
         setDraft(null);
       }
+      return;
+    }
+
+    if (tool === "erase") {
+      // Delete the nearest drawing within a small pixel threshold of the click.
+      const THRESH = 8;
+      let bestIdx = -1;
+      let bestDist = THRESH;
+      drawings.forEach((d, i) => {
+        let dist = Infinity;
+        if (d.kind === "hline") {
+          dist = Math.abs(p.y - geom.yP(d.price));
+        } else if (d.kind === "trend") {
+          const x0 = geom.cx(idxForDate(data, d.d0));
+          const y0 = geom.yP(d.p0);
+          const x1 = geom.cx(idxForDate(data, d.d1));
+          const y1 = geom.yP(d.p1);
+          dist = distToSegment(p.x, p.y, x0, y0, x1, y1);
+        }
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestIdx = i;
+        }
+      });
+      if (bestIdx >= 0) onDeleteDrawing?.(bestIdx);
       return;
     }
   }

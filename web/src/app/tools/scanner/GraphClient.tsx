@@ -107,6 +107,18 @@ function TrendIcon({ size = 13 }: { size?: number }) {
   );
 }
 
+function EraseIcon({ size = 13 }: { size?: number }) {
+  return (
+    <svg
+      width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden
+    >
+      <path d="M4 20h16" />
+      <path d="M13.5 6.5l4 4L9 19H5l-1-4z" />
+    </svg>
+  );
+}
+
 function Chevron({ open }: { open: boolean }) {
   return (
     <svg
@@ -235,6 +247,17 @@ export default function GraphClient({
       if (!prev[symbol]?.length) return prev;
       const next = { ...prev };
       delete next[symbol];
+      return next;
+    });
+  }, []);
+  const deleteDrawing = useCallback((symbol: string, index: number) => {
+    setDrawings((prev) => {
+      const arr = prev[symbol];
+      if (!arr) return prev;
+      const rest = arr.filter((_, i) => i !== index);
+      const next = { ...prev };
+      if (rest.length) next[symbol] = rest;
+      else delete next[symbol];
       return next;
     });
   }, []);
@@ -749,6 +772,7 @@ export default function GraphClient({
                       { id: "measure", label: "Measure", icon: <RulerIcon size={13} />, hint: "Measure price move between two points" },
                       { id: "hline", label: "H-line", icon: <HLineIcon size={13} />, hint: "Add a horizontal price line (shows on all charts)" },
                       { id: "trend", label: "Trend", icon: <TrendIcon size={13} />, hint: "Draw a trend line between two points" },
+                      { id: "erase", label: "Erase", icon: <EraseIcon size={13} />, hint: "Click a line to delete it" },
                     ] as const).map((t) => {
                       const active = tool === t.id;
                       return (
@@ -784,7 +808,9 @@ export default function GraphClient({
                     <span className="text-[11px] muted-text">
                       {tool === "hline"
                         ? "Click to place the line"
-                        : "Click 2 points"}
+                        : tool === "erase"
+                          ? "Click a line to delete"
+                          : "Click 2 points"}
                     </span>
                   )}
                   <div className="text-right leading-tight">
@@ -825,6 +851,7 @@ export default function GraphClient({
                   tool={tool}
                   drawings={drawings[focus.symbol]}
                   onAddDrawing={(d) => addDrawing(focus.symbol, d)}
+                  onDeleteDrawing={(i) => deleteDrawing(focus.symbol, i)}
                 />
               </div>
             </div>
