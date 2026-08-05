@@ -286,10 +286,26 @@ function renderChart(data: Candle[], W: number, H: number, hoverIdx: number | nu
           ["C", fmtPrice(c.c), up ? GREEN : RED],
           [weekly ? "Vol/wk" : "Vol", fmtVol(c.v || 0), AXIS],
         ];
+        const hy = yP(c.c);
+        const priceTag = fmtPrice(c.c);
+        const tagW = 6.6 * priceTag.length + 12;
+        const dateTagW = 6 * dateLbl.length + 12;
         return (
           <g pointerEvents="none">
+            {/* vertical + horizontal crosshair through the hovered bar's close */}
             <line x1={hx} y1={priceTop} x2={hx} y2={volBot} stroke={AXIS} strokeWidth={1} strokeDasharray="2 3" opacity={0.55} />
-            <circle cx={hx} cy={yP(c.c)} r={2.6} fill={up ? GREEN : RED} />
+            <line x1={plotL} y1={hy} x2={plotR} y2={hy} stroke={AXIS} strokeWidth={1} strokeDasharray="2 3" opacity={0.55} />
+            <circle cx={hx} cy={hy} r={2.6} fill={up ? GREEN : RED} />
+            {/* right-edge price tag at the close */}
+            <g>
+              <rect x={plotR - tagW} y={hy - 8} width={tagW} height={16} rx={3} fill={up ? GREEN : RED} opacity={0.95} />
+              <text x={plotR - tagW / 2} y={hy + 3.5} textAnchor="middle" fontSize={9.5} fontWeight={700} fill="#fff">{priceTag}</text>
+            </g>
+            {/* bottom-edge date tag */}
+            <g>
+              <rect x={Math.max(plotL, Math.min(plotR - dateTagW, hx - dateTagW / 2))} y={volBot + 2} width={dateTagW} height={15} rx={3} fill={AXIS} opacity={0.9} />
+              <text x={Math.max(plotL + dateTagW / 2, Math.min(plotR - dateTagW / 2, hx))} y={volBot + 12.5} textAnchor="middle" fontSize={9} fontWeight={600} fill="#fff">{dateLbl}</text>
+            </g>
             <rect x={bx} y={by} width={boxW} height={boxH} rx={5} fill={CARD} stroke={GRID} strokeWidth={1} opacity={0.97} />
             <text x={bx + 8} y={by + 15} fontSize={10} fontWeight={600} fill="var(--color-ink, #111)">
               {dateLbl}
@@ -323,6 +339,11 @@ function renderChart(data: Candle[], W: number, H: number, hoverIdx: number | nu
         );
         let vol = 0;
         for (let i = iA; i <= iB; i++) vol += data[i].v || 0;
+        const fmtD = (s: string) => {
+          const [yy, mm, dd] = s.split("-");
+          return `${+dd} ${MONTHS[(+mm || 1) - 1]} '${yy.slice(2)}`;
+        };
+        const dateRange = `${fmtD(data[iA].d)} → ${fmtD(data[iB].d)}`;
 
         const rx = Math.min(x0, x1);
         const ry = Math.min(y0, y1);
@@ -331,15 +352,15 @@ function renderChart(data: Candle[], W: number, H: number, hoverIdx: number | nu
         const col = up ? GREEN : RED;
         const cxm = rx + rw / 2;
 
-        const boxW = 150;
-        const boxH = 50;
+        const boxW = 172;
+        const boxH = 64;
         let bx = cxm - boxW / 2;
         bx = Math.max(plotL + 2, Math.min(plotR - boxW - 2, bx));
         let by = ry - boxH - 6;
         if (by < priceTop + 2) by = Math.min(y0, y1) + rh + 6; // flip below if no room above
         const sign = up ? "+" : "";
         const l1 = `${sign}${chg.toFixed(2)} (${sign}${pct.toFixed(2)}%)`;
-        const l2 = `${bars} bars, ${days}d`;
+        const l2 = `${bars} bars, ${days} calendar days`;
         const l3 = `Vol ${fmtVol(vol)}`;
 
         return (
@@ -349,9 +370,10 @@ function renderChart(data: Candle[], W: number, H: number, hoverIdx: number | nu
             <line x1={cxm} y1={y0} x2={cxm} y2={y1} stroke={col} strokeWidth={1.2} opacity={0.8} />
             <line x1={x0} y1={ry + rh / 2} x2={x1} y2={ry + rh / 2} stroke={col} strokeWidth={1} opacity={0.6} strokeDasharray="3 3" />
             <rect x={bx} y={by} width={boxW} height={boxH} rx={5} fill={col} opacity={0.95} />
-            <text x={bx + boxW / 2} y={by + 16} textAnchor="middle" fontSize={11} fontWeight={700} fill="#fff">{l1}</text>
-            <text x={bx + boxW / 2} y={by + 30} textAnchor="middle" fontSize={9.5} fill="#fff" opacity={0.92}>{l2}</text>
-            <text x={bx + boxW / 2} y={by + 43} textAnchor="middle" fontSize={9.5} fill="#fff" opacity={0.92}>{l3}</text>
+            <text x={bx + boxW / 2} y={by + 15} textAnchor="middle" fontSize={11} fontWeight={700} fill="#fff">{l1}</text>
+            <text x={bx + boxW / 2} y={by + 29} textAnchor="middle" fontSize={9.5} fill="#fff" opacity={0.92}>{dateRange}</text>
+            <text x={bx + boxW / 2} y={by + 42} textAnchor="middle" fontSize={9.5} fill="#fff" opacity={0.92}>{l2}</text>
+            <text x={bx + boxW / 2} y={by + 55} textAnchor="middle" fontSize={9.5} fill="#fff" opacity={0.92}>{l3}</text>
           </g>
         );
       })()}
