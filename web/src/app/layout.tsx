@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter, Source_Serif_4, IBM_Plex_Mono } from "next/font/google";
 import Link from "next/link";
 import { StockSearch } from "@/components/StockSearch";
@@ -37,6 +37,13 @@ export const metadata: Metadata = {
   title: "EquityRoots — Indian stocks, scored against their real peers",
   description:
     "Every NSE stock ranked on Quality, Valuation, and Momentum — within its true peer cluster. Find compounders, cheap-in-cluster names, and weekly movers without comparing apples to oranges.",
+};
+
+// Pin Safari's toolbar tint to the light paper background. Without this Safari
+// samples the dark SnapshotRibbon at the top of the page and paints its own
+// chrome dark to match — see --color-paper in globals.css.
+export const viewport: Viewport = {
+  themeColor: "#fbfbfd",
 };
 
 export default function RootLayout({
