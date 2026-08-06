@@ -175,18 +175,25 @@ export default function GraphClient({
   const { symbols: starredSyms, hydrated: starHydrated } = useStarred();
   const starSet = useMemo(() => new Set(starredSyms), [starredSyms]);
   const [favOnly, setFavOnly] = useState(false);
-  // Minimum Industry Score (composite percentile) filter. null = off. When set,
-  // only stocks with composite_pct >= this value survive.
+  // Industry Score (composite percentile) range filter. null = open on that end.
+  // A stock survives when its composite_pct sits within [min, max].
   const [minComposite, setMinComposite] = useState<number | null>(null);
+  const [maxComposite, setMaxComposite] = useState<number | null>(null);
 
-  // Apply favourites + score floor → the tree/grid actually rendered. We drop
+  // Apply favourites + score range → the tree/grid actually rendered. We drop
   // non-matching stocks (and any industry/sector that empties out). Order is
   // preserved from the source (composite-desc) — no starred-first shuffle.
   const viewSectors = useMemo<GraphSector[]>(() => {
-    if (!favOnly && minComposite == null) return sectors;
-    const keep = (st: GraphStock) =>
-      (!favOnly || starSet.has(st.symbol)) &&
-      (minComposite == null || (st.composite_pct != null && st.composite_pct >= minComposite));
+    if (!favOnly && minComposite == null && maxComposite == null) return sectors;
+    const keep = (st: GraphStock) => {
+      if (favOnly && !starSet.has(st.symbol)) return false;
+      if (minComposite != null || maxComposite != null) {
+        if (st.composite_pct == null) return false;
+        if (minComposite != null && st.composite_pct < minComposite) return false;
+        if (maxComposite != null && st.composite_pct > maxComposite) return false;
+      }
+      return true;
+    };
     const out: GraphSector[] = [];
     for (const s of sectors) {
       const inds: GraphIndustry[] = [];
@@ -200,7 +207,7 @@ export default function GraphClient({
       if (inds.length) out.push({ ...s, count, industries: inds });
     }
     return out;
-  }, [sectors, starSet, favOnly, minComposite]);
+  }, [sectors, starSet, favOnly, minComposite, maxComposite]);
 
   // Flat lookup: industry_id → { industry, sectorName }.
   const industryById = useMemo(() => {
@@ -422,19 +429,19 @@ export default function GraphClient({
             <div
               className="inline-flex items-center gap-1 rounded-md border hairline px-2 py-1 text-[12px] font-medium transition-colors"
               style={
-                minComposite != null
+                minComposite != null || maxComposite != null
                   ? { borderColor: "var(--color-accent-600)", color: "var(--color-accent-700)", background: "color-mix(in srgb, var(--color-accent-600) 10%, transparent)" }
                   : undefined
               }
-              title="Show only stocks with Industry Score ≥ this value"
+              title="Show only stocks whose Industry Score falls within this range"
             >
-              <span className="muted-text whitespace-nowrap">Score ≥</span>
+              <span className="muted-text whitespace-nowrap">Score</span>
               <input
                 type="number"
                 min={0}
                 max={100}
                 inputMode="numeric"
-                placeholder="all"
+                placeholder="min"
                 value={minComposite ?? ""}
                 onChange={(e) => {
                   const v = e.target.value.trim();
@@ -443,13 +450,31 @@ export default function GraphClient({
                   setMinComposite(Number.isFinite(n) ? n : null);
                   setPage(0);
                 }}
-                className="w-12 bg-transparent text-right tabular-nums outline-none placeholder:text-[var(--color-muted)] placeholder:font-normal"
+                className="w-11 bg-transparent text-right tabular-nums outline-none placeholder:text-[var(--color-muted)] placeholder:font-normal"
                 aria-label="Minimum Industry Score"
               />
-              {minComposite != null && (
+              <span className="muted-text">–</span>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                inputMode="numeric"
+                placeholder="max"
+                value={maxComposite ?? ""}
+                onChange={(e) => {
+                  const v = e.target.value.trim();
+                  if (v === "") { setMaxComposite(null); setPage(0); return; }
+                  const n = Math.max(0, Math.min(100, Math.round(Number(v))));
+                  setMaxComposite(Number.isFinite(n) ? n : null);
+                  setPage(0);
+                }}
+                className="w-11 bg-transparent text-left tabular-nums outline-none placeholder:text-[var(--color-muted)] placeholder:font-normal"
+                aria-label="Maximum Industry Score"
+              />
+              {(minComposite != null || maxComposite != null) && (
                 <button
                   type="button"
-                  onClick={() => { setMinComposite(null); setPage(0); }}
+                  onClick={() => { setMinComposite(null); setMaxComposite(null); setPage(0); }}
                   className="ml-0.5 rounded px-1 text-[var(--color-muted)] hover:text-[var(--color-ink)]"
                   aria-label="Clear score filter"
                   title="Clear score filter"
