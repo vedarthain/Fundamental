@@ -12,7 +12,7 @@
  * whole universe. See useGraphCandles + /api/scanner/ohlc.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Star } from "lucide-react";
 import { displayCompanyName } from "@/lib/score";
@@ -290,6 +290,44 @@ export default function GraphClient({
     () => new Set(sectors[0] ? [sectors[0].name] : []),
   );
   const [openIndustries, setOpenIndustries] = useState<Set<string>>(() => new Set());
+
+  // Remember the Graph tab's position (industry + sector-wide page + window) so a
+  // browser refresh lands you back exactly where you were instead of resetting to
+  // the first sector. Restored in an effect (not a useState initializer) to avoid
+  // an SSR/client hydration mismatch; the mount write is skipped so an empty store
+  // never clobbers a previously saved position.
+  const GRAPH_NAV_KEY = "er:graphNav:v1";
+  const navHydrated = useRef(false);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(GRAPH_NAV_KEY);
+      if (raw) {
+        const saved = JSON.parse(raw) as { ind?: string; page?: number; days?: number };
+        if (saved.ind && industryById.has(saved.ind)) {
+          setSelectedInd(saved.ind);
+          const sector = industryById.get(saved.ind)?.sector;
+          if (sector) setOpenSectors((prev) => new Set(prev).add(sector));
+        }
+        if (typeof saved.page === "number") setPage(saved.page);
+        if (typeof saved.days === "number") setDays(saved.days);
+      }
+    } catch {
+      /* ignore corrupt/unavailable storage */
+    }
+    // Restore once, on mount only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (!navHydrated.current) {
+      navHydrated.current = true; // skip the mount write
+      return;
+    }
+    try {
+      localStorage.setItem(GRAPH_NAV_KEY, JSON.stringify({ ind: selectedInd, page, days }));
+    } catch {
+      /* ignore quota/unavailable storage */
+    }
+  }, [selectedInd, page, days]);
 
   // Sector-wide paging. The grid pages across the WHOLE sector, not just the
   // selected industry: each page is a slice of a SINGLE industry (never
