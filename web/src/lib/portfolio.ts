@@ -188,6 +188,19 @@ function pctx(x: unknown): number | null {
   return n == null ? null : Math.round(n * 1000) / 10;
 }
 
+/**
+ * Just the mapped universe symbols a user holds — a cheap membership lookup for
+ * "is this stock in my portfolio?" badges. Skips all valuation work.
+ */
+export async function loadPortfolioSymbols(userId: number): Promise<string[]> {
+  const rows = await sql<{ symbol: string }[]>`
+    SELECT DISTINCT symbol
+      FROM app.portfolio_holding
+     WHERE user_id = ${userId} AND symbol IS NOT NULL
+  `;
+  return rows.map((r) => r.symbol);
+}
+
 /** Load + value a user's portfolio, aggregated per instrument. */
 export async function loadPortfolio(userId: number): Promise<Portfolio> {
   const holdings = await sql<HoldingRow[]>`

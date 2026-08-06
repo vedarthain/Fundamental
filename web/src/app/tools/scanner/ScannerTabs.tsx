@@ -51,6 +51,7 @@ export default function ScannerTabs({
   graphUniverse,
   dividendUniverse,
   nifty500,
+  portfolioSymbols = [],
   initialTab = "igniting",
 }: {
   momentumSnapDate: string | null;
@@ -71,6 +72,7 @@ export default function ScannerTabs({
   graphUniverse: GraphUniverse;
   dividendUniverse: DividendUniverse;
   nifty500: string[];
+  portfolioSymbols?: string[];
   initialTab?: Tab;
 }) {
   const [tab, setTab] = useState<Tab>(initialTab);
@@ -288,7 +290,7 @@ export default function ScannerTabs({
             <AllStocksClient snapDate={allStocksSnapDate} rows={allStocks} n500Only={n500Only} />
           )}
           {tab === "graph" && (
-            <GraphClient universe={graphUniverse} nifty500={nifty500} n500Only={n500Only} />
+            <GraphClient universe={graphUniverse} nifty500={nifty500} n500Only={n500Only} portfolioSymbols={portfolioSymbols} />
           )}
           {tab === "dividends" && (
             <DividendClient universe={dividendUniverse} nifty500={nifty500} n500Only={n500Only} />

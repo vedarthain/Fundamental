@@ -7,6 +7,8 @@ import { loadAllStocks } from "@/lib/allStocks";
 import { loadGraphUniverse } from "@/lib/graphUniverse";
 import { loadDividendUniverse } from "@/lib/dividendScanner";
 import { loadSparklines } from "@/lib/sparklines";
+import { loadPortfolioSymbols } from "@/lib/portfolio";
+import { getSession } from "@/lib/auth";
 import { IGNITING_DEFAULT_DAYS, TREND_DEFAULT_DAYS, FLOOR_DEFAULT_DAYS } from "./sparkWindows";
 import { sql } from "@/lib/db";
 import { unstable_cache } from "next/cache";
@@ -68,7 +70,11 @@ export default async function MomentumPage({
   const sp = await searchParams;
   const tabParam = one(sp.tab);
   const initialTab: Tab = SCANNER_TABS.includes(tabParam as Tab) ? (tabParam as Tab) : "igniting";
-  const [momentum, trend, floor, rotation, allStocks, graphUniverse, dividendUniverse, n500] = await Promise.all([
+  // Per-user, so it must stay OUT of the shared unstable_cache above (which is
+  // keyed only by date and shared across all visitors). Cheap symbol-only query.
+  const session = await getSession();
+
+  const [momentum, trend, floor, rotation, allStocks, graphUniverse, dividendUniverse, n500, portfolioSymbols] = await Promise.all([
     cachedMomentum(one(sp.mDate)),
     cachedTrend(one(sp.tDate)),
     cachedFloor(one(sp.fDate)),
@@ -77,6 +83,7 @@ export default async function MomentumPage({
     cachedGraphUniverse(),
     cachedDividendUniverse(),
     cachedN500(),
+    session ? loadPortfolioSymbols(session.userId) : Promise.resolve([]),
   ]);
 
   // Per-row mini price charts — one batched golden query per tab, each on that
@@ -109,6 +116,7 @@ export default async function MomentumPage({
       graphUniverse={graphUniverse}
       dividendUniverse={dividendUniverse}
       nifty500={n500.map((r) => r.symbol)}
+      portfolioSymbols={portfolioSymbols}
       initialTab={initialTab}
     />
   );

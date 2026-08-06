@@ -137,12 +137,15 @@ export default function GraphClient({
   universe,
   nifty500,
   n500Only,
+  portfolioSymbols = [],
 }: {
   universe: GraphUniverse;
   nifty500: string[];
   n500Only: boolean;
+  portfolioSymbols?: string[];
 }) {
   const { snapDate } = universe;
+  const portfolioSet = useMemo(() => new Set(portfolioSymbols), [portfolioSymbols]);
 
   // When the NIFTY 500 toggle is on, narrow the tree to index members: filter
   // each industry's stocks, recompute counts, and drop industries/sectors that
@@ -721,7 +724,21 @@ export default function GraphClient({
                 >
                   <CandleChart candles={series} weekly={weekly} drawings={drawings[st.symbol]} />
                 </div>
-                <div className="flex justify-end border-t hairline px-2 py-1">
+                <div className="flex items-center justify-end gap-1.5 border-t hairline px-2 py-1">
+                  {portfolioSet.has(st.symbol) && (
+                    <span
+                      className="inline-flex h-[18px] w-[18px] items-center justify-center rounded-full border text-[10px] font-bold tabular-nums"
+                      style={{
+                        borderColor: "var(--color-accent-600)",
+                        color: "var(--color-accent-700)",
+                        background: "color-mix(in srgb, var(--color-accent-600) 12%, transparent)",
+                      }}
+                      title="In your portfolio"
+                      aria-label={`${st.symbol} is in your portfolio`}
+                    >
+                      P
+                    </span>
+                  )}
                   <button
                     type="button"
                     onClick={() => series && series.length >= 2 && setFocus(st)}
