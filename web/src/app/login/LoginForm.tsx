@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { broadcastSessionChange } from "@/lib/session-client";
 import { mergeLocalWatchlistIntoServer } from "@/lib/watchlist";
+import { mergeLocalStarredIntoServer } from "@/lib/starred";
 
 export function LoginForm() {
   const router = useRouter();
@@ -37,6 +38,7 @@ export function LoginForm() {
       // Best-effort: push any localStorage symbols up to the server.
       // Failure here is non-fatal; the user can re-add manually.
       await mergeLocalWatchlistIntoServer().catch(() => undefined);
+      await mergeLocalStarredIntoServer().catch(() => undefined);
       setSuccess(true);
       broadcastSessionChange();
       setTimeout(() => {
