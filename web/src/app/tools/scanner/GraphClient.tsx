@@ -20,6 +20,8 @@ import type { GraphUniverse, GraphSector, GraphIndustry, GraphStock } from "@/li
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { StarButton } from "@/components/StarButton";
 import { useStarred } from "@/lib/starred";
+import { PortfolioTagButton } from "@/components/PortfolioTagButton";
+import { usePortfolioTag } from "@/lib/portfolioTag";
 import { WindowPicker } from "./WindowPicker";
 import type { WindowOpt } from "./sparkWindows";
 import { CandleChart, type ChartTool, type Drawing } from "./CandleChart";
@@ -137,15 +139,12 @@ export default function GraphClient({
   universe,
   nifty500,
   n500Only,
-  portfolioSymbols = [],
 }: {
   universe: GraphUniverse;
   nifty500: string[];
   n500Only: boolean;
-  portfolioSymbols?: string[];
 }) {
   const { snapDate } = universe;
-  const portfolioSet = useMemo(() => new Set(portfolioSymbols), [portfolioSymbols]);
 
   // When the NIFTY 500 toggle is on, narrow the tree to index members: filter
   // each industry's stocks, recompute counts, and drop industries/sectors that
@@ -178,6 +177,12 @@ export default function GraphClient({
   const { symbols: starredSyms, hydrated: starHydrated } = useStarred();
   const starSet = useMemo(() => new Set(starredSyms), [starredSyms]);
   const [favOnly, setFavOnly] = useState(false);
+  // Portfolio "P" tags — same scan-aid pattern as Favourites, own store
+  // (@/lib/portfolioTag). Powers the "Portfolio only" filter. A scanner-view
+  // marker, NOT a real holding (those live on the Portfolio tab).
+  const { symbols: pSyms, hydrated: pHydrated } = usePortfolioTag();
+  const pSet = useMemo(() => new Set(pSyms), [pSyms]);
+  const [pOnly, setPOnly] = useState(false);
   // Industry Score (composite percentile) range filter. null = open on that end.
   // A stock survives when its composite_pct sits within [min, max].
   const [minComposite, setMinComposite] = useState<number | null>(null);
@@ -187,9 +192,10 @@ export default function GraphClient({
   // non-matching stocks (and any industry/sector that empties out). Order is
   // preserved from the source (composite-desc) — no starred-first shuffle.
   const viewSectors = useMemo<GraphSector[]>(() => {
-    if (!favOnly && minComposite == null && maxComposite == null) return sectors;
+    if (!favOnly && !pOnly && minComposite == null && maxComposite == null) return sectors;
     const keep = (st: GraphStock) => {
       if (favOnly && !starSet.has(st.symbol)) return false;
+      if (pOnly && !pSet.has(st.symbol)) return false;
       if (minComposite != null || maxComposite != null) {
         if (st.composite_pct == null) return false;
         if (minComposite != null && st.composite_pct < minComposite) return false;
@@ -210,7 +216,7 @@ export default function GraphClient({
       if (inds.length) out.push({ ...s, count, industries: inds });
     }
     return out;
-  }, [sectors, starSet, favOnly, minComposite, maxComposite]);
+  }, [sectors, starSet, favOnly, pSet, pOnly, minComposite, maxComposite]);
 
   // Flat lookup: industry_id → { industry, sectorName }.
   const industryById = useMemo(() => {
@@ -467,6 +473,45 @@ export default function GraphClient({
               <Star size={13} fill={favOnly ? "#e8a838" : "none"} strokeWidth={2} />
               <span>Favourites{starHydrated && starSet.size > 0 ? ` · ${starSet.size}` : ""}</span>
             </button>
+            <button
+              type="button"
+              onClick={() => { setPOnly((v) => !v); setPage(0); }}
+              disabled={!pOnly && pSet.size === 0}
+              className="inline-flex items-center gap-1.5 rounded-md border hairline px-2.5 py-1.5 text-[12px] font-medium transition-colors disabled:opacity-40 hover:bg-[var(--color-paper)]"
+              style={
+                pOnly
+                  ? {
+                      borderColor: "#7c3aed",
+                      backgroundColor: "color-mix(in srgb, #7c3aed 12%, transparent)",
+                      color: "#7c3aed",
+                    }
+                  : undefined
+              }
+              aria-pressed={pOnly}
+              title={
+                pSet.size === 0
+                  ? "Tag some stocks with P first"
+                  : pOnly
+                    ? "Showing portfolio tags only — click for all"
+                    : "Show portfolio-tagged only"
+              }
+            >
+              <span
+                className="inline-flex items-center justify-center rounded-full border font-bold leading-none"
+                style={{
+                  width: 15,
+                  height: 15,
+                  fontSize: 9.5,
+                  borderColor: pOnly ? "#7c3aed" : "currentColor",
+                  color: pOnly ? "#fff" : "inherit",
+                  backgroundColor: pOnly ? "#7c3aed" : "transparent",
+                }}
+                aria-hidden
+              >
+                P
+              </span>
+              <span>Portfolio{pHydrated && pSet.size > 0 ? ` · ${pSet.size}` : ""}</span>
+            </button>
             <div
               className="inline-flex items-center gap-1 rounded-md border hairline px-2 py-1 text-[12px] font-medium transition-colors"
               style={
@@ -683,6 +728,7 @@ export default function GraphClient({
               <div key={st.symbol} className="flex flex-col rounded-xl border hairline overflow-hidden">
                 <div className="flex items-center gap-2 border-b hairline px-3 py-2">
                   <StarButton symbol={st.symbol} variant="icon" className="-ml-1 shrink-0" />
+                  <PortfolioTagButton symbol={st.symbol} variant="icon" className="-ml-1 shrink-0" />
                   <WatchlistButton symbol={st.symbol} variant="icon" className="-ml-1 shrink-0" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
@@ -763,20 +809,6 @@ export default function GraphClient({
                   <CandleChart candles={series} weekly={weekly} drawings={drawings[st.symbol]} />
                 </div>
                 <div className="flex items-center justify-end gap-1.5 border-t hairline px-2 py-1">
-                  {portfolioSet.has(st.symbol) && (
-                    <span
-                      className="inline-flex h-[18px] w-[18px] items-center justify-center rounded-full border text-[10px] font-bold tabular-nums"
-                      style={{
-                        borderColor: "var(--color-accent-600)",
-                        color: "var(--color-accent-700)",
-                        background: "color-mix(in srgb, var(--color-accent-600) 12%, transparent)",
-                      }}
-                      title="In your portfolio"
-                      aria-label={`${st.symbol} is in your portfolio`}
-                    >
-                      P
-                    </span>
-                  )}
                   <button
                     type="button"
                     onClick={() => series && series.length >= 2 && setFocus(st)}
@@ -821,6 +853,7 @@ export default function GraphClient({
             >
               <div className="flex items-center gap-3 border-b hairline px-4 py-3">
                 <StarButton symbol={focus.symbol} variant="icon" className="shrink-0" />
+                <PortfolioTagButton symbol={focus.symbol} variant="icon" className="shrink-0" />
                 <WatchlistButton symbol={focus.symbol} variant="icon" className="shrink-0" />
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">

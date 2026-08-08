@@ -6,6 +6,7 @@ import { useState } from "react";
 import { broadcastSessionChange } from "@/lib/session-client";
 import { mergeLocalWatchlistIntoServer } from "@/lib/watchlist";
 import { mergeLocalStarredIntoServer } from "@/lib/starred";
+import { mergeLocalPortfolioTagIntoServer } from "@/lib/portfolioTag";
 
 export function LoginForm() {
   const router = useRouter();
@@ -39,6 +40,7 @@ export function LoginForm() {
       // Failure here is non-fatal; the user can re-add manually.
       await mergeLocalWatchlistIntoServer().catch(() => undefined);
       await mergeLocalStarredIntoServer().catch(() => undefined);
+      await mergeLocalPortfolioTagIntoServer().catch(() => undefined);
       setSuccess(true);
       broadcastSessionChange();
       setTimeout(() => {

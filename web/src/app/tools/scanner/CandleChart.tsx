@@ -452,12 +452,14 @@ function renderChart(
           const y = yP(d.price);
           if (y < priceTop - 1 || y > priceBot + 1) return null; // off current price window
           const tag = fmtPrice(d.price);
-          const tw = 6.6 * tag.length + 12;
+          // Label sits just ABOVE the line, hugging the right edge — no box
+          // straddling the line. Nudge down to below the line if the level is
+          // near the very top of the plot so the text never clips off-chart.
+          const ty = y - priceTop < 12 ? y + 12 : y - 5;
           return (
             <g key={`dl-${i}`} pointerEvents="none">
               <line x1={plotL} y1={y} x2={plotR} y2={y} stroke={ACCENT} strokeWidth={1.2} strokeDasharray="5 3" opacity={0.85} />
-              <rect x={plotR - tw} y={y - 8} width={tw} height={16} rx={3} fill={ACCENT} opacity={0.95} />
-              <text x={plotR - tw / 2} y={y + 3.5} textAnchor="middle" fontSize={9.5} fontWeight={700} fill="#fff">{tag}</text>
+              <text x={plotR} y={ty} textAnchor="end" fontSize={9.5} fontWeight={700} fill={ACCENT}>{tag}</text>
             </g>
           );
         }
