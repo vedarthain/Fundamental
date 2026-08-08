@@ -728,7 +728,6 @@ export default function GraphClient({
               <div key={st.symbol} className="flex flex-col rounded-xl border hairline overflow-hidden">
                 <div className="flex items-center gap-2 border-b hairline px-3 py-2">
                   <StarButton symbol={st.symbol} variant="icon" className="-ml-1 shrink-0" />
-                  <PortfolioTagButton symbol={st.symbol} variant="icon" className="-ml-1 shrink-0" />
                   <WatchlistButton symbol={st.symbol} variant="icon" className="-ml-1 shrink-0" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
@@ -809,6 +808,7 @@ export default function GraphClient({
                   <CandleChart candles={series} weekly={weekly} drawings={drawings[st.symbol]} />
                 </div>
                 <div className="flex items-center justify-end gap-1.5 border-t hairline px-2 py-1">
+                  <PortfolioTagButton symbol={st.symbol} variant="icon" className="shrink-0" />
                   <button
                     type="button"
                     onClick={() => series && series.length >= 2 && setFocus(st)}
@@ -853,7 +853,6 @@ export default function GraphClient({
             >
               <div className="flex items-center gap-3 border-b hairline px-4 py-3">
                 <StarButton symbol={focus.symbol} variant="icon" className="shrink-0" />
-                <PortfolioTagButton symbol={focus.symbol} variant="icon" className="shrink-0" />
                 <WatchlistButton symbol={focus.symbol} variant="icon" className="shrink-0" />
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
@@ -880,6 +879,7 @@ export default function GraphClient({
                   </div>
                 </div>
                 <div className="ml-auto flex items-center gap-4">
+                  <PortfolioTagButton symbol={focus.symbol} variant="icon" className="shrink-0" />
                   <div className="flex items-center gap-1 rounded-lg border hairline p-0.5">
                     {([
                       { id: "measure", label: "Measure", icon: <RulerIcon size={13} />, hint: "Measure price move between two points" },
