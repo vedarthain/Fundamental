@@ -136,6 +136,34 @@ function ensureLoaded(): void {
   if (state.hydrated || loadPromise) return;
   loadPromise = (async () => {
     const { signedIn, symbols } = await fetchServerStarred();
+
+    // Self-healing merge for users who were ALREADY signed in when this
+    // dual-mode store shipped: the login/signup merge only fires on the auth
+    // form, so an existing session would otherwise read the empty server list
+    // and silently drop its localStorage stars. If we're signed in and still
+    // have local stars, fold them into the server here, adopt the union, then
+    // clear the local copy. Idempotent — once merged, readLocal() is empty and
+    // this branch is a no-op on every future load.
+    if (signedIn) {
+      const local = readLocal();
+      if (local.length > 0) {
+        const union = Array.from(new Set([...symbols, ...local]));
+        setState({ signedIn, symbols: union, hydrated: true });
+        try {
+          await fetch("/api/scanner-favourites", {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ symbols: local }),
+          });
+          clearLocal();
+        } catch {
+          // Leave local in place so the merge retries on the next load.
+        }
+        return;
+      }
+    }
+
     setState({
       signedIn,
       symbols: signedIn ? symbols : readLocal(),
