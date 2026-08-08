@@ -20,8 +20,6 @@ import type { GraphUniverse, GraphSector, GraphIndustry, GraphStock } from "@/li
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { StarButton } from "@/components/StarButton";
 import { useStarred } from "@/lib/starred";
-import { PortfolioTagButton } from "@/components/PortfolioTagButton";
-import { usePortfolioTag } from "@/lib/portfolioTag";
 import { WindowPicker } from "./WindowPicker";
 import type { WindowOpt } from "./sparkWindows";
 import { CandleChart, type ChartTool, type Drawing } from "./CandleChart";
@@ -139,12 +137,21 @@ export default function GraphClient({
   universe,
   nifty500,
   n500Only,
+  portfolioSymbols = [],
 }: {
   universe: GraphUniverse;
   nifty500: string[];
   n500Only: boolean;
+  /** The user's REAL portfolio holdings (app.portfolio_holding). Drives the
+   *  auto-lit "P" marker + the Portfolio filter/count — read-only here;
+   *  holdings are edited on the Portfolio tab. */
+  portfolioSymbols?: string[];
 }) {
   const { snapDate } = universe;
+  const portfolioSet = useMemo(
+    () => new Set(portfolioSymbols.map((s) => s.toUpperCase())),
+    [portfolioSymbols],
+  );
 
   // When the NIFTY 500 toggle is on, narrow the tree to index members: filter
   // each industry's stocks, recompute counts, and drop industries/sectors that
@@ -177,11 +184,9 @@ export default function GraphClient({
   const { symbols: starredSyms, hydrated: starHydrated } = useStarred();
   const starSet = useMemo(() => new Set(starredSyms), [starredSyms]);
   const [favOnly, setFavOnly] = useState(false);
-  // Portfolio "P" tags — same scan-aid pattern as Favourites, own store
-  // (@/lib/portfolioTag). Powers the "Portfolio only" filter. A scanner-view
-  // marker, NOT a real holding (those live on the Portfolio tab).
-  const { symbols: pSyms, hydrated: pHydrated } = usePortfolioTag();
-  const pSet = useMemo(() => new Set(pSyms), [pSyms]);
+  // Portfolio "P" — auto-derived from the user's REAL holdings (portfolioSet
+  // above), NOT a manual tag. The marker lights on its own for held names and
+  // the count is the holding total; nothing to click. Powers "Portfolio only".
   const [pOnly, setPOnly] = useState(false);
   // Industry Score (composite percentile) range filter. null = open on that end.
   // A stock survives when its composite_pct sits within [min, max].
@@ -195,7 +200,7 @@ export default function GraphClient({
     if (!favOnly && !pOnly && minComposite == null && maxComposite == null) return sectors;
     const keep = (st: GraphStock) => {
       if (favOnly && !starSet.has(st.symbol)) return false;
-      if (pOnly && !pSet.has(st.symbol)) return false;
+      if (pOnly && !portfolioSet.has(st.symbol)) return false;
       if (minComposite != null || maxComposite != null) {
         if (st.composite_pct == null) return false;
         if (minComposite != null && st.composite_pct < minComposite) return false;
@@ -216,7 +221,7 @@ export default function GraphClient({
       if (inds.length) out.push({ ...s, count, industries: inds });
     }
     return out;
-  }, [sectors, starSet, favOnly, pSet, pOnly, minComposite, maxComposite]);
+  }, [sectors, starSet, favOnly, portfolioSet, pOnly, minComposite, maxComposite]);
 
   // Flat lookup: industry_id → { industry, sectorName }.
   const industryById = useMemo(() => {
@@ -476,7 +481,7 @@ export default function GraphClient({
             <button
               type="button"
               onClick={() => { setPOnly((v) => !v); setPage(0); }}
-              disabled={!pOnly && pSet.size === 0}
+              disabled={!pOnly && portfolioSet.size === 0}
               className="inline-flex items-center gap-1.5 rounded-md border hairline px-2.5 py-1.5 text-[12px] font-medium transition-colors disabled:opacity-40 hover:bg-[var(--color-paper)]"
               style={
                 pOnly
@@ -489,11 +494,11 @@ export default function GraphClient({
               }
               aria-pressed={pOnly}
               title={
-                pSet.size === 0
-                  ? "Tag some stocks with P first"
+                portfolioSet.size === 0
+                  ? "No portfolio holdings yet — add them on the Portfolio tab"
                   : pOnly
-                    ? "Showing portfolio tags only — click for all"
-                    : "Show portfolio-tagged only"
+                    ? "Showing portfolio holdings only — click for all"
+                    : "Show portfolio holdings only"
               }
             >
               <span
@@ -510,7 +515,7 @@ export default function GraphClient({
               >
                 P
               </span>
-              <span>Portfolio{pHydrated && pSet.size > 0 ? ` · ${pSet.size}` : ""}</span>
+              <span>Portfolio{portfolioSet.size > 0 ? ` · ${portfolioSet.size}` : ""}</span>
             </button>
             <div
               className="inline-flex items-center gap-1 rounded-md border hairline px-2 py-1 text-[12px] font-medium transition-colors"
@@ -808,7 +813,16 @@ export default function GraphClient({
                   <CandleChart candles={series} weekly={weekly} drawings={drawings[st.symbol]} />
                 </div>
                 <div className="flex items-center justify-end gap-1.5 border-t hairline px-2 py-1">
-                  <PortfolioTagButton symbol={st.symbol} variant="icon" className="shrink-0" />
+                  {portfolioSet.has(st.symbol) && (
+                    <span
+                      className="inline-flex items-center justify-center rounded-full font-bold leading-none shrink-0"
+                      style={{ width: 18, height: 18, fontSize: 10.5, color: "#fff", backgroundColor: "#7c3aed" }}
+                      title="In your portfolio"
+                      aria-label={`${st.symbol} is in your portfolio`}
+                    >
+                      P
+                    </span>
+                  )}
                   <button
                     type="button"
                     onClick={() => series && series.length >= 2 && setFocus(st)}
@@ -879,7 +893,16 @@ export default function GraphClient({
                   </div>
                 </div>
                 <div className="ml-auto flex items-center gap-4">
-                  <PortfolioTagButton symbol={focus.symbol} variant="icon" className="shrink-0" />
+                  {portfolioSet.has(focus.symbol) && (
+                    <span
+                      className="inline-flex items-center justify-center rounded-full font-bold leading-none shrink-0"
+                      style={{ width: 18, height: 18, fontSize: 10.5, color: "#fff", backgroundColor: "#7c3aed" }}
+                      title="In your portfolio"
+                      aria-label={`${focus.symbol} is in your portfolio`}
+                    >
+                      P
+                    </span>
+                  )}
                   <div className="flex items-center gap-1 rounded-lg border hairline p-0.5">
                     {([
                       { id: "measure", label: "Measure", icon: <RulerIcon size={13} />, hint: "Measure price move between two points" },

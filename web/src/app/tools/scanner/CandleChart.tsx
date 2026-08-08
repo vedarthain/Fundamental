@@ -452,14 +452,18 @@ function renderChart(
           const y = yP(d.price);
           if (y < priceTop - 1 || y > priceBot + 1) return null; // off current price window
           const tag = fmtPrice(d.price);
-          // Label sits just ABOVE the line, hugging the right edge — no box
-          // straddling the line. Nudge down to below the line if the level is
-          // near the very top of the plot so the text never clips off-chart.
+          // Label sits just ABOVE the line at the LEFT edge — the right side is
+          // where the latest price action lives, so a right-aligned tag sat on
+          // top of the candles and was hard to read. A small paper-coloured pill
+          // behind it keeps it legible over gridlines/bars. Nudge below the line
+          // if the level is near the very top so the text never clips off-chart.
           const ty = y - priceTop < 12 ? y + 12 : y - 5;
+          const tw = 6.6 * tag.length + 8;
           return (
             <g key={`dl-${i}`} pointerEvents="none">
               <line x1={plotL} y1={y} x2={plotR} y2={y} stroke={ACCENT} strokeWidth={1.2} strokeDasharray="5 3" opacity={0.85} />
-              <text x={plotR} y={ty} textAnchor="end" fontSize={9.5} fontWeight={700} fill={ACCENT}>{tag}</text>
+              <rect x={plotL} y={ty - 9} width={tw} height={12} rx={2} fill="var(--color-paper, #fbfbfd)" opacity={0.82} />
+              <text x={plotL + 3} y={ty} textAnchor="start" fontSize={9.5} fontWeight={700} fill={ACCENT}>{tag}</text>
             </g>
           );
         }

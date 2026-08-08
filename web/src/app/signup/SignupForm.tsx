@@ -6,7 +6,6 @@ import { useState } from "react";
 import { broadcastSessionChange } from "@/lib/session-client";
 import { mergeLocalWatchlistIntoServer } from "@/lib/watchlist";
 import { mergeLocalStarredIntoServer } from "@/lib/starred";
-import { mergeLocalPortfolioTagIntoServer } from "@/lib/portfolioTag";
 
 export function SignupForm() {
   const router = useRouter();
@@ -54,7 +53,6 @@ export function SignupForm() {
       // Failure here is non-fatal.
       await mergeLocalWatchlistIntoServer().catch(() => undefined);
       await mergeLocalStarredIntoServer().catch(() => undefined);
-      await mergeLocalPortfolioTagIntoServer().catch(() => undefined);
       // Flip into the success state and tell the rest of the app (top
       // nav, etc.) that the session changed.
       setSuccess(true);
