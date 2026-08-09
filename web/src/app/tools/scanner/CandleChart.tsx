@@ -81,12 +81,12 @@ export type ChartTool = "none" | "measure" | "hline" | "trend" | "erase";
 
 // Shared price/x geometry — the single source of truth used by both renderChart
 // (to draw) and the click handler (to invert a pixel back to a price/date).
-function computeGeom(data: Candle[], W: number, H: number) {
+function computeGeom(data: Candle[], W: number, H: number, hideVolume = false) {
   const plotL = mL;
   const plotR = W - mR;
   const plotW = plotR - plotL;
   const priceTop = mT;
-  const priceBot = mT + (H - mT - mB) * 0.7;
+  const priceBot = hideVolume ? H - mB : mT + (H - mT - mB) * 0.7;
   const volTop = priceBot + 12;
   const volBot = H - mB;
   const n = data.length;
@@ -159,6 +159,8 @@ export function CandleChart({
   drawings = EMPTY_DRAWINGS,
   onAddDrawing,
   onDeleteDrawing,
+  monoColor,
+  hideVolume = false,
 }: {
   candles?: Candle[];
   interactive?: boolean;
@@ -171,6 +173,11 @@ export function CandleChart({
   onAddDrawing?: (d: Drawing) => void;
   /** Delete the drawing at this index (eraser tool). */
   onDeleteDrawing?: (index: number) => void;
+  /** Paint every candle a single colour (up/down ignored) — used for the
+   *  purple index tile on the Themes grid. */
+  monoColor?: string;
+  /** Drop the volume panel entirely (indices carry no volume). */
+  hideVolume?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -243,7 +250,7 @@ export function CandleChart({
   function onClick(e: React.MouseEvent<HTMLDivElement>) {
     if (data.length < 2 || size.w <= 20 || size.h <= 20) return;
     const p = localPos(e);
-    const geom = computeGeom(data, size.w, size.h);
+    const geom = computeGeom(data, size.w, size.h, hideVolume);
 
     if (tool === "measure") {
       if (phaseRef.current === "placing") {
@@ -333,6 +340,8 @@ export function CandleChart({
           drawings,
           interactive,
           drawMode ? draft : null,
+          monoColor,
+          hideVolume,
         )
       ) : null}
     </div>
@@ -349,12 +358,14 @@ function renderChart(
   drawings: Drawing[] = EMPTY_DRAWINGS,
   showTrend = false,
   draft: Draft | null = null,
+  monoColor?: string,
+  hideVolume = false,
 ) {
   const plotL = mL;
   const plotR = W - mR;
   const plotW = plotR - plotL;
   const priceTop = mT;
-  const priceBot = mT + (H - mT - mB) * 0.7;
+  const priceBot = hideVolume ? H - mB : mT + (H - mT - mB) * 0.7;
   const volTop = priceBot + 12;
   const volBot = H - mB;
 
@@ -411,7 +422,7 @@ function renderChart(
       {/* candles + volume, one x-slot per session */}
       {data.map((c, i) => {
         const up = c.c >= c.o;
-        const color = up ? GREEN : RED;
+        const color = monoColor ?? (up ? GREEN : RED);
         const x = cx(i);
         const top = Math.min(yP(c.o), yP(c.c));
         const bh = Math.max(1, Math.abs(yP(c.c) - yP(c.o)));
@@ -420,20 +431,26 @@ function renderChart(
           <g key={c.d}>
             <line x1={x} y1={yP(c.h)} x2={x} y2={yP(c.l)} stroke={color} strokeWidth={1} />
             <rect x={x - bodyW / 2} y={top} width={bodyW} height={bh} fill={color} opacity={up ? 0.85 : 0.9} />
-            <rect x={x - bodyW / 2} y={vt} width={bodyW} height={Math.max(0, volBot - vt)} fill={color} opacity={0.62} />
+            {!hideVolume && (
+              <rect x={x - bodyW / 2} y={vt} width={bodyW} height={Math.max(0, volBot - vt)} fill={color} opacity={0.62} />
+            )}
           </g>
         );
       })}
 
       {/* volume panel: top separator, baseline, and gutter labels */}
-      <line x1={plotL} y1={volTop} x2={plotR} y2={volTop} stroke={GRID} strokeWidth={1} opacity={0.5} />
-      <line x1={plotL} y1={volBot} x2={plotR} y2={volBot} stroke={GRID} strokeWidth={1} opacity={0.7} />
-      <text x={plotL - 5} y={volTop + 8} textAnchor="end" fontSize={8.5} fill={AXIS}>
-        {fmtVol(vMax)}
-      </text>
-      <text x={plotL - 5} y={volBot - 1} textAnchor="end" fontSize={8.5} fill={AXIS} fontWeight={600}>
-        {weekly ? "Vol/wk" : "Vol"}
-      </text>
+      {!hideVolume && (
+        <>
+          <line x1={plotL} y1={volTop} x2={plotR} y2={volTop} stroke={GRID} strokeWidth={1} opacity={0.5} />
+          <line x1={plotL} y1={volBot} x2={plotR} y2={volBot} stroke={GRID} strokeWidth={1} opacity={0.7} />
+          <text x={plotL - 5} y={volTop + 8} textAnchor="end" fontSize={8.5} fill={AXIS}>
+            {fmtVol(vMax)}
+          </text>
+          <text x={plotL - 5} y={volBot - 1} textAnchor="end" fontSize={8.5} fill={AXIS} fontWeight={600}>
+            {weekly ? "Vol/wk" : "Vol"}
+          </text>
+        </>
+      )}
 
       {/* date (X) labels */}
       {xIdx.map((i, k) => {

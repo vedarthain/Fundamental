@@ -1,50 +1,60 @@
 "use client";
 
 /**
- * ThemesClient — the "Themes" scanner tab.
+ * ThemesClient — the "Themes" scanner tab, rebuilt as a Graph-style candle grid.
  *
- * Layout intent: a real NSE thematic index as the benchmark, its constituents
- * read RELATIVE to it. Three panes:
- *   1. left  — pick one of 8 themes (each chip shows the index's own return)
- *   2. header— the picked index rebased-to-100 line + window return + breadth
- *              (% constituents beating zero) + advance/decline
- *   3. list  — constituents ranked by EXCESS return vs. the index (default),
- *              with Q/V/M chips, star + portfolio (P) markers. Toggle the sort
- *              to "Quality within theme" to rank by composite score instead —
- *              that's the differentiating read: who's beating the theme AND is
- *              fundamentally sound vs. just riding the tide.
+ * Pick a theme (Auto, Bank, IT, …) on the left; the right pane is a 3×2 grid of
+ * candlestick charts — exactly like the Graph tab — but with the traded INDEX
+ * pinned in slot 1 (purple, fixed on every page) and its constituents filling
+ * the other five slots, paged 5 at a time. So every screen reads the index next
+ * to five of its members on the same timeframe.
  *
- * Windows are the three the panel cache carries (1w / 1m / 1y) so excess return
- * is apples-to-apples on both sides. No per-constituent price fetch.
+ * Data:
+ *   - index candles      ← /api/scanner/index-ohlc (app.market_index_history)
+ *   - constituent candles← /api/scanner/ohlc (golden, split-safe) via useGraphCandles
+ *   - constituent scores ← passed in on each Theme (panel-cache join)
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import type { Theme, ThemeWindow, ThemeConstituent } from "@/lib/themes";
-import { Sparkline, type SparkPoint } from "@/components/Sparkline";
+import { Star } from "lucide-react";
+import type { Theme, ThemeConstituent } from "@/lib/themes";
+import type { Candle } from "@/lib/candles";
+import { displayCompanyName } from "@/lib/score";
+import { WatchlistButton } from "@/components/WatchlistButton";
+import { StarButton } from "@/components/StarButton";
 import { useStarred } from "@/lib/starred";
+import { WindowPicker } from "./WindowPicker";
+import type { WindowOpt } from "./sparkWindows";
+import { CandleChart } from "./CandleChart";
+import { useGraphCandles } from "./useGraphCandles";
+import { useIndexCandles } from "./useIndexCandles";
+import { WEEKLY_THRESHOLD_DAYS } from "@/lib/candleConfig";
 
 const GREEN = "var(--color-delta-up, #0a0)";
 const RED = "var(--color-delta-down, #b00)";
-const VIOLET = "#7c3aed";
+const PURPLE = "#7c3aed";
+const CONS_PER_PAGE = 5; // slot 1 is always the index; 5 constituents fill the rest
 
-const WINDOWS: { id: ThemeWindow; label: string }[] = [
-  { id: "1w", label: "1W" },
-  { id: "1m", label: "1M" },
-  { id: "1y", label: "1Y" },
+// Index history goes back ~21y; stock candles ~5y in golden, so at 10Y the
+// purple index fills the window while constituents show what golden has.
+const THEME_WINDOWS: WindowOpt[] = [
+  { label: "1W", days: 7 },
+  { label: "1M", days: 30 },
+  { label: "3M", days: 90 },
+  { label: "6M", days: 180 },
+  { label: "1Y", days: 365 },
+  { label: "2Y", days: 730 },
+  { label: "3Y", days: 1100 },
+  { label: "5Y", days: 1830 },
+  { label: "10Y", days: 3660 },
 ];
 
-// Approx trading-day span per window — how much of the index series to rebase
-// for the header line. Mirrors WINDOW_OFFSET in lib/themes.ts.
-const WINDOW_SPAN: Record<ThemeWindow, number> = { "1w": 6, "1m": 22, "1y": 251 };
-
-function pctColor(p: number | null): string {
-  if (p == null) return "var(--color-muted)";
-  return p > 0 ? GREEN : p < 0 ? RED : "var(--color-muted)";
+function inr(n: number): string {
+  return "₹" + n.toLocaleString("en-IN", { maximumFractionDigits: 2 });
 }
-function signedPct(p: number | null, dp = 1): string {
-  if (p == null) return "—";
-  return `${p >= 0 ? "+" : ""}${p.toFixed(dp)}%`;
+function idxNum(n: number): string {
+  return n.toLocaleString("en-IN", { maximumFractionDigits: 2 });
 }
 function scoreColor(p: number | null): string {
   if (p == null) return "var(--color-muted)";
@@ -53,28 +63,34 @@ function scoreColor(p: number | null): string {
   return RED;
 }
 
-/** Pull a constituent's return for the active window. */
-function constituentRet(c: ThemeConstituent, w: ThemeWindow): number | null {
-  return w === "1w" ? c.ret1w : w === "1m" ? c.ret1m : c.ret1y;
-}
-/** The index's own return for the active window. */
-function indexRet(t: Theme, w: ThemeWindow): number | null {
-  return w === "1w" ? t.idxRet1w : w === "1m" ? t.idxRet1m : t.idxRet1y;
-}
-
-// Small Q/V/M/score pill.
-function Chip({ label, value }: { label: string; value: number | null }) {
+function Chevron({ open }: { open: boolean }) {
   return (
-    <span
-      className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10.5px] tabular-nums"
-      style={{ background: "var(--color-paper, #fbfbfd)", border: "1px solid var(--color-border)" }}
-      title={`${label} percentile`}
+    <svg
+      width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round"
+      className="shrink-0 transition-transform"
+      style={{ transform: open ? "rotate(90deg)" : "none" }}
+      aria-hidden
     >
-      <span className="muted-text">{label}</span>
-      <span style={{ color: scoreColor(value), fontWeight: 700 }}>{value == null ? "—" : value}</span>
-    </span>
+      <path d="M9 6l6 6-6 6" />
+    </svg>
   );
 }
+
+// Metrics read off a candle series (last close, period change, hi/lo).
+function seriesStats(series: Candle[] | undefined) {
+  if (!series || series.length === 0) return { last: null as Candle | null, chg: null as number | null, hi: null as number | null, lo: null as number | null };
+  const first = series[0];
+  const last = series[series.length - 1];
+  const hi = Math.max(...series.map((c) => c.h));
+  const lo = Math.min(...series.map((c) => c.l));
+  const chg = first && last && first.c > 0 ? (last.c / first.c - 1) * 100 : null;
+  return { last, chg, hi, lo };
+}
+
+type FocusTarget =
+  | { kind: "index"; theme: Theme }
+  | { kind: "stock"; stock: ThemeConstituent };
 
 export default function ThemesClient({
   themes,
@@ -92,10 +108,15 @@ export default function ThemesClient({
   portfolioSymbols?: string[];
 }) {
   const [selectedCode, setSelectedCode] = useState<string>(themes[0]?.code ?? "");
-  const [win, setWin] = useState<ThemeWindow>("1m");
-  const [sort, setSort] = useState<"excess" | "quality">("excess");
+  const [page, setPage] = useState(0);
+  const [days, setDays] = useState<number>(365);
+  const [treeOpen, setTreeOpen] = useState(true);
+  const [focus, setFocus] = useState<FocusTarget | null>(null);
+  const [favOnly, setFavOnly] = useState(false);
+  const [pOnly, setPOnly] = useState(false);
 
-  const { isStarred, toggle } = useStarred();
+  const { symbols: starredSyms, hydrated: starHydrated } = useStarred();
+  const starSet = useMemo(() => new Set(starredSyms), [starredSyms]);
   const portfolioSet = useMemo(
     () => new Set(portfolioSymbols.map((s) => s.toUpperCase())),
     [portfolioSymbols],
@@ -107,314 +128,559 @@ export default function ThemesClient({
     [themes, selectedCode],
   );
 
-  // Rebase the index series to 100 within the active window for the header line.
-  const rebased: SparkPoint[] = useMemo(() => {
+  // Constituents in scope: NIFTY 500 (global toggle), Favourites, and Portfolio
+  // filters all narrow the grid — same semantics as the Graph tab.
+  const constituents = useMemo<ThemeConstituent[]>(() => {
     if (!theme) return [];
-    const span = WINDOW_SPAN[win];
-    const slice = theme.series.slice(-span - 1);
-    if (slice.length < 2) return [];
-    const base = slice[0].close;
-    if (!base) return [];
-    return slice.map((p) => ({ label: p.date, value: (p.close / base) * 100 }));
-  }, [theme, win]);
-
-  const idxRet = theme ? indexRet(theme, win) : null;
-
-  // Constituents for the active window: attach excess return, filter to N500 if
-  // scoped, drop names with no return for this window, then rank.
-  const rows = useMemo(() => {
-    if (!theme) return [];
-    const enriched = theme.constituents
-      .filter((c) => (n500Only ? n500.has(c.symbol) : true))
-      .map((c) => {
-        const r = constituentRet(c, win);
-        const excess = r != null && idxRet != null ? r - idxRet : null;
-        return { c, ret: r, excess };
-      });
-    enriched.sort((a, b) => {
-      if (sort === "quality") {
-        return (b.c.compositePct ?? -1) - (a.c.compositePct ?? -1);
-      }
-      return (b.excess ?? -Infinity) - (a.excess ?? -Infinity);
+    return theme.constituents.filter((c) => {
+      if (n500Only && !n500.has(c.symbol)) return false;
+      if (favOnly && !starSet.has(c.symbol)) return false;
+      if (pOnly && !portfolioSet.has(c.symbol)) return false;
+      return true;
     });
-    return enriched;
-  }, [theme, win, idxRet, sort, n500Only, n500]);
+  }, [theme, n500Only, n500, favOnly, starSet, pOnly, portfolioSet]);
 
-  // Breadth + advance/decline over the window (constituents with a return).
-  const { breadthPct, adv, dec, total } = useMemo(() => {
-    const withRet = rows.filter((r) => r.ret != null);
-    const a = withRet.filter((r) => (r.ret as number) > 0).length;
-    const d = withRet.filter((r) => (r.ret as number) < 0).length;
-    return {
-      breadthPct: withRet.length ? (a / withRet.length) * 100 : null,
-      adv: a,
-      dec: d,
-      total: withRet.length,
-    };
-  }, [rows]);
+  const pageCount = Math.max(1, Math.ceil(constituents.length / CONS_PER_PAGE));
+  const safePage = Math.min(Math.max(0, page), pageCount - 1);
+  const pageStocks = constituents.slice(safePage * CONS_PER_PAGE, safePage * CONS_PER_PAGE + CONS_PER_PAGE);
+  const pageSymbols = pageStocks.map((s) => s.symbol);
 
-  // Max |excess| for scaling the inline excess bars.
-  const maxAbsExcess = useMemo(() => {
-    let m = 0;
-    for (const r of rows) if (r.excess != null) m = Math.max(m, Math.abs(r.excess));
-    return m || 1;
-  }, [rows]);
+  // Switch theme + jump back to the first page in one handler (avoids a
+  // setState-in-effect; safePage already clamps if the N500 toggle shrinks the
+  // list under the current page).
+  const selectTheme = (code: string) => { setSelectedCode(code); setPage(0); };
+
+  // Left-rail tree: each theme expands to reveal its constituent stocks.
+  const [openThemes, setOpenThemes] = useState<Set<string>>(
+    () => new Set(themes[0] ? [themes[0].code] : []),
+  );
+  const scopedConstituents = (t: Theme) =>
+    n500Only ? t.constituents.filter((c) => n500.has(c.symbol)) : t.constituents;
+  const toggleThemeOpen = (code: string) =>
+    setOpenThemes((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code);
+      else next.add(code);
+      return next;
+    });
+  // Click a stock in the tree → select its theme and jump to the page holding it.
+  const selectStock = (t: Theme, symbol: string) => {
+    const idx = scopedConstituents(t).findIndex((c) => c.symbol === symbol);
+    setSelectedCode(t.code);
+    setPage(idx >= 0 ? Math.floor(idx / CONS_PER_PAGE) : 0);
+  };
+
+  const consCandles = useGraphCandles(pageSymbols, days);
+  const idxCandles = useIndexCandles(theme?.code ?? "", days);
+  const weekly = days > WEEKLY_THRESHOLD_DAYS;
+
+  // Esc closes the focus overlay.
+  useEffect(() => {
+    if (!focus) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setFocus(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [focus]);
 
   if (!theme) {
     return <div className="muted-text text-[13px] py-8">No theme data yet.</div>;
   }
 
-  return (
-    <div>
-      {/* Eyebrow + freshness */}
-      <div className="flex items-baseline justify-between gap-3 mb-3">
-        <div>
-          <div className="text-[11px] uppercase tracking-wide muted-text">Themes</div>
-          <h2 className="font-display text-[22px] leading-tight">Index vs. its constituents</h2>
-        </div>
-        <div className="text-[11px] muted-text text-right leading-tight">
-          {snapDate && <div>Scores as of {snapDate}</div>}
-          {indexLastDate && <div>Index to {indexLastDate}</div>}
-        </div>
-      </div>
+  const idxStats = seriesStats(idxCandles.candles);
+  const rangeStart = constituents.length ? safePage * CONS_PER_PAGE + 1 : 0;
+  const rangeEnd = safePage * CONS_PER_PAGE + pageStocks.length;
+  // How many of THIS index's constituents you actually hold (distinct from the
+  // Portfolio toggle's total-holdings count).
+  const heldInTheme = constituents.filter((c) => portfolioSet.has(c.symbol)).length;
 
-      <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
-        {/* Left: theme picker */}
-        <div className="w-full lg:w-[176px] lg:shrink-0">
-          <div className="text-[11px] uppercase tracking-wide muted-text mb-2 px-1">Theme</div>
-          <div className="flex flex-wrap gap-1.5 lg:flex-col">
+  return (
+    <div className="flex flex-col">
+      <header className="mb-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <div className="min-w-0">
+          <h1 className="font-display text-[20px] tracking-tight leading-tight">
+            {theme.displayName ?? theme.label} · index vs. constituents
+          </h1>
+          <p className="text-[12px] muted-text">
+            {constituents.length} names
+            {constituents.length ? <> · showing {rangeStart}–{rangeEnd}</> : null}
+            {heldInTheme > 0 ? (
+              <>
+                {" · "}
+                <span style={{ color: PURPLE, fontWeight: 600 }}>
+                  {heldInTheme} held
+                </span>
+              </>
+            ) : null}
+            {n500Only ? " · NIFTY 500 scope" : ""}
+            {snapDate ? <> · panel {snapDate}</> : null}
+            {indexLastDate ? <> · index to {indexLastDate}</> : null}
+          </p>
+          <p className="text-[11px] muted-text mt-0.5">
+            <span style={{ color: PURPLE, fontWeight: 600 }}>ER</span> = Excess Return — a stock&apos;s
+            return over the selected window minus the index&apos;s own return (positive = beating its theme).
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => { setFavOnly((v) => !v); setPage(0); }}
+            disabled={!favOnly && starSet.size === 0}
+            className="inline-flex items-center gap-1.5 rounded-md border hairline px-2.5 py-1.5 text-[12px] font-medium transition-colors disabled:opacity-40 hover:bg-[var(--color-paper)]"
+            style={
+              favOnly
+                ? { borderColor: "#e8a838", backgroundColor: "color-mix(in srgb, #e8a838 12%, transparent)", color: "#e8a838" }
+                : undefined
+            }
+            aria-pressed={favOnly}
+            title={starSet.size === 0 ? "Star some stocks first" : favOnly ? "Showing favourites only — click for all" : "Show favourites only"}
+          >
+            <Star size={13} fill={favOnly ? "#e8a838" : "none"} strokeWidth={2} />
+            <span>Favourites{starHydrated && starSet.size > 0 ? ` · ${starSet.size}` : ""}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => { setPOnly((v) => !v); setPage(0); }}
+            disabled={!pOnly && portfolioSet.size === 0}
+            className="inline-flex items-center gap-1.5 rounded-md border hairline px-2.5 py-1.5 text-[12px] font-medium transition-colors disabled:opacity-40 hover:bg-[var(--color-paper)]"
+            style={
+              pOnly
+                ? { borderColor: PURPLE, backgroundColor: "color-mix(in srgb, #7c3aed 12%, transparent)", color: PURPLE }
+                : undefined
+            }
+            aria-pressed={pOnly}
+            title={portfolioSet.size === 0 ? "No portfolio holdings yet — add them on the Portfolio tab" : pOnly ? "Showing portfolio holdings only — click for all" : "Show portfolio holdings only"}
+          >
+            <span
+              className="inline-flex items-center justify-center rounded-full border font-bold leading-none"
+              style={{ width: 15, height: 15, fontSize: 9.5, borderColor: pOnly ? PURPLE : "currentColor", color: pOnly ? "#fff" : "inherit", backgroundColor: pOnly ? PURPLE : "transparent" }}
+              aria-hidden
+            >
+              P
+            </span>
+            <span>Portfolio{portfolioSet.size > 0 ? ` · ${portfolioSet.size}` : ""}</span>
+          </button>
+          <WindowPicker options={THEME_WINDOWS} days={days} onSelect={setDays} loading={consCandles.loading || idxCandles.loading} />
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={safePage <= 0}
+              className="rounded-md border hairline px-2.5 py-1.5 text-[12px] font-medium disabled:opacity-40 hover:bg-[var(--color-paper)] transition-colors"
+              aria-label="Previous page"
+            >
+              ‹
+            </button>
+            <span className="text-[12px] tabular-nums muted-text px-1 min-w-[64px] text-center">
+              {safePage + 1} / {pageCount}
+            </span>
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+              disabled={safePage >= pageCount - 1}
+              className="rounded-md border hairline px-2.5 py-1.5 text-[12px] font-medium disabled:opacity-40 hover:bg-[var(--color-paper)] transition-colors"
+              aria-label="Next page"
+            >
+              ›
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div className="flex gap-3 h-[calc(100vh-158px)] min-h-[560px]">
+        {/* ── Left: theme picker ── */}
+        {!treeOpen && (
+          <button
+            type="button"
+            onClick={() => setTreeOpen(true)}
+            className="shrink-0 self-start rounded-lg border hairline px-2 py-2 hover:bg-[var(--color-paper)] transition-colors"
+            aria-label="Show theme list"
+            title="Show theme list"
+          >
+            <Chevron open />
+          </button>
+        )}
+        {treeOpen && (
+          <aside className="w-[200px] shrink-0 overflow-y-auto rounded-xl border hairline p-2 text-[12.5px]">
+            <div className="flex items-center justify-between px-1 pb-2 mb-1 border-b hairline">
+              <span className="text-[11px] uppercase tracking-wide muted-text">Themes</span>
+              <button
+                type="button"
+                onClick={() => setTreeOpen(false)}
+                className="rounded p-1 hover:bg-[var(--color-border)] transition-colors"
+                aria-label="Hide theme list"
+                title="Hide list"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M15 6l-6 6 6 6" />
+                </svg>
+              </button>
+            </div>
             {themes.map((t) => {
               const active = t.code === selectedCode;
-              const r = indexRet(t, win);
+              const open = openThemes.has(t.code);
+              const list = scopedConstituents(t);
+              const held = list.filter((c) => portfolioSet.has(c.symbol)).length;
               return (
-                <button
-                  key={t.code}
-                  type="button"
-                  onClick={() => setSelectedCode(t.code)}
-                  className="flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left transition-colors"
-                  style={
-                    active
-                      ? {
-                          background: "color-mix(in srgb, var(--color-accent-600) 10%, transparent)",
-                          borderColor: "color-mix(in srgb, var(--color-accent-600) 35%, transparent)",
-                        }
-                      : { borderColor: "var(--color-border)" }
-                  }
-                >
-                  <span
-                    className="text-[13px] font-semibold"
-                    style={{ color: active ? "var(--color-accent-700)" : "var(--color-ink)" }}
+                <div key={t.code} className="mb-0.5">
+                  <div
+                    className="flex items-center gap-0.5 rounded-md pr-1"
+                    style={active ? { background: "color-mix(in srgb, #7c3aed 12%, transparent)" } : undefined}
                   >
-                    {t.label}
-                  </span>
-                  <span className="text-[11px] tabular-nums" style={{ color: pctColor(r) }}>
-                    {signedPct(r)}
-                  </span>
-                </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleThemeOpen(t.code)}
+                      className="shrink-0 rounded p-1 hover:bg-[var(--color-border)] transition-colors"
+                      aria-label={open ? "Collapse stocks" : "Expand stocks"}
+                    >
+                      <Chevron open={open} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => selectTheme(t.code)}
+                      className="flex-1 flex items-center gap-1.5 py-2 text-left min-w-0"
+                    >
+                      <span
+                        className="h-2 w-2 rounded-full shrink-0"
+                        style={{ background: active ? PURPLE : "var(--color-border)" }}
+                        aria-hidden
+                      />
+                      <span
+                        className="font-semibold flex-1 truncate"
+                        style={active ? { color: PURPLE } : undefined}
+                      >
+                        {t.displayName ?? t.label}
+                      </span>
+                      {held > 0 && (
+                        <span
+                          className="inline-flex items-center gap-0.5 rounded-full px-1.5 text-[9.5px] font-bold tabular-nums leading-[15px] shrink-0"
+                          style={{ color: "#fff", background: PURPLE }}
+                          title={`You hold ${held} of this index's ${list.length} constituents`}
+                        >
+                          P{held}
+                        </span>
+                      )}
+                      <span className="text-[10.5px] tabular-nums muted-text">{list.length}</span>
+                    </button>
+                  </div>
+                  {open && (
+                    <ul className="ml-5 mb-1 border-l hairline pl-1.5">
+                      {list.map((c, i) => {
+                        const onPage =
+                          active &&
+                          i >= safePage * CONS_PER_PAGE &&
+                          i < safePage * CONS_PER_PAGE + CONS_PER_PAGE;
+                        return (
+                          <li key={c.symbol} className="flex items-center gap-0.5">
+                            <StarButton symbol={c.symbol} variant="icon" className="!w-6 !h-6 shrink-0" />
+                            <button
+                              type="button"
+                              onClick={() => selectStock(t, c.symbol)}
+                              className="flex-1 min-w-0 flex items-center rounded px-1.5 py-1 text-left hover:bg-[var(--color-paper)] transition-colors"
+                              style={onPage ? { color: PURPLE, fontWeight: 600 } : undefined}
+                            >
+                              <span className="text-[11.5px] tabular-nums truncate">{c.symbol}</span>
+                            </button>
+                          </li>
+                        );
+                      })}
+                      {list.length === 0 && (
+                        <li className="px-1.5 py-1 text-[11px] muted-text italic">none in scope</li>
+                      )}
+                    </ul>
+                  )}
+                </div>
               );
             })}
-          </div>
-        </div>
+          </aside>
+        )}
 
-        {/* Right: header card + constituents */}
-        <div className="min-w-0 flex-1">
-          {/* Header card: rebased index line + stats */}
-          <div className="card p-4 mb-4">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0">
-                <div className="font-display text-[18px] leading-tight">
+        {/* ── Right: 3×2 candle grid — index pinned in slot 1, then 5 constituents ── */}
+        <div className="min-w-0 flex-1 grid grid-cols-3 grid-rows-2 gap-3">
+          {/* Slot 1: the index (purple, no volume) — fixed on every page */}
+          <div
+            className="flex flex-col rounded-xl overflow-hidden border-2"
+            style={{ borderColor: "color-mix(in srgb, #7c3aed 45%, transparent)" }}
+          >
+            <div className="flex items-center gap-2 border-b hairline px-3 py-2">
+              <span
+                className="inline-flex items-center rounded px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wide shrink-0"
+                style={{ color: "#fff", background: PURPLE }}
+              >
+                Index
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="font-semibold text-[13px] truncate" style={{ color: PURPLE }}>
                   {theme.displayName ?? theme.label}
                 </div>
-                <div className="text-[11.5px] muted-text mt-0.5">
-                  {theme.constituents.length} constituents{n500Only ? " · NIFTY 500 scope" : ""}
-                </div>
-                {/* Window toggle */}
-                <div className="inline-flex items-center gap-1 rounded-lg p-1 border hairline mt-3" role="group" aria-label="Window">
-                  {WINDOWS.map((w) => {
-                    const active = win === w.id;
-                    return (
-                      <button
-                        key={w.id}
-                        type="button"
-                        aria-pressed={active}
-                        onClick={() => setWin(w.id)}
-                        className="px-2.5 py-1 rounded-md text-[12px] font-medium transition-colors"
-                        style={active ? { background: "var(--color-accent-600)", color: "#fff" } : { color: "var(--color-muted)" }}
-                      >
-                        {w.label}
-                      </button>
-                    );
-                  })}
-                </div>
+                <div className="text-[10.5px] muted-text truncate">{constituents.length} constituents</div>
               </div>
-
-              {/* Rebased index line */}
-              <div className="shrink-0">
-                <Sparkline
-                  data={rebased}
-                  width={260}
-                  height={64}
-                  stroke={VIOLET}
-                  showBaseline={false}
-                  showHiLo
-                />
+              <div className="text-right shrink-0">
+                <div className="text-[12.5px] tabular-nums font-semibold">
+                  {idxStats.last ? idxNum(idxStats.last.c) : "—"}
+                </div>
+                <div className="text-[10.5px] tabular-nums font-medium" style={{ color: idxStats.chg == null ? "var(--color-muted)" : idxStats.chg >= 0 ? GREEN : RED }}>
+                  {idxStats.chg == null ? "" : `${idxStats.chg >= 0 ? "+" : ""}${idxStats.chg.toFixed(1)}%`}
+                </div>
+                {idxStats.hi != null && idxStats.lo != null && (
+                  <div className="text-[9.5px] tabular-nums muted-text mt-0.5" title="Period high / low">
+                    <span style={{ color: GREEN }}>H</span> {idxNum(idxStats.hi)}
+                    {"  "}
+                    <span style={{ color: RED }}>L</span> {idxNum(idxStats.lo)}
+                  </div>
+                )}
               </div>
             </div>
-
-            {/* Stat strip */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 pt-4 border-t hairline">
-              <Stat label={`Index ${win.toUpperCase()}`} value={signedPct(idxRet)} color={pctColor(idxRet)} />
-              <Stat
-                label="Breadth"
-                value={breadthPct == null ? "—" : `${breadthPct.toFixed(0)}%`}
-                color={breadthPct == null ? "var(--color-muted)" : breadthPct >= 50 ? GREEN : RED}
-                hint="% of constituents up over the window"
-              />
-              <Stat label="Advancing" value={`${adv}`} color={GREEN} />
-              <Stat label="Declining" value={`${dec}`} color={RED} />
+            <div
+              className="flex-1 min-h-0 transition-opacity"
+              style={{ opacity: idxCandles.loading && idxCandles.candles.length === 0 ? 0.4 : 1 }}
+            >
+              <CandleChart candles={idxCandles.candles} weekly={weekly} hideVolume />
+            </div>
+            <div className="flex items-center justify-end border-t hairline px-2 py-1">
+              <button
+                type="button"
+                onClick={() => idxCandles.candles.length >= 2 && setFocus({ kind: "index", theme })}
+                disabled={idxCandles.candles.length < 2}
+                className="inline-flex items-center gap-1 rounded-md border hairline px-2 py-1 text-[10.5px] font-medium disabled:opacity-40 hover:bg-[var(--color-paper)] transition-colors"
+                title="Expand chart"
+              >
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+                </svg>
+                Expand
+              </button>
             </div>
           </div>
 
-          {/* Sort toggle */}
-          <div className="flex items-center justify-between gap-3 mb-2 px-0.5">
-            <div className="text-[11.5px] muted-text">
-              {total} ranked · {sort === "excess" ? "excess return vs. index" : "quality within theme"}
+          {/* Empty state: a filter (or scope) hid every constituent — say so
+              instead of leaving the lone index looking broken. */}
+          {constituents.length === 0 && (
+            <div className="col-span-2 row-span-2 flex items-center justify-center rounded-xl border hairline">
+              <div className="text-center px-6 max-w-[420px]">
+                <div className="text-[14px] font-semibold mb-1">No constituents to show</div>
+                <div className="text-[12.5px] muted-text leading-[1.5]">
+                  {pOnly
+                    ? "None of this index's constituents are in your portfolio — showing the index only. Turn off the Portfolio filter to see all names."
+                    : favOnly
+                      ? "You haven't starred any of this index's constituents. Turn off the Favourites filter to see all names."
+                      : n500Only
+                        ? "No constituents of this index are in the NIFTY 500 scope. Switch to the full universe to see all names."
+                        : "This index has no constituents on record yet."}
+                </div>
+              </div>
             </div>
-            <div className="inline-flex items-center gap-1 rounded-lg p-1 border hairline" role="group" aria-label="Sort">
-              {([
-                { id: "excess", label: "Excess vs. index" },
-                { id: "quality", label: "Quality" },
-              ] as const).map((opt) => {
-                const active = sort === opt.id;
-                return (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    aria-pressed={active}
-                    onClick={() => setSort(opt.id)}
-                    className="px-2.5 py-1 rounded-md text-[12px] font-medium transition-colors"
-                    style={active ? { background: "var(--color-accent-600)", color: "#fff" } : { color: "var(--color-muted)" }}
-                  >
-                    {opt.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          )}
 
-          {/* Constituent list */}
-          <div className="card divide-y" style={{ borderColor: "var(--color-border)" }}>
-            {rows.length === 0 && (
-              <div className="muted-text text-[13px] p-4">No constituents in scope.</div>
-            )}
-            {rows.map(({ c, ret, excess }) => {
-              const starred = isStarred(c.symbol);
-              const inPortfolio = portfolioSet.has(c.symbol);
-              const barW = excess == null ? 0 : (Math.abs(excess) / maxAbsExcess) * 100;
-              const barPositive = (excess ?? 0) >= 0;
-              return (
-                <div key={c.symbol} className="flex items-center gap-3 px-3 py-2.5">
-                  {/* Star */}
-                  <button
-                    type="button"
-                    onClick={() => toggle(c.symbol)}
-                    className="shrink-0 rounded p-1 transition-colors hover:bg-[var(--color-border)]"
-                    aria-label={starred ? `Unstar ${c.symbol}` : `Star ${c.symbol}`}
-                    title={starred ? "Remove from Favourites" : "Add to Favourites"}
-                  >
-                    <svg width="15" height="15" viewBox="0 0 24 24"
-                      fill={starred ? "var(--color-accent-500, #f59e0b)" : "none"}
-                      stroke={starred ? "var(--color-accent-500, #f59e0b)" : "currentColor"}
-                      strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-                    </svg>
-                  </button>
-
-                  {/* Name + symbol */}
-                  <div className="min-w-0 w-[150px] sm:w-[190px] shrink-0">
-                    <div className="flex items-center gap-1.5">
+          {/* Slots 2-6: five constituents */}
+          {pageStocks.map((st) => {
+            const series = consCandles.data[st.symbol];
+            const { last, chg, hi, lo } = seriesStats(series);
+            const chgColor = chg == null ? "var(--color-muted)" : chg >= 0 ? GREEN : RED;
+            // Excess return = stock's window return minus the index's own — >0
+            // means it's beating its theme, not just riding the tide.
+            const excess = chg != null && idxStats.chg != null ? chg - idxStats.chg : null;
+            return (
+              <div key={st.symbol} className="flex flex-col rounded-xl border hairline overflow-hidden">
+                <div className="flex items-center gap-2 border-b hairline px-3 py-2">
+                  <StarButton symbol={st.symbol} variant="icon" className="-ml-1 shrink-0" />
+                  <WatchlistButton symbol={st.symbol} variant="icon" className="-ml-1 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
                       <Link
-                        href={`/stock/${c.symbol}`}
-                        className="text-[13px] font-semibold truncate hover:underline"
-                        style={{ color: "var(--color-ink)" }}
+                        href={`/stock/${st.symbol}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-semibold text-[13px] hover:underline truncate"
                       >
-                        {c.symbol}
+                        {st.symbol}
                       </Link>
-                      {inPortfolio && (
+                      {st.compositePct != null && (
                         <span
-                          className="inline-flex items-center justify-center rounded-full font-bold leading-none shrink-0"
-                          style={{ width: 16, height: 16, fontSize: 9.5, color: "#fff", backgroundColor: VIOLET }}
-                          title="In your portfolio"
-                          aria-label={`${c.symbol} is in your portfolio`}
+                          className="text-[10.5px] tabular-nums font-medium shrink-0"
+                          style={{ color: scoreColor(st.compositePct) }}
+                          title="Industry Score percentile"
                         >
-                          P
+                          {Math.round(st.compositePct)}
                         </span>
                       )}
                     </div>
-                    <div className="text-[11px] muted-text truncate">{c.name ?? ""}</div>
+                    <div className="text-[10.5px] muted-text truncate">
+                      {displayCompanyName(st.name, st.symbol)}
+                    </div>
                   </div>
-
-                  {/* Excess-return bar (diverging) */}
-                  <div className="flex-1 min-w-0 hidden sm:block">
-                    <div className="flex items-center" style={{ height: 16 }}>
-                      <div className="w-1/2 flex justify-end pr-1">
-                        {!barPositive && (
-                          <div style={{ width: `${barW}%`, height: 8, background: RED, borderRadius: 2 }} />
-                        )}
+                  <div className="text-right shrink-0">
+                    <div className="flex items-center justify-end gap-2.5">
+                      {(st.qualityPct != null || st.valuationPct != null) && (
+                        <div className="flex items-center gap-1.5 text-[10px] tabular-nums font-medium">
+                          <span title="Quality percentile">
+                            <span className="muted-text">Q</span>{" "}
+                            <span style={{ color: scoreColor(st.qualityPct) }}>
+                              {st.qualityPct != null ? Math.round(st.qualityPct) : "—"}
+                            </span>
+                          </span>
+                          <span title="Valuation percentile">
+                            <span className="muted-text">V</span>{" "}
+                            <span style={{ color: scoreColor(st.valuationPct) }}>
+                              {st.valuationPct != null ? Math.round(st.valuationPct) : "—"}
+                            </span>
+                          </span>
+                        </div>
+                      )}
+                      <div className="text-[12.5px] tabular-nums font-semibold">
+                        {last ? inr(last.c) : "—"}
                       </div>
-                      <div className="w-px self-stretch" style={{ background: "var(--color-border)" }} />
-                      <div className="w-1/2 flex justify-start pl-1">
-                        {barPositive && (
-                          <div style={{ width: `${barW}%`, height: 8, background: GREEN, borderRadius: 2 }} />
-                        )}
+                    </div>
+                    <div className="text-[10.5px] tabular-nums font-medium" style={{ color: chgColor }}>
+                      {chg == null ? "" : `${chg >= 0 ? "+" : ""}${chg.toFixed(1)}%`}
+                    </div>
+                    {hi != null && lo != null && (
+                      <div className="text-[9.5px] tabular-nums muted-text mt-0.5" title="Period high / low">
+                        <span style={{ color: GREEN }}>H</span> {inr(hi)}
+                        {"  "}
+                        <span style={{ color: RED }}>L</span> {inr(lo)}
                       </div>
-                    </div>
-                  </div>
-
-                  {/* Excess + raw return */}
-                  <div className="w-[92px] shrink-0 text-right">
-                    <div className="text-[13px] tabular-nums font-semibold" style={{ color: pctColor(excess) }}>
-                      {signedPct(excess)}
-                    </div>
-                    <div className="text-[10.5px] tabular-nums muted-text">
-                      raw {signedPct(ret)}
-                    </div>
-                  </div>
-
-                  {/* Q / V / M chips */}
-                  <div className="hidden md:flex items-center gap-1 shrink-0">
-                    <Chip label="C" value={c.compositePct} />
-                    <Chip label="Q" value={c.qualityPct} />
-                    <Chip label="V" value={c.valuationPct} />
-                    <Chip label="M" value={c.momentumPct} />
+                    )}
                   </div>
                 </div>
-              );
-            })}
-          </div>
-
-          {/* Footnote */}
-          <p className="text-[11.5px] muted-text mt-3 leading-[1.55]">
-            <strong>Excess return</strong> is each stock&apos;s {win.toUpperCase()} return minus the
-            index&apos;s own {win.toUpperCase()} return — a positive bar means the name is beating its
-            theme, not just up with the tide. <strong>Breadth</strong> is the share of constituents up
-            over the window: a green index on thin breadth is a few names carrying the group. The
-            <strong> Quality</strong> sort re-ranks by composite score to surface names beating the
-            theme that are also fundamentally sound. This is a map, not a buy list.
-          </p>
+                <div
+                  className="flex-1 min-h-0 transition-opacity"
+                  style={{ opacity: consCandles.loading && !series ? 0.4 : 1 }}
+                >
+                  <CandleChart candles={series} weekly={weekly} />
+                </div>
+                <div className="flex items-center justify-between gap-1.5 border-t hairline px-2 py-1">
+                  <span
+                    className="text-[10.5px] tabular-nums font-semibold"
+                    style={{ color: excess == null ? "var(--color-muted)" : excess >= 0 ? GREEN : RED }}
+                    title={`Excess return vs. the index over ${THEME_WINDOWS.find((w) => w.days === days)?.label ?? "the window"} — the stock's return minus the index's own`}
+                  >
+                    ER {excess == null ? "—" : `${excess >= 0 ? "+" : ""}${excess.toFixed(1)}%`}
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                  {portfolioSet.has(st.symbol) && (
+                    <span
+                      className="inline-flex items-center justify-center rounded-full font-bold leading-none shrink-0"
+                      style={{ width: 18, height: 18, fontSize: 10.5, color: "#fff", backgroundColor: PURPLE }}
+                      title="In your portfolio"
+                      aria-label={`${st.symbol} is in your portfolio`}
+                    >
+                      P
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => series && series.length >= 2 && setFocus({ kind: "stock", stock: st })}
+                    disabled={!series || series.length < 2}
+                    className="inline-flex items-center gap-1 rounded-md border hairline px-2 py-1 text-[10.5px] font-medium disabled:opacity-40 hover:bg-[var(--color-paper)] transition-colors"
+                    title="Expand chart"
+                    aria-label={`Expand ${st.symbol} chart`}
+                  >
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+                    </svg>
+                    Expand
+                  </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
-    </div>
-  );
-}
 
-function Stat({ label, value, color, hint }: { label: string; value: string; color: string; hint?: string }) {
-  return (
-    <div title={hint}>
-      <div className="text-[10.5px] uppercase tracking-wide muted-text">{label}</div>
-      <div className="text-[17px] tabular-nums font-semibold mt-0.5" style={{ color }}>
-        {value}
-      </div>
+      {/* ── Focus overlay: one expanded, interactive chart ── */}
+      {focus && (() => {
+        const isIndex = focus.kind === "index";
+        const series = isIndex ? idxCandles.candles : consCandles.data[focus.stock.symbol];
+        const label = isIndex ? (focus.theme.displayName ?? focus.theme.label) : focus.stock.symbol;
+        const sub = isIndex
+          ? `${constituents.length} constituents`
+          : displayCompanyName(focus.stock.name, focus.stock.symbol);
+        const { last, chg, hi, lo } = seriesStats(series);
+        const chgColor = chg == null ? "var(--color-muted)" : chg >= 0 ? GREEN : RED;
+        const fmt = isIndex ? idxNum : inr;
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 sm:p-8"
+            onClick={() => setFocus(null)}
+            role="dialog"
+            aria-modal="true"
+            aria-label={`${label} expanded chart`}
+          >
+            <div
+              className="relative flex h-[88vh] w-[94vw] max-w-[1280px] flex-col rounded-2xl border hairline shadow-2xl"
+              style={{ background: "var(--color-card, #fff)" }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-3 border-b hairline px-4 py-3">
+                {!isIndex && <StarButton symbol={focus.stock.symbol} variant="icon" className="shrink-0" />}
+                {!isIndex && <WatchlistButton symbol={focus.stock.symbol} variant="icon" className="shrink-0" />}
+                {isIndex && (
+                  <span
+                    className="inline-flex items-center rounded px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wide shrink-0"
+                    style={{ color: "#fff", background: PURPLE }}
+                  >
+                    Index
+                  </span>
+                )}
+                <div className="min-w-0">
+                  <div className="font-semibold text-[15px] truncate" style={isIndex ? { color: PURPLE } : undefined}>
+                    {isIndex ? label : (
+                      <Link href={`/stock/${focus.stock.symbol}`} target="_blank" rel="noopener noreferrer" className="hover:underline">
+                        {label}
+                      </Link>
+                    )}
+                  </div>
+                  <div className="text-[11px] muted-text truncate">{sub}</div>
+                </div>
+                <div className="ml-auto flex items-center gap-4">
+                  {!isIndex && portfolioSet.has(focus.stock.symbol) && (
+                    <span
+                      className="inline-flex items-center justify-center rounded-full font-bold leading-none shrink-0"
+                      style={{ width: 18, height: 18, fontSize: 10.5, color: "#fff", backgroundColor: PURPLE }}
+                      title="In your portfolio"
+                      aria-label={`${focus.stock.symbol} is in your portfolio`}
+                    >
+                      P
+                    </span>
+                  )}
+                  <div className="text-right leading-tight">
+                    <div className="text-[15px] tabular-nums font-semibold">{last ? fmt(last.c) : "—"}</div>
+                    <div className="text-[11px] tabular-nums font-medium" style={{ color: chgColor }}>
+                      {chg == null ? "" : `${chg >= 0 ? "+" : ""}${chg.toFixed(1)}%`}
+                      {hi != null && lo != null && (
+                        <span className="muted-text font-normal">
+                          {"  "}
+                          <span style={{ color: GREEN }}>H</span> {fmt(hi)}{"  "}
+                          <span style={{ color: RED }}>L</span> {fmt(lo)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <WindowPicker options={THEME_WINDOWS} days={days} onSelect={setDays} loading={consCandles.loading || idxCandles.loading} />
+                  <button
+                    type="button"
+                    onClick={() => setFocus(null)}
+                    className="rounded-md border hairline px-2.5 py-1.5 text-[13px] font-medium hover:bg-[var(--color-paper)] transition-colors"
+                    aria-label="Close expanded chart"
+                    title="Close (Esc)"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+              <div className="flex-1 min-h-0 p-2">
+                <CandleChart
+                  candles={series}
+                  interactive
+                  weekly={weekly}
+                  hideVolume={isIndex}
+                />
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
