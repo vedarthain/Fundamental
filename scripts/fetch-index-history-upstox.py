@@ -62,6 +62,19 @@ INDEX_MAP: dict[str, str] = {
     "NIFTYMETAL":  "Nifty Metal",
     "NIFTYPHARMA": "Nifty Pharma",
     "NIFTYREALTY": "Nifty Realty",
+    # Second wave of sectorals — all verified ~20y deep on Upstox (2004-2005
+    # inception). Upstox uses truncated labels (the VALUE is the exact
+    # instrument-key name; the daily NSE driver later overwrites display_name
+    # on the tail with the clean "Nifty …" string).
+    "NIFTYFINSERVICE":     "Nifty Fin Service",
+    "NIFTYFINSRV2550":     "Nifty FinSrv25 50",
+    "NIFTYHEALTHCARE":     "NIFTY HEALTHCARE",
+    "NIFTYCONSDUR":        "NIFTY CONSR DURBL",
+    "NIFTYOILGAS":         "NIFTY OIL AND GAS",
+    "NIFTYPVTBANK":        "Nifty Pvt Bank",
+    "NIFTYPSUBANK":        "Nifty PSU Bank",
+    "NIFTYMEDIA":          "Nifty Media",
+    "NIFTYMIDSMALLHEALTH": "Nifty MidSml Hlth",
     # Broad indices — useful benchmarks; skipped automatically if a key 404s.
     "NIFTY50":         "Nifty 50",
     "NIFTY100":        "Nifty 100",

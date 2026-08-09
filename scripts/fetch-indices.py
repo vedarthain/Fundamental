@@ -75,6 +75,17 @@ INDEX_WHITELIST: dict[str, str] = {
     "NIFTYENERGY":     "Nifty Energy",
     "NIFTYMETAL":      "Nifty Metal",
     "NIFTYREALTY":     "Nifty Realty",
+    # Second wave of sectorals (deep Upstox history; kept current daily here).
+    # Names below are the EXACT NSE ind_close_all strings — do not normalise.
+    "NIFTYFINSERVICE":     "Nifty Financial Services",
+    "NIFTYFINSRV2550":     "Nifty Financial Services 25/50",
+    "NIFTYHEALTHCARE":     "Nifty Healthcare Index",
+    "NIFTYCONSDUR":        "Nifty Consumer Durables",
+    "NIFTYOILGAS":         "Nifty Oil & Gas",
+    "NIFTYPVTBANK":        "Nifty Private Bank",
+    "NIFTYPSUBANK":        "Nifty PSU Bank",
+    "NIFTYMEDIA":          "Nifty Media",
+    "NIFTYMIDSMALLHEALTH": "Nifty MidSmall Healthcare",
     # SENSEX is a BSE index — not present in NSE's ind_close_all CSV. If
     # we want it later we'll add a separate BSE source (or YF "^BSESN")
     # and write into the same table with code="SENSEX".

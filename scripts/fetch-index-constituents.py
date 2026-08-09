@@ -57,6 +57,16 @@ INDEX_CSV: dict[str, str] = {
     "NIFTYENERGY":      "ind_niftyenergylist.csv",
     "NIFTYMETAL":       "ind_niftymetallist.csv",
     "NIFTYREALTY":      "ind_niftyrealtylist.csv",
+    # Second wave of sectorals (basenames verified against NSE archives).
+    "NIFTYFINSERVICE":     "ind_niftyfinancelist.csv",
+    "NIFTYFINSRV2550":     "ind_niftyfinancialservices25-50list.csv",
+    "NIFTYHEALTHCARE":     "ind_niftyhealthcarelist.csv",
+    "NIFTYCONSDUR":        "ind_niftyconsumerdurableslist.csv",
+    "NIFTYOILGAS":         "ind_niftyoilgaslist.csv",
+    "NIFTYPVTBANK":        "ind_nifty_privatebanklist.csv",
+    "NIFTYPSUBANK":        "ind_niftypsubanklist.csv",
+    "NIFTYMEDIA":          "ind_niftymedialist.csv",
+    "NIFTYMIDSMALLHEALTH": "ind_niftymidsmallhealthcare_list.csv",
 }
 
 CSV_URL_TEMPLATES = [

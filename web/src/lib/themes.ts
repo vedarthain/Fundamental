@@ -9,9 +9,9 @@
  * vs. the theme — plus the quality/value/momentum read so a name that's beating
  * the theme on fundamentals stands apart from one just riding the tide.
  *
- * Scope (Fork A): the 8 NSE thematic/sector indices that have BOTH a published
- * constituent list (app.index_constituent) AND price history
- * (app.market_index_history). No synthetic baskets.
+ * Scope: NSE thematic/sector indices that have BOTH a published constituent
+ * list (app.index_constituent) AND deep price history
+ * (app.market_index_history, ~20y via Upstox). No synthetic baskets.
  *
  * Data:
  *   - index line + index returns  ← app.market_index_history (index OHLC)
@@ -29,7 +29,7 @@
 
 import { sql } from "@/lib/db";
 
-// The 8 themes. `code` is our internal index_code (matches both tables);
+// The themes. `code` is our internal index_code (matches both tables);
 // `label` is the short chip label; the long name comes from the history row.
 export const THEME_META: readonly { code: string; label: string }[] = [
   { code: "NIFTYAUTO", label: "Auto" },
@@ -40,6 +40,15 @@ export const THEME_META: readonly { code: string; label: string }[] = [
   { code: "NIFTYMETAL", label: "Metal" },
   { code: "NIFTYPHARMA", label: "Pharma" },
   { code: "NIFTYREALTY", label: "Realty" },
+  { code: "NIFTYFINSERVICE", label: "Fin Services" },
+  { code: "NIFTYFINSRV2550", label: "Fin 25/50" },
+  { code: "NIFTYHEALTHCARE", label: "Healthcare" },
+  { code: "NIFTYCONSDUR", label: "Cons Durables" },
+  { code: "NIFTYOILGAS", label: "Oil & Gas" },
+  { code: "NIFTYPVTBANK", label: "Pvt Bank" },
+  { code: "NIFTYPSUBANK", label: "PSU Bank" },
+  { code: "NIFTYMEDIA", label: "Media" },
+  { code: "NIFTYMIDSMALLHEALTH", label: "MidSm Health" },
 ];
 
 const THEME_CODES = THEME_META.map((t) => t.code);
@@ -129,7 +138,7 @@ function num(v: unknown): number | null {
 }
 
 /**
- * Load all 8 themes: index line + returns, and constituents with scores.
+ * Load all themes: index line + returns, and constituents with scores.
  * Two app-DB queries; everything else is a JS rollup. Returns empty themes
  * (never throws) so the tab degrades to "no data yet" rather than 500-ing.
  */
