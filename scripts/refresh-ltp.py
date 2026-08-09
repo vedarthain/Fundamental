@@ -50,6 +50,7 @@ import csv
 import io
 import os
 import sys
+import time
 from datetime import date, timedelta
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -82,6 +83,13 @@ HEADERS = {
 # How many calendar days to walk back before giving up. Covers a long weekend
 # plus a national holiday plus a Sunday — 5 is generous.
 MAX_DAYS_BACK = 5
+
+# NSE intermittently times out / resets connections from datacenter IPs (like
+# GitHub Actions runners). A bare read-timeout used to escape fetch_bhavcopy
+# and crash the whole EOD pipeline before indices/FII/snapshot could run
+# (see the 2026-08-07 job failure). Retry the SAME URL a few times with
+# backoff so a transient blip self-heals instead of aborting everything.
+FETCH_RETRY_BACKOFF = (3, 8, 20)  # seconds between attempts; len = retry count
 
 # We only update prices for equity scrips. T2T (BE/BZ) and limited-trading
 # (BL) are still equities, just with stricter settlement. Exclude bonds,
@@ -119,24 +127,47 @@ def env_url(name: str, required: bool = True) -> str | None:
 
 def fetch_bhavcopy(d: date) -> str | None:
     """Try to fetch the bhavcopy CSV for date `d`. Returns CSV text, or None
-    if the file isn't published for that date (404, weekend, holiday)."""
+    if the file isn't published for that date (404, weekend, holiday).
+
+    A transient network error (read timeout, connection reset — common from
+    cloud IPs against NSE) is retried on the SAME URL with backoff rather than
+    propagating: a bare TimeoutError here previously crashed the whole EOD
+    pipeline. A genuine 404 still means "not published", so we fall through to
+    the next URL template / older date as before.
+    """
     ddmmyyyy = d.strftime("%d%m%Y")
+    # attempts = initial try + one per backoff interval.
+    max_attempts = len(FETCH_RETRY_BACKOFF) + 1
     for url_tmpl in BHAVCOPY_URL_TEMPLATES:
         url = url_tmpl.format(ddmmyyyy=ddmmyyyy)
-        try:
-            req = Request(url, headers=HEADERS)
-            with urlopen(req, timeout=30) as r:
-                body = r.read().decode("utf-8", errors="replace")
-                # Sanity: NSE sometimes returns an HTML error page with a 200
-                # status. Real bhavcopy CSVs have CLOSE_PRICE in the header.
-                if "CLOSE_PRICE" in body[:300].upper():
-                    return body
-        except HTTPError as e:
-            if e.code == 404:
-                continue
-            print(f"  http error {e.code} for {url}: {e.reason}", file=sys.stderr)
-        except URLError as e:
-            print(f"  url error for {url}: {e.reason}", file=sys.stderr)
+        for attempt in range(max_attempts):
+            try:
+                req = Request(url, headers=HEADERS)
+                with urlopen(req, timeout=45) as r:
+                    body = r.read().decode("utf-8", errors="replace")
+                    # Sanity: NSE sometimes returns an HTML error page with a
+                    # 200 status. Real bhavcopy CSVs have CLOSE_PRICE in header.
+                    if "CLOSE_PRICE" in body[:300].upper():
+                        return body
+                break  # 200 but not a real CSV — try the next URL template.
+            except HTTPError as e:
+                if e.code == 404:
+                    break  # not published for this template — next template.
+                print(f"  http error {e.code} for {url}: {e.reason}", file=sys.stderr)
+                break
+            except (TimeoutError, URLError, OSError) as e:
+                # Transient. Back off and retry the same URL; give up (→ next
+                # template) only after exhausting the backoff schedule.
+                if attempt < len(FETCH_RETRY_BACKOFF):
+                    wait = FETCH_RETRY_BACKOFF[attempt]
+                    print(
+                        f"  transient error for {url} "
+                        f"(attempt {attempt + 1}/{max_attempts}): {e}; retry in {wait}s",
+                        file=sys.stderr,
+                    )
+                    time.sleep(wait)
+                else:
+                    print(f"  giving up on {url} after {max_attempts} attempts: {e}", file=sys.stderr)
     return None
 
 
