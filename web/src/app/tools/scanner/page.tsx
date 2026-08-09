@@ -6,6 +6,7 @@ import { loadRotation } from "@/lib/rotation";
 import { loadAllStocks } from "@/lib/allStocks";
 import { loadGraphUniverse } from "@/lib/graphUniverse";
 import { loadDividendUniverse } from "@/lib/dividendScanner";
+import { loadThemes } from "@/lib/themes";
 import { loadSparklines } from "@/lib/sparklines";
 import { loadPortfolioSymbols } from "@/lib/portfolio";
 import { getSession } from "@/lib/auth";
@@ -34,6 +35,7 @@ const cachedRotation = unstable_cache(loadRotation, ["scanner:rotation:v1"], { r
 const cachedAllStocks = unstable_cache(loadAllStocks, ["scanner:allStocks:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
 const cachedGraphUniverse = unstable_cache(loadGraphUniverse, ["scanner:graph:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
 const cachedDividendUniverse = unstable_cache(loadDividendUniverse, ["scanner:dividends:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
+const cachedThemes = unstable_cache(loadThemes, ["scanner:themes:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
 const cachedSparklines = unstable_cache(loadSparklines, ["scanner:sparklines:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
 const cachedN500 = unstable_cache(
   async () => sql<{ symbol: string }[]>`SELECT symbol FROM app.index_constituent WHERE index_code = 'NIFTY500'`,
@@ -44,7 +46,7 @@ const cachedN500 = unstable_cache(
 // Defined server-side, NOT imported from the "use client" ScannerTabs module:
 // value exports from a client module become client-reference proxies in a
 // Server Component, so `.includes` would be undefined at runtime.
-const SCANNER_TABS: readonly Tab[] = ["igniting", "trend", "floor", "fallen", "sectors", "peers", "all", "graph", "dividends"];
+const SCANNER_TABS: readonly Tab[] = ["igniting", "trend", "floor", "fallen", "sectors", "all", "graph", "themes", "dividends"];
 
 export const metadata: Metadata = {
   title: "Scanner — EquityRoots",
@@ -69,13 +71,17 @@ export default async function MomentumPage({
 }) {
   const sp = await searchParams;
   const tabParam = one(sp.tab);
-  const initialTab: Tab = SCANNER_TABS.includes(tabParam as Tab) ? (tabParam as Tab) : "igniting";
+  // "peers" folded into the "sectors" tab (a toggle inside it now switches
+  // Sectors ⇄ Peer groups). Redirect the old deep-link so a bookmarked
+  // ?tab=peers still lands somewhere real instead of a blank panel.
+  const normalizedTab = tabParam === "peers" ? "sectors" : tabParam;
+  const initialTab: Tab = SCANNER_TABS.includes(normalizedTab as Tab) ? (normalizedTab as Tab) : "igniting";
   // Per-user real holdings — kept OUT of the shared unstable_cache above (which
   // is keyed only by date and shared across all visitors). Drives the auto-lit
   // "P" marker + Portfolio filter on the Graph tab. Cheap symbol-only query.
   const session = await getSession();
 
-  const [momentum, trend, floor, rotation, allStocks, graphUniverse, dividendUniverse, n500, portfolioSymbols] = await Promise.all([
+  const [momentum, trend, floor, rotation, allStocks, graphUniverse, dividendUniverse, themes, n500, portfolioSymbols] = await Promise.all([
     cachedMomentum(one(sp.mDate)),
     cachedTrend(one(sp.tDate)),
     cachedFloor(one(sp.fDate)),
@@ -83,6 +89,7 @@ export default async function MomentumPage({
     cachedAllStocks(),
     cachedGraphUniverse(),
     cachedDividendUniverse(),
+    cachedThemes(),
     cachedN500(),
     session ? loadPortfolioSymbols(session.userId) : Promise.resolve([]),
   ]);
@@ -116,6 +123,7 @@ export default async function MomentumPage({
       allStocks={allStocks.rows}
       graphUniverse={graphUniverse}
       dividendUniverse={dividendUniverse}
+      themes={themes}
       nifty500={n500.map((r) => r.symbol)}
       portfolioSymbols={portfolioSymbols}
       initialTab={initialTab}

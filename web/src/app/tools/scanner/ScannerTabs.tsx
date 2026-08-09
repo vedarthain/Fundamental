@@ -19,6 +19,7 @@ import type { RotationData } from "@/lib/rotation";
 import type { AllStockRow } from "@/lib/allStocks";
 import type { GraphUniverse } from "@/lib/graphUniverse";
 import type { DividendUniverse } from "@/lib/dividendScanner";
+import type { ThemesData } from "@/lib/themes";
 import type { SparkPoint } from "@/components/Sparkline";
 import MomentumClient from "./MomentumClient";
 import GraphClient from "./GraphClient";
@@ -28,9 +29,13 @@ import SupportFloorClient from "./SupportFloorClient";
 import RotationClient from "./RotationClient";
 import FallenLeadersClient from "./FallenLeadersClient";
 import AllStocksClient from "./AllStocksClient";
+import ThemesClient from "./ThemesClient";
 import ScannerDatePicker from "./ScannerDatePicker";
 
-export type Tab = "igniting" | "trend" | "floor" | "fallen" | "sectors" | "peers" | "all" | "graph" | "dividends";
+// "peers" is no longer a top-level tab — it folded into "sectors" as a toggle.
+export type Tab = "igniting" | "trend" | "floor" | "fallen" | "sectors" | "all" | "graph" | "themes" | "dividends";
+// Which cut the merged Sectors/Peers ("rotation") tab is showing.
+type RotView = "sectors" | "peers";
 
 export default function ScannerTabs({
   momentumSnapDate,
@@ -50,6 +55,7 @@ export default function ScannerTabs({
   allStocks,
   graphUniverse,
   dividendUniverse,
+  themes,
   nifty500,
   portfolioSymbols = [],
   initialTab = "igniting",
@@ -71,6 +77,7 @@ export default function ScannerTabs({
   allStocks: AllStockRow[];
   graphUniverse: GraphUniverse;
   dividendUniverse: DividendUniverse;
+  themes: ThemesData;
   nifty500: string[];
   portfolioSymbols?: string[];
   initialTab?: Tab;
@@ -78,6 +85,23 @@ export default function ScannerTabs({
   const [tab, setTab] = useState<Tab>(initialTab);
   const [n500Only, setN500Only] = useState(false);
   const [railOpen, setRailOpen] = useState(true);
+  // Sectors ⇄ Peer groups toggle inside the merged "sectors" tab. Seed from
+  // ?rot= so a deep-link (or the redirected ?tab=peers) opens the right cut.
+  const [rotView, setRotView] = useState<RotView>(() => {
+    if (typeof window === "undefined") return "sectors";
+    const p = new URLSearchParams(window.location.search);
+    if (p.get("rot") === "peers" || p.get("tab") === "peers") return "peers";
+    return "sectors";
+  });
+
+  function selectRotView(next: RotView) {
+    setRotView(next);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("rot", next);
+      window.history.replaceState(null, "", url);
+    }
+  }
 
   // Mirror the active tab into the URL (?tab=) so a refresh reopens the same
   // scanner instead of snapping back to "Igniting today". Use history.replaceState
@@ -107,13 +131,16 @@ export default function ScannerTabs({
 
   const allCount = n500Only ? allStocks.filter((r) => r.is_n500).length : allStocks.length;
 
+  // Merged Sectors/Peers tab: the count reflects whichever cut is active.
+  const rotCount = rotView === "peers" ? peers.length : sectors.length;
+
   const tabs: { id: Tab; label: string; sub: string; count: number | null }[] = [
     { id: "igniting", label: "Igniting today", sub: "Volume breakouts", count: momentum.length },
     { id: "trend", label: "Trend Leaders", sub: "Fresh golden crosses", count: trend.length },
     { id: "floor", label: "At Support", sub: "Multi-year tested floors", count: floor.length },
     { id: "fallen", label: "Fallen Leaders", sub: "Beaten-down quality", count: null },
-    { id: "peers", label: "Peer groups", sub: "Cluster rotation", count: peers.length },
-    { id: "sectors", label: "Sectors", sub: "Sector rotation", count: sectors.length },
+    { id: "sectors", label: "Sectors & Peers", sub: "Rotation map", count: rotCount },
+    { id: "themes", label: "Themes", sub: "Index vs. constituents", count: themes.themes.length },
     { id: "graph", label: "Graph", sub: "Candles by industry", count: null },
     { id: "dividends", label: "Dividend Scanner", sub: "Income by sector · yield", count: null },
     { id: "all", label: "All stocks", sub: "Full universe · sortable", count: allCount },
@@ -132,6 +159,7 @@ export default function ScannerTabs({
     tab === "igniting" ||
     tab === "trend" ||
     tab === "floor" ||
+    tab === "themes" ||
     tab === "fallen";
 
   return (
@@ -295,42 +323,76 @@ export default function ScannerTabs({
           {tab === "dividends" && (
             <DividendClient universe={dividendUniverse} nifty500={nifty500} n500Only={n500Only} />
           )}
-          {tab === "peers" && (
-            <RotationClient
-              snapDate={rotation.snapDate}
-              rows={peers}
-              title="Peer groups"
-              eyebrow="Rotation map"
-              groupLabel="Peer group"
-              noun="peer groups"
-              datePicker={<ScannerDatePicker param="rDate" dates={rotation.dates} selected={rotation.snapDate} />}
-              intro={
-                <>
-                  The scoring peer clusters (~46 of them) ranked by <strong>median 1-week return</strong>,
-                  so you can see <strong>which pockets are being bid up</strong> and which are being sold.
-                  Peer groups are tighter than sectors — they&apos;re the same clusters the platform
-                  scores stocks within — so this is the granular read on rotation.
-                </>
-              }
-            />
-          )}
           {tab === "sectors" && (
-            <RotationClient
-              snapDate={rotation.snapDate}
-              rows={sectors}
-              title="Sectors"
-              eyebrow="Rotation map"
-              groupLabel="Sector"
-              noun="sectors"
-              datePicker={<ScannerDatePicker param="rDate" dates={rotation.dates} selected={rotation.snapDate} />}
-              intro={
-                <>
-                  Broad sectors ranked by <strong>median 1-week return</strong> — the top-down
-                  complement to the per-stock scanners. It answers <strong>where the money is
-                  rotating</strong> before you drill into single names. Read breadth alongside the
-                  median: a green sector on thin breadth is a couple of names, not a wave.
-                </>
-              }
+            <div>
+              {/* Sectors ⇄ Peer groups toggle — same RotationData, two cuts. */}
+              <div className="inline-flex items-center gap-1 rounded-lg p-1 border hairline mb-4" role="group" aria-label="Rotation grouping">
+                {([
+                  { id: "sectors" as RotView, label: "Sectors" },
+                  { id: "peers" as RotView, label: "Peer groups" },
+                ]).map((opt) => {
+                  const active = rotView === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => selectRotView(opt.id)}
+                      className="px-3 py-1.5 rounded-md text-[12.5px] font-medium transition-colors"
+                      style={active ? { background: "var(--color-accent-600)", color: "#fff" } : { color: "var(--color-muted)" }}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+              {rotView === "peers" ? (
+                <RotationClient
+                  snapDate={rotation.snapDate}
+                  rows={peers}
+                  title="Peer groups"
+                  eyebrow="Rotation map"
+                  groupLabel="Peer group"
+                  noun="peer groups"
+                  datePicker={<ScannerDatePicker param="rDate" dates={rotation.dates} selected={rotation.snapDate} />}
+                  intro={
+                    <>
+                      The scoring peer clusters (~46 of them) ranked by <strong>median 1-week return</strong>,
+                      so you can see <strong>which pockets are being bid up</strong> and which are being sold.
+                      Peer groups are tighter than sectors — they&apos;re the same clusters the platform
+                      scores stocks within — so this is the granular read on rotation.
+                    </>
+                  }
+                />
+              ) : (
+                <RotationClient
+                  snapDate={rotation.snapDate}
+                  rows={sectors}
+                  title="Sectors"
+                  eyebrow="Rotation map"
+                  groupLabel="Sector"
+                  noun="sectors"
+                  datePicker={<ScannerDatePicker param="rDate" dates={rotation.dates} selected={rotation.snapDate} />}
+                  intro={
+                    <>
+                      Broad sectors ranked by <strong>median 1-week return</strong> — the top-down
+                      complement to the per-stock scanners. It answers <strong>where the money is
+                      rotating</strong> before you drill into single names. Read breadth alongside the
+                      median: a green sector on thin breadth is a couple of names, not a wave.
+                    </>
+                  }
+                />
+              )}
+            </div>
+          )}
+          {tab === "themes" && (
+            <ThemesClient
+              themes={themes.themes}
+              snapDate={themes.snapDate}
+              indexLastDate={themes.indexLastDate}
+              n500Only={n500Only}
+              nifty500={nifty500}
+              portfolioSymbols={portfolioSymbols}
             />
           )}
         </div>
