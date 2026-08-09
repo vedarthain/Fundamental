@@ -69,7 +69,8 @@ type LiveData = {
 const GROUPS: { title: string; codes: string[] }[] = [
   { title: "Headline", codes: ["NIFTY50", "NIFTYBANK"] },
   { title: "Broad market", codes: ["NIFTY100", "NIFTY500", "NIFTYNEXT50", "NIFTYMIDCAP100", "NIFTYSMALLCAP100"] },
-  { title: "Sectoral", codes: ["NIFTYIT", "NIFTYAUTO", "NIFTYFMCG", "NIFTYPHARMA", "NIFTYENERGY", "NIFTYMETAL", "NIFTYREALTY"] },
+  { title: "Sectoral", codes: ["NIFTYIT", "NIFTYAUTO", "NIFTYFMCG", "NIFTYPHARMA", "NIFTYENERGY", "NIFTYMETAL", "NIFTYREALTY", "NIFTYHEALTHCARE", "NIFTYCONSDUR", "NIFTYOILGAS", "NIFTYMEDIA", "NIFTYMIDSMALLHEALTH"] },
+  { title: "Financials", codes: ["NIFTYFINSERVICE", "NIFTYFINSRV2550", "NIFTYPVTBANK", "NIFTYPSUBANK"] },
 ];
 
 // ── Live polling ────────────────────────────────────────────────────────────
