@@ -30,6 +30,25 @@ import { CandleChart } from "./CandleChart";
 import { useGraphCandles } from "./useGraphCandles";
 import { useIndexCandles } from "./useIndexCandles";
 import { WEEKLY_THRESHOLD_DAYS } from "@/lib/candleConfig";
+import type { TradeMark } from "@/lib/portfolio";
+
+const P_HELD = "#7c3aed"; // dark purple — currently held
+const P_EXITED = "#9ca3af"; // grey — ever bought, not held now
+
+// Tri-state portfolio badge (held → purple, ever-traded-not-held → grey).
+function PBadge({ held, traded, size = 18 }: { held: boolean; traded: boolean; size?: number }) {
+  if (!held && !traded) return null;
+  const col = held ? P_HELD : P_EXITED;
+  return (
+    <span
+      className="inline-flex items-center justify-center rounded-full font-bold leading-none shrink-0"
+      style={{ width: size, height: size, fontSize: size * 0.58, color: "#fff", backgroundColor: col }}
+      title={held ? "In your portfolio" : "Previously held — fully exited"}
+    >
+      P
+    </span>
+  );
+}
 
 const GREEN = "var(--color-delta-up, #0a0)";
 const RED = "var(--color-delta-down, #b00)";
@@ -99,6 +118,8 @@ export default function ThemesClient({
   n500Only,
   nifty500,
   portfolioSymbols = [],
+  tradedSymbols = [],
+  tradesBySymbol = {},
 }: {
   themes: Theme[];
   snapDate: string | null;
@@ -106,6 +127,8 @@ export default function ThemesClient({
   n500Only: boolean;
   nifty500: string[];
   portfolioSymbols?: string[];
+  tradedSymbols?: string[];
+  tradesBySymbol?: Record<string, TradeMark[]>;
 }) {
   const [selectedCode, setSelectedCode] = useState<string>(themes[0]?.code ?? "");
   const [page, setPage] = useState(0);
@@ -120,6 +143,10 @@ export default function ThemesClient({
   const portfolioSet = useMemo(
     () => new Set(portfolioSymbols.map((s) => s.toUpperCase())),
     [portfolioSymbols],
+  );
+  const tradedSet = useMemo(
+    () => new Set(tradedSymbols.map((s) => s.toUpperCase())),
+    [tradedSymbols],
   );
   const n500 = useMemo(() => new Set(nifty500), [nifty500]);
 
@@ -557,16 +584,7 @@ export default function ThemesClient({
                     ER {excess == null ? "—" : `${excess >= 0 ? "+" : ""}${excess.toFixed(1)}%`}
                   </span>
                   <div className="flex items-center gap-1.5">
-                  {portfolioSet.has(st.symbol) && (
-                    <span
-                      className="inline-flex items-center justify-center rounded-full font-bold leading-none shrink-0"
-                      style={{ width: 18, height: 18, fontSize: 10.5, color: "#fff", backgroundColor: PURPLE }}
-                      title="In your portfolio"
-                      aria-label={`${st.symbol} is in your portfolio`}
-                    >
-                      P
-                    </span>
-                  )}
+                  <PBadge held={portfolioSet.has(st.symbol)} traded={tradedSet.has(st.symbol)} />
                   <button
                     type="button"
                     onClick={() => series && series.length >= 2 && setFocus({ kind: "stock", stock: st })}
@@ -634,15 +652,8 @@ export default function ThemesClient({
                   <div className="text-[11px] muted-text truncate">{sub}</div>
                 </div>
                 <div className="ml-auto flex items-center gap-4">
-                  {!isIndex && portfolioSet.has(focus.stock.symbol) && (
-                    <span
-                      className="inline-flex items-center justify-center rounded-full font-bold leading-none shrink-0"
-                      style={{ width: 18, height: 18, fontSize: 10.5, color: "#fff", backgroundColor: PURPLE }}
-                      title="In your portfolio"
-                      aria-label={`${focus.stock.symbol} is in your portfolio`}
-                    >
-                      P
-                    </span>
+                  {!isIndex && (
+                    <PBadge held={portfolioSet.has(focus.stock.symbol)} traded={tradedSet.has(focus.stock.symbol)} />
                   )}
                   <div className="text-right leading-tight">
                     <div className="text-[15px] tabular-nums font-semibold">{last ? fmt(last.c) : "—"}</div>
@@ -675,6 +686,7 @@ export default function ThemesClient({
                   interactive
                   weekly={weekly}
                   hideVolume={isIndex}
+                  trades={isIndex ? undefined : tradesBySymbol[focus.stock.symbol]}
                 />
               </div>
             </div>

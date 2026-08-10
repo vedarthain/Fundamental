@@ -201,6 +201,44 @@ export async function loadPortfolioSymbols(userId: number): Promise<string[]> {
   return rows.map((r) => r.symbol);
 }
 
+/** One executed-trade marker for the chart tabs: buy/sell aggregated per
+ *  (symbol, date, side), qty summed and price qty-weighted. */
+export type TradeMark = { d: string; side: "B" | "S"; price: number; qty: number };
+
+/**
+ * Real executed trades (app.portfolio_transaction) for the Graph/Themes B/S
+ * markers, plus the set of symbols ever traded (drives the grey "P" state for
+ * names bought-but-not-currently-held). Small per-user payload (~600 rows),
+ * loaded server-side and passed straight to the client — no API/hook needed.
+ */
+export async function loadPortfolioTrades(
+  userId: number,
+): Promise<{ tradedSymbols: string[]; tradesBySymbol: Record<string, TradeMark[]> }> {
+  const rows = await sql<
+    { symbol: string; d: string; side: string; qty: number; price: number }[]
+  >`
+    SELECT symbol,
+           trade_date::text AS d,
+           side,
+           SUM(quantity)::float8 AS qty,
+           (SUM(price * quantity) / NULLIF(SUM(quantity), 0))::float8 AS price
+      FROM app.portfolio_transaction
+     WHERE user_id = ${userId} AND symbol IS NOT NULL
+     GROUP BY symbol, trade_date, side
+     ORDER BY symbol, trade_date
+  `;
+  const tradesBySymbol: Record<string, TradeMark[]> = {};
+  for (const r of rows) {
+    (tradesBySymbol[r.symbol] ??= []).push({
+      d: r.d,
+      side: r.side === "sell" ? "S" : "B",
+      price: r.price,
+      qty: Math.round(r.qty),
+    });
+  }
+  return { tradedSymbols: Object.keys(tradesBySymbol), tradesBySymbol };
+}
+
 /** Load + value a user's portfolio, aggregated per instrument. */
 export async function loadPortfolio(userId: number): Promise<Portfolio> {
   const holdings = await sql<HoldingRow[]>`

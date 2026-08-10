@@ -8,7 +8,7 @@ import { loadGraphUniverse } from "@/lib/graphUniverse";
 import { loadDividendUniverse } from "@/lib/dividendScanner";
 import { loadThemes } from "@/lib/themes";
 import { loadSparklines } from "@/lib/sparklines";
-import { loadPortfolioSymbols } from "@/lib/portfolio";
+import { loadPortfolioSymbols, loadPortfolioTrades } from "@/lib/portfolio";
 import { getSession } from "@/lib/auth";
 import { IGNITING_DEFAULT_DAYS, TREND_DEFAULT_DAYS, FLOOR_DEFAULT_DAYS } from "./sparkWindows";
 import { sql } from "@/lib/db";
@@ -81,7 +81,7 @@ export default async function MomentumPage({
   // "P" marker + Portfolio filter on the Graph tab. Cheap symbol-only query.
   const session = await getSession();
 
-  const [momentum, trend, floor, rotation, allStocks, graphUniverse, dividendUniverse, themes, n500, portfolioSymbols] = await Promise.all([
+  const [momentum, trend, floor, rotation, allStocks, graphUniverse, dividendUniverse, themes, n500, portfolioSymbols, portfolioTrades] = await Promise.all([
     cachedMomentum(one(sp.mDate)),
     cachedTrend(one(sp.tDate)),
     cachedFloor(one(sp.fDate)),
@@ -92,6 +92,7 @@ export default async function MomentumPage({
     cachedThemes(),
     cachedN500(),
     session ? loadPortfolioSymbols(session.userId) : Promise.resolve([]),
+    session ? loadPortfolioTrades(session.userId) : Promise.resolve({ tradedSymbols: [], tradesBySymbol: {} }),
   ]);
 
   // Per-row mini price charts — one batched golden query per tab, each on that
@@ -126,6 +127,8 @@ export default async function MomentumPage({
       themes={themes}
       nifty500={n500.map((r) => r.symbol)}
       portfolioSymbols={portfolioSymbols}
+      tradedSymbols={portfolioTrades.tradedSymbols}
+      tradesBySymbol={portfolioTrades.tradesBySymbol}
       initialTab={initialTab}
     />
   );

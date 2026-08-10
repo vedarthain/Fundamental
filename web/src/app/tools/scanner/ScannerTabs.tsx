@@ -31,6 +31,7 @@ import FallenLeadersClient from "./FallenLeadersClient";
 import AllStocksClient from "./AllStocksClient";
 import ThemesClient from "./ThemesClient";
 import ScannerDatePicker from "./ScannerDatePicker";
+import type { TradeMark } from "@/lib/portfolio";
 
 // "peers" is no longer a top-level tab — it folded into "sectors" as a toggle.
 export type Tab = "igniting" | "trend" | "floor" | "fallen" | "sectors" | "all" | "graph" | "themes" | "dividends";
@@ -58,6 +59,8 @@ export default function ScannerTabs({
   themes,
   nifty500,
   portfolioSymbols = [],
+  tradedSymbols = [],
+  tradesBySymbol = {},
   initialTab = "igniting",
 }: {
   momentumSnapDate: string | null;
@@ -80,6 +83,8 @@ export default function ScannerTabs({
   themes: ThemesData;
   nifty500: string[];
   portfolioSymbols?: string[];
+  tradedSymbols?: string[];
+  tradesBySymbol?: Record<string, TradeMark[]>;
   initialTab?: Tab;
 }) {
   const [tab, setTab] = useState<Tab>(initialTab);
@@ -318,7 +323,7 @@ export default function ScannerTabs({
             <AllStocksClient snapDate={allStocksSnapDate} rows={allStocks} n500Only={n500Only} />
           )}
           {tab === "graph" && (
-            <GraphClient universe={graphUniverse} nifty500={nifty500} n500Only={n500Only} portfolioSymbols={portfolioSymbols} />
+            <GraphClient universe={graphUniverse} nifty500={nifty500} n500Only={n500Only} portfolioSymbols={portfolioSymbols} tradedSymbols={tradedSymbols} tradesBySymbol={tradesBySymbol} />
           )}
           {tab === "dividends" && (
             <DividendClient universe={dividendUniverse} nifty500={nifty500} n500Only={n500Only} />
@@ -393,6 +398,8 @@ export default function ScannerTabs({
               n500Only={n500Only}
               nifty500={nifty500}
               portfolioSymbols={portfolioSymbols}
+              tradedSymbols={tradedSymbols}
+              tradesBySymbol={tradesBySymbol}
             />
           )}
         </div>

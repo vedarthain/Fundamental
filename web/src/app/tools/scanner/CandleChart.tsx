@@ -79,6 +79,15 @@ export type Drawing =
 // Which drawing/measure tool is armed on an interactive chart.
 export type ChartTool = "none" | "measure" | "hline" | "trend" | "erase";
 
+// A real executed trade to pin on the chart (expanded view only). Anchored to a
+// DATE (not a pixel/price) and drawn against the bar's own high/low, so it stays
+// correctly placed regardless of split-adjustment or timeframe. Side "B"=buy is
+// pinned just below the bar's low; "S"=sell just above the bar's high.
+export type TradeMark = { d: string; side: "B" | "S"; price: number; qty: number };
+const EMPTY_TRADES: TradeMark[] = [];
+const BUY_COL = "#16a34a";
+const SELL_COL = "#dc2626";
+
 // Shared price/x geometry — the single source of truth used by both renderChart
 // (to draw) and the click handler (to invert a pixel back to a price/date).
 function computeGeom(data: Candle[], W: number, H: number, hideVolume = false) {
@@ -161,6 +170,7 @@ export function CandleChart({
   onDeleteDrawing,
   monoColor,
   hideVolume = false,
+  trades = EMPTY_TRADES,
 }: {
   candles?: Candle[];
   interactive?: boolean;
@@ -169,6 +179,9 @@ export function CandleChart({
   tool?: ChartTool;
   /** Persisted drawings for this symbol (price/date anchored). */
   drawings?: Drawing[];
+  /** Real executed trades to pin as B/S markers — drawn on the expanded chart
+   *  only (interactive). */
+  trades?: TradeMark[];
   /** Commit a newly placed drawing up to the parent (which persists it). */
   onAddDrawing?: (d: Drawing) => void;
   /** Delete the drawing at this index (eraser tool). */
@@ -342,6 +355,7 @@ export function CandleChart({
           drawMode ? draft : null,
           monoColor,
           hideVolume,
+          interactive ? trades : EMPTY_TRADES,
         )
       ) : null}
     </div>
@@ -360,6 +374,7 @@ function renderChart(
   draft: Draft | null = null,
   monoColor?: string,
   hideVolume = false,
+  trades: TradeMark[] = EMPTY_TRADES,
 ) {
   const plotL = mL;
   const plotR = W - mR;
@@ -492,6 +507,32 @@ function renderChart(
           );
         }
         return null;
+      })}
+
+      {/* real executed trades: B pinned below the bar's low, S above its high.
+          Anchored by date (bar high/low), so split-adjustment can't misplace. */}
+      {trades.map((t, i) => {
+        const idx = idxForDate(data, t.d);
+        const c = data[idx];
+        if (!c) return null;
+        const x = cx(idx);
+        const buy = t.side === "B";
+        const col = buy ? BUY_COL : SELL_COL;
+        const barY = buy ? yP(c.l) : yP(c.h);
+        const cy = buy
+          ? Math.min(barY + 13, priceBot - 8)
+          : Math.max(barY - 13, priceTop + 8);
+        const tip = `${buy ? "Buy" : "Sell"} ${t.qty} @ ${fmtPrice(t.price)} · ${t.d}`;
+        return (
+          <g key={`tx-${i}-${t.d}-${t.side}`} pointerEvents="none">
+            <line x1={x} y1={barY} x2={x} y2={cy} stroke={col} strokeWidth={1} opacity={0.55} />
+            <circle cx={x} cy={cy} r={7} fill={col} stroke={CARD} strokeWidth={1.2} />
+            <text x={x} y={cy + 3.3} textAnchor="middle" fontSize={9.5} fontWeight={800} fill="#fff">
+              {t.side}
+            </text>
+            <title>{tip}</title>
+          </g>
+        );
       })}
 
       {/* live draft preview while placing an hline / trend */}

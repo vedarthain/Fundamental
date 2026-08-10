@@ -25,10 +25,38 @@ import type { WindowOpt } from "./sparkWindows";
 import { CandleChart, type ChartTool, type Drawing } from "./CandleChart";
 import { useGraphCandles } from "./useGraphCandles";
 import { WEEKLY_THRESHOLD_DAYS } from "@/lib/candleConfig";
+import type { TradeMark } from "@/lib/portfolio";
 
 const GREEN = "var(--color-delta-up, #0a0)";
 const RED = "var(--color-delta-down, #b00)";
 const PER_PAGE = 6;
+const P_HELD = "#7c3aed"; // dark purple — currently held
+const P_EXITED = "#9ca3af"; // grey — ever bought, not held now
+
+// Tri-state portfolio badge. Held → dark purple; ever-traded-not-held → grey;
+// never → nothing. Returns null when no badge should show.
+function PBadge({
+  held,
+  traded,
+  size = 18,
+}: {
+  held: boolean;
+  traded: boolean;
+  size?: number;
+}) {
+  if (!held && !traded) return null;
+  const col = held ? P_HELD : P_EXITED;
+  return (
+    <span
+      className="inline-flex items-center justify-center rounded-full font-bold leading-none shrink-0"
+      style={{ width: size, height: size, fontSize: size * 0.58, color: "#fff", backgroundColor: col }}
+      title={held ? "In your portfolio" : "Previously held — fully exited"}
+      aria-label={held ? "currently held" : "previously held, exited"}
+    >
+      P
+    </span>
+  );
+}
 
 // One grid page: a chunk of a single industry within the active sector. Paging
 // walks these in order so the grid rolls from one industry into the next.
@@ -138,6 +166,8 @@ export default function GraphClient({
   nifty500,
   n500Only,
   portfolioSymbols = [],
+  tradedSymbols = [],
+  tradesBySymbol = {},
 }: {
   universe: GraphUniverse;
   nifty500: string[];
@@ -146,11 +176,19 @@ export default function GraphClient({
    *  auto-lit "P" marker + the Portfolio filter/count — read-only here;
    *  holdings are edited on the Portfolio tab. */
   portfolioSymbols?: string[];
+  /** Symbols ever traded (app.portfolio_transaction) — grey "P" when not held. */
+  tradedSymbols?: string[];
+  /** Executed B/S trades per symbol, for markers on the expanded chart. */
+  tradesBySymbol?: Record<string, TradeMark[]>;
 }) {
   const { snapDate } = universe;
   const portfolioSet = useMemo(
     () => new Set(portfolioSymbols.map((s) => s.toUpperCase())),
     [portfolioSymbols],
+  );
+  const tradedSet = useMemo(
+    () => new Set(tradedSymbols.map((s) => s.toUpperCase())),
+    [tradedSymbols],
   );
 
   // When the NIFTY 500 toggle is on, narrow the tree to index members: filter
@@ -813,16 +851,7 @@ export default function GraphClient({
                   <CandleChart candles={series} weekly={weekly} drawings={drawings[st.symbol]} />
                 </div>
                 <div className="flex items-center justify-end gap-1.5 border-t hairline px-2 py-1">
-                  {portfolioSet.has(st.symbol) && (
-                    <span
-                      className="inline-flex items-center justify-center rounded-full font-bold leading-none shrink-0"
-                      style={{ width: 18, height: 18, fontSize: 10.5, color: "#fff", backgroundColor: "#7c3aed" }}
-                      title="In your portfolio"
-                      aria-label={`${st.symbol} is in your portfolio`}
-                    >
-                      P
-                    </span>
-                  )}
+                  <PBadge held={portfolioSet.has(st.symbol)} traded={tradedSet.has(st.symbol)} />
                   <button
                     type="button"
                     onClick={() => series && series.length >= 2 && setFocus(st)}
@@ -893,16 +922,7 @@ export default function GraphClient({
                   </div>
                 </div>
                 <div className="ml-auto flex items-center gap-4">
-                  {portfolioSet.has(focus.symbol) && (
-                    <span
-                      className="inline-flex items-center justify-center rounded-full font-bold leading-none shrink-0"
-                      style={{ width: 18, height: 18, fontSize: 10.5, color: "#fff", backgroundColor: "#7c3aed" }}
-                      title="In your portfolio"
-                      aria-label={`${focus.symbol} is in your portfolio`}
-                    >
-                      P
-                    </span>
-                  )}
+                  <PBadge held={portfolioSet.has(focus.symbol)} traded={tradedSet.has(focus.symbol)} />
                   <div className="flex items-center gap-1 rounded-lg border hairline p-0.5">
                     {([
                       { id: "measure", label: "Measure", icon: <RulerIcon size={13} />, hint: "Measure price move between two points" },
@@ -986,6 +1006,7 @@ export default function GraphClient({
                   weekly={weekly}
                   tool={tool}
                   drawings={drawings[focus.symbol]}
+                  trades={tradesBySymbol[focus.symbol]}
                   onAddDrawing={(d) => addDrawing(focus.symbol, d)}
                   onDeleteDrawing={(i) => deleteDrawing(focus.symbol, i)}
                 />
