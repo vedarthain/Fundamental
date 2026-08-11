@@ -273,6 +273,7 @@ export default function GraphClient({
   const [page, setPage] = useState(0);
   const [days, setDays] = useState<number>(180);
   const [treeOpen, setTreeOpen] = useState(true);
+  const [treeQuery, setTreeQuery] = useState("");
   const [focus, setFocus] = useState<GraphStock | null>(null);
   // Drawing/measure tool armed on the expanded chart, via the overlay toolbar.
   // Reset whenever the overlay closes.
@@ -391,6 +392,35 @@ export default function GraphClient({
     [viewSectors, activeSectorName],
   );
 
+  // Tree search: filter the sector→industry→stock tree by symbol, company name
+  // or industry name. A matching industry name keeps all its stocks; otherwise
+  // only the matching stocks survive. Empty query → the full tree. Clicking a
+  // result still resolves via industryById (built from the unfiltered universe).
+  const searching = treeQuery.trim().length > 0;
+  const treeSectors = useMemo<GraphSector[]>(() => {
+    const q = treeQuery.trim().toLowerCase();
+    if (!q) return viewSectors;
+    const out: GraphSector[] = [];
+    for (const s of viewSectors) {
+      const inds: GraphIndustry[] = [];
+      for (const ind of s.industries) {
+        const indHit = ind.name.toLowerCase().includes(q);
+        const stocks = indHit
+          ? ind.stocks
+          : ind.stocks.filter(
+              (st) =>
+                st.symbol.toLowerCase().includes(q) ||
+                (st.name ?? "").toLowerCase().includes(q),
+            );
+        if (indHit || stocks.length > 0) inds.push({ ...ind, stocks });
+      }
+      if (inds.length > 0) {
+        out.push({ ...s, industries: inds, count: inds.reduce((n, i) => n + i.stocks.length, 0) });
+      }
+    }
+    return out;
+  }, [viewSectors, treeQuery]);
+
   const sectorPages = useMemo<SecPage[]>(() => {
     const out: SecPage[] = [];
     if (!activeSector) return out;
@@ -463,6 +493,12 @@ export default function GraphClient({
     const sector = industryById.get(id)?.sector ?? "";
     setSelectedInd(id);
     setPage(pageOffsetOfIndustry(sector, id) + Math.floor(idx / PER_PAGE));
+  }
+  // Search results carry a filtered stock list, so a positional index would be
+  // wrong — resolve the stock's true index within the unfiltered industry.
+  function jumpToStockSymbol(id: string, symbol: string) {
+    const real = industryById.get(id)?.ind.stocks.findIndex((s) => s.symbol === symbol) ?? -1;
+    jumpToStock(id, real >= 0 ? real : 0);
   }
 
   const rangeStart = curPage ? curPage.chunkStart : 0;
@@ -671,8 +707,32 @@ export default function GraphClient({
               </svg>
             </button>
           </div>
-          {viewSectors.map((s) => {
-            const open = openSectors.has(s.name);
+          {/* Tree search — filter by symbol, company or industry name. */}
+          <div className="relative px-1 mb-1.5">
+            <svg
+              width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 muted-text pointer-events-none"
+            >
+              <circle cx="11" cy="11" r="7" />
+              <path d="M21 21l-4.3-4.3" />
+            </svg>
+            <input
+              type="search"
+              value={treeQuery}
+              onChange={(e) => setTreeQuery(e.target.value)}
+              placeholder="Search stock or industry…"
+              aria-label="Search charts by stock or industry"
+              className="w-full rounded-md border hairline bg-[var(--color-paper)] pl-7 pr-2 py-1.5 text-[12px] outline-none focus:border-[var(--color-accent-600)]"
+            />
+          </div>
+          {searching && treeSectors.length === 0 && (
+            <p className="px-2 py-3 text-[12px] muted-text text-center">
+              No matches for “{treeQuery.trim()}”.
+            </p>
+          )}
+          {treeSectors.map((s) => {
+            const open = searching || openSectors.has(s.name);
             return (
               <div key={s.name} className="mb-0.5">
                 <button
@@ -688,7 +748,7 @@ export default function GraphClient({
                   <div className="ml-2 border-l hairline pl-1.5">
                     {s.industries.map((ind) => {
                       const isSel = ind.id === activeInd;
-                      const stocksOpen = openIndustries.has(ind.id);
+                      const stocksOpen = searching || openIndustries.has(ind.id);
                       return (
                         <div key={ind.id}>
                           <div
@@ -721,7 +781,7 @@ export default function GraphClient({
                             <ul className="ml-6 mb-1">
                               {ind.stocks.map((st, i) => {
                                 const onPage =
-                                  isSel && curPage != null &&
+                                  !searching && isSel && curPage != null &&
                                   i >= curPage.chunkStart - 1 &&
                                   i < curPage.chunkStart - 1 + pageStocks.length;
                                 return (
@@ -729,7 +789,7 @@ export default function GraphClient({
                                     <StarButton symbol={st.symbol} variant="icon" className="!w-6 !h-6 shrink-0" />
                                     <button
                                       type="button"
-                                      onClick={() => jumpToStock(ind.id, i)}
+                                      onClick={() => searching ? jumpToStockSymbol(ind.id, st.symbol) : jumpToStock(ind.id, i)}
                                       className="flex-1 min-w-0 flex items-center gap-1.5 rounded px-1.5 py-1 text-left hover:bg-[var(--color-paper)] transition-colors"
                                       style={onPage ? { color: "var(--color-accent-700)", fontWeight: 600 } : undefined}
                                     >

@@ -382,6 +382,26 @@ def main():
         return
 
     cur.execute(DDL)
+
+    # CSV takes precedence over hand entry: drop any manual entry that matches an
+    # imported trade on (symbol, broker, trade_date, quantity) — it's the same
+    # real trade typed in by hand, so keeping both would double-count. Mirror of
+    # web/src/app/api/portfolio/import-trades/route.ts. Dedup tuple is the product
+    # spec's, NOT dedup_key (which also keys on side/price/time).
+    superseded = 0
+    seen_tuples = set()
+    for r in kept:
+        key = (r["symbol"], r["broker"], r["trade_date"], r["quantity"])
+        if key in seen_tuples:
+            continue
+        seen_tuples.add(key)
+        cur.execute("""
+            delete from app.portfolio_transaction
+             where user_id=%s and source_file='manual-entry'
+               and broker=%s and symbol=%s and trade_date=%s and quantity=%s
+        """, (USER_ID, r["broker"], r["symbol"], r["trade_date"], r["quantity"]))
+        superseded += cur.rowcount
+
     ins = 0
     for r in kept:
         cur.execute("""
@@ -408,6 +428,8 @@ def main():
 
     conn.commit()
     print(f"\nCOMMITTED: inserted {ins} new rows (dedup_key conflicts skipped).")
+    if superseded:
+        print(f"superseded {superseded} manual entries matched by CSV trades.")
     if symbols:
         print(f"recomputed derived holdings for {len(symbols)} symbols.")
     cur.execute("select count(*) from app.portfolio_transaction where user_id=%s", (USER_ID,))

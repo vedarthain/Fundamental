@@ -143,8 +143,32 @@ export async function POST(req: NextRequest) {
 
   const coveredSymbols = [...new Set(uniqueRows.map((r) => r.symbol))];
 
+  // CSV takes precedence over hand entry: if an imported trade matches a manual
+  // entry on (symbol, broker, trade_date, quantity), the manual row is the same
+  // real trade typed in by hand — drop it so the import doesn't double-count.
+  // Dedup tuple is per the product spec (NOT dedup_key, which also keys on
+  // side/price/time and wouldn't catch a hand entry that rounded the price).
+  const supersedeTuples = [
+    ...new Map(
+      uniqueRows.map((r) => [`${r.symbol}|${r.tradeDate}|${r.quantity}`, r]),
+    ).values(),
+  ];
+
   let inserted = 0;
+  let supersededManual = 0;
   await sql.begin(async (tx) => {
+    for (const r of supersedeTuples) {
+      const del = await tx`
+        DELETE FROM app.portfolio_transaction
+         WHERE user_id = ${session.userId}
+           AND source_file = 'manual-entry'
+           AND broker = ${broker}
+           AND symbol = ${r.symbol}
+           AND trade_date = ${r.tradeDate}
+           AND quantity = ${r.quantity}
+      `;
+      supersededManual += del.count;
+    }
     for (const r of uniqueRows) {
       const res = await tx`
         INSERT INTO app.portfolio_transaction
@@ -172,6 +196,7 @@ export async function POST(req: NextRequest) {
     imported: inserted,
     skipped: uniqueRows.length - inserted, // already-present (deduped) trades
     mappedSymbols: coveredSymbols.length,
+    supersededManual, // hand entries replaced by the authoritative CSV trade
     outsideCoverage: [...skippedSymbols],
     dateRange: dates.length ? { from: dates[0], to: dates[dates.length - 1] } : null,
   });

@@ -9,7 +9,7 @@
  */
 import Link from "next/link";
 import { getSession } from "@/lib/auth";
-import { loadPortfolio, loadEquityCurve } from "@/lib/portfolio";
+import { loadPortfolio, loadEquityCurve, loadRealizedPnl } from "@/lib/portfolio";
 import { PortfolioClient } from "./PortfolioClient";
 
 export const dynamic = "force-dynamic";
@@ -50,14 +50,15 @@ export default async function PortfolioPage() {
     );
   }
 
-  const [portfolio, curve] = await Promise.all([
+  const [portfolio, curve, realized] = await Promise.all([
     loadPortfolio(session.userId),
     loadEquityCurve(session.userId),
+    loadRealizedPnl(session.userId),
   ]);
 
   return (
     <div className="mx-auto max-w-[1200px] px-4 md:px-6 py-6 md:py-8">
-      <PortfolioClient portfolio={portfolio} curve={curve} />
+      <PortfolioClient portfolio={portfolio} curve={curve} realized={realized} />
     </div>
   );
 }

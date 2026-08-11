@@ -19,7 +19,7 @@ import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
   PieChart, Pie, Cell,
 } from "recharts";
-import type { Portfolio, Instrument, CurvePoint } from "@/lib/portfolio";
+import type { Portfolio, Instrument, CurvePoint, RealizedPnl, RealizedLot } from "@/lib/portfolio";
 
 const BROKERS = [
   { value: "upstox", label: "Upstox" },
@@ -74,8 +74,19 @@ type ImportResult = {
   error?: string;
 };
 
-export function PortfolioClient({ portfolio, curve }: { portfolio: Portfolio; curve: CurvePoint[] }) {
+type PortfolioTab = "overview" | "booked";
+
+export function PortfolioClient({
+  portfolio,
+  curve,
+  realized,
+}: {
+  portfolio: Portfolio;
+  curve: CurvePoint[];
+  realized: RealizedPnl;
+}) {
   const router = useRouter();
+  const [tab, setTab] = useState<PortfolioTab>("overview");
   const [broker, setBroker] = useState<string>("zerodha");
   const [kind, setKind] = useState<ImportKind>("holdings");
   const [busy, setBusy] = useState(false);
@@ -115,7 +126,7 @@ export function PortfolioClient({ portfolio, curve }: { portfolio: Portfolio; cu
 
   return (
     <>
-      <header className="mb-6">
+      <header className="mb-4">
         <h1 className="font-display text-[26px] md:text-[30px] leading-[1.1] tracking-tight">
           Your portfolio
         </h1>
@@ -125,40 +136,182 @@ export function PortfolioClient({ portfolio, curve }: { portfolio: Portfolio; cu
         </p>
       </header>
 
-      <ImportPanel
-        broker={broker}
-        setBroker={setBroker}
-        kind={kind}
-        setKind={setKind}
-        busy={busy}
-        result={result}
-        fileRef={fileRef}
-        onUpload={onUpload}
-        brokers={portfolio.brokers}
-      />
+      {/* Overview (holdings) vs Booked P&L (realized from the trade log). */}
+      <div className="flex items-center gap-1 border-b hairline mb-5">
+        {([
+          { v: "overview", label: "Overview" },
+          { v: "booked", label: "Booked P&L" },
+        ] as const).map((o) => (
+          <button
+            key={o.v}
+            type="button"
+            onClick={() => setTab(o.v)}
+            className="relative px-3 py-2 text-[13px] font-medium transition-colors"
+            style={{ color: tab === o.v ? "var(--color-accent-700)" : "var(--color-muted)" }}
+          >
+            {o.label}
+            {o.v === "booked" && realized.rows.length > 0 && (
+              <span className="ml-1.5 text-[11px] tabular-nums" style={{ color: up(realized.totals.realized) ? GREEN : RED }}>
+                {signed(realized.totals.realized)}
+              </span>
+            )}
+            {tab === o.v && (
+              <span className="absolute left-0 right-0 -bottom-px h-[2px]" style={{ background: "var(--color-accent-600)" }} />
+            )}
+          </button>
+        ))}
+      </div>
 
-      <ManualTradePanel onChanged={() => router.refresh()} />
-
-      {!portfolio.hasHoldings ? (
-        <div className="card p-8 text-center mt-6">
-          <h2 className="font-display text-[20px] mb-2">No holdings yet</h2>
-          <p className="muted-text text-[13px] max-w-md mx-auto">
-            Import a holdings export from any of the five brokers above to see your
-            portfolio valued, allocated and scored. Re-importing a broker replaces
-            just that broker&apos;s rows.
-          </p>
-        </div>
+      {tab === "booked" ? (
+        <BookedPnl realized={realized} />
       ) : (
         <>
-          <SummaryCards t={t} snapshot={portfolio.snapshotDate} />
-          <EquityCurve curve={curve} />
-          <div className="grid md:grid-cols-2 gap-4 mt-6">
-            <Donut title="By broker" data={portfolio.brokerAlloc} total={t.currentValue} />
-            <Donut title="By sector" data={portfolio.sectorAlloc} total={t.currentValue} />
-          </div>
-          <HoldingsTable instruments={portfolio.instruments} totalValue={t.currentValue} />
+          <ImportPanel
+            broker={broker}
+            setBroker={setBroker}
+            kind={kind}
+            setKind={setKind}
+            busy={busy}
+            result={result}
+            fileRef={fileRef}
+            onUpload={onUpload}
+            brokers={portfolio.brokers}
+          />
+
+          <ManualTradePanel onChanged={() => router.refresh()} />
+
+          {!portfolio.hasHoldings ? (
+            <div className="card p-8 text-center mt-6">
+              <h2 className="font-display text-[20px] mb-2">No holdings yet</h2>
+              <p className="muted-text text-[13px] max-w-md mx-auto">
+                Import a holdings export from any of the five brokers above to see your
+                portfolio valued, allocated and scored. Re-importing a broker replaces
+                just that broker&apos;s rows.
+              </p>
+            </div>
+          ) : (
+            <>
+              <SummaryCards t={t} snapshot={portfolio.snapshotDate} />
+              <EquityCurve curve={curve} />
+              <div className="grid md:grid-cols-2 gap-4 mt-6">
+                <Donut title="By broker" data={portfolio.brokerAlloc} total={t.currentValue} />
+                <Donut title="By sector" data={portfolio.sectorAlloc} total={t.currentValue} />
+              </div>
+              <HoldingsTable instruments={portfolio.instruments} totalValue={t.currentValue} />
+            </>
+          )}
         </>
       )}
+    </>
+  );
+}
+
+// ─────────────────────────── booked (realized) P&L ─────────────────────────
+
+function BookedPnl({ realized }: { realized: RealizedPnl }) {
+  if (realized.rows.length === 0) {
+    return (
+      <div className="card p-8 text-center mt-2">
+        <h2 className="font-display text-[20px] mb-2">No booked P&amp;L yet</h2>
+        <p className="muted-text text-[13px] max-w-md mx-auto">
+          Once you record or import a <strong>sell</strong>, the realized profit or loss on that
+          exit shows up here — computed average-cost from your trade log. Open positions and their
+          unrealized gains stay on the Overview tab.
+        </p>
+      </div>
+    );
+  }
+  const tt = realized.totals;
+  return (
+    <>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+        <Card
+          label="Net booked P&L"
+          value={signed(tt.realized)}
+          valueColor={up(tt.realized) ? GREEN : RED}
+          sub={pct(tt.realizedPct)}
+          subColor={up(tt.realizedPct) ? GREEN : RED}
+          icon={<IconTrendUp size={15} />}
+          accent={up(tt.realized) ? GREEN : RED}
+        />
+        <Card label="Sale proceeds" value={inr(tt.proceeds)} sub="realized exits" icon={<IconWallet size={15} />} />
+        <Card label="Cost of sold" value={inr(tt.costOfSold)} sub="avg-cost basis" icon={<IconDeposit size={15} />} />
+        <Card
+          label="Win / loss"
+          value={`${tt.winners} / ${tt.losers}`}
+          sub={`${realized.rows.length} stocks sold`}
+          icon={<IconPulse size={15} />}
+        />
+      </div>
+
+      <div className="card overflow-hidden">
+        <div className="px-4 py-3 border-b hairline flex items-center gap-2">
+          <span
+            className="inline-flex items-center justify-center w-6 h-6 rounded-md shrink-0"
+            style={{ background: "color-mix(in srgb, var(--color-accent-600) 12%, transparent)", color: "var(--color-accent-700)" }}
+          >
+            <IconList size={15} />
+          </span>
+          <h2 className="text-[14px] font-semibold">Booked profit &amp; loss ({realized.rows.length})</h2>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-[12.5px]">
+            <thead>
+              <tr className="text-[10.5px] uppercase tracking-wide muted-text border-b hairline">
+                <th className="text-left font-semibold px-3 py-2">Instrument</th>
+                <th className="text-right font-semibold px-2 py-2">Qty sold</th>
+                <th className="text-right font-semibold px-2 py-2">Cost basis</th>
+                <th className="text-right font-semibold px-2 py-2">Proceeds</th>
+                <th className="text-right font-semibold px-2 py-2">Booked P&amp;L</th>
+                <th className="text-right font-semibold px-2 py-2">Return</th>
+                <th className="text-right font-semibold px-3 py-2 hidden sm:table-cell">Last sell</th>
+              </tr>
+            </thead>
+            <tbody>
+              {realized.rows.map((r: RealizedLot) => (
+                <tr key={r.symbol} className="border-b hairline hover:bg-[var(--color-paper)]">
+                  <td className="px-3 py-2">
+                    <Link href={`/stock/${r.symbol}`} className="font-medium hover:underline">
+                      {r.symbol}
+                    </Link>
+                    <div className="text-[10.5px] muted-text truncate max-w-[220px]">{r.name ?? ""}</div>
+                  </td>
+                  <td className="px-2 py-2 text-right tabular-nums">{r.qtySold}</td>
+                  <td className="px-2 py-2 text-right tabular-nums">{inr(r.costOfSold)}</td>
+                  <td className="px-2 py-2 text-right tabular-nums">{inr(r.proceeds)}</td>
+                  <td className="px-2 py-2 text-right tabular-nums font-medium" style={{ color: up(r.realized) ? GREEN : RED }}>
+                    {signed(r.realized)}
+                  </td>
+                  <td className="px-2 py-2 text-right tabular-nums" style={{ color: r.realizedPct == null ? undefined : up(r.realizedPct) ? GREEN : RED }}>
+                    {pct(r.realizedPct)}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums muted-text hidden sm:table-cell">{r.lastSell ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="border-t-2 hairline font-semibold" style={{ background: "var(--color-paper)" }}>
+                <td className="px-3 py-2">Total</td>
+                <td className="px-2 py-2" />
+                <td className="px-2 py-2 text-right tabular-nums">{inr(tt.costOfSold)}</td>
+                <td className="px-2 py-2 text-right tabular-nums">{inr(tt.proceeds)}</td>
+                <td className="px-2 py-2 text-right tabular-nums" style={{ color: up(tt.realized) ? GREEN : RED }}>
+                  {signed(tt.realized)}
+                </td>
+                <td className="px-2 py-2 text-right tabular-nums" style={{ color: up(tt.realizedPct) ? GREEN : RED }}>
+                  {pct(tt.realizedPct)}
+                </td>
+                <td className="px-3 py-2 hidden sm:table-cell" />
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+        <p className="muted-text text-[11px] px-4 py-2.5 leading-snug border-t hairline">
+          Average-cost method. A sale before any recorded buy (common in date-windowed exports) has
+          no cost basis, so its proceeds book as pure gain — import the full history for accuracy.
+          Not tax advice.
+        </p>
+      </div>
     </>
   );
 }
@@ -319,12 +472,25 @@ type ManualTrade = {
   id: string;
   symbol: string;
   name: string | null;
+  broker: string;
+  brokerLabel: string;
   side: string;
   date: string;
   quantity: number;
   price: number;
 };
 type SearchHit = { symbol: string; company_name: string };
+
+// Brokers a manual trade can be tagged with (metadata — the trade is still a
+// hand entry). Mirrors MANUAL_BROKERS in the manual-trade route.
+const MANUAL_BROKERS = [
+  { value: "zerodha", label: "Zerodha" },
+  { value: "upstox", label: "Upstox" },
+  { value: "fyers", label: "Fyers" },
+  { value: "fivepaisa", label: "5paisa" },
+  { value: "groww", label: "Groww" },
+  { value: "other", label: "Other" },
+] as const;
 
 function ManualTradePanel({ onChanged }: { onChanged: () => void }) {
   const [trades, setTrades] = useState<ManualTrade[]>([]);
@@ -333,6 +499,7 @@ function ManualTradePanel({ onChanged }: { onChanged: () => void }) {
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [showHits, setShowHits] = useState(false);
   const [side, setSide] = useState<"buy" | "sell">("buy");
+  const [brokerSel, setBrokerSel] = useState<string>("zerodha");
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [qty, setQty] = useState("");
   const [price, setPrice] = useState("");
@@ -398,7 +565,7 @@ function ManualTradePanel({ onChanged }: { onChanged: () => void }) {
         method: "POST",
         credentials: "include",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ symbol, side, date, quantity: q, price: p }),
+        body: JSON.stringify({ symbol, side, broker: brokerSel, date, quantity: q, price: p }),
       });
       const d = await r.json();
       if (!r.ok) {
@@ -443,8 +610,8 @@ function ManualTradePanel({ onChanged }: { onChanged: () => void }) {
       <SectionHead icon={<IconEdit size={15} />} title="Add a manual trade" />
       <p className="muted-text text-[11.5px] -mt-1 mb-3 leading-snug">
         Log a buy or sell between broker imports — it updates your holdings, not just the chart.
-        When you next import that broker&apos;s file, the real trade <strong>supersedes</strong> your
-        manual entry (no duplicates).
+        A real <strong>holdings snapshot</strong> for the same stock always wins for the current
+        quantity; until then the position is computed from your trades.
       </p>
 
       <div className="flex flex-wrap items-end gap-3">
@@ -486,6 +653,23 @@ function ManualTradePanel({ onChanged }: { onChanged: () => void }) {
               ))}
             </ul>
           )}
+        </div>
+
+        {/* broker */}
+        <div>
+          <label className="block text-[11px] font-semibold muted-text uppercase tracking-wide mb-1">
+            Broker
+          </label>
+          <select
+            value={brokerSel}
+            onChange={(e) => setBrokerSel(e.target.value)}
+            className="rounded-md border px-3 py-2 text-[13px] bg-[var(--color-card)]"
+            style={inputStyle}
+          >
+            {MANUAL_BROKERS.map((b) => (
+              <option key={b.value} value={b.value}>{b.label}</option>
+            ))}
+          </select>
         </div>
 
         {/* side toggle */}
@@ -603,7 +787,15 @@ function ManualTradePanel({ onChanged }: { onChanged: () => void }) {
                       </span>
                     </td>
                     <td className="py-1.5 pr-3 font-medium">{tr.symbol}</td>
-                    <td className="py-1.5 pr-3 muted-text truncate max-w-[220px] hidden sm:table-cell">
+                    <td className="py-1.5 pr-3">
+                      <span
+                        className="inline-block px-1.5 py-0.5 rounded text-[10.5px] font-medium whitespace-nowrap"
+                        style={{ background: "var(--color-paper)", color: "var(--color-muted)" }}
+                      >
+                        {tr.brokerLabel}
+                      </span>
+                    </td>
+                    <td className="py-1.5 pr-3 muted-text truncate max-w-[200px] hidden sm:table-cell">
                       {tr.name}
                     </td>
                     <td className="py-1.5 pr-3 text-right tabular-nums">{tr.quantity}</td>

@@ -19,10 +19,25 @@ import { recomputeDerivedHolding } from "@/lib/derivedHoldings";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// Brokers a manual trade can be tagged with. These are metadata on the trade
+// (which broker it happened at) — the trade is still a hand entry, marked by
+// source_file='manual-entry', which is what makes it listable/deletable here.
+const MANUAL_BROKERS = ["zerodha", "upstox", "fyers", "fivepaisa", "groww", "other"] as const;
+const MANUAL_BROKER_LABEL: Record<string, string> = {
+  zerodha: "Zerodha",
+  upstox: "Upstox",
+  fyers: "Fyers",
+  fivepaisa: "5paisa",
+  groww: "Groww",
+  other: "Other",
+  manual: "Manual", // legacy entries stored before broker tagging
+};
+
 type ManualRow = {
   id: string;
   symbol: string;
   company_name: string | null;
+  broker: string;
   side: string;
   trade_date: string;
   quantity: string;
@@ -34,11 +49,11 @@ export async function GET() {
   if (!session) return NextResponse.json({ error: "sign in required" }, { status: 401 });
 
   const rows = await sql<ManualRow[]>`
-    SELECT t.id::text, t.symbol, u.company_name, t.side,
+    SELECT t.id::text, t.symbol, u.company_name, t.broker, t.side,
            t.trade_date::text, t.quantity::text, t.price::text
       FROM app.portfolio_transaction t
       LEFT JOIN app.universe u ON u.symbol = t.symbol
-     WHERE t.user_id = ${session.userId} AND t.broker = 'manual'
+     WHERE t.user_id = ${session.userId} AND t.source_file = 'manual-entry'
      ORDER BY t.trade_date DESC, t.id DESC
   `;
   return NextResponse.json({
@@ -46,6 +61,8 @@ export async function GET() {
       id: r.id,
       symbol: r.symbol,
       name: r.company_name,
+      broker: r.broker,
+      brokerLabel: MANUAL_BROKER_LABEL[r.broker] ?? r.broker,
       side: r.side,
       date: r.trade_date,
       quantity: Number(r.quantity),
@@ -67,6 +84,8 @@ export async function POST(req: NextRequest) {
 
   const symbol = String(body.symbol ?? "").toUpperCase().trim();
   const side = String(body.side ?? "").toLowerCase().trim();
+  const brokerRaw = String(body.broker ?? "other").toLowerCase().trim();
+  const broker = (MANUAL_BROKERS as readonly string[]).includes(brokerRaw) ? brokerRaw : "other";
   const date = String(body.date ?? "").trim();
   const quantity = Number(body.quantity);
   const price = Number(body.price);
@@ -108,13 +127,22 @@ export async function POST(req: NextRequest) {
         (user_id, broker, trade_date, trade_time, side, symbol, raw_symbol,
          raw_name, isin, quantity, price, source_file, dedup_key)
       VALUES
-        (${session.userId}, 'manual', ${date}, ${time}, ${side}, ${symbol}, ${symbol},
+        (${session.userId}, ${broker}, ${date}, ${time}, ${side}, ${symbol}, ${symbol},
          ${company_name}, ${isin}, ${quantity}, ${price}, 'manual-entry', ${dedupKey})
     `;
     await recomputeDerivedHolding(tx, session.userId, symbol);
   });
 
-  return NextResponse.json({ ok: true, symbol, side, quantity, price, date });
+  return NextResponse.json({
+    ok: true,
+    symbol,
+    side,
+    broker,
+    brokerLabel: MANUAL_BROKER_LABEL[broker] ?? broker,
+    quantity,
+    price,
+    date,
+  });
 }
 
 export async function DELETE(req: NextRequest) {
@@ -125,10 +153,13 @@ export async function DELETE(req: NextRequest) {
   if (!id || !/^\d+$/.test(id))
     return NextResponse.json({ error: "valid numeric id required" }, { status: 400 });
 
-  // Only manual rows are deletable here — imported broker trades are read-only.
+  // Only hand-entered rows are deletable here (source_file='manual-entry') —
+  // imported broker trades are read-only, even when a manual entry is tagged
+  // with the same broker.
   const del = await sql<{ symbol: string }[]>`
     DELETE FROM app.portfolio_transaction
-     WHERE id = ${Number(id)} AND user_id = ${session.userId} AND broker = 'manual'
+     WHERE id = ${Number(id)} AND user_id = ${session.userId}
+       AND source_file = 'manual-entry'
      RETURNING symbol
   `;
   if (del.length === 0)

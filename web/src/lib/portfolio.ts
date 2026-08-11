@@ -240,6 +240,126 @@ export async function loadPortfolioTrades(
   return { tradedSymbols: Object.keys(tradesBySymbol), tradesBySymbol };
 }
 
+// ─────────────────────────── booked (realized) P&L ─────────────────────────
+
+export type RealizedLot = {
+  symbol: string;
+  name: string | null;
+  qtySold: number;
+  proceeds: number; // Σ (sell price × qty)
+  costOfSold: number; // Σ (avg cost at time of sale × qty)
+  realized: number; // proceeds − costOfSold
+  realizedPct: number | null; // realized ÷ costOfSold
+  firstBuy: string | null;
+  lastSell: string | null;
+};
+
+export type RealizedPnl = {
+  rows: RealizedLot[];
+  totals: {
+    proceeds: number;
+    costOfSold: number;
+    realized: number;
+    realizedPct: number | null;
+    winners: number;
+    losers: number;
+  };
+};
+
+/**
+ * Booked (realized) P&L from the trade log, average-cost method. Walking each
+ * symbol's transactions in order, a buy blends into the running avg cost; a sell
+ * books (sell price − avg cost) × qty against that basis. Only symbols that have
+ * ever been (partly) sold appear. Unrealized gains on still-open positions are
+ * NOT here — those live in the Holdings table. Cost basis unknown (a sell before
+ * any buy in a windowed export) contributes 0 cost, so proceeds count as pure
+ * realized — flagged implicitly by realizedPct being null-safe.
+ */
+export async function loadRealizedPnl(userId: number): Promise<RealizedPnl> {
+  const txns = await sql<
+    { symbol: string; d: string; side: string; qty: number; price: number; name: string | null }[]
+  >`
+    SELECT t.symbol, t.trade_date::text AS d, t.side,
+           t.quantity::float8 AS qty, t.price::float8 AS price, u.company_name AS name
+      FROM app.portfolio_transaction t
+      LEFT JOIN app.universe u ON u.symbol = t.symbol
+     WHERE t.user_id = ${userId} AND t.symbol IS NOT NULL
+     ORDER BY t.symbol, t.trade_date ASC, t.trade_time ASC NULLS FIRST, t.id ASC
+  `;
+
+  type Acc = {
+    name: string | null;
+    qty: number; // open qty
+    avg: number; // running avg cost
+    qtySold: number;
+    proceeds: number;
+    costOfSold: number;
+    firstBuy: string | null;
+    lastSell: string | null;
+  };
+  const bySym = new Map<string, Acc>();
+
+  for (const t of txns) {
+    let a = bySym.get(t.symbol);
+    if (!a) {
+      a = { name: t.name, qty: 0, avg: 0, qtySold: 0, proceeds: 0, costOfSold: 0, firstBuy: null, lastSell: null };
+      bySym.set(t.symbol, a);
+    }
+    if (t.side === "buy") {
+      if (a.firstBuy == null) a.firstBuy = t.d;
+      const next = a.qty + t.qty;
+      a.avg = next > 0 ? (a.qty * a.avg + t.qty * t.price) / next : 0;
+      a.qty = next;
+    } else {
+      // sell: book against current avg, up to the open qty (ignore oversells).
+      const sold = a.qty > 0 ? Math.min(t.qty, a.qty) : 0;
+      if (sold > 0) {
+        a.qtySold += sold;
+        a.proceeds += sold * t.price;
+        a.costOfSold += sold * a.avg;
+        a.qty -= sold;
+        a.lastSell = t.d;
+      }
+    }
+  }
+
+  const rows: RealizedLot[] = [];
+  let pProceeds = 0, pCost = 0, winners = 0, losers = 0;
+  for (const [symbol, a] of bySym) {
+    if (a.qtySold <= 0) continue;
+    const realized = a.proceeds - a.costOfSold;
+    rows.push({
+      symbol,
+      name: a.name,
+      qtySold: Math.round(a.qtySold * 10000) / 10000,
+      proceeds: Math.round(a.proceeds * 100) / 100,
+      costOfSold: Math.round(a.costOfSold * 100) / 100,
+      realized: Math.round(realized * 100) / 100,
+      realizedPct: a.costOfSold > 0 ? Math.round((realized / a.costOfSold) * 1000) / 10 : null,
+      firstBuy: a.firstBuy,
+      lastSell: a.lastSell,
+    });
+    pProceeds += a.proceeds;
+    pCost += a.costOfSold;
+    if (realized >= 0) winners++;
+    else losers++;
+  }
+  rows.sort((x, y) => y.realized - x.realized);
+
+  const realized = pProceeds - pCost;
+  return {
+    rows,
+    totals: {
+      proceeds: Math.round(pProceeds * 100) / 100,
+      costOfSold: Math.round(pCost * 100) / 100,
+      realized: Math.round(realized * 100) / 100,
+      realizedPct: pCost > 0 ? Math.round((realized / pCost) * 1000) / 10 : null,
+      winners,
+      losers,
+    },
+  };
+}
+
 /** Load + value a user's portfolio, aggregated per instrument. */
 export async function loadPortfolio(userId: number): Promise<Portfolio> {
   const holdings = await sql<HoldingRow[]>`
