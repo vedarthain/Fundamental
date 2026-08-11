@@ -13,7 +13,7 @@
  */
 
 import { useRouter } from "next/navigation";
-import { Fragment, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -54,19 +54,30 @@ function up(v: number | null): boolean {
 const GREEN = "var(--color-delta-up, #15803D)";
 const RED = "var(--color-delta-down, #DC2626)";
 
+type ImportKind = "holdings" | "trades";
+
 type ImportResult = {
   ok?: boolean;
+  kind?: ImportKind;
   brokerLabel?: string;
+  // holdings-snapshot fields
   imported?: number;
   mapped?: number;
   unmapped?: number;
   unmappedSymbols?: string[];
+  // tradebook fields
+  parsed?: number;
+  skipped?: number;
+  mappedSymbols?: number;
+  outsideCoverage?: string[];
+  dateRange?: { from: string; to: string } | null;
   error?: string;
 };
 
 export function PortfolioClient({ portfolio, curve }: { portfolio: Portfolio; curve: CurvePoint[] }) {
   const router = useRouter();
   const [broker, setBroker] = useState<string>("zerodha");
+  const [kind, setKind] = useState<ImportKind>("holdings");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -74,7 +85,7 @@ export function PortfolioClient({ portfolio, curve }: { portfolio: Portfolio; cu
   async function onUpload() {
     const file = fileRef.current?.files?.[0];
     if (!file) {
-      setResult({ error: "Choose a holdings file first." });
+      setResult({ error: `Choose a ${kind === "trades" ? "tradebook" : "holdings"} file first.` });
       return;
     }
     setBusy(true);
@@ -83,12 +94,13 @@ export function PortfolioClient({ portfolio, curve }: { portfolio: Portfolio; cu
       const fd = new FormData();
       fd.append("broker", broker);
       fd.append("file", file);
-      const r = await fetch("/api/portfolio/import", { method: "POST", body: fd, credentials: "include" });
+      const endpoint = kind === "trades" ? "/api/portfolio/import-trades" : "/api/portfolio/import";
+      const r = await fetch(endpoint, { method: "POST", body: fd, credentials: "include" });
       const data: ImportResult = await r.json();
       if (!r.ok) {
         setResult({ error: data.error ?? `Import failed (HTTP ${r.status})` });
       } else {
-        setResult(data);
+        setResult({ ...data, kind });
         if (fileRef.current) fileRef.current.value = "";
         router.refresh();
       }
@@ -116,12 +128,16 @@ export function PortfolioClient({ portfolio, curve }: { portfolio: Portfolio; cu
       <ImportPanel
         broker={broker}
         setBroker={setBroker}
+        kind={kind}
+        setKind={setKind}
         busy={busy}
         result={result}
         fileRef={fileRef}
         onUpload={onUpload}
         brokers={portfolio.brokers}
       />
+
+      <ManualTradePanel onChanged={() => router.refresh()} />
 
       {!portfolio.hasHoldings ? (
         <div className="card p-8 text-center mt-6">
@@ -150,18 +166,45 @@ export function PortfolioClient({ portfolio, curve }: { portfolio: Portfolio; cu
 // ─────────────────────────── import panel ──────────────────────────────────
 
 function ImportPanel({
-  broker, setBroker, busy, result, fileRef, onUpload, brokers,
+  broker, setBroker, kind, setKind, busy, result, fileRef, onUpload, brokers,
 }: {
   broker: string;
   setBroker: (b: string) => void;
+  kind: ImportKind;
+  setKind: (k: ImportKind) => void;
   busy: boolean;
   result: ImportResult | null;
   fileRef: React.RefObject<HTMLInputElement | null>;
   onUpload: () => void;
   brokers: string[];
 }) {
+  const isTrades = kind === "trades";
   return (
     <div className="card p-4 md:p-5">
+      {/* Holdings (snapshot) vs Transactions (tradebook) */}
+      <div className="mb-3">
+        <div className="inline-flex rounded-md border overflow-hidden" style={{ borderColor: "var(--color-border-default)" }}>
+          {([
+            { v: "holdings", label: "Holdings snapshot" },
+            { v: "trades", label: "Transactions" },
+          ] as const).map((o) => (
+            <button
+              key={o.v}
+              type="button"
+              onClick={() => setKind(o.v)}
+              className="px-3 py-1.5 text-[12px] font-medium transition-colors"
+              style={
+                kind === o.v
+                  ? { background: "var(--color-accent-600)", color: "white" }
+                  : { background: "transparent", color: "var(--color-muted)" }
+              }
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="flex flex-wrap items-end gap-3">
         <div>
           <label className="block text-[11px] font-semibold muted-text uppercase tracking-wide mb-1">
@@ -183,7 +226,7 @@ function ImportPanel({
         </div>
         <div className="flex-1 min-w-[200px]">
           <label className="block text-[11px] font-semibold muted-text uppercase tracking-wide mb-1">
-            Holdings file (.csv, .xlsx or .xls)
+            {isTrades ? "Tradebook file (.csv, .xlsx or .xls)" : "Holdings file (.csv, .xlsx or .xls)"}
           </label>
           <input
             ref={fileRef}
@@ -204,9 +247,20 @@ function ImportPanel({
         </button>
       </div>
       <p className="muted-text text-[11.5px] mt-2 leading-snug">
-        Re-importing a broker <strong>replaces</strong> that broker&apos;s holdings. Upload the
-        broker&apos;s holdings export as-is — <code>.csv</code>, <code>.xlsx</code> and 5paisa&apos;s
-        legacy <code>.xls</code> are all accepted.
+        {isTrades ? (
+          <>
+            A <strong>tradebook</strong> is your buy/sell history. Trades are <strong>added</strong> (re-uploading
+            an overlapping window is de-duplicated, never doubled) and drive the B/S chart markers. For any stock
+            you haven&apos;t given a holdings snapshot, we compute the position from these trades — but a real
+            snapshot always <strong>wins</strong> for the current quantity.
+          </>
+        ) : (
+          <>
+            Re-importing a broker <strong>replaces</strong> that broker&apos;s holdings. Upload the
+            broker&apos;s holdings export as-is — <code>.csv</code>, <code>.xlsx</code> and 5paisa&apos;s
+            legacy <code>.xls</code> are all accepted.
+          </>
+        )}
       </p>
 
       {result && (
@@ -220,6 +274,23 @@ function ImportPanel({
         >
           {result.error ? (
             <span style={{ color: RED }}>{result.error}</span>
+          ) : result.kind === "trades" ? (
+            <span>
+              <strong>{result.brokerLabel}</strong>: {result.imported} new trade
+              {result.imported === 1 ? "" : "s"} imported
+              {result.skipped ? `, ${result.skipped} already on record` : ""} across{" "}
+              {result.mappedSymbols} stock{result.mappedSymbols === 1 ? "" : "s"}
+              {result.dateRange ? ` (${result.dateRange.from} → ${result.dateRange.to})` : ""}
+              {result.outsideCoverage && result.outsideCoverage.length > 0 && (
+                <span className="muted-text">
+                  {" "}
+                  · {result.outsideCoverage.length} outside coverage (
+                  {result.outsideCoverage.slice(0, 6).join(", ")}
+                  {result.outsideCoverage.length > 6 ? "…" : ""})
+                </span>
+              )}
+              .
+            </span>
           ) : (
             <span>
               <strong>{result.brokerLabel}</strong>: {result.imported} holdings imported —{" "}
@@ -236,6 +307,324 @@ function ImportPanel({
               .
             </span>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────── manual trade entry ────────────────────────────
+
+type ManualTrade = {
+  id: string;
+  symbol: string;
+  name: string | null;
+  side: string;
+  date: string;
+  quantity: number;
+  price: number;
+};
+type SearchHit = { symbol: string; company_name: string };
+
+function ManualTradePanel({ onChanged }: { onChanged: () => void }) {
+  const [trades, setTrades] = useState<ManualTrade[]>([]);
+  const [symbol, setSymbol] = useState("");
+  const [query, setQuery] = useState("");
+  const [hits, setHits] = useState<SearchHit[]>([]);
+  const [showHits, setShowHits] = useState(false);
+  const [side, setSide] = useState<"buy" | "sell">("buy");
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [qty, setQty] = useState("");
+  const [price, setPrice] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ err?: string; ok?: string } | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const r = await fetch("/api/portfolio/manual-trade", { credentials: "include" });
+      if (r.ok) {
+        const d = await r.json();
+        setTrades(d.trades ?? []);
+      }
+    } catch {
+      /* ignore — panel is non-critical */
+    }
+  }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // Debounced symbol autocomplete against the shared /api/search endpoint.
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 1) {
+      setHits([]);
+      return;
+    }
+    const ctrl = new AbortController();
+    const t = setTimeout(async () => {
+      try {
+        const r = await fetch(`/api/search?q=${encodeURIComponent(q)}`, { signal: ctrl.signal });
+        if (r.ok) {
+          const d = await r.json();
+          setHits(d.hits ?? []);
+        }
+      } catch {
+        /* aborted / offline */
+      }
+    }, 180);
+    return () => {
+      clearTimeout(t);
+      ctrl.abort();
+    };
+  }, [query]);
+
+  function pick(h: SearchHit) {
+    setSymbol(h.symbol);
+    setQuery(h.symbol);
+    setShowHits(false);
+  }
+
+  async function submit() {
+    setMsg(null);
+    if (!symbol) return setMsg({ err: "Pick a stock from the suggestions first." });
+    const q = Number(qty);
+    const p = Number(price);
+    if (!(q > 0)) return setMsg({ err: "Quantity must be greater than 0." });
+    if (!(p >= 0)) return setMsg({ err: "Price must be zero or more." });
+    setBusy(true);
+    try {
+      const r = await fetch("/api/portfolio/manual-trade", {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ symbol, side, date, quantity: q, price: p }),
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        setMsg({ err: d.error ?? `Failed (HTTP ${r.status})` });
+      } else {
+        setMsg({ ok: `${side === "buy" ? "Bought" : "Sold"} ${q} ${symbol} @ ₹${p.toLocaleString("en-IN")}.` });
+        setSymbol("");
+        setQuery("");
+        setQty("");
+        setPrice("");
+        await load();
+        onChanged();
+      }
+    } catch {
+      setMsg({ err: "Network error — try again." });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove(id: string) {
+    try {
+      const r = await fetch(`/api/portfolio/manual-trade?id=${id}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (r.ok) {
+        await load();
+        onChanged();
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const inputCls =
+    "rounded-md border px-3 py-2 text-[13px] bg-[var(--color-card)] w-full";
+  const inputStyle = { borderColor: "var(--color-border-default)" };
+
+  return (
+    <div className="card p-4 md:p-5 mt-4">
+      <SectionHead icon={<IconEdit size={15} />} title="Add a manual trade" />
+      <p className="muted-text text-[11.5px] -mt-1 mb-3 leading-snug">
+        Log a buy or sell between broker imports — it updates your holdings, not just the chart.
+        When you next import that broker&apos;s file, the real trade <strong>supersedes</strong> your
+        manual entry (no duplicates).
+      </p>
+
+      <div className="flex flex-wrap items-end gap-3">
+        {/* symbol autocomplete */}
+        <div className="relative min-w-[190px] flex-1">
+          <label className="block text-[11px] font-semibold muted-text uppercase tracking-wide mb-1">
+            Stock
+          </label>
+          <input
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setSymbol("");
+              setShowHits(true);
+            }}
+            onFocus={() => setShowHits(true)}
+            onBlur={() => setTimeout(() => setShowHits(false), 150)}
+            placeholder="Search symbol or name…"
+            className={inputCls}
+            style={inputStyle}
+          />
+          {showHits && hits.length > 0 && (
+            <ul
+              className="absolute z-20 mt-1 w-full max-h-64 overflow-auto rounded-md border shadow-lg text-[12.5px]"
+              style={{ borderColor: "var(--color-border-default)", background: "var(--color-card)" }}
+            >
+              {hits.map((h) => (
+                <li key={h.symbol}>
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => pick(h)}
+                    className="block w-full text-left px-3 py-1.5 hover:bg-[var(--color-paper)]"
+                  >
+                    <span className="font-medium">{h.symbol}</span>
+                    <span className="muted-text"> — {h.company_name}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {/* side toggle */}
+        <div>
+          <label className="block text-[11px] font-semibold muted-text uppercase tracking-wide mb-1">
+            Side
+          </label>
+          <div className="inline-flex rounded-md border overflow-hidden" style={inputStyle}>
+            {(["buy", "sell"] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setSide(s)}
+                className="px-3 py-2 text-[12.5px] font-medium capitalize transition-colors"
+                style={
+                  side === s
+                    ? { background: s === "buy" ? GREEN : RED, color: "white" }
+                    : { background: "transparent", color: "var(--color-muted)" }
+                }
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="w-[140px]">
+          <label className="block text-[11px] font-semibold muted-text uppercase tracking-wide mb-1">
+            Date
+          </label>
+          <input
+            type="date"
+            value={date}
+            max={new Date().toISOString().slice(0, 10)}
+            onChange={(e) => setDate(e.target.value)}
+            className={inputCls}
+            style={inputStyle}
+          />
+        </div>
+
+        <div className="w-[100px]">
+          <label className="block text-[11px] font-semibold muted-text uppercase tracking-wide mb-1">
+            Qty
+          </label>
+          <input
+            type="number"
+            inputMode="decimal"
+            min="0"
+            value={qty}
+            onChange={(e) => setQty(e.target.value)}
+            className={`${inputCls} text-right`}
+            style={inputStyle}
+          />
+        </div>
+
+        <div className="w-[120px]">
+          <label className="block text-[11px] font-semibold muted-text uppercase tracking-wide mb-1">
+            Price ₹
+          </label>
+          <input
+            type="number"
+            inputMode="decimal"
+            min="0"
+            step="0.01"
+            value={price}
+            onChange={(e) => setPrice(e.target.value)}
+            className={`${inputCls} text-right`}
+            style={inputStyle}
+          />
+        </div>
+
+        <button
+          type="button"
+          onClick={submit}
+          disabled={busy}
+          className="px-4 py-2 rounded-md font-medium text-[13px] transition-colors disabled:opacity-60"
+          style={{ backgroundColor: "var(--color-accent-600)", color: "white" }}
+        >
+          {busy ? "Saving…" : "Add trade"}
+        </button>
+      </div>
+
+      {msg && (
+        <div
+          className="mt-3 rounded-md px-3 py-2 text-[12.5px]"
+          style={{
+            background: msg.err
+              ? "color-mix(in srgb, var(--color-delta-down, #DC2626) 10%, transparent)"
+              : "color-mix(in srgb, var(--color-delta-up, #15803D) 12%, transparent)",
+          }}
+        >
+          <span style={{ color: msg.err ? RED : GREEN }}>{msg.err ?? msg.ok}</span>
+        </div>
+      )}
+
+      {trades.length > 0 && (
+        <div className="mt-4">
+          <div className="text-[11px] font-semibold muted-text uppercase tracking-wide mb-1">
+            Manual trades ({trades.length})
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-[12.5px]">
+              <tbody>
+                {trades.map((tr) => (
+                  <tr key={tr.id} className="border-b hairline">
+                    <td className="py-1.5 pr-3">
+                      <span
+                        className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase"
+                        style={{
+                          color: "white",
+                          background: tr.side === "buy" ? GREEN : RED,
+                        }}
+                      >
+                        {tr.side}
+                      </span>
+                    </td>
+                    <td className="py-1.5 pr-3 font-medium">{tr.symbol}</td>
+                    <td className="py-1.5 pr-3 muted-text truncate max-w-[220px] hidden sm:table-cell">
+                      {tr.name}
+                    </td>
+                    <td className="py-1.5 pr-3 text-right tabular-nums">{tr.quantity}</td>
+                    <td className="py-1.5 pr-3 text-right tabular-nums">@ {inr(tr.price, 2)}</td>
+                    <td className="py-1.5 pr-3 text-right tabular-nums muted-text">{tr.date}</td>
+                    <td className="py-1.5 text-right">
+                      <button
+                        type="button"
+                        onClick={() => remove(tr.id)}
+                        className="text-[11px] px-2 py-1 rounded hover:bg-[var(--color-paper)]"
+                        style={{ color: RED }}
+                        aria-label={`Delete ${tr.side} ${tr.symbol}`}
+                      >
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>
@@ -506,10 +895,10 @@ function makeCmp(key: SortKey, dir: SortDir) {
 
 function HoldingsTable({ instruments, totalValue }: { instruments: Instrument[]; totalValue: number }) {
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [mode, setMode] = useState<GroupMode>("sector");
+  const [mode, setMode] = useState<GroupMode>("flat");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  // Flat-view column sort. Defaults to Value-desc to match the grouped ordering.
-  const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: "value", dir: "desc" });
+  // Flat-view column sort. Defaults to Instrument A→Z (the landing view).
+  const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: "symbol", dir: "asc" });
   const onSort = (key: SortKey) =>
     setSort((cur) => {
       if (cur.key === key) return { key, dir: cur.dir === "asc" ? "desc" : "asc" };
@@ -674,8 +1063,17 @@ function FragmentRow({
                   ins.name
                 )}
               </div>
-              <div className="text-[10.5px] muted-text truncate max-w-[220px]">
-                {ins.isMapped ? ins.name : "Outside coverage — unscored"}
+              <div className="text-[10.5px] muted-text truncate max-w-[220px] flex items-center gap-1">
+                {ins.derived && (
+                  <span
+                    className="inline-block px-1 py-[1px] rounded text-[9px] font-semibold uppercase tracking-wide shrink-0"
+                    style={{ background: "color-mix(in srgb, var(--color-accent-600) 14%, transparent)", color: "var(--color-accent-700)" }}
+                    title="Computed from your trades — no broker snapshot, so it may be incomplete (pre-window lots can be missing)."
+                  >
+                    from trades
+                  </span>
+                )}
+                <span className="truncate">{ins.isMapped ? ins.name : "Outside coverage — unscored"}</span>
               </div>
             </div>
           </div>
@@ -795,6 +1193,8 @@ const IconList = ({ className, size }: IconProps) =>
   svg(size, className, <><path d="M8 6h13M8 12h13M8 18h13" /><path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01" /></>);
 const IconUpload = ({ className, size }: IconProps) =>
   svg(size, className, <><path d="M12 15V4" /><path d="m8 8 4-4 4 4" /><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" /></>);
+const IconEdit = ({ className, size }: IconProps) =>
+  svg(size, className, <><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></>);
 // Sector/industry glyphs for the holdings group headers.
 const IconFactory = ({ className, size }: IconProps) =>
   svg(size, className, <><path d="M3 21V10l6 4V10l6 4V7l6 4v10Z" /><path d="M3 21h18" /></>);

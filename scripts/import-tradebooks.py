@@ -243,6 +243,70 @@ def dedup_key(r):
         raw = f"{r['broker']}|{r['trade_date']}|{r['symbol']}|{r['side']}|{r['quantity']}|{r['price']}|{r.get('trade_time','')}"
     return hashlib.md5(raw.encode()).hexdigest()
 
+def recompute_derived_holding(cur, user_id, symbol):
+    """Rebuild the synthetic broker='derived' portfolio_holding row for one
+    (user, symbol) from that user's transactions. 1:1 mirror of
+    web/src/lib/derivedHoldings.ts::recomputeDerivedHolding — average-cost walk,
+    snapshot-wins, imported_at = first trade date. Idempotent."""
+    # Snapshot wins: a real broker already reports this symbol -> drop any
+    # derived row and stop. (Real brokers = everything except 'derived'.)
+    cur.execute(
+        "select 1 from app.portfolio_holding "
+        "where user_id=%s and broker<>'derived' and symbol=%s limit 1",
+        (user_id, symbol))
+    if cur.fetchone():
+        cur.execute(
+            "delete from app.portfolio_holding "
+            "where user_id=%s and broker='derived' and raw_symbol=%s",
+            (user_id, symbol))
+        return
+
+    cur.execute(
+        "select side, trade_date::text, quantity::float8, price::float8 "
+        "from app.portfolio_transaction where user_id=%s and symbol=%s "
+        "order by trade_date asc, trade_time asc nulls first, id asc",
+        (user_id, symbol))
+    qty = 0.0
+    avg = 0.0
+    first_date = None
+    for side, d, q, price in cur.fetchall():
+        if first_date is None:
+            first_date = d
+        if side == "buy":
+            nxt = qty + q
+            avg = (qty * avg + q * price) / nxt if nxt > 0 else 0.0
+            qty = nxt
+        else:
+            qty -= q
+    qty = round(qty, 4)
+
+    if qty <= 0:
+        cur.execute(
+            "delete from app.portfolio_holding "
+            "where user_id=%s and broker='derived' and raw_symbol=%s",
+            (user_id, symbol))
+        return
+
+    cur.execute("select isin from app.universe where symbol=%s limit 1", (symbol,))
+    row = cur.fetchone()
+    isin = row[0] if row else None
+    avg_cost = round(avg, 4) if avg > 0 else None
+    imported_at = first_date or date.today().isoformat()
+
+    cur.execute("""
+        insert into app.portfolio_holding
+          (user_id, broker, raw_symbol, isin, symbol, is_mapped, quantity,
+           avg_cost, source_batch, imported_at)
+        values (%s,'derived',%s,%s,%s,true,%s,%s,gen_random_uuid(),%s)
+        on conflict (user_id, broker, raw_symbol) do update
+          set quantity=excluded.quantity,
+              avg_cost=excluded.avg_cost,
+              isin=excluded.isin,
+              symbol=excluded.symbol,
+              is_mapped=true,
+              imported_at=excluded.imported_at
+    """, (user_id, symbol, isin, symbol, qty, avg_cost, imported_at))
+
 DDL = """
 create table if not exists app.portfolio_transaction (
     id           bigserial primary key,
@@ -332,8 +396,20 @@ def main():
               r.get("trade_id") or None, r.get("order_id") or None,
               r["source_file"], r["dedup_key"]))
         ins += cur.rowcount
+
+    # Recompute the transaction-derived holdings for every symbol this import
+    # touched. A symbol with a real broker snapshot keeps the snapshot
+    # (snapshot-wins) and its derived row is dropped; a symbol without one gets a
+    # synthetic broker='derived' position computed from its trades. 1:1 mirror of
+    # web/src/lib/derivedHoldings.ts, run in the same transaction as the inserts.
+    symbols = sorted({r["symbol"] for r in kept if r.get("symbol")})
+    for sym in symbols:
+        recompute_derived_holding(cur, USER_ID, sym)
+
     conn.commit()
     print(f"\nCOMMITTED: inserted {ins} new rows (dedup_key conflicts skipped).")
+    if symbols:
+        print(f"recomputed derived holdings for {len(symbols)} symbols.")
     cur.execute("select count(*) from app.portfolio_transaction where user_id=%s", (USER_ID,))
     print(f"table now holds {cur.fetchone()[0]} rows for user {USER_ID}.")
 

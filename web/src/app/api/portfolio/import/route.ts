@@ -22,7 +22,7 @@ import { getSession } from "@/lib/auth";
 import {
   BROKERS,
   BROKER_LABEL,
-  type Broker,
+  type UploadBroker,
   fileToMatrix,
   parseHoldings,
   resolveSymbol,
@@ -30,13 +30,14 @@ import {
   PortfolioImportError,
   type UniverseMap,
 } from "@/lib/portfolioImport";
+import { recomputeDerivedHoldings } from "@/lib/derivedHoldings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_BYTES = 2 * 1024 * 1024; // 2 MB — holdings files are a few KB
 
-function isBroker(x: string): x is Broker {
+function isBroker(x: string): x is UploadBroker {
   return (BROKERS as readonly string[]).includes(x);
 }
 
@@ -131,6 +132,11 @@ export async function POST(req: NextRequest) {
   for (const r of resolved) seen.set(r.raw_symbol, r);
   const rows = [...seen.values()];
 
+  // Symbols this real broker now covers → any transaction-derived holding for
+  // them is dropped (snapshot wins). recomputeDerivedHolding sees the fresh
+  // snapshot rows and deletes the derived row. Same tx → never double-counts.
+  const coveredSymbols = [...new Set(rows.filter((r) => r.symbol).map((r) => r.symbol!))];
+
   await sql.begin(async (tx) => {
     await tx`
       DELETE FROM app.portfolio_holding
@@ -147,6 +153,7 @@ export async function POST(req: NextRequest) {
            ${r.broker_cur_value}, ${r.broker_day_pct}, ${batch})
       `;
     }
+    await recomputeDerivedHoldings(tx, session.userId, coveredSymbols);
   });
 
   const mapped = rows.filter((r) => r.is_mapped).length;

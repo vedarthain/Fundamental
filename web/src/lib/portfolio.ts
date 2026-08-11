@@ -30,6 +30,7 @@ export type Instrument = {
   symbol: string | null; // universe symbol when mapped
   name: string;
   isMapped: boolean;
+  derived: boolean; // computed from trades (no broker snapshot) — "may be incomplete"
   quantity: number;
   avgCost: number | null; // blended
   invested: number;
@@ -383,6 +384,7 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
   const instruments: Instrument[] = [];
   for (const a of aggs.values()) {
     const c = a.symbol ? cache.get(a.symbol) : undefined;
+    const derived = a.lots.every((l) => l.broker === "derived");
     const blendedAvg = a.costQty > 0 ? a.costSum / a.costQty : null;
     const invested = a.costSum; // Σ qty*avgCost across brokers
 
@@ -437,6 +439,7 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
       symbol: a.symbol,
       name: c?.company_name ?? a.symbol ?? a.rawName,
       isMapped: a.isMapped,
+      derived,
       quantity: Math.round(a.qty * 10000) / 10000,
       avgCost: blendedAvg == null ? null : Math.round(blendedAvg * 100) / 100,
       invested: Math.round(invested * 100) / 100,

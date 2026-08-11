@@ -19,8 +19,16 @@ import "server-only";
 import ExcelJS from "exceljs";
 import * as XLSX from "xlsx";
 
+// The five brokers whose exports we can PARSE and upload.
 export const BROKERS = ["upstox", "zerodha", "fyers", "fivepaisa", "groww"] as const;
-export type Broker = (typeof BROKERS)[number];
+export type UploadBroker = (typeof BROKERS)[number];
+
+// Every broker that can own a holding row — the five uploadable ones plus the
+// synthetic "derived" broker for positions computed from transactions (manual
+// entries + tradebook imports; see derivedHoldings.ts). Keep this DISTINCT from
+// BROKERS: "derived" is never a valid file upload, so the import route's
+// isBroker() guard still rejects it.
+export type Broker = UploadBroker | "derived";
 
 export const BROKER_LABEL: Record<Broker, string> = {
   upstox: "Upstox",
@@ -28,6 +36,7 @@ export const BROKER_LABEL: Record<Broker, string> = {
   fyers: "Fyers",
   fivepaisa: "5paisa",
   groww: "Groww",
+  derived: "From trades",
 };
 
 /** One holding as pulled from a broker file, before universe resolution. */
@@ -306,7 +315,7 @@ function parseGroww(rows: string[][]): ParsedHolding[] {
   return out;
 }
 
-const PARSERS: Record<Broker, (rows: string[][]) => ParsedHolding[]> = {
+const PARSERS: Record<UploadBroker, (rows: string[][]) => ParsedHolding[]> = {
   fyers: parseFyers,
   zerodha: parseZerodha,
   fivepaisa: parseFivepaisa,
@@ -314,8 +323,8 @@ const PARSERS: Record<Broker, (rows: string[][]) => ParsedHolding[]> = {
   groww: parseGroww,
 };
 
-/** Parse an already-loaded matrix for a known broker. */
-export function parseHoldings(broker: Broker, rows: string[][]): ParsedHolding[] {
+/** Parse an already-loaded matrix for a known (uploadable) broker. */
+export function parseHoldings(broker: UploadBroker, rows: string[][]): ParsedHolding[] {
   return PARSERS[broker](rows);
 }
 
