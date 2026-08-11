@@ -434,11 +434,96 @@ function buildGroups(instruments: Instrument[], mode: GroupMode): Group[] {
   });
 }
 
+// Sortable columns for the Flat view. Order MUST match the <thead> and the
+// cells FragmentRow renders (grouped-mode group rows also colSpan against it).
+type SortKey =
+  | "symbol" | "broker" | "qty" | "avg" | "price" | "target"
+  | "value" | "day" | "pnl" | "qvm" | "rank" | "held" | "wt";
+type SortDir = "asc" | "desc";
+
+const COLUMNS: {
+  key: SortKey; label: string; align: "left" | "center" | "right";
+  cls: string; numeric: boolean; title?: string;
+}[] = [
+  { key: "symbol", label: "Instrument", align: "left", cls: "px-3", numeric: false },
+  { key: "broker", label: "Broker", align: "left", cls: "px-2", numeric: false, title: "Broker(s) the position is held at" },
+  { key: "qty", label: "Qty", align: "right", cls: "px-2", numeric: true },
+  { key: "avg", label: "Avg", align: "right", cls: "px-2", numeric: true },
+  { key: "price", label: "Price", align: "right", cls: "px-2", numeric: true },
+  { key: "target", label: "Target", align: "right", cls: "px-2", numeric: true, title: "Profit target: avg cost +25%" },
+  { key: "value", label: "Value", align: "right", cls: "px-2", numeric: true },
+  { key: "day", label: "Day", align: "right", cls: "px-2", numeric: true },
+  { key: "pnl", label: "P&L", align: "right", cls: "px-2", numeric: true },
+  { key: "qvm", label: "Q/V/M", align: "center", cls: "px-2", numeric: true },
+  { key: "rank", label: "Rank", align: "center", cls: "px-2", numeric: true },
+  { key: "held", label: "Held", align: "right", cls: "px-2", numeric: true, title: "Time held (approx — measured from import date, not actual purchase date). Flags at 4 months." },
+  { key: "wt", label: "Wt", align: "right", cls: "px-3", numeric: true },
+];
+
+// Broker cell text: the single broker's label, or "N brokers" when the position
+// is split across several. Sorted by this same string in the Flat view.
+function brokerText(ins: Instrument): string {
+  if (!ins.brokers?.length) return "—";
+  return ins.brokers.length === 1 ? ins.brokers[0].brokerLabel : `${ins.brokers.length} brokers`;
+}
+
+// Value under a sort key: number for numeric cols, lowercased string for the
+// instrument name, or null (always sorted last, either direction).
+function sortVal(ins: Instrument, key: SortKey): number | string | null {
+  switch (key) {
+    case "symbol": return (ins.symbol ?? ins.name ?? "").toLowerCase();
+    case "broker": return brokerText(ins).toLowerCase();
+    case "qty": return ins.quantity ?? null;
+    case "avg": return ins.avgCost ?? null;
+    case "price": return ins.price ?? null;
+    case "target": return ins.targetPrice ?? null;
+    case "value": case "wt": return ins.currentValue ?? null;
+    case "day": return ins.dayChangePct ?? null;
+    case "pnl": return ins.pnl ?? null;
+    case "qvm": {
+      const vals = [ins.q, ins.v, ins.m].filter((x): x is number => x != null);
+      return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+    }
+    case "rank": return ins.peerRank ?? null;
+    case "held": return ins.monthsHeld ?? null;
+  }
+}
+
+function makeCmp(key: SortKey, dir: SortDir) {
+  const s = dir === "asc" ? 1 : -1;
+  return (a: Instrument, b: Instrument) => {
+    const va = sortVal(a, key);
+    const vb = sortVal(b, key);
+    if (va == null && vb == null) return 0;
+    if (va == null) return 1; // nulls always last
+    if (vb == null) return -1;
+    if (typeof va === "string" || typeof vb === "string") {
+      return String(va).localeCompare(String(vb)) * s;
+    }
+    return (va - vb) * s;
+  };
+}
+
 function HoldingsTable({ instruments, totalValue }: { instruments: Instrument[]; totalValue: number }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [mode, setMode] = useState<GroupMode>("sector");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Flat-view column sort. Defaults to Value-desc to match the grouped ordering.
+  const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: "value", dir: "desc" });
+  const onSort = (key: SortKey) =>
+    setSort((cur) => {
+      if (cur.key === key) return { key, dir: cur.dir === "asc" ? "desc" : "asc" };
+      const col = COLUMNS.find((c) => c.key === key)!;
+      return { key, dir: col.numeric ? "desc" : "asc" }; // numbers → high-first, name → A→Z
+    });
+
   const groups = buildGroups(instruments, mode);
+  // Only the Flat view is sortable — grouped modes keep their value-desc order
+  // (per-column sort would collide with the collapsible group rows).
+  const displayGroups =
+    mode === "flat" && groups[0]
+      ? [{ ...groups[0], instruments: [...groups[0].instruments].sort(makeCmp(sort.key, sort.dir)) }]
+      : groups;
 
   const toggleGroup = (label: string) =>
     setCollapsed((prev) => {
@@ -485,22 +570,29 @@ function HoldingsTable({ instruments, totalValue }: { instruments: Instrument[];
         <table className="w-full text-[12.5px]">
           <thead>
             <tr className="text-[10.5px] uppercase tracking-wide muted-text border-b hairline">
-              <th className="text-left font-semibold px-3 py-2">Instrument</th>
-              <th className="text-right font-semibold px-2 py-2">Qty</th>
-              <th className="text-right font-semibold px-2 py-2">Avg</th>
-              <th className="text-right font-semibold px-2 py-2">Price</th>
-              <th className="text-right font-semibold px-2 py-2" title="Profit target: avg cost +25%">Target</th>
-              <th className="text-right font-semibold px-2 py-2">Value</th>
-              <th className="text-right font-semibold px-2 py-2">Day</th>
-              <th className="text-right font-semibold px-2 py-2">P&L</th>
-              <th className="text-center font-semibold px-2 py-2">Q/V/M</th>
-              <th className="text-center font-semibold px-2 py-2">Rank</th>
-              <th className="text-right font-semibold px-2 py-2" title="Time held (approx — measured from import date, not actual purchase date). Flags at 4 months.">Held</th>
-              <th className="text-right font-semibold px-3 py-2">Wt</th>
+              {COLUMNS.map((c) => {
+                const sortable = mode === "flat";
+                const active = sortable && sort.key === c.key;
+                const alignCls = c.align === "left" ? "text-left" : c.align === "center" ? "text-center" : "text-right";
+                return (
+                  <th
+                    key={c.key}
+                    className={`${alignCls} font-semibold ${c.cls} py-2${sortable ? " cursor-pointer select-none hover:text-[var(--color-fg)]" : ""}`}
+                    title={c.title}
+                    aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : undefined}
+                    onClick={sortable ? () => onSort(c.key) : undefined}
+                  >
+                    <span className={`inline-flex items-center gap-0.5${c.align === "right" ? " flex-row-reverse" : ""}`}>
+                      {c.label}
+                      {active && <span aria-hidden className="text-[8px] leading-none">{sort.dir === "asc" ? "▲" : "▼"}</span>}
+                    </span>
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody>
-            {groups.map((g) => {
+            {displayGroups.map((g) => {
               const gWt = totalValue > 0 ? Math.round((g.value / totalValue) * 1000) / 10 : 0;
               const grouped = mode !== "flat";
               const isCollapsed = grouped && collapsed.has(g.label);
@@ -525,7 +617,7 @@ function HoldingsTable({ instruments, totalValue }: { instruments: Instrument[];
                           <span className="muted-text font-normal">({g.instruments.length})</span>
                         </span>
                       </td>
-                      <td colSpan={4} />
+                      <td colSpan={5} />
                       <td className="px-2 py-1.5 text-right tabular-nums font-semibold">{inr(g.value)}</td>
                       <td className="px-2 py-1.5 text-right tabular-nums" style={{ color: up(g.dayChange) ? GREEN : RED }}>
                         {signed(g.dayChange)}
@@ -584,10 +676,16 @@ function FragmentRow({
               </div>
               <div className="text-[10.5px] muted-text truncate max-w-[220px]">
                 {ins.isMapped ? ins.name : "Outside coverage — unscored"}
-                {ins.brokers.length > 1 && <span> · {ins.brokers.length} brokers</span>}
               </div>
             </div>
           </div>
+        </td>
+        <td className="px-2 py-2">
+          {ins.brokers.length > 1 ? (
+            <span className="muted-text">{ins.brokers.length} brokers</span>
+          ) : (
+            <span>{ins.brokers[0]?.brokerLabel ?? "—"}</span>
+          )}
         </td>
         <td className="px-2 py-2 text-right tabular-nums">{ins.quantity}</td>
         <td className="px-2 py-2 text-right tabular-nums">{ins.avgCost != null ? ins.avgCost.toLocaleString("en-IN") : "—"}</td>
@@ -645,7 +743,7 @@ function FragmentRow({
       </tr>
       {isOpen && ins.brokers.length > 1 && (
         <tr className="border-b hairline" style={{ background: "var(--color-paper)" }}>
-          <td colSpan={12} className="px-3 py-2">
+          <td colSpan={13} className="px-3 py-2">
             <div className="flex flex-wrap gap-x-6 gap-y-1 text-[11.5px] pl-6">
               {ins.brokers.map((b, i) => (
                 <span key={i} className="tabular-nums">
