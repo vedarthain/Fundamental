@@ -510,10 +510,10 @@ export default function GraphClient({
 
   return (
     <div className="flex flex-col">
-      <header className="mb-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+      <header className="mb-2 flex flex-nowrap items-center justify-between gap-x-4">
           <div className="min-w-0">
-            <h1 className="font-display text-[20px] tracking-tight leading-tight">Charts by industry</h1>
-            <p className="text-[12px] muted-text">
+            <h1 className="font-display text-[20px] tracking-tight leading-tight truncate">Charts by industry</h1>
+            <p className="text-[12px] muted-text truncate">
               {curPage ? (
                 <>
                   <span className="ink-text font-medium">{activeSectorName}</span> ·{" "}
@@ -525,7 +525,7 @@ export default function GraphClient({
               )}
             </p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex shrink-0 items-center gap-3">
             <button
               type="button"
               onClick={() => { setFavOnly((v) => !v); setPage(0); }}
