@@ -12,6 +12,13 @@
  * date-windowed tradebook could otherwise miss pre-window lots. Derived rows
  * fill gaps only, and the UI flags them as "from trades — may be incomplete".
  *
+ * EXCEPTION — hand-entered trades: a MANUAL entry is a deliberate correction, so
+ * it layers on top of the snapshot. When a snapshotted symbol has manual trades,
+ * we seed the walk with the snapshot as an opening lot and apply the manual
+ * trades on top; the resulting derived row supersedes the snapshot in the read
+ * model (loadPortfolio suppresses the raw snapshot rows for such symbols).
+ * Imported tradebooks still defer to the snapshot (they can overlap its lots).
+ *
  * Cost basis = average-cost method: a buy blends into the running avg; a sell
  * reduces quantity at the current avg. Net qty ≤ 0 ⇒ position flat ⇒ no row.
  * imported_at is set to the FIRST trade date, so "held for" reflects the real
@@ -35,14 +42,31 @@ export async function recomputeDerivedHolding(
   userId: number,
   symbol: string,
 ): Promise<void> {
-  // Snapshot wins: a real broker already reports this symbol → drop any derived
-  // row and stop. (Real brokers are everything except our synthetic 'derived'.)
-  const snap = await db<{ one: number }[]>`
-    SELECT 1 AS one FROM app.portfolio_holding
+  // Real broker snapshot rows for this symbol (everything except our synthetic
+  // 'derived'). A symbol may be snapshotted at several brokers → sum them into a
+  // single opening lot with a weighted-average cost.
+  const snapRows = await db<{ qty: number; avg: number | null; imported_at: string | null }[]>`
+    SELECT quantity::float8 AS qty, avg_cost::float8 AS avg, imported_at::text AS imported_at
+      FROM app.portfolio_holding
      WHERE user_id = ${userId} AND broker <> 'derived' AND symbol = ${symbol}
-     LIMIT 1
   `;
-  if (snap.length > 0) {
+  const hasSnapshot = snapRows.length > 0;
+
+  // All transactions for this symbol, tagged with whether they're hand-entered.
+  const txns = await db<(Txn & { manual: boolean })[]>`
+    SELECT side, trade_date::text AS d, quantity::float8 AS qty, price::float8 AS price,
+           (source_file = 'manual-entry') AS manual
+      FROM app.portfolio_transaction
+     WHERE user_id = ${userId} AND symbol = ${symbol}
+     ORDER BY trade_date ASC, trade_time ASC NULLS FIRST, id ASC
+  `;
+  const hasManual = txns.some((t) => t.manual);
+
+  // SNAPSHOT WINS — UNLESS the user hand-entered trades for this symbol. A manual
+  // entry is a deliberate correction, so it layers on top of the snapshot (below).
+  // Imported tradebooks still defer: a date-windowed export can overlap the
+  // snapshot's lots and would double-count if applied on top.
+  if (hasSnapshot && !hasManual) {
     await db`
       DELETE FROM app.portfolio_holding
        WHERE user_id = ${userId} AND broker = 'derived' AND raw_symbol = ${symbol}
@@ -50,18 +74,25 @@ export async function recomputeDerivedHolding(
     return;
   }
 
-  const txns = await db<Txn[]>`
-    SELECT side, trade_date::text AS d, quantity::float8 AS qty, price::float8 AS price
-      FROM app.portfolio_transaction
-     WHERE user_id = ${userId} AND symbol = ${symbol}
-     ORDER BY trade_date ASC, trade_time ASC NULLS FIRST, id ASC
-  `;
-
-  // Average-cost walk.
+  // Average-cost walk. When a snapshot exists we seed an opening lot from it and
+  // apply ONLY the manual trades on top (imported trades defer to the snapshot).
+  // With no snapshot we walk every trade (pure derived).
   let qty = 0;
   let avg = 0; // cost basis per share
   let firstDate: string | null = null;
-  for (const t of txns) {
+  if (hasSnapshot) {
+    let sQty = 0, sCostSum = 0, sCostQty = 0, sDate: string | null = null;
+    for (const r of snapRows) {
+      sQty += r.qty;
+      if (r.avg != null) { sCostSum += r.qty * r.avg; sCostQty += r.qty; }
+      if (r.imported_at && (sDate == null || r.imported_at < sDate)) sDate = r.imported_at;
+    }
+    qty = sQty;
+    avg = sCostQty > 0 ? sCostSum / sCostQty : 0;
+    firstDate = sDate;
+  }
+  const walk = hasSnapshot ? txns.filter((t) => t.manual) : txns;
+  for (const t of walk) {
     if (firstDate == null) firstDate = t.d;
     if (t.side === "buy") {
       const next = qty + t.qty;

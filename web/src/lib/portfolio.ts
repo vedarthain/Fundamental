@@ -194,10 +194,19 @@ function pctx(x: unknown): number | null {
  * "is this stock in my portfolio?" badges. Skips all valuation work.
  */
 export async function loadPortfolioSymbols(userId: number): Promise<string[]> {
+  // A symbol with hand-entered trades is represented only by its reconciled
+  // 'derived' row (snapshot opening + manual trades); its raw snapshot rows are
+  // suppressed (see loadPortfolio). So it counts as held iff the derived row
+  // survived — i.e. it isn't fully exited. Mirror that here for the graph badge.
   const rows = await sql<{ symbol: string }[]>`
-    SELECT DISTINCT symbol
-      FROM app.portfolio_holding
-     WHERE user_id = ${userId} AND symbol IS NOT NULL
+    SELECT DISTINCT h.symbol
+      FROM app.portfolio_holding h
+     WHERE h.user_id = ${userId} AND h.symbol IS NOT NULL
+       AND (h.broker = 'derived'
+            OR h.symbol NOT IN (
+              SELECT symbol FROM app.portfolio_transaction
+               WHERE user_id = ${userId} AND source_file = 'manual-entry'
+                 AND symbol IS NOT NULL))
   `;
   return rows.map((r) => r.symbol);
 }
@@ -277,15 +286,33 @@ export type RealizedPnl = {
  */
 export async function loadRealizedPnl(userId: number): Promise<RealizedPnl> {
   const txns = await sql<
-    { symbol: string; d: string; side: string; qty: number; price: number; name: string | null }[]
+    { symbol: string; d: string; side: string; qty: number; price: number; name: string | null; manual: boolean }[]
   >`
     SELECT t.symbol, t.trade_date::text AS d, t.side,
-           t.quantity::float8 AS qty, t.price::float8 AS price, u.company_name AS name
+           t.quantity::float8 AS qty, t.price::float8 AS price, u.company_name AS name,
+           (t.source_file = 'manual-entry') AS manual
       FROM app.portfolio_transaction t
       LEFT JOIN app.universe u ON u.symbol = t.symbol
      WHERE t.user_id = ${userId} AND t.symbol IS NOT NULL
      ORDER BY t.symbol, t.trade_date ASC, t.trade_time ASC NULLS FIRST, t.id ASC
   `;
+
+  // Broker snapshot opening lots per symbol (weighted-avg cost across brokers).
+  // Mirrors derivedHoldings.ts: when a snapshotted symbol has manual trades, the
+  // snapshot seeds the walk and only the MANUAL trades apply on top — so a manual
+  // sell books against the snapshot's cost basis.
+  const snapRows = await sql<{ symbol: string; qty: number; avg: number | null }[]>`
+    SELECT symbol, quantity::float8 AS qty, avg_cost::float8 AS avg
+      FROM app.portfolio_holding
+     WHERE user_id = ${userId} AND broker <> 'derived' AND symbol IS NOT NULL
+  `;
+  const snapBySym = new Map<string, { qty: number; costSum: number; costQty: number }>();
+  for (const r of snapRows) {
+    let s = snapBySym.get(r.symbol);
+    if (!s) { s = { qty: 0, costSum: 0, costQty: 0 }; snapBySym.set(r.symbol, s); }
+    s.qty += r.qty;
+    if (r.avg != null) { s.costSum += r.qty * r.avg; s.costQty += r.qty; }
+  }
 
   type Acc = {
     name: string | null;
@@ -299,26 +326,46 @@ export async function loadRealizedPnl(userId: number): Promise<RealizedPnl> {
   };
   const bySym = new Map<string, Acc>();
 
+  // Group the (already symbol-ordered) txns so we can pick a per-symbol regime.
+  type TxnRow = (typeof txns)[number];
+  const txnsBySym = new Map<string, TxnRow[]>();
   for (const t of txns) {
-    let a = bySym.get(t.symbol);
-    if (!a) {
-      a = { name: t.name, qty: 0, avg: 0, qtySold: 0, proceeds: 0, costOfSold: 0, firstBuy: null, lastSell: null };
-      bySym.set(t.symbol, a);
+    (txnsBySym.get(t.symbol) ?? txnsBySym.set(t.symbol, []).get(t.symbol)!).push(t);
+  }
+
+  for (const [symbol, list] of txnsBySym) {
+    const snap = snapBySym.get(symbol);
+    const hasSnapshot = !!snap && snap.qty > 0;
+    const hasManual = list.some((t) => t.manual);
+    const seeded = hasSnapshot && hasManual; // snapshot + manual → seed & manual-only
+    const walk = seeded ? list.filter((t) => t.manual) : list;
+
+    const a: Acc = {
+      name: list[0]?.name ?? null,
+      qty: 0, avg: 0, qtySold: 0, proceeds: 0, costOfSold: 0, firstBuy: null, lastSell: null,
+    };
+    if (seeded && snap) {
+      a.qty = snap.qty;
+      a.avg = snap.costQty > 0 ? snap.costSum / snap.costQty : 0;
     }
-    if (t.side === "buy") {
-      if (a.firstBuy == null) a.firstBuy = t.d;
-      const next = a.qty + t.qty;
-      a.avg = next > 0 ? (a.qty * a.avg + t.qty * t.price) / next : 0;
-      a.qty = next;
-    } else {
-      // sell: book against current avg, up to the open qty (ignore oversells).
-      const sold = a.qty > 0 ? Math.min(t.qty, a.qty) : 0;
-      if (sold > 0) {
-        a.qtySold += sold;
-        a.proceeds += sold * t.price;
-        a.costOfSold += sold * a.avg;
-        a.qty -= sold;
-        a.lastSell = t.d;
+    bySym.set(symbol, a);
+
+    for (const t of walk) {
+      if (t.side === "buy") {
+        if (a.firstBuy == null) a.firstBuy = t.d;
+        const next = a.qty + t.qty;
+        a.avg = next > 0 ? (a.qty * a.avg + t.qty * t.price) / next : 0;
+        a.qty = next;
+      } else {
+        // sell: book against current avg, up to the open qty (ignore oversells).
+        const sold = a.qty > 0 ? Math.min(t.qty, a.qty) : 0;
+        if (sold > 0) {
+          a.qtySold += sold;
+          a.proceeds += sold * t.price;
+          a.costOfSold += sold * a.avg;
+          a.qty -= sold;
+          a.lastSell = t.d;
+        }
       }
     }
   }
@@ -385,7 +432,21 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
     };
   }
 
-  const mappedSyms = [...new Set(holdings.filter((h) => h.symbol).map((h) => h.symbol!))];
+  // Symbols the user has hand-entered trades for. Each such symbol is reconciled
+  // into a single synthetic 'derived' row (snapshot opening lot + manual trades,
+  // see derivedHoldings.ts); we suppress its raw broker snapshot rows below so
+  // the position isn't double-counted. A fully-exited symbol has no derived row
+  // and its snapshot stays suppressed → it drops off Holdings, as expected.
+  const manualRows = await sql<{ symbol: string }[]>`
+    SELECT DISTINCT symbol FROM app.portfolio_transaction
+     WHERE user_id = ${userId} AND source_file = 'manual-entry' AND symbol IS NOT NULL
+  `;
+  const manualSymbols = new Set(manualRows.map((r) => r.symbol));
+  const visibleHoldings = holdings.filter(
+    (h) => h.broker === "derived" || !h.symbol || !manualSymbols.has(h.symbol),
+  );
+
+  const mappedSyms = [...new Set(visibleHoldings.filter((h) => h.symbol).map((h) => h.symbol!))];
 
   // Scores + sector/industry from the latest cache snapshot.
   const cacheRows = mappedSyms.length
@@ -457,7 +518,7 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
   };
   const aggs = new Map<string, Agg>();
 
-  for (const h of holdings) {
+  for (const h of visibleHoldings) {
     const key = h.symbol ?? h.isin ?? bareSymbol(h.raw_symbol);
     const qty = Number(h.quantity) || 0;
     const avgCost = num(h.avg_cost);

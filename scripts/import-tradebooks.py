@@ -247,29 +247,57 @@ def recompute_derived_holding(cur, user_id, symbol):
     """Rebuild the synthetic broker='derived' portfolio_holding row for one
     (user, symbol) from that user's transactions. 1:1 mirror of
     web/src/lib/derivedHoldings.ts::recomputeDerivedHolding — average-cost walk,
-    snapshot-wins, imported_at = first trade date. Idempotent."""
-    # Snapshot wins: a real broker already reports this symbol -> drop any
-    # derived row and stop. (Real brokers = everything except 'derived'.)
+    snapshot-wins (except hand-entered trades layer on top), imported_at = first
+    trade / snapshot date. Idempotent."""
+    # Real broker snapshot rows for this symbol (everything except 'derived').
     cur.execute(
-        "select 1 from app.portfolio_holding "
-        "where user_id=%s and broker<>'derived' and symbol=%s limit 1",
+        "select quantity::float8, avg_cost::float8, imported_at::text "
+        "from app.portfolio_holding "
+        "where user_id=%s and broker<>'derived' and symbol=%s",
         (user_id, symbol))
-    if cur.fetchone():
+    snap_rows = cur.fetchall()
+    has_snapshot = len(snap_rows) > 0
+
+    cur.execute(
+        "select side, trade_date::text, quantity::float8, price::float8, "
+        "(source_file='manual-entry') as manual "
+        "from app.portfolio_transaction where user_id=%s and symbol=%s "
+        "order by trade_date asc, trade_time asc nulls first, id asc",
+        (user_id, symbol))
+    txns = cur.fetchall()
+    has_manual = any(r[4] for r in txns)
+
+    # Snapshot wins UNLESS the user hand-entered trades for this symbol. Manual
+    # entries layer on top of the snapshot; imported tradebooks still defer.
+    if has_snapshot and not has_manual:
         cur.execute(
             "delete from app.portfolio_holding "
             "where user_id=%s and broker='derived' and raw_symbol=%s",
             (user_id, symbol))
         return
 
-    cur.execute(
-        "select side, trade_date::text, quantity::float8, price::float8 "
-        "from app.portfolio_transaction where user_id=%s and symbol=%s "
-        "order by trade_date asc, trade_time asc nulls first, id asc",
-        (user_id, symbol))
+    # Seed an opening lot from the snapshot (weighted-avg cost) and apply only the
+    # manual trades on top; with no snapshot, walk every trade (pure derived).
     qty = 0.0
     avg = 0.0
     first_date = None
-    for side, d, q, price in cur.fetchall():
+    if has_snapshot:
+        s_qty = 0.0
+        s_cost_sum = 0.0
+        s_cost_qty = 0.0
+        s_date = None
+        for sq, savg, s_imp in snap_rows:
+            s_qty += sq
+            if savg is not None:
+                s_cost_sum += sq * savg
+                s_cost_qty += sq
+            if s_imp and (s_date is None or s_imp < s_date):
+                s_date = s_imp
+        qty = s_qty
+        avg = s_cost_sum / s_cost_qty if s_cost_qty > 0 else 0.0
+        first_date = s_date
+    walk = [r for r in txns if r[4]] if has_snapshot else txns
+    for side, d, q, price, _manual in walk:
         if first_date is None:
             first_date = d
         if side == "buy":
