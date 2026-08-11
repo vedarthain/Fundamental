@@ -208,7 +208,58 @@ export function PortfolioClient({
 
 // ─────────────────────────── booked (realized) P&L ─────────────────────────
 
+// Sortable columns for the Booked P&L table. Order MUST match the <thead>/<tbody>.
+type RSortKey = "symbol" | "qtySold" | "costOfSold" | "proceeds" | "realized" | "realizedPct" | "lastSell";
+
+const R_COLUMNS: {
+  key: RSortKey; label: string; align: "left" | "right"; cls: string; numeric: boolean; hideSm?: boolean;
+}[] = [
+  { key: "symbol", label: "Instrument", align: "left", cls: "px-3", numeric: false },
+  { key: "qtySold", label: "Qty sold", align: "right", cls: "px-2", numeric: true },
+  { key: "costOfSold", label: "Cost basis", align: "right", cls: "px-2", numeric: true },
+  { key: "proceeds", label: "Proceeds", align: "right", cls: "px-2", numeric: true },
+  { key: "realized", label: "Booked P&L", align: "right", cls: "px-2", numeric: true },
+  { key: "realizedPct", label: "Return", align: "right", cls: "px-2", numeric: true },
+  { key: "lastSell", label: "Last sell", align: "right", cls: "px-3", numeric: false, hideSm: true },
+];
+
+function rSortVal(r: RealizedLot, key: RSortKey): number | string | null {
+  switch (key) {
+    case "symbol": return (r.symbol ?? r.name ?? "").toLowerCase();
+    case "qtySold": return r.qtySold;
+    case "costOfSold": return r.costOfSold;
+    case "proceeds": return r.proceeds;
+    case "realized": return r.realized;
+    case "realizedPct": return r.realizedPct; // may be null → sorted last
+    case "lastSell": return r.lastSell; // ISO date string sorts lexically → chronologically
+  }
+}
+
+function rMakeCmp(key: RSortKey, dir: SortDir) {
+  const s = dir === "asc" ? 1 : -1;
+  return (a: RealizedLot, b: RealizedLot) => {
+    const va = rSortVal(a, key);
+    const vb = rSortVal(b, key);
+    if (va == null && vb == null) return 0;
+    if (va == null) return 1; // nulls always last
+    if (vb == null) return -1;
+    if (typeof va === "string" || typeof vb === "string") {
+      return String(va).localeCompare(String(vb)) * s;
+    }
+    return (va - vb) * s;
+  };
+}
+
 function BookedPnl({ realized }: { realized: RealizedPnl }) {
+  // Defaults to Booked P&L high→low (the server's original order).
+  const [sort, setSort] = useState<{ key: RSortKey; dir: SortDir }>({ key: "realized", dir: "desc" });
+  const onSort = (key: RSortKey) =>
+    setSort((cur) => {
+      if (cur.key === key) return { key, dir: cur.dir === "asc" ? "desc" : "asc" };
+      const col = R_COLUMNS.find((c) => c.key === key)!;
+      return { key, dir: col.numeric ? "desc" : "asc" }; // numbers → high-first, name → A→Z
+    });
+
   if (realized.rows.length === 0) {
     return (
       <div className="card p-8 text-center mt-2">
@@ -258,17 +309,27 @@ function BookedPnl({ realized }: { realized: RealizedPnl }) {
           <table className="w-full text-[12.5px]">
             <thead>
               <tr className="text-[10.5px] uppercase tracking-wide muted-text border-b hairline">
-                <th className="text-left font-semibold px-3 py-2">Instrument</th>
-                <th className="text-right font-semibold px-2 py-2">Qty sold</th>
-                <th className="text-right font-semibold px-2 py-2">Cost basis</th>
-                <th className="text-right font-semibold px-2 py-2">Proceeds</th>
-                <th className="text-right font-semibold px-2 py-2">Booked P&amp;L</th>
-                <th className="text-right font-semibold px-2 py-2">Return</th>
-                <th className="text-right font-semibold px-3 py-2 hidden sm:table-cell">Last sell</th>
+                {R_COLUMNS.map((c) => {
+                  const active = sort.key === c.key;
+                  const alignCls = c.align === "left" ? "text-left" : "text-right";
+                  return (
+                    <th
+                      key={c.key}
+                      className={`${alignCls} font-semibold ${c.cls} py-2 cursor-pointer select-none hover:text-[var(--color-fg)]${c.hideSm ? " hidden sm:table-cell" : ""}`}
+                      aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : undefined}
+                      onClick={() => onSort(c.key)}
+                    >
+                      <span className={`inline-flex items-center gap-0.5${c.align === "right" ? " flex-row-reverse" : ""}`}>
+                        {c.label}
+                        {active && <span aria-hidden className="text-[8px] leading-none">{sort.dir === "asc" ? "▲" : "▼"}</span>}
+                      </span>
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
-              {realized.rows.map((r: RealizedLot) => (
+              {[...realized.rows].sort(rMakeCmp(sort.key, sort.dir)).map((r: RealizedLot) => (
                 <tr key={r.symbol} className="border-b hairline hover:bg-[var(--color-paper)]">
                   <td className="px-3 py-2">
                     <Link href={`/stock/${r.symbol}`} className="font-medium hover:underline">
