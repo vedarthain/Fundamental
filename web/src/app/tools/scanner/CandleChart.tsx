@@ -510,30 +510,63 @@ function renderChart(
       })}
 
       {/* real executed trades: B pinned below the bar's low, S above its high.
-          Anchored by date (bar high/low), so split-adjustment can't misplace. */}
-      {trades.map((t, i) => {
-        const idx = idxForDate(data, t.d);
-        const c = data[idx];
-        if (!c) return null;
-        const x = cx(idx);
-        const buy = t.side === "B";
-        const col = buy ? BUY_COL : SELL_COL;
-        const barY = buy ? yP(c.l) : yP(c.h);
-        const cy = buy
-          ? Math.min(barY + 13, priceBot - 8)
-          : Math.max(barY - 13, priceTop + 8);
-        const tip = `${buy ? "Buy" : "Sell"} ${t.qty} @ ${fmtPrice(t.price)} · ${t.d}`;
-        return (
-          <g key={`tx-${i}-${t.d}-${t.side}`} pointerEvents="none">
-            <line x1={x} y1={barY} x2={x} y2={cy} stroke={col} strokeWidth={1} opacity={0.55} />
-            <circle cx={x} cy={cy} r={7} fill={col} stroke={CARD} strokeWidth={1.2} />
-            <text x={x} y={cy + 3.3} textAnchor="middle" fontSize={9.5} fontWeight={800} fill="#fff">
-              {t.side}
-            </text>
-            <title>{tip}</title>
-          </g>
-        );
-      })}
+          Anchored by date (bar high/low), so split-adjustment can't misplace.
+          Each marker is hit-testable so its <title> hover tooltip fires; when
+          few enough are in view we also stamp an always-on "B qty @ price" label
+          (skipped on dense windows to avoid a wall of overlapping text). */}
+      {(() => {
+        const drawn = trades
+          .map((t) => {
+            const idx = idxForDate(data, t.d);
+            const c = data[idx];
+            if (!c) return null;
+            const buy = t.side === "B";
+            const barY = buy ? yP(c.l) : yP(c.h);
+            const cy = buy
+              ? Math.min(barY + 13, priceBot - 8)
+              : Math.max(barY - 13, priceTop + 8);
+            return { t, x: cx(idx), barY, cy, buy, col: buy ? BUY_COL : SELL_COL };
+          })
+          .filter((m): m is NonNullable<typeof m> => m !== null);
+        // Always-on labels only when uncluttered; otherwise rely on hover.
+        const showLabels = drawn.length <= 10;
+        return drawn.map((m, i) => {
+          const { t, x, barY, cy, buy, col } = m;
+          const tip = `${buy ? "Buy" : "Sell"} ${t.qty} @ ${fmtPrice(t.price)} · ${t.d}`;
+          const label = `${t.side} ${t.qty} @ ${fmtPrice(t.price)}`;
+          const ly = buy ? cy + 15 : cy - 15;
+          return (
+            <g key={`tx-${i}-${t.d}-${t.side}`}>
+              <line pointerEvents="none" x1={x} y1={barY} x2={x} y2={cy} stroke={col} strokeWidth={1} opacity={0.55} />
+              {/* interactive dot (pointer-events on) → native title tooltip on hover */}
+              <circle cx={x} cy={cy} r={7} fill={col} stroke={CARD} strokeWidth={1.2}>
+                <title>{tip}</title>
+              </circle>
+              <text pointerEvents="none" x={x} y={cy + 3.3} textAnchor="middle" fontSize={9.5} fontWeight={800} fill="#fff">
+                {t.side}
+              </text>
+              {showLabels && (
+                <text
+                  pointerEvents="none"
+                  x={x}
+                  y={ly}
+                  textAnchor="middle"
+                  dominantBaseline={buy ? "hanging" : "auto"}
+                  fontSize={9}
+                  fontWeight={700}
+                  fill={col}
+                  stroke={CARD}
+                  strokeWidth={2.6}
+                  paintOrder="stroke"
+                  style={{ strokeLinejoin: "round" }}
+                >
+                  {label}
+                </text>
+              )}
+            </g>
+          );
+        });
+      })()}
 
       {/* live draft preview while placing an hline / trend */}
       {draft && (draft.tool === "hline" ? (
