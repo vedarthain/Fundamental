@@ -377,7 +377,7 @@ export default function GraphClient({
     try {
       const raw = localStorage.getItem(GRAPH_NAV_KEY);
       if (raw) {
-        const saved = JSON.parse(raw) as { ind?: string; page?: number; days?: number };
+        const saved = JSON.parse(raw) as { ind?: string; page?: number; days?: number; perPage?: number };
         if (saved.ind && industryById.has(saved.ind)) {
           setSelectedInd(saved.ind);
           const sector = industryById.get(saved.ind)?.sector;
@@ -385,6 +385,7 @@ export default function GraphClient({
         }
         if (typeof saved.page === "number") setPage(saved.page);
         if (typeof saved.days === "number") setDays(saved.days);
+        if (saved.perPage === 4 || saved.perPage === 6) setPerPage(saved.perPage);
       }
     } catch {
       /* ignore corrupt/unavailable storage */
@@ -398,11 +399,11 @@ export default function GraphClient({
       return;
     }
     try {
-      localStorage.setItem(GRAPH_NAV_KEY, JSON.stringify({ ind: selectedInd, page, days }));
+      localStorage.setItem(GRAPH_NAV_KEY, JSON.stringify({ ind: selectedInd, page, days, perPage }));
     } catch {
       /* ignore quota/unavailable storage */
     }
-  }, [selectedInd, page, days]);
+  }, [selectedInd, page, days, perPage]);
 
   // Sector-wide paging. The grid pages across the WHOLE sector, not just the
   // selected industry: each page is a slice of a SINGLE industry (never
