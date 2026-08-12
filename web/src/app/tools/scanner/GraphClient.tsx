@@ -294,6 +294,8 @@ export default function GraphClient({
   const firstIndustry = viewSectors[0]?.industries[0]?.id ?? "";
   const [selectedInd, setSelectedInd] = useState<string>(firstIndustry);
   const [page, setPage] = useState(0);
+  // Charts per page: 6 (dense 3×2) or 4 (roomier 2×2 for a clearer read).
+  const [perPage, setPerPage] = useState<number>(PER_PAGE);
   const [days, setDays] = useState<number>(180);
   const [treeOpen, setTreeOpen] = useState(true);
   const [treeQuery, setTreeQuery] = useState("");
@@ -450,18 +452,18 @@ export default function GraphClient({
     for (const ind of activeSector.industries) {
       const total = ind.stocks.length;
       if (total === 0) continue;
-      for (let i = 0; i < total; i += PER_PAGE) {
+      for (let i = 0; i < total; i += perPage) {
         out.push({
           indId: ind.id,
           indName: ind.name,
-          stocks: ind.stocks.slice(i, i + PER_PAGE),
+          stocks: ind.stocks.slice(i, i + perPage),
           chunkStart: i + 1,
           indTotal: total,
         });
       }
     }
     return out;
-  }, [activeSector]);
+  }, [activeSector, perPage]);
 
   const pageCount = Math.max(1, sectorPages.length);
   const safePage = Math.min(Math.max(0, page), pageCount - 1);
@@ -485,7 +487,7 @@ export default function GraphClient({
     for (const ind of sec.industries) {
       if (ind.stocks.length === 0) continue;
       if (ind.id === indId) return idx;
-      idx += Math.ceil(ind.stocks.length / PER_PAGE);
+      idx += Math.ceil(ind.stocks.length / perPage);
     }
     return 0;
   }
@@ -495,6 +497,73 @@ export default function GraphClient({
     setSelectedInd(id);
     setPage(pageOffsetOfIndustry(sector, id));
     setOpenIndustries((prev) => new Set(prev).add(id));
+  }
+  // Clicking a SECTOR name loads its first page (first non-empty industry) so you
+  // can drive the grid straight from the sector, then page through the whole
+  // sector. Expand/collapse stays on the chevron.
+  const firstIndustryOfSector = useCallback((name: string): string | null => {
+    const sec = viewSectors.find((s) => s.name === name);
+    return sec?.industries.find((i) => i.stocks.length > 0)?.id ?? null;
+  }, [viewSectors]);
+  function selectSector(name: string) {
+    const first = firstIndustryOfSector(name);
+    if (!first) return;
+    setSelectedInd(first);
+    setPage(0);
+    setOpenSectors((prev) => new Set(prev).add(name));
+  }
+  // Total pages a sector spans under the current page size.
+  const sectorPageCount = useCallback((name: string): number => {
+    const sec = viewSectors.find((s) => s.name === name);
+    if (!sec) return 0;
+    return sec.industries.reduce((n, i) => n + Math.ceil(i.stocks.length / perPage), 0);
+  }, [viewSectors, perPage]);
+
+  // Sectors that actually have charts, in tree order — the rails Prev/Next roll
+  // along once a sector's own pages are exhausted.
+  const stockSectorNames = useMemo(
+    () => viewSectors.filter((s) => s.industries.some((i) => i.stocks.length > 0)).map((s) => s.name),
+    [viewSectors],
+  );
+  const curSectorPos = stockSectorNames.indexOf(activeSectorName);
+  const atFirstPage = safePage <= 0 && curSectorPos <= 0;
+  const atLastPage = safePage >= pageCount - 1 && curSectorPos >= stockSectorNames.length - 1;
+
+  // Next/Prev auto-cross the sector boundary: at a sector's last page, Next rolls
+  // into the next sector's first page (and the pager count switches to THAT
+  // sector's total); Prev mirrors it, landing on the previous sector's last page.
+  function gotoNextPage() {
+    if (safePage < pageCount - 1) { setPage(safePage + 1); return; }
+    const nextName = stockSectorNames[curSectorPos + 1];
+    if (!nextName) return;
+    selectSector(nextName);
+  }
+  function gotoPrevPage() {
+    if (safePage > 0) { setPage(safePage - 1); return; }
+    const prevName = stockSectorNames[curSectorPos - 1];
+    if (!prevName) return;
+    const first = firstIndustryOfSector(prevName);
+    if (!first) return;
+    setSelectedInd(first);
+    setPage(Math.max(0, sectorPageCount(prevName) - 1)); // land on its last page
+    setOpenSectors((prev) => new Set(prev).add(prevName));
+  }
+  // Switching page size keeps you on the same industry's first page (predictable,
+  // no jarring jump to an unrelated slice).
+  function changePerPage(n: number) {
+    const anchor = activeInd;
+    const sector = activeSectorName;
+    const sec = viewSectors.find((s) => s.name === sector);
+    let idx = 0;
+    if (sec) {
+      for (const ind of sec.industries) {
+        if (ind.stocks.length === 0) continue;
+        if (ind.id === anchor) break;
+        idx += Math.ceil(ind.stocks.length / n);
+      }
+    }
+    setPerPage(n);
+    setPage(idx);
   }
   function toggleSector(name: string) {
     setOpenSectors((prev) => {
@@ -515,7 +584,7 @@ export default function GraphClient({
   function jumpToStock(id: string, idx: number) {
     const sector = industryById.get(id)?.sector ?? "";
     setSelectedInd(id);
-    setPage(pageOffsetOfIndustry(sector, id) + Math.floor(idx / PER_PAGE));
+    setPage(pageOffsetOfIndustry(sector, id) + Math.floor(idx / perPage));
   }
   // Search results carry a filtered stock list, so a positional index would be
   // wrong — resolve the stock's true index within the unfiltered industry.
@@ -528,8 +597,8 @@ export default function GraphClient({
   const rangeEnd = curPage ? curPage.chunkStart + pageStocks.length - 1 : 0;
   // Page position WITHIN the current industry (header), distinct from the
   // sector-wide page position shown in the pager on the right.
-  const indPageCount = curPage ? Math.ceil(curPage.indTotal / PER_PAGE) : 0;
-  const indPageIdx = curPage ? Math.floor((curPage.chunkStart - 1) / PER_PAGE) + 1 : 0;
+  const indPageCount = curPage ? Math.ceil(curPage.indTotal / perPage) : 0;
+  const indPageIdx = curPage ? Math.floor((curPage.chunkStart - 1) / perPage) + 1 : 0;
 
   return (
     <div className="flex flex-col">
@@ -685,14 +754,31 @@ export default function GraphClient({
                 </button>
               )}
             </div>
+            {/* Charts per page: 4 (clearer) vs 6 (denser). */}
+            <div className="inline-flex items-center rounded-md border hairline overflow-hidden text-[12px] font-medium" role="group" aria-label="Charts per page">
+              {[4, 6].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => changePerPage(n)}
+                  aria-pressed={perPage === n}
+                  title={`Show ${n} charts per page`}
+                  className="px-2.5 py-1.5 tabular-nums transition-colors hover:bg-[var(--color-paper)]"
+                  style={perPage === n ? { background: "var(--color-accent-600)", color: "#fff" } : undefined}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
             <WindowPicker options={GRAPH_WINDOWS} days={days} onSelect={setDays} loading={candles.loading} />
             <div className="flex items-center gap-1">
               <button
                 type="button"
-                onClick={() => setPage((p) => Math.max(0, p - 1))}
-                disabled={safePage <= 0}
+                onClick={gotoPrevPage}
+                disabled={atFirstPage}
                 className="rounded-md border hairline px-2.5 py-1.5 text-[12px] font-medium disabled:opacity-40 hover:bg-[var(--color-paper)] transition-colors"
                 aria-label="Previous page"
+                title={safePage <= 0 ? "Previous sector" : "Previous page"}
               >
                 ‹
               </button>
@@ -701,10 +787,11 @@ export default function GraphClient({
               </span>
               <button
                 type="button"
-                onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
-                disabled={safePage >= pageCount - 1}
+                onClick={gotoNextPage}
+                disabled={atLastPage}
                 className="rounded-md border hairline px-2.5 py-1.5 text-[12px] font-medium disabled:opacity-40 hover:bg-[var(--color-paper)] transition-colors"
                 aria-label="Next page"
+                title={safePage >= pageCount - 1 ? "Next sector" : "Next page"}
               >
                 ›
               </button>
@@ -770,17 +857,36 @@ export default function GraphClient({
           )}
           {treeSectors.map((s) => {
             const open = searching || openSectors.has(s.name);
+            const isActiveSector = s.name === activeSectorName;
             return (
               <div key={s.name} className="mb-0.5">
-                <button
-                  type="button"
-                  onClick={() => toggleSector(s.name)}
-                  className="w-full flex items-center gap-1.5 rounded-md px-2 py-1.5 text-left hover:bg-[var(--color-paper)] transition-colors"
+                <div
+                  className="flex items-center gap-1 rounded-md pr-2 transition-colors hover:bg-[var(--color-paper)]"
+                  style={isActiveSector ? { background: "color-mix(in srgb, var(--color-accent-600) 10%, transparent)" } : undefined}
                 >
-                  <Chevron open={open} />
-                  <span className="font-semibold flex-1 truncate">{s.name}</span>
-                  <span className="text-[10.5px] tabular-nums muted-text">{s.count}</span>
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => toggleSector(s.name)}
+                    className="shrink-0 rounded p-1 hover:bg-[var(--color-border)] transition-colors"
+                    aria-label={open ? "Collapse sector" : "Expand sector"}
+                  >
+                    <Chevron open={open} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => selectSector(s.name)}
+                    className="flex-1 flex items-center gap-1.5 py-1.5 text-left min-w-0"
+                    title={`Show ${s.name} charts`}
+                  >
+                    <span
+                      className="font-semibold flex-1 truncate"
+                      style={isActiveSector ? { color: "var(--color-accent-700)" } : undefined}
+                    >
+                      {s.name}
+                    </span>
+                    <span className="text-[10.5px] tabular-nums muted-text">{s.count}</span>
+                  </button>
+                </div>
                 {open && (
                   <div className="ml-2 border-l hairline pl-1.5">
                     {s.industries.map((ind) => {
@@ -848,8 +954,8 @@ export default function GraphClient({
         </aside>
         )}
 
-        {/* ── Right: 3×2 candlestick grid (6 at a time) ── */}
-        <div className="min-w-0 flex-1 grid grid-cols-3 grid-rows-2 gap-3">
+        {/* ── Right: candlestick grid — 3×2 (6) or 2×2 (4) per the toggle ── */}
+        <div className={`min-w-0 flex-1 grid grid-rows-2 gap-3 ${perPage === 4 ? "grid-cols-2" : "grid-cols-3"}`}>
           {pageStocks.map((st) => {
             const series = candles.data[st.symbol];
             const first = series?.[0];
