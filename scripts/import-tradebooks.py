@@ -11,6 +11,8 @@ Usage:
   python scripts/import-tradebooks.py            # dry run, prints summary
   python scripts/import-tradebooks.py --commit    # writes to DB
   DB_URL=... python scripts/import-tradebooks.py --commit   # target DB
+  python scripts/import-tradebooks.py --recompute-all --commit  # rebuild all
+                                                  # derived holdings, no import
 """
 import os, sys, re, glob, shutil, hashlib
 from datetime import datetime, date
@@ -21,6 +23,10 @@ import csv
 DOWNLOADS = os.path.expanduser("~/Downloads")
 USER_ID = 1
 COMMIT = "--commit" in sys.argv
+# Rebuild every transaction-derived holding from scratch, no import. Use when the
+# derived rows have drifted or were never generated (e.g. trades loaded before the
+# recompute was wired in). Idempotent; still needs --commit to actually write.
+RECOMPUTE_ALL = "--recompute-all" in sys.argv
 
 def get_db_url():
     if os.environ.get("DB_URL"):
@@ -359,10 +365,45 @@ create index if not exists idx_ptx_user_symbol on app.portfolio_transaction(user
 create index if not exists idx_ptx_symbol_date on app.portfolio_transaction(symbol, trade_date);
 """
 
+def recompute_all(cur):
+    """Rebuild derived holdings for every symbol the user has ever traded."""
+    cur.execute(
+        "select distinct symbol from app.portfolio_transaction "
+        "where user_id=%s and symbol is not null",
+        (USER_ID,))
+    syms = sorted(r[0] for r in cur.fetchall())
+    cur.execute(
+        "select count(*) from app.portfolio_holding where user_id=%s and broker='derived'",
+        (USER_ID,))
+    before = cur.fetchone()[0]
+    for s in syms:
+        recompute_derived_holding(cur, USER_ID, s)
+    cur.execute(
+        "select count(*) from app.portfolio_holding where user_id=%s and broker='derived'",
+        (USER_ID,))
+    after = cur.fetchone()[0]
+    return syms, before, after
+
+
 def main():
     db = get_db_url()
     conn = psycopg2.connect(db)
     cur = conn.cursor()
+
+    # Backfill mode: recompute all derived holdings, no CSV import.
+    if RECOMPUTE_ALL:
+        cur.execute(DDL)
+        syms, before, after = recompute_all(cur)
+        print(f"\nDB: {db.split('@')[-1].split('/')[0]}")
+        print(f"recompute-all: {len(syms)} traded symbols · derived rows {before} -> {after}")
+        if not COMMIT:
+            conn.rollback()
+            print("DRY RUN — pass --commit to write.")
+            return
+        conn.commit()
+        print("COMMITTED.")
+        return
+
     ref = load_universe(cur)
     recs = collect()
 
