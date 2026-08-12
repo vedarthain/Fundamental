@@ -261,6 +261,29 @@ export default function GraphClient({
     return out;
   }, [sectors, starSet, favOnly, portfolioSet, pOnly, minComposite, maxComposite]);
 
+  // How many of your favourites / holdings survive the CURRENT score range —
+  // powers the "n / total" badge so you can see, without toggling, how many of
+  // your names sit in strong (or weak) industries. Only computed when a score
+  // filter is active; otherwise the badges show the plain total.
+  const scoreActive = minComposite != null || maxComposite != null;
+  const { favInRange, portInRange } = useMemo(() => {
+    if (!scoreActive) return { favInRange: 0, portInRange: 0 };
+    const favSeen = new Set<string>();
+    const portSeen = new Set<string>();
+    for (const s of sectors) {
+      for (const ind of s.industries) {
+        for (const st of ind.stocks) {
+          if (st.composite_pct == null) continue;
+          if (minComposite != null && st.composite_pct < minComposite) continue;
+          if (maxComposite != null && st.composite_pct > maxComposite) continue;
+          if (starSet.has(st.symbol)) favSeen.add(st.symbol);
+          if (portfolioSet.has(st.symbol)) portSeen.add(st.symbol);
+        }
+      }
+    }
+    return { favInRange: favSeen.size, portInRange: portSeen.size };
+  }, [scoreActive, sectors, starSet, portfolioSet, minComposite, maxComposite]);
+
   // Flat lookup: industry_id → { industry, sectorName }.
   const industryById = useMemo(() => {
     const m = new Map<string, { ind: GraphIndustry; sector: string }>();
@@ -550,7 +573,14 @@ export default function GraphClient({
               }
             >
               <Star size={13} fill={favOnly ? "#e8a838" : "none"} strokeWidth={2} />
-              <span>Favourites{starHydrated && starSet.size > 0 ? ` · ${starSet.size}` : ""}</span>
+              <span>
+                Favourites
+                {starHydrated && starSet.size > 0 ? (
+                  <span className="tabular-nums" style={scoreActive ? { fontSize: "0.9em" } : undefined}>
+                    {` · ${scoreActive ? `${favInRange} / ${starSet.size}` : starSet.size}`}
+                  </span>
+                ) : ""}
+              </span>
             </button>
             <button
               type="button"
@@ -589,7 +619,14 @@ export default function GraphClient({
               >
                 P
               </span>
-              <span>Portfolio{portfolioSet.size > 0 ? ` · ${portfolioSet.size}` : ""}</span>
+              <span>
+                Portfolio
+                {portfolioSet.size > 0 ? (
+                  <span className="tabular-nums" style={scoreActive ? { fontSize: "0.9em" } : undefined}>
+                    {` · ${scoreActive ? `${portInRange} / ${portfolioSet.size}` : portfolioSet.size}`}
+                  </span>
+                ) : ""}
+              </span>
             </button>
             <div
               className="inline-flex items-center gap-1 rounded-md border hairline px-2 py-1 text-[12px] font-medium transition-colors"
