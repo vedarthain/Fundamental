@@ -212,8 +212,11 @@ export async function loadPortfolioSymbols(userId: number): Promise<string[]> {
 }
 
 /** One executed-trade marker for the chart tabs: buy/sell aggregated per
- *  (symbol, date, side), qty summed and price qty-weighted. */
-export type TradeMark = { d: string; side: "B" | "S"; price: number; qty: number };
+ *  (symbol, date, side), qty summed and price qty-weighted. `derived` flags a
+ *  SYNTHETIC buy inferred from a broker snapshot that has no trade log — its
+ *  date is approximated (the historical bar whose price is nearest the avg cost),
+ *  so the chart renders it faintly and labels it "≈" to signal it's a guess. */
+export type TradeMark = { d: string; side: "B" | "S"; price: number; qty: number; derived?: boolean };
 
 /**
  * Real executed trades (app.portfolio_transaction) for the Graph/Themes B/S
@@ -246,6 +249,61 @@ export async function loadPortfolioTrades(
       qty: Math.round(r.qty),
     });
   }
+
+  // ── Synthetic buys for snapshot-only holdings ──────────────────────────────
+  // A broker snapshot tells us WHAT is held, not WHEN it was bought — so a
+  // snapshotted stock with no trade log gets a "P" badge but no B/S marker. To
+  // guarantee every held name shows an entry point, we synthesise one buy: the
+  // historical bar (on or before import) whose split-adjusted price is nearest
+  // the avg cost. Approximate by construction (flagged `derived`); a real trade,
+  // once entered, supersedes it (symbols with any transaction are excluded).
+  const snapOnly = await sql<{ symbol: string; qty: number; avg: number; imp: string }[]>`
+    SELECT h.symbol,
+           SUM(h.quantity)::float8                                   AS qty,
+           (SUM(h.avg_cost * h.quantity) / NULLIF(SUM(h.quantity), 0))::float8 AS avg,
+           COALESCE(MIN(h.imported_at), CURRENT_DATE)::text          AS imp
+      FROM app.portfolio_holding h
+     WHERE h.user_id = ${userId} AND h.broker <> 'derived'
+       AND h.symbol IS NOT NULL AND h.quantity > 0 AND h.avg_cost IS NOT NULL
+       AND h.symbol NOT IN (
+         SELECT DISTINCT symbol FROM app.portfolio_transaction
+          WHERE user_id = ${userId} AND symbol IS NOT NULL
+       )
+     GROUP BY h.symbol
+  `;
+  if (snapOnly.length > 0) {
+    const nsSyms = snapOnly.map((s) => `${s.symbol.toUpperCase()}.NS`);
+    const targets = snapOnly.map((s) => s.avg);
+    const imps = snapOnly.map((s) => s.imp);
+    // One batched golden query: DISTINCT ON picks, per symbol, the on/before-import
+    // bar whose adjusted close is closest to the avg cost paid.
+    const hits = await golden<{ symbol: string; d: string }[]>`
+      WITH t AS (
+        SELECT unnest(${nsSyms}::text[])   AS ns_sym,
+               unnest(${targets}::float8[]) AS target,
+               unnest(${imps}::date[])      AS imp
+      )
+      SELECT DISTINCT ON (t.ns_sym) t.ns_sym AS symbol, ph.date::text AS d
+        FROM t
+        JOIN golden.price_history_1d ph
+          ON ph.symbol = t.ns_sym AND ph.interval = '1d'
+       WHERE ph.date <= t.imp AND ph.adj_close IS NOT NULL
+       ORDER BY t.ns_sym, abs(ph.adj_close - t.target) ASC
+    `.catch(() => [] as { symbol: string; d: string }[]);
+    const dateByNs = new Map(hits.map((h) => [h.symbol, h.d]));
+    for (const s of snapOnly) {
+      const d = dateByNs.get(`${s.symbol.toUpperCase()}.NS`);
+      if (!d) continue; // no price history → can't place a marker
+      (tradesBySymbol[s.symbol] ??= []).push({
+        d,
+        side: "B",
+        price: s.avg,
+        qty: Math.round(s.qty),
+        derived: true,
+      });
+    }
+  }
+
   return { tradedSymbols: Object.keys(tradesBySymbol), tradesBySymbol };
 }
 

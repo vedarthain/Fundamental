@@ -83,7 +83,7 @@ export type ChartTool = "none" | "measure" | "hline" | "trend" | "erase";
 // DATE (not a pixel/price) and drawn against the bar's own high/low, so it stays
 // correctly placed regardless of split-adjustment or timeframe. Side "B"=buy is
 // pinned just below the bar's low; "S"=sell just above the bar's high.
-export type TradeMark = { d: string; side: "B" | "S"; price: number; qty: number };
+export type TradeMark = { d: string; side: "B" | "S"; price: number; qty: number; derived?: boolean };
 const EMPTY_TRADES: TradeMark[] = [];
 const BUY_COL = "#16a34a";
 const SELL_COL = "#dc2626";
@@ -515,8 +515,14 @@ function renderChart(
           few enough are in view we also stamp an always-on "B qty @ price" label
           (skipped on dense windows to avoid a wall of overlapping text). */}
       {(() => {
+        const firstD = data[0]?.d;
+        const lastD = data[data.length - 1]?.d;
         const drawn = trades
           .map((t) => {
+            // A synthetic (snapshot-inferred) buy is date-approximate; if it falls
+            // outside the loaded window, idxForDate would clamp it to an edge bar —
+            // a lie. Suppress it instead; it reappears when the window is widened.
+            if (t.derived && firstD && lastD && (t.d < firstD || t.d > lastD)) return null;
             const idx = idxForDate(data, t.d);
             const c = data[idx];
             if (!c) return null;
@@ -532,17 +538,35 @@ function renderChart(
         const showLabels = drawn.length <= 10;
         return drawn.map((m, i) => {
           const { t, x, barY, cy, buy, col } = m;
-          const tip = `${buy ? "Buy" : "Sell"} ${t.qty} @ ${fmtPrice(t.price)} · ${t.d}`;
-          const label = `${t.side} ${t.qty} @ ${fmtPrice(t.price)}`;
+          const derived = t.derived === true;
+          // Synthetic (snapshot-inferred) buys read differently: "≈" + a note the
+          // date is a guess, and they're drawn faded/hollow so a real trade stands out.
+          const tip = derived
+            ? `≈ Buy ${t.qty} @ ${fmtPrice(t.price)} · ${t.d} (inferred from holding — date approx.)`
+            : `${buy ? "Buy" : "Sell"} ${t.qty} @ ${fmtPrice(t.price)} · ${t.d}`;
+          const label = `${derived ? "≈ " : ""}${t.side} ${t.qty} @ ${fmtPrice(t.price)}`;
           const ly = buy ? cy + 15 : cy - 15;
           return (
-            <g key={`tx-${i}-${t.d}-${t.side}`}>
-              <line pointerEvents="none" x1={x} y1={barY} x2={x} y2={cy} stroke={col} strokeWidth={1} opacity={0.55} />
-              {/* interactive dot (pointer-events on) → native title tooltip on hover */}
-              <circle cx={x} cy={cy} r={7} fill={col} stroke={CARD} strokeWidth={1.2}>
+            <g key={`tx-${i}-${t.d}-${t.side}`} opacity={derived ? 0.75 : 1}>
+              <line
+                pointerEvents="none"
+                x1={x} y1={barY} x2={x} y2={cy}
+                stroke={col} strokeWidth={1} opacity={0.55}
+                strokeDasharray={derived ? "2 2" : undefined}
+              />
+              {/* interactive dot (pointer-events on) → native title tooltip on hover.
+                  Derived markers are hollow (fill washed out, dashed ring) to signal a guess. */}
+              <circle
+                cx={x} cy={cy} r={7}
+                fill={col}
+                fillOpacity={derived ? 0.28 : 1}
+                stroke={derived ? col : CARD}
+                strokeWidth={derived ? 1.4 : 1.2}
+                strokeDasharray={derived ? "2.4 2" : undefined}
+              >
                 <title>{tip}</title>
               </circle>
-              <text pointerEvents="none" x={x} y={cy + 3.3} textAnchor="middle" fontSize={9.5} fontWeight={800} fill="#fff">
+              <text pointerEvents="none" x={x} y={cy + 3.3} textAnchor="middle" fontSize={9.5} fontWeight={800} fill={derived ? col : "#fff"}>
                 {t.side}
               </text>
               {showLabels && (
