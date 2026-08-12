@@ -511,7 +511,7 @@ export default function GraphClient({
     if (!first) return;
     setSelectedInd(first);
     setPage(0);
-    setOpenSectors((prev) => new Set(prev).add(name));
+    // Load the graph only — expand/collapse stays under the chevron's control.
   }
   // Total pages a sector spans under the current page size.
   const sectorPageCount = useCallback((name: string): number => {
@@ -547,7 +547,6 @@ export default function GraphClient({
     if (!first) return;
     setSelectedInd(first);
     setPage(Math.max(0, sectorPageCount(prevName) - 1)); // land on its last page
-    setOpenSectors((prev) => new Set(prev).add(prevName));
   }
   // Switching page size keeps you on the same industry's first page (predictable,
   // no jarring jump to an unrelated slice).
