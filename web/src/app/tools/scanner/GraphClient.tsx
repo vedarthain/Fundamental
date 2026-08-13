@@ -33,6 +33,19 @@ const PER_PAGE = 6;
 const P_HELD = "#7c3aed"; // dark purple — currently held
 const P_EXITED = "#9ca3af"; // grey — ever bought, not held now
 
+// Small grid charts show ONE marker: the latest BUY, and only for a currently
+// held stock — no sell history, no earlier lots (the expanded chart keeps the
+// full B/S history). Returns [] when the stock has no buy on record.
+function latestBuyMark(list?: TradeMark[]): TradeMark[] {
+  if (!list?.length) return [];
+  let best: TradeMark | null = null;
+  for (const t of list) {
+    if (t.side !== "B") continue;
+    if (!best || t.d > best.d) best = t;
+  }
+  return best ? [best] : [];
+}
+
 // Tri-state portfolio badge. Held → dark purple; ever-traded-not-held → grey;
 // never → nothing. Returns null when no badge should show.
 function PBadge({
@@ -600,6 +613,31 @@ export default function GraphClient({
   const indPageCount = curPage ? Math.ceil(curPage.indTotal / perPage) : 0;
   const indPageIdx = curPage ? Math.floor((curPage.chunkStart - 1) / perPage) + 1 : 0;
 
+  // Global progress across the WHOLE view (all sectors), in STOCKS — so with the
+  // Portfolio/Favourites filter on you can see "67 / 88 seen" without opening the
+  // tree. Sectors before the current one count fully; the current sector counts
+  // the stocks on pages up to and including the one you're on.
+  const globalProgress = useMemo(() => {
+    let total = 0, seen = 0, reachedActive = false;
+    for (const s of viewSectors) {
+      const secStocks = s.industries.reduce((n, i) => n + i.stocks.length, 0);
+      total += secStocks;
+      if (s.name === activeSectorName) {
+        // Count stocks on pages 0..safePage within this sector.
+        const counts: number[] = [];
+        for (const ind of s.industries) {
+          const t = ind.stocks.length;
+          for (let i = 0; i < t; i += perPage) counts.push(Math.min(perPage, t - i));
+        }
+        for (let p = 0; p <= safePage && p < counts.length; p++) seen += counts[p];
+        reachedActive = true;
+      } else if (!reachedActive) {
+        seen += secStocks; // a sector fully behind us → all its stocks seen
+      }
+    }
+    return { seen, total };
+  }, [viewSectors, activeSectorName, safePage, perPage]);
+
   return (
     <div className="flex flex-col">
       <header className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -772,6 +810,12 @@ export default function GraphClient({
             </div>
             <WindowPicker options={GRAPH_WINDOWS} days={days} onSelect={setDays} loading={candles.loading} />
             <div className="flex items-center gap-1">
+              <span
+                className="text-[11px] tabular-nums muted-text whitespace-nowrap mr-1"
+                title="Stocks seen / total in the current view (respects Favourites & Portfolio filters)"
+              >
+                {globalProgress.seen} / {globalProgress.total}
+              </span>
               <button
                 type="button"
                 onClick={gotoPrevPage}
@@ -1051,7 +1095,7 @@ export default function GraphClient({
                   className="flex-1 min-h-0 transition-opacity"
                   style={{ opacity: candles.loading && !series ? 0.4 : 1 }}
                 >
-                  <CandleChart candles={series} weekly={weekly} drawings={drawings[st.symbol]} />
+                  <CandleChart candles={series} weekly={weekly} drawings={drawings[st.symbol]} trades={portfolioSet.has(st.symbol) ? latestBuyMark(tradesBySymbol[st.symbol]) : undefined} />
                 </div>
                 <div className="flex items-center justify-end gap-1.5 border-t hairline px-2 py-1">
                   <PBadge held={portfolioSet.has(st.symbol)} traded={tradedSet.has(st.symbol)} />

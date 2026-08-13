@@ -179,8 +179,9 @@ export function CandleChart({
   tool?: ChartTool;
   /** Persisted drawings for this symbol (price/date anchored). */
   drawings?: Drawing[];
-  /** Real executed trades to pin as B/S markers — drawn on the expanded chart
-   *  only (interactive). */
+  /** Real executed trades to pin as B/S markers. Rendered on both the expanded
+   *  chart (with always-on labels) and the small grid charts (compact dots,
+   *  hover-only tooltip). */
   trades?: TradeMark[];
   /** Commit a newly placed drawing up to the parent (which persists it). */
   onAddDrawing?: (d: Drawing) => void;
@@ -355,7 +356,7 @@ export function CandleChart({
           drawMode ? draft : null,
           monoColor,
           hideVolume,
-          interactive ? trades : EMPTY_TRADES,
+          trades,
         )
       ) : null}
     </div>
@@ -515,6 +516,11 @@ function renderChart(
           few enough are in view we also stamp an always-on "B qty @ price" label
           (skipped on dense windows to avoid a wall of overlapping text). */}
       {(() => {
+        // Small grid charts render compact markers (smaller dot, no always-on
+        // label) — hover still shows the full "Buy qty @ price" tooltip.
+        const compact = !showTrend;
+        const off = compact ? 9 : 13;
+        const r = compact ? 5 : 7;
         const firstD = data[0]?.d;
         const lastD = data[data.length - 1]?.d;
         const drawn = trades
@@ -529,13 +535,14 @@ function renderChart(
             const buy = t.side === "B";
             const barY = buy ? yP(c.l) : yP(c.h);
             const cy = buy
-              ? Math.min(barY + 13, priceBot - 8)
-              : Math.max(barY - 13, priceTop + 8);
+              ? Math.min(barY + off, priceBot - 8)
+              : Math.max(barY - off, priceTop + 8);
             return { t, x: cx(idx), barY, cy, buy, col: buy ? BUY_COL : SELL_COL };
           })
           .filter((m): m is NonNullable<typeof m> => m !== null);
-        // Always-on labels only when uncluttered; otherwise rely on hover.
-        const showLabels = drawn.length <= 10;
+        // Always-on labels only on the expanded chart, and only when uncluttered;
+        // small charts rely on hover to avoid a wall of overlapping text.
+        const showLabels = !compact && drawn.length <= 10;
         return drawn.map((m, i) => {
           const { t, x, barY, cy, buy, col } = m;
           const derived = t.derived === true;
@@ -557,7 +564,7 @@ function renderChart(
               {/* interactive dot (pointer-events on) → native title tooltip on hover.
                   Derived markers are hollow (fill washed out, dashed ring) to signal a guess. */}
               <circle
-                cx={x} cy={cy} r={7}
+                cx={x} cy={cy} r={r}
                 fill={col}
                 fillOpacity={derived ? 0.28 : 1}
                 stroke={derived ? col : CARD}
@@ -566,7 +573,7 @@ function renderChart(
               >
                 <title>{tip}</title>
               </circle>
-              <text pointerEvents="none" x={x} y={cy + 3.3} textAnchor="middle" fontSize={9.5} fontWeight={800} fill={derived ? col : "#fff"}>
+              <text pointerEvents="none" x={x} y={cy + (compact ? 2.6 : 3.3)} textAnchor="middle" fontSize={compact ? 7.5 : 9.5} fontWeight={800} fill={derived ? col : "#fff"}>
                 {t.side}
               </text>
               {showLabels && (
