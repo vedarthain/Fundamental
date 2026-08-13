@@ -696,7 +696,7 @@ export default function GraphClient({
             >
               <Star size={13} fill={favOnly ? "#e8a838" : "none"} strokeWidth={2} />
               <span>
-                Favourites
+                Fav
                 {starHydrated && starSet.size > 0 ? (
                   <span className="tabular-nums" style={favOnly || scoreActive ? { fontSize: "0.9em" } : undefined}>
                     {` · ${favCount}`}
