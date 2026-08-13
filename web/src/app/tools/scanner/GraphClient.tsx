@@ -638,6 +638,21 @@ export default function GraphClient({
     return { seen, total };
   }, [viewSectors, activeSectorName, safePage, perPage]);
 
+  // Count shown on each filter button. Priority: if the button's OWN filter is
+  // on, show paging progress "seen / total" (e.g. P · 67/88); else if a score
+  // filter is active, show how many pass it "in-range / total"; else the plain
+  // total. The "/" forms get a slightly smaller font so 4 digits fit.
+  const favCount = favOnly
+    ? `${globalProgress.seen} / ${globalProgress.total}`
+    : scoreActive
+      ? `${favInRange} / ${starSet.size}`
+      : `${starSet.size}`;
+  const portCount = pOnly
+    ? `${globalProgress.seen} / ${globalProgress.total}`
+    : scoreActive
+      ? `${portInRange} / ${portfolioSet.size}`
+      : `${portfolioSet.size}`;
+
   return (
     <div className="flex flex-col">
       <header className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -683,8 +698,8 @@ export default function GraphClient({
               <span>
                 Favourites
                 {starHydrated && starSet.size > 0 ? (
-                  <span className="tabular-nums" style={scoreActive ? { fontSize: "0.9em" } : undefined}>
-                    {` · ${scoreActive ? `${favInRange} / ${starSet.size}` : starSet.size}`}
+                  <span className="tabular-nums" style={favOnly || scoreActive ? { fontSize: "0.9em" } : undefined}>
+                    {` · ${favCount}`}
                   </span>
                 ) : ""}
               </span>
@@ -729,8 +744,8 @@ export default function GraphClient({
               <span>
                 Portfolio
                 {portfolioSet.size > 0 ? (
-                  <span className="tabular-nums" style={scoreActive ? { fontSize: "0.9em" } : undefined}>
-                    {` · ${scoreActive ? `${portInRange} / ${portfolioSet.size}` : portfolioSet.size}`}
+                  <span className="tabular-nums" style={pOnly || scoreActive ? { fontSize: "0.9em" } : undefined}>
+                    {` · ${portCount}`}
                   </span>
                 ) : ""}
               </span>
@@ -810,12 +825,6 @@ export default function GraphClient({
             </div>
             <WindowPicker options={GRAPH_WINDOWS} days={days} onSelect={setDays} loading={candles.loading} />
             <div className="flex items-center gap-1">
-              <span
-                className="text-[11px] tabular-nums muted-text whitespace-nowrap mr-1"
-                title="Stocks seen / total in the current view (respects Favourites & Portfolio filters)"
-              >
-                {globalProgress.seen} / {globalProgress.total}
-              </span>
               <button
                 type="button"
                 onClick={gotoPrevPage}
