@@ -450,8 +450,8 @@ export default function GraphClient({
         const saved = JSON.parse(raw) as { ind?: string; page?: number; days?: number; perPage?: number };
         if (saved.ind && industryById.has(saved.ind)) {
           setSelectedInd(saved.ind);
-          const sector = industryById.get(saved.ind)?.sector;
-          if (sector) setOpenSectors((prev) => new Set(prev).add(sector));
+          // Intentionally do NOT auto-open the sector here — the tree stays
+          // collapsed until the user clicks a sector's arrow themselves.
         }
         if (typeof saved.page === "number") setPage(saved.page);
         if (typeof saved.days === "number") setDays(saved.days);
@@ -1170,7 +1170,7 @@ export default function GraphClient({
                   )}
                   {series && series.length > 1 && (
                     <div className="flex items-center gap-2.5 text-[10px] font-medium ml-2">
-                      {!weekly && <GrowthTag label="1D" v={pctBack(series, 1)} />}
+                      <GrowthTag label="1D" v={weekly ? null : pctBack(series, 1)} />
                       <GrowthTag label="1W" v={pctBack(series, weekly ? 1 : 5)} />
                     </div>
                   )}
@@ -1246,7 +1246,7 @@ export default function GraphClient({
                     </span>
                     {series && series.length > 1 && (
                       <span className="flex items-center gap-3 shrink-0">
-                        {!weekly && <GrowthTag label="1D" v={pctBack(series, 1)} />}
+                        <GrowthTag label="1D" v={weekly ? null : pctBack(series, 1)} />
                         <GrowthTag label="1W" v={pctBack(series, weekly ? 1 : 5)} />
                       </span>
                     )}
