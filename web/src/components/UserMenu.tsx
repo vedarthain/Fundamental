@@ -172,6 +172,15 @@ export function UserMenu({ email, displayName, isAdmin = false }: Props) {
           >
             Your watchlist
           </Link>
+          <Link
+            href="/account"
+            role="menuitem"
+            onClick={() => setOpen(false)}
+            className="block px-4 py-2.5 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
+            title="Change your password"
+          >
+            Account settings
+          </Link>
           {isAdmin && (
             <>
               <Link

@@ -12,6 +12,7 @@
 import { redirect } from "next/navigation";
 import { sql } from "@/lib/db";
 import { isAdminRequest } from "@/lib/auth";
+import { ResetPasswordForm } from "./ResetPasswordForm";
 
 export const dynamic = "force-dynamic";
 
@@ -122,6 +123,14 @@ export default async function AdminUsersPage({
             ))}
           </div>
         )}
+      </section>
+
+      {/* Reset a user's password (forgot-password recovery path) */}
+      <section className="mb-8">
+        <div className="text-[11px] uppercase tracking-wide muted-text mb-2">
+          Reset a password
+        </div>
+        <ResetPasswordForm />
       </section>
 
       {/* Recent users */}

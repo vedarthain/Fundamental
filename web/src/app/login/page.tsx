@@ -25,6 +25,11 @@ export default function LoginPage() {
       <Suspense fallback={<div className="card p-6 text-[13px] muted-text">Loading…</div>}>
         <LoginForm />
       </Suspense>
+      <p className="muted-text text-[11.5px] mt-4 text-center leading-relaxed">
+        Forgot your password? We don&apos;t send reset emails — write to us via{" "}
+        <a className="underline" href="/feedback">feedback</a> and an admin will
+        reset it for you.
+      </p>
     </div>
   );
 }

@@ -262,7 +262,8 @@ function MobileTabBar({ pathname, user, isAdmin, showWatchlist, showSignIn }: Mo
   const segmentsActive = ["/indices", "/sectors"].some((p) => isActive(pathname, p));
   const toolsActive = isActive(pathname, "/tools") || isActive(pathname, "/ideas") || (TOOLS_LINK.submenu ?? []).some((s) => isActive(pathname, s.href));
   const accountActive = isActive(pathname, "/watchlist") || isActive(pathname, "/portfolio") ||
-                        isActive(pathname, "/login") || isActive(pathname, "/admin");
+                        isActive(pathname, "/login") || isActive(pathname, "/admin") ||
+                        isActive(pathname, "/account");
 
   return (
     <div ref={ref} className="md:hidden relative">
@@ -450,6 +451,13 @@ function PopupSheet({
                   onClose={onClose}
                 />
               )}
+              <PopupLink
+                href="/account"
+                label="Account settings"
+                sublabel="Change your password"
+                active={isActive(pathname, "/account")}
+                onClose={onClose}
+              />
               {isAdmin && (
                 <>
                   <PopupLink
