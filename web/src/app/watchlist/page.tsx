@@ -100,12 +100,12 @@ export default async function WatchlistPage() {
   const watchlistNews = await loadWatchlistNews(session.userId);
 
   return (
-    <div className="mx-auto max-w-[1200px] px-4 md:px-6 py-6 md:py-8">
-      <header className="mb-6">
-        <h1 className="font-display text-[26px] md:text-[30px] leading-[1.1] tracking-tight">
+    <div className="mx-auto max-w-[1200px] px-4 md:px-6 py-4 md:py-5">
+      <header className="mb-3">
+        <h1 className="font-display text-[22px] md:text-[26px] leading-[1.1] tracking-tight">
           Your watchlist
         </h1>
-        <p className="muted-text text-[13px] mt-1">
+        <p className="muted-text text-[12.5px] mt-0.5">
           Stocks you&apos;re tracking — refreshed with each weekly snapshot. Saved to your account when you&apos;re signed in, otherwise on this device.
         </p>
       </header>

@@ -26,6 +26,7 @@ import { CandleChart, type ChartTool, type Drawing } from "./CandleChart";
 import { useGraphCandles } from "./useGraphCandles";
 import { WEEKLY_THRESHOLD_DAYS } from "@/lib/candleConfig";
 import type { TradeMark } from "@/lib/portfolio";
+import type { Candle } from "@/lib/candles";
 
 const GREEN = "var(--color-delta-up, #0a0)";
 const RED = "var(--color-delta-down, #b00)";
@@ -71,6 +72,25 @@ function PBadge({
   );
 }
 
+// "% increase in price till date" shown beside the P badge — current price vs
+// your quantity-weighted average buy price. Green/red; hidden when we can't
+// derive a cost basis or a live price. (avgBuyPrice is hoisted below.)
+function HoldGainBadge({ trades, last }: { trades?: TradeMark[]; last: number | null }) {
+  const avg = avgBuyPrice(trades);
+  if (avg == null || last == null || !(last > 0)) return null;
+  const pct = (last / avg - 1) * 100;
+  return (
+    <span
+      className="text-[10.5px] tabular-nums font-semibold shrink-0"
+      style={{ color: pct >= 0 ? GREEN : RED }}
+      title={`Since your avg buy ${inr(avg)} → ${inr(last)}`}
+    >
+      {pct >= 0 ? "+" : ""}
+      {pct.toFixed(1)}%
+    </span>
+  );
+}
+
 // One grid page: a chunk of a single industry within the active sector. Paging
 // walks these in order so the grid rolls from one industry into the next.
 type SecPage = {
@@ -107,6 +127,44 @@ function scoreColor(p: number | null): string {
   if (p >= 66) return GREEN;
   if (p >= 40) return "var(--color-score-weak, #b7791f)";
   return RED;
+}
+
+// Percentage move over the last `back` candles (last close vs the close `back`
+// bars earlier). Returns null when the series is too short. Used for the 1D/1W
+// growth badges overlaid on each chart.
+function pctBack(series: Candle[] | undefined, back: number): number | null {
+  if (!series || series.length <= back) return null;
+  const last = series[series.length - 1];
+  const prev = series[series.length - 1 - back];
+  if (!last || !prev || !(prev.c > 0)) return null;
+  return (last.c / prev.c - 1) * 100;
+}
+
+// Small "1D +1.2%" style tag; muted label, green/red value.
+function GrowthTag({ label, v }: { label: string; v: number | null }) {
+  const color = v == null ? "var(--color-muted)" : v >= 0 ? GREEN : RED;
+  return (
+    <span className="tabular-nums">
+      <span className="muted-text">{label}</span>{" "}
+      <span style={{ color }}>{v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`}</span>
+    </span>
+  );
+}
+
+// Quantity-weighted average BUY price across a symbol's trades — the cost basis
+// used for the "since you bought" gain shown next to the portfolio (P) badge.
+// Sells are ignored: this answers "how far has price moved from what I paid",
+// not realised P&L.
+function avgBuyPrice(list?: TradeMark[]): number | null {
+  if (!list?.length) return null;
+  let cost = 0;
+  let qty = 0;
+  for (const t of list) {
+    if (t.side !== "B" || !(t.price > 0) || !(t.qty > 0)) continue;
+    cost += t.price * t.qty;
+    qty += t.qty;
+  }
+  return qty > 0 ? cost / qty : null;
 }
 
 // Ruler / measure-tool glyph.
@@ -373,10 +431,9 @@ export default function GraphClient({
     return () => window.removeEventListener("keydown", onKey);
   }, [focus]);
 
-  // Tree open-state: sectors expanded, and industries expanded to reveal stocks.
-  const [openSectors, setOpenSectors] = useState<Set<string>>(
-    () => new Set(sectors[0] ? [sectors[0].name] : []),
-  );
+  // Tree open-state: everything starts collapsed — the user expands a sector by
+  // clicking its arrow. (We still auto-open the sector of a restored selection.)
+  const [openSectors, setOpenSectors] = useState<Set<string>>(() => new Set());
   const [openIndustries, setOpenIndustries] = useState<Set<string>>(() => new Set());
 
   // Remember the Graph tab's position (industry + sector-wide page + window) so a
@@ -1025,7 +1082,7 @@ export default function GraphClient({
             const volMult = lastVol != null && avgVol && avgVol > 0 ? lastVol / avgVol : null;
             return (
               <div key={st.symbol} className="flex flex-col rounded-xl border hairline overflow-hidden">
-                <div className="flex items-center gap-2 border-b hairline px-3 py-2">
+                <div className="flex items-start gap-2 border-b hairline px-3 py-2">
                   <StarButton symbol={st.symbol} variant="icon" className="-ml-1 shrink-0" />
                   <WatchlistButton symbol={st.symbol} variant="icon" className="-ml-1 shrink-0" />
                   <div className="min-w-0 flex-1">
@@ -1052,10 +1109,10 @@ export default function GraphClient({
                       {displayCompanyName(st.name, st.symbol)}
                     </div>
                   </div>
-                  <div className="text-right shrink-0">
+                  <div className="text-right shrink-0 tabular-nums">
                     <div className="flex items-center justify-end gap-2.5">
                       {(st.quality_pct != null || st.value_pct != null) && (
-                        <div className="flex items-center gap-1.5 text-[10px] tabular-nums font-medium">
+                        <div className="flex items-center gap-1.5 text-[10px] font-medium">
                           <span title="Quality percentile">
                             <span className="muted-text">Q</span>{" "}
                             <span style={{ color: scoreColor(st.quality_pct) }}>
@@ -1070,15 +1127,15 @@ export default function GraphClient({
                           </span>
                         </div>
                       )}
-                      <div className="text-[12.5px] tabular-nums font-semibold">
+                      <span className="text-[12.5px] font-semibold">
                         {last ? inr(last.c) : "—"}
-                      </div>
+                      </span>
                     </div>
-                    <div className="text-[10.5px] tabular-nums font-medium" style={{ color: chgColor }}>
+                    <div className="text-[10.5px] font-medium" style={{ color: chgColor }}>
                       {chg == null ? "" : `${chg >= 0 ? "+" : ""}${chg.toFixed(1)}%`}
                     </div>
                     {hi != null && lo != null && (
-                      <div className="text-[9.5px] tabular-nums muted-text mt-0.5" title="Period high / low">
+                      <div className="text-[9.5px] muted-text mt-0.5" title="Period high / low">
                         <span style={{ color: GREEN }}>H</span> {inr(hi)}
                         {"  "}
                         <span style={{ color: RED }}>L</span> {inr(lo)}
@@ -1086,7 +1143,7 @@ export default function GraphClient({
                     )}
                     {lastVol != null && (
                       <div
-                        className="text-[9.5px] tabular-nums muted-text mt-0.5"
+                        className="text-[9.5px] muted-text mt-0.5"
                         title="Latest session volume · multiple of period average"
                       >
                         {weekly ? "Vol/wk" : "Vol"} {fmtVol(lastVol)}
@@ -1106,8 +1163,18 @@ export default function GraphClient({
                 >
                   <CandleChart candles={series} weekly={weekly} drawings={drawings[st.symbol]} trades={portfolioSet.has(st.symbol) ? latestBuyMark(tradesBySymbol[st.symbol]) : undefined} />
                 </div>
-                <div className="flex items-center justify-end gap-1.5 border-t hairline px-2 py-1">
+                <div className="flex items-center gap-1.5 border-t hairline px-2 py-1">
                   <PBadge held={portfolioSet.has(st.symbol)} traded={tradedSet.has(st.symbol)} />
+                  {portfolioSet.has(st.symbol) && (
+                    <HoldGainBadge trades={tradesBySymbol[st.symbol]} last={last?.c ?? null} />
+                  )}
+                  {series && series.length > 1 && (
+                    <div className="flex items-center gap-2.5 text-[10px] font-medium ml-2">
+                      {!weekly && <GrowthTag label="1D" v={pctBack(series, 1)} />}
+                      <GrowthTag label="1W" v={pctBack(series, weekly ? 1 : 5)} />
+                    </div>
+                  )}
+                  <div className="flex-1" />
                   <button
                     type="button"
                     onClick={() => series && series.length >= 2 && setFocus(st)}
@@ -1173,12 +1240,25 @@ export default function GraphClient({
                       </span>
                     )}
                   </div>
-                  <div className="text-[11px] muted-text truncate">
-                    {displayCompanyName(focus.name, focus.symbol)}
+                  <div className="flex items-center gap-3 text-[10px] font-medium">
+                    <span className="muted-text truncate">
+                      {displayCompanyName(focus.name, focus.symbol)}
+                    </span>
+                    {series && series.length > 1 && (
+                      <span className="flex items-center gap-3 shrink-0">
+                        {!weekly && <GrowthTag label="1D" v={pctBack(series, 1)} />}
+                        <GrowthTag label="1W" v={pctBack(series, weekly ? 1 : 5)} />
+                      </span>
+                    )}
                   </div>
                 </div>
                 <div className="ml-auto flex items-center gap-4">
-                  <PBadge held={portfolioSet.has(focus.symbol)} traded={tradedSet.has(focus.symbol)} />
+                  <div className="flex items-center gap-1.5">
+                    <PBadge held={portfolioSet.has(focus.symbol)} traded={tradedSet.has(focus.symbol)} />
+                    {portfolioSet.has(focus.symbol) && (
+                      <HoldGainBadge trades={tradesBySymbol[focus.symbol]} last={last?.c ?? null} />
+                    )}
+                  </div>
                   <div className="flex items-center gap-1 rounded-lg border hairline p-0.5">
                     {([
                       { id: "measure", label: "Measure", icon: <RulerIcon size={13} />, hint: "Measure price move between two points" },

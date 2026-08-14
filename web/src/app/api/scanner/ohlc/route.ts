@@ -16,7 +16,9 @@ export const dynamic = "force-dynamic";
 
 const MAX_SYMBOLS = 8;
 const MIN_DAYS = 5; // 1W window
-const MAX_DAYS = 3660; // 10Y window
+// 10Y is the labelled max preset; the "ALL" toggle sends a larger value that we
+// clamp here to ~30Y so full listed history comes back (weekly-rolled past ~2Y).
+const MAX_DAYS = 11000;
 
 export async function GET(req: Request) {
   const url = new URL(req.url);

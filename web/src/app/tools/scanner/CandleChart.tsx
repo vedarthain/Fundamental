@@ -435,6 +435,27 @@ function renderChart(
       <line x1={plotL} y1={hiY} x2={plotR} y2={hiY} stroke={GREEN} strokeDasharray="3 3" strokeWidth={1} opacity={0.6} />
       <line x1={plotL} y1={loY} x2={plotR} y2={loY} stroke={RED} strokeDasharray="3 3" strokeWidth={1} opacity={0.6} />
 
+      {/* period high / low VALUE labels, pinned at the left edge on their rules.
+          High sits just below its line (near the top), low just above its line
+          (near the bottom), so neither clips off-chart. A paper pill keeps them
+          legible over gridlines/candles. */}
+      {(() => {
+        const hiTag = fmtPrice(pMax);
+        const loTag = fmtPrice(pMin);
+        const hiTw = 6.6 * hiTag.length + 8;
+        const loTw = 6.6 * loTag.length + 8;
+        const hiTy = hiY + 11;
+        const loTy = loY - 4;
+        return (
+          <g pointerEvents="none">
+            <rect x={plotL} y={hiTy - 9} width={hiTw} height={12} rx={2} fill="var(--color-paper, #fbfbfd)" opacity={0.82} />
+            <text x={plotL + 3} y={hiTy} textAnchor="start" fontSize={9.5} fontWeight={700} fill={GREEN}>{hiTag}</text>
+            <rect x={plotL} y={loTy - 9} width={loTw} height={12} rx={2} fill="var(--color-paper, #fbfbfd)" opacity={0.82} />
+            <text x={plotL + 3} y={loTy} textAnchor="start" fontSize={9.5} fontWeight={700} fill={RED}>{loTag}</text>
+          </g>
+        );
+      })()}
+
       {/* candles + volume, one x-slot per session */}
       {data.map((c, i) => {
         const up = c.c >= c.o;
