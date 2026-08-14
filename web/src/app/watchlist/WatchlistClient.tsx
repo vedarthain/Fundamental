@@ -205,6 +205,21 @@ export function WatchlistClient() {
     });
   }, [rows]);
 
+  // Arrow-key navigation through the list. rotate() is defined further down
+  // (it needs flatOrder), so we stash the latest copy in a ref and let a
+  // stable listener call it — keeps the effect off the early-return path.
+  const rotateRef = useRef<(dir: 1 | -1) => void>(() => {});
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      if (e.key === "ArrowRight") { e.preventDefault(); rotateRef.current(1); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); rotateRef.current(-1); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   // Render states ─────────────────────────────────────────────────────────
   if (!hydrated) {
     return <Skeleton />;
@@ -262,6 +277,7 @@ export function WatchlistClient() {
     const next = ((cur === -1 ? 0 : cur + dir) + flatOrder.length) % flatOrder.length;
     setSelected(flatOrder[next]);
   };
+  rotateRef.current = rotate;
 
   return (
     <div className="space-y-3">
@@ -397,8 +413,9 @@ export function WatchlistClient() {
                 {/* Rotate bar — step through the watchlist without leaving the
                     detail panel. Position readout confirms where you are. */}
                 <div className="flex items-center justify-between gap-2 px-4 md:px-5 py-2 border-b hairline bg-[var(--color-paper)]/50">
-                  <span className="text-[11px] muted-text tabular-nums">
+                  <span className="text-[11px] muted-text tabular-nums flex items-center gap-2">
                     {pos >= 0 ? `${pos + 1} / ${flatOrder.length}` : `${flatOrder.length}`}
+                    <span className="hidden sm:inline opacity-70">· use ← → keys</span>
                   </span>
                   <div className="inline-flex rounded-md border hairline overflow-hidden">
                     <button
