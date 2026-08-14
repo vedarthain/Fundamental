@@ -125,6 +125,49 @@ def env_url(name: str, required: bool = True) -> str | None:
     return None
 
 
+def connect_with_retry(
+    url: str, *, attempts: int = 4, base_delay: float = 1.5
+) -> psycopg.Connection:
+    """Open a psycopg connection, retrying transient drops.
+
+    Neon scales serverless compute to zero when idle, so this infrequent
+    nightly job routinely hits a cold start: connect() succeeds but the
+    freshly established socket is closed by the proxy while the compute wakes,
+    and the first query dies with "SSL connection has been closed
+    unexpectedly". We defend against that by opening the connection AND
+    running a warm-up `SELECT 1` inside the retry loop — a bad connection is
+    discarded and re-dialled with exponential backoff instead of failing the
+    whole run. Only OperationalError (transient/network) is retried; a real
+    error (bad credentials, missing table) still surfaces immediately.
+    """
+    last_exc: Exception | None = None
+    for i in range(attempts):
+        conn: psycopg.Connection | None = None
+        try:
+            conn = psycopg.connect(url)
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+                cur.fetchone()
+            return conn
+        except psycopg.OperationalError as exc:
+            last_exc = exc
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            if i == attempts - 1:
+                break
+            delay = base_delay * (2 ** i)
+            print(f"  ⚠ DB connect attempt {i + 1}/{attempts} failed "
+                  f"({exc}); retrying in {delay:.1f}s")
+            time.sleep(delay)
+    raise SystemExit(
+        f"✗ could not establish a usable DB connection after {attempts} "
+        f"attempts: {last_exc}"
+    )
+
+
 def fetch_bhavcopy(d: date) -> str | None:
     """Try to fetch the bhavcopy CSV for date `d`. Returns CSV text, or None
     if the file isn't published for that date (404, weekend, holiday).
@@ -449,7 +492,7 @@ def main() -> None:
     # Without 1b the /sectors page keeps showing stale prices + the buggy
     # Screener-sourced market cap until the next weekly score run.
     app_url = env_url("APP_DB_URL", required=True)
-    with psycopg.connect(app_url) as conn:
+    with connect_with_retry(app_url) as conn:
         known = fetch_known_symbols(conn)
         updated, missing = update_ltps(conn, bars, known)
         n_mcap, n_panel = recompute_market_cap_and_panel(conn)
@@ -466,7 +509,7 @@ def main() -> None:
     if not golden_url:
         print("  NEON_GOLDEN_URL not set — skipping OHLC INSERT into golden.price_history")
         return
-    with psycopg.connect(golden_url) as conn:
+    with connect_with_retry(golden_url) as conn:
         # Pre-step: ensure each tracked symbol exists in golden.stocks. This
         # auto-registers brand-new IPOs the first time we see them so the
         # price_history FK doesn't fail. Idempotent.
