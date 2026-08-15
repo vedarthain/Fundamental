@@ -336,8 +336,11 @@ export async function loadPortfolioTrades(
   // snapshotted stock with no trade log gets a "P" badge but no B/S marker. To
   // guarantee every held name shows an entry point, we synthesise one buy: the
   // historical bar (on or before import) whose split-adjusted price is nearest
-  // the avg cost. Approximate by construction (flagged `derived`); a real trade,
-  // once entered, supersedes it (symbols with any transaction are excluded).
+  // the avg cost. Approximate by construction (flagged `derived`); a real BUY,
+  // once entered, supersedes it. We exclude a symbol only when the log actually
+  // carries a buy — a windowed broker export can contain sells-only (e.g. a
+  // Groww order-history slice), which would otherwise leave a held position with
+  // an "S" marker but no entry point at all. Sells-only ⇒ still synthesise.
   const snapOnly = await sql<{ symbol: string; qty: number; avg: number; imp: string }[]>`
     SELECT h.symbol,
            SUM(h.quantity)::float8                                   AS qty,
@@ -348,7 +351,7 @@ export async function loadPortfolioTrades(
        AND h.symbol IS NOT NULL AND h.quantity > 0 AND h.avg_cost IS NOT NULL
        AND h.symbol NOT IN (
          SELECT DISTINCT symbol FROM app.portfolio_transaction
-          WHERE user_id = ${userId} AND symbol IS NOT NULL
+          WHERE user_id = ${userId} AND symbol IS NOT NULL AND side = 'buy'
        )
      GROUP BY h.symbol
   `;
