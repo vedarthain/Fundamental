@@ -240,12 +240,50 @@ export async function loadPortfolioTrades(
      GROUP BY symbol, trade_date, side
      ORDER BY symbol, trade_date
   `;
+  // ── Split/bonus reconciliation ─────────────────────────────────────────────
+  // Trades are stored RAW (as executed at the broker); golden's price_history is
+  // fully split/bonus-ADJUSTED. Left unreconciled, a post-trade corporate action
+  // makes the B/S marker label + cost basis read ~Nx the chart — e.g. ECLERX's
+  // 1:1 bonus (2026-03-13) rendered a Oct-2025 buy at ₹3,970 against candles near
+  // ₹1,960. We scale each trade's price by the cumulative split_factor for ex-dates
+  // AFTER the trade, landing it in the same adjusted space as the candles. Quantity
+  // is left as entered: avgBuyPrice weights by qty, so scaling price alone yields
+  // the correct adjusted average. NOTE: golden.corporate_actions has backfill gaps
+  // (e.g. BAJFINANCE's 2025 split is missing) — those leave a residual mismatch
+  // until the corporate-actions ETL is backfilled; the frontend can't fix that.
+  const caBySym = new Map<string, { ex: string; f: number }[]>();
+  const cumFactor = (sym: string, date: string): number => {
+    const acts = caBySym.get(sym.toUpperCase());
+    if (!acts) return 1;
+    let f = 1;
+    for (const a of acts) if (a.ex > date) f *= a.f;
+    return f;
+  };
+  const loadActions = async (symbols: string[]): Promise<void> => {
+    const want = symbols.filter((s) => !caBySym.has(s.toUpperCase()));
+    if (want.length === 0) return;
+    const ns = want.map((s) => `${s.toUpperCase()}.NS`);
+    // Pre-seed so symbols with no actions still count as "loaded" (skip re-query).
+    for (const s of want) caBySym.set(s.toUpperCase(), caBySym.get(s.toUpperCase()) ?? []);
+    const actions = await golden<{ symbol: string; ex: string; f: number }[]>`
+      SELECT symbol, ex_date::text AS ex, split_factor::float8 AS f
+        FROM golden.corporate_actions
+       WHERE symbol = ANY(${ns}) AND split_factor > 0
+    `.catch(() => [] as { symbol: string; ex: string; f: number }[]);
+    for (const a of actions) {
+      const bare = a.symbol.replace(/\.NS$/, "").toUpperCase();
+      (caBySym.get(bare) ?? []).push({ ex: a.ex, f: a.f });
+    }
+  };
+
+  await loadActions(Array.from(new Set(rows.map((r) => r.symbol))));
+
   const tradesBySymbol: Record<string, TradeMark[]> = {};
   for (const r of rows) {
     (tradesBySymbol[r.symbol] ??= []).push({
       d: r.d,
       side: r.side === "sell" ? "S" : "B",
-      price: r.price,
+      price: r.price * cumFactor(r.symbol, r.d),
       qty: Math.round(r.qty),
     });
   }
@@ -272,8 +310,13 @@ export async function loadPortfolioTrades(
      GROUP BY h.symbol
   `;
   if (snapOnly.length > 0) {
+    await loadActions(snapOnly.map((s) => s.symbol));
+    // Broker snapshots already reflect corporate actions up to the import date;
+    // golden is adjusted to today. Reconcile the residual — actions with an ex-date
+    // AFTER import — so the synthetic buy lands on the right (adjusted) candle.
+    const snapFactor = (s: { symbol: string; imp: string }) => cumFactor(s.symbol, s.imp.slice(0, 10));
     const nsSyms = snapOnly.map((s) => `${s.symbol.toUpperCase()}.NS`);
-    const targets = snapOnly.map((s) => s.avg);
+    const targets = snapOnly.map((s) => s.avg * snapFactor(s));
     const imps = snapOnly.map((s) => s.imp);
     // One batched golden query: DISTINCT ON picks, per symbol, the on/before-import
     // bar whose adjusted close is closest to the avg cost paid.
@@ -297,7 +340,7 @@ export async function loadPortfolioTrades(
       (tradesBySymbol[s.symbol] ??= []).push({
         d,
         side: "B",
-        price: s.avg,
+        price: s.avg * snapFactor(s),
         qty: Math.round(s.qty),
         derived: true,
       });
