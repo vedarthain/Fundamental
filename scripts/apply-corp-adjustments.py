@@ -259,39 +259,51 @@ def main() -> None:
                 print("  [DRY-RUN] No changes written.", file=sys.stderr)
                 return
 
+            # Both tables mirror the same rows and the chart reads _1d; keep them
+            # in lock-step or the candle series diverges from everything else.
+            TABLES = ("price_history", "price_history_1d")
+
             rows_updated = 0
             for symbol, events in by_symbol.items():
-                # Sort LATEST first so we can accumulate iteratively.
-                events_desc = sorted(events, key=lambda x: x[0], reverse=True)
-
                 with conn.cursor() as cur:
-                    # Unlock the append-only immutability guard for this
-                    # transaction — the golden DB trigger allows repair
-                    # operations when this session GUC is set.
+                    # yfinance history is already back-adjusted TO ITS FETCH DATE, so
+                    # any action on/before that boundary is baked into `close` — re-
+                    # applying it here would DOUBLE-adjust. Only actions AFTER the
+                    # boundary (reflected by neither yfinance nor the raw bhavcopy
+                    # top-ups) still need applying. Symbols with no yfinance rows fall
+                    # back to applying everything.
+                    cur.execute("""
+                        SELECT MAX(date) FROM golden.price_history
+                         WHERE symbol = %s AND interval = '1d' AND data_source = 'yfinance'
+                    """, (symbol,))
+                    boundary = cur.fetchone()[0]
+
+                    applicable = [(ex, sf) for ex, sf in events if boundary is None or ex > boundary]
+                    # Sort LATEST first so factors accumulate iteratively.
+                    events_desc = sorted(applicable, key=lambda x: x[0], reverse=True)
+
+                    # Unlock the append-only immutability guard for this transaction —
+                    # the golden DB trigger allows repair when this session GUC is set.
                     cur.execute("SET LOCAL golden.allow_repair = 'on'")
 
-                    # Clean slate: reset adj_close = close for this symbol.
-                    cur.execute("""
-                        UPDATE golden.price_history
-                           SET adj_close = close
-                         WHERE symbol = %s AND interval = '1d'
-                    """, (symbol,))
-
-                    # Apply events latest → earliest.
-                    # Each pass multiplies adj_close × split_factor for all
-                    # rows BEFORE this event's ex_date. Because we go latest→
-                    # earliest, earlier dates accumulate the product of all
-                    # subsequent events' factors automatically.
-                    for ex_date, split_factor in events_desc:
-                        cur.execute("""
-                            UPDATE golden.price_history
-                               SET adj_close = adj_close * %s
-                             WHERE symbol = %s
-                               AND interval = '1d'
-                               AND date < %s
-                        """, (split_factor, symbol, ex_date))
-
-                    rows_updated += cur.rowcount
+                    for tbl in TABLES:
+                        # Clean slate: reset adj_close = close for this symbol.
+                        cur.execute(
+                            f"UPDATE golden.{tbl} SET adj_close = close "
+                            "WHERE symbol = %s AND interval = '1d'",
+                            (symbol,),
+                        )
+                        # Apply applicable events latest → earliest; each pass scales
+                        # adj_close for all rows BEFORE its ex_date, so earlier dates
+                        # accumulate the product of all subsequent factors.
+                        for ex_date, split_factor in events_desc:
+                            cur.execute(
+                                f"UPDATE golden.{tbl} SET adj_close = adj_close * %s "
+                                "WHERE symbol = %s AND interval = '1d' AND date < %s",
+                                (split_factor, symbol, ex_date),
+                            )
+                        if tbl == "price_history":
+                            rows_updated += cur.rowcount
                 conn.commit()
 
             # Verify a known stock as sanity check.
