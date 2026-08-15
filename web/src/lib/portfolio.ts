@@ -242,15 +242,21 @@ export async function loadPortfolioTrades(
   `;
   // ── Split/bonus reconciliation ─────────────────────────────────────────────
   // Trades are stored RAW (as executed at the broker); golden's price_history is
-  // fully split/bonus-ADJUSTED. Left unreconciled, a post-trade corporate action
-  // makes the B/S marker label + cost basis read ~Nx the chart — e.g. ECLERX's
-  // 1:1 bonus (2026-03-13) rendered a Oct-2025 buy at ₹3,970 against candles near
-  // ₹1,960. We scale each trade's price by the cumulative split_factor for ex-dates
-  // AFTER the trade, landing it in the same adjusted space as the candles. Quantity
-  // is left as entered: avgBuyPrice weights by qty, so scaling price alone yields
-  // the correct adjusted average. NOTE: golden.corporate_actions has backfill gaps
-  // (e.g. BAJFINANCE's 2025 split is missing) — those leave a residual mismatch
-  // until the corporate-actions ETL is backfilled; the frontend can't fix that.
+  // (usually) split/bonus-ADJUSTED. Left unreconciled, a post-trade corporate
+  // action makes the B/S marker label + cost basis read ~Nx the chart — e.g.
+  // ECLERX's 1:1 bonus (2026-03-13) rendered an Oct-2025 buy at ₹3,970 against
+  // candles near ₹1,960. We scale a trade's price by the cumulative split_factor
+  // for ex-dates AFTER it, landing it in the candles' space. Quantity is left as
+  // entered: avgBuyPrice weights by qty, so scaling price alone yields the correct
+  // adjusted average.
+  //
+  // But golden's own adjustment is NOT uniform: some names (CUB, RPOWER) carry a
+  // corporate_actions row that price_history never applied (a visible cliff), or a
+  // spurious auto-detected one. Trusting the table blindly would over-correct those.
+  // So we self-correct: golden's close ON THE TRADE DATE is the arbiter — we keep
+  // whichever of {raw, raw×factor} sits closer to it. Adjusted wins where golden is
+  // back-adjusted; raw wins where it isn't. This makes an inconsistent table a
+  // no-op rather than a new bug.
   const caBySym = new Map<string, { ex: string; f: number }[]>();
   const cumFactor = (sym: string, date: string): number => {
     const acts = caBySym.get(sym.toUpperCase());
@@ -276,14 +282,51 @@ export async function loadPortfolioTrades(
     }
   };
 
+  // golden's on/before-date close per (symbol, date) — the reconciliation arbiter.
+  // Only fetched for trades that actually have a corporate action (factor ≠ 1).
+  const closeByKey = new Map<string, number>();
+  const loadCloses = async (pairs: { sym: string; date: string }[]): Promise<void> => {
+    const need = pairs.filter((p) => !closeByKey.has(`${p.sym.toUpperCase()}|${p.date}`));
+    if (need.length === 0) return;
+    const ns = need.map((p) => `${p.sym.toUpperCase()}.NS`);
+    const ds = need.map((p) => p.date);
+    const found = await golden<{ ns: string; td: string; close: number }[]>`
+      WITH pairs AS (
+        SELECT DISTINCT ns_sym, td FROM unnest(${ns}::text[], ${ds}::date[]) AS u(ns_sym, td)
+      )
+      SELECT DISTINCT ON (p.ns_sym, p.td)
+             p.ns_sym AS ns, p.td::text AS td, ph.close::float8 AS close
+        FROM pairs p
+        JOIN golden.price_history ph
+          ON ph.symbol = p.ns_sym AND ph.interval = '1d' AND ph.date <= p.td
+       ORDER BY p.ns_sym, p.td, ph.date DESC
+    `.catch(() => [] as { ns: string; td: string; close: number }[]);
+    for (const r of found) {
+      const bare = r.ns.replace(/\.NS$/, "").toUpperCase();
+      closeByKey.set(`${bare}|${r.td}`, r.close);
+    }
+  };
+
+  // Reconcile a raw price to golden's space, arbitrated by golden's own close.
+  const reconcile = (sym: string, date: string, raw: number): number => {
+    const f = cumFactor(sym, date);
+    if (f === 1) return raw;
+    const g = closeByKey.get(`${sym.toUpperCase()}|${date}`);
+    if (g == null || !(g > 0)) return raw * f; // no reference → trust the actions table
+    return Math.abs((raw * f) / g - 1) < Math.abs(raw / g - 1) ? raw * f : raw;
+  };
+
   await loadActions(Array.from(new Set(rows.map((r) => r.symbol))));
+  await loadCloses(
+    rows.filter((r) => cumFactor(r.symbol, r.d) !== 1).map((r) => ({ sym: r.symbol, date: r.d })),
+  );
 
   const tradesBySymbol: Record<string, TradeMark[]> = {};
   for (const r of rows) {
     (tradesBySymbol[r.symbol] ??= []).push({
       d: r.d,
       side: r.side === "sell" ? "S" : "B",
-      price: r.price * cumFactor(r.symbol, r.d),
+      price: reconcile(r.symbol, r.d, r.price),
       qty: Math.round(r.qty),
     });
   }
@@ -313,10 +356,17 @@ export async function loadPortfolioTrades(
     await loadActions(snapOnly.map((s) => s.symbol));
     // Broker snapshots already reflect corporate actions up to the import date;
     // golden is adjusted to today. Reconcile the residual — actions with an ex-date
-    // AFTER import — so the synthetic buy lands on the right (adjusted) candle.
-    const snapFactor = (s: { symbol: string; imp: string }) => cumFactor(s.symbol, s.imp.slice(0, 10));
+    // AFTER import — arbitrated (like trades) by golden's close on the import date,
+    // so the synthetic buy lands on the right candle even when golden is unadjusted.
+    await loadCloses(
+      snapOnly
+        .filter((s) => cumFactor(s.symbol, s.imp.slice(0, 10)) !== 1)
+        .map((s) => ({ sym: s.symbol, date: s.imp.slice(0, 10) })),
+    );
+    const snapAdj = (s: { symbol: string; imp: string; avg: number }) =>
+      reconcile(s.symbol, s.imp.slice(0, 10), s.avg);
     const nsSyms = snapOnly.map((s) => `${s.symbol.toUpperCase()}.NS`);
-    const targets = snapOnly.map((s) => s.avg * snapFactor(s));
+    const targets = snapOnly.map((s) => snapAdj(s));
     const imps = snapOnly.map((s) => s.imp);
     // One batched golden query: DISTINCT ON picks, per symbol, the on/before-import
     // bar whose adjusted close is closest to the avg cost paid.
@@ -340,7 +390,7 @@ export async function loadPortfolioTrades(
       (tradesBySymbol[s.symbol] ??= []).push({
         d,
         side: "B",
-        price: s.avg * snapFactor(s),
+        price: snapAdj(s),
         qty: Math.round(s.qty),
         derived: true,
       });
