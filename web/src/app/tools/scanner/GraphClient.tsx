@@ -24,6 +24,7 @@ import { WindowPicker } from "./WindowPicker";
 import type { WindowOpt } from "./sparkWindows";
 import { CandleChart, type ChartTool, type Drawing } from "./CandleChart";
 import { useGraphCandles } from "./useGraphCandles";
+import { useGraphReturns } from "./useGraphReturns";
 import { WEEKLY_THRESHOLD_DAYS } from "@/lib/candleConfig";
 import type { TradeMark } from "@/lib/portfolio";
 import type { Candle } from "@/lib/candles";
@@ -129,15 +130,10 @@ function scoreColor(p: number | null): string {
   return RED;
 }
 
-// Percentage move over the last `back` candles (last close vs the close `back`
-// bars earlier). Returns null when the series is too short. Used for the 1D/1W
-// growth badges overlaid on each chart.
-function pctBack(series: Candle[] | undefined, back: number): number | null {
-  if (!series || series.length <= back) return null;
-  const last = series[series.length - 1];
-  const prev = series[series.length - 1 - back];
-  if (!last || !prev || !(prev.c > 0)) return null;
-  return (last.c / prev.c - 1) * 100;
+// Fraction → percentage for the 1D/1W growth badges. The returns API hands
+// back fractions (0.012 = +1.2%); GrowthTag renders whole percents.
+function pct100(v: number | null | undefined): number | null {
+  return v == null ? null : v * 100;
 }
 
 // Small "1D +1.2%" style tag; muted label, green/red value.
@@ -544,6 +540,9 @@ export default function GraphClient({
   const pageSymbols = pageStocks.map((s) => s.symbol);
 
   const candles = useGraphCandles(pageSymbols, days);
+  // 1D/1W come from precomputed sources (panel cache + golden), NOT the candle
+  // series — so they stay populated on weekly-rolled long ranges.
+  const returns = useGraphReturns(pageSymbols);
   // Beyond ~2Y the loader rolls daily bars up to weekly, so volume is a weekly
   // sum — label it "/wk" everywhere so the number's unit is unambiguous.
   const weekly = days > WEEKLY_THRESHOLD_DAYS;
@@ -1168,12 +1167,10 @@ export default function GraphClient({
                   {portfolioSet.has(st.symbol) && (
                     <HoldGainBadge trades={tradesBySymbol[st.symbol]} last={last?.c ?? null} />
                   )}
-                  {series && series.length > 1 && (
-                    <div className="flex items-center gap-2.5 text-[10px] font-medium ml-2">
-                      <GrowthTag label="1D" v={weekly ? null : pctBack(series, 1)} />
-                      <GrowthTag label="1W" v={pctBack(series, weekly ? 1 : 5)} />
-                    </div>
-                  )}
+                  <div className="flex items-center gap-2.5 text-[10px] font-medium ml-2">
+                    <GrowthTag label="1D" v={pct100(returns.data[st.symbol]?.ret_1d)} />
+                    <GrowthTag label="1W" v={pct100(returns.data[st.symbol]?.ret_1w)} />
+                  </div>
                   <div className="flex-1" />
                   <button
                     type="button"
@@ -1244,12 +1241,10 @@ export default function GraphClient({
                     <span className="muted-text truncate">
                       {displayCompanyName(focus.name, focus.symbol)}
                     </span>
-                    {series && series.length > 1 && (
-                      <span className="flex items-center gap-3 shrink-0">
-                        <GrowthTag label="1D" v={weekly ? null : pctBack(series, 1)} />
-                        <GrowthTag label="1W" v={pctBack(series, weekly ? 1 : 5)} />
-                      </span>
-                    )}
+                    <span className="flex items-center gap-3 shrink-0">
+                      <GrowthTag label="1D" v={pct100(returns.data[focus.symbol]?.ret_1d)} />
+                      <GrowthTag label="1W" v={pct100(returns.data[focus.symbol]?.ret_1w)} />
+                    </span>
                   </div>
                 </div>
                 <div className="ml-auto flex items-center gap-4">
