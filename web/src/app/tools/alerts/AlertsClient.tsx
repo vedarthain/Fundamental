@@ -24,6 +24,29 @@ const SEV_LABEL: Record<Severity, string> = {
   info: "FYI",
 };
 
+// Category tabs. Each tab claims a set of rule_keys; "all" is the union.
+// Order is deliberate: price alerts (user-created) first after All, then the
+// automatic rules roughly by urgency. A rule_key not listed falls into "all"
+// only, so new rules stay visible even before they get their own tab.
+type TabKey =
+  | "all"
+  | "price_level"
+  | "target_hit"
+  | "deep_drawdown"
+  | "big_down_day"
+  | "composite_slip"
+  | "hold_limit";
+
+const TABS: { key: TabKey; label: string; rules: string[] }[] = [
+  { key: "all", label: "All", rules: [] },
+  { key: "price_level", label: "Price alerts", rules: ["price_level"] },
+  { key: "target_hit", label: "Target", rules: ["target_hit"] },
+  { key: "deep_drawdown", label: "Drawdown", rules: ["deep_drawdown"] },
+  { key: "big_down_day", label: "Down day", rules: ["big_down_day"] },
+  { key: "composite_slip", label: "Rank", rules: ["composite_slip"] },
+  { key: "hold_limit", label: "Hold limit", rules: ["hold_limit"] },
+];
+
 function ago(iso: string): string {
   const then = new Date(iso).getTime();
   const mins = Math.max(0, Math.round((Date.now() - then) / 60000));
@@ -102,6 +125,17 @@ export function AlertsClient({
   const [active, setActive] = useState<AlertRow[]>(initialActive);
   const [dismissed, setDismissed] = useState<AlertRow[]>(initialDismissed);
   const [checking, startCheck] = useTransition();
+  const [tab, setTab] = useState<TabKey>("all");
+
+  // Which rule_keys does a tab match? "all" matches everything.
+  const matchesTab = (a: AlertRow, key: TabKey): boolean => {
+    if (key === "all") return true;
+    const t = TABS.find((x) => x.key === key);
+    return t ? t.rules.includes(a.ruleKey) : true;
+  };
+
+  const visibleActive = active.filter((a) => matchesTab(a, tab));
+  const visibleDismissed = dismissed.filter((a) => matchesTab(a, tab));
 
   const dismiss = async (id: number) => {
     const card = active.find((a) => a.id === id);
@@ -153,22 +187,75 @@ export function AlertsClient({
         </button>
       </div>
 
-      {active.length === 0 && dismissed.length === 0 ? (
+      {/* Category tabs. A tab is shown only if it has any alert (active or
+          dismissed), except "All" which is always present. The count badge
+          reflects ACTIVE alerts in that category. */}
+      <div
+        className="flex items-center gap-1 overflow-x-auto mb-4 pb-px"
+        style={{ scrollbarWidth: "none" }}
+        role="tablist"
+      >
+        {TABS.map((t) => {
+          const activeN = active.filter((a) => matchesTab(a, t.key)).length;
+          const total =
+            activeN + dismissed.filter((a) => matchesTab(a, t.key)).length;
+          if (t.key !== "all" && total === 0) return null;
+          const sel = tab === t.key;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              role="tab"
+              aria-selected={sel}
+              onClick={() => setTab(t.key)}
+              className={`shrink-0 rounded-full px-3 py-1 text-[12.5px] font-medium transition-colors ${
+                sel ? "text-white" : "muted-text hover:bg-[var(--color-paper)]"
+              }`}
+              style={
+                sel
+                  ? { backgroundColor: "var(--color-accent-600)" }
+                  : { border: "1px solid var(--color-border-default)" }
+              }
+            >
+              {t.label}
+              {activeN > 0 && (
+                <span
+                  className="ml-1.5 inline-block rounded-full px-1.5 text-[10.5px] font-semibold"
+                  style={
+                    sel
+                      ? { backgroundColor: "rgba(255,255,255,0.25)" }
+                      : {
+                          backgroundColor: "var(--color-paper)",
+                          color: "var(--color-accent-600)",
+                        }
+                  }
+                >
+                  {activeN}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {visibleActive.length === 0 && visibleDismissed.length === 0 ? (
         <div className="card p-8 text-center">
-          <p className="ink-text text-[15px] font-medium mb-1">All clear</p>
+          <p className="ink-text text-[15px] font-medium mb-1">
+            {tab === "all" ? "All clear" : "Nothing here"}
+          </p>
           <p className="muted-text text-[13px] max-w-sm mx-auto">
-            Nothing needs your attention right now. Alerts appear here when a
-            holding hits its +25% target, drops sharply in a day, or falls 20%
-            below your cost.
+            {tab === "all"
+              ? "Nothing needs your attention right now. Alerts appear here when a holding hits its +25% target, drops sharply in a day, or falls 20% below your cost."
+              : "No alerts in this category. Switch to All to see everything."}
           </p>
         </div>
       ) : (
         <div className="space-y-3">
-          {active.map((a) => (
+          {visibleActive.map((a) => (
             <AlertCard key={a.id} a={a} dimmed={false} onDismiss={dismiss} />
           ))}
 
-          {dismissed.length > 0 && (
+          {visibleDismissed.length > 0 && (
             <>
               <div className="flex items-center gap-3 pt-4 pb-1">
                 <div
@@ -183,7 +270,7 @@ export function AlertsClient({
                   style={{ backgroundColor: "var(--color-border-default)" }}
                 />
               </div>
-              {dismissed.map((a) => (
+              {visibleDismissed.map((a) => (
                 <AlertCard key={a.id} a={a} dimmed onDismiss={undefined} />
               ))}
             </>
