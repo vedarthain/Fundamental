@@ -22,7 +22,8 @@ import { StarButton } from "@/components/StarButton";
 import { useStarred } from "@/lib/starred";
 import { WindowPicker } from "./WindowPicker";
 import type { WindowOpt } from "./sparkWindows";
-import { CandleChart, type ChartTool, type Drawing } from "./CandleChart";
+import { CandleChart, type ChartTool, type Drawing, type AlertLine } from "./CandleChart";
+import type { PriceAlert } from "@/lib/price-alerts";
 import { useGraphCandles } from "./useGraphCandles";
 import { useGraphReturns } from "./useGraphReturns";
 import { WEEKLY_THRESHOLD_DAYS } from "@/lib/candleConfig";
@@ -211,6 +212,132 @@ function EraseIcon({ size = 13 }: { size?: number }) {
       <path d="M4 20h16" />
       <path d="M13.5 6.5l4 4L9 19H5l-1-4z" />
     </svg>
+  );
+}
+
+// The price-alert strip inside the expanded chart: existing lines as chips
+// (green armed / orange hit), plus an input to add a new one or, by tapping a
+// chip, update its price. Save/delete flow up to GraphClient's optimistic state.
+function AlertBar({
+  alerts,
+  lastClose,
+  onSave,
+  onDelete,
+}: {
+  alerts: PriceAlert[];
+  lastClose: number | null;
+  onSave: (price: number, id?: number) => Promise<string | null>;
+  onDelete: (id: number) => void;
+}) {
+  const [val, setVal] = useState("");
+  const [editId, setEditId] = useState<number | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const submit = async () => {
+    const price = Number(val);
+    if (!Number.isFinite(price) || price <= 0) {
+      setErr("Enter a price above 0.");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    const e = await onSave(price, editId);
+    setBusy(false);
+    if (e) {
+      setErr(e);
+    } else {
+      setVal("");
+      setEditId(undefined);
+    }
+  };
+
+  return (
+    <div
+      className="flex items-center gap-2 border-b hairline px-4 py-2 overflow-x-auto"
+      style={{ scrollbarWidth: "none" }}
+    >
+      <span className="text-[11px] font-semibold shrink-0" style={{ color: "var(--color-muted)" }}>
+        Price alerts
+      </span>
+      {alerts.map((a) => {
+        const hit = a.status === "triggered";
+        const c = hit ? "#e8830c" : "var(--color-delta-up, #0a0)";
+        const editing = editId === a.id;
+        return (
+          <span
+            key={a.id}
+            className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold shrink-0"
+            style={{
+              background: `color-mix(in srgb, ${c} 14%, transparent)`,
+              color: c,
+              outline: editing ? `1.5px solid ${c}` : "none",
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                setEditId(a.id);
+                setVal(String(a.price));
+                setErr(null);
+              }}
+              title="Edit this alert's price"
+            >
+              {hit ? "Hit" : "Armed"} {inr(a.price)}
+            </button>
+            <button
+              type="button"
+              onClick={() => onDelete(a.id)}
+              className="opacity-70 hover:opacity-100"
+              aria-label={`Remove ${inr(a.price)} alert`}
+            >
+              ×
+            </button>
+          </span>
+        );
+      })}
+      <input
+        type="number"
+        inputMode="decimal"
+        value={val}
+        onChange={(e) => {
+          setVal(e.target.value);
+          setErr(null);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") submit();
+        }}
+        placeholder={lastClose ? `e.g. ${Math.round(lastClose)}` : "price"}
+        className="w-24 rounded-md border hairline bg-transparent px-2 py-1 text-[12px] shrink-0"
+      />
+      <button
+        type="button"
+        onClick={submit}
+        disabled={busy}
+        className="rounded-md px-2.5 py-1 text-[12px] font-medium text-white disabled:opacity-60 shrink-0"
+        style={{ background: "var(--color-accent-600)" }}
+      >
+        {busy ? "…" : editId ? "Update" : "Add alert"}
+      </button>
+      {editId && (
+        <button
+          type="button"
+          onClick={() => {
+            setEditId(undefined);
+            setVal("");
+            setErr(null);
+          }}
+          className="text-[11px] muted-text shrink-0 hover:underline"
+        >
+          Cancel
+        </button>
+      )}
+      {err && (
+        <span className="text-[11px] shrink-0" style={{ color: "var(--color-score-poor)" }}>
+          {err}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -413,6 +540,88 @@ export default function GraphClient({
       return next;
     });
   }, []);
+
+  // ── Server-backed price alerts, keyed by symbol (armed + triggered) ──
+  // Loaded once for the whole grid; each card draws its own lines + the grey
+  // "A" chip. Mutated optimistically as the user sets/edits/removes in the big
+  // graph. `signedIn` gates the create UI (GET 200 ⇒ we have a session).
+  const [alerts, setAlerts] = useState<Record<string, PriceAlert[]>>({});
+  const [signedIn, setSignedIn] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/alerts/price")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!alive || !j?.alerts) return;
+        setSignedIn(true);
+        const by: Record<string, PriceAlert[]> = {};
+        for (const a of j.alerts as PriceAlert[]) (by[a.symbol] ??= []).push(a);
+        setAlerts(by);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const alertLines = useCallback(
+    (symbol: string): AlertLine[] =>
+      (alerts[symbol] ?? []).map((a) => ({ price: a.price, status: a.status })),
+    [alerts],
+  );
+
+  const upsertAlert = useCallback((a: PriceAlert) => {
+    setAlerts((prev) => {
+      const rest = (prev[a.symbol] ?? []).filter((x) => x.id !== a.id);
+      return {
+        ...prev,
+        [a.symbol]: [...rest, a].sort((x, y) => x.price - y.price),
+      };
+    });
+  }, []);
+
+  const removeAlertLocal = useCallback((symbol: string, id: number) => {
+    setAlerts((prev) => {
+      const rest = (prev[symbol] ?? []).filter((x) => x.id !== id);
+      const next = { ...prev };
+      if (rest.length) next[symbol] = rest;
+      else delete next[symbol];
+      return next;
+    });
+  }, []);
+
+  // Create (no id) or update (id) a line. Returns an error string, or null on ok.
+  const saveAlert = useCallback(
+    async (symbol: string, price: number, id?: number): Promise<string | null> => {
+      const res = await fetch("/api/alerts/price", {
+        method: id ? "PATCH" : "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(id ? { id, price } : { symbol, price }),
+      }).catch(() => null);
+      if (!res) return "Network error — try again.";
+      const j = (await res.json().catch(() => null)) as
+        | { ok?: boolean; alert?: PriceAlert; error?: string }
+        | null;
+      if (res.ok && j?.alert) {
+        upsertAlert(j.alert);
+        return null;
+      }
+      return j?.error ?? "Could not save alert.";
+    },
+    [upsertAlert],
+  );
+
+  const deleteAlert = useCallback(
+    async (symbol: string, id: number) => {
+      removeAlertLocal(symbol, id); // optimistic
+      await fetch("/api/alerts/price", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id }),
+      }).catch(() => {});
+    },
+    [removeAlertLocal],
+  );
 
   // Esc closes the focus (expanded chart) overlay.
   useEffect(() => {
@@ -1160,7 +1369,7 @@ export default function GraphClient({
                   className="flex-1 min-h-0 transition-opacity"
                   style={{ opacity: candles.loading && !series ? 0.4 : 1 }}
                 >
-                  <CandleChart candles={series} weekly={weekly} drawings={drawings[st.symbol]} trades={portfolioSet.has(st.symbol) ? latestBuyMark(tradesBySymbol[st.symbol]) : undefined} />
+                  <CandleChart candles={series} weekly={weekly} drawings={drawings[st.symbol]} alerts={alertLines(st.symbol)} trades={portfolioSet.has(st.symbol) ? latestBuyMark(tradesBySymbol[st.symbol]) : undefined} />
                 </div>
                 <div className="flex items-center gap-1.5 border-t hairline px-2 py-1">
                   <PBadge held={portfolioSet.has(st.symbol)} traded={tradedSet.has(st.symbol)} />
@@ -1172,6 +1381,26 @@ export default function GraphClient({
                     <GrowthTag label="1W" v={pct100(returns.data[st.symbol]?.ret_1w)} />
                   </div>
                   <div className="flex-1" />
+                  {signedIn && (() => {
+                    const has = (alerts[st.symbol]?.length ?? 0) > 0;
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => series && series.length >= 2 && setFocus(st)}
+                        disabled={!series || series.length < 2}
+                        className="inline-flex items-center justify-center rounded-md border hairline w-[26px] py-1 text-[10.5px] font-bold disabled:opacity-40 hover:bg-[var(--color-paper)] transition-colors"
+                        style={
+                          has
+                            ? { background: "var(--color-paper)", color: "var(--color-muted)" }
+                            : { color: "var(--color-accent-600)" }
+                        }
+                        title={has ? "Price alert set — open the chart to edit" : "Set a price alert"}
+                        aria-label={`Price alert for ${st.symbol}`}
+                      >
+                        A
+                      </button>
+                    );
+                  })()}
                   <button
                     type="button"
                     onClick={() => series && series.length >= 2 && setFocus(st)}
@@ -1327,6 +1556,14 @@ export default function GraphClient({
                   </button>
                 </div>
               </div>
+              {signedIn && (
+                <AlertBar
+                  alerts={alerts[focus.symbol] ?? []}
+                  lastClose={last?.c ?? null}
+                  onSave={(price, id) => saveAlert(focus.symbol, price, id)}
+                  onDelete={(id) => deleteAlert(focus.symbol, id)}
+                />
+              )}
               <div
                 className="flex-1 min-h-0 p-2 transition-opacity"
                 style={{ opacity: candles.loading && !series ? 0.4 : 1 }}
@@ -1337,6 +1574,7 @@ export default function GraphClient({
                   weekly={weekly}
                   tool={tool}
                   drawings={drawings[focus.symbol]}
+                  alerts={alertLines(focus.symbol)}
                   trades={tradesBySymbol[focus.symbol]}
                   onAddDrawing={(d) => addDrawing(focus.symbol, d)}
                   onDeleteDrawing={(i) => deleteDrawing(focus.symbol, i)}

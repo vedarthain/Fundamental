@@ -19,7 +19,10 @@ const AXIS = "var(--color-muted, #7a8894)";
 const GRID = "var(--color-border-default, #e5e5e5)";
 const CARD = "var(--color-card, #fff)";
 const ACCENT = "var(--color-accent-600, #2563eb)";
+const ALERT_ARMED = "var(--color-delta-up, #0a0)"; // green — waiting to cross
+const ALERT_TRIGGERED = "#e8830c"; // orange — crossed
 const EMPTY_DRAWINGS: Drawing[] = [];
+const EMPTY_ALERTS: AlertLine[] = [];
 
 // Shared plot margins — used both by renderChart and the hover hit-test so a
 // mouse-x maps to the same slot the candles were drawn in.
@@ -84,6 +87,11 @@ export type ChartTool = "none" | "measure" | "hline" | "trend" | "erase";
 // correctly placed regardless of split-adjustment or timeframe. Side "B"=buy is
 // pinned just below the bar's low; "S"=sell just above the bar's high.
 export type TradeMark = { d: string; side: "B" | "S"; price: number; qty: number; derived?: boolean };
+
+// A user price alert to draw as a horizontal line. armed = green (waiting),
+// triggered = orange (crossed). Rendered on every chart, like an hline, but
+// owned by the server (not the localStorage drawing layer).
+export type AlertLine = { price: number; status: "armed" | "triggered" };
 const EMPTY_TRADES: TradeMark[] = [];
 const BUY_COL = "#16a34a";
 const SELL_COL = "#dc2626";
@@ -171,6 +179,7 @@ export function CandleChart({
   monoColor,
   hideVolume = false,
   trades = EMPTY_TRADES,
+  alerts = EMPTY_ALERTS,
 }: {
   candles?: Candle[];
   interactive?: boolean;
@@ -192,6 +201,8 @@ export function CandleChart({
   monoColor?: string;
   /** Drop the volume panel entirely (indices carry no volume). */
   hideVolume?: boolean;
+  /** User price alerts to draw as green (armed) / orange (triggered) lines. */
+  alerts?: AlertLine[];
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -357,6 +368,7 @@ export function CandleChart({
           monoColor,
           hideVolume,
           trades,
+          alerts,
         )
       ) : null}
     </div>
@@ -376,6 +388,7 @@ function renderChart(
   monoColor?: string,
   hideVolume = false,
   trades: TradeMark[] = EMPTY_TRADES,
+  alerts: AlertLine[] = EMPTY_ALERTS,
 ) {
   const plotL = mL;
   const plotR = W - mR;
@@ -529,6 +542,26 @@ function renderChart(
           );
         }
         return null;
+      })}
+
+      {/* price alerts: green (armed) / orange (triggered) horizontal lines, each
+          with an "A" pill on the RIGHT edge so they don't collide with the
+          left-anchored hline tags. Solid (not dashed) to read as a live target. */}
+      {alerts.map((a, i) => {
+        const y = yP(a.price);
+        if (y < priceTop - 1 || y > priceBot + 1) return null;
+        const color = a.status === "triggered" ? ALERT_TRIGGERED : ALERT_ARMED;
+        const tag = fmtPrice(a.price);
+        const tw = 6.6 * tag.length + 20;
+        const ty = y - priceTop < 12 ? y + 12 : y - 5;
+        return (
+          <g key={`al-${i}`} pointerEvents="none">
+            <line x1={plotL} y1={y} x2={plotR} y2={y} stroke={color} strokeWidth={1.3} opacity={0.9} />
+            <rect x={plotR - tw} y={ty - 9} width={tw} height={12} rx={2} fill={color} opacity={0.92} />
+            <text x={plotR - tw + 3} y={ty} textAnchor="start" fontSize={9.5} fontWeight={800} fill="#fff">A</text>
+            <text x={plotR - 3} y={ty} textAnchor="end" fontSize={9.5} fontWeight={700} fill="#fff">{tag}</text>
+          </g>
+        );
       })}
 
       {/* real executed trades: B pinned below the bar's low, S above its high.

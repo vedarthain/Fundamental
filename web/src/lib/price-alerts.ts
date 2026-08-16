@@ -88,6 +88,38 @@ export async function loadPriceAlertsForSymbol(
 }
 
 /**
+ * Every live line the user has across ALL symbols (armed + triggered), keyed
+ * for the scanner graph so each candlestick card can draw its own alert lines
+ * and show the grey "A" once a symbol has any. One query, not one-per-card.
+ */
+export async function loadLivePriceAlerts(userId: number): Promise<PriceAlert[]> {
+  const rows = await sql<
+    {
+      id: number;
+      symbol: string;
+      price: number;
+      direction: PriceAlertDirection;
+      status: PriceAlert["status"];
+      triggered_at: string | null;
+    }[]
+  >`
+    SELECT id, symbol, price::float8 AS price, direction, status,
+           triggered_at::text AS triggered_at
+      FROM app.price_alert
+     WHERE user_id = ${userId} AND status IN ('armed', 'triggered')
+     ORDER BY symbol ASC, price ASC
+  `.catch(() => []);
+  return rows.map((r) => ({
+    id: r.id,
+    symbol: r.symbol,
+    price: r.price,
+    direction: r.direction,
+    status: r.status,
+    triggeredAt: r.triggered_at,
+  }));
+}
+
+/**
  * Create an armed alert at `price` for `symbol`. Direction is inferred from the
  * latest close (target above → 'above'; at/below → 'below') so it starts armed.
  * Returns the created row, or an error string the API surfaces to the user.
@@ -134,6 +166,63 @@ export async function createPriceAlert(
               triggered_at::text AS triggered_at
   `;
   const r = ins[0];
+  return {
+    ok: true,
+    alert: {
+      id: r.id,
+      symbol: r.symbol,
+      price: r.price,
+      direction: r.direction,
+      status: r.status,
+      triggeredAt: r.triggered_at,
+    },
+  };
+}
+
+/**
+ * Change an existing alert's price. Re-infers direction from the latest close
+ * and re-arms it (clears any triggered/dismissed state) so editing a fired
+ * alert puts a fresh line back on the chart. Scoped to the owner.
+ */
+export async function updatePriceAlert(
+  userId: number,
+  id: number,
+  price: number,
+): Promise<{ ok: true; alert: PriceAlert } | { ok: false; error: string }> {
+  if (!Number.isFinite(price) || price <= 0) {
+    return { ok: false, error: "Enter a price above 0." };
+  }
+  // Need the symbol to re-infer direction from its current close.
+  const own = await sql<{ symbol: string }[]>`
+    SELECT symbol FROM app.price_alert WHERE id = ${id} AND user_id = ${userId}
+  `.catch(() => []);
+  if (own.length === 0) return { ok: false, error: "Alert not found." };
+  const sym = own[0].symbol;
+
+  const closes = await loadLatestClose([sym]);
+  const cur = closes.get(sym);
+  if (cur == null) return { ok: false, error: "No recent price for this stock yet." };
+  const direction: PriceAlertDirection = price > cur ? "above" : "below";
+
+  const upd = await sql<
+    {
+      id: number;
+      symbol: string;
+      price: number;
+      direction: PriceAlertDirection;
+      status: PriceAlert["status"];
+      triggered_at: string | null;
+    }[]
+  >`
+    UPDATE app.price_alert
+       SET price = ${price}, direction = ${direction},
+           status = 'armed', triggered_at = NULL, dismissed_at = NULL
+     WHERE id = ${id} AND user_id = ${userId}
+    RETURNING id, symbol, price::float8 AS price, direction, status,
+              triggered_at::text AS triggered_at
+  `.catch(() => []);
+  if (upd.length === 0) return { ok: false, error: "Could not update alert." };
+  const r = upd[0];
   return {
     ok: true,
     alert: {
