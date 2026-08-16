@@ -8,10 +8,13 @@
  * reverts it. "Check now" re-evaluates server-side then refreshes the route so
  * the server component re-reads the reconciled set (no client-side merge).
  */
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import type { AlertRow, Severity } from "@/lib/alerts";
+import type { AlertRow, AlertEnrichment, Severity } from "@/lib/alerts";
+import { band, bandColor } from "@/lib/score";
+import { CandleChart } from "@/app/tools/scanner/CandleChart";
+import type { Candle } from "@/lib/candles";
 
 const SEV_COLOR: Record<Severity, string> = {
   urgent: "var(--color-score-poor)",
@@ -57,16 +60,142 @@ function ago(iso: string): string {
   return `${days}d ago`;
 }
 
+// A percentile score (0–100) rendered as a compact pill: "Q 62".
+function ScorePill({ label, value }: { label: string; value: number | null }) {
+  return (
+    <span className="tabular-nums">
+      <span className="muted-text">{label} </span>
+      <span className="font-medium">{value == null ? "—" : Math.round(value)}</span>
+    </span>
+  );
+}
+
+// A period return (fraction, e.g. 0.024) rendered signed + coloured: "1M +4.2%".
+function RetPill({ label, value }: { label: string; value: number | null }) {
+  if (value == null) {
+    return (
+      <span className="tabular-nums muted-text">
+        {label} <span className="opacity-60">—</span>
+      </span>
+    );
+  }
+  const v = value * 100;
+  const color = v >= 0 ? "var(--color-delta-up)" : "var(--color-delta-down)";
+  const txt = Math.abs(v) >= 10 ? Math.round(v).toString() : v.toFixed(1);
+  return (
+    <span className="tabular-nums">
+      <span className="muted-text">{label} </span>
+      <span className="font-medium" style={{ color }}>
+        {v >= 0 ? "+" : ""}
+        {txt}%
+      </span>
+    </span>
+  );
+}
+
+const RANGE_OPTIONS: { label: string; days: number }[] = [
+  { label: "1M", days: 31 },
+  { label: "6M", days: 180 },
+  { label: "1Y", days: 365 },
+  { label: "2Y", days: 730 },
+];
+// Reuse across re-renders / re-opens so a range already fetched is instant.
+const candleCache = new Map<string, Candle[]>();
+
+// Inline candle chart for an alert's symbol — mirrors the watchlist's ChartBlock
+// (same /api/scanner/ohlc source + CandleChart renderer), just a touch shorter.
+function AlertChart({ symbol }: { symbol: string }) {
+  const [days, setDays] = useState(180);
+  const [candles, setCandles] = useState<Candle[] | null>(null);
+  const [err, setErr] = useState(false);
+
+  useEffect(() => {
+    const key = `${symbol}:${days}`;
+    const cached = candleCache.get(key);
+    if (cached) {
+      setCandles(cached);
+      setErr(false);
+      return;
+    }
+    let alive = true;
+    setCandles(null);
+    setErr(false);
+    fetch(`/api/scanner/ohlc?syms=${encodeURIComponent(symbol)}&days=${days}`)
+      .then((r) => {
+        if (!r.ok) throw new Error(String(r.status));
+        return r.json();
+      })
+      .then((j: { data: Record<string, Candle[]> }) => {
+        if (!alive) return;
+        const c = j.data?.[symbol] ?? [];
+        candleCache.set(key, c);
+        setCandles(c);
+      })
+      .catch(() => alive && setErr(true));
+    return () => {
+      alive = false;
+    };
+  }, [symbol, days]);
+
+  return (
+    <div className="mt-2.5">
+      <div className="flex items-center justify-between mb-1.5 gap-2 flex-wrap">
+        <span className="text-[9.5px] uppercase tracking-wide muted-text">Price</span>
+        <div className="flex rounded-md border hairline overflow-hidden">
+          {RANGE_OPTIONS.map((o) => (
+            <button
+              key={o.days}
+              type="button"
+              onClick={() => setDays(o.days)}
+              className="px-2 py-0.5 text-[10.5px] tabular-nums transition-colors border-l first:border-l-0 hairline"
+              style={
+                days === o.days
+                  ? { backgroundColor: "var(--color-accent-600)", color: "white" }
+                  : undefined
+              }
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="h-[200px] w-full rounded-md border hairline overflow-hidden">
+        {err ? (
+          <div className="h-full flex items-center justify-center muted-text text-[12px]">
+            Couldn&apos;t load price data.
+          </div>
+        ) : candles === null ? (
+          <div className="h-full flex items-center justify-center muted-text text-[12px]">
+            Loading chart…
+          </div>
+        ) : candles.length === 0 ? (
+          <div className="h-full flex items-center justify-center muted-text text-[12px]">
+            No price history.
+          </div>
+        ) : (
+          <CandleChart candles={candles} interactive weekly={days > 730} />
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AlertCard({
   a,
   dimmed,
+  enrich,
   onDismiss,
 }: {
   a: AlertRow;
   dimmed: boolean;
+  enrich?: AlertEnrichment;
   onDismiss?: (a: AlertRow) => void;
 }) {
   const color = SEV_COLOR[a.severity];
+  // hold_limit is an aggregate digest (sentinel symbol) — no single chart/scores.
+  const showEnrich = a.ruleKey !== "hold_limit" && enrich != null;
+  const comp = enrich?.composite ?? null;
+  const compColor = bandColor(band(comp));
   return (
     <div
       className="flex items-start gap-3 px-4 py-3 transition-colors hover:bg-[var(--color-paper)]/60"
@@ -93,11 +222,47 @@ function AlertCard({
               {a.symbol}
             </Link>
           )}
-          <span className="muted-text text-[11px] ml-auto whitespace-nowrap">
+          {showEnrich && comp != null && (
+            <span
+              className="ml-auto inline-block min-w-[34px] text-center px-1.5 py-0.5 rounded tabular-nums font-semibold text-[11px]"
+              style={{
+                backgroundColor: compColor,
+                color: band(comp) === "neutral" ? "var(--color-ink)" : "white",
+              }}
+              title="Composite peer-cluster score (0–100)"
+            >
+              {Math.round(comp)}
+            </span>
+          )}
+          <span
+            className={`muted-text text-[11px] whitespace-nowrap ${
+              showEnrich && comp != null ? "" : "ml-auto"
+            }`}
+          >
             {ago(a.triggeredAt)}
           </span>
         </div>
         <p className="ink-text mt-1 text-[13px] leading-[1.5]">{a.reason}</p>
+
+        {showEnrich && (
+          <>
+            {/* Scores (QVM) + return ladder — same figures as the watchlist row. */}
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+              <ScorePill label="Q" value={enrich!.quality} />
+              <ScorePill label="V" value={enrich!.valuation} />
+              <ScorePill label="M" value={enrich!.momentum} />
+              <span className="muted-text">·</span>
+              <RetPill label="1D" value={enrich!.ret1d} />
+              <RetPill label="1W" value={enrich!.ret1w} />
+              <RetPill label="1M" value={enrich!.ret1m} />
+              <RetPill label="6M" value={enrich!.ret6m} />
+              <RetPill label="1Y" value={enrich!.ret1y} />
+            </div>
+            {/* Chart only for live cards — skip it on greyed/dismissed rows so a
+                long dismissed list doesn't fire a fetch per row. */}
+            {!dimmed && <AlertChart symbol={a.symbol} />}
+          </>
+        )}
       </div>
       {onDismiss && (
         <button
@@ -117,9 +282,11 @@ function AlertCard({
 export function AlertsClient({
   initialActive,
   initialDismissed,
+  enrich = {},
 }: {
   initialActive: AlertRow[];
   initialDismissed: AlertRow[];
+  enrich?: Record<string, AlertEnrichment>;
 }) {
   const router = useRouter();
   const [active, setActive] = useState<AlertRow[]>(initialActive);
@@ -263,6 +430,7 @@ export function AlertsClient({
                   key={`${a.ruleKey}-${a.id}`}
                   a={a}
                   dimmed={false}
+                  enrich={enrich[a.symbol]}
                   onDismiss={dismiss}
                 />
               ))}
@@ -283,6 +451,7 @@ export function AlertsClient({
                       key={`${a.ruleKey}-${a.id}`}
                       a={a}
                       dimmed
+                      enrich={enrich[a.symbol]}
                       onDismiss={undefined}
                     />
                   ))}

@@ -9,7 +9,7 @@
  */
 import Link from "next/link";
 import { getSession } from "@/lib/auth";
-import { loadAlerts } from "@/lib/alerts";
+import { loadAlerts, loadAlertEnrichment } from "@/lib/alerts";
 import { AlertsClient } from "./AlertsClient";
 
 export const dynamic = "force-dynamic";
@@ -54,6 +54,13 @@ export default async function AlertsPage() {
   // (or the user's, via "Check now"), not a blocking cost on every open.
   const { active, dismissed } = await loadAlerts(session.userId);
 
+  // Scores + return ladder + composite for each alerted name, so a card can show
+  // the same at-a-glance context as a watchlist row. One cache read + one golden
+  // read for the union of symbols; failure just yields empty enrichment.
+  const enrich = await loadAlertEnrichment(
+    [...active, ...dismissed].map((a) => a.symbol),
+  );
+
   return (
     <div className="mx-auto max-w-[1200px] px-4 md:px-6 py-4 md:py-5">
       <header className="mb-3">
@@ -61,7 +68,11 @@ export default async function AlertsPage() {
           Alerts
         </h1>
       </header>
-      <AlertsClient initialActive={active} initialDismissed={dismissed} />
+      <AlertsClient
+        initialActive={active}
+        initialDismissed={dismissed}
+        enrich={enrich}
+      />
     </div>
   );
 }

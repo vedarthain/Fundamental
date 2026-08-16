@@ -380,6 +380,133 @@ export async function loadAlerts(
   return { active, dismissed };
 }
 
+/**
+ * Per-symbol scores + return ladder for the alert cards, mirroring the watchlist
+ * row. Scores (QVM/composite) and 1W/1M/1Y come from the SAME weekly panel cache
+ * the /watchlist and /sectors pages read, so the numbers can't disagree. 1D and
+ * 6M aren't cached, so they're derived from golden daily closes here. All returns
+ * are fractions (0.024 = +2.4%). Best-effort: any DB hiccup just leaves nulls.
+ */
+export type AlertEnrichment = {
+  composite: number | null;
+  quality: number | null;
+  valuation: number | null;
+  momentum: number | null;
+  ret1d: number | null;
+  ret1w: number | null;
+  ret1m: number | null;
+  ret6m: number | null;
+  ret1y: number | null;
+};
+
+export async function loadAlertEnrichment(
+  symbols: string[],
+): Promise<Record<string, AlertEnrichment>> {
+  const out: Record<string, AlertEnrichment> = {};
+  const uniq = Array.from(
+    new Set(symbols.filter((s) => s && s !== HOLD_LIMIT_KEY)),
+  );
+  if (uniq.length === 0) return out;
+
+  // Scores + weekly-panel returns (1W/1M/1Y) — one indexed read of the latest snapshot.
+  const scoreRows = await sql<
+    {
+      symbol: string;
+      composite: number | null;
+      quality: number | null;
+      valuation: number | null;
+      momentum: number | null;
+      ret_1w: number | null;
+      ret_1m: number | null;
+      ret_1y: number | null;
+    }[]
+  >`
+    SELECT symbol,
+           composite_pct::float8 AS composite,
+           quality_pct::float8   AS quality,
+           valuation_pct::float8 AS valuation,
+           momentum_pct::float8  AS momentum,
+           ret_1w::float8        AS ret_1w,
+           ret_1m::float8        AS ret_1m,
+           ret_1y::float8        AS ret_1y
+      FROM app.cluster_stocks_panel_cache
+     WHERE snapshot_date = (SELECT max(snapshot_date) FROM app.cluster_stocks_panel_cache)
+       AND symbol = ANY(${uniq})
+  `.catch(() => [] as never[]);
+
+  // 1D + 6M from golden daily closes (the cache stores neither). One query:
+  // last close vs the prior trading day (1D) and vs the last close ≤182d ago (6M).
+  const ns = uniq.map((s) => `${s}.NS`);
+  const px = await golden<
+    { symbol: string; ret_1d: number | null; ret_6m: number | null }[]
+  >`
+    WITH latest AS (
+      SELECT max(date) AS d FROM golden.price_history WHERE interval = '1d'
+    ),
+    px AS (
+      SELECT replace(symbol, '.NS', '') AS symbol, date, close::float8 AS close
+        FROM golden.price_history
+       WHERE interval = '1d' AND close IS NOT NULL
+         AND symbol = ANY(${ns})
+         AND date >= (SELECT d FROM latest) - INTERVAL '400 days'
+    ),
+    last AS (
+      SELECT DISTINCT ON (symbol) symbol, close AS c_last, date AS d_last
+        FROM px ORDER BY symbol, date DESC
+    ),
+    prev AS (
+      SELECT DISTINCT ON (px.symbol) px.symbol, px.close AS c_prev
+        FROM px JOIN last USING (symbol)
+       WHERE px.date < last.d_last
+       ORDER BY px.symbol, px.date DESC
+    ),
+    six AS (
+      SELECT DISTINCT ON (px.symbol) px.symbol, px.close AS c_6m
+        FROM px JOIN last USING (symbol)
+       WHERE px.date <= last.d_last - INTERVAL '182 days'
+       ORDER BY px.symbol, px.date DESC
+    )
+    SELECT last.symbol,
+           (last.c_last / NULLIF(prev.c_prev, 0) - 1)::float8 AS ret_1d,
+           (last.c_last / NULLIF(six.c_6m, 0) - 1)::float8    AS ret_6m
+      FROM last
+      LEFT JOIN prev USING (symbol)
+      LEFT JOIN six  USING (symbol)
+  `.catch(() => [] as never[]);
+
+  const pxBy = new Map(px.map((r) => [r.symbol, r]));
+  for (const r of scoreRows) {
+    const p = pxBy.get(r.symbol);
+    out[r.symbol] = {
+      composite: r.composite,
+      quality: r.quality,
+      valuation: r.valuation,
+      momentum: r.momentum,
+      ret1d: p?.ret_1d ?? null,
+      ret1w: r.ret_1w,
+      ret1m: r.ret_1m,
+      ret6m: p?.ret_6m ?? null,
+      ret1y: r.ret_1y,
+    };
+  }
+  // Symbols priced in golden but missing from the panel cache still get returns.
+  for (const p of px) {
+    if (out[p.symbol]) continue;
+    out[p.symbol] = {
+      composite: null,
+      quality: null,
+      valuation: null,
+      momentum: null,
+      ret1d: p.ret_1d ?? null,
+      ret1w: null,
+      ret1m: null,
+      ret6m: p.ret_6m ?? null,
+      ret1y: null,
+    };
+  }
+  return out;
+}
+
 /** Ack one alert → greyed, won't re-fire until the condition clears & re-crosses. */
 export async function dismissAlert(userId: number, id: number): Promise<boolean> {
   const upd = await sql<{ id: number }[]>`
