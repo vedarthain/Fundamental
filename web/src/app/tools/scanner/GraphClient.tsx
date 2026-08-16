@@ -223,11 +223,17 @@ function AlertBar({
   lastClose,
   onSave,
   onDelete,
+  onArmPick,
+  picking = false,
 }: {
   alerts: PriceAlert[];
   lastClose: number | null;
   onSave: (price: number, id?: number) => Promise<string | null>;
   onDelete: (id: number) => void;
+  /** Arm the on-chart crosshair to place an alert by clicking a level. */
+  onArmPick?: () => void;
+  /** True while the chart crosshair is armed (mirrors the toolbar tool). */
+  picking?: boolean;
 }) {
   const [val, setVal] = useState("");
   const [editId, setEditId] = useState<number | undefined>(undefined);
@@ -235,6 +241,11 @@ function AlertBar({
   const [err, setErr] = useState<string | null>(null);
 
   const submit = async () => {
+    // Empty box + not editing → hand off to the chart: click a level to place.
+    if (!val.trim() && editId == null) {
+      onArmPick?.();
+      return;
+    }
     const price = Number(val);
     if (!Number.isFinite(price) || price <= 0) {
       setErr("Enter a price above 0.");
@@ -315,9 +326,27 @@ function AlertBar({
         onClick={submit}
         disabled={busy}
         className="rounded-md px-2.5 py-1 text-[12px] font-medium text-white disabled:opacity-60 shrink-0"
-        style={{ background: "var(--color-accent-600)" }}
+        style={{
+          background:
+            picking && !val.trim() && editId == null
+              ? "var(--color-delta-up, #0a0)"
+              : "var(--color-accent-600)",
+        }}
+        title={
+          !val.trim() && editId == null
+            ? "Click a level on the chart to set an alert, or type a price"
+            : undefined
+        }
       >
-        {busy ? "…" : editId ? "Update" : "Add alert"}
+        {busy
+          ? "…"
+          : editId != null
+            ? "Update"
+            : val.trim()
+              ? "Add alert"
+              : picking
+                ? "Click the chart…"
+                : "Add alert"}
       </button>
       {editId && (
         <button
@@ -1498,23 +1527,26 @@ export default function GraphClient({
                   </div>
                   <div className="flex items-center gap-1 rounded-lg border hairline p-0.5">
                     {([
+                      { id: "alert", label: "Alert", icon: <HLineIcon size={13} />, hint: "Click a level to set a price alert" },
                       { id: "measure", label: "Measure", icon: <RulerIcon size={13} />, hint: "Measure price move between two points" },
                       { id: "hline", label: "H-line", icon: <HLineIcon size={13} />, hint: "Add a horizontal price line (shows on all charts)" },
                       { id: "trend", label: "Trend", icon: <TrendIcon size={13} />, hint: "Draw a trend line between two points" },
                       { id: "erase", label: "Erase", icon: <EraseIcon size={13} />, hint: "Click a line to delete it" },
                     ] as const).map((t) => {
                       const active = tool === t.id;
+                      // The alert tool lights GREEN when armed (matches the line
+                      // it will draw); the drawing tools light accent.
+                      const activeStyle =
+                        t.id === "alert"
+                          ? { color: "var(--color-delta-up, #0a0)", background: "color-mix(in srgb, var(--color-delta-up, #0a0) 14%, transparent)" }
+                          : { color: "var(--color-accent-700)", background: "color-mix(in srgb, var(--color-accent-600) 12%, transparent)" };
                       return (
                         <button
                           key={t.id}
                           type="button"
                           onClick={() => setTool((cur) => (cur === t.id ? "none" : t.id))}
                           className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[12px] font-medium hover:bg-[var(--color-paper)] transition-colors"
-                          style={
-                            active
-                              ? { color: "var(--color-accent-700)", background: "color-mix(in srgb, var(--color-accent-600) 12%, transparent)" }
-                              : undefined
-                          }
+                          style={active ? activeStyle : undefined}
                           aria-pressed={active}
                           title={t.hint}
                         >
@@ -1535,11 +1567,13 @@ export default function GraphClient({
                   </div>
                   {tool !== "none" && (
                     <span className="text-[11px] muted-text">
-                      {tool === "hline"
-                        ? "Click to place the line"
-                        : tool === "erase"
-                          ? "Click a line to delete"
-                          : "Click 2 points"}
+                      {tool === "alert"
+                        ? "Click a level to set an alert"
+                        : tool === "hline"
+                          ? "Click to place the line"
+                          : tool === "erase"
+                            ? "Click a line to delete"
+                            : "Click 2 points"}
                     </span>
                   )}
                   <div className="text-right leading-tight">
@@ -1575,6 +1609,8 @@ export default function GraphClient({
                   lastClose={last?.c ?? null}
                   onSave={(price, id) => saveAlert(focus.symbol, price, id)}
                   onDelete={(id) => deleteAlert(focus.symbol, id)}
+                  onArmPick={() => setTool((cur) => (cur === "alert" ? "none" : "alert"))}
+                  picking={tool === "alert"}
                 />
               )}
               <div
@@ -1591,6 +1627,12 @@ export default function GraphClient({
                   trades={tradesBySymbol[focus.symbol]}
                   onAddDrawing={(d) => addDrawing(focus.symbol, d)}
                   onDeleteDrawing={(i) => deleteDrawing(focus.symbol, i)}
+                  onPlaceAlert={(price) => {
+                    // Round to 2dp (pixel Y is noisy), create, then disarm so a
+                    // single click sets one line — like dropping a pin.
+                    void saveAlert(focus.symbol, Math.round(price * 100) / 100);
+                    setTool("none");
+                  }}
                 />
               </div>
             </div>

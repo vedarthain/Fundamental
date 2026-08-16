@@ -79,8 +79,10 @@ export type Drawing =
   | { kind: "hline"; price: number }
   | { kind: "trend"; d0: string; p0: number; d1: string; p1: number };
 
-// Which drawing/measure tool is armed on an interactive chart.
-export type ChartTool = "none" | "measure" | "hline" | "trend" | "erase";
+// Which drawing/measure tool is armed on an interactive chart. "alert" is the
+// crosshair for placing a price alert — same follow-the-cursor feel as "hline",
+// but the click creates a server-backed alert instead of a local drawing.
+export type ChartTool = "none" | "measure" | "hline" | "trend" | "erase" | "alert";
 
 // A real executed trade to pin on the chart (expanded view only). Anchored to a
 // DATE (not a pixel/price) and drawn against the bar's own high/low, so it stays
@@ -180,6 +182,7 @@ export function CandleChart({
   hideVolume = false,
   trades = EMPTY_TRADES,
   alerts = EMPTY_ALERTS,
+  onPlaceAlert,
 }: {
   candles?: Candle[];
   interactive?: boolean;
@@ -203,6 +206,8 @@ export function CandleChart({
   hideVolume?: boolean;
   /** User price alerts to draw as green (armed) / orange (triggered) lines. */
   alerts?: AlertLine[];
+  /** Click-to-place handler for the "alert" tool: the price at the cursor Y. */
+  onPlaceAlert?: (price: number) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -242,7 +247,7 @@ export function CandleChart({
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }
 
-  const drawMode = tool === "hline" || tool === "trend";
+  const drawMode = tool === "hline" || tool === "trend" || tool === "alert";
   const armed = interactive || tool !== "none";
 
   function onMove(e: React.MouseEvent<HTMLDivElement>) {
@@ -291,6 +296,11 @@ export function CandleChart({
 
     if (tool === "hline") {
       onAddDrawing?.({ kind: "hline", price: geom.priceAt(p.y) });
+      return;
+    }
+
+    if (tool === "alert") {
+      onPlaceAlert?.(geom.priceAt(p.y));
       return;
     }
 
@@ -415,6 +425,8 @@ function renderChart(
   const cx = (i: number) => plotL + slot * (i + 0.5);
   const yP = (v: number) => priceTop + (1 - (v - lo) / (hi - lo)) * (priceBot - priceTop);
   const yV = (v: number) => volBot - (v / vMax) * (volBot - volTop);
+  // Inverse of yP: the price at a pixel Y — labels the alert draft line.
+  const priceAtY = (y: number) => lo + (1 - (y - priceTop) / (priceBot - priceTop)) * (hi - lo);
 
   const last = data[n - 1];
   const hiY = yP(pMax);
@@ -653,12 +665,26 @@ function renderChart(
         });
       })()}
 
-      {/* live draft preview while placing an hline / trend */}
+      {/* live draft preview while placing an hline / trend / alert */}
       {draft && (draft.tool === "hline" ? (
         <line pointerEvents="none" x1={plotL} y1={draft.y} x2={plotR} y2={draft.y} stroke={ACCENT} strokeWidth={1.2} strokeDasharray="5 3" opacity={0.6} />
       ) : draft.tool === "trend" && draft.sx != null ? (
         <line pointerEvents="none" x1={draft.sx} y1={draft.sy!} x2={draft.x} y2={draft.y} stroke={ACCENT} strokeWidth={1.4} strokeDasharray="4 3" opacity={0.7} />
-      ) : null)}
+      ) : draft.tool === "alert" ? (() => {
+        // Green follow line + a price pill on the right so you can read the
+        // exact level before clicking to place the alert.
+        const y = Math.max(priceTop, Math.min(priceBot, draft.y));
+        const tag = fmtPrice(priceAtY(y));
+        const tw = 6.6 * tag.length + 20;
+        return (
+          <g pointerEvents="none">
+            <line x1={plotL} y1={y} x2={plotR} y2={y} stroke={ALERT_ARMED} strokeWidth={1.3} strokeDasharray="5 3" opacity={0.9} />
+            <rect x={plotR - tw} y={y - 9} width={tw} height={13} rx={2} fill={ALERT_ARMED} opacity={0.95} />
+            <text x={plotR - tw + 3} y={y + 1} textAnchor="start" fontSize={9.5} fontWeight={800} fill="#fff">A</text>
+            <text x={plotR - 3} y={y + 1} textAnchor="end" fontSize={9.5} fontWeight={700} fill="#fff">{tag}</text>
+          </g>
+        );
+      })() : null)}
 
       {/* hover crosshair + per-bar OHLCV tooltip (interactive mode only) */}
       {hoverIdx != null && data[hoverIdx] && (() => {
