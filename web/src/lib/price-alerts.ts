@@ -246,15 +246,28 @@ export async function deletePriceAlert(userId: number, id: number): Promise<bool
   return del.length > 0;
 }
 
-/** Ack a triggered price-alert card → greyed in the tab, line gone from chart. */
+/**
+ * Ack a fired price-alert card → greyed in the tab, line gone from chart.
+ * `id` is the EVENT id (loadPriceAlertRows returns event rows). We ack the
+ * event AND, if its source line is still triggered, dismiss it so the orange
+ * line leaves the chart. A deleted/re-armed line simply has nothing to dismiss.
+ */
 export async function dismissPriceAlert(userId: number, id: number): Promise<boolean> {
-  const upd = await sql<{ id: number }[]>`
+  const upd = await sql<{ alert_id: number }[]>`
+    UPDATE app.price_alert_event
+       SET acknowledged_at = now()
+     WHERE id = ${id} AND user_id = ${userId} AND acknowledged_at IS NULL
+    RETURNING alert_id
+  `.catch(() => []);
+  if (upd.length === 0) return false;
+
+  const alertId = upd[0].alert_id;
+  await sql`
     UPDATE app.price_alert
        SET status = 'dismissed', dismissed_at = now()
-     WHERE id = ${id} AND user_id = ${userId} AND status = 'triggered'
-    RETURNING id
-  `.catch(() => []);
-  return upd.length > 0;
+     WHERE id = ${alertId} AND user_id = ${userId} AND status = 'triggered'
+  `.catch(() => {});
+  return true;
 }
 
 /**
@@ -282,18 +295,51 @@ export async function evaluatePriceAlerts(userId: number): Promise<number> {
   }
   if (hit.length === 0) return 0;
 
-  await sql`
+  const upd = await sql<{ id: number }[]>`
     UPDATE app.price_alert
        SET status = 'triggered', triggered_at = now()
      WHERE id = ANY(${hit}) AND status = 'armed'
-  `;
-  return hit.length;
+    RETURNING id
+  `.catch(() => []);
+  // Append an immutable fire to the history log for each alert we actually
+  // flipped (the RETURNING guards against a race double-firing). This row
+  // survives any later edit/delete of the live line — that's the whole point.
+  const flipped = new Set(upd.map((r) => r.id));
+  const armedById = new Map(armed.map((a) => [a.id, a]));
+  const events = hit
+    .filter((id) => flipped.has(id) && armedById.has(id))
+    .map((id) => armedById.get(id)!)
+    .map((a) => ({
+      alert_id: a.id,
+      user_id: userId,
+      symbol: a.symbol,
+      price: a.price,
+      direction: a.direction,
+      close_at_event: closes.get(a.symbol) ?? null,
+    }));
+  if (events.length > 0) {
+    await sql`
+      INSERT INTO app.price_alert_event ${sql(
+        events,
+        "alert_id",
+        "user_id",
+        "symbol",
+        "price",
+        "direction",
+        "close_at_event",
+      )}
+    `.catch(() => {});
+  }
+  return flipped.size;
 }
 
 /**
- * Triggered + dismissed price alerts as AlertRows for the tab's "Price alerts"
- * category. Triggered → active card; dismissed → greyed. severity 'warn' so the
- * card colour matches the chart's orange triggered line.
+ * The "Price alerts" category for the tab — read straight from the immutable
+ * fire log (app.price_alert_event), so every trigger stays here for good even
+ * after the source line is edited or deleted. Unacked fire → active card;
+ * acked → greyed. severity 'warn' matches the chart's orange triggered line.
+ *
+ * `id` is the EVENT id (not the alert id): dismissPriceAlert acks by event id.
  */
 export async function loadPriceAlertRows(userId: number): Promise<AlertRow[]> {
   const rows = await sql<
@@ -302,16 +348,16 @@ export async function loadPriceAlertRows(userId: number): Promise<AlertRow[]> {
       symbol: string;
       price: number;
       direction: PriceAlertDirection;
-      status: PriceAlertStatus;
-      triggered_at: string | null;
-      created_at: string;
+      acknowledged: boolean;
+      event_at: string;
     }[]
   >`
-    SELECT id, symbol, price::float8 AS price, direction, status,
-           triggered_at::text AS triggered_at, created_at::text AS created_at
-      FROM app.price_alert
-     WHERE user_id = ${userId} AND status IN ('triggered', 'dismissed')
-     ORDER BY COALESCE(triggered_at, created_at) DESC
+    SELECT id, symbol, price::float8 AS price, direction,
+           acknowledged_at IS NOT NULL AS acknowledged,
+           event_at::text AS event_at
+      FROM app.price_alert_event
+     WHERE user_id = ${userId}
+     ORDER BY event_at DESC
   `.catch(() => []);
 
   return rows.map((r) => {
@@ -324,8 +370,8 @@ export async function loadPriceAlertRows(userId: number): Promise<AlertRow[]> {
       title: "Price alert",
       reason: `${r.symbol} ${verb} your ${inr(r.price)} level`,
       context: { price: r.price, direction: r.direction },
-      status: r.status === "triggered" ? ("active" as const) : ("dismissed" as const),
-      triggeredAt: r.triggered_at ?? r.created_at,
+      status: r.acknowledged ? ("dismissed" as const) : ("active" as const),
+      triggeredAt: r.event_at,
     };
   });
 }

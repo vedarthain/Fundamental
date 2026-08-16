@@ -1382,19 +1382,32 @@ export default function GraphClient({
                   </div>
                   <div className="flex-1" />
                   {signedIn && (() => {
-                    const has = (alerts[st.symbol]?.length ?? 0) > 0;
+                    const list = alerts[st.symbol] ?? [];
+                    const fired = list.some((a) => a.status === "triggered");
+                    const set = list.length > 0;
+                    // green once armed, orange if any line has fired, accent
+                    // outline when none (a "+ set one" affordance).
+                    const c = fired
+                      ? "#e8830c"
+                      : set
+                        ? "var(--color-delta-up, #0a0)"
+                        : "var(--color-accent-600)";
                     return (
                       <button
                         type="button"
                         onClick={() => series && series.length >= 2 && setFocus(st)}
                         disabled={!series || series.length < 2}
-                        className="inline-flex items-center justify-center rounded-md border hairline w-[26px] py-1 text-[10.5px] font-bold disabled:opacity-40 hover:bg-[var(--color-paper)] transition-colors"
+                        className="inline-flex items-center justify-center rounded-md border w-[26px] py-1 text-[10.5px] font-bold disabled:opacity-40 transition-colors"
                         style={
-                          has
-                            ? { background: "var(--color-paper)", color: "var(--color-muted)" }
-                            : { color: "var(--color-accent-600)" }
+                          set
+                            ? { background: `color-mix(in srgb, ${c} 12%, transparent)`, color: c, borderColor: c }
+                            : { color: c, borderColor: "var(--color-border-default)" }
                         }
-                        title={has ? "Price alert set — open the chart to edit" : "Set a price alert"}
+                        title={
+                          set
+                            ? "Price alert set — open the chart to edit"
+                            : "Set a price alert"
+                        }
                         aria-label={`Price alert for ${st.symbol}`}
                       >
                         A

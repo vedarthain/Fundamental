@@ -1,13 +1,15 @@
 /**
  * /tools/alerts — ring-1 portfolio alerts (holdings discipline).
  *
- * Auth-gated like /portfolio. On load we evaluate fresh (so opening the tab is
- * itself a "check now") then render active cards on top with dismissed greyed
- * below. The heavy lifting lives in lib/alerts.ts; this page is thin glue.
+ * Auth-gated like /portfolio. Renders active cards on top with dismissed greyed
+ * below. We do NOT evaluate on load — a full re-eval hits the portfolio + golden
+ * serially and added ~10s to first paint. Freshness comes from the daily cron
+ * (/api/cron/evaluate-alerts) plus the on-demand "Check now" button. The heavy
+ * lifting lives in lib/alerts.ts; this page is thin glue.
  */
 import Link from "next/link";
 import { getSession } from "@/lib/auth";
-import { evaluateAlerts, loadAlerts } from "@/lib/alerts";
+import { loadAlerts } from "@/lib/alerts";
 import { AlertsClient } from "./AlertsClient";
 
 export const dynamic = "force-dynamic";
@@ -48,9 +50,8 @@ export default async function AlertsPage() {
     );
   }
 
-  // Opening the tab re-checks the rules against the live portfolio, then reads
-  // the reconciled set. Evaluation is idempotent, so a refresh is harmless.
-  await evaluateAlerts(session.userId).catch(() => {});
+  // Read the last-reconciled set only — fast. Re-evaluation is the cron's job
+  // (or the user's, via "Check now"), not a blocking cost on every open.
   const { active, dismissed } = await loadAlerts(session.userId);
 
   return (
