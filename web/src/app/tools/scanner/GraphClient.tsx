@@ -1463,6 +1463,34 @@ export default function GraphClient({
         </div>
       </div>
 
+      {/* ── Bottom pager: mirrors the header nav so you can roll to the next
+          page without scrolling back up. ── */}
+      <div className="mt-3 flex items-center justify-center gap-1">
+        <button
+          type="button"
+          onClick={gotoPrevPage}
+          disabled={atFirstPage}
+          className="rounded-md border hairline px-2.5 py-1.5 text-[12px] font-medium disabled:opacity-40 hover:bg-[var(--color-paper)] transition-colors"
+          aria-label="Previous page"
+          title={safePage <= 0 ? "Previous sector" : "Previous page"}
+        >
+          ‹
+        </button>
+        <span className="text-[12px] tabular-nums muted-text px-1 min-w-[64px] text-center">
+          {safePage + 1} / {pageCount}
+        </span>
+        <button
+          type="button"
+          onClick={gotoNextPage}
+          disabled={atLastPage}
+          className="rounded-md border hairline px-2.5 py-1.5 text-[12px] font-medium disabled:opacity-40 hover:bg-[var(--color-paper)] transition-colors"
+          aria-label="Next page"
+          title={safePage >= pageCount - 1 ? "Next sector" : "Next page"}
+        >
+          ›
+        </button>
+      </div>
+
       {/* ── Focus overlay: one expanded, interactive chart ── */}
       {focus && (() => {
         const series = candles.data[focus.symbol];

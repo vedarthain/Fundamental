@@ -69,7 +69,7 @@ function AlertCard({
   const color = SEV_COLOR[a.severity];
   return (
     <div
-      className="card flex items-start gap-3 p-4 transition-opacity"
+      className="flex items-start gap-3 px-4 py-3 transition-colors hover:bg-[var(--color-paper)]/60"
       style={{
         borderLeft: `3px solid ${color}`,
         opacity: dimmed ? 0.5 : 1,
@@ -190,96 +190,108 @@ export function AlertsClient({
         </button>
       </div>
 
-      {/* Category tabs. A tab is shown only if it has any alert (active or
-          dismissed), except "All" which is always present. The count badge
-          reflects ACTIVE alerts in that category. */}
-      <div
-        className="flex items-center gap-1 overflow-x-auto mb-4 pb-px"
-        style={{ scrollbarWidth: "none" }}
-        role="tablist"
-      >
-        {TABS.map((t) => {
-          const activeN = active.filter((a) => matchesTab(a, t.key)).length;
-          const total =
-            activeN + dismissed.filter((a) => matchesTab(a, t.key)).length;
-          if (t.key !== "all" && total === 0) return null;
-          const sel = tab === t.key;
-          return (
-            <button
-              key={t.key}
-              type="button"
-              role="tab"
-              aria-selected={sel}
-              onClick={() => setTab(t.key)}
-              className={`shrink-0 rounded-full px-3 py-1 text-[12.5px] font-medium transition-colors ${
-                sel ? "text-white" : "muted-text hover:bg-[var(--color-paper)]"
-              }`}
-              style={
-                sel
-                  ? { backgroundColor: "var(--color-accent-600)" }
-                  : { border: "1px solid var(--color-border-default)" }
-              }
-            >
-              {t.label}
-              {activeN > 0 && (
-                <span
-                  className="ml-1.5 inline-block rounded-full px-1.5 text-[10.5px] font-semibold"
+      {/* Watchlist-style master/detail: category rail on the left, the alert
+          feed on the right. A category is listed only if it has any alert
+          (active or dismissed), except "All" which is always present. */}
+      <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-4 items-start">
+        {/* LEFT rail — categories. */}
+        <div className="card overflow-hidden lg:sticky lg:top-4">
+          <div className="divide-y hairline" role="tablist">
+            {TABS.map((t) => {
+              const activeN = active.filter((a) => matchesTab(a, t.key)).length;
+              const total =
+                activeN + dismissed.filter((a) => matchesTab(a, t.key)).length;
+              if (t.key !== "all" && total === 0) return null;
+              const sel = tab === t.key;
+              return (
+                <button
+                  key={t.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={sel}
+                  onClick={() => setTab(t.key)}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] transition-colors hover:bg-[var(--color-paper)]"
                   style={
                     sel
-                      ? { backgroundColor: "rgba(255,255,255,0.25)" }
-                      : {
+                      ? {
                           backgroundColor: "var(--color-paper)",
-                          color: "var(--color-accent-600)",
+                          boxShadow: "inset 2px 0 0 var(--color-accent-600)",
                         }
+                      : undefined
                   }
                 >
-                  {activeN}
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-
-      {visibleActive.length === 0 && visibleDismissed.length === 0 ? (
-        <div className="card p-8 text-center">
-          <p className="ink-text text-[15px] font-medium mb-1">
-            {tab === "all" ? "All clear" : "Nothing here"}
-          </p>
-          <p className="muted-text text-[13px] max-w-sm mx-auto">
-            {tab === "all"
-              ? "Nothing needs your attention right now. Alerts appear here when a holding hits its +25% target, drops sharply in a day, or falls 20% below your cost."
-              : "No alerts in this category. Switch to All to see everything."}
-          </p>
+                  <span
+                    className={sel ? "ink-text font-semibold" : "ink-text"}
+                  >
+                    {t.label}
+                  </span>
+                  {activeN > 0 && (
+                    <span
+                      className="ml-auto inline-block rounded-full px-1.5 text-[10.5px] font-semibold"
+                      style={{
+                        backgroundColor: "var(--color-paper)",
+                        color: "var(--color-accent-600)",
+                        border: "1px solid var(--color-border-default)",
+                      }}
+                    >
+                      {activeN}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </div>
-      ) : (
-        <div className="space-y-3">
-          {visibleActive.map((a) => (
-            <AlertCard key={`${a.ruleKey}-${a.id}`} a={a} dimmed={false} onDismiss={dismiss} />
-          ))}
 
-          {visibleDismissed.length > 0 && (
-            <>
-              <div className="flex items-center gap-3 pt-4 pb-1">
-                <div
-                  className="h-px flex-1"
-                  style={{ backgroundColor: "var(--color-border-default)" }}
+        {/* RIGHT panel — the alert feed. */}
+        <div className="card overflow-hidden min-h-[240px]">
+          {visibleActive.length === 0 && visibleDismissed.length === 0 ? (
+            <div className="p-8 text-center">
+              <p className="ink-text text-[15px] font-medium mb-1">
+                {tab === "all" ? "All clear" : "Nothing here"}
+              </p>
+              <p className="muted-text text-[13px] max-w-sm mx-auto">
+                {tab === "all"
+                  ? "Nothing needs your attention right now. Alerts appear here when a holding hits its +25% target, drops sharply in a day, or falls 20% below your cost."
+                  : "No alerts in this category. Switch to All to see everything."}
+              </p>
+            </div>
+          ) : (
+            <div className="divide-y hairline">
+              {visibleActive.map((a) => (
+                <AlertCard
+                  key={`${a.ruleKey}-${a.id}`}
+                  a={a}
+                  dimmed={false}
+                  onDismiss={dismiss}
                 />
-                <span className="muted-text text-[11px] uppercase tracking-wide">
-                  Dismissed
-                </span>
-                <div
-                  className="h-px flex-1"
-                  style={{ backgroundColor: "var(--color-border-default)" }}
-                />
-              </div>
-              {visibleDismissed.map((a) => (
-                <AlertCard key={`${a.ruleKey}-${a.id}`} a={a} dimmed onDismiss={undefined} />
               ))}
-            </>
+
+              {visibleDismissed.length > 0 && (
+                <>
+                  <div className="flex items-center gap-3 px-4 py-2 bg-[var(--color-paper)]/40">
+                    <span className="muted-text text-[11px] uppercase tracking-wide">
+                      Dismissed
+                    </span>
+                    <div
+                      className="h-px flex-1"
+                      style={{ backgroundColor: "var(--color-border-default)" }}
+                    />
+                  </div>
+                  {visibleDismissed.map((a) => (
+                    <AlertCard
+                      key={`${a.ruleKey}-${a.id}`}
+                      a={a}
+                      dimmed
+                      onDismiss={undefined}
+                    />
+                  ))}
+                </>
+              )}
+            </div>
           )}
         </div>
-      )}
+      </div>
     </div>
   );
 }
