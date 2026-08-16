@@ -61,13 +61,15 @@ function AlertCard({
             {SEV_LABEL[a.severity]}
           </span>
           <span className="ink-text text-[14px] font-medium">{a.title}</span>
-          <Link
-            href={`/stock/${a.symbol}`}
-            className="text-[12px] font-semibold underline decoration-dotted hover:no-underline"
-            style={{ color: "var(--color-accent-600)" }}
-          >
-            {a.symbol}
-          </Link>
+          {a.ruleKey !== "hold_limit" && (
+            <Link
+              href={`/stock/${a.symbol}`}
+              className="text-[12px] font-semibold underline decoration-dotted hover:no-underline"
+              style={{ color: "var(--color-accent-600)" }}
+            >
+              {a.symbol}
+            </Link>
+          )}
           <span className="muted-text text-[11px] ml-auto whitespace-nowrap">
             {ago(a.triggeredAt)}
           </span>
