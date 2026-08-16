@@ -18,7 +18,7 @@
  *                  −6% on a quiet largecap trips but −6% noise on a smallcap
  *                  doesn't. Reads golden for the vol baseline.
  *   deep_drawdown  price ≤ avgCost×0.80 (−20% from cost).
- *   composite_slip composite score fell ≥8 pts vs ~1wk ago (panel-cache WoW).
+ *   composite_slip composite RANK fell ≥12 pts vs ~1wk ago (panel-cache WoW).
  *   hold_limit     ONE aggregate digest card listing holdings past the 4-month
  *                  limit — not one card per name (that's a day-one flood).
  */
@@ -52,7 +52,13 @@ const DRAWDOWN_MULT = 0.8; // −20% below avg cost → review thesis
 const DOWN_DAY_K = 2.5; // today's move must be ≥ this many σ below zero…
 const DOWN_DAY_FLOOR = 0.04; // …AND at least −4%, so low-vol names don't trip on noise
 const VOL_WINDOW = 20; // trading days of daily-return σ (excludes today)
-const COMPOSITE_DROP = 8; // composite (0–100) fall vs ~1wk ago that warrants a look
+// composite (0–100 rank) fall vs ~1wk ago. Set at ~1.5σ of the measured
+// universe-wide WoW jitter (delta stdev = 7.80, so 8 was only ~1σ/p85 — noise).
+// 12 ≈ p95 region: fires on ~4% of the universe / ~5 held names, cleanly
+// separating a real slide (e.g. JKTYRE −36, ~4.6σ) from weekly rank churn.
+// Note: composite_pct is percentile-ish, so a drop is partly peers rising —
+// read it as "losing relative standing", not "the business deteriorated".
+const COMPOSITE_DROP = 12;
 const WOW_MIN_GAP_DAYS = 5; // baseline = latest snapshot at least this many days older
 const HOLD_LIMIT_MONTHS = 4; // matches the Holdings "over hold limit" overlay
 const HOLD_LIST_MAX = 6; // names to spell out in the aggregate card before "+N more"
@@ -218,7 +224,9 @@ export async function evaluateAlerts(
       });
     }
 
-    // 4. Composite slip — quality/value/momentum score fell hard vs ~1wk ago.
+    // 4. Composite slip — quality/value/momentum RANK fell hard vs ~1wk ago.
+    // composite_pct is percentile-ish, so this is relative standing, not an
+    // absolute business call: the reason says "slipped … in rank" deliberately.
     const w = wow.get(sym);
     if (w && w.cur - w.prev <= -COMPOSITE_DROP) {
       const drop = Math.round(w.prev - w.cur);
@@ -226,8 +234,8 @@ export async function evaluateAlerts(
         ruleKey: "composite_slip",
         symbol: sym,
         severity: "warn",
-        title: "Score slipping",
-        reason: `${sym}'s composite fell ${drop} pts in a week — ${Math.round(w.prev)} → ${Math.round(w.cur)}`,
+        title: "Rank slipping",
+        reason: `${sym} slipped ${drop} pts in rank this week — ${Math.round(w.prev)} → ${Math.round(w.cur)}`,
         context: { from: Math.round(w.prev), to: Math.round(w.cur), drop },
       });
     }
