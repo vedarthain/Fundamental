@@ -55,20 +55,12 @@ export default async function AlertsPage() {
   const { active, dismissed } = await loadAlerts(session.userId);
 
   return (
-    <div className="theme-indigo mx-auto max-w-[880px] px-4 md:px-6 py-6 md:py-10">
-      <header className="max-w-[640px] mb-6">
-        <div className="eyebrow mb-3">Portfolio discipline</div>
-        <h1 className="font-display text-[32px] md:text-[36px] tracking-tight leading-tight">
+    <div className="mx-auto max-w-[1200px] px-4 md:px-6 py-4 md:py-5">
+      <header className="mb-3">
+        <h1 className="font-display text-[22px] md:text-[26px] leading-[1.1] tracking-tight">
           Alerts
         </h1>
-        <p className="muted-text mt-3 text-[14px] leading-[1.55]">
-          The few holdings that need a look — profit target reached, a sharp
-          down day, or a deep drawdown from your cost. Dismiss to acknowledge; a
-          dismissed alert won&apos;t return until its condition clears and
-          re-crosses.
-        </p>
       </header>
-
       <AlertsClient initialActive={active} initialDismissed={dismissed} />
     </div>
   );
