@@ -82,6 +82,19 @@ const TOOLS: ToolCard[] = [
     ],
     accent: "var(--color-accent-600)",
   },
+  {
+    href: "/tools/alerts",
+    title: "Alerts",
+    tagline: "The few holdings that need a look today",
+    body:
+      "Watches the stocks you hold and flags only what's actionable — a name that hit your +25% profit target, dropped sharply in a single day, or fell 20% below your cost. Each card says exactly why it fired; dismiss to acknowledge and it won't return until the condition clears and re-crosses. Re-evaluated daily and whenever you open the tab.",
+    useFor: [
+      "See which holdings reached your profit target",
+      "Catch a sharp down day on a name you own",
+      "Get warned when a position is deep underwater",
+    ],
+    accent: "var(--color-score-weak)",
+  },
 ];
 
 export default function ToolsLanding() {
@@ -133,6 +146,11 @@ export default function ToolsLanding() {
             <span className="ink-text font-medium">Want today&apos;s breakouts, a trend at its start, or beaten-down quality?</span> Use{" "}
             <Link href="/tools/scanner" className="underline">Scanner</Link>{" "}
             — tabs for stocks igniting on volume now (with catalyst + score), fresh golden crosses, stocks at multi-year support, Fallen Leaders (corrected quality), dividends by sector, and sector/peer rotation.
+          </li>
+          <li>
+            <span className="ink-text font-medium">Own stocks and want to be told when to look?</span> Use{" "}
+            <Link href="/tools/alerts" className="underline">Alerts</Link>{" "}
+            — flags holdings that hit your target, fell hard today, or are deep underwater; dismiss to acknowledge.
           </li>
         </ul>
       </section>
