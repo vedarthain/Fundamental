@@ -64,7 +64,7 @@ function AlertCard({
 }: {
   a: AlertRow;
   dimmed: boolean;
-  onDismiss?: (id: number) => void;
+  onDismiss?: (a: AlertRow) => void;
 }) {
   const color = SEV_COLOR[a.severity];
   return (
@@ -102,7 +102,7 @@ function AlertCard({
       {onDismiss && (
         <button
           type="button"
-          onClick={() => onDismiss(a.id)}
+          onClick={() => onDismiss(a)}
           className="shrink-0 self-center rounded-md border px-2.5 py-1 text-[12px] font-medium transition-colors hover:bg-[var(--color-paper)]"
           style={{ borderColor: "var(--color-border-default)" }}
           aria-label={`Dismiss ${a.title} for ${a.symbol}`}
@@ -137,22 +137,25 @@ export function AlertsClient({
   const visibleActive = active.filter((a) => matchesTab(a, tab));
   const visibleDismissed = dismissed.filter((a) => matchesTab(a, tab));
 
-  const dismiss = async (id: number) => {
-    const card = active.find((a) => a.id === id);
-    if (!card) return;
+  // Identity is (ruleKey, id): app.alert and app.price_alert ids can overlap,
+  // so id alone isn't unique across the merged feed.
+  const same = (a: AlertRow, b: AlertRow) => a.id === b.id && a.ruleKey === b.ruleKey;
+
+  const dismiss = async (card: AlertRow) => {
     // Optimistic: move active → dismissed immediately.
-    setActive((xs) => xs.filter((a) => a.id !== id));
+    setActive((xs) => xs.filter((a) => !same(a, card)));
     setDismissed((xs) => [{ ...card, status: "dismissed" }, ...xs]);
     try {
       const r = await fetch("/api/alerts/dismiss", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id }),
+        // ruleKey lets the endpoint route price-alert cards to their own table.
+        body: JSON.stringify({ id: card.id, ruleKey: card.ruleKey }),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
     } catch {
       // Revert on failure.
-      setDismissed((xs) => xs.filter((a) => a.id !== id));
+      setDismissed((xs) => xs.filter((a) => !same(a, card)));
       setActive((xs) => [card, ...xs]);
     }
   };
@@ -252,7 +255,7 @@ export function AlertsClient({
       ) : (
         <div className="space-y-3">
           {visibleActive.map((a) => (
-            <AlertCard key={a.id} a={a} dimmed={false} onDismiss={dismiss} />
+            <AlertCard key={`${a.ruleKey}-${a.id}`} a={a} dimmed={false} onDismiss={dismiss} />
           ))}
 
           {visibleDismissed.length > 0 && (
@@ -271,7 +274,7 @@ export function AlertsClient({
                 />
               </div>
               {visibleDismissed.map((a) => (
-                <AlertCard key={a.id} a={a} dimmed onDismiss={undefined} />
+                <AlertCard key={`${a.ruleKey}-${a.id}`} a={a} dimmed onDismiss={undefined} />
               ))}
             </>
           )}

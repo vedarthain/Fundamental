@@ -25,6 +25,7 @@
 import "server-only";
 import { sql, golden } from "@/lib/db";
 import { loadPortfolio } from "@/lib/portfolio";
+import { evaluatePriceAlerts, loadPriceAlertRows } from "@/lib/price-alerts";
 
 export type Severity = "info" | "warn" | "urgent";
 export type AlertStatus = "active" | "dismissed";
@@ -314,6 +315,11 @@ export async function evaluateAlerts(
     resolved = staleIds.length;
   }
 
+  // User price alerts live in their own table (app.price_alert) but ride the
+  // same evaluation cadence: flip any armed line whose EOD close has crossed.
+  // Failure is non-fatal to the portfolio rules above.
+  triggered += await evaluatePriceAlerts(userId).catch(() => 0);
+
   return { triggered, resolved };
 }
 
@@ -353,15 +359,23 @@ export async function loadAlerts(
     triggeredAt: r.triggered_at,
   });
 
+  // User price alerts (own table) merge into the same feed as ruleKey
+  // 'price_level' — triggered → active 'warn' card, dismissed → greyed.
+  const priceRows = await loadPriceAlertRows(userId).catch(() => [] as AlertRow[]);
+
   // Cap each severity bucket independently, then order urgent → warn → info.
   const perSev: Record<Severity, AlertRow[]> = { urgent: [], warn: [], info: [] };
   for (const r of rows) if (r.status === "active") perSev[r.severity].push(map(r));
+  for (const r of priceRows) if (r.status === "active") perSev[r.severity].push(r);
   const byRecency = (a: AlertRow, b: AlertRow) => (a.triggeredAt < b.triggeredAt ? 1 : -1);
   const active = (["urgent", "warn", "info"] as Severity[]).flatMap((s) =>
     perSev[s].sort(byRecency).slice(0, CAP_PER_SEVERITY),
   );
 
-  const dismissed = rows.filter((r) => r.status === "dismissed").map(map);
+  const dismissed = [
+    ...rows.filter((r) => r.status === "dismissed").map(map),
+    ...priceRows.filter((r) => r.status === "dismissed"),
+  ].sort((a, b) => (a.triggeredAt < b.triggeredAt ? 1 : -1));
 
   return { active, dismissed };
 }

@@ -1,11 +1,27 @@
 "use client";
 import { useState, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import {
-  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
 } from "recharts";
 import { PCT_CAP, type RetWindow } from "@/lib/returnGuards";
 
 export type PricePoint = { date: string; close: number };
+
+/** One user price-alert line on the chart. Mirrors PriceAlert in
+ *  lib/price-alerts (kept local so this client bundle never imports the
+ *  server-only module). */
+export type ChartPriceAlert = {
+  id: number;
+  price: number;
+  direction: "above" | "below";
+  status: "armed" | "triggered";
+};
+
+// Green = armed (watching), orange = triggered (crossed) — matches the Alerts
+// tab's severity colours so the two surfaces read the same.
+const ALERT_ARMED = "var(--color-score-good)";
+const ALERT_TRIGGERED = "var(--color-score-weak)";
 
 type Range = "1D" | "1W" | "1M" | "3M" | "1Y" | "3Y" | "5Y" | "10Y" | "ALL";
 
@@ -69,6 +85,8 @@ export function PriceChart({
   priceFetchedAt,
   prefix = "₹",
   symbol,
+  priceAlerts,
+  canSetAlerts = false,
 }: {
   data: PricePoint[];
   /** Optional identity label shown in the card header (e.g. "3MINDIA"). */
@@ -81,8 +99,60 @@ export function PriceChart({
   /** Value prefix for the headline/axis/tooltip. "₹" for stocks; pass "" for
    *  index levels (which aren't a rupee amount). */
   prefix?: string;
+  /** User's live price-alert lines for this symbol (armed + triggered). */
+  priceAlerts?: ChartPriceAlert[];
+  /** Whether to render the create/manage controls (signed-in stock pages). */
+  canSetAlerts?: boolean;
 }) {
   const [range, setRange] = useState<Range>("1Y");
+  const router = useRouter();
+  const alerts = priceAlerts ?? [];
+  const [alertInput, setAlertInput] = useState("");
+  const [alertBusy, setAlertBusy] = useState(false);
+  const [alertErr, setAlertErr] = useState<string | null>(null);
+
+  async function addAlert() {
+    const price = Number(alertInput);
+    if (!Number.isFinite(price) || price <= 0) {
+      setAlertErr("Enter a price above 0.");
+      return;
+    }
+    setAlertBusy(true);
+    setAlertErr(null);
+    try {
+      const r = await fetch("/api/alerts/price", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ symbol, price }),
+      });
+      if (!r.ok) {
+        const j = (await r.json().catch(() => ({}))) as { error?: string };
+        throw new Error(j.error || `HTTP ${r.status}`);
+      }
+      setAlertInput("");
+      router.refresh();
+    } catch (e) {
+      setAlertErr(e instanceof Error ? e.message : "Could not add alert.");
+    } finally {
+      setAlertBusy(false);
+    }
+  }
+
+  async function removeAlert(id: number) {
+    setAlertBusy(true);
+    try {
+      await fetch("/api/alerts/price", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+      router.refresh();
+    } catch {
+      /* refresh re-reads truth regardless */
+    } finally {
+      setAlertBusy(false);
+    }
+  }
 
   // Filter the full daily series down to the selected range.
   const filtered = useMemo(() => {
@@ -353,8 +423,99 @@ export function PriceChart({
             fill="url(#priceFill)"
             isAnimationActive={false}
           />
+          {alerts.map((a) => {
+            const c = a.status === "triggered" ? ALERT_TRIGGERED : ALERT_ARMED;
+            return (
+              <ReferenceLine
+                key={a.id}
+                y={a.price}
+                stroke={c}
+                strokeDasharray="4 3"
+                strokeWidth={1.5}
+                ifOverflow="extendDomain"
+                label={{
+                  value: "A",
+                  position: "left",
+                  fill: c,
+                  fontSize: 11,
+                  fontWeight: 700,
+                }}
+              />
+            );
+          })}
         </AreaChart>
       </ResponsiveContainer>
+
+      {/* Price-alert controls — signed-in stock pages only. */}
+      {canSetAlerts && symbol && (
+        <div className="mt-3 pt-3 border-t hairline">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[11px] uppercase tracking-wide muted-text">
+              Price alert
+            </span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[13px] muted-text">{prefix}</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                value={alertInput}
+                onChange={(e) => setAlertInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !alertBusy) addAlert();
+                }}
+                placeholder="target price"
+                className="w-[110px] rounded-md border px-2 py-1 text-[13px] tabular-nums"
+                style={{ borderColor: "var(--color-border-default)", background: "var(--color-card)" }}
+              />
+              <button
+                type="button"
+                onClick={addAlert}
+                disabled={alertBusy}
+                className="rounded-md px-2.5 py-1 text-[12.5px] font-medium text-white transition-opacity disabled:opacity-60"
+                style={{ backgroundColor: "var(--color-accent-600)" }}
+              >
+                {alertBusy ? "…" : "Add"}
+              </button>
+            </div>
+            {alertErr && (
+              <span className="text-[12px]" style={{ color: "var(--color-score-poor)" }}>
+                {alertErr}
+              </span>
+            )}
+          </div>
+
+          {alerts.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {alerts.map((a) => {
+                const c = a.status === "triggered" ? ALERT_TRIGGERED : ALERT_ARMED;
+                return (
+                  <span
+                    key={a.id}
+                    className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[12px] font-medium"
+                    style={{ backgroundColor: `${c}1a`, color: c }}
+                  >
+                    <span aria-hidden className="font-bold">A</span>
+                    {prefix}
+                    {a.price.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+                    <span className="muted-text text-[10.5px]">
+                      {a.status === "triggered" ? "hit" : a.direction}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removeAlert(a.id)}
+                      disabled={alertBusy}
+                      aria-label="Remove alert"
+                      className="ml-0.5 leading-none hover:opacity-70"
+                    >
+                      ×
+                    </button>
+                  </span>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

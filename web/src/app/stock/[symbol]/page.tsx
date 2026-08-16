@@ -21,6 +21,8 @@ import { TrendSection, TrendCommentary } from "@/components/TrendSection";
 import { ScoreHistoryChart, type ScoreHistoryPoint } from "@/components/ScoreHistoryChart";
 import { loadPersistenceForSymbol } from "@/lib/persistence";
 import { getOIAlertForSymbol, type OIAlert } from "@/lib/oi-alerts";
+import { getSession } from "@/lib/auth";
+import { loadPriceAlertsForSymbol, type PriceAlert } from "@/lib/price-alerts";
 import { AlertTriangle } from "lucide-react";
 
 // Stock fundamentals + scores change weekly at most. 6h cache cuts Neon wakes
@@ -460,12 +462,18 @@ export default async function StockPage({
 }) {
   const { symbol: rawSymbol } = await params;
   const symbol = decodeSymbolParam(rawSymbol);
-  const [data, persistence] = await Promise.all([
+  const [data, persistence, session] = await Promise.all([
     loadStock(symbol),
     loadPersistenceForSymbol(symbol),
+    getSession(),
   ]);
   if (!data) return notFound();
   const { stock, scorecard, annual, quarterly, priceHistory, intradayTicks, shareholding, corporateActions, stockNews, announcements, scoreHistory, oiAlert, nextEvent, rankInIndustry, industryPeerCount } = data;
+
+  // Signed-in users can set price alerts on the chart; load their live lines.
+  const priceAlerts: PriceAlert[] = session
+    ? await loadPriceAlertsForSymbol(session.userId, stock.symbol).catch(() => [])
+    : [];
 
   // Some app.universe.company_name rows are polluted with the ".NS" Yahoo
   // suffix (e.g. "INFY.NS"). Strip it once here so every downstream render —
@@ -832,7 +840,7 @@ export default async function StockPage({
                   <AboutCard stock={stock} priceHistoryStart={priceHistory[0]?.date ?? null} />
                 )}
               </div>
-              <PriceChartCard symbol={stock.symbol} history={priceHistory} intraday={intradayTicks} currentPrice={stock.current_price} priceFetchedAt={stock.price_fetched_at} />
+              <PriceChartCard symbol={stock.symbol} history={priceHistory} intraday={intradayTicks} currentPrice={stock.current_price} priceFetchedAt={stock.price_fetched_at} priceAlerts={priceAlerts} canSetAlerts={session != null} />
             </div>
             {stockNews.length > 0 && (
               <div className="mt-6">
@@ -1340,14 +1348,22 @@ function StockNewsCard({
 /* ----------------------------- Price chart card -------------------- */
 
 function PriceChartCard({
-  symbol, history, intraday, currentPrice, priceFetchedAt,
-}: { symbol: string; history: PricePoint[]; intraday?: { ts: string; ltp: number }[]; currentPrice?: number | null; priceFetchedAt?: string | null }) {
+  symbol, history, intraday, currentPrice, priceFetchedAt, priceAlerts, canSetAlerts,
+}: {
+  symbol: string;
+  history: PricePoint[];
+  intraday?: { ts: string; ltp: number }[];
+  currentPrice?: number | null;
+  priceFetchedAt?: string | null;
+  priceAlerts?: { id: number; price: number; direction: "above" | "below"; status: "armed" | "triggered" }[];
+  canSetAlerts?: boolean;
+}) {
   // Header (identity line + headline return + CAGR) is rendered inside
   // PriceChart so it can react to the selected timeframe rather than being
   // pinned to the full history.
   return (
     <section className="card p-5">
-      <PriceChart symbol={symbol} data={history} intraday={intraday} currentPrice={currentPrice ?? undefined} priceFetchedAt={priceFetchedAt ?? undefined} />
+      <PriceChart symbol={symbol} data={history} intraday={intraday} currentPrice={currentPrice ?? undefined} priceFetchedAt={priceFetchedAt ?? undefined} priceAlerts={priceAlerts} canSetAlerts={canSetAlerts} />
     </section>
   );
 }
