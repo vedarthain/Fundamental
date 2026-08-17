@@ -1099,7 +1099,7 @@ function buildGroups(instruments: Instrument[], mode: GroupMode): Group[] {
 // cells FragmentRow renders (grouped-mode group rows also colSpan against it).
 type SortKey =
   | "symbol" | "broker" | "qty" | "avg" | "price" | "target"
-  | "value" | "day" | "pnl" | "qvm" | "rank" | "held" | "wt";
+  | "value" | "day" | "pnl" | "pnlPct" | "qvm" | "rank" | "held" | "wt";
 type SortDir = "asc" | "desc";
 
 const COLUMNS: {
@@ -1141,6 +1141,7 @@ function sortVal(ins: Instrument, key: SortKey): number | string | null {
     case "value": case "wt": return ins.currentValue ?? null;
     case "day": return ins.dayChangePct ?? null;
     case "pnl": return ins.pnl ?? null;
+    case "pnlPct": return ins.pnlPct ?? null;
     case "qvm": {
       const vals = [ins.q, ins.v, ins.m].filter((x): x is number => x != null);
       return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
@@ -1230,8 +1231,9 @@ function HoldingsTable({
   const onSort = (key: SortKey) =>
     setSort((cur) => {
       if (cur.key === key) return { key, dir: cur.dir === "asc" ? "desc" : "asc" };
-      const col = COLUMNS.find((c) => c.key === key)!;
-      return { key, dir: col.numeric ? "desc" : "asc" }; // numbers → high-first, name → A→Z
+      // pnlPct has no COLUMNS entry (it shares the P&L header) — treat it as numeric.
+      const col = COLUMNS.find((c) => c.key === key);
+      return { key, dir: !col || col.numeric ? "desc" : "asc" }; // numbers → high-first, name → A→Z
     });
 
   const groups = buildGroups(instruments, mode);
@@ -1291,6 +1293,42 @@ function HoldingsTable({
                 const sortable = mode === "flat";
                 const active = sortable && sort.key === c.key;
                 const alignCls = c.align === "left" ? "text-left" : c.align === "center" ? "text-center" : "text-right";
+                const arrow = (
+                  <span aria-hidden className="text-[8px] leading-none">{sort.dir === "asc" ? "▲" : "▼"}</span>
+                );
+
+                // P&L carries two measures — absolute rupees and return %.
+                // Give each its own sort target so you can rank by either.
+                if (c.key === "pnl") {
+                  const pctActive = sortable && sort.key === "pnlPct";
+                  return (
+                    <th
+                      key={c.key}
+                      className={`${alignCls} font-semibold ${c.cls} py-2`}
+                      title="Sort by absolute P&L (₹) or by return (%)"
+                      aria-sort={active || pctActive ? (sort.dir === "asc" ? "ascending" : "descending") : undefined}
+                    >
+                      <span className="inline-flex items-center gap-0.5 flex-row-reverse">
+                        <span
+                          className={`inline-flex items-center gap-0.5${sortable ? " cursor-pointer select-none hover:text-[var(--color-fg)]" : ""}`}
+                          onClick={sortable ? () => onSort("pnl") : undefined}
+                        >
+                          {active && arrow}
+                          P&amp;L
+                        </span>
+                        <span className="muted-text font-normal">/</span>
+                        <span
+                          className={`inline-flex items-center gap-0.5${sortable ? " cursor-pointer select-none hover:text-[var(--color-fg)]" : ""}${pctActive ? "" : " muted-text"}`}
+                          onClick={sortable ? () => onSort("pnlPct") : undefined}
+                        >
+                          {pctActive && arrow}
+                          %
+                        </span>
+                      </span>
+                    </th>
+                  );
+                }
+
                 return (
                   <th
                     key={c.key}
@@ -1301,7 +1339,7 @@ function HoldingsTable({
                   >
                     <span className={`inline-flex items-center gap-0.5${c.align === "right" ? " flex-row-reverse" : ""}`}>
                       {c.label}
-                      {active && <span aria-hidden className="text-[8px] leading-none">{sort.dir === "asc" ? "▲" : "▼"}</span>}
+                      {active && arrow}
                     </span>
                   </th>
                 );
