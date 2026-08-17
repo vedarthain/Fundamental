@@ -18,8 +18,7 @@ import { Star } from "lucide-react";
 import { displayCompanyName } from "@/lib/score";
 import type { GraphUniverse, GraphSector, GraphIndustry, GraphStock } from "@/lib/graphUniverse";
 import { WatchlistButton } from "@/components/WatchlistButton";
-import { StarButton } from "@/components/StarButton";
-import { useStarred } from "@/lib/starred";
+import { useWatchlist } from "@/lib/watchlist";
 import { WindowPicker } from "./WindowPicker";
 import type { WindowOpt } from "./sparkWindows";
 import { CandleChart, type ChartTool, type Drawing, type AlertLine } from "./CandleChart";
@@ -409,6 +408,16 @@ export default function GraphClient({
     () => new Set(portfolioSymbols.map((s) => s.toUpperCase())),
     [portfolioSymbols],
   );
+
+  // Watch list: the user's starred/tracked names (server-backed when signed in).
+  // Powers the "Watch only" filter that hides everything the user isn't watching
+  // — same scan-aid as the old Favourites filter, now backed by the one Watch
+  // list rather than a separate local star store.
+  const { symbols: watchSyms, hydrated: watchHydrated } = useWatchlist();
+  const watchSet = useMemo(
+    () => new Set(watchSyms.map((s) => s.toUpperCase())),
+    [watchSyms],
+  );
   const tradedSet = useMemo(
     () => new Set(tradedSymbols.map((s) => s.toUpperCase())),
     [tradedSymbols],
@@ -436,31 +445,23 @@ export default function GraphClient({
     return out;
   }, [universe.sectors, n500, n500Only]);
 
-  // Starred stocks: a local-only favourites list (see @/lib/starred). One job
-  // here — power the "Favourites only" filter that hides all non-starred names.
-  // Deliberately does NOT reorder the default view: starring a stock leaves it
-  // exactly where it is (the user asked not to be yanked to the top), so they
-  // can star in place and recall the set later via the Favourites toggle.
-  // Distinct from the watchlist heart: purely a Graph-tab scan aid, no server.
-  const { symbols: starredSyms, hydrated: starHydrated } = useStarred();
-  const starSet = useMemo(() => new Set(starredSyms), [starredSyms]);
-  const [favOnly, setFavOnly] = useState(false);
   // Portfolio "P" — auto-derived from the user's REAL holdings (portfolioSet
   // above), NOT a manual tag. The marker lights on its own for held names and
   // the count is the holding total; nothing to click. Powers "Portfolio only".
   const [pOnly, setPOnly] = useState(false);
+  const [watchOnly, setWatchOnly] = useState(false);
   // Industry Score (composite percentile) range filter. null = open on that end.
   // A stock survives when its composite_pct sits within [min, max].
   const [minComposite, setMinComposite] = useState<number | null>(null);
   const [maxComposite, setMaxComposite] = useState<number | null>(null);
 
-  // Apply favourites + score range → the tree/grid actually rendered. We drop
-  // non-matching stocks (and any industry/sector that empties out). Order is
-  // preserved from the source (composite-desc) — no starred-first shuffle.
+  // Apply watch + portfolio + score range → the tree/grid actually rendered. We
+  // drop non-matching stocks (and any industry/sector that empties out). Order
+  // is preserved from the source (composite-desc).
   const viewSectors = useMemo<GraphSector[]>(() => {
-    if (!favOnly && !pOnly && minComposite == null && maxComposite == null) return sectors;
+    if (!watchOnly && !pOnly && minComposite == null && maxComposite == null) return sectors;
     const keep = (st: GraphStock) => {
-      if (favOnly && !starSet.has(st.symbol)) return false;
+      if (watchOnly && !watchSet.has(st.symbol)) return false;
       if (pOnly && !portfolioSet.has(st.symbol)) return false;
       if (minComposite != null || maxComposite != null) {
         if (st.composite_pct == null) return false;
@@ -482,16 +483,16 @@ export default function GraphClient({
       if (inds.length) out.push({ ...s, count, industries: inds });
     }
     return out;
-  }, [sectors, starSet, favOnly, portfolioSet, pOnly, minComposite, maxComposite]);
+  }, [sectors, watchSet, watchOnly, portfolioSet, pOnly, minComposite, maxComposite]);
 
-  // How many of your favourites / holdings survive the CURRENT score range —
+  // How many of your watched / held names survive the CURRENT score range —
   // powers the "n / total" badge so you can see, without toggling, how many of
   // your names sit in strong (or weak) industries. Only computed when a score
   // filter is active; otherwise the badges show the plain total.
   const scoreActive = minComposite != null || maxComposite != null;
-  const { favInRange, portInRange } = useMemo(() => {
-    if (!scoreActive) return { favInRange: 0, portInRange: 0 };
-    const favSeen = new Set<string>();
+  const { watchInRange, portInRange } = useMemo(() => {
+    if (!scoreActive) return { watchInRange: 0, portInRange: 0 };
+    const watchSeen = new Set<string>();
     const portSeen = new Set<string>();
     for (const s of sectors) {
       for (const ind of s.industries) {
@@ -499,13 +500,13 @@ export default function GraphClient({
           if (st.composite_pct == null) continue;
           if (minComposite != null && st.composite_pct < minComposite) continue;
           if (maxComposite != null && st.composite_pct > maxComposite) continue;
-          if (starSet.has(st.symbol)) favSeen.add(st.symbol);
+          if (watchSet.has(st.symbol)) watchSeen.add(st.symbol);
           if (portfolioSet.has(st.symbol)) portSeen.add(st.symbol);
         }
       }
     }
-    return { favInRange: favSeen.size, portInRange: portSeen.size };
-  }, [scoreActive, sectors, starSet, portfolioSet, minComposite, maxComposite]);
+    return { watchInRange: watchSeen.size, portInRange: portSeen.size };
+  }, [scoreActive, sectors, watchSet, portfolioSet, minComposite, maxComposite]);
 
   // Flat lookup: industry_id → { industry, sectorName }.
   const industryById = useMemo(() => {
@@ -908,7 +909,7 @@ export default function GraphClient({
   const indPageIdx = curPage ? Math.floor((curPage.chunkStart - 1) / perPage) + 1 : 0;
 
   // Global progress across the WHOLE view (all sectors), in STOCKS — so with the
-  // Portfolio/Favourites filter on you can see "67 / 88 seen" without opening the
+  // Portfolio filter on you can see "67 / 88 seen" without opening the
   // tree. Sectors before the current one count fully; the current sector counts
   // the stocks on pages up to and including the one you're on.
   const globalProgress = useMemo(() => {
@@ -936,16 +937,16 @@ export default function GraphClient({
   // on, show paging progress "seen / total" (e.g. P · 67/88); else if a score
   // filter is active, show how many pass it "in-range / total"; else the plain
   // total. The "/" forms get a slightly smaller font so 4 digits fit.
-  const favCount = favOnly
-    ? `${globalProgress.seen} / ${globalProgress.total}`
-    : scoreActive
-      ? `${favInRange} / ${starSet.size}`
-      : `${starSet.size}`;
   const portCount = pOnly
     ? `${globalProgress.seen} / ${globalProgress.total}`
     : scoreActive
       ? `${portInRange} / ${portfolioSet.size}`
       : `${portfolioSet.size}`;
+  const watchCount = watchOnly
+    ? `${globalProgress.seen} / ${globalProgress.total}`
+    : scoreActive
+      ? `${watchInRange} / ${watchSet.size}`
+      : `${watchSet.size}`;
 
   return (
     <div className="flex flex-col">
@@ -967,11 +968,11 @@ export default function GraphClient({
           <div className="flex shrink-0 items-center gap-3 ml-auto">
             <button
               type="button"
-              onClick={() => { setFavOnly((v) => !v); setPage(0); }}
-              disabled={!favOnly && starSet.size === 0}
+              onClick={() => { setWatchOnly((v) => !v); setPage(0); }}
+              disabled={!watchOnly && watchSet.size === 0}
               className="inline-flex items-center gap-1.5 rounded-md border hairline px-2.5 py-1.5 text-[12px] font-medium transition-colors disabled:opacity-40 hover:bg-[var(--color-paper)]"
               style={
-                favOnly
+                watchOnly
                   ? {
                       borderColor: "#e8a838",
                       backgroundColor: "color-mix(in srgb, #e8a838 12%, transparent)",
@@ -979,21 +980,21 @@ export default function GraphClient({
                     }
                   : undefined
               }
-              aria-pressed={favOnly}
+              aria-pressed={watchOnly}
               title={
-                starSet.size === 0
+                watchSet.size === 0
                   ? "Star some stocks first"
-                  : favOnly
-                    ? "Showing favourites only — click for all"
-                    : "Show favourites only"
+                  : watchOnly
+                    ? "Showing watched only — click for all"
+                    : "Show watched only"
               }
             >
-              <Star size={13} fill={favOnly ? "#e8a838" : "none"} strokeWidth={2} />
+              <Star size={13} fill={watchOnly ? "#e8a838" : "none"} strokeWidth={2} />
               <span>
-                Fav
-                {starHydrated && starSet.size > 0 ? (
-                  <span className="tabular-nums" style={favOnly || scoreActive ? { fontSize: "0.9em" } : undefined}>
-                    {` · ${favCount}`}
+                Watch
+                {watchHydrated && watchSet.size > 0 ? (
+                  <span className="tabular-nums" style={watchOnly || scoreActive ? { fontSize: "0.9em" } : undefined}>
+                    {` · ${watchCount}`}
                   </span>
                 ) : ""}
               </span>
@@ -1276,7 +1277,7 @@ export default function GraphClient({
                                   i < curPage.chunkStart - 1 + pageStocks.length;
                                 return (
                                   <li key={st.symbol} className="flex items-center gap-0.5">
-                                    <StarButton symbol={st.symbol} variant="icon" className="!w-6 !h-6 shrink-0" />
+                                    <WatchlistButton symbol={st.symbol} variant="icon" className="!w-6 !h-6 shrink-0" />
                                     <button
                                       type="button"
                                       onClick={() => searching ? jumpToStockSymbol(ind.id, st.symbol) : jumpToStock(ind.id, i)}
@@ -1320,7 +1321,6 @@ export default function GraphClient({
             return (
               <div key={st.symbol} className="flex flex-col rounded-xl border hairline overflow-hidden">
                 <div className="flex items-start gap-2 border-b hairline px-3 py-2">
-                  <StarButton symbol={st.symbol} variant="icon" className="-ml-1 shrink-0" />
                   <WatchlistButton symbol={st.symbol} variant="icon" className="-ml-1 shrink-0" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
@@ -1514,7 +1514,6 @@ export default function GraphClient({
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center gap-3 border-b hairline px-4 py-3">
-                <StarButton symbol={focus.symbol} variant="icon" className="shrink-0" />
                 <WatchlistButton symbol={focus.symbol} variant="icon" className="shrink-0" />
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">

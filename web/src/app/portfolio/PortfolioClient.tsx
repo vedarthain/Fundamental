@@ -74,7 +74,7 @@ type ImportResult = {
   error?: string;
 };
 
-type PortfolioTab = "overview" | "booked";
+type PortfolioTab = "overview" | "holdings" | "booked";
 
 export function PortfolioClient({
   portfolio,
@@ -140,6 +140,7 @@ export function PortfolioClient({
       <div className="flex items-center gap-1 border-b hairline mb-5">
         {([
           { v: "overview", label: "Overview" },
+          { v: "holdings", label: "Holdings" },
           { v: "booked", label: "Booked P&L" },
         ] as const).map((o) => (
           <button
@@ -150,6 +151,11 @@ export function PortfolioClient({
             style={{ color: tab === o.v ? "var(--color-accent-700)" : "var(--color-muted)" }}
           >
             {o.label}
+            {o.v === "holdings" && portfolio.hasHoldings && (
+              <span className="ml-1.5 text-[11px] tabular-nums muted-text">
+                {portfolio.instruments.length}
+              </span>
+            )}
             {o.v === "booked" && realized.rows.length > 0 && (
               <span className="ml-1.5 text-[11px] tabular-nums" style={{ color: up(realized.totals.realized) ? GREEN : RED }}>
                 {signed(realized.totals.realized)}
@@ -164,6 +170,18 @@ export function PortfolioClient({
 
       {tab === "booked" ? (
         <BookedPnl realized={realized} />
+      ) : tab === "holdings" ? (
+        !portfolio.hasHoldings ? (
+          <div className="card p-8 text-center mt-6">
+            <h2 className="font-display text-[20px] mb-2">No holdings yet</h2>
+            <p className="muted-text text-[13px] max-w-md mx-auto">
+              Import a holdings export on the Overview tab to see every position valued,
+              scored and sortable here.
+            </p>
+          </div>
+        ) : (
+          <HoldingsTable instruments={portfolio.instruments} totalValue={t.currentValue} />
+        )
       ) : (
         <>
           <ImportPanel
@@ -197,7 +215,6 @@ export function PortfolioClient({
                 <Donut title="By broker" data={portfolio.brokerAlloc} total={t.currentValue} />
                 <Donut title="By sector" data={portfolio.sectorAlloc} total={t.currentValue} />
               </div>
-              <HoldingsTable instruments={portfolio.instruments} totalValue={t.currentValue} />
             </>
           )}
         </>

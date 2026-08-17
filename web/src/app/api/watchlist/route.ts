@@ -28,7 +28,7 @@ import { loadQuotes, loadCloseOnAdd } from "@/lib/watchlistQuote";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MAX_SYMBOLS = 100;
+const MAX_SYMBOLS = 1000;
 const NOTE_MAX = 500;
 const SYMBOL_RE = /^[A-Z0-9&-]+$/;
 

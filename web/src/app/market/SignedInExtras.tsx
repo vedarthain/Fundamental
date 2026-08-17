@@ -126,7 +126,7 @@ function WatchlistTodayCard({ rows }: { rows: WatchlistMover[] }) {
         <div className="px-4 py-6 text-center">
           <div className="text-[13px] mb-1.5">No saved symbols yet</div>
           <div className="muted-text text-[11.5px] mb-3">
-            Hit the heart on any /stock page to start tracking it here.
+            Hit the star on any /stock page to start tracking it here.
           </div>
           <Link
             href="/sectors"

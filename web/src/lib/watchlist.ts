@@ -24,7 +24,7 @@
 import { useCallback, useSyncExternalStore } from "react";
 
 const STORAGE_KEY = "equityroots:watchlist:v1";
-const MAX_SYMBOLS = 100;
+const MAX_SYMBOLS = 1000;
 
 // ── localStorage helpers ───────────────────────────────────────────────
 
@@ -123,6 +123,43 @@ export async function mergeLocalWatchlistIntoServer(): Promise<void> {
     clearLocal();
   } catch {
     // Leave the local copy in place so the merge can retry next sign-in.
+  }
+}
+
+/**
+ * One-time carry-over from the retired Scanner "Favourites" store. Stars used
+ * to live under `equityroots:starred:v1` (see the deleted @/lib/starred). Now
+ * that starring == watching, fold any leftover local stars into the watchlist
+ * and drop the old key. Server-side favourites are migrated by db migration
+ * 0054; this only rescues symbols a signed-out browser had starred locally.
+ * Safe to call repeatedly — a no-op once the old key is gone.
+ */
+const LEGACY_STARRED_KEY = "equityroots:starred:v1";
+export async function mergeLegacyStarredIntoWatchlist(): Promise<void> {
+  if (typeof window === "undefined") return;
+  let legacy: string[] = [];
+  try {
+    const raw = window.localStorage.getItem(LEGACY_STARRED_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) legacy = parsed.filter((s): s is string => typeof s === "string");
+  } catch {
+    return;
+  }
+  if (legacy.length === 0) {
+    try { window.localStorage.removeItem(LEGACY_STARRED_KEY); } catch { /* ignore */ }
+    return;
+  }
+  try {
+    await fetch("/api/watchlist", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ symbols: legacy }),
+    });
+    window.localStorage.removeItem(LEGACY_STARRED_KEY);
+  } catch {
+    // Leave the legacy key in place so the carry-over retries next sign-in.
   }
 }
 

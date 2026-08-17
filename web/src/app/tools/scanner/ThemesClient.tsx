@@ -22,8 +22,7 @@ import type { Theme, ThemeConstituent } from "@/lib/themes";
 import type { Candle } from "@/lib/candles";
 import { displayCompanyName } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
-import { StarButton } from "@/components/StarButton";
-import { useStarred } from "@/lib/starred";
+import { useWatchlist } from "@/lib/watchlist";
 import { WindowPicker } from "./WindowPicker";
 import type { WindowOpt } from "./sparkWindows";
 import { CandleChart } from "./CandleChart";
@@ -135,11 +134,14 @@ export default function ThemesClient({
   const [days, setDays] = useState<number>(365);
   const [treeOpen, setTreeOpen] = useState(true);
   const [focus, setFocus] = useState<FocusTarget | null>(null);
-  const [favOnly, setFavOnly] = useState(false);
   const [pOnly, setPOnly] = useState(false);
+  const [watchOnly, setWatchOnly] = useState(false);
 
-  const { symbols: starredSyms, hydrated: starHydrated } = useStarred();
-  const starSet = useMemo(() => new Set(starredSyms), [starredSyms]);
+  const { symbols: watchSyms, hydrated: watchHydrated } = useWatchlist();
+  const watchSet = useMemo(
+    () => new Set(watchSyms.map((s) => s.toUpperCase())),
+    [watchSyms],
+  );
   const portfolioSet = useMemo(
     () => new Set(portfolioSymbols.map((s) => s.toUpperCase())),
     [portfolioSymbols],
@@ -155,17 +157,17 @@ export default function ThemesClient({
     [themes, selectedCode],
   );
 
-  // Constituents in scope: NIFTY 500 (global toggle), Favourites, and Portfolio
+  // Constituents in scope: NIFTY 500 (global toggle), Watch, and Portfolio
   // filters all narrow the grid — same semantics as the Graph tab.
   const constituents = useMemo<ThemeConstituent[]>(() => {
     if (!theme) return [];
     return theme.constituents.filter((c) => {
       if (n500Only && !n500.has(c.symbol)) return false;
-      if (favOnly && !starSet.has(c.symbol)) return false;
+      if (watchOnly && !watchSet.has(c.symbol)) return false;
       if (pOnly && !portfolioSet.has(c.symbol)) return false;
       return true;
     });
-  }, [theme, n500Only, n500, favOnly, starSet, pOnly, portfolioSet]);
+  }, [theme, n500Only, n500, watchOnly, watchSet, pOnly, portfolioSet]);
 
   const pageCount = Math.max(1, Math.ceil(constituents.length / CONS_PER_PAGE));
   const safePage = Math.min(Math.max(0, page), pageCount - 1);
@@ -250,19 +252,19 @@ export default function ThemesClient({
         <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={() => { setFavOnly((v) => !v); setPage(0); }}
-            disabled={!favOnly && starSet.size === 0}
+            onClick={() => { setWatchOnly((v) => !v); setPage(0); }}
+            disabled={!watchOnly && watchSet.size === 0}
             className="inline-flex items-center gap-1.5 rounded-md border hairline px-2.5 py-1.5 text-[12px] font-medium transition-colors disabled:opacity-40 hover:bg-[var(--color-paper)]"
             style={
-              favOnly
+              watchOnly
                 ? { borderColor: "#e8a838", backgroundColor: "color-mix(in srgb, #e8a838 12%, transparent)", color: "#e8a838" }
                 : undefined
             }
-            aria-pressed={favOnly}
-            title={starSet.size === 0 ? "Star some stocks first" : favOnly ? "Showing favourites only — click for all" : "Show favourites only"}
+            aria-pressed={watchOnly}
+            title={watchSet.size === 0 ? "Star some stocks first" : watchOnly ? "Showing watched only — click for all" : "Show watched only"}
           >
-            <Star size={13} fill={favOnly ? "#e8a838" : "none"} strokeWidth={2} />
-            <span>Favourites{starHydrated && starSet.size > 0 ? ` · ${starSet.size}` : ""}</span>
+            <Star size={13} fill={watchOnly ? "#e8a838" : "none"} strokeWidth={2} />
+            <span>Watch{watchHydrated && watchSet.size > 0 ? ` · ${watchSet.size}` : ""}</span>
           </button>
           <button
             type="button"
@@ -398,7 +400,7 @@ export default function ThemesClient({
                           i < safePage * CONS_PER_PAGE + CONS_PER_PAGE;
                         return (
                           <li key={c.symbol} className="flex items-center gap-0.5">
-                            <StarButton symbol={c.symbol} variant="icon" className="!w-6 !h-6 shrink-0" />
+                            <WatchlistButton symbol={c.symbol} variant="icon" className="!w-6 !h-6 shrink-0" />
                             <button
                               type="button"
                               onClick={() => selectStock(t, c.symbol)}
@@ -486,10 +488,10 @@ export default function ThemesClient({
               <div className="text-center px-6 max-w-[420px]">
                 <div className="text-[14px] font-semibold mb-1">No constituents to show</div>
                 <div className="text-[12.5px] muted-text leading-[1.5]">
-                  {pOnly
-                    ? "None of this index's constituents are in your portfolio — showing the index only. Turn off the Portfolio filter to see all names."
-                    : favOnly
-                      ? "You haven't starred any of this index's constituents. Turn off the Favourites filter to see all names."
+                  {watchOnly
+                    ? "You're not watching any of this index's constituents. Turn off the Watch filter to see all names."
+                    : pOnly
+                      ? "None of this index's constituents are in your portfolio — showing the index only. Turn off the Portfolio filter to see all names."
                       : n500Only
                         ? "No constituents of this index are in the NIFTY 500 scope. Switch to the full universe to see all names."
                         : "This index has no constituents on record yet."}
@@ -509,7 +511,6 @@ export default function ThemesClient({
             return (
               <div key={st.symbol} className="flex flex-col rounded-xl border hairline overflow-hidden">
                 <div className="flex items-center gap-2 border-b hairline px-3 py-2">
-                  <StarButton symbol={st.symbol} variant="icon" className="-ml-1 shrink-0" />
                   <WatchlistButton symbol={st.symbol} variant="icon" className="-ml-1 shrink-0" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
@@ -631,7 +632,6 @@ export default function ThemesClient({
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center gap-3 border-b hairline px-4 py-3">
-                {!isIndex && <StarButton symbol={focus.stock.symbol} variant="icon" className="shrink-0" />}
                 {!isIndex && <WatchlistButton symbol={focus.stock.symbol} variant="icon" className="shrink-0" />}
                 {isIndex && (
                   <span

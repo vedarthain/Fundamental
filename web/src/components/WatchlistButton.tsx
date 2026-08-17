@@ -1,18 +1,22 @@
 "use client";
 
 /**
- * Watchlist toggle for a single stock. Renders an outline heart when the
- * stock isn't watched, a filled heart when it is. Click toggles state.
+ * Watch toggle for a single stock. Renders an outline star when the stock
+ * isn't watched, a filled amber star when it is. Click toggles state.
+ *
+ * "Watch" is the single tracking concept — starring a stock adds it to the
+ * watchlist (server-backed when signed in). This replaces the old separate
+ * Scanner "Favourites" star; there is now one star, one list.
  *
  * Two variants:
  *   - default: pill button with label ("Watch" / "Watching")
- *   - icon: just the heart icon, for compact contexts (stock-row tables)
- *
- * Zero server impact: state lives entirely in localStorage via useWatchlist.
+ *   - icon: just the star icon, for compact contexts (stock-row tables)
  */
 
-import { Heart } from "lucide-react";
+import { Star } from "lucide-react";
 import { useWatchlist } from "@/lib/watchlist";
+
+const STAR_COLOR = "#e8a838"; // amber — the Watch star
 
 export function WatchlistButton({
   symbol,
@@ -23,7 +27,7 @@ export function WatchlistButton({
   variant?: "default" | "icon";
   className?: string;
 }) {
-  const { isWatched, toggle, hydrated, isFull } = useWatchlist();
+  const { isWatched, toggle, hydrated, isFull, maxSize } = useWatchlist();
   const watched = hydrated && isWatched(symbol);
 
   // While hydrating (server render + first paint), render in a neutral
@@ -34,7 +38,7 @@ export function WatchlistButton({
     e.stopPropagation();
     if (!watched && isFull) {
       // Soft cap reached. Hint to the user without blocking.
-      alert(`Watchlist is full (100 stocks max). Remove one before adding ${symbol}.`);
+      alert(`Watch list is full (${maxSize} stocks max). Remove one before adding ${symbol}.`);
       return;
     }
     toggle(symbol);
@@ -45,14 +49,14 @@ export function WatchlistButton({
       <button
         type="button"
         onClick={onClick}
-        aria-label={watched ? `Remove ${symbol} from watchlist` : `Add ${symbol} to watchlist`}
-        title={watched ? "Watching — click to remove" : "Add to watchlist"}
+        aria-label={watched ? `Stop watching ${symbol}` : `Watch ${symbol}`}
+        title={watched ? "Watching — click to remove" : "Watch this stock"}
         className={`inline-flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-[var(--color-paper)] ${className}`}
       >
-        <Heart
+        <Star
           size={15}
-          fill={watched ? "var(--color-delta-down)" : "none"}
-          stroke={watched ? "var(--color-delta-down)" : "var(--color-muted)"}
+          fill={watched ? STAR_COLOR : "none"}
+          stroke={watched ? STAR_COLOR : "var(--color-muted)"}
           strokeWidth={1.75}
         />
       </button>
@@ -63,14 +67,14 @@ export function WatchlistButton({
     <button
       type="button"
       onClick={onClick}
-      aria-label={watched ? `Remove ${symbol} from watchlist` : `Add ${symbol} to watchlist`}
+      aria-label={watched ? `Stop watching ${symbol}` : `Watch ${symbol}`}
       className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border transition-colors text-[12px] font-medium ${className}`}
       style={
         watched
           ? {
-              borderColor: "var(--color-delta-down)",
-              backgroundColor: "color-mix(in srgb, var(--color-delta-down) 8%, transparent)",
-              color: "var(--color-delta-down)",
+              borderColor: STAR_COLOR,
+              backgroundColor: `color-mix(in srgb, ${STAR_COLOR} 12%, transparent)`,
+              color: "var(--color-ink)",
             }
           : {
               borderColor: "var(--color-border-default)",
@@ -79,9 +83,10 @@ export function WatchlistButton({
             }
       }
     >
-      <Heart
+      <Star
         size={13}
-        fill={watched ? "var(--color-delta-down)" : "none"}
+        fill={watched ? STAR_COLOR : "none"}
+        stroke={watched ? STAR_COLOR : "currentColor"}
         strokeWidth={2}
       />
       <span>{watched ? "Watching" : "Watch"}</span>

@@ -161,6 +161,8 @@ export function WatchlistClient() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   // Left-rail search — filters the tree by sector / industry / symbol / company.
   const [query, setQuery] = useState("");
+  // Left rail can be collapsed to hand the whole width to the detail panel.
+  const [railOpen, setRailOpen] = useState(true);
   // Snapshot date from the API response so we can tell the user when the
   // prices/scores were computed.  Same value /sectors and the top ribbon
   // show — keeps the "as-of" date consistent across surfaces.
@@ -306,17 +308,49 @@ export function WatchlistClient() {
         {loading && <span>· refreshing…</span>}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-4 items-start">
+      <div
+        className={`grid grid-cols-1 gap-4 items-start ${
+          railOpen ? "lg:grid-cols-[300px_1fr]" : "lg:grid-cols-[36px_1fr]"
+        }`}
+      >
         {/* LEFT rail — sector → industry tree with search, matching the
-            Graph-tab industries browser. */}
+            Graph-tab industries browser. Collapsible to free up width. */}
+        {!railOpen ? (
+          <button
+            type="button"
+            onClick={() => setRailOpen(true)}
+            className="card hidden lg:flex flex-col items-center gap-2 py-3 lg:sticky lg:top-4 transition-colors hover:bg-[var(--color-paper)]"
+            title="Show sectors & industries"
+            aria-label="Show sectors and industries panel"
+          >
+            <span className="text-[13px] leading-none">☰</span>
+            <span
+              className="text-[10px] font-semibold uppercase tracking-wide muted-text"
+              style={{ writingMode: "vertical-rl" }}
+            >
+              Sectors &amp; industries
+            </span>
+          </button>
+        ) : (
         <div className="card overflow-hidden lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] flex flex-col">
-          <div className="px-3 py-2.5 border-b hairline flex items-center justify-between shrink-0">
+          <div className="px-3 py-2.5 border-b hairline flex items-center justify-between gap-2 shrink-0">
             <span className="text-[11px] font-semibold uppercase tracking-wide muted-text">
               Sectors &amp; industries
             </span>
-            <span className="text-[10.5px] muted-text tabular-nums">
-              {tree.length} · {tree.reduce((n, s) => n + s.industries.length, 0)}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-[10.5px] muted-text tabular-nums">
+                {tree.length} · {tree.reduce((n, s) => n + s.industries.length, 0)}
+              </span>
+              <button
+                type="button"
+                onClick={() => setRailOpen(false)}
+                className="hidden lg:inline-flex items-center justify-center w-5 h-5 rounded muted-text hover:text-[var(--color-ink)] hover:bg-[var(--color-paper)] transition-colors"
+                title="Collapse panel"
+                aria-label="Collapse sectors and industries panel"
+              >
+                ‹
+              </button>
+            </div>
           </div>
           <div className="p-2 border-b hairline shrink-0">
             <div className="relative">
@@ -395,6 +429,7 @@ export function WatchlistClient() {
             )}
           </div>
         </div>
+        )}
 
         {/* RIGHT panel — full detail for the selected stock. */}
         <div className="card overflow-hidden min-h-[240px]">
@@ -646,7 +681,7 @@ function WatchRow({
   return (
     <div className="px-4 md:px-5 py-3 hover:bg-[var(--color-paper)]/60 transition-colors">
       <div className="flex items-start gap-3">
-        <Link href={`/stock/${row.symbol}`} className="flex-1 min-w-0 block">
+        <Link href={`/stock/${row.symbol}`} className="min-w-0 block shrink-0">
           <div className="flex items-baseline gap-2 flex-wrap">
             <span className="font-medium text-[14px] tabular-nums">{row.symbol}</span>
             <span className="muted-text text-[12px] truncate">{row.company_name}</span>
@@ -656,6 +691,18 @@ function WatchRow({
             {row.maturity_tier && <TierBadge tier={row.maturity_tier} />}
           </div>
         </Link>
+
+        {/* Scores + returns — sit right next to the name. */}
+        <div className="flex-1 min-w-0 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[10.5px] tabular-nums pt-0.5">
+          <ReturnPill label="Q" value={row.quality_pct}   pct />
+          <ReturnPill label="V" value={row.valuation_pct} pct />
+          <ReturnPill label="M" value={row.momentum_pct}  pct />
+          <span className="muted-text">·</span>
+          <ReturnPill label="1D" value={row.ret_1d == null ? null : row.ret_1d / 100} signed />
+          <ReturnPill label="1W" value={row.ret_1w} signed />
+          <ReturnPill label="1M" value={row.ret_1m} signed />
+          <ReturnPill label="1Y" value={row.ret_1y} signed />
+        </div>
 
         {/* Composite score badge */}
         {row.composite_pct != null && (
@@ -731,23 +778,9 @@ function WatchRow({
         />
       </div>
 
-      {/* Scores + longer-horizon returns (weekly panel). */}
-      <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-[10.5px] tabular-nums">
-        <ReturnPill label="Q" value={row.quality_pct}   pct />
-        <ReturnPill label="V" value={row.valuation_pct} pct />
-        <ReturnPill label="M" value={row.momentum_pct}  pct />
-        <span className="muted-text">·</span>
-        <ReturnPill label="1D" value={row.ret_1d == null ? null : row.ret_1d / 100} signed />
-        <ReturnPill label="1W" value={row.ret_1w} signed />
-        <ReturnPill label="1M" value={row.ret_1m} signed />
-        <ReturnPill label="1Y" value={row.ret_1y} signed />
-      </div>
-
-      {/* Price chart (split-safe daily candles). */}
-      <ChartBlock symbol={row.symbol} />
-
-      {/* Corporate actions + quarterly-result snapshot. */}
-      <ExtrasBlock symbol={row.symbol} />
+      {/* Price chart + latest results side by side, then quarterly-trend
+          graph beside dividends, then two-column news. */}
+      <DetailExtras symbol={row.symbol} />
 
       {/* Editable note — signed-in only (it lives on the server row). */}
       {signedIn ? (
@@ -894,8 +927,9 @@ function ChartBlock({ symbol }: { symbol: string }) {
 
 // ── Corporate actions + quarterly results ───────────────────────────────────
 
-/** Lazily loads dividends / bonuses / quarterly results for the open stock. */
-function ExtrasBlock({ symbol }: { symbol: string }) {
+/** Lazily loads dividends / bonuses / quarterly results / news for a stock,
+ *  deduped via the module-level cache. */
+function useExtras(symbol: string): { data: Extras | null; err: boolean } {
   const [data, setData] = useState<Extras | null>(null);
   const [err, setErr] = useState(false);
 
@@ -931,190 +965,253 @@ function ExtrasBlock({ symbol }: { symbol: string }) {
     };
   }, [symbol]);
 
-  if (err) return null;
-  if (data === null) {
-    return <div className="mt-3 text-[11px] muted-text">Loading corporate actions…</div>;
-  }
+  return { data, err };
+}
 
-  const { dividends, bonuses, quarterly, news } = data;
+/** Detail body below the score/return strips. Layout:
+ *   Row A — price chart (squeezed) | fundamentals column (Sales / Net profit /
+ *           OPM / NPM / Dividend, each a single row with its own sparkline)
+ *   Row B — recent news in two columns
+ */
+function DetailExtras({ symbol }: { symbol: string }) {
+  const { data, err } = useExtras(symbol);
+  const quarterly = data?.quarterly ?? [];
+  const dividends = data?.dividends ?? [];
+  const news = data?.news ?? [];
+  const loadingExtras = data === null && !err;
   const nothing =
-    dividends.length === 0 &&
-    bonuses.length === 0 &&
+    data !== null &&
     quarterly.length === 0 &&
+    dividends.length === 0 &&
     news.length === 0;
-  if (nothing) {
-    return (
-      <div className="mt-3 text-[11px] muted-text italic">
-        No corporate actions, results, or news on record for {symbol}.
-      </div>
-    );
-  }
-
-  const latest = quarterly[0];
 
   return (
-    <div className="mt-4 space-y-4">
-      {/* Latest-result highlight strip — the headline numbers pulled out of
-          the table so the current quarter reads at a glance. */}
-      {latest && (
-        <div>
-          <div className="text-[9.5px] uppercase tracking-wide muted-text mb-1.5">
-            Latest results · {fmtQuarter(latest.period_end)}
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            <ResultStat label="Sales" value={`₹${fmtCr(latest.sales)} Cr`} yoy={latest.sales_yoy} />
-            <ResultStat label="Net profit" value={`₹${fmtCr(latest.net_profit)} Cr`} yoy={latest.np_yoy} />
-            <ResultStat label="OPM" value={latest.opm_pct == null ? "—" : `${latest.opm_pct.toFixed(1)}%`} />
-            <ResultStat label="NPM" value={latest.npm_pct == null ? "—" : `${latest.npm_pct.toFixed(1)}%`} />
-          </div>
-        </div>
-      )}
-
-      {/* Two-column body on wide screens: results table beside recent news. */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Quarterly result trend */}
-        {quarterly.length > 0 && (
-          <div>
-            <div className="text-[9.5px] uppercase tracking-wide muted-text mb-1">
-              Quarterly trend (₹ Cr)
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-[11px] tabular-nums">
-                <thead>
-                  <tr className="muted-text text-left">
-                    <th className="font-medium py-1 pr-2">Qtr</th>
-                    <th className="font-medium py-1 px-2 text-right">Sales</th>
-                    <th className="font-medium py-1 px-2 text-right">Net profit</th>
-                    <th className="font-medium py-1 pl-2 text-right">OPM</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {quarterly.map((q) => (
-                    <tr key={q.period_end} className="border-t hairline">
-                      <td className="py-1 pr-2">{fmtQuarter(q.period_end)}</td>
-                      <td className="py-1 px-2 text-right">{fmtCr(q.sales)}</td>
-                      <td className="py-1 px-2 text-right">{fmtCr(q.net_profit)}</td>
-                      <td className="py-1 pl-2 text-right">
-                        {q.opm_pct == null ? "—" : `${q.opm_pct.toFixed(1)}%`}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* Recent news */}
-        {news.length > 0 && (
-          <div>
-            <div className="text-[9.5px] uppercase tracking-wide muted-text mb-1">
-              Recent news
-            </div>
-            <ul className="space-y-1.5">
-              {news.map((n, i) => (
-                <li key={`${n.published_at}-${i}`}>
-                  <a
-                    href={n.url ?? "#"}
-                    target="_blank"
-                    rel="noopener noreferrer nofollow"
-                    className="block group"
-                    title={n.title}
-                  >
-                    <div className="text-[11.5px] leading-snug group-hover:underline line-clamp-2">
-                      {n.title}
-                    </div>
-                    <div className="text-[9.5px] muted-text tabular-nums mt-0.5 flex items-center gap-1.5">
-                      {n.source && <span>{n.source}</span>}
-                      {n.source && <span aria-hidden>·</span>}
-                      <span>{fmtNewsDate(n.published_at)}</span>
-                    </div>
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+    <div className="mt-3 space-y-4">
+      {/* Row A: price chart squeezed to fit; fundamentals stacked on the right. */}
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_200px] gap-4 items-start">
+        <ChartBlock symbol={symbol} />
+        <FundamentalsColumn
+          quarterly={quarterly}
+          dividends={dividends}
+          loading={loadingExtras}
+        />
       </div>
 
-      {/* Corporate actions — dividends and bonus/rights on one line each. */}
-      {(dividends.length > 0 || bonuses.length > 0) && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {dividends.length > 0 && (
-            <div>
-              <div className="text-[9.5px] uppercase tracking-wide muted-text mb-1">Dividends</div>
-              <div className="flex flex-wrap gap-1.5">
-                {dividends.map((d, i) => (
-                  <span
-                    key={`${d.ex_date}-${i}`}
-                    className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border hairline text-[11px] tabular-nums"
-                    title={d.purpose ?? undefined}
-                  >
-                    <span className="muted-text">{fmtShortDate(d.ex_date)}</span>
-                    <span className="font-medium">
-                      {d.amount != null ? `₹${d.amount}` : (d.purpose ?? "—")}
-                    </span>
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
+      {/* Row B: recent news, two columns. */}
+      {news.length > 0 && <NewsGrid news={news} />}
 
-          {bonuses.length > 0 && (
-            <div>
-              <div className="text-[9.5px] uppercase tracking-wide muted-text mb-1">
-                Bonus &amp; rights
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {bonuses.map((b, i) => (
-                  <span
-                    key={`${b.ex_date}-${i}`}
-                    className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border hairline text-[11px] tabular-nums"
-                    title={b.purpose ?? undefined}
-                  >
-                    <span className="muted-text">{fmtShortDate(b.ex_date)}</span>
-                    <span
-                      className="font-medium uppercase text-[9.5px] px-1 rounded"
-                      style={{ backgroundColor: "var(--color-paper)" }}
-                    >
-                      {b.action_type}
-                    </span>
-                    {b.purpose && <span className="truncate max-w-[160px]">{b.purpose}</span>}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
+      {nothing && (
+        <div className="text-[11px] muted-text italic">
+          No corporate actions, results, or news on record for {symbol}.
         </div>
       )}
     </div>
   );
 }
 
-/** One headline stat in the latest-results strip, with an optional YoY badge. */
-function ResultStat({
+/** Right-hand fundamentals stack: one row per metric (Sales, Net profit, OPM,
+ *  NPM, Dividend), each showing the latest value, YoY where we have it, and a
+ *  small sparkline of the metric's history. Quarterly series run latest-first
+ *  from the API, so we reverse to chronological for the sparkline. */
+function FundamentalsColumn({
+  quarterly,
+  dividends,
+  loading,
+}: {
+  quarterly: Quarter[];
+  dividends: Dividend[];
+  loading: boolean;
+}) {
+  const latest = quarterly[0];
+  const chrono = [...quarterly].reverse(); // oldest → newest for the sparkline
+  const sales = chrono.map((q) => q.sales);
+  const np = chrono.map((q) => q.net_profit);
+  const opm = chrono.map((q) => q.opm_pct);
+  const npm = chrono.map((q) => q.npm_pct);
+
+  // Dividend series: amounts over time (skip purpose-only rows for the graph).
+  const divChrono = [...dividends].sort((a, b) => a.ex_date.localeCompare(b.ex_date));
+  const divSeries = divChrono.map((d) => d.amount);
+  const latestDiv = [...divChrono].reverse().find((d) => d.amount != null);
+
+  const noResults = quarterly.length === 0;
+
+  return (
+    <div className="rounded-md border hairline">
+      <div className="px-3 py-2 border-b hairline text-[9.5px] uppercase tracking-wide muted-text">
+        {latest ? (
+          <>
+            Fundamentals · {fmtQuarter(latest.period_end)}
+            <span className="normal-case tracking-normal"> · results {fmtShortDate(latest.period_end)}</span>
+          </>
+        ) : (
+          "Fundamentals"
+        )}
+      </div>
+
+      {noResults && dividends.length === 0 ? (
+        <div className="px-3 py-3 text-[11px] muted-text italic">
+          {loading ? "Loading…" : "No results on record."}
+        </div>
+      ) : (
+        <div className="divide-y hairline">
+          <MetricSpark
+            label="Sales"
+            value={latest ? `₹${fmtCr(latest.sales)} Cr` : "—"}
+            yoy={latest?.sales_yoy ?? null}
+            series={sales}
+          />
+          <MetricSpark
+            label="Net profit"
+            value={latest ? `₹${fmtCr(latest.net_profit)} Cr` : "—"}
+            yoy={latest?.np_yoy ?? null}
+            series={np}
+          />
+          <MetricSpark
+            label="OPM"
+            value={latest?.opm_pct == null ? "—" : `${latest.opm_pct.toFixed(1)}%`}
+            series={opm}
+          />
+          <MetricSpark
+            label="NPM"
+            value={latest?.npm_pct == null ? "—" : `${latest.npm_pct.toFixed(1)}%`}
+            series={npm}
+          />
+          <MetricSpark
+            label="Dividend"
+            value={
+              latestDiv?.amount != null
+                ? `₹${latestDiv.amount}`
+                : dividends.length > 0
+                  ? (dividends[0].purpose ?? "—")
+                  : "—"
+            }
+            valueTitle={latestDiv ? `Latest dividend · ex ${fmtShortDate(latestDiv.ex_date)}` : undefined}
+            series={divSeries}
+            color="var(--color-delta-up)"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One fundamentals row: label + latest value + optional YoY badge on top, a
+ *  small sparkline of the metric's history below. */
+function MetricSpark({
   label,
   value,
-  yoy,
+  series,
+  yoy = null,
+  color = "var(--color-accent-600)",
+  valueTitle,
 }: {
   label: string;
   value: string;
+  series: (number | null)[];
   yoy?: number | null;
+  color?: string;
+  valueTitle?: string;
 }) {
   return (
-    <div className="rounded-md border hairline px-2.5 py-1.5">
-      <div className="text-[9px] uppercase tracking-wide muted-text leading-tight">{label}</div>
-      <div className="text-[13px] font-medium leading-tight mt-0.5">{value}</div>
-      {yoy != null && (
-        <div
-          className="text-[9.5px] font-medium tabular-nums mt-0.5"
-          style={{ color: yoy >= 0 ? "var(--color-delta-up)" : "var(--color-delta-down)" }}
-          title="Year-on-year change vs the same quarter last year"
-        >
-          {yoy >= 0 ? "+" : ""}
-          {yoy.toFixed(1)}% YoY
+    <div className="px-3 py-1.5">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-[9.5px] uppercase tracking-wide muted-text">{label}</span>
+        {yoy != null && (
+          <span
+            className="text-[9.5px] font-medium tabular-nums"
+            style={{ color: yoy >= 0 ? "var(--color-delta-up)" : "var(--color-delta-down)" }}
+            title="Year-on-year change vs the same quarter last year"
+          >
+            {yoy >= 0 ? "+" : ""}
+            {yoy.toFixed(1)}% YoY
+          </span>
+        )}
+      </div>
+      <div className="mt-0.5 flex items-end justify-between gap-2">
+        <span className="text-[12.5px] font-medium tabular-nums leading-tight truncate" title={valueTitle}>
+          {value}
+        </span>
+        <div className="w-[84px] shrink-0">
+          <Sparkline values={series} color={color} />
         </div>
-      )}
+      </div>
+    </div>
+  );
+}
+
+/** Minimal responsive sparkline. Stretches to the container width; the last
+ *  point gets a dot. Non-scaling stroke keeps the line crisp despite the
+ *  horizontal stretch. Renders a flat baseline when there's <2 points. */
+function Sparkline({ values, color }: { values: (number | null)[]; color: string }) {
+  const H = 16;
+  const W = 100; // viewBox units; preserveAspectRatio="none" stretches x to fit
+  const pts = values
+    .map((v, i) => ({ v, i }))
+    .filter((p): p is { v: number; i: number } => p.v != null);
+
+  if (pts.length < 2) {
+    return <div className="h-[16px]" aria-hidden />;
+  }
+
+  const xMax = values.length - 1 || 1;
+  const min = Math.min(...pts.map((p) => p.v));
+  const max = Math.max(...pts.map((p) => p.v));
+  const range = max - min || 1;
+  const x = (i: number) => (i / xMax) * W;
+  const y = (v: number) => H - 2 - ((v - min) / range) * (H - 4);
+
+  const d = pts
+    .map((p, k) => `${k === 0 ? "M" : "L"}${x(p.i).toFixed(1)},${y(p.v).toFixed(1)}`)
+    .join(" ");
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="w-full h-[16px] block">
+      <path d={d} fill="none" stroke={color} strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+      {/* One dot per quarter so each data point is legible, last one emphasised. */}
+      {pts.map((p, k) => (
+        <circle
+          key={p.i}
+          cx={x(p.i)}
+          cy={y(p.v)}
+          r={k === pts.length - 1 ? 2 : 1.4}
+          fill={k === pts.length - 1 ? color : "var(--color-paper)"}
+          stroke={color}
+          strokeWidth={1}
+          vectorEffect="non-scaling-stroke"
+        />
+      ))}
+    </svg>
+  );
+}
+
+/** Recent news in two columns. */
+function NewsGrid({ news }: { news: NewsItem[] }) {
+  return (
+    <div>
+      <div className="text-[9.5px] uppercase tracking-wide muted-text mb-1">Recent news</div>
+      <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5">
+        {news.map((n, i) => (
+          <li key={`${n.published_at}-${i}`}>
+            <a
+              href={n.url ?? "#"}
+              target="_blank"
+              rel="noopener noreferrer nofollow"
+              className="block group"
+              title={n.title}
+            >
+              <div className="text-[11.5px] leading-snug group-hover:underline line-clamp-2">
+                {n.title}
+              </div>
+              <div className="text-[9.5px] muted-text tabular-nums mt-0.5 flex items-center gap-1.5">
+                {n.source && <span>{n.source}</span>}
+                {n.source && <span aria-hidden>·</span>}
+                <span>{fmtNewsDate(n.published_at)}</span>
+              </div>
+            </a>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
