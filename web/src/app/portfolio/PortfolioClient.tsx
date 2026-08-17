@@ -74,7 +74,7 @@ type ImportResult = {
   error?: string;
 };
 
-type PortfolioTab = "overview" | "holdings" | "booked";
+type PortfolioTab = "overview" | "holdings" | "transactions" | "booked";
 
 export function PortfolioClient({
   portfolio,
@@ -141,6 +141,7 @@ export function PortfolioClient({
         {([
           { v: "overview", label: "Overview" },
           { v: "holdings", label: "Holdings" },
+          { v: "transactions", label: "Transactions" },
           { v: "booked", label: "Booked P&L" },
         ] as const).map((o) => (
           <button
@@ -175,14 +176,14 @@ export function PortfolioClient({
           <div className="card p-8 text-center mt-6">
             <h2 className="font-display text-[20px] mb-2">No holdings yet</h2>
             <p className="muted-text text-[13px] max-w-md mx-auto">
-              Import a holdings export on the Overview tab to see every position valued,
+              Import a holdings export on the Transactions tab to see every position valued,
               scored and sortable here.
             </p>
           </div>
         ) : (
-          <HoldingsTable instruments={portfolio.instruments} totalValue={t.currentValue} />
+          <HoldingsSheets instruments={portfolio.instruments} totalValue={t.currentValue} />
         )
-      ) : (
+      ) : tab === "transactions" ? (
         <>
           <ImportPanel
             broker={broker}
@@ -197,14 +198,15 @@ export function PortfolioClient({
           />
 
           <ManualTradePanel onChanged={() => router.refresh()} />
-
+        </>
+      ) : (
+        <>
           {!portfolio.hasHoldings ? (
             <div className="card p-8 text-center mt-6">
               <h2 className="font-display text-[20px] mb-2">No holdings yet</h2>
               <p className="muted-text text-[13px] max-w-md mx-auto">
-                Import a holdings export from any of the five brokers above to see your
-                portfolio valued, allocated and scored. Re-importing a broker replaces
-                just that broker&apos;s rows.
+                Head to the Transactions tab to import a broker holdings export or log a
+                manual trade — your portfolio is then valued, allocated and scored here.
               </p>
             </div>
           ) : (
@@ -1163,7 +1165,63 @@ function makeCmp(key: SortKey, dir: SortDir) {
   };
 }
 
-function HoldingsTable({ instruments, totalValue }: { instruments: Instrument[]; totalValue: number }) {
+/** Holdings tab body: splits positions into Stocks (mapped/scored NSE names)
+ *  and Others (ETFs, funds, bonds — anything we don't score) under two
+ *  sub-tabs. `isMapped` is the same signal the sector allocation uses to
+ *  bucket "ETFs & funds (unscored)". */
+function HoldingsSheets({ instruments, totalValue }: { instruments: Instrument[]; totalValue: number }) {
+  const stocks = instruments.filter((i) => i.isMapped);
+  const others = instruments.filter((i) => !i.isMapped);
+  const [sub, setSub] = useState<"stocks" | "others">("stocks");
+  const active = sub === "stocks" ? stocks : others;
+
+  return (
+    <div className="mt-6">
+      <div className="flex items-center gap-1 border-b hairline">
+        {([
+          { v: "stocks", label: "Stocks", n: stocks.length },
+          { v: "others", label: "Others", n: others.length },
+        ] as const).map((o) => (
+          <button
+            key={o.v}
+            type="button"
+            onClick={() => setSub(o.v)}
+            className="relative px-3 py-2 text-[12.5px] font-medium transition-colors"
+            style={{ color: sub === o.v ? "var(--color-accent-700)" : "var(--color-muted)" }}
+          >
+            {o.label}
+            <span className="ml-1.5 text-[11px] tabular-nums muted-text">{o.n}</span>
+            {sub === o.v && (
+              <span className="absolute left-0 right-0 -bottom-px h-[2px]" style={{ background: "var(--color-accent-600)" }} />
+            )}
+          </button>
+        ))}
+      </div>
+
+      {active.length === 0 ? (
+        <div className="card p-6 mt-3 text-center muted-text text-[13px]">
+          {sub === "others"
+            ? "No ETFs, funds or other non-equity holdings."
+            : "No mapped stock holdings."}
+        </div>
+      ) : (
+        <div className="mt-3">
+          <HoldingsTable instruments={active} totalValue={totalValue} flush />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HoldingsTable({
+  instruments,
+  totalValue,
+  flush = false,
+}: {
+  instruments: Instrument[];
+  totalValue: number;
+  flush?: boolean;
+}) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [mode, setMode] = useState<GroupMode>("flat");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -1193,7 +1251,7 @@ function HoldingsTable({ instruments, totalValue }: { instruments: Instrument[];
     });
 
   return (
-    <div className="card mt-6 overflow-hidden">
+    <div className={`card overflow-hidden${flush ? "" : " mt-6"}`}>
       <div className="px-4 py-3 border-b hairline flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <span
