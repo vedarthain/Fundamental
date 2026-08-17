@@ -62,7 +62,7 @@ export default async function AlertsPage() {
   );
 
   return (
-    <div className="mx-auto max-w-[1200px] px-4 md:px-6 py-4 md:py-5">
+    <div className="mx-auto max-w-[1600px] px-4 md:px-6 py-4 md:py-5">
       <header className="mb-3">
         <h1 className="font-display text-[22px] md:text-[26px] leading-[1.1] tracking-tight">
           Alerts

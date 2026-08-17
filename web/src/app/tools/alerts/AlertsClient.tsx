@@ -98,14 +98,15 @@ const RANGE_OPTIONS: { label: string; days: number }[] = [
   { label: "6M", days: 180 },
   { label: "1Y", days: 365 },
   { label: "2Y", days: 730 },
+  { label: "5Y", days: 1825 },
 ];
 // Reuse across re-renders / re-opens so a range already fetched is instant.
 const candleCache = new Map<string, Candle[]>();
 
-// Inline candle chart for an alert's symbol — mirrors the watchlist's ChartBlock
-// (same /api/scanner/ohlc source + CandleChart renderer), just a touch shorter.
+// The single detail chart — fills its parent's height so it uses the full pane.
+// Same /api/scanner/ohlc source + CandleChart renderer as the watchlist.
 function AlertChart({ symbol }: { symbol: string }) {
-  const [days, setDays] = useState(180);
+  const [days, setDays] = useState(365);
   const [candles, setCandles] = useState<Candle[] | null>(null);
   const [err, setErr] = useState(false);
 
@@ -138,7 +139,7 @@ function AlertChart({ symbol }: { symbol: string }) {
   }, [symbol, days]);
 
   return (
-    <div className="mt-2.5">
+    <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center justify-between mb-1.5 gap-2 flex-wrap">
         <span className="text-[9.5px] uppercase tracking-wide muted-text">Price</span>
         <div className="flex rounded-md border hairline overflow-hidden">
@@ -147,7 +148,7 @@ function AlertChart({ symbol }: { symbol: string }) {
               key={o.days}
               type="button"
               onClick={() => setDays(o.days)}
-              className="px-2 py-0.5 text-[10.5px] tabular-nums transition-colors border-l first:border-l-0 hairline"
+              className="px-2.5 py-1 text-[11px] tabular-nums transition-colors border-l first:border-l-0 hairline"
               style={
                 days === o.days
                   ? { backgroundColor: "var(--color-accent-600)", color: "white" }
@@ -159,7 +160,7 @@ function AlertChart({ symbol }: { symbol: string }) {
           ))}
         </div>
       </div>
-      <div className="h-[200px] w-full rounded-md border hairline overflow-hidden">
+      <div className="flex-1 min-h-[260px] w-full rounded-md border hairline overflow-hidden">
         {err ? (
           <div className="h-full flex items-center justify-center muted-text text-[12px]">
             Couldn&apos;t load price data.
@@ -180,102 +181,54 @@ function AlertChart({ symbol }: { symbol: string }) {
   );
 }
 
-function AlertCard({
+const keyOf = (a: AlertRow) => `${a.ruleKey}-${a.id}`;
+
+// One row in the left sector tree — severity dot, symbol/title, composite chip.
+function TreeRow({
   a,
-  dimmed,
   enrich,
-  onDismiss,
+  selected,
+  onSelect,
 }: {
   a: AlertRow;
-  dimmed: boolean;
   enrich?: AlertEnrichment;
-  onDismiss?: (a: AlertRow) => void;
+  selected: boolean;
+  onSelect: () => void;
 }) {
   const color = SEV_COLOR[a.severity];
-  // hold_limit is an aggregate digest (sentinel symbol) — no single chart/scores.
-  const showEnrich = a.ruleKey !== "hold_limit" && enrich != null;
-  const comp = enrich?.composite ?? null;
-  const compColor = bandColor(band(comp));
+  const dimmed = a.status === "dismissed";
+  const comp = a.ruleKey === "hold_limit" ? null : enrich?.composite ?? null;
+  const isAgg = a.ruleKey === "hold_limit";
   return (
-    <div
-      className="flex items-start gap-3 px-4 py-3 transition-colors hover:bg-[var(--color-paper)]/60"
+    <button
+      type="button"
+      onClick={onSelect}
+      className="flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-[var(--color-paper)]"
       style={{
-        borderLeft: `3px solid ${color}`,
-        opacity: dimmed ? 0.5 : 1,
+        opacity: dimmed ? 0.55 : 1,
+        ...(selected
+          ? {
+              backgroundColor: "var(--color-paper)",
+              boxShadow: "inset 2px 0 0 var(--color-accent-600)",
+            }
+          : {}),
       }}
+      title={a.reason}
     >
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span
-            className="text-[10px] uppercase tracking-wide font-semibold rounded px-1.5 py-0.5"
-            style={{ color, backgroundColor: `${color}1a` }}
-          >
-            {SEV_LABEL[a.severity]}
-          </span>
-          <span className="ink-text text-[14px] font-medium">{a.title}</span>
-          {a.ruleKey !== "hold_limit" && (
-            <Link
-              href={`/stock/${a.symbol}`}
-              className="text-[12px] font-semibold underline decoration-dotted hover:no-underline"
-              style={{ color: "var(--color-accent-600)" }}
-            >
-              {a.symbol}
-            </Link>
-          )}
-          {showEnrich && comp != null && (
-            <span
-              className="ml-auto inline-block min-w-[34px] text-center px-1.5 py-0.5 rounded tabular-nums font-semibold text-[11px]"
-              style={{
-                backgroundColor: compColor,
-                color: band(comp) === "neutral" ? "var(--color-ink)" : "white",
-              }}
-              title="Composite peer-cluster score (0–100)"
-            >
-              {Math.round(comp)}
-            </span>
-          )}
-          <span
-            className={`muted-text text-[11px] whitespace-nowrap ${
-              showEnrich && comp != null ? "" : "ml-auto"
-            }`}
-          >
-            {ago(a.triggeredAt)}
-          </span>
-        </div>
-        <p className="ink-text mt-1 text-[13px] leading-[1.5]">{a.reason}</p>
-
-        {showEnrich && (
-          <>
-            {/* Scores (QVM) + return ladder — same figures as the watchlist row. */}
-            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
-              <ScorePill label="Q" value={enrich!.quality} />
-              <ScorePill label="V" value={enrich!.valuation} />
-              <ScorePill label="M" value={enrich!.momentum} />
-              <span className="muted-text">·</span>
-              <RetPill label="1D" value={enrich!.ret1d} />
-              <RetPill label="1W" value={enrich!.ret1w} />
-              <RetPill label="1M" value={enrich!.ret1m} />
-              <RetPill label="6M" value={enrich!.ret6m} />
-              <RetPill label="1Y" value={enrich!.ret1y} />
-            </div>
-            {/* Chart only for live cards — skip it on greyed/dismissed rows so a
-                long dismissed list doesn't fire a fetch per row. */}
-            {!dimmed && <AlertChart symbol={a.symbol} />}
-          </>
-        )}
-      </div>
-      {onDismiss && (
-        <button
-          type="button"
-          onClick={() => onDismiss(a)}
-          className="shrink-0 self-center rounded-md border px-2.5 py-1 text-[12px] font-medium transition-colors hover:bg-[var(--color-paper)]"
-          style={{ borderColor: "var(--color-border-default)" }}
-          aria-label={`Dismiss ${a.title} for ${a.symbol}`}
-        >
-          Dismiss
-        </button>
+      <span
+        className="h-2 w-2 shrink-0 rounded-full"
+        style={{ backgroundColor: color }}
+      />
+      <span className="min-w-0 flex-1">
+        <span className="ink-text text-[12.5px] font-medium">
+          {isAgg ? "Hold limit" : a.symbol}
+        </span>
+        <span className="muted-text ml-1.5 text-[11px]">{a.title}</span>
+      </span>
+      {comp != null && (
+        <span className="muted-text tabular-nums text-[11px]">{Math.round(comp)}</span>
       )}
-    </div>
+    </button>
   );
 }
 
@@ -293,8 +246,10 @@ export function AlertsClient({
   const [dismissed, setDismissed] = useState<AlertRow[]>(initialDismissed);
   const [checking, startCheck] = useTransition();
   const [tab, setTab] = useState<TabKey>("all");
+  // The focused alert (key = ruleKey-id). Falls back to the first in view when
+  // the selection isn't present in the current filter.
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
-  // Which rule_keys does a tab match? "all" matches everything.
   const matchesTab = (a: AlertRow, key: TabKey): boolean => {
     if (key === "all") return true;
     const t = TABS.find((x) => x.key === key);
@@ -303,25 +258,44 @@ export function AlertsClient({
 
   const visibleActive = active.filter((a) => matchesTab(a, tab));
   const visibleDismissed = dismissed.filter((a) => matchesTab(a, tab));
+  // Flat nav order = active first, then dismissed. Prev/Next walk this list.
+  const flat = [...visibleActive, ...visibleDismissed];
 
-  // Identity is (ruleKey, id): app.alert and app.price_alert ids can overlap,
-  // so id alone isn't unique across the merged feed.
+  const idxRaw = flat.findIndex((a) => keyOf(a) === selectedKey);
+  const idx = idxRaw < 0 ? 0 : idxRaw;
+  const sel = flat[idx] ?? null;
+  const atFirst = idx <= 0;
+  const atLast = idx >= flat.length - 1;
+  const go = (delta: number) => {
+    const n = flat[idx + delta];
+    if (n) setSelectedKey(keyOf(n));
+  };
+
+  // Keyboard ← / → step through stocks (ignored while typing in a field).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;
+      if (e.key === "ArrowLeft" && !atFirst) { e.preventDefault(); go(-1); }
+      if (e.key === "ArrowRight" && !atLast) { e.preventDefault(); go(1); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
   const same = (a: AlertRow, b: AlertRow) => a.id === b.id && a.ruleKey === b.ruleKey;
 
   const dismiss = async (card: AlertRow) => {
-    // Optimistic: move active → dismissed immediately.
     setActive((xs) => xs.filter((a) => !same(a, card)));
     setDismissed((xs) => [{ ...card, status: "dismissed" }, ...xs]);
     try {
       const r = await fetch("/api/alerts/dismiss", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        // ruleKey lets the endpoint route price-alert cards to their own table.
         body: JSON.stringify({ id: card.id, ruleKey: card.ruleKey }),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
     } catch {
-      // Revert on failure.
       setDismissed((xs) => xs.filter((a) => !same(a, card)));
       setActive((xs) => [card, ...xs]);
     }
@@ -338,129 +312,237 @@ export function AlertsClient({
     });
   };
 
+  // Group the flat list by sector for the left tree. hold_limit + unmapped names
+  // land in "Other". Sectors sorted alphabetically; rows keep flat order within.
+  const groups = new Map<string, AlertRow[]>();
+  for (const a of flat) {
+    const sector =
+      a.ruleKey === "hold_limit" ? "Portfolio" : enrich[a.symbol]?.sector ?? "Other";
+    const arr = groups.get(sector) ?? [];
+    arr.push(a);
+    groups.set(sector, arr);
+  }
+  const sectorNames = Array.from(groups.keys()).sort((x, y) => x.localeCompare(y));
+
+  const selEnrich = sel ? enrich[sel.symbol] : undefined;
+  const selShowEnrich = sel != null && sel.ruleKey !== "hold_limit" && selEnrich != null;
+  const selComp = selShowEnrich ? selEnrich!.composite : null;
+
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
-        <div className="muted-text text-[12.5px]">
+      {/* Top bar: count · horizontal category tabs · Check now. */}
+      <div className="flex items-center gap-3 mb-3">
+        <div className="muted-text text-[12.5px] shrink-0">
           {active.length === 0
             ? "No active alerts"
-            : `${active.length} active alert${active.length === 1 ? "" : "s"}`}
+            : `${active.length} active`}
+        </div>
+        <div
+          className="flex items-center gap-1 overflow-x-auto flex-1"
+          style={{ scrollbarWidth: "none" }}
+          role="tablist"
+        >
+          {TABS.map((t) => {
+            const activeN = active.filter((a) => matchesTab(a, t.key)).length;
+            const total =
+              activeN + dismissed.filter((a) => matchesTab(a, t.key)).length;
+            if (t.key !== "all" && total === 0) return null;
+            const selTab = tab === t.key;
+            return (
+              <button
+                key={t.key}
+                type="button"
+                role="tab"
+                aria-selected={selTab}
+                onClick={() => setTab(t.key)}
+                className={`shrink-0 rounded-full px-3 py-1 text-[12.5px] font-medium transition-colors ${
+                  selTab ? "text-white" : "muted-text hover:bg-[var(--color-paper)]"
+                }`}
+                style={
+                  selTab
+                    ? { backgroundColor: "var(--color-accent-600)" }
+                    : { border: "1px solid var(--color-border-default)" }
+                }
+              >
+                {t.label}
+                {activeN > 0 && (
+                  <span
+                    className="ml-1.5 inline-block rounded-full px-1.5 text-[10.5px] font-semibold"
+                    style={
+                      selTab
+                        ? { backgroundColor: "rgba(255,255,255,0.25)" }
+                        : {
+                            backgroundColor: "var(--color-paper)",
+                            color: "var(--color-accent-600)",
+                          }
+                    }
+                  >
+                    {activeN}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
         <button
           type="button"
           onClick={checkNow}
           disabled={checking}
-          className="rounded-md px-3 py-1.5 text-[12.5px] font-medium text-white transition-opacity disabled:opacity-60"
+          className="shrink-0 rounded-md px-3 py-1.5 text-[12.5px] font-medium text-white transition-opacity disabled:opacity-60"
           style={{ backgroundColor: "var(--color-accent-600)" }}
         >
           {checking ? "Checking…" : "Check now"}
         </button>
       </div>
 
-      {/* Watchlist-style master/detail: category rail on the left, the alert
-          feed on the right. A category is listed only if it has any alert
-          (active or dismissed), except "All" which is always present. */}
-      <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-4 items-start">
-        {/* LEFT rail — categories. */}
-        <div className="card overflow-hidden lg:sticky lg:top-4">
-          <div className="divide-y hairline" role="tablist">
-            {TABS.map((t) => {
-              const activeN = active.filter((a) => matchesTab(a, t.key)).length;
-              const total =
-                activeN + dismissed.filter((a) => matchesTab(a, t.key)).length;
-              if (t.key !== "all" && total === 0) return null;
-              const sel = tab === t.key;
-              return (
-                <button
-                  key={t.key}
-                  type="button"
-                  role="tab"
-                  aria-selected={sel}
-                  onClick={() => setTab(t.key)}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] transition-colors hover:bg-[var(--color-paper)]"
-                  style={
-                    sel
-                      ? {
-                          backgroundColor: "var(--color-paper)",
-                          boxShadow: "inset 2px 0 0 var(--color-accent-600)",
-                        }
-                      : undefined
-                  }
-                >
-                  <span
-                    className={sel ? "ink-text font-semibold" : "ink-text"}
-                  >
-                    {t.label}
-                  </span>
-                  {activeN > 0 && (
-                    <span
-                      className="ml-auto inline-block rounded-full px-1.5 text-[10.5px] font-semibold"
-                      style={{
-                        backgroundColor: "var(--color-paper)",
-                        color: "var(--color-accent-600)",
-                        border: "1px solid var(--color-border-default)",
-                      }}
-                    >
-                      {activeN}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
+      {flat.length === 0 ? (
+        <div className="card p-8 text-center">
+          <p className="ink-text text-[15px] font-medium mb-1">
+            {tab === "all" ? "All clear" : "Nothing here"}
+          </p>
+          <p className="muted-text text-[13px] max-w-sm mx-auto">
+            {tab === "all"
+              ? "Nothing needs your attention right now. Alerts appear here when a holding hits its +25% target, drops sharply in a day, or falls 20% below your cost."
+              : "No alerts in this category. Switch to All to see everything."}
+          </p>
         </div>
-
-        {/* RIGHT panel — the alert feed. */}
-        <div className="card overflow-hidden min-h-[240px]">
-          {visibleActive.length === 0 && visibleDismissed.length === 0 ? (
-            <div className="p-8 text-center">
-              <p className="ink-text text-[15px] font-medium mb-1">
-                {tab === "all" ? "All clear" : "Nothing here"}
-              </p>
-              <p className="muted-text text-[13px] max-w-sm mx-auto">
-                {tab === "all"
-                  ? "Nothing needs your attention right now. Alerts appear here when a holding hits its +25% target, drops sharply in a day, or falls 20% below your cost."
-                  : "No alerts in this category. Switch to All to see everything."}
-              </p>
-            </div>
-          ) : (
-            <div className="divide-y hairline">
-              {visibleActive.map((a) => (
-                <AlertCard
-                  key={`${a.ruleKey}-${a.id}`}
-                  a={a}
-                  dimmed={false}
-                  enrich={enrich[a.symbol]}
-                  onDismiss={dismiss}
-                />
-              ))}
-
-              {visibleDismissed.length > 0 && (
-                <>
-                  <div className="flex items-center gap-3 px-4 py-2 bg-[var(--color-paper)]/40">
-                    <span className="muted-text text-[11px] uppercase tracking-wide">
-                      Dismissed
-                    </span>
-                    <div
-                      className="h-px flex-1"
-                      style={{ backgroundColor: "var(--color-border-default)" }}
-                    />
-                  </div>
-                  {visibleDismissed.map((a) => (
-                    <AlertCard
-                      key={`${a.ruleKey}-${a.id}`}
+      ) : (
+        // Master/detail: left sector tree, right single big chart.
+        <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-4 items-stretch">
+          {/* LEFT — sector tree of alerted names. */}
+          <div className="card overflow-y-auto lg:h-[calc(100vh-190px)] lg:min-h-[480px]">
+            {sectorNames.map((s) => (
+              <div key={s}>
+                <div className="sticky top-0 z-10 bg-[var(--color-paper)]/95 px-3 py-1.5 text-[10.5px] font-semibold uppercase tracking-wide muted-text border-b hairline">
+                  {s}
+                  <span className="ml-1.5 opacity-70">{groups.get(s)!.length}</span>
+                </div>
+                <div className="divide-y hairline">
+                  {groups.get(s)!.map((a) => (
+                    <TreeRow
+                      key={keyOf(a)}
                       a={a}
-                      dimmed
                       enrich={enrich[a.symbol]}
-                      onDismiss={undefined}
+                      selected={sel != null && keyOf(a) === keyOf(sel)}
+                      onSelect={() => setSelectedKey(keyOf(a))}
                     />
                   ))}
-                </>
-              )}
-            </div>
-          )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* RIGHT — the focused alert: header + prev/next, scores, one chart. */}
+          <div className="card flex flex-col overflow-hidden p-4 lg:h-[calc(100vh-190px)] lg:min-h-[480px]">
+            {sel && (
+              <>
+                {/* Prev/Next stepper + position. */}
+                <div className="flex items-center gap-2 mb-2">
+                  <button
+                    type="button"
+                    onClick={() => go(-1)}
+                    disabled={atFirst}
+                    className="rounded-md border hairline px-2.5 py-1 text-[13px] font-medium disabled:opacity-40 hover:bg-[var(--color-paper)] transition-colors"
+                    aria-label="Previous stock"
+                    title="Previous stock (←)"
+                  >
+                    ‹
+                  </button>
+                  <span className="text-[12px] tabular-nums muted-text min-w-[54px] text-center">
+                    {idx + 1} / {flat.length}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => go(1)}
+                    disabled={atLast}
+                    className="rounded-md border hairline px-2.5 py-1 text-[13px] font-medium disabled:opacity-40 hover:bg-[var(--color-paper)] transition-colors"
+                    aria-label="Next stock"
+                    title="Next stock (→)"
+                  >
+                    ›
+                  </button>
+                  {sel.status === "active" && sel.ruleKey !== "hold_limit" && (
+                    <button
+                      type="button"
+                      onClick={() => dismiss(sel)}
+                      className="ml-auto shrink-0 rounded-md border px-2.5 py-1 text-[12px] font-medium transition-colors hover:bg-[var(--color-paper)]"
+                      style={{ borderColor: "var(--color-border-default)" }}
+                      aria-label={`Dismiss ${sel.title} for ${sel.symbol}`}
+                    >
+                      Dismiss
+                    </button>
+                  )}
+                </div>
+
+                {/* Title line. */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span
+                    className="text-[10px] uppercase tracking-wide font-semibold rounded px-1.5 py-0.5"
+                    style={{
+                      color: SEV_COLOR[sel.severity],
+                      backgroundColor: `${SEV_COLOR[sel.severity]}1a`,
+                    }}
+                  >
+                    {SEV_LABEL[sel.severity]}
+                  </span>
+                  <span className="ink-text text-[15px] font-semibold">{sel.title}</span>
+                  {sel.ruleKey !== "hold_limit" && (
+                    <Link
+                      href={`/stock/${sel.symbol}`}
+                      className="text-[13px] font-semibold underline decoration-dotted hover:no-underline"
+                      style={{ color: "var(--color-accent-600)" }}
+                    >
+                      {sel.symbol}
+                    </Link>
+                  )}
+                  {selComp != null && (
+                    <span
+                      className="inline-block min-w-[34px] text-center px-1.5 py-0.5 rounded tabular-nums font-semibold text-[11px]"
+                      style={{
+                        backgroundColor: bandColor(band(selComp)),
+                        color: band(selComp) === "neutral" ? "var(--color-ink)" : "white",
+                      }}
+                      title="Composite peer-cluster score (0–100)"
+                    >
+                      {Math.round(selComp)}
+                    </span>
+                  )}
+                  <span className="muted-text text-[11px] ml-auto whitespace-nowrap">
+                    {ago(sel.triggeredAt)}
+                  </span>
+                </div>
+
+                <p className="ink-text mt-1 text-[13px] leading-[1.5]">{sel.reason}</p>
+
+                {selShowEnrich && (
+                  <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+                    <ScorePill label="Q" value={selEnrich!.quality} />
+                    <ScorePill label="V" value={selEnrich!.valuation} />
+                    <ScorePill label="M" value={selEnrich!.momentum} />
+                    <span className="muted-text">·</span>
+                    <RetPill label="1D" value={selEnrich!.ret1d} />
+                    <RetPill label="1W" value={selEnrich!.ret1w} />
+                    <RetPill label="1M" value={selEnrich!.ret1m} />
+                    <RetPill label="6M" value={selEnrich!.ret6m} />
+                    <RetPill label="1Y" value={selEnrich!.ret1y} />
+                  </div>
+                )}
+
+                {/* Single chart, filling the rest of the pane. */}
+                {sel.ruleKey !== "hold_limit" ? (
+                  <div className="mt-3 flex-1 min-h-0">
+                    <AlertChart key={sel.symbol} symbol={sel.symbol} />
+                  </div>
+                ) : (
+                  <div className="mt-3 flex-1 min-h-[200px] flex items-center justify-center muted-text text-[12.5px]">
+                    An aggregate digest — no single chart.
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

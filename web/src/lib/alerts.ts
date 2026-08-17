@@ -388,6 +388,8 @@ export async function loadAlerts(
  * are fractions (0.024 = +2.4%). Best-effort: any DB hiccup just leaves nulls.
  */
 export type AlertEnrichment = {
+  sector: string | null;
+  industry: string | null;
   composite: number | null;
   quality: number | null;
   valuation: number | null;
@@ -412,6 +414,8 @@ export async function loadAlertEnrichment(
   const scoreRows = await sql<
     {
       symbol: string;
+      sector: string | null;
+      industry: string | null;
       composite: number | null;
       quality: number | null;
       valuation: number | null;
@@ -421,17 +425,21 @@ export async function loadAlertEnrichment(
       ret_1y: number | null;
     }[]
   >`
-    SELECT symbol,
-           composite_pct::float8 AS composite,
-           quality_pct::float8   AS quality,
-           valuation_pct::float8 AS valuation,
-           momentum_pct::float8  AS momentum,
-           ret_1w::float8        AS ret_1w,
-           ret_1m::float8        AS ret_1m,
-           ret_1y::float8        AS ret_1y
-      FROM app.cluster_stocks_panel_cache
-     WHERE snapshot_date = (SELECT max(snapshot_date) FROM app.cluster_stocks_panel_cache)
-       AND symbol = ANY(${uniq})
+    SELECT c.symbol,
+           mc.name                 AS sector,
+           cl.name                 AS industry,
+           c.composite_pct::float8 AS composite,
+           c.quality_pct::float8   AS quality,
+           c.valuation_pct::float8 AS valuation,
+           c.momentum_pct::float8  AS momentum,
+           c.ret_1w::float8        AS ret_1w,
+           c.ret_1m::float8        AS ret_1m,
+           c.ret_1y::float8        AS ret_1y
+      FROM app.cluster_stocks_panel_cache c
+      JOIN app.cluster cl      ON cl.id = c.cluster_id
+      JOIN app.meta_cluster mc ON mc.id = cl.meta_cluster_id
+     WHERE c.snapshot_date = (SELECT max(snapshot_date) FROM app.cluster_stocks_panel_cache)
+       AND c.symbol = ANY(${uniq})
   `.catch(() => [] as never[]);
 
   // 1D + 6M from golden daily closes (the cache stores neither). One query:
@@ -478,6 +486,8 @@ export async function loadAlertEnrichment(
   for (const r of scoreRows) {
     const p = pxBy.get(r.symbol);
     out[r.symbol] = {
+      sector: r.sector,
+      industry: r.industry,
       composite: r.composite,
       quality: r.quality,
       valuation: r.valuation,
@@ -493,6 +503,8 @@ export async function loadAlertEnrichment(
   for (const p of px) {
     if (out[p.symbol]) continue;
     out[p.symbol] = {
+      sector: null,
+      industry: null,
       composite: null,
       quality: null,
       valuation: null,
