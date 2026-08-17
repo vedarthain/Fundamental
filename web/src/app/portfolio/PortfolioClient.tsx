@@ -419,7 +419,7 @@ function ImportPanel({
         <div className="inline-flex rounded-md border overflow-hidden" style={{ borderColor: "var(--color-border-default)" }}>
           {([
             { v: "holdings", label: "Holdings snapshot" },
-            { v: "trades", label: "Transactions" },
+            { v: "trades", label: "Tradebook" },
           ] as const).map((o) => (
             <button
               key={o.v}
