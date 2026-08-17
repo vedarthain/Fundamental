@@ -1465,7 +1465,7 @@ export default function GraphClient({
 
       {/* ── Bottom pager: mirrors the header nav so you can roll to the next
           page without scrolling back up. ── */}
-      <div className="mt-3 flex items-center justify-center gap-1">
+      <div className="mt-3 flex items-center justify-end gap-1">
         <button
           type="button"
           onClick={gotoPrevPage}

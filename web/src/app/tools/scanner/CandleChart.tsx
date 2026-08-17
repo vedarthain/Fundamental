@@ -565,6 +565,23 @@ function renderChart(
         const color = a.status === "triggered" ? ALERT_TRIGGERED : ALERT_ARMED;
         const tag = fmtPrice(a.price);
         const tw = 6.6 * tag.length + 20;
+        if (!showTrend) {
+          // Small grid card: pin the "A + price" pill to the LEFT edge, sitting
+          // ABOVE the line (flips just below when the line hugs the top so it
+          // never clips off-canvas).
+          const above = y - priceTop >= 16;
+          const ry = above ? y - 15 : y + 3;
+          const ty = ry + 10;
+          return (
+            <g key={`al-${i}`} pointerEvents="none">
+              <line x1={plotL} y1={y} x2={plotR} y2={y} stroke={color} strokeWidth={1.3} opacity={0.9} />
+              <rect x={plotL} y={ry} width={tw} height={12} rx={2} fill={color} opacity={0.92} />
+              <text x={plotL + 3} y={ty} textAnchor="start" fontSize={9.5} fontWeight={800} fill="#fff">A</text>
+              <text x={plotL + tw - 3} y={ty} textAnchor="end" fontSize={9.5} fontWeight={700} fill="#fff">{tag}</text>
+            </g>
+          );
+        }
+        // Big chart: "A + price" pill on the RIGHT edge (clear of left hline tags).
         const ty = y - priceTop < 12 ? y + 12 : y - 5;
         return (
           <g key={`al-${i}`} pointerEvents="none">
