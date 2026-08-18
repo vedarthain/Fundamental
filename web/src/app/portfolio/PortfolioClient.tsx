@@ -80,10 +80,12 @@ export function PortfolioClient({
   portfolio,
   curve,
   realized,
+  owner = false,
 }: {
   portfolio: Portfolio;
   curve: CurvePoint[];
   realized: RealizedPnl;
+  owner?: boolean; // gates the (personal, owner-only) Performance analysis tab
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<PortfolioTab>("overview");
@@ -144,7 +146,9 @@ export function PortfolioClient({
           { v: "performance", label: "Performance" },
           { v: "transactions", label: "Transactions" },
           { v: "booked", label: "Booked P&L" },
-        ] as const).map((o) => (
+        ] as const)
+          .filter((o) => owner || o.v !== "performance")
+          .map((o) => (
           <button
             key={o.v}
             type="button"
@@ -184,7 +188,7 @@ export function PortfolioClient({
         ) : (
           <HoldingsSheets instruments={portfolio.instruments} totalValue={t.currentValue} />
         )
-      ) : tab === "performance" ? (
+      ) : tab === "performance" && owner ? (
         !portfolio.hasHoldings && realized.rows.length === 0 ? (
           <div className="card p-8 text-center mt-6">
             <h2 className="font-display text-[20px] mb-2">Nothing to analyse yet</h2>

@@ -8,7 +8,7 @@
  * imported via CSV/XLSX.
  */
 import Link from "next/link";
-import { getSession } from "@/lib/auth";
+import { getSession, isAdminRequest } from "@/lib/auth";
 import { loadPortfolio, loadEquityCurve, loadRealizedPnl } from "@/lib/portfolio";
 import { PortfolioClient } from "./PortfolioClient";
 
@@ -50,15 +50,16 @@ export default async function PortfolioPage() {
     );
   }
 
-  const [portfolio, curve, realized] = await Promise.all([
+  const [portfolio, curve, realized, owner] = await Promise.all([
     loadPortfolio(session.userId),
     loadEquityCurve(session.userId),
     loadRealizedPnl(session.userId),
+    isAdminRequest(), // Performance tab is owner-only for now (personal, prescriptive-friendly).
   ]);
 
   return (
     <div className="mx-auto max-w-[1200px] px-4 md:px-6 py-6 md:py-8">
-      <PortfolioClient portfolio={portfolio} curve={curve} realized={realized} />
+      <PortfolioClient portfolio={portfolio} curve={curve} realized={realized} owner={owner} />
     </div>
   );
 }
