@@ -92,6 +92,21 @@ function HoldGainBadge({ trades, last }: { trades?: TradeMark[]; last: number | 
   );
 }
 
+// Held share count beside the P badge — broker-truth quantity (what you actually
+// hold), not a net of the incomplete trade log. Hidden when unknown.
+function HoldQtyBadge({ qty }: { qty?: number }) {
+  if (!qty || qty <= 0) return null;
+  return (
+    <span
+      className="text-[10.5px] tabular-nums font-semibold shrink-0"
+      style={{ color: P_HELD }}
+      title={`${qty.toLocaleString("en-IN")} shares held`}
+    >
+      {qty.toLocaleString("en-IN")} sh
+    </span>
+  );
+}
+
 // One grid page: a chunk of a single industry within the active sector. Paging
 // walks these in order so the grid rolls from one industry into the next.
 type SecPage = {
@@ -390,6 +405,7 @@ export default function GraphClient({
   portfolioSymbols = [],
   tradedSymbols = [],
   tradesBySymbol = {},
+  portfolioQty = {},
 }: {
   universe: GraphUniverse;
   nifty500: string[];
@@ -402,6 +418,8 @@ export default function GraphClient({
   tradedSymbols?: string[];
   /** Executed B/S trades per symbol, for markers on the expanded chart. */
   tradesBySymbol?: Record<string, TradeMark[]>;
+  /** Held share count per symbol (broker-truth) — shown next to the "P" badge. */
+  portfolioQty?: Record<string, number>;
 }) {
   const { snapDate } = universe;
   const portfolioSet = useMemo(
@@ -1424,7 +1442,10 @@ export default function GraphClient({
                 <div className="flex items-center gap-1.5 border-t hairline px-2 py-1">
                   <PBadge held={portfolioSet.has(st.symbol)} traded={tradedSet.has(st.symbol)} />
                   {portfolioSet.has(st.symbol) && (
-                    <HoldGainBadge trades={tradesBySymbol[st.symbol]} last={last?.c ?? null} />
+                    <>
+                      <HoldQtyBadge qty={portfolioQty[st.symbol]} />
+                      <HoldGainBadge trades={tradesBySymbol[st.symbol]} last={last?.c ?? null} />
+                    </>
                   )}
                   <div className="flex items-center gap-2.5 text-[10px] font-medium ml-2">
                     <GrowthTag label="1D" v={pct100(returns.data[st.symbol]?.ret_1d)} />
@@ -1570,7 +1591,10 @@ export default function GraphClient({
                   <div className="flex items-center gap-1.5">
                     <PBadge held={portfolioSet.has(focus.symbol)} traded={tradedSet.has(focus.symbol)} />
                     {portfolioSet.has(focus.symbol) && (
-                      <HoldGainBadge trades={tradesBySymbol[focus.symbol]} last={last?.c ?? null} />
+                      <>
+                        <HoldQtyBadge qty={portfolioQty[focus.symbol]} />
+                        <HoldGainBadge trades={tradesBySymbol[focus.symbol]} last={last?.c ?? null} />
+                      </>
                     )}
                   </div>
                   <div className="flex items-center gap-1 rounded-lg border hairline p-0.5">

@@ -50,7 +50,11 @@ export async function GET(req: Request) {
   const ret1dBySym = new Map<string, number>();
   try {
     // 1D from golden: latest daily close vs the previous trading day's close.
-    // Symbols are stored with a .NS suffix there; strip it for the join/output.
+    // Symbols are stored with a .NS suffix there; filter on the RAW ".NS" form so
+    // the primary key (symbol, interval, date) can index the lookup. Filtering on
+    // REPLACE(symbol,'.NS','') defeats the index and full-scans the 1d partition
+    // (~3s each, run twice → a multi-second stall); strip ".NS" only in output.
+    const symbolsNS = symbols.map((s) => `${s}.NS`);
     const moves1D = await golden<{ symbol: string; pct: number }[]>`
       WITH bounds AS (
         SELECT date AS latest FROM golden.price_history WHERE interval='1d'
@@ -64,13 +68,13 @@ export async function GET(req: Request) {
         SELECT REPLACE(symbol, '.NS', '') AS symbol, close
           FROM golden.price_history, bounds
          WHERE interval='1d' AND date = bounds.latest
-           AND REPLACE(symbol, '.NS', '') = ANY(${symbols})
+           AND symbol = ANY(${symbolsNS})
       ),
       prev_close AS (
         SELECT REPLACE(symbol, '.NS', '') AS symbol, close
           FROM golden.price_history, prev
          WHERE interval='1d' AND date = prev.d
-           AND REPLACE(symbol, '.NS', '') = ANY(${symbols})
+           AND symbol = ANY(${symbolsNS})
       )
       SELECT t.symbol, ((t.close - p.close) / NULLIF(p.close, 0))::float AS pct
         FROM today_close t

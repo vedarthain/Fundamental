@@ -333,6 +333,31 @@ export async function loadPortfolioSymbols(userId: number): Promise<string[]> {
   return rows.map((r) => r.symbol);
 }
 
+/**
+ * Held quantity per symbol for the Graph tab's "P · N sh" badge. Uses the SAME
+ * reconciliation rule as loadPortfolioSymbols: a symbol with hand-entered trades
+ * is represented only by its 'derived' row (snapshot opening + manual trades),
+ * so its raw broker rows are suppressed to avoid double-counting; a snapshot-only
+ * symbol sums its raw broker lots. This is broker-truth (what you actually hold),
+ * NOT a net of the incomplete trade log.
+ */
+export async function loadPortfolioHeldQty(userId: number): Promise<Record<string, number>> {
+  const rows = await sql<{ symbol: string; qty: number }[]>`
+    SELECT h.symbol, SUM(h.quantity)::float8 AS qty
+      FROM app.portfolio_holding h
+     WHERE h.user_id = ${userId} AND h.symbol IS NOT NULL AND h.quantity > 0
+       AND (h.broker = 'derived'
+            OR h.symbol NOT IN (
+              SELECT symbol FROM app.portfolio_transaction
+               WHERE user_id = ${userId} AND source_file = 'manual-entry'
+                 AND symbol IS NOT NULL))
+     GROUP BY h.symbol
+  `;
+  const out: Record<string, number> = {};
+  for (const r of rows) if (r.qty > 0) out[r.symbol] = Math.round(r.qty);
+  return out;
+}
+
 /** One executed-trade marker for the chart tabs: buy/sell aggregated per
  *  (symbol, date, side), qty summed and price qty-weighted. `derived` flags a
  *  SYNTHETIC buy inferred from a broker snapshot that has no trade log — its

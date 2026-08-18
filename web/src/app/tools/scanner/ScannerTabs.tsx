@@ -67,6 +67,7 @@ export default function ScannerTabs({
   portfolioSymbols = [],
   tradedSymbols = [],
   tradesBySymbol = {},
+  portfolioQty = {},
   initialTab = "igniting",
 }: {
   momentumSnapDate: string | null;
@@ -88,6 +89,7 @@ export default function ScannerTabs({
   portfolioSymbols?: string[];
   tradedSymbols?: string[];
   tradesBySymbol?: Record<string, TradeMark[]>;
+  portfolioQty?: Record<string, number>;
   initialTab?: Tab;
 }) {
   const [tab, setTab] = useState<Tab>(initialTab);
@@ -355,7 +357,7 @@ export default function ScannerTabs({
             graphUniverse === null ? (
               <PanelLoading label="Loading candle universe…" />
             ) : (
-              <GraphClient universe={graphUniverse} nifty500={nifty500} n500Only={n500Only} portfolioSymbols={portfolioSymbols} tradedSymbols={tradedSymbols} tradesBySymbol={tradesBySymbol} />
+              <GraphClient universe={graphUniverse} nifty500={nifty500} n500Only={n500Only} portfolioSymbols={portfolioSymbols} tradedSymbols={tradedSymbols} tradesBySymbol={tradesBySymbol} portfolioQty={portfolioQty} />
             )
           )}
           {tab === "dividends" && (
