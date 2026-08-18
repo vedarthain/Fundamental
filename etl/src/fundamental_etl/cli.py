@@ -744,6 +744,16 @@ def sync_universe_cmd(
                     ON CONFLICT (symbol) DO NOTHING
                 """, payload)
                 inserted = cur.rowcount
+                # Append to the immutable membership log — one 'added' event per
+                # NEW row. RETURNING from the INSERT above would be cleaner but
+                # executemany doesn't surface it reliably across rows; new_syms
+                # is exactly the set we just inserted (ON CONFLICT only skips
+                # pre-existing symbols, which by construction aren't in new_syms).
+                cur.executemany(
+                    "INSERT INTO app.universe_event (symbol, event, company_name, source) "
+                    "VALUES (%s, 'added', %s, 'sync')",
+                    [(s, (live[s]["company_name"] or s)) for s in new_syms],
+                )
             conn.commit()
 
         # ── 4. Optionally retire names that have gone dark on NSE ─────────────
@@ -752,10 +762,19 @@ def sync_universe_cmd(
             with conn.cursor() as cur:
                 cur.execute(
                     "UPDATE app.universe SET is_active = false, synced_at = now() "
-                    "WHERE symbol = ANY(%s) AND is_active",
+                    "WHERE symbol = ANY(%s) AND is_active "
+                    "RETURNING symbol, company_name",
                     (gone,),
                 )
-                retired = cur.rowcount
+                retired_rows = cur.fetchall()
+                retired = len(retired_rows)
+                # Log each retirement in the immutable membership history.
+                if retired_rows:
+                    cur.executemany(
+                        "INSERT INTO app.universe_event (symbol, event, company_name, source) "
+                        "VALUES (%s, 'removed', %s, 'sync')",
+                        [(r["symbol"], r["company_name"]) for r in retired_rows],
+                    )
             conn.commit()
 
     log.info("sync_universe_done", inserted=inserted, retired=retired,

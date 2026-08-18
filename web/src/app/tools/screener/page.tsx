@@ -556,9 +556,11 @@ export default async function ScreenerPage({
             <span aria-hidden style={{ color: "var(--color-border-default)" }}>›</span>
             <span>Stock Screener</span>
             <span aria-hidden style={{ color: "var(--color-border-default)" }}>·</span>
-            <span
-              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border hairline normal-case tracking-normal"
+            <Link
+              href="/tools/universe-changes"
+              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border hairline normal-case tracking-normal hover:opacity-80 transition-opacity"
               style={{ backgroundColor: "var(--color-card)" }}
+              title="See what was added / removed each week"
             >
               <span
                 className="w-1.5 h-1.5 rounded-full animate-livepulse"
@@ -568,7 +570,7 @@ export default async function ScreenerPage({
                 {coverage.stocks.toLocaleString("en-IN")}
               </span>
               <span>stocks tracked</span>
-            </span>
+            </Link>
           </div>
           <h1 className="font-display text-[36px] tracking-tight leading-tight mt-1">
             Stocks ranked by <em className="accent">Industry Score</em>
