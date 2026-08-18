@@ -11,7 +11,7 @@
  * the tab is the only chrome. Each panel self-contains its own header + table.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { MomentumSignal } from "@/lib/momentum";
 import type { TrendLeaderSignal } from "@/lib/trendLeaders";
 import type { SupportFloorSignal } from "@/lib/supportFloor";
@@ -38,6 +38,15 @@ export type Tab = "igniting" | "trend" | "floor" | "fallen" | "sectors" | "all" 
 // Which cut the merged Sectors/Peers ("rotation") tab is showing.
 type RotView = "sectors" | "peers";
 
+function PanelLoading({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-3 py-16 justify-center muted-text text-[13px]">
+      <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" aria-hidden />
+      {label}
+    </div>
+  );
+}
+
 export default function ScannerTabs({
   momentumSnapDate,
   momentumSignals,
@@ -52,9 +61,6 @@ export default function ScannerTabs({
   floorDates,
   floorSpark,
   rotation,
-  allStocksSnapDate,
-  allStocks,
-  graphUniverse,
   dividendUniverse,
   themes,
   nifty500,
@@ -76,9 +82,6 @@ export default function ScannerTabs({
   floorDates: string[];
   floorSpark: Record<string, SparkPoint[]>;
   rotation: RotationData;
-  allStocksSnapDate: string | null;
-  allStocks: AllStockRow[];
-  graphUniverse: GraphUniverse;
   dividendUniverse: DividendUniverse;
   themes: ThemesData;
   nifty500: string[];
@@ -90,6 +93,27 @@ export default function ScannerTabs({
   const [tab, setTab] = useState<Tab>(initialTab);
   const [n500Only, setN500Only] = useState(false);
   const [railOpen, setRailOpen] = useState(true);
+
+  // "All stocks" + "Graph" are the two heaviest datasets, so they're NOT shipped
+  // with the page. Fetch each the first time its tab is opened (see
+  // /api/scanner/panel), then keep it cached in state for the session.
+  const [allStocksData, setAllStocksData] = useState<{ snapDate: string | null; rows: AllStockRow[] } | null>(null);
+  const [graphUniverse, setGraphUniverse] = useState<GraphUniverse | null>(null);
+
+  useEffect(() => {
+    if (tab === "all" && allStocksData === null) {
+      fetch("/api/scanner/panel?panel=all")
+        .then((r) => r.json())
+        .then((d) => setAllStocksData({ snapDate: d.snapDate ?? null, rows: d.rows ?? [] }))
+        .catch(() => setAllStocksData({ snapDate: null, rows: [] }));
+    }
+    if (tab === "graph" && graphUniverse === null) {
+      fetch("/api/scanner/panel?panel=graph")
+        .then((r) => r.json())
+        .then((d) => setGraphUniverse(d.universe ?? null))
+        .catch(() => setGraphUniverse(null));
+    }
+  }, [tab, allStocksData, graphUniverse]);
   // Sectors ⇄ Peer groups toggle inside the merged "sectors" tab. Seed from
   // ?rot= so a deep-link (or the redirected ?tab=peers) opens the right cut.
   const [rotView, setRotView] = useState<RotView>(() => {
@@ -134,7 +158,8 @@ export default function ScannerTabs({
   const sectors = n500Only ? rotation.sectorsN500 : rotation.sectorsAll;
   const peers = n500Only ? rotation.peersN500 : rotation.peersAll;
 
-  const allCount = n500Only ? allStocks.filter((r) => r.is_n500).length : allStocks.length;
+  const allRows = allStocksData?.rows ?? null;
+  const allCount = allRows === null ? null : n500Only ? allRows.filter((r) => r.is_n500).length : allRows.length;
 
   // Merged Sectors/Peers tab: the count reflects whichever cut is active.
   const rotCount = rotView === "peers" ? peers.length : sectors.length;
@@ -320,10 +345,18 @@ export default function ScannerTabs({
           )}
           {tab === "fallen" && <FallenLeadersClient n500Only={n500Only} />}
           {tab === "all" && (
-            <AllStocksClient snapDate={allStocksSnapDate} rows={allStocks} n500Only={n500Only} />
+            allStocksData === null ? (
+              <PanelLoading label="Loading full universe…" />
+            ) : (
+              <AllStocksClient snapDate={allStocksData.snapDate} rows={allStocksData.rows} n500Only={n500Only} />
+            )
           )}
           {tab === "graph" && (
-            <GraphClient universe={graphUniverse} nifty500={nifty500} n500Only={n500Only} portfolioSymbols={portfolioSymbols} tradedSymbols={tradedSymbols} tradesBySymbol={tradesBySymbol} />
+            graphUniverse === null ? (
+              <PanelLoading label="Loading candle universe…" />
+            ) : (
+              <GraphClient universe={graphUniverse} nifty500={nifty500} n500Only={n500Only} portfolioSymbols={portfolioSymbols} tradedSymbols={tradedSymbols} tradesBySymbol={tradesBySymbol} />
+            )
           )}
           {tab === "dividends" && (
             <DividendClient universe={dividendUniverse} nifty500={nifty500} n500Only={n500Only} />

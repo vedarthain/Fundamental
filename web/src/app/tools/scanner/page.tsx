@@ -3,8 +3,6 @@ import { loadLatestMomentum } from "@/lib/momentum";
 import { loadLatestTrendLeaders } from "@/lib/trendLeaders";
 import { loadLatestSupportFloor } from "@/lib/supportFloor";
 import { loadRotation } from "@/lib/rotation";
-import { loadAllStocks } from "@/lib/allStocks";
-import { loadGraphUniverse } from "@/lib/graphUniverse";
 import { loadDividendUniverse } from "@/lib/dividendScanner";
 import { loadThemes } from "@/lib/themes";
 import { loadSparklines } from "@/lib/sparklines";
@@ -32,8 +30,9 @@ const cachedMomentum = unstable_cache(loadLatestMomentum, ["scanner:momentum:v1"
 const cachedTrend = unstable_cache(loadLatestTrendLeaders, ["scanner:trend:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
 const cachedFloor = unstable_cache(loadLatestSupportFloor, ["scanner:floor:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
 const cachedRotation = unstable_cache(loadRotation, ["scanner:rotation:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
-const cachedAllStocks = unstable_cache(loadAllStocks, ["scanner:allStocks:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
-const cachedGraphUniverse = unstable_cache(loadGraphUniverse, ["scanner:graph:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
+// "All stocks" + "Graph" are the two heaviest payloads (~1 MB serialized combined).
+// They're lazy-loaded on first tab open via /api/scanner/panel, NOT shipped with
+// the page — so they're intentionally absent from the eager wave below.
 const cachedDividendUniverse = unstable_cache(loadDividendUniverse, ["scanner:dividends:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
 const cachedThemes = unstable_cache(loadThemes, ["scanner:themes:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
 const cachedSparklines = unstable_cache(loadSparklines, ["scanner:sparklines:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
@@ -81,13 +80,11 @@ export default async function MomentumPage({
   // "P" marker + Portfolio filter on the Graph tab. Cheap symbol-only query.
   const session = await getSession();
 
-  const [momentum, trend, floor, rotation, allStocks, graphUniverse, dividendUniverse, themes, n500, portfolioSymbols, portfolioTrades] = await Promise.all([
+  const [momentum, trend, floor, rotation, dividendUniverse, themes, n500, portfolioSymbols, portfolioTrades] = await Promise.all([
     cachedMomentum(one(sp.mDate)),
     cachedTrend(one(sp.tDate)),
     cachedFloor(one(sp.fDate)),
     cachedRotation(one(sp.rDate)),
-    cachedAllStocks(),
-    cachedGraphUniverse(),
     cachedDividendUniverse(),
     cachedThemes(),
     cachedN500(),
@@ -120,9 +117,6 @@ export default async function MomentumPage({
       floorDates={floor.dates}
       floorSpark={floorSpark}
       rotation={rotation}
-      allStocksSnapDate={allStocks.snapDate}
-      allStocks={allStocks.rows}
-      graphUniverse={graphUniverse}
       dividendUniverse={dividendUniverse}
       themes={themes}
       nifty500={n500.map((r) => r.symbol)}
