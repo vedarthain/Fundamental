@@ -856,6 +856,27 @@ export default function GraphClient({
     setSelectedInd(first);
     setPage(Math.max(0, sectorPageCount(prevName) - 1)); // land on its last page
   }
+
+  // Keyboard paging: ←/PageUp = prev, →/PageDown = next. Refs keep the latest
+  // closures so the listener registers once instead of re-subscribing per render.
+  const gotoNextRef = useRef(gotoNextPage);
+  const gotoPrevRef = useRef(gotoPrevPage);
+  gotoNextRef.current = gotoNextPage;
+  gotoPrevRef.current = gotoPrevPage;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // Don't hijack while typing in a field, using a browser shortcut, or with
+      // an expanded-chart overlay open (that owns its own keys).
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (focus) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+      if (e.key === "ArrowRight" || e.key === "PageDown") { e.preventDefault(); gotoNextRef.current(); }
+      else if (e.key === "ArrowLeft" || e.key === "PageUp") { e.preventDefault(); gotoPrevRef.current(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [focus]);
   // Switching page size keeps you on the same industry's first page (predictable,
   // no jarring jump to an unrelated slice).
   function changePerPage(n: number) {
