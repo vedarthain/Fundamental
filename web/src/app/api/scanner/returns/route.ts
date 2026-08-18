@@ -49,37 +49,30 @@ export async function GET(req: Request) {
 
   const ret1dBySym = new Map<string, number>();
   try {
-    // 1D from golden: latest daily close vs the previous trading day's close.
-    // Symbols are stored with a .NS suffix there; filter on the RAW ".NS" form so
-    // the primary key (symbol, interval, date) can index the lookup. Filtering on
-    // REPLACE(symbol,'.NS','') defeats the index and full-scans the 1d partition
-    // (~3s each, run twice → a multi-second stall); strip ".NS" only in output.
+    // 1D from golden: each symbol's latest daily close vs its previous trading
+    // day's close. Get the last 2 rows PER SYMBOL straight off the primary key
+    // (symbol, interval, date) with a short date-window guard — a per-symbol
+    // index scan (~50ms).
+    //
+    // The prior shape computed a GLOBAL latest/previous trading date via
+    // `MAX(date)`/`ORDER BY date DESC` over the whole 1d partition. With no
+    // standalone index on `date`, that full-scanned ~3.3M rows (~30s) — the real
+    // cause of the slow 1D/1W populate. Per-symbol windowing sidesteps it and is
+    // also more correct when some symbols' data lags others'. Strip ".NS" in output.
     const symbolsNS = symbols.map((s) => `${s}.NS`);
     const moves1D = await golden<{ symbol: string; pct: number }[]>`
-      WITH bounds AS (
-        SELECT date AS latest FROM golden.price_history WHERE interval='1d'
-         ORDER BY date DESC LIMIT 1
-      ),
-      prev AS (
-        SELECT MAX(date) AS d FROM golden.price_history
-         WHERE interval='1d' AND date < (SELECT latest FROM bounds)
-      ),
-      today_close AS (
-        SELECT REPLACE(symbol, '.NS', '') AS symbol, close
-          FROM golden.price_history, bounds
-         WHERE interval='1d' AND date = bounds.latest
-           AND symbol = ANY(${symbolsNS})
-      ),
-      prev_close AS (
-        SELECT REPLACE(symbol, '.NS', '') AS symbol, close
-          FROM golden.price_history, prev
-         WHERE interval='1d' AND date = prev.d
-           AND symbol = ANY(${symbolsNS})
+      WITH recent AS (
+        SELECT REPLACE(symbol, '.NS', '') AS symbol,
+               close,
+               row_number() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
+          FROM golden.price_history
+         WHERE interval = '1d' AND symbol = ANY(${symbolsNS})
+           AND date >= CURRENT_DATE - 16
       )
-      SELECT t.symbol, ((t.close - p.close) / NULLIF(p.close, 0))::float AS pct
-        FROM today_close t
-        JOIN prev_close  p ON p.symbol = t.symbol
-       WHERE p.close > 0
+      SELECT c.symbol, ((c.close - p.close) / NULLIF(p.close, 0))::float AS pct
+        FROM recent c
+        JOIN recent p ON p.symbol = c.symbol AND p.rn = 2
+       WHERE c.rn = 1 AND p.close > 0
     `;
     for (const m of moves1D) ret1dBySym.set(m.symbol, m.pct);
   } catch {
