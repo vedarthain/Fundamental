@@ -44,6 +44,11 @@ class AssertionResult:
                 f"{icon} {self.name:<55} {self.total} rows "
                 f"(expected ≥ {int(self.threshold_pct)})"
             )
+        if self.shape == "count_max":
+            return (
+                f"{icon} {self.name:<55} {self.total} rows "
+                f"(expected ≤ {int(self.threshold_pct)})"
+            )
         return (
             f"{icon} {self.name:<55} {self.actual_pct:5.1f}% "
             f"({self.populated}/{self.total}, threshold ≥ {self.threshold_pct}%)"
@@ -119,6 +124,44 @@ _COUNT_ASSERTIONS = [
 ]
 
 
+# Upper-bound count assertions — fail when a count EXCEEDS a ceiling (the
+# OPPOSITE direction of _COUNT_ASSERTIONS above, which fails when a count falls
+# below a floor). For failure modes that should stay small.
+_MAX_COUNT_ASSERTIONS = [
+    # (name, sql_returning_single_int_column_n, maximum)
+    #
+    # Screener-export warehouse lag: names Screener returns with a CURRENT price
+    # (freshly fetched, last_status='ok') but STALE financials — its downloadable
+    # xlsx export lags its own live company page. The scorer's 15-month freshness
+    # gate (see scoring/metrics.py: (snapshot - freshest_period_end).days > 458)
+    # then correctly drops these from the scored universe, silently shrinking
+    # "All stocks". This watches the size of that cohort so a systemic Screener
+    # regression (or a fetch bug reintroducing stale content) is caught loudly
+    # instead of surfacing months later as an unexplained coverage gap.
+    #
+    # Baseline was 25 on 2026-08-19 (JYOTHYLAB, MANYAVAR, HDBFS, SBFC, CAMPUS,
+    # KENNAMET, …). Ceiling 40 catches a ~1.6x jump without flaking on the normal
+    # churn of a few names sliding in/out around FY-result season.
+    ("screener_export_stale_financials (price-fresh)",
+        """
+        SELECT COUNT(*)::int AS n
+          FROM app.universe u
+          JOIN app.screener_meta sm USING (symbol)
+         WHERE u.is_active
+           AND sm.current_price IS NOT NULL
+           AND sm.last_status = 'ok'
+           AND sm.last_scraped_at >= NOW() - INTERVAL '10 days'
+           AND GREATEST(
+                 COALESCE((SELECT MAX(period_end) FROM app.fundamentals_annual a
+                            WHERE a.symbol = u.symbol), DATE '1900-01-01'),
+                 COALESCE((SELECT MAX(period_end) FROM app.fundamentals_quarterly q
+                            WHERE q.symbol = u.symbol), DATE '1900-01-01')
+               ) < CURRENT_DATE - INTERVAL '15 months'
+        """,
+        40),
+]
+
+
 def _run_pct(conn, name, table_clause, where_clause, column, threshold) -> AssertionResult:
     # Force dict_row at the cursor level so this module works regardless of
     # the caller's default row factory (cli.py uses dict_row via app_conn();
@@ -165,6 +208,22 @@ def _run_count(conn, name, table, where_clause, minimum) -> AssertionResult:
     )
 
 
+def _run_max_count(conn, name, sql, maximum) -> AssertionResult:
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(sql)
+        row = cur.fetchone()
+    n = (row["n"] or 0) if row else 0
+    return AssertionResult(
+        name=name,
+        passed=(n <= maximum),
+        actual_pct=float(n),
+        threshold_pct=float(maximum),
+        populated=n,
+        total=n,
+        shape="count_max",
+    )
+
+
 def run_assertions(conn: psycopg.Connection) -> list[AssertionResult]:
     """Run all DQ assertions against the given app DB connection.
 
@@ -176,6 +235,8 @@ def run_assertions(conn: psycopg.Connection) -> list[AssertionResult]:
         out.append(_run_pct(conn, name, table, where, col, threshold))
     for name, table, where, minimum in _COUNT_ASSERTIONS:
         out.append(_run_count(conn, name, table, where, minimum))
+    for name, sql, maximum in _MAX_COUNT_ASSERTIONS:
+        out.append(_run_max_count(conn, name, sql, maximum))
     return out
 
 
