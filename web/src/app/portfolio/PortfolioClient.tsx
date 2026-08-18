@@ -19,7 +19,7 @@ import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
   PieChart, Pie, Cell, BarChart, Bar, ScatterChart, Scatter, ZAxis, ReferenceLine,
 } from "recharts";
-import type { Portfolio, Instrument, CurvePoint, RealizedPnl, RealizedLot, PerformanceStats, RealizedTimeline } from "@/lib/portfolio";
+import type { Portfolio, Instrument, RealizedPnl, RealizedLot, PerformanceStats, RealizedTimeline } from "@/lib/portfolio";
 
 const BROKERS = [
   { value: "upstox", label: "Upstox" },
@@ -74,25 +74,23 @@ type ImportResult = {
   error?: string;
 };
 
-type PortfolioTab = "overview" | "holdings" | "performance" | "transactions" | "booked";
+type PortfolioTab = "holdings" | "performance" | "transactions" | "booked";
 
 export function PortfolioClient({
   portfolio,
-  curve,
   realized,
   owner = false,
   perf = null,
   timeline = null,
 }: {
   portfolio: Portfolio;
-  curve: CurvePoint[];
   realized: RealizedPnl;
   owner?: boolean; // gates the (personal, owner-only) Performance analysis tab
   perf?: PerformanceStats | null; // time-weighted stats (owner-only)
   timeline?: RealizedTimeline | null; // realized-over-time analytics (owner-only)
 }) {
   const router = useRouter();
-  const [tab, setTab] = useState<PortfolioTab>("overview");
+  const [tab, setTab] = useState<PortfolioTab>("holdings");
   const [broker, setBroker] = useState<string>("zerodha");
   const [kind, setKind] = useState<ImportKind>("holdings");
   const [busy, setBusy] = useState(false);
@@ -145,7 +143,6 @@ export function PortfolioClient({
       {/* Overview (holdings) vs Booked P&L (realized from the trade log). */}
       <div className="flex items-center gap-1 border-b hairline mb-5">
         {([
-          { v: "overview", label: "Overview" },
           { v: "holdings", label: "Holdings" },
           { v: "performance", label: "Performance" },
           { v: "transactions", label: "Transactions" },
@@ -190,7 +187,12 @@ export function PortfolioClient({
             </p>
           </div>
         ) : (
-          <HoldingsSheets instruments={portfolio.instruments} totalValue={t.currentValue} />
+          <>
+            <SummaryCards t={t} snapshot={portfolio.snapshotDate} />
+            <div className="mt-6">
+              <HoldingsSheets instruments={portfolio.instruments} totalValue={t.currentValue} />
+            </div>
+          </>
         )
       ) : tab === "performance" && owner ? (
         !portfolio.hasHoldings && realized.rows.length === 0 ? (
@@ -220,28 +222,7 @@ export function PortfolioClient({
 
           <ManualTradePanel onChanged={() => router.refresh()} />
         </>
-      ) : (
-        <>
-          {!portfolio.hasHoldings ? (
-            <div className="card p-8 text-center mt-6">
-              <h2 className="font-display text-[20px] mb-2">No holdings yet</h2>
-              <p className="muted-text text-[13px] max-w-md mx-auto">
-                Head to the Transactions tab to import a broker holdings export or log a
-                manual trade — your portfolio is then valued, allocated and scored here.
-              </p>
-            </div>
-          ) : (
-            <>
-              <SummaryCards t={t} snapshot={portfolio.snapshotDate} />
-              <EquityCurve curve={curve} />
-              <div className="grid md:grid-cols-2 gap-4 mt-6">
-                <Donut title="By broker" data={portfolio.brokerAlloc} total={t.currentValue} />
-                <Donut title="By sector" data={portfolio.sectorAlloc} total={t.currentValue} />
-              </div>
-            </>
-          )}
-        </>
-      )}
+      ) : null}
     </>
   );
 }
@@ -328,6 +309,12 @@ function PerformanceTab({ portfolio, realized, perf, timeline }: { portfolio: Po
       {/* Zone B — quality */}
       <QualityDistribution mapped={mapped} mappedValue={mappedValue} totalValue={totals.currentValue} />
       <ConvictionCheck mapped={mapped} mappedValue={mappedValue} />
+
+      {/* Zone C — allocation */}
+      <div className="grid md:grid-cols-2 gap-4">
+        <Donut title="By broker" data={portfolio.brokerAlloc} total={totals.currentValue} />
+        <Donut title="By sector" data={portfolio.sectorAlloc} total={totals.currentValue} />
+      </div>
     </div>
   );
 }
@@ -1615,47 +1602,6 @@ function Card({
           {sub}
         </div>
       )}
-    </div>
-  );
-}
-
-// ─────────────────────────── equity curve ──────────────────────────────────
-
-function EquityCurve({ curve }: { curve: CurvePoint[] }) {
-  if (curve.length < 2) {
-    return (
-      <div className="card p-5 mt-6">
-        <SectionHead icon={<IconChart size={15} />} title="Performance vs NIFTY 500" />
-        <p className="muted-text text-[12.5px]">
-          {curve.length === 0
-            ? "Your equity curve starts accruing from your first daily snapshot. Check back tomorrow — a holdings export has no back-history, so the curve grows forward from onboarding."
-            : `Accruing since ${curve[0].date}. One more daily snapshot and the curve vs NIFTF 500 appears here.`}
-        </p>
-      </div>
-    );
-  }
-  return (
-    <div className="card p-4 md:p-5 mt-6">
-      <SectionHead
-        icon={<IconChart size={15} />}
-        title="Performance vs NIFTY 500"
-        right={<span className="text-[11px] muted-text">rebased to 100 at {curve[0].date}</span>}
-      />
-      <div style={{ width: "100%", height: 280 }}>
-        <ResponsiveContainer>
-          <LineChart data={curve} margin={{ top: 4, right: 8, bottom: 4, left: 8 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-default)" opacity={0.4} />
-            <XAxis dataKey="date" tick={{ fontSize: 11 }} minTickGap={30} />
-            <YAxis tick={{ fontSize: 11 }} domain={["auto", "auto"]} width={40} />
-            <Tooltip
-              formatter={(v, name) => [Number(v).toFixed(1), String(name)]}
-              contentStyle={{ fontSize: 12, borderRadius: 8 }}
-            />
-            <Line type="monotone" dataKey="portfolioIdx" name="Portfolio" stroke="#1E2761" strokeWidth={2} dot={false} />
-            <Line type="monotone" dataKey="niftyIdx" name="NIFTY 500" stroke="#B45309" strokeWidth={1.5} strokeDasharray="4 3" dot={false} />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
     </div>
   );
 }

@@ -74,7 +74,7 @@ type Measure = { x0: number; y0: number; x1: number; y1: number };
 // Persistable drawings. Anchored to PRICE / DATE (never pixels) so a line drawn
 // on one timeframe re-projects correctly on any other timeframe or chart size.
 //  - hline: a single price level (rendered on every chart, incl. the small grid)
-//  - trend: two (date, price) anchors → a sloped segment (expanded chart only)
+//  - trend: two (date, price) anchors → a sloped segment (rendered on every chart)
 export type Drawing =
   | { kind: "hline"; price: number }
   | { kind: "trend"; d0: string; p0: number; d1: string; p1: number };
@@ -525,7 +525,7 @@ function renderChart(
         );
       })}
 
-      {/* saved drawings: hlines everywhere, trend lines on the expanded chart */}
+      {/* saved drawings: hlines and trend lines both render on every chart */}
       {drawings.map((d, i) => {
         if (d.kind === "hline") {
           const y = yP(d.price);
@@ -546,11 +546,13 @@ function renderChart(
             </g>
           );
         }
-        if (d.kind === "trend" && showTrend) {
+        if (d.kind === "trend") {
           const x0 = cx(idxForDate(data, d.d0));
           const x1 = cx(idxForDate(data, d.d1));
+          // Thinner on the small grid (showTrend=false) so it doesn't dominate a
+          // tiny card; full weight on the expanded chart.
           return (
-            <line key={`dl-${i}`} pointerEvents="none" x1={x0} y1={yP(d.p0)} x2={x1} y2={yP(d.p1)} stroke={ACCENT} strokeWidth={1.6} opacity={0.9} />
+            <line key={`dl-${i}`} pointerEvents="none" x1={x0} y1={yP(d.p0)} x2={x1} y2={yP(d.p1)} stroke={ACCENT} strokeWidth={showTrend ? 1.6 : 1.2} opacity={0.9} />
           );
         }
         return null;

@@ -9,7 +9,7 @@
  */
 import Link from "next/link";
 import { getSession, isAdminRequest } from "@/lib/auth";
-import { loadPortfolio, loadEquityCurve, loadRealizedPnl, loadPerformanceStats, loadRealizedTimeline } from "@/lib/portfolio";
+import { loadPortfolio, loadRealizedPnl, loadPerformanceStats, loadRealizedTimeline } from "@/lib/portfolio";
 import { PortfolioClient } from "./PortfolioClient";
 
 export const dynamic = "force-dynamic";
@@ -50,9 +50,8 @@ export default async function PortfolioPage() {
     );
   }
 
-  const [portfolio, curve, realized, owner] = await Promise.all([
+  const [portfolio, realized, owner] = await Promise.all([
     loadPortfolio(session.userId),
-    loadEquityCurve(session.userId),
     loadRealizedPnl(session.userId),
     isAdminRequest(), // Performance tab is owner-only for now (personal, prescriptive-friendly).
   ]);
@@ -67,7 +66,6 @@ export default async function PortfolioPage() {
     <div className="mx-auto max-w-[1200px] px-4 md:px-6 py-6 md:py-8">
       <PortfolioClient
         portfolio={portfolio}
-        curve={curve}
         realized={realized}
         owner={owner}
         perf={perf}

@@ -123,61 +123,6 @@ const TIER_MAP: Record<string, string> = {
   new: "Emerging",
 };
 
-export type CurvePoint = {
-  date: string;
-  value: number; // portfolio total value that day
-  portfolioIdx: number; // normalised to 100 at the first snapshot
-  niftyIdx: number | null; // NIFTY 500 normalised to 100 at the first snapshot
-};
-
-/**
- * Forward-only equity curve for the signed-in user + a NIFTY 500 overlay,
- * both rebased to 100 at the first snapshot. `portfolio_snapshot` accrues one
- * row per user per day from onboarding onward (the daily cron), so an equity
- * curve simply doesn't exist before the first snapshot — the UI shows an
- * "accruing from <date>" note in that case.
- */
-export async function loadEquityCurve(userId: number): Promise<CurvePoint[]> {
-  const snaps = await sql<{ snap_date: string; total_value: string | null }[]>`
-    SELECT snap_date::text, total_value::text
-      FROM app.portfolio_snapshot
-     WHERE user_id = ${userId} AND total_value IS NOT NULL
-     ORDER BY snap_date ASC
-  `;
-  if (snaps.length === 0) return [];
-
-  const first = snaps[0].snap_date;
-  const nifty = await sql<{ date: string; close: string }[]>`
-    SELECT date::text, close::text
-      FROM app.market_index_history
-     WHERE index_code = 'NIFTY500' AND date >= ${first}
-     ORDER BY date ASC
-  `;
-  // nearest-on-or-before NIFTY close for each snapshot date.
-  const niftyByDate = nifty.map((r) => ({ date: r.date, close: Number(r.close) }));
-  const niftyAt = (d: string): number | null => {
-    let val: number | null = null;
-    for (const r of niftyByDate) {
-      if (r.date <= d) val = r.close;
-      else break;
-    }
-    return val;
-  };
-
-  const baseVal = Number(snaps[0].total_value);
-  const baseNifty = niftyAt(first);
-  return snaps.map((s) => {
-    const v = Number(s.total_value);
-    const n = niftyAt(s.snap_date);
-    return {
-      date: s.snap_date,
-      value: Math.round(v * 100) / 100,
-      portfolioIdx: baseVal > 0 ? Math.round((v / baseVal) * 1000) / 10 : 100,
-      niftyIdx: n != null && baseNifty ? Math.round((n / baseNifty) * 1000) / 10 : null,
-    };
-  });
-}
-
 // ── time-weighted performance model ─────────────────────────────────────────
 //
 // A trustworthy return figure must ignore BOTH the money you add/remove AND any

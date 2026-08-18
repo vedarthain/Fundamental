@@ -546,9 +546,9 @@ export default function GraphClient({
   // Reset whenever the overlay closes.
   const [tool, setTool] = useState<ChartTool>("none");
 
-  // Persisted chart drawings, keyed by symbol. Hlines show on every chart
-  // (incl. the small grid); trend lines only on the expanded chart. Stored in
-  // localStorage so they survive reloads.
+  // Persisted chart drawings, keyed by symbol. Hlines and trend lines both show
+  // on every chart (incl. the small grid). Stored in localStorage so they
+  // survive reloads.
   const DRAW_KEY = "er:chartDrawings:v1";
   const [drawings, setDrawings] = useState<Record<string, Drawing[]>>({});
   useEffect(() => {
