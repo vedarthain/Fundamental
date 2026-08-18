@@ -17,9 +17,9 @@ import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
-  PieChart, Pie, Cell,
+  PieChart, Pie, Cell, BarChart, Bar, ScatterChart, Scatter, ZAxis, ReferenceLine,
 } from "recharts";
-import type { Portfolio, Instrument, CurvePoint, RealizedPnl, RealizedLot, PerformanceStats } from "@/lib/portfolio";
+import type { Portfolio, Instrument, CurvePoint, RealizedPnl, RealizedLot, PerformanceStats, RealizedTimeline } from "@/lib/portfolio";
 
 const BROKERS = [
   { value: "upstox", label: "Upstox" },
@@ -82,12 +82,14 @@ export function PortfolioClient({
   realized,
   owner = false,
   perf = null,
+  timeline = null,
 }: {
   portfolio: Portfolio;
   curve: CurvePoint[];
   realized: RealizedPnl;
   owner?: boolean; // gates the (personal, owner-only) Performance analysis tab
   perf?: PerformanceStats | null; // time-weighted stats (owner-only)
+  timeline?: RealizedTimeline | null; // realized-over-time analytics (owner-only)
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<PortfolioTab>("overview");
@@ -200,7 +202,7 @@ export function PortfolioClient({
             </p>
           </div>
         ) : (
-          <PerformanceTab portfolio={portfolio} realized={realized} perf={perf} />
+          <PerformanceTab portfolio={portfolio} realized={realized} perf={perf} timeline={timeline} />
         )
       ) : tab === "transactions" ? (
         <>
@@ -251,7 +253,7 @@ export function PortfolioClient({
 // the book already is: where the P&L came from (attribution) and how the money
 // is distributed across score quality. All client-side on props already loaded.
 
-function PerformanceTab({ portfolio, realized, perf }: { portfolio: Portfolio; realized: RealizedPnl; perf?: PerformanceStats | null }) {
+function PerformanceTab({ portfolio, realized, perf, timeline }: { portfolio: Portfolio; realized: RealizedPnl; perf?: PerformanceStats | null; timeline?: RealizedTimeline | null }) {
   const { instruments, totals } = portfolio;
 
   // Split once: scored equities carry Q/V/M; unmapped (ETFs/funds) are excluded
@@ -312,6 +314,9 @@ function PerformanceTab({ portfolio, realized, perf }: { portfolio: Portfolio; r
       {/* Time-weighted return model + benchmark (owner-only) */}
       {perf && <ReturnModel perf={perf} />}
 
+      {/* Realized performance over time — the honest long-run trader view */}
+      {timeline && <RealizedTimelinePanel timeline={timeline} />}
+
       {/* Discipline desk — rule triggers with plain calls to action (owner-only) */}
       <DisciplineDesk instruments={instruments} />
 
@@ -323,6 +328,127 @@ function PerformanceTab({ portfolio, realized, perf }: { portfolio: Portfolio; r
       {/* Zone B — quality */}
       <QualityDistribution mapped={mapped} mappedValue={mappedValue} totalValue={totals.currentValue} />
       <ConvictionCheck mapped={mapped} mappedValue={mappedValue} />
+    </div>
+  );
+}
+
+// Realized performance over time — booked P&L by month + trade-quality stats,
+// derived purely from CLOSED trades (the trade log's one trustworthy signal).
+// Deliberately NOT a portfolio value curve: the log's position history is
+// incomplete, so we only analyse exits that matched a real cost basis.
+function RealizedTimelinePanel({ timeline }: { timeline: RealizedTimeline }) {
+  const { months, scatter, stats } = timeline;
+  const s = stats;
+  const statCards = [
+    { label: "Win rate", value: s.winRate != null ? `${s.winRate.toFixed(0)}%` : "—", color: "var(--color-fg)" },
+    { label: "Closed trades", value: `${s.closedTrades}`, sub: `${s.closedSymbols} symbols`, color: "var(--color-fg)" },
+    { label: "Avg winner", value: s.avgWinPct != null ? pct(s.avgWinPct) : "—", color: GREEN },
+    { label: "Avg loser", value: s.avgLossPct != null ? pct(s.avgLossPct) : "—", color: RED },
+    { label: "Avg hold", value: s.avgHoldDays != null ? `${s.avgHoldDays}d` : "—", color: "var(--color-muted)" },
+    {
+      label: "Best / worst",
+      value: `${s.bestTrade ? signed(s.bestTrade.realized) : "—"}`,
+      sub: s.worstTrade ? signed(s.worstTrade.realized) : undefined,
+      color: GREEN, subColor: RED, small: true,
+    },
+  ];
+  return (
+    <div className="card p-4 md:p-5">
+      <SectionHead
+        icon={<IconTrendUp size={15} />}
+        title="Realized performance over time"
+        right={
+          <span className="text-[11px] muted-text">
+            {s.firstSell} → {s.lastSell}
+          </span>
+        }
+      />
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-x-4 gap-y-3 mb-4">
+        {statCards.map((c) => (
+          <div key={c.label}>
+            <div className="text-[10.5px] font-semibold muted-text uppercase tracking-wide leading-tight">{c.label}</div>
+            <div className={`tabular-nums font-semibold mt-0.5 ${c.small ? "text-[14px]" : "text-[17px]"}`} style={{ color: c.color }}>
+              {c.value}
+            </div>
+            {c.sub && (
+              <div className="text-[11px] tabular-nums" style={{ color: c.subColor ?? "var(--color-muted)" }}>{c.sub}</div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <div className="grid lg:grid-cols-2 gap-5">
+        {/* Monthly booked P&L */}
+        <div>
+          <div className="text-[11px] font-semibold muted-text uppercase tracking-wide mb-2">Booked P&amp;L by month</div>
+          <div style={{ width: "100%", height: 210 }}>
+            <ResponsiveContainer>
+              <BarChart data={months} margin={{ top: 4, right: 8, bottom: 4, left: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-default)" opacity={0.4} vertical={false} />
+                <XAxis dataKey="month" tick={{ fontSize: 10 }} minTickGap={12} />
+                <YAxis tick={{ fontSize: 10 }} width={44} tickFormatter={(v) => inr(Number(v))} />
+                <Tooltip
+                  formatter={(v) => [signed(Number(v)), "Booked"]}
+                  labelFormatter={(l) => String(l)}
+                  contentStyle={{ fontSize: 12, borderRadius: 8 }}
+                />
+                <ReferenceLine y={0} stroke="var(--color-border-default)" />
+                <Bar dataKey="realized" radius={[2, 2, 0, 0]}>
+                  {months.map((m) => (
+                    <Cell key={m.month} fill={m.realized >= 0 ? GREEN : RED} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Hold-period vs return scatter */}
+        <div>
+          <div className="text-[11px] font-semibold muted-text uppercase tracking-wide mb-2">
+            Hold period vs return {scatter.length > 0 && <span className="normal-case">({scatter.length} symbols)</span>}
+          </div>
+          {scatter.length === 0 ? (
+            <p className="muted-text text-[12px]">No closed trades with a datable buy→sell span yet.</p>
+          ) : (
+            <div style={{ width: "100%", height: 210 }}>
+              <ResponsiveContainer>
+                <ScatterChart margin={{ top: 8, right: 12, bottom: 4, left: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-default)" opacity={0.4} />
+                  <XAxis
+                    type="number" dataKey="holdingDays" name="Hold (days)"
+                    tick={{ fontSize: 10 }} tickFormatter={(v) => `${v}d`}
+                  />
+                  <YAxis
+                    type="number" dataKey="realizedPct" name="Return"
+                    tick={{ fontSize: 10 }} width={40} tickFormatter={(v) => `${v}%`}
+                  />
+                  <ZAxis type="number" dataKey="realized" range={[24, 260]} name="P&L" />
+                  <ReferenceLine y={0} stroke="var(--color-border-default)" />
+                  <Tooltip
+                    cursor={{ strokeDasharray: "3 3" }}
+                    contentStyle={{ fontSize: 12, borderRadius: 8 }}
+                    formatter={(v, n) => [n === "Return" ? `${Number(v).toFixed(1)}%` : n === "P&L" ? signed(Number(v)) : `${v}d`, String(n)]}
+                    labelFormatter={() => ""}
+                  />
+                  <Scatter data={scatter}>
+                    {scatter.map((p) => (
+                      <Cell key={p.symbol} fill={p.realizedPct >= 0 ? GREEN : RED} fillOpacity={0.55} />
+                    ))}
+                  </Scatter>
+                </ScatterChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <p className="muted-text text-[11px] mt-3 leading-snug">
+        Closed trades only, average-cost matched — the same engine as Booked P&amp;L. This is NOT a
+        portfolio value curve: your trade log&apos;s position history is incomplete (early buys pre-date
+        it), so a reconstructed net-worth curve would be fabricated. Win rate is per sell event; average
+        winner/loser and hold period are per symbol with a known cost basis.
+      </p>
     </div>
   );
 }

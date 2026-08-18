@@ -551,6 +551,26 @@ export type RealizedPnl = {
   };
 };
 
+// One realized sell, booked at the running average cost at the moment of sale.
+// Emitted by the same walk that produces the per-symbol rollup, so the Booked
+// P&L tab and the realized-over-time analytics can never disagree.
+type SellEvent = {
+  symbol: string;
+  name: string | null;
+  date: string;        // sell date (ISO)
+  qty: number;
+  proceeds: number;
+  cost: number;        // avg-cost basis of the sold qty
+  realized: number;    // proceeds − cost
+  holdingDays: number | null; // sell date − symbol's first observed buy (proxy)
+};
+
+function daysBetween(a: string, b: string): number | null {
+  const ta = Date.parse(a), tb = Date.parse(b);
+  if (!Number.isFinite(ta) || !Number.isFinite(tb)) return null;
+  return Math.max(0, Math.round((tb - ta) / 86_400_000));
+}
+
 /**
  * Booked (realized) P&L from the trade log, average-cost method. Walking each
  * symbol's transactions in order, a buy blends into the running avg cost; a sell
@@ -559,8 +579,13 @@ export type RealizedPnl = {
  * NOT here — those live in the Holdings table. Cost basis unknown (a sell before
  * any buy in a windowed export) contributes 0 cost, so proceeds count as pure
  * realized — flagged implicitly by realizedPct being null-safe.
+ *
+ * Returns the per-symbol rows + totals AND the raw sell events, so callers that
+ * want a time series (loadRealizedTimeline) reuse the exact same matching.
  */
-export async function loadRealizedPnl(userId: number): Promise<RealizedPnl> {
+async function computeRealized(
+  userId: number,
+): Promise<{ rows: RealizedLot[]; totals: RealizedPnl["totals"]; events: SellEvent[] }> {
   const txns = await sql<
     { symbol: string; d: string; side: string; qty: number; price: number; name: string | null; manual: boolean }[]
   >`
@@ -601,6 +626,7 @@ export async function loadRealizedPnl(userId: number): Promise<RealizedPnl> {
     lastSell: string | null;
   };
   const bySym = new Map<string, Acc>();
+  const events: SellEvent[] = [];
 
   // Group the (already symbol-ordered) txns so we can pick a per-symbol regime.
   type TxnRow = (typeof txns)[number];
@@ -636,11 +662,18 @@ export async function loadRealizedPnl(userId: number): Promise<RealizedPnl> {
         // sell: book against current avg, up to the open qty (ignore oversells).
         const sold = a.qty > 0 ? Math.min(t.qty, a.qty) : 0;
         if (sold > 0) {
+          const proceeds = sold * t.price;
+          const cost = sold * a.avg;
           a.qtySold += sold;
-          a.proceeds += sold * t.price;
-          a.costOfSold += sold * a.avg;
+          a.proceeds += proceeds;
+          a.costOfSold += cost;
           a.qty -= sold;
           a.lastSell = t.d;
+          events.push({
+            symbol, name: a.name, date: t.d, qty: sold,
+            proceeds, cost, realized: proceeds - cost,
+            holdingDays: a.firstBuy ? daysBetween(a.firstBuy, t.d) : null,
+          });
         }
       }
     }
@@ -679,6 +712,102 @@ export async function loadRealizedPnl(userId: number): Promise<RealizedPnl> {
       realizedPct: pCost > 0 ? Math.round((realized / pCost) * 1000) / 10 : null,
       winners,
       losers,
+    },
+    events,
+  };
+}
+
+/** Public per-symbol booked P&L (drops the raw sell events). */
+export async function loadRealizedPnl(userId: number): Promise<RealizedPnl> {
+  const { rows, totals } = await computeRealized(userId);
+  return { rows, totals };
+}
+
+// ── realized performance over time ──────────────────────────────────────────
+//
+// The honest "how good am I over the long run?" view. The trade log's POSITION
+// history is incomplete (early buys pre-date it, some holdings have no logged
+// trades), so we deliberately do NOT reconstruct a portfolio value curve from
+// it. But every logged SELL that matched against a known cost basis is a real
+// closed trade — those we can trust. This aggregates them into a monthly booked
+// P&L series plus win-rate / hold-period / best-worst stats. Symbols sold with
+// NO cost basis (proceeds booked as pure realized) are excluded from the
+// return-percentage stats but still counted in monthly rupee totals.
+export type RealizedTimeline = {
+  months: { month: string; realized: number; proceeds: number; sells: number; winners: number; losers: number }[];
+  scatter: { symbol: string; holdingDays: number; realizedPct: number; realized: number }[];
+  stats: {
+    closedTrades: number;      // number of sell events
+    closedSymbols: number;     // distinct symbols with a booked exit
+    winRate: number | null;    // % of sell events with realized ≥ 0
+    avgWinPct: number | null;  // mean realizedPct of winning symbols
+    avgLossPct: number | null; // mean realizedPct of losing symbols
+    avgHoldDays: number | null;
+    bestTrade: { symbol: string; realized: number } | null;
+    worstTrade: { symbol: string; realized: number } | null;
+    firstSell: string | null;
+    lastSell: string | null;
+  };
+};
+
+export async function loadRealizedTimeline(userId: number): Promise<RealizedTimeline | null> {
+  const { rows, events } = await computeRealized(userId);
+  if (events.length === 0) return null;
+
+  // Monthly rupee buckets keyed YYYY-MM (win/loss counted per sell event).
+  const byMonth = new Map<string, { realized: number; proceeds: number; sells: number; winners: number; losers: number }>();
+  for (const e of events) {
+    const m = e.date.slice(0, 7);
+    const b = byMonth.get(m) ?? { realized: 0, proceeds: 0, sells: 0, winners: 0, losers: 0 };
+    b.realized += e.realized;
+    b.proceeds += e.proceeds;
+    b.sells += 1;
+    if (e.realized >= 0) b.winners += 1; else b.losers += 1;
+    byMonth.set(m, b);
+  }
+  const months = [...byMonth.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([month, b]) => ({
+      month,
+      realized: Math.round(b.realized * 100) / 100,
+      proceeds: Math.round(b.proceeds * 100) / 100,
+      sells: b.sells,
+      winners: b.winners,
+      losers: b.losers,
+    }));
+
+  // Per-symbol hold-period vs return scatter (needs a real cost basis + span).
+  const scatter = rows
+    .filter((r) => r.realizedPct != null && r.firstBuy && r.lastSell)
+    .map((r) => ({
+      symbol: r.symbol,
+      holdingDays: daysBetween(r.firstBuy!, r.lastSell!) ?? 0,
+      realizedPct: r.realizedPct!,
+      realized: r.realized,
+    }));
+
+  const wins = rows.filter((r) => r.realizedPct != null && r.realized >= 0);
+  const losses = rows.filter((r) => r.realizedPct != null && r.realized < 0);
+  const sellWins = events.filter((e) => e.realized >= 0).length;
+  const holdDays = scatter.map((s) => s.holdingDays);
+  const sorted = [...rows].sort((a, b) => b.realized - a.realized);
+  const mean = (xs: number[]) => (xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : null);
+  const r1 = (x: number | null) => (x == null ? null : Math.round(x * 10) / 10);
+
+  return {
+    months,
+    scatter,
+    stats: {
+      closedTrades: events.length,
+      closedSymbols: rows.length,
+      winRate: events.length ? Math.round((sellWins / events.length) * 1000) / 10 : null,
+      avgWinPct: r1(mean(wins.map((r) => r.realizedPct!))),
+      avgLossPct: r1(mean(losses.map((r) => r.realizedPct!))),
+      avgHoldDays: holdDays.length ? Math.round(mean(holdDays)!) : null,
+      bestTrade: sorted.length ? { symbol: sorted[0].symbol, realized: sorted[0].realized } : null,
+      worstTrade: sorted.length ? { symbol: sorted[sorted.length - 1].symbol, realized: sorted[sorted.length - 1].realized } : null,
+      firstSell: events.reduce((min, e) => (e.date < min ? e.date : min), events[0].date),
+      lastSell: events.reduce((max, e) => (e.date > max ? e.date : max), events[0].date),
     },
   };
 }
