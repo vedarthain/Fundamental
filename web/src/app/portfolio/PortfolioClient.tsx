@@ -74,7 +74,7 @@ type ImportResult = {
   error?: string;
 };
 
-type PortfolioTab = "overview" | "holdings" | "transactions" | "booked";
+type PortfolioTab = "overview" | "holdings" | "performance" | "transactions" | "booked";
 
 export function PortfolioClient({
   portfolio,
@@ -141,6 +141,7 @@ export function PortfolioClient({
         {([
           { v: "overview", label: "Overview" },
           { v: "holdings", label: "Holdings" },
+          { v: "performance", label: "Performance" },
           { v: "transactions", label: "Transactions" },
           { v: "booked", label: "Booked P&L" },
         ] as const).map((o) => (
@@ -183,6 +184,18 @@ export function PortfolioClient({
         ) : (
           <HoldingsSheets instruments={portfolio.instruments} totalValue={t.currentValue} />
         )
+      ) : tab === "performance" ? (
+        !portfolio.hasHoldings && realized.rows.length === 0 ? (
+          <div className="card p-8 text-center mt-6">
+            <h2 className="font-display text-[20px] mb-2">Nothing to analyse yet</h2>
+            <p className="muted-text text-[13px] max-w-md mx-auto">
+              Import holdings or a tradebook on the Transactions tab — this view then decomposes
+              where your P&amp;L came from and how your capital sits across score quality.
+            </p>
+          </div>
+        ) : (
+          <PerformanceTab portfolio={portfolio} realized={realized} />
+        )
       ) : tab === "transactions" ? (
         <>
           <ImportPanel
@@ -222,6 +235,345 @@ export function PortfolioClient({
         </>
       )}
     </>
+  );
+}
+
+// ─────────────────────────── performance (analysis) ────────────────────────
+
+// A descriptive analytics view over the *current* holdings + realized log.
+// No advice, no forward projections — every number is a decomposition of what
+// the book already is: where the P&L came from (attribution) and how the money
+// is distributed across score quality. All client-side on props already loaded.
+
+function PerformanceTab({ portfolio, realized }: { portfolio: Portfolio; realized: RealizedPnl }) {
+  const { instruments, totals } = portfolio;
+
+  // Split once: scored equities carry Q/V/M; unmapped (ETFs/funds) are excluded
+  // from every quality calc and surfaced only as an honest coverage caveat.
+  const mapped = instruments.filter((i) => i.isMapped && i.composite != null);
+  const mappedValue = mapped.reduce((s, i) => s + i.currentValue, 0);
+
+  // ── Zone 0 headline numbers ──
+  const unrealized = instruments.reduce((s, i) => s + i.pnl, 0);
+  const realizedTotal = realized.totals.realized;
+  const lifetimePnl = unrealized + realizedTotal;
+
+  // Value-weighted composite over scored capital (0 when nothing scoreable).
+  const bookQuality =
+    mappedValue > 0
+      ? mapped.reduce((s, i) => s + (i.composite ?? 0) * i.currentValue, 0) / mappedValue
+      : null;
+  const coverage = totals.currentValue > 0 ? (mappedValue / totals.currentValue) * 100 : 0;
+
+  // Gain concentration: how much of the *positive* unrealized P&L sits in the top 5.
+  const gainers = instruments.filter((i) => i.pnl > 0).sort((a, b) => b.pnl - a.pnl);
+  const totalGain = gainers.reduce((s, i) => s + i.pnl, 0);
+  const top5Gain = gainers.slice(0, 5).reduce((s, i) => s + i.pnl, 0);
+  const concentration = totalGain > 0 ? (top5Gain / totalGain) * 100 : null;
+
+  return (
+    <div className="space-y-6">
+      {/* Zone 0 — headline strip */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <Card
+          label="Lifetime P&L"
+          value={signed(lifetimePnl)}
+          valueColor={up(lifetimePnl) ? GREEN : RED}
+          sub={`${signed(unrealized)} open · ${signed(realizedTotal)} booked`}
+          icon={<IconTrendUp size={15} />}
+          accent={up(lifetimePnl) ? GREEN : RED}
+        />
+        <Card
+          label="Book quality"
+          value={bookQuality != null ? fmtScore(bookQuality) : "—"}
+          sub="value-weighted composite"
+          icon={<IconPulse size={15} />}
+        />
+        <Card
+          label="Scored coverage"
+          value={`${coverage.toFixed(0)}%`}
+          sub={`${inr(mappedValue)} of ${inr(totals.currentValue)}`}
+          icon={<IconPie size={15} />}
+        />
+        <Card
+          label="Gain concentration"
+          value={concentration != null ? `${concentration.toFixed(0)}%` : "—"}
+          sub="top 5 share of gains"
+          icon={<IconLayers size={15} />}
+        />
+      </div>
+
+      {/* Zone A — attribution */}
+      <WinnersLosers instruments={instruments} />
+      <SectorContribution instruments={instruments} mappedValue={mappedValue} />
+      {realized.rows.length > 0 && <RealizedLeaders realized={realized} />}
+
+      {/* Zone B — quality */}
+      <QualityDistribution mapped={mapped} mappedValue={mappedValue} totalValue={totals.currentValue} />
+      <ConvictionCheck mapped={mapped} mappedValue={mappedValue} />
+    </div>
+  );
+}
+
+// A1 — top movers as diverging bars, gainers up top, losers below, scaled to
+// the single largest absolute P&L so the bars are comparable across both sides.
+function WinnersLosers({ instruments }: { instruments: Instrument[] }) {
+  const sorted = [...instruments].sort((a, b) => b.pnl - a.pnl);
+  const winners = sorted.filter((i) => i.pnl > 0).slice(0, 5);
+  const losers = sorted.filter((i) => i.pnl < 0).slice(-5).reverse();
+  const rows = [...winners, ...losers];
+  if (rows.length === 0) {
+    return (
+      <div className="card p-5">
+        <SectionHead icon={<IconTrendUp size={15} />} title="Winners & losers" />
+        <p className="muted-text text-[12.5px]">No open P&amp;L to attribute yet.</p>
+      </div>
+    );
+  }
+  const maxAbs = Math.max(...rows.map((i) => Math.abs(i.pnl)), 1);
+  return (
+    <div className="card p-5">
+      <SectionHead icon={<IconTrendUp size={15} />} title="Winners & losers" right={<span className="muted-text text-[11px]">by open P&amp;L</span>} />
+      <div className="space-y-1.5">
+        {rows.map((i) => {
+          const w = (Math.abs(i.pnl) / maxAbs) * 100;
+          const pos = i.pnl >= 0;
+          return (
+            <Link
+              key={i.key}
+              href={i.symbol ? `/stock/${i.symbol}` : "#"}
+              className="grid grid-cols-[minmax(90px,150px)_1fr_minmax(96px,auto)] items-center gap-3 group"
+            >
+              <div className="text-[12px] font-medium truncate group-hover:text-[var(--color-accent-700)]">
+                {i.symbol ?? i.name}
+              </div>
+              <div className="relative h-[14px] flex items-center">
+                {/* center baseline; bar grows right for gains, left for losses */}
+                <div className="absolute left-1/2 top-0 bottom-0 w-px" style={{ background: "var(--color-border-default)" }} />
+                <div
+                  className="absolute h-[9px] rounded-sm"
+                  style={{
+                    background: pos ? GREEN : RED,
+                    width: `${w / 2}%`,
+                    left: pos ? "50%" : `${50 - w / 2}%`,
+                  }}
+                />
+              </div>
+              <div className="text-[12px] tabular-nums text-right" style={{ color: pos ? GREEN : RED }}>
+                {signed(i.pnl)}
+                <span className="muted-text ml-1.5">{pct(i.pnlPct)}</span>
+              </div>
+            </Link>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// A2 — where capital sits by sector vs what each sector contributed to open P&L.
+// Weight is a share of scored value; P&L is the raw ₹ so a heavy-but-flat sector
+// reads differently from a light-but-hot one.
+function SectorContribution({ instruments, mappedValue }: { instruments: Instrument[]; mappedValue: number }) {
+  const bySector = new Map<string, { value: number; pnl: number }>();
+  for (const i of instruments) {
+    if (!i.isMapped) continue;
+    const key = i.sector ?? "Unclassified";
+    const cur = bySector.get(key) ?? { value: 0, pnl: 0 };
+    cur.value += i.currentValue;
+    cur.pnl += i.pnl;
+    bySector.set(key, cur);
+  }
+  const rows = [...bySector.entries()]
+    .map(([sector, v]) => ({ sector, ...v, weight: mappedValue > 0 ? (v.value / mappedValue) * 100 : 0 }))
+    .sort((a, b) => b.value - a.value);
+  if (rows.length === 0) {
+    return (
+      <div className="card p-5">
+        <SectionHead icon={<IconPie size={15} />} title="Sector attribution" />
+        <p className="muted-text text-[12.5px]">No scored holdings to break down by sector.</p>
+      </div>
+    );
+  }
+  const maxWeight = Math.max(...rows.map((r) => r.weight), 1);
+  return (
+    <div className="card p-5">
+      <SectionHead icon={<IconPie size={15} />} title="Sector attribution" right={<span className="muted-text text-[11px]">weight · open P&amp;L</span>} />
+      <div className="space-y-1.5">
+        {rows.map((r) => (
+          <div key={r.sector} className="grid grid-cols-[minmax(110px,180px)_1fr_minmax(96px,auto)] items-center gap-3">
+            <div className="text-[12px] font-medium truncate" title={r.sector}>{r.sector}</div>
+            <div className="relative h-[14px] flex items-center">
+              <div
+                className="h-[9px] rounded-sm"
+                style={{ background: "var(--color-accent-600)", width: `${(r.weight / maxWeight) * 100}%`, opacity: 0.85 }}
+              />
+              <span className="ml-2 text-[10.5px] tabular-nums muted-text">{r.weight.toFixed(0)}%</span>
+            </div>
+            <div className="text-[12px] tabular-nums text-right" style={{ color: up(r.pnl) ? GREEN : RED }}>
+              {signed(r.pnl)}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// A3 — realized leaders from the trade log (symbol-level; sector rollup deferred).
+function RealizedLeaders({ realized }: { realized: RealizedPnl }) {
+  const rows = [...realized.rows].sort((a, b) => b.realized - a.realized);
+  const top = rows.slice(0, 5);
+  const bottom = rows.slice(-3).reverse().filter((r) => r.realized < 0 && !top.includes(r));
+  const show = [...top, ...bottom];
+  const maxAbs = Math.max(...show.map((r) => Math.abs(r.realized)), 1);
+  return (
+    <div className="card p-5">
+      <SectionHead icon={<IconList size={15} />} title="Booked leaders" right={<span className="muted-text text-[11px]">realized exits</span>} />
+      <div className="space-y-1.5">
+        {show.map((r) => {
+          const w = (Math.abs(r.realized) / maxAbs) * 100;
+          const pos = r.realized >= 0;
+          return (
+            <Link
+              key={r.symbol}
+              href={`/stock/${r.symbol}`}
+              className="grid grid-cols-[minmax(90px,150px)_1fr_minmax(96px,auto)] items-center gap-3 group"
+            >
+              <div className="text-[12px] font-medium truncate group-hover:text-[var(--color-accent-700)]">{r.symbol}</div>
+              <div className="relative h-[14px] flex items-center">
+                <div className="h-[9px] rounded-sm" style={{ background: pos ? GREEN : RED, width: `${w}%` }} />
+              </div>
+              <div className="text-[12px] tabular-nums text-right" style={{ color: pos ? GREEN : RED }}>
+                {signed(r.realized)}
+                <span className="muted-text ml-1.5">{pct(r.realizedPct)}</span>
+              </div>
+            </Link>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// B1 — how scored capital distributes across composite quartiles, plus the
+// value-weighted Q/V/M tilt of the book. Answers "is my money in good scores?"
+const QUARTILES = [
+  { label: "Strong (75–100)", min: 75, color: "#15803D" },
+  { label: "Solid (50–75)", min: 50, color: "#65A30D" },
+  { label: "Weak (25–50)", min: 25, color: "#B45309" },
+  { label: "Poor (0–25)", min: 0, color: "#DC2626" },
+] as const;
+
+function QualityDistribution({
+  mapped, mappedValue, totalValue,
+}: { mapped: Instrument[]; mappedValue: number; totalValue: number }) {
+  if (mapped.length === 0) {
+    return (
+      <div className="card p-5">
+        <SectionHead icon={<IconPulse size={15} />} title="Capital by score quality" />
+        <p className="muted-text text-[12.5px]">Nothing scoreable — all holdings are outside our coverage universe.</p>
+      </div>
+    );
+  }
+  const buckets = QUARTILES.map((q) => {
+    const items = mapped.filter((i) => {
+      const c = i.composite ?? 0;
+      return c >= q.min && (q.min === 75 ? c <= 100 : c < q.min + 25);
+    });
+    const value = items.reduce((s, i) => s + i.currentValue, 0);
+    return { ...q, value, share: mappedValue > 0 ? (value / mappedValue) * 100 : 0, count: items.length };
+  });
+  const wAvg = (sel: (i: Instrument) => number | null) =>
+    mappedValue > 0
+      ? mapped.reduce((s, i) => s + (sel(i) ?? 0) * i.currentValue, 0) / mappedValue
+      : null;
+  const wq = wAvg((i) => i.q), wv = wAvg((i) => i.v), wm = wAvg((i) => i.m);
+  const unscored = totalValue - mappedValue;
+  return (
+    <div className="card p-5">
+      <SectionHead
+        icon={<IconPulse size={15} />}
+        title="Capital by score quality"
+        right={<span className="muted-text text-[11px]">Q {fmtScore(wq)} · V {fmtScore(wv)} · M {fmtScore(wm)}</span>}
+      />
+      {/* stacked share bar */}
+      <div className="flex h-[22px] rounded-md overflow-hidden mb-3" style={{ background: "var(--color-paper)" }}>
+        {buckets.map((b) => b.share > 0 && (
+          <div key={b.label} style={{ width: `${b.share}%`, background: b.color }} title={`${b.label}: ${inr(b.value)}`} />
+        ))}
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        {buckets.map((b) => (
+          <div key={b.label} className="flex items-start gap-2">
+            <span className="w-2.5 h-2.5 rounded-sm mt-1 shrink-0" style={{ background: b.color }} />
+            <div className="min-w-0">
+              <div className="text-[11px] muted-text truncate">{b.label}</div>
+              <div className="text-[13px] font-semibold tabular-nums">{b.share.toFixed(0)}%</div>
+              <div className="text-[10.5px] muted-text tabular-nums">{inr(b.value)} · {b.count}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+      {unscored > 1 && (
+        <p className="muted-text text-[11px] mt-3">
+          {inr(unscored)} in unscored instruments (ETFs / funds) is excluded from this breakdown.
+        </p>
+      )}
+    </div>
+  );
+}
+
+// B2/B3 — conviction check: your biggest bets against their scores, flagging
+// heavy positions sitting on weak composites. Descriptive only — no call to act.
+function ConvictionCheck({ mapped, mappedValue }: { mapped: Instrument[]; mappedValue: number }) {
+  if (mapped.length === 0) return null;
+  const rows = [...mapped]
+    .map((i) => ({ i, weight: mappedValue > 0 ? (i.currentValue / mappedValue) * 100 : 0 }))
+    .sort((a, b) => b.weight - a.weight)
+    .slice(0, 8);
+  const mismatches = rows.filter((r) => r.weight >= 8 && (r.i.composite ?? 0) < 50).length;
+  return (
+    <div className="card p-5">
+      <SectionHead
+        icon={<IconLayers size={15} />}
+        title="Conviction check"
+        right={
+          <span className="text-[11px]" style={{ color: mismatches > 0 ? RED : "var(--color-muted)" }}>
+            {mismatches > 0 ? `${mismatches} heavy · weak-score` : "no size/score mismatch"}
+          </span>
+        }
+      />
+      <div className="space-y-1">
+        {rows.map(({ i, weight }) => {
+          const c = i.composite ?? 0;
+          const flag = weight >= 8 && c < 50;
+          return (
+            <Link
+              key={i.key}
+              href={i.symbol ? `/stock/${i.symbol}` : "#"}
+              className="grid grid-cols-[minmax(90px,160px)_1fr_44px_44px] items-center gap-3 py-1 group"
+            >
+              <div className="text-[12px] font-medium truncate group-hover:text-[var(--color-accent-700)]">
+                {i.symbol ?? i.name}
+                {flag && <span className="ml-1.5 text-[10px]" style={{ color: RED }}>heavy · weak</span>}
+              </div>
+              <div className="relative h-[12px] flex items-center">
+                <div className="h-[8px] rounded-sm" style={{ background: "var(--color-accent-600)", width: `${weight}%`, opacity: 0.85 }} />
+              </div>
+              <div className="text-[11.5px] tabular-nums text-right muted-text">{weight.toFixed(0)}%</div>
+              <div className="text-[12px] tabular-nums text-right font-medium" style={{ color: c >= 50 ? GREEN : RED }}>
+                {fmtScore(c)}
+              </div>
+            </Link>
+          );
+        })}
+      </div>
+      <p className="muted-text text-[11px] mt-3">
+        Weight = share of scored value; score = composite. This is a lens on position sizing versus
+        our read on quality — not a recommendation to trade.
+      </p>
+    </div>
   );
 }
 
