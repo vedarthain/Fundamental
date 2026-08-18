@@ -1881,8 +1881,17 @@ function HoldingsTable({
   const [expanded, setExpanded] = useState<string | null>(null);
   const [mode, setMode] = useState<GroupMode>("flat");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [query, setQuery] = useState("");
   // Flat-view column sort. Defaults to Instrument A→Z (the landing view).
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: "symbol", dir: "asc" });
+
+  // Free-text filter on symbol or name — narrows the sheet as you type.
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? instruments.filter(
+        (i) => i.symbol?.toLowerCase().includes(q) || i.name.toLowerCase().includes(q),
+      )
+    : instruments;
   const onSort = (key: SortKey) =>
     setSort((cur) => {
       if (cur.key === key) return { key, dir: cur.dir === "asc" ? "desc" : "asc" };
@@ -1891,7 +1900,7 @@ function HoldingsTable({
       return { key, dir: !col || col.numeric ? "desc" : "asc" }; // numbers → high-first, name → A→Z
     });
 
-  const groups = buildGroups(instruments, mode);
+  const groups = buildGroups(filtered, mode);
   // Only the Flat view is sortable — grouped modes keep their value-desc order
   // (per-column sort would collide with the collapsible group rows).
   const displayGroups =
@@ -1917,9 +1926,40 @@ function HoldingsTable({
           >
             <IconList size={15} />
           </span>
-          <h2 className="text-[14px] font-semibold">Holdings ({instruments.length})</h2>
+          <h2 className="text-[14px] font-semibold">
+            Holdings ({q ? `${filtered.length} of ${instruments.length}` : instruments.length})
+          </h2>
         </div>
         <div className="flex items-center gap-2">
+          <div className="relative">
+            <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 muted-text" aria-hidden>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="7" />
+                <path d="M21 21l-4.3-4.3" />
+              </svg>
+            </span>
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search holdings…"
+              aria-label="Search holdings by symbol or name"
+              className="w-[150px] sm:w-[190px] rounded-md border pl-7 pr-6 py-1 text-[12px] bg-transparent focus:outline-none focus:ring-1"
+              style={{ borderColor: "var(--color-border-default)" }}
+            />
+            {query && (
+              <button
+                type="button"
+                onClick={() => setQuery("")}
+                aria-label="Clear search"
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 muted-text hover:text-[var(--color-ink)]"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </div>
           <span className="text-[11px] muted-text hidden sm:inline">group by</span>
           <div className="inline-flex rounded-md border overflow-hidden" style={{ borderColor: "var(--color-border-default)" }}>
             {(["sector", "industry", "flat"] as GroupMode[]).map((m) => (
@@ -2002,6 +2042,13 @@ function HoldingsTable({
             </tr>
           </thead>
           <tbody>
+            {filtered.length === 0 && (
+              <tr>
+                <td colSpan={COLUMNS.length} className="px-4 py-6 text-center muted-text text-[13px]">
+                  No holdings match “{query}”.
+                </td>
+              </tr>
+            )}
             {displayGroups.map((g) => {
               const gWt = totalValue > 0 ? Math.round((g.value / totalValue) * 1000) / 10 : 0;
               const grouped = mode !== "flat";
