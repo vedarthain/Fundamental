@@ -307,6 +307,9 @@ function PerformanceTab({ portfolio, realized }: { portfolio: Portfolio; realize
         />
       </div>
 
+      {/* Discipline desk — rule triggers with plain calls to action (owner-only) */}
+      <DisciplineDesk instruments={instruments} />
+
       {/* Zone A — attribution */}
       <WinnersLosers instruments={instruments} />
       <SectorContribution instruments={instruments} mappedValue={mappedValue} />
@@ -315,6 +318,98 @@ function PerformanceTab({ portfolio, realized }: { portfolio: Portfolio; realize
       {/* Zone B — quality */}
       <QualityDistribution mapped={mapped} mappedValue={mappedValue} totalValue={totals.currentValue} />
       <ConvictionCheck mapped={mapped} mappedValue={mappedValue} />
+    </div>
+  );
+}
+
+// Discipline desk — fires *your* holding rules against the live book so the
+// decisions surface themselves instead of you hunting for them. Owner-only, so
+// these are stated as plain actions (book / review / cut), not hedged commentary.
+//
+// Rule triggers (all already derived on Instrument):
+//   • target hit  — live price ≥ avgCost×1.25 (targetHit)
+//   • over-hold    — held ≥ 4 months (overHoldLimit)
+//   • drawdown     — open P&L ≤ DRAWDOWN_FLAG %
+// A holding can trip more than one rule; it appears in each column it triggers.
+const DRAWDOWN_FLAG = -15;
+
+function DisciplineDesk({ instruments }: { instruments: Instrument[] }) {
+  const booked = instruments
+    .filter((i) => i.targetHit)
+    .sort((a, b) => (b.pnlPct ?? 0) - (a.pnlPct ?? 0));
+  const overheld = instruments
+    .filter((i) => i.overHoldLimit)
+    .sort((a, b) => (b.monthsHeld ?? 0) - (a.monthsHeld ?? 0));
+  const drawdown = instruments
+    .filter((i) => (i.pnlPct ?? 0) <= DRAWDOWN_FLAG)
+    .sort((a, b) => (a.pnlPct ?? 0) - (b.pnlPct ?? 0));
+
+  const groups = [
+    {
+      key: "book", color: GREEN, title: "Target hit (+25%)",
+      note: "Live price cleared your profit target — book or set a trailing exit.",
+      rows: booked, metric: (i: Instrument) => pct(i.pnlPct),
+    },
+    {
+      key: "hold", color: "#B45309", title: "Held 4+ months",
+      note: "Past your hold window — re-check the thesis or let it compound deliberately.",
+      rows: overheld, metric: (i: Instrument) => (i.monthsHeld != null ? `${i.monthsHeld}mo` : "—"),
+    },
+    {
+      key: "cut", color: RED, title: `Down ${Math.abs(DRAWDOWN_FLAG)}%+`,
+      note: "Deep drawdown — decide deliberately: average down, hold, or cut.",
+      rows: drawdown, metric: (i: Instrument) => pct(i.pnlPct),
+    },
+  ] as const;
+
+  const total = booked.length + overheld.length + drawdown.length;
+
+  return (
+    <div className="card p-5">
+      <SectionHead
+        icon={<IconHealth size={15} />}
+        title="Discipline desk"
+        right={
+          <span className="text-[11px]" style={{ color: total > 0 ? "var(--color-accent-700)" : "var(--color-muted)" }}>
+            {total > 0 ? `${total} flagged` : "all clear"}
+          </span>
+        }
+      />
+      <div className="grid md:grid-cols-3 gap-4">
+        {groups.map((g) => (
+          <div key={g.key}>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: g.color }} />
+              <h3 className="text-[12.5px] font-semibold">{g.title}</h3>
+              <span className="text-[11px] tabular-nums muted-text">{g.rows.length}</span>
+            </div>
+            <p className="muted-text text-[11px] leading-snug mb-2">{g.note}</p>
+            {g.rows.length === 0 ? (
+              <p className="text-[11.5px] muted-text italic">Nothing flagged.</p>
+            ) : (
+              <div className="space-y-0.5">
+                {g.rows.slice(0, 6).map((i) => (
+                  <Link
+                    key={i.key}
+                    href={i.symbol ? `/stock/${i.symbol}` : "#"}
+                    className="flex items-center justify-between gap-2 py-0.5 group"
+                  >
+                    <span className="text-[12px] font-medium truncate group-hover:text-[var(--color-accent-700)]">
+                      {i.symbol ?? i.name}
+                    </span>
+                    <span className="text-[11.5px] tabular-nums shrink-0" style={{ color: g.color }}>
+                      {g.metric(i)}
+                    </span>
+                  </Link>
+                ))}
+                {g.rows.length > 6 && (
+                  <div className="text-[11px] muted-text pt-0.5">+{g.rows.length - 6} more</div>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
