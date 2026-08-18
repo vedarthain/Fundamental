@@ -178,6 +178,128 @@ export async function loadEquityCurve(userId: number): Promise<CurvePoint[]> {
   });
 }
 
+// ── time-weighted performance model ─────────────────────────────────────────
+//
+// A trustworthy return figure must ignore BOTH the money you add/remove AND any
+// structural revaluation of the book (a holding getting re-mapped or re-priced
+// between snapshots). Naively differencing `total_value` fails on both counts —
+// it treats a fresh buy or a pricing correction as "return".
+//
+// The snapshot already stores the clean signal: `day_change_value`, the sum of
+// each held position's genuine 1-day market move (day-change% × value). That is
+// flow-neutral (a new buy contributes only its intraday move, never its cost)
+// and revaluation-neutral (a total_value jump with no market move carries a
+// ~zero day-change). So we chain daily returns straight off it:
+//
+//     r_t = day_change_value_t / total_value_{t-1}
+//     TWR = Π(1 + r_t) − 1
+//
+// A TWR index (base 100) accumulates so drawdown/vol are measured on RETURN, not
+// raw value. NIFTY 500 over the exact same window gives the only comparison that
+// matters — alpha.
+//
+// HARD LIMIT: `portfolio_snapshot` is forward-only from onboarding, so TWR spans
+// only from the first snapshot — NOT your full trade history. Reconstructing
+// pre-onboarding value needs a transaction replay against historical prices
+// (separate job). Everything here is honestly labelled "since <firstSnapshot>".
+export type PerformanceStats = {
+  startDate: string;
+  endDate: string;
+  points: number;        // number of snapshots in the series
+  twrPct: number;        // time-weighted return over the window, %
+  niftyPct: number | null; // NIFTY 500 total return over the same window, %
+  alphaPct: number | null; // twr − nifty
+  maxDrawdownPct: number;  // worst peak-to-trough on the TWR index (≤ 0)
+  volPct: number | null;   // annualised stdev of daily TWR (×√252), %
+  bestDayPct: number;
+  worstDayPct: number;
+  index: { date: string; twrIdx: number; niftyIdx: number | null }[];
+};
+
+export async function loadPerformanceStats(userId: number): Promise<PerformanceStats | null> {
+  const snaps = await sql<{ snap_date: string; total_value: string | null; day_change_value: string | null }[]>`
+    SELECT snap_date::text, total_value::text, day_change_value::text
+      FROM app.portfolio_snapshot
+     WHERE user_id = ${userId} AND total_value IS NOT NULL
+     ORDER BY snap_date ASC
+  `;
+  if (snaps.length < 2) return null;
+  const first = snaps[0].snap_date;
+
+  // NIFTY 500 closes over the window (nearest-on-or-before per snapshot date).
+  const nifty = await sql<{ date: string; close: string }[]>`
+    SELECT date::text, close::text
+      FROM app.market_index_history
+     WHERE index_code = 'NIFTY500' AND date >= ${first}
+     ORDER BY date ASC
+  `;
+  const niftyByDate = nifty.map((r) => ({ date: r.date, close: Number(r.close) }));
+  const niftyAt = (d: string): number | null => {
+    let val: number | null = null;
+    for (const r of niftyByDate) {
+      if (r.date <= d) val = r.close;
+      else break;
+    }
+    return val;
+  };
+  const baseNifty = niftyAt(first);
+
+  // Chain daily time-weighted sub-returns off the clean per-holding market move.
+  const dailyReturns: number[] = [];
+  let twrIdx = 100;
+  let peak = 100;
+  let maxDrawdown = 0;
+  const index: PerformanceStats["index"] = [
+    { date: first, twrIdx: 100, niftyIdx: baseNifty ? 100 : null },
+  ];
+
+  for (let i = 1; i < snaps.length; i++) {
+    const vPrev = Number(snaps[i - 1].total_value);
+    const dcv = Number(snaps[i].day_change_value ?? 0);
+    // r_t = today's market move ÷ yesterday's value. Flow- and revaluation-neutral.
+    const r = vPrev > 0 && Number.isFinite(dcv) ? dcv / vPrev : 0;
+    dailyReturns.push(r);
+    twrIdx *= 1 + r;
+    if (twrIdx > peak) peak = twrIdx;
+    const dd = twrIdx / peak - 1;
+    if (dd < maxDrawdown) maxDrawdown = dd;
+    const n = niftyAt(snaps[i].snap_date);
+    index.push({
+      date: snaps[i].snap_date,
+      twrIdx: Math.round(twrIdx * 100) / 100,
+      niftyIdx: n != null && baseNifty ? Math.round((n / baseNifty) * 10000) / 100 : null,
+    });
+  }
+
+  const twrPct = twrIdx - 100; // base-100 index → % return
+  const endNifty = niftyAt(snaps[snaps.length - 1].snap_date);
+  const niftyPct = endNifty != null && baseNifty ? (endNifty / baseNifty - 1) * 100 : null;
+
+  // Annualised volatility of daily TWR (×√252). Needs ≥ 2 returns.
+  let volPct: number | null = null;
+  if (dailyReturns.length >= 2) {
+    const mean = dailyReturns.reduce((s, x) => s + x, 0) / dailyReturns.length;
+    const variance =
+      dailyReturns.reduce((s, x) => s + (x - mean) ** 2, 0) / (dailyReturns.length - 1);
+    volPct = Math.sqrt(variance) * Math.sqrt(252) * 100;
+  }
+
+  const r1 = (x: number) => Math.round(x * 10) / 10;
+  return {
+    startDate: first,
+    endDate: snaps[snaps.length - 1].snap_date,
+    points: snaps.length,
+    twrPct: r1(twrPct),
+    niftyPct: niftyPct != null ? r1(niftyPct) : null,
+    alphaPct: niftyPct != null ? r1(twrPct - niftyPct) : null,
+    maxDrawdownPct: r1(maxDrawdown * 100),
+    volPct: volPct != null ? r1(volPct) : null,
+    bestDayPct: dailyReturns.length ? r1(Math.max(...dailyReturns) * 100) : 0,
+    worstDayPct: dailyReturns.length ? r1(Math.min(...dailyReturns) * 100) : 0,
+    index,
+  };
+}
+
 function num(x: unknown): number | null {
   if (x == null) return null;
   const n = Number(x);

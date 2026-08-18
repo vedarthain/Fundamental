@@ -19,7 +19,7 @@ import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
   PieChart, Pie, Cell,
 } from "recharts";
-import type { Portfolio, Instrument, CurvePoint, RealizedPnl, RealizedLot } from "@/lib/portfolio";
+import type { Portfolio, Instrument, CurvePoint, RealizedPnl, RealizedLot, PerformanceStats } from "@/lib/portfolio";
 
 const BROKERS = [
   { value: "upstox", label: "Upstox" },
@@ -81,11 +81,13 @@ export function PortfolioClient({
   curve,
   realized,
   owner = false,
+  perf = null,
 }: {
   portfolio: Portfolio;
   curve: CurvePoint[];
   realized: RealizedPnl;
   owner?: boolean; // gates the (personal, owner-only) Performance analysis tab
+  perf?: PerformanceStats | null; // time-weighted stats (owner-only)
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<PortfolioTab>("overview");
@@ -198,7 +200,7 @@ export function PortfolioClient({
             </p>
           </div>
         ) : (
-          <PerformanceTab portfolio={portfolio} realized={realized} />
+          <PerformanceTab portfolio={portfolio} realized={realized} perf={perf} />
         )
       ) : tab === "transactions" ? (
         <>
@@ -249,7 +251,7 @@ export function PortfolioClient({
 // the book already is: where the P&L came from (attribution) and how the money
 // is distributed across score quality. All client-side on props already loaded.
 
-function PerformanceTab({ portfolio, realized }: { portfolio: Portfolio; realized: RealizedPnl }) {
+function PerformanceTab({ portfolio, realized, perf }: { portfolio: Portfolio; realized: RealizedPnl; perf?: PerformanceStats | null }) {
   const { instruments, totals } = portfolio;
 
   // Split once: scored equities carry Q/V/M; unmapped (ETFs/funds) are excluded
@@ -307,6 +309,9 @@ function PerformanceTab({ portfolio, realized }: { portfolio: Portfolio; realize
         />
       </div>
 
+      {/* Time-weighted return model + benchmark (owner-only) */}
+      {perf && <ReturnModel perf={perf} />}
+
       {/* Discipline desk — rule triggers with plain calls to action (owner-only) */}
       <DisciplineDesk instruments={instruments} />
 
@@ -318,6 +323,79 @@ function PerformanceTab({ portfolio, realized }: { portfolio: Portfolio; realize
       {/* Zone B — quality */}
       <QualityDistribution mapped={mapped} mappedValue={mappedValue} totalValue={totals.currentValue} />
       <ConvictionCheck mapped={mapped} mappedValue={mappedValue} />
+    </div>
+  );
+}
+
+// Return model — time-weighted return (flow-neutralised) vs NIFTY 500 over the
+// snapshot window, with the risk stats that make a return figure trustworthy:
+// max drawdown, annualised vol, best/worst day. The window is forward-only from
+// the first snapshot — stated plainly so the number is never mistaken for the
+// full trade history.
+function ReturnModel({ perf }: { perf: PerformanceStats }) {
+  const twrUp = perf.twrPct >= 0;
+  const alphaUp = (perf.alphaPct ?? 0) >= 0;
+  const stats = [
+    { label: "Time-weighted return", value: pct(perf.twrPct), color: twrUp ? GREEN : RED, big: true },
+    { label: "NIFTY 500 (same window)", value: perf.niftyPct != null ? pct(perf.niftyPct) : "—", color: "var(--color-fg)" },
+    {
+      label: "Alpha vs NIFTY",
+      value: perf.alphaPct != null ? pct(perf.alphaPct) : "—",
+      color: perf.alphaPct == null ? "var(--color-fg)" : alphaUp ? GREEN : RED,
+      big: true,
+    },
+    { label: "Max drawdown", value: `${perf.maxDrawdownPct.toFixed(1)}%`, color: RED },
+    { label: "Volatility (ann.)", value: perf.volPct != null ? `${perf.volPct.toFixed(1)}%` : "—", color: "var(--color-muted)" },
+    { label: "Best / worst day", value: `${pct(perf.bestDayPct)} / ${pct(perf.worstDayPct)}`, color: "var(--color-muted)", small: true },
+  ];
+  const hasNifty = perf.index.some((p) => p.niftyIdx != null);
+  return (
+    <div className="card p-4 md:p-5">
+      <SectionHead
+        icon={<IconChart size={15} />}
+        title="Return model"
+        right={
+          <span className="text-[11px] muted-text">
+            since {perf.startDate} · {perf.points} snapshots
+          </span>
+        }
+      />
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-x-4 gap-y-3 mb-4">
+        {stats.map((s) => (
+          <div key={s.label}>
+            <div className="text-[10.5px] font-semibold muted-text uppercase tracking-wide leading-tight">{s.label}</div>
+            <div
+              className={`tabular-nums font-semibold mt-0.5 ${s.big ? "text-[19px]" : s.small ? "text-[13px]" : "text-[16px]"}`}
+              style={{ color: s.color }}
+            >
+              {s.value}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div style={{ width: "100%", height: 240 }}>
+        <ResponsiveContainer>
+          <LineChart data={perf.index} margin={{ top: 4, right: 8, bottom: 4, left: 8 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-default)" opacity={0.4} />
+            <XAxis dataKey="date" tick={{ fontSize: 11 }} minTickGap={30} />
+            <YAxis tick={{ fontSize: 11 }} domain={["auto", "auto"]} width={40} />
+            <Tooltip
+              formatter={(v, name) => [Number(v).toFixed(2), String(name)]}
+              contentStyle={{ fontSize: 12, borderRadius: 8 }}
+            />
+            <Line type="monotone" dataKey="twrIdx" name="Your return (TWR)" stroke="#1E2761" strokeWidth={2} dot={false} />
+            {hasNifty && (
+              <Line type="monotone" dataKey="niftyIdx" name="NIFTY 500" stroke="#B45309" strokeWidth={1.5} strokeDasharray="4 3" dot={false} />
+            )}
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+      <p className="muted-text text-[11px] mt-3 leading-snug">
+        Return is chained from each day&apos;s per-holding market move, so it excludes your trades
+        (deposits/withdrawals) and any re-pricing of the book — it reflects price performance, not
+        cash timing. Window is forward-only from your first daily snapshot — not your full trade
+        history. Drawdown and volatility are measured on the return index, not raw value.
+      </p>
     </div>
   );
 }
