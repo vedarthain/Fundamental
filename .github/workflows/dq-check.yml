@@ -1,0 +1,94 @@
+# Weekly data-quality report.
+#
+# What this does:
+#   Runs scripts/check-dq.py against Neon — the same assertions the `score`
+#   command runs at the end of every weekly compute, but as a standalone,
+#   fully-printed report (all 17 checks, pass AND fail). This is the VISIBLE
+#   surface: the score run only logs a line when a check FAILS, so on a normal
+#   pass you never see e.g. the Screener export-warehouse-lag cohort size. Here
+#   every check prints its number every week, so you can watch trends (is the
+#   stale-financials cohort growing or self-healing?) not just breaches.
+#
+# When it runs:
+#   - Every Saturday 18:00 UTC (23:30 IST) — 5h AFTER the Sat 13:00 UTC
+#     `Weekly Fetch` (which re-scrapes Screener + syncs the universe). Running
+#     post-fetch means screener_meta.last_scraped_at is fresh, so the
+#     "price-fresh / financials-stale" assertion measures THIS week's data.
+#   - Manual trigger for on-demand verification.
+#
+# Why a GitHub Action:
+#   - Free, no infra. Logs are one click away in the Actions UI.
+#   - On failure it opens (or appends to) a GitHub Issue — a loud, trackable
+#     alert, de-duped by title — matching freshness-check.yml.
+#
+# Required secrets:
+#   NEON_APP_URL — Postgres URL for fundamental_app on Neon (read). Same secret
+#   as freshness-check.yml; no new setup needed.
+
+name: Weekly data quality
+
+on:
+  # Saturday 18:00 UTC = 23:30 IST. After Weekly Fetch (Sat 13:00 UTC, up to
+  # 180 min) so the Screener scrape + universe sync have landed.
+  schedule:
+    - cron: '0 18 * * 6'
+
+  # Manual trigger for testing or post-incident verification.
+  workflow_dispatch: {}
+
+# Needed by the failure step to open/append a GitHub Issue as a loud alert.
+permissions:
+  contents: read
+  issues: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install psycopg
+        run: pip install 'psycopg[binary]==3.2.*'
+
+      - name: Run data-quality checks
+        env:
+          APP_DB_URL:       ${{ secrets.NEON_APP_URL }}
+          PYTHONUNBUFFERED: "1"
+        run: python scripts/check-dq.py
+
+      # Loud alert: a failed check opens (or appends to) a GitHub Issue, so a
+      # DQ regression is trackable + notifies watchers, not just a CI email that
+      # gets ignored. De-duped by title so a persistent failure appends a comment
+      # rather than spawning a new issue every run.
+      - name: Raise a loud alert on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TITLE="⚠️ Weekly data-quality check FAILED"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          BODY=$(printf '%s\n' \
+            "The weekly data-quality check FAILED at $(date -u '+%Y-%m-%d %H:%M UTC')." \
+            "" \
+            "Which assertion tripped (and its number vs threshold) is in the run log:" \
+            "$RUN_URL" \
+            "" \
+            "Common causes: a parser change silently NULLing a column, or the Screener export-warehouse-lag cohort (price-fresh / financials-stale) exceeding its ceiling. Investigate the latest \`Weekly Fetch\` / \`Weekly Compute + Score\` runs.")
+          EXISTING=$(gh issue list --state open --search "$TITLE in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+            echo "Appended to existing alert issue #$EXISTING"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+            echo "Opened a new alert issue"
+          fi
