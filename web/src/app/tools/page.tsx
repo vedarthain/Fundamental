@@ -95,6 +95,19 @@ const TOOLS: ToolCard[] = [
     ],
     accent: "var(--color-score-weak)",
   },
+  {
+    href: "/tools/universe-changes",
+    title: "Universe Changes",
+    tagline: "What joined and left the tracked universe, week by week",
+    body:
+      "The weekly reconciliation against NSE's live listing master, kept as an append-only log — every fresh listing we onboard shows as added, every name that goes dark as removed. Grouped by week so you can watch the coverage evolve; no week is ever overwritten. Click any name to open its scorecard.",
+    useFor: [
+      "See which new listings were onboarded this week",
+      "Track names retired for going dark on NSE",
+      "Explain a shift in the 'stocks tracked' count",
+    ],
+    accent: "var(--color-score-good)",
+  },
 ];
 
 export default function ToolsLanding() {
@@ -151,6 +164,11 @@ export default function ToolsLanding() {
             <span className="ink-text font-medium">Own stocks and want to be told when to look?</span> Use{" "}
             <Link href="/tools/alerts" className="underline">Alerts</Link>{" "}
             — flags holdings that hit your target, fell hard today, or are deep underwater; dismiss to acknowledge.
+          </li>
+          <li>
+            <span className="ink-text font-medium">Wondering what changed in our coverage?</span> Use{" "}
+            <Link href="/tools/universe-changes" className="underline">Universe Changes</Link>{" "}
+            — the weekly log of stocks added to and removed from the tracked universe.
           </li>
         </ul>
       </section>

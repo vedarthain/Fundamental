@@ -50,6 +50,7 @@ const LINKS: NavLink[] = [
       { href: "/tools/alerts",            label: "Alerts",             description: "Holdings that need a look + your price alerts" },
       { href: "/tools/investing-trials",  label: "Investing Trials",   description: "Set your own Q/V/M weights" },
       { href: "/tools/peer-comparison",   label: "Peer Comparison",    description: "Stack 2-5 stocks side by side" },
+      { href: "/tools/universe-changes",  label: "Universe Changes",   description: "Weekly log of stocks added & removed" },
       { href: "/today",                   label: "Today's Signal",     description: "Auto-generated daily stock insight" },
       { href: "/feedback",                label: "Feedback",           description: "Tell us what to build next" },
     ],
