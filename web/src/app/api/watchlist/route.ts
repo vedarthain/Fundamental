@@ -23,7 +23,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { loadPersistenceForSymbols } from "@/lib/persistence";
-import { loadQuotes, loadCloseOnAdd } from "@/lib/watchlistQuote";
+import { loadQuotes, loadCloseOnAdd, loadCloseAsOf } from "@/lib/watchlistQuote";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -191,6 +191,47 @@ export async function GET(req: NextRequest) {
       ? loadMeta(session.userId, symbols)
       : Promise.resolve(new Map<string, WatchMeta>()),
   ]);
+  // Self-heal missing close_on_add. Rows added while golden lagged (e.g. a
+  // post-merger ticker like PVRINOX whose bars backfilled late) got a null
+  // close_on_add that was then frozen — the value is captured once at add-time
+  // and never retried, so "Close @ add" / "Since add" stayed blank forever.
+  // Now that golden has the bars, recover the close as of the original add date
+  // and persist it once. Signed-in only (signed-out rows have no server meta).
+  if (session) {
+    const needsHeal = [...meta.entries()]
+      .filter(([, m]) => m.close_on_add == null && m.added_at)
+      .map(([symbol, m]) => ({ symbol, date: (m.added_at as string).slice(0, 10) }));
+    if (needsHeal.length > 0) {
+      const healed = await loadCloseAsOf(needsHeal);
+      const upSyms: string[] = [];
+      const upCloses: number[] = [];
+      const upDates: string[] = [];
+      for (const { symbol } of needsHeal) {
+        const h = healed.get(symbol);
+        if (!h) continue;
+        const m = meta.get(symbol);
+        if (!m) continue;
+        m.close_on_add = h.close;        // patch the in-memory map for this response
+        m.close_on_add_date = h.date;
+        upSyms.push(symbol);
+        upCloses.push(h.close);
+        upDates.push(h.date);
+      }
+      if (upSyms.length > 0) {
+        // Persist so the heal is one-time, not recomputed on every load. Guard
+        // on IS NULL so a concurrent legit snapshot is never overwritten.
+        await sql`
+          UPDATE app.user_watchlist AS w
+             SET close_on_add = v.cl, close_on_add_date = v.dt
+            FROM unnest(${upSyms}::text[], ${upCloses}::numeric[], ${upDates}::date[])
+                 AS v(sym, cl, dt)
+           WHERE w.user_id = ${session.userId} AND w.symbol = v.sym
+             AND w.close_on_add IS NULL
+        `.catch(() => {});
+      }
+    }
+  }
+
   // Splice the persistence, quote and per-user fields into each row so the
   // client renders them in the same iteration as the rest of the data.
   for (const row of rows) {

@@ -59,6 +59,46 @@ export async function loadCloseOnAdd(
   return out;
 }
 
+/** Close (split-adjusted) as of the NEAREST trading day on-or-before a given
+ *  date, per symbol. Used to self-heal watchlist rows whose close_on_add was
+ *  null because golden lagged at add-time — now that golden has backfilled, we
+ *  can recover the close for the original add date. Keyed by bare symbol; a
+ *  symbol with no bar within a 30-day lookback simply won't appear. */
+export async function loadCloseAsOf(
+  pairs: { symbol: string; date: string }[],
+): Promise<Map<string, { close: number; date: string }>> {
+  const out = new Map<string, { close: number; date: string }>();
+  const clean = pairs.filter((p) => p.symbol && p.date);
+  if (clean.length === 0) return out;
+  // Query both spellings (bare + .NS) so golden's index is usable regardless of
+  // how the symbol is stored; each candidate carries its own as-of date.
+  const syms: string[] = [];
+  const asof: string[] = [];
+  for (const p of clean) {
+    const b = bare(p.symbol);
+    syms.push(`${b}.NS`, b);
+    asof.push(p.date, p.date);
+  }
+  try {
+    const rows = await golden<{ symbol: string; c: string; d: string }[]>`
+      SELECT DISTINCT ON (ph.symbol) ph.symbol,
+             COALESCE(ph.adj_close, ph.close)::text AS c,
+             ph.date::text AS d
+        FROM unnest(${syms}::text[], ${asof}::date[]) AS q(sym, asof)
+        JOIN golden.price_history ph
+          ON ph.symbol = q.sym AND ph.interval = '1d'
+         AND COALESCE(ph.adj_close, ph.close) IS NOT NULL
+         AND ph.date <= q.asof
+         AND ph.date >  q.asof - 30
+       ORDER BY ph.symbol, ph.date DESC
+    `;
+    for (const r of rows) out.set(bare(r.symbol), { close: Number(r.c), date: r.d });
+  } catch {
+    // Non-fatal — unhealed rows simply keep their null close_on_add.
+  }
+  return out;
+}
+
 /** Load quote context for a set of bare NSE symbols. Never throws — a golden
  *  hiccup yields an empty map and the UI renders "—". */
 export async function loadQuotes(symbols: string[]): Promise<Map<string, Quote>> {
