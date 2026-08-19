@@ -649,6 +649,11 @@ function ThinRow({
       <div className="flex-1 min-w-0">
         <div className="font-medium text-[13px] tabular-nums truncate">{row.symbol}</div>
         <div className="text-[10px] muted-text truncate leading-tight">{row.company_name}</div>
+        {row.added_at && (
+          <div className="text-[9.5px] muted-text/80 leading-tight tabular-nums">
+            Added {formatShortDate(row.added_at.slice(0, 10))}
+          </div>
+        )}
       </div>
       <div className="text-right shrink-0 tabular-nums">
         <div className="text-[12px] font-medium leading-tight">{fmtPrice(ltp)}</div>
