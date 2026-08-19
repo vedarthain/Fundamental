@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
@@ -5,7 +6,7 @@ import { sql, golden } from "@/lib/db";
 import { band, bandColor, fmtPct, fmtRupeesCr, tierLabel, displayCompanyName, isRecentListing, listingYear, hasScoreableHistory, monthsSinceListing, ordinal } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { PriceChart, type PricePoint } from "@/components/PriceChart";
-import type { SparkPoint } from "@/components/Sparkline";
+import { MetricTrendCard, type SparkPoint } from "@/components/Sparkline";
 import { type PillarTabContent } from "@/components/PillarTabs";
 import { StrengthsPanel } from "@/components/StrengthsPanel";
 import { buildSpider } from "@/lib/spider";
@@ -97,6 +98,15 @@ type AnnualRow = {
   depreciation: number | null;
   interest: number | null;
   profit_before_tax: number | null;
+  other_liabilities: number | null;
+  net_block: number | null;
+  cwip: number | null;
+  investments: number | null;
+  other_assets: number | null;
+  cash_and_bank: number | null;
+  cash_from_investing: number | null;
+  cash_from_financing: number | null;
+  net_cash_flow: number | null;
 };
 
 type QuarterlyRow = {
@@ -233,7 +243,10 @@ async function loadStock(symbol: string) {
            sales::float, operating_profit::float, net_profit::float, cash_from_operating::float,
            total_assets::float, borrowings::float,
            equity_share_capital::float, reserves::float,
-           depreciation::float, interest::float, profit_before_tax::float
+           depreciation::float, interest::float, profit_before_tax::float,
+           other_liabilities::float, net_block::float, cwip::float,
+           investments::float, other_assets::float, cash_and_bank::float,
+           cash_from_investing::float, cash_from_financing::float, net_cash_flow::float
     FROM app.fundamentals_annual
     WHERE symbol = ${upper}
       AND period_end >= (CURRENT_DATE - INTERVAL '10 years')
@@ -969,7 +982,7 @@ export default async function StockPage({
             </div>
           </div>
         }
-        numbers={<FundamentalsTables annual={annual} quarterly={quarterly} />}
+        numbers={<FundamentalsTables annual={annual} quarterly={quarterly} shareholding={shareholding} />}
       />
     </div>
   );
@@ -1604,6 +1617,15 @@ type AnnualLite = {
   borrowings: number | null;
   equity_share_capital: number | null;
   reserves: number | null;
+  other_liabilities: number | null;
+  net_block: number | null;
+  cwip: number | null;
+  investments: number | null;
+  other_assets: number | null;
+  cash_and_bank: number | null;
+  cash_from_investing: number | null;
+  cash_from_financing: number | null;
+  net_cash_flow: number | null;
 };
 
 type QuarterlyLite = {
@@ -1628,9 +1650,17 @@ function cell(n: number | null, fmt: (x: number | null) => string): NumCell {
   return { text: fmt(n), value: n };
 }
 
+// ---------------------------------------------------------------------------
+// "The Numbers" tab — a single-scroll stack of plain-language fundamentals
+// cards. Each card leads with a one-line explainer (what the metric MEANS,
+// for a first-time reader) and then the dense figures. Sections:
+//   Summary → Profit & Loss → Balance Sheet → Cash Flow → Shareholding
+// Everything is on one page — no sub-tabs, no clicks — so a user can skim the
+// whole financial picture top-to-bottom.
+// ---------------------------------------------------------------------------
 function FundamentalsTables({
-  annual, quarterly,
-}: { annual: AnnualLite[]; quarterly: QuarterlyLite[] }) {
+  annual, quarterly, shareholding,
+}: { annual: AnnualLite[]; quarterly: QuarterlyLite[]; shareholding: ShareholdingRow[] }) {
   const annualOldFirst = [...annual].reverse();
   const qOldFirst = [...quarterly].reverse();
 
@@ -1646,53 +1676,217 @@ function FundamentalsTables({
     return { period_end: r.period_end, op_margin, np_margin, roe, debt_equity };
   });
 
-  return (
-    <section className="card p-6">
-      <h2 className="font-display text-[20px] mb-1">The numbers</h2>
-      <p className="text-[13px] muted-text mb-5">
-        Source data behind the score. All ₹ figures in crores; ratios as percentages.
-        Cells color green when the metric moved in a favourable direction vs the
-        prior period, red when it moved unfavourably.
-      </p>
+  // Free cash flow proxy = cash from operations − capex. We don't get a clean
+  // "capex" line from the source, so we approximate it from investing outflow
+  // (the bulk of which is capex for most operating companies). Shown as a
+  // best-effort figure, clearly labelled.
+  const cashRows = annualOldFirst.map((r) => {
+    const capex = r.cash_from_investing != null && r.cash_from_investing < 0
+      ? -r.cash_from_investing : null;
+    const fcf = r.cash_from_operating != null && capex != null
+      ? r.cash_from_operating - capex : null;
+    return { ...r, capex: capex != null ? -capex : null, fcf };
+  });
 
-      <div className="space-y-8">
+  const shOldFirst = [...shareholding].reverse();
+  const hasShareholding = shOldFirst.some(
+    (r) => r.promoter_pct != null || r.fii_pct != null || r.dii_pct != null,
+  );
+
+  return (
+    <div className="space-y-6 max-w-[960px]">
+      {/* ---- Summary ---- */}
+      <MetricCard
+        title="Financials at a glance"
+        explainer="Revenue is the money the company earns from selling its products or services. Net profit is what's left after every cost — expenses, interest and tax. A healthy business grows revenue while keeping profit growing at least as fast."
+      >
+        <SummaryBars
+          data={annualOldFirst.map((r) => ({
+            label: fyLabel(r.period_end),
+            sales: r.sales,
+            net: r.net_profit,
+          }))}
+        />
+      </MetricCard>
+
+      {/* ---- Profit & Loss ---- */}
+      <MetricCard
+        title="Profit &amp; Loss"
+        explainer="How money flows from sales down to profit. Operating profit is what the core business earns before interest and tax; net profit is the final bottom line. The margins below show how many paise of each rupee of sales the company keeps."
+      >
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
+          <MetricTrendCard name="Operating margin"  format="pct" data={derived.map((r) => ({ label: fyLabel(r.period_end), value: r.op_margin }))} />
+          <MetricTrendCard name="Net profit margin" format="pct" data={derived.map((r) => ({ label: fyLabel(r.period_end), value: r.np_margin }))} />
+          <MetricTrendCard name="Return on equity"  format="pct" data={derived.map((r) => ({ label: fyLabel(r.period_end), value: r.roe }))} />
+        </div>
+        <div className="space-y-8">
+          <FundamentalsBlock
+            title="Annual (last 10 fiscal years)"
+            rows={[
+              { label: "Sales",                cells: annualOldFirst.map((r) => cell(r.sales,               fmtCr)) },
+              { label: "Operating profit",     cells: annualOldFirst.map((r) => cell(r.operating_profit,    fmtCr)) },
+              { label: "Net profit",           cells: annualOldFirst.map((r) => cell(r.net_profit,          fmtCr)) },
+            ]}
+            headers={annualOldFirst.map((r) => fyLabel(r.period_end))}
+          />
+          <FundamentalsBlock
+            title="Margins &amp; returns"
+            rows={[
+              { label: "Operating margin",  cells: derived.map((r) => cell(r.op_margin,    fmtPctRatio)) },
+              { label: "Net profit margin", cells: derived.map((r) => cell(r.np_margin,    fmtPctRatio)) },
+              { label: "Return on equity",  cells: derived.map((r) => cell(r.roe,          fmtPctRatio)) },
+              { label: "Debt / Equity",     cells: derived.map((r) => cell(r.debt_equity,  fmtRatio)), polarity: "up-bad" },
+            ]}
+            headers={derived.map((r) => fyLabel(r.period_end))}
+          />
+          <FundamentalsBlock
+            title={`Quarterly (latest ${qOldFirst.length} quarters)`}
+            rows={[
+              { label: "Sales",            cells: qOldFirst.map((r) => cell(r.sales,            fmtCr)) },
+              { label: "Operating profit", cells: qOldFirst.map((r) => cell(r.operating_profit, fmtCr)) },
+              { label: "Net profit",       cells: qOldFirst.map((r) => cell(r.net_profit,       fmtCr)) },
+            ]}
+            headers={qOldFirst.map((r) => qLabel(r.period_end))}
+          />
+        </div>
+      </MetricCard>
+
+      {/* ---- Balance Sheet ---- */}
+      <MetricCard
+        title="Balance Sheet"
+        explainer="A snapshot of what the company owns (assets) and owes (liabilities) at year-end. Reserves are accumulated profits kept in the business; borrowings are debt. Watch for borrowings rising faster than the assets they fund."
+      >
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
+          <MetricTrendCard name="Reserves"     format="cr"    data={annualOldFirst.map((r) => ({ label: fyLabel(r.period_end), value: r.reserves }))} />
+          <MetricTrendCard name="Borrowings"   format="cr"    inverse data={annualOldFirst.map((r) => ({ label: fyLabel(r.period_end), value: r.borrowings }))} />
+          <MetricTrendCard name="Debt / Equity" format="ratio" inverse data={derived.map((r) => ({ label: fyLabel(r.period_end), value: r.debt_equity }))} />
+        </div>
         <FundamentalsBlock
-          title="Annual P&amp;L (last 10 fiscal years)"
+          title="Year-end position (last 10 fiscal years)"
           rows={[
-            { label: "Sales",                cells: annualOldFirst.map((r) => cell(r.sales,               fmtCr)) },
-            { label: "Operating profit",     cells: annualOldFirst.map((r) => cell(r.operating_profit,    fmtCr)) },
-            { label: "Net profit",           cells: annualOldFirst.map((r) => cell(r.net_profit,          fmtCr)) },
-            { label: "Cash from operations", cells: annualOldFirst.map((r) => cell(r.cash_from_operating, fmtCr)) },
-            { label: "Total assets",         cells: annualOldFirst.map((r) => cell(r.total_assets,        fmtCr)) },
-            // Borrowings up = bad — flip the polarity so rising debt reads red.
-            { label: "Borrowings",           cells: annualOldFirst.map((r) => cell(r.borrowings,          fmtCr)), polarity: "up-bad" },
+            { label: "Reserves",          cells: annualOldFirst.map((r) => cell(r.reserves,          fmtCr)) },
+            { label: "Borrowings",        cells: annualOldFirst.map((r) => cell(r.borrowings,        fmtCr)), polarity: "up-bad" },
+            { label: "Other liabilities", cells: annualOldFirst.map((r) => cell(r.other_liabilities, fmtCr)), polarity: "up-bad" },
+            { label: "Fixed assets",      cells: annualOldFirst.map((r) => cell(r.net_block,         fmtCr)) },
+            { label: "Capital work-in-progress", cells: annualOldFirst.map((r) => cell(r.cwip,       fmtCr)) },
+            { label: "Investments",       cells: annualOldFirst.map((r) => cell(r.investments,       fmtCr)) },
+            { label: "Cash & bank",       cells: annualOldFirst.map((r) => cell(r.cash_and_bank,     fmtCr)) },
+            { label: "Other assets",      cells: annualOldFirst.map((r) => cell(r.other_assets,      fmtCr)) },
+            { label: "Total assets",      cells: annualOldFirst.map((r) => cell(r.total_assets,      fmtCr)) },
           ]}
           headers={annualOldFirst.map((r) => fyLabel(r.period_end))}
         />
+      </MetricCard>
 
+      {/* ---- Cash Flow ---- */}
+      <MetricCard
+        title="Cash Flow"
+        explainer="Profit is an accounting figure; cash flow is the actual money moving in and out. Cash from operations is the lifeblood — a company that reports profit but can't generate operating cash is a red flag. Free cash flow is what's left after reinvesting in the business."
+      >
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
+          <MetricTrendCard name="Cash from operations" format="cr" data={cashRows.map((r) => ({ label: fyLabel(r.period_end), value: r.cash_from_operating }))} />
+          <MetricTrendCard name="Free cash flow (est.)" format="cr" data={cashRows.map((r) => ({ label: fyLabel(r.period_end), value: r.fcf }))} />
+        </div>
         <FundamentalsBlock
-          title="Derived ratios"
+          title="Annual (last 10 fiscal years)"
           rows={[
-            { label: "Operating margin",  cells: derived.map((r) => cell(r.op_margin,    fmtPctRatio)) },
-            { label: "Net profit margin", cells: derived.map((r) => cell(r.np_margin,    fmtPctRatio)) },
-            { label: "Return on equity",  cells: derived.map((r) => cell(r.roe,          fmtPctRatio)) },
-            // Higher debt/equity is unfavourable.
-            { label: "Debt / Equity",     cells: derived.map((r) => cell(r.debt_equity,  fmtRatio)), polarity: "up-bad" },
+            { label: "Cash from operations", cells: cashRows.map((r) => cell(r.cash_from_operating, fmtCr)) },
+            { label: "Cash from investing",  cells: cashRows.map((r) => cell(r.cash_from_investing,  fmtCr)) },
+            { label: "Cash from financing",  cells: cashRows.map((r) => cell(r.cash_from_financing,  fmtCr)) },
+            { label: "Free cash flow (est.)", cells: cashRows.map((r) => cell(r.fcf,                 fmtCr)) },
+            { label: "Net cash flow",        cells: cashRows.map((r) => cell(r.net_cash_flow,        fmtCr)) },
           ]}
-          headers={derived.map((r) => fyLabel(r.period_end))}
+          headers={cashRows.map((r) => fyLabel(r.period_end))}
         />
+        <p className="text-[11px] muted-text mt-3">
+          Free cash flow is estimated as operating cash minus the year&apos;s investing
+          outflow (a proxy for capital spending); it may include one-off investments.
+        </p>
+      </MetricCard>
 
-        <FundamentalsBlock
-          title={`Quarterly results (latest ${qOldFirst.length} quarters)`}
-          rows={[
-            { label: "Sales",            cells: qOldFirst.map((r) => cell(r.sales,            fmtCr)) },
-            { label: "Operating profit", cells: qOldFirst.map((r) => cell(r.operating_profit, fmtCr)) },
-            { label: "Net profit",       cells: qOldFirst.map((r) => cell(r.net_profit,       fmtCr)) },
-          ]}
-          headers={qOldFirst.map((r) => qLabel(r.period_end))}
-        />
-      </div>
+      {/* ---- Shareholding ---- */}
+      {hasShareholding && (
+        <MetricCard
+          title="Shareholding"
+          explainer="Who owns the company. High, steady promoter holding signals skin in the game; rising FII/DII (foreign & domestic institutions) means professional investors are buying. Any pledged promoter shares are a warning — the promoter has borrowed against their stake."
+        >
+          <FundamentalsBlock
+            title="By holder type (% of shares)"
+            rows={[
+              { label: "Promoters",          cells: shOldFirst.map((r) => cell(r.promoter_pct,   fmtPct1)) },
+              ...(shOldFirst.some((r) => (r.pledge_pct ?? 0) > 0)
+                ? [{ label: "— of which pledged", cells: shOldFirst.map((r) => cell(r.pledge_pct ?? null, fmtPct1)), polarity: "up-bad" as Polarity }]
+                : []),
+              { label: "Foreign inst. (FII)", cells: shOldFirst.map((r) => cell(r.fii_pct,        fmtPct1)) },
+              { label: "Domestic inst. (DII)", cells: shOldFirst.map((r) => cell(r.dii_pct,       fmtPct1)) },
+              { label: "Government",          cells: shOldFirst.map((r) => cell(r.government_pct,  fmtPct1)) },
+              { label: "Public & others",     cells: shOldFirst.map((r) => cell(r.public_pct,      fmtPct1)) },
+              { label: "No. of shareholders", cells: shOldFirst.map((r) => cell(r.shareholders,   fmtCount)) },
+            ]}
+            headers={shOldFirst.map((r) => qLabel(r.period_end))}
+          />
+        </MetricCard>
+      )}
+    </div>
+  );
+}
+
+// A single fundamentals section: heading, a plain-language explainer, then the
+// figures. The explainer is the whole point of the redesign — it turns a wall
+// of numbers into something a first-time reader can follow.
+function MetricCard({
+  title, explainer, children,
+}: { title: string; explainer: string; children: ReactNode }) {
+  return (
+    <section className="card p-6">
+      <h2 className="font-display text-[20px] mb-1" dangerouslySetInnerHTML={{ __html: title }} />
+      <p className="text-[12.5px] muted-text mb-5 leading-relaxed max-w-[70ch]">{explainer}</p>
+      {children}
     </section>
+  );
+}
+
+// Lightweight CSS bar chart — Revenue vs Net profit per fiscal year. No chart
+// library; just flex columns sized by height. Loss years clamp to a zero bar.
+function SummaryBars({
+  data,
+}: { data: { label: string; sales: number | null; net: number | null }[] }) {
+  const rows = data.filter((d) => d.sales != null);
+  if (rows.length < 2) return null;
+  const max = Math.max(...rows.map((d) => Math.max(d.sales ?? 0, d.net ?? 0, 0)));
+  if (max <= 0) return null;
+  return (
+    <div className="max-w-[440px]">
+      <div className="flex items-end gap-1.5 h-[84px]">
+        {rows.map((d) => (
+          <div key={d.label} className="flex-1 flex items-end justify-center gap-[2px] h-full">
+            <div
+              className="w-[42%] rounded-t-[1.5px]"
+              style={{ height: `${((d.sales ?? 0) / max) * 100}%`, minHeight: 2, background: "var(--color-accent-500)" }}
+              title={`Revenue ${fmtCr(d.sales)}`}
+            />
+            <div
+              className="w-[42%] rounded-t-[1.5px]"
+              style={{ height: `${Math.max((d.net ?? 0) / max, 0) * 100}%`, minHeight: d.net != null && d.net > 0 ? 2 : 0, background: "var(--color-score-good)" }}
+              title={`Net profit ${fmtCr(d.net)}`}
+            />
+          </div>
+        ))}
+      </div>
+      <div className="flex gap-1.5 mt-1">
+        {rows.map((d) => (
+          <div key={d.label} className="flex-1 text-center text-[9px] muted-text tabular-nums">{d.label}</div>
+        ))}
+      </div>
+      <div className="flex gap-4 mt-2.5 text-[10.5px] muted-text">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block w-2 h-2 rounded-[2px]" style={{ background: "var(--color-accent-500)" }} /> Revenue
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block w-2 h-2 rounded-[2px]" style={{ background: "var(--color-score-good)" }} /> Net profit
+        </span>
+      </div>
+    </div>
   );
 }
 
@@ -1787,6 +1981,18 @@ function fmtPctRatio(r: number | null): string {
 function fmtRatio(r: number | null): string {
   if (r == null) return "—";
   return r.toFixed(2);
+}
+
+// Percent value already expressed in percent (e.g. 55.3 → "55.3%").
+function fmtPct1(n: number | null): string {
+  if (n == null) return "—";
+  return `${n.toFixed(1)}%`;
+}
+
+// Whole-number count with Indian grouping (e.g. shareholder count).
+function fmtCount(n: number | null): string {
+  if (n == null) return "—";
+  return n.toLocaleString("en-IN", { maximumFractionDigits: 0 });
 }
 
 function fyLabel(iso: string): string {
