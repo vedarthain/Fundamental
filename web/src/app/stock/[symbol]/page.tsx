@@ -260,6 +260,33 @@ async function loadStock(symbol: string) {
     WHERE symbol = ${upper + ".NS"} AND interval = '1d'
     ORDER BY date ASC
   `.catch(() => [] as PricePoint[]);
+  // Trailing liquidity: MEDIAN daily traded value (₹) over the last ~30 sessions.
+  // price × volume = actual rupee turnover — the metric that decides whether a
+  // position can be entered/exited without moving the price (raw share count is
+  // misleading: an ₹8 penny stock at 40k shares/day is far less liquid than a
+  // ₹5,000 stock at 8k). Median, not mean, so one block-deal day can't mask a
+  // chronically thin name. Below the floor → a "thinly traded" surveillance nudge.
+  const liqRows = await golden<{ med_turnover: number | null; sessions: number }[]>`
+    WITH recent AS (
+      SELECT COALESCE(adj_close, close) * volume AS turnover
+        FROM golden.price_history
+       WHERE symbol = ${upper + ".NS"} AND interval = '1d'
+         AND close IS NOT NULL AND volume IS NOT NULL
+       ORDER BY date DESC
+       LIMIT 30
+    )
+    SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY turnover)::float AS med_turnover,
+           COUNT(*)::int AS sessions
+      FROM recent
+  `.catch(() => [] as { med_turnover: number | null; sessions: number }[]);
+  const medTurnover = liqRows[0]?.med_turnover ?? null;
+  const liqSessions = liqRows[0]?.sessions ?? 0;
+  // ₹50 lakh median daily turnover — deliberately low so only genuinely dead
+  // names light up, not merely small-caps. Require ≥15 sessions so a freshly
+  // listed stock on a handful of bars isn't mislabelled.
+  const THINLY_TRADED_FLOOR = 5_000_000;
+  const isThinlyTraded =
+    medTurnover != null && liqSessions >= 15 && medTurnover < THINLY_TRADED_FLOOR;
   // Intraday ticks (appended every ~10 min by the equity pinger) for the 1D
   // chart's real session curve. Use the MOST RECENT tick-day, not strictly
   // "today" — otherwise the chart is a straight line all weekend / before the
@@ -449,6 +476,7 @@ async function loadStock(symbol: string) {
   return {
     stock, scorecard, annual, quarterly, priceHistory, intradayTicks, shareholding,
     corporateActions, stockNews, announcements, scoreHistory, oiAlert, nextEvent,
+    isThinlyTraded, medTurnover, liqSessions,
     peerMedianComposite: peerStats[0]?.median ?? 50,
     rankInIndustry: peerStats[0]?.rank ?? null,
     industryPeerCount: peerStats[0]?.peer_count ?? null,
@@ -468,7 +496,7 @@ export default async function StockPage({
     getSession(),
   ]);
   if (!data) return notFound();
-  const { stock, scorecard, annual, quarterly, priceHistory, intradayTicks, shareholding, corporateActions, stockNews, announcements, scoreHistory, oiAlert, nextEvent, rankInIndustry, industryPeerCount } = data;
+  const { stock, scorecard, annual, quarterly, priceHistory, intradayTicks, shareholding, corporateActions, stockNews, announcements, scoreHistory, oiAlert, nextEvent, rankInIndustry, industryPeerCount, isThinlyTraded, medTurnover, liqSessions } = data;
 
   // Signed-in users can set price alerts on the chart; load their live lines.
   const priceAlerts: PriceAlert[] = session
@@ -784,6 +812,25 @@ export default async function StockPage({
           </div>
         );
       })()}
+
+      {/* Thinly-traded nudge — surveillance-style liquidity warning. Fires when
+          median daily turnover over the last ~30 sessions is below ₹50 lakh: at
+          that level a normal retail order can move the price and exits are slow.
+          Mirrors the pledge governance alert; caution (amber) styling. */}
+      {isThinlyTraded && (
+        <div
+          className="flex items-start gap-2.5 px-3.5 py-2.5 rounded-md mt-3 text-[12.5px] leading-snug"
+          style={{ background: "color-mix(in srgb, #d97706 10%, transparent)", color: "#92400e" }}
+        >
+          <AlertTriangle size={14} className="shrink-0 mt-[1px]" strokeWidth={2.2} />
+          <span>
+            <strong>Thinly traded:</strong>{" "}
+            median daily turnover is about ₹{Math.round((medTurnover as number) / 1e5).toLocaleString("en-IN")} L
+            over the last {liqSessions} sessions. Low liquidity means wider spreads and
+            slippage — a normal order can move the price, and exiting a position may take time.
+          </span>
+        </div>
+      )}
 
       {oiAlert && (
         <div
