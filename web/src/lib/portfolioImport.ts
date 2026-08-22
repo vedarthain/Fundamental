@@ -242,6 +242,20 @@ function parseZerodha(rows: string[][]): ParsedHolding[] {
 }
 
 function parseFivepaisa(rows: string[][]): ParsedHolding[] {
+  // 5paisa exports TWO different equity reports. Only the "Equity Portfolio"
+  // report carries per-holding average cost + bare ticker symbols. The "Holding
+  // Statement" is a year-start snapshot: 4 columns, full company names ("Cyient
+  // Ltd."), no cost basis — nothing we can map to the ticker universe. Detect it
+  // by its report title and reject with a pointer to the right file, instead of
+  // the generic "no holdings found" the empty-return would trigger.
+  const isHoldingStatement = rows.some((r) =>
+    r.some((c) => /^Report Name\s*:\s*Holding Statement/i.test(c)),
+  );
+  if (isHoldingStatement) {
+    throw new PortfolioImportError(
+      "That's a 5paisa Holding Statement — it has no average cost and lists full company names we can't map to symbols. Upload the Equity Portfolio report instead (5paisa → Reports → Equity Portfolio).",
+    );
+  }
   // two-row header; detect r[0]==="Company" && r[4]==="Price". Cols:
   // Company,Quantity,Avg.Price,Total Investment,Price,Value,UGL val,UGL%,
   // Day val,Day%.
