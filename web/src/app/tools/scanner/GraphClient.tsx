@@ -20,6 +20,8 @@ import type { GraphUniverse, GraphSector, GraphIndustry, GraphStock } from "@/li
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { useWatchlist } from "@/lib/watchlist";
 import { WindowPicker } from "./WindowPicker";
+import { BookmarkMenu } from "./BookmarkMenu";
+import { useBookmarks, GRAPH_BOOKMARKS_KEY, newBookmarkId, type GraphBookmark } from "@/lib/scannerBookmarks";
 import type { WindowOpt } from "./sparkWindows";
 import { CandleChart, type ChartTool, type Drawing, type AlertLine } from "./CandleChart";
 import type { PriceAlert } from "@/lib/price-alerts";
@@ -940,6 +942,33 @@ export default function GraphClient({
     jumpToStock(id, real >= 0 ? real : 0);
   }
 
+  // ── Bookmarks: multi-slot saved positions (location + view settings only).
+  // Filters (portfolio/watch/score) are intentionally NOT captured — restoring
+  // one shouldn't silently change what the grid shows.
+  const bookmarks = useBookmarks<GraphBookmark>(GRAPH_BOOKMARKS_KEY);
+  function addGraphBookmark(label: string) {
+    bookmarks.add({
+      id: newBookmarkId(),
+      label,
+      ind: activeInd,
+      page: safePage,
+      days,
+      perPage,
+      created: Date.now(),
+    });
+  }
+  function jumpGraphBookmark(b: GraphBookmark) {
+    if (!industryById.has(b.ind)) return; // industry filtered out of the current view
+    const sector = industryById.get(b.ind)!.sector;
+    setSelectedInd(b.ind);
+    if (b.perPage === 4 || b.perPage === 6) setPerPage(b.perPage);
+    setDays(b.days);
+    setPage(b.page);
+    setOpenSectors((prev) => new Set(prev).add(sector));
+  }
+  // Suggested label: "Sector · Industry" of the current page.
+  const bookmarkSuggest = [activeSectorName, curPage?.indName].filter(Boolean).join(" · ");
+
   const rangeStart = curPage ? curPage.chunkStart : 0;
   const rangeEnd = curPage ? curPage.chunkStart + pageStocks.length - 1 : 0;
   // Page position WITHIN the current industry (header), distinct from the
@@ -1158,6 +1187,20 @@ export default function GraphClient({
               ))}
             </div>
             <WindowPicker options={GRAPH_WINDOWS} days={days} onSelect={setDays} loading={candles.loading} />
+            <BookmarkMenu<GraphBookmark>
+              items={bookmarks.items}
+              suggestLabel={() => bookmarkSuggest}
+              onSave={addGraphBookmark}
+              onJump={jumpGraphBookmark}
+              onRemove={bookmarks.remove}
+              onRename={bookmarks.rename}
+              describe={(b) => {
+                const ind = industryById.get(b.ind)?.ind.name ?? "(hidden industry)";
+                const w = GRAPH_WINDOWS.find((o) => o.days === b.days)?.label ?? `${b.days}d`;
+                return `${ind} · ${w}`;
+              }}
+              title="Graph bookmark"
+            />
             <div className="flex items-center gap-1">
               <button
                 type="button"

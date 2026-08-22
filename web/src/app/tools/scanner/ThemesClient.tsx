@@ -15,7 +15,7 @@
  *   - constituent scores ← passed in on each Theme (panel-cache join)
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Star } from "lucide-react";
 import type { Theme, ThemeConstituent } from "@/lib/themes";
@@ -24,6 +24,8 @@ import { displayCompanyName } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { useWatchlist } from "@/lib/watchlist";
 import { WindowPicker } from "./WindowPicker";
+import { BookmarkMenu } from "./BookmarkMenu";
+import { useBookmarks, THEME_BOOKMARKS_KEY, newBookmarkId, type ThemeBookmark } from "@/lib/scannerBookmarks";
 import type { WindowOpt } from "./sparkWindows";
 import { CandleChart } from "./CandleChart";
 import { useGraphCandles } from "./useGraphCandles";
@@ -179,6 +181,51 @@ export default function ThemesClient({
   // list under the current page).
   const selectTheme = (code: string) => { setSelectedCode(code); setPage(0); };
 
+  // Auto-resume the LAST theme position across refreshes (single slot), mirroring
+  // the Graph tab's er:graphNav. Restored in an effect to avoid an SSR/client
+  // hydration mismatch; the mount write is skipped so an empty store never
+  // clobbers a saved position.
+  const THEME_NAV_KEY = "er:themeNav:v1";
+  const navHydrated = useRef(false);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(THEME_NAV_KEY);
+      if (raw) {
+        const saved = JSON.parse(raw) as { code?: string; page?: number; days?: number };
+        if (saved.code && themes.some((t) => t.code === saved.code)) setSelectedCode(saved.code);
+        if (typeof saved.page === "number") setPage(saved.page);
+        if (typeof saved.days === "number") setDays(saved.days);
+      }
+    } catch {
+      /* ignore corrupt/unavailable storage */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (!navHydrated.current) {
+      navHydrated.current = true; // skip the mount write
+      return;
+    }
+    try {
+      localStorage.setItem(THEME_NAV_KEY, JSON.stringify({ code: selectedCode, page, days }));
+    } catch {
+      /* ignore quota/unavailable storage */
+    }
+  }, [selectedCode, page, days]);
+
+  // ── Bookmarks: multi-slot saved theme positions (location + window only;
+  // filters are intentionally excluded — same rationale as the Graph tab).
+  const bookmarks = useBookmarks<ThemeBookmark>(THEME_BOOKMARKS_KEY);
+  function addThemeBookmark(label: string) {
+    bookmarks.add({ id: newBookmarkId(), label, code: selectedCode, page: safePage, days, created: Date.now() });
+  }
+  function jumpThemeBookmark(b: ThemeBookmark) {
+    if (!themes.some((t) => t.code === b.code)) return;
+    setSelectedCode(b.code);
+    setDays(b.days);
+    setPage(b.page);
+  }
+
   // Left-rail tree: each theme expands to reveal its constituent stocks.
   const [openThemes, setOpenThemes] = useState<Set<string>>(
     () => new Set(themes[0] ? [themes[0].code] : []),
@@ -289,6 +336,20 @@ export default function ThemesClient({
             <span>Portfolio{portfolioSet.size > 0 ? ` · ${portfolioSet.size}` : ""}</span>
           </button>
           <WindowPicker options={THEME_WINDOWS} days={days} onSelect={setDays} loading={consCandles.loading || idxCandles.loading} />
+          <BookmarkMenu<ThemeBookmark>
+            items={bookmarks.items}
+            suggestLabel={() => theme.displayName ?? theme.label}
+            onSave={addThemeBookmark}
+            onJump={jumpThemeBookmark}
+            onRemove={bookmarks.remove}
+            onRename={bookmarks.rename}
+            describe={(b) => {
+              const t = themes.find((x) => x.code === b.code);
+              const w = THEME_WINDOWS.find((o) => o.days === b.days)?.label ?? `${b.days}d`;
+              return `${t?.displayName ?? t?.label ?? b.code} · ${w}`;
+            }}
+            title="Theme bookmarks"
+          />
           <div className="flex items-center gap-1">
             <button
               type="button"
