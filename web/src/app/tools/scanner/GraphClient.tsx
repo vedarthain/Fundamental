@@ -18,6 +18,7 @@ import { Star } from "lucide-react";
 import { displayCompanyName } from "@/lib/score";
 import type { GraphUniverse, GraphSector, GraphIndustry, GraphStock } from "@/lib/graphUniverse";
 import { WatchlistButton } from "@/components/WatchlistButton";
+import { CallToggle } from "@/components/CallToggle";
 import { useWatchlist } from "@/lib/watchlist";
 import { WindowPicker } from "./WindowPicker";
 import { BookmarkMenu } from "./BookmarkMenu";
@@ -1423,6 +1424,7 @@ export default function GraphClient({
                           {Math.round(st.composite_pct)}
                         </span>
                       )}
+                      <CallToggle symbol={st.symbol} size="sm" />
                     </div>
                     <div className="text-[10.5px] muted-text truncate">
                       {displayCompanyName(st.name, st.symbol)}
@@ -1619,6 +1621,7 @@ export default function GraphClient({
                         {Math.round(focus.composite_pct)}
                       </span>
                     )}
+                    <CallToggle symbol={focus.symbol} size="md" />
                   </div>
                   <div className="flex items-center gap-3 text-[10px] font-medium">
                     <span className="muted-text truncate">

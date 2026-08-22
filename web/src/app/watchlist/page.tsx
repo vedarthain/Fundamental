@@ -16,7 +16,7 @@
  */
 import Link from "next/link";
 import { getSession } from "@/lib/auth";
-import { WatchlistClient } from "./WatchlistClient";
+import { WatchlistTabs } from "./WatchlistTabs";
 
 export const dynamic = "force-dynamic";
 
@@ -66,7 +66,7 @@ export default async function WatchlistPage() {
           Stocks you&apos;re tracking — refreshed with each weekly snapshot. Saved to your account when you&apos;re signed in, otherwise on this device.
         </p>
       </header>
-      <WatchlistClient />
+      <WatchlistTabs />
     </div>
   );
 }

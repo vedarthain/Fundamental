@@ -5,6 +5,7 @@ import type { Metadata } from "next";
 import { sql, golden } from "@/lib/db";
 import { band, bandColor, fmtPct, fmtRupeesCr, tierLabel, displayCompanyName, isRecentListing, listingYear, hasScoreableHistory, monthsSinceListing, ordinal } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
+import { CallToggle } from "@/components/CallToggle";
 import { PriceChart, type PricePoint } from "@/components/PriceChart";
 import { MetricTrendCard, type SparkPoint } from "@/components/Sparkline";
 import { type PillarTabContent } from "@/components/PillarTabs";
@@ -770,6 +771,11 @@ export default async function StockPage({
               </div>
             </div>
           )}
+          {/* Buy/Sell call — a dated directional tag anchored to today's price. */}
+          <div className="mt-2 flex items-center gap-1.5 md:justify-end">
+            <span className="text-[11px] muted-text">Call</span>
+            <CallToggle symbol={stock.symbol} size="md" />
+          </div>
         </div>
       </header>
 

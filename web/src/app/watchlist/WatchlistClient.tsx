@@ -18,6 +18,7 @@ import Link from "next/link";
 import { useWatchlist, saveWatchlistNote } from "@/lib/watchlist";
 import { band, bandColor, tierLabel } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
+import { CallToggle } from "@/components/CallToggle";
 import { CandleChart } from "@/app/tools/scanner/CandleChart";
 import type { Candle } from "@/lib/candles";
 import { metricsForSector, METRIC_META, fmtMetric, type GlanceMetrics, type MetricKey } from "@/lib/glance";
@@ -757,6 +758,9 @@ function WatchRow({
             {Math.round(row.composite_pct)}
           </span>
         )}
+
+        {/* Buy/Sell call toggle — shares state with the scanner + Calls tab. */}
+        <CallToggle symbol={row.symbol} size="sm" />
 
         {/* Quick remove */}
         <button
