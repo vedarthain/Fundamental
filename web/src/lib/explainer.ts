@@ -26,7 +26,11 @@ const STRENGTH_PHRASE: Record<string, string> = {
   // Quality — profitability
   roe_3y: "Returns on equity beat the cluster",
   roe_5y: "Returns on equity beat the cluster",
+  roe_7y: "Returns on equity beat the cluster over seven years",
   roe_latest: "Latest year RoE is among the highest",
+  roe_excess_13_5y: "RoE above 13% in most of last five years",
+  roe_excess_13_7y: "RoE above 13% in most of last seven years",
+  roe_excess_13_10y: "RoE above 13% in most of last ten years",
   roa_3y: "Returns on assets beat peers",
   roce_3y: "Returns on capital employed beat peers",
   roce_5y: "Returns on capital have stayed strong over five years",
@@ -38,6 +42,7 @@ const STRENGTH_PHRASE: Record<string, string> = {
   op_margin_trend_3y: "Operating margin is improving",
   op_margin_trend_7y: "Operating margin has improved over seven years",
   ebitda_margin_3y: "EBITDA margins beat the cluster",
+  ebitda_margin_5y: "EBITDA margins consistently beat the cluster",
   gross_margin_3y: "Gross margins beat peers (pricing power)",
   gross_margin_5y: "Gross margins have stayed strong",
   gross_margin_latest: "Gross margin is among the highest",
@@ -54,6 +59,7 @@ const STRENGTH_PHRASE: Record<string, string> = {
   rev_yoy_latest: "Latest year revenue jumped above peers",
   np_yoy_latest: "Latest year profit jumped above peers",
   loan_book_cagr_3y: "Loan book growing faster than peer banks",
+  book_value_cagr_3y: "Book value is compounding faster than peers",
   book_value_cagr_5y: "Book value is compounding faster than peers",
   book_value_cagr_7y: "Book value is compounding faster than peers",
   book_value_cagr_10y: "Book value has compounded for a decade",
@@ -62,12 +68,16 @@ const STRENGTH_PHRASE: Record<string, string> = {
   np_consistency_7y: "Profits steady over seven years",
   np_consistency_10y: "Profits steady over a full decade",
   roe_avg_above_threshold_5y: "RoE above 15% in most of last five years",
+  roe_avg_above_threshold_7y: "RoE above 15% in most of last seven years",
   roe_avg_above_threshold_10y: "RoE above 15% in most of last ten years",
+  np_growth_above_inflation_5y: "Profit growth beats inflation in most years",
+  np_growth_above_inflation_7y: "Profit growth beats inflation in most years",
   np_growth_above_inflation_10y: "Profit growth beats inflation in most years",
   // Quality — cash & balance sheet
   cfo_pat_3y: "Cash flow keeps pace with reported profit",
   cfo_pat_latest: "Latest year cash flow matches reported profit",
   cfo_ebitda_3y: "Cash conversion above peers",
+  cfo_ebitda_5y: "Cash conversion above peers over five years",
   cfo_sales_3y: "Cash conversion from sales is strong",
   debt_equity: "Lower debt vs equity than peers",
   net_debt_ebitda: "Lower net debt to EBITDA than peers",
@@ -104,7 +114,11 @@ const STRENGTH_PHRASE: Record<string, string> = {
 const GAP_PHRASE: Record<string, string> = {
   roe_3y: "RoE lags the cluster",
   roe_5y: "RoE has lagged peers for five years",
+  roe_7y: "RoE has lagged peers for seven years",
   roe_latest: "Latest year RoE is below peers",
+  roe_excess_13_5y: "RoE rarely above 13% in last five years",
+  roe_excess_13_7y: "RoE rarely above 13% in last seven years",
+  roe_excess_13_10y: "RoE rarely above 13% in last ten years",
   roa_3y: "RoA lags peer banks/NBFCs",
   roce_3y: "RoCE lags peers",
   roce_5y: "RoCE has lagged for five years",
@@ -116,6 +130,7 @@ const GAP_PHRASE: Record<string, string> = {
   op_margin_trend_3y: "Operating margin is contracting",
   op_margin_trend_7y: "Operating margin has shrunk over seven years",
   ebitda_margin_3y: "EBITDA margins lag the cluster",
+  ebitda_margin_5y: "EBITDA margins have lagged the cluster",
   gross_margin_3y: "Gross margins below peers — weak pricing power",
   gross_margin_5y: "Gross margins have lagged for five years",
   gross_margin_latest: "Latest gross margin is below peers",
@@ -131,6 +146,7 @@ const GAP_PHRASE: Record<string, string> = {
   rev_yoy_latest: "Latest year revenue lagged peers",
   np_yoy_latest: "Latest year profit lagged peers",
   loan_book_cagr_3y: "Loan book growth lags peer banks",
+  book_value_cagr_3y: "Book value compounding lags peers",
   book_value_cagr_5y: "Book value compounding lags peers",
   book_value_cagr_7y: "Book value compounding lags peers",
   book_value_cagr_10y: "Decade of book value growth lags peers",
@@ -139,11 +155,15 @@ const GAP_PHRASE: Record<string, string> = {
   np_consistency_7y: "Profits volatile vs peers",
   np_consistency_10y: "Profits volatile vs peers over a decade",
   roe_avg_above_threshold_5y: "RoE rarely above 15% in last five years",
+  roe_avg_above_threshold_7y: "RoE rarely above 15% in last seven years",
   roe_avg_above_threshold_10y: "RoE rarely above 15% in last ten years",
+  np_growth_above_inflation_5y: "Profit growth often below inflation",
+  np_growth_above_inflation_7y: "Profit growth often below inflation",
   np_growth_above_inflation_10y: "Profit growth often below inflation",
   cfo_pat_3y: "Cash flow lags reported profit (accrual flag)",
   cfo_pat_latest: "Latest cash flow lags reported profit",
   cfo_ebitda_3y: "Cash conversion below peers",
+  cfo_ebitda_5y: "Cash conversion below peers over five years",
   cfo_sales_3y: "Weak cash flow from sales",
   debt_equity: "Higher debt vs equity than peers",
   net_debt_ebitda: "Higher net debt to EBITDA than peers",
@@ -235,4 +255,58 @@ export function buildPillarStory(
     strength,
     gap,
   };
+}
+
+// ── Per-stock verdict (watchlist "what matters for THIS stock") ──────────────
+// Flattens the three pillars' component sub-percentiles into one ranked list,
+// then surfaces the handful of metrics on which this specific stock most stands
+// out — its real strengths (high percentile) and real gaps (low). Different
+// metrics surface for different stocks, which is the whole point: the columns
+// aren't fixed, the stock's own profile chooses them.
+
+export type VerdictLine = { key: string; label: string; subPct: number };
+export type StockVerdict = { strengths: VerdictLine[]; gaps: VerdictLine[] };
+
+/** Build a compact per-stock verdict from the persisted pillar components.
+ *  `strongAt`/`weakAt` gate what counts as a genuine strength/gap so a mid-pack
+ *  stock doesn't get a spurious "strength" at the 55th percentile. */
+export function buildVerdict(
+  quality: Record<string, number> | null | undefined,
+  valuation: Record<string, number> | null | undefined,
+  momentum: Record<string, number> | null | undefined,
+  opts: { strongAt?: number; weakAt?: number; maxStrengths?: number; maxGaps?: number } = {},
+): StockVerdict {
+  const { strongAt = 65, weakAt = 35, maxStrengths = 3, maxGaps = 2 } = opts;
+  const all: { key: string; subPct: number }[] = [];
+  for (const src of [quality, valuation, momentum]) {
+    if (!src) continue;
+    for (const [key, v] of Object.entries(src)) {
+      if (v == null || Number.isNaN(v)) continue;
+      all.push({ key, subPct: v });
+    }
+  }
+  // Collapse the same metric measured over different windows (roe_3y/5y/7y,
+  // cfo_ebitda_3y/5y, …) to one line per family, keeping the strongest read —
+  // otherwise a card shows three near-identical "Returns on equity…" rows.
+  const family = (key: string) => key.replace(/_(3y|5y|7y|10y|latest|ttm|q|252d)$/, "");
+  const pick = (
+    filter: (e: { subPct: number }) => boolean,
+    cmp: (a: { subPct: number }, b: { subPct: number }) => number,
+    phrases: Record<string, string>,
+    limit: number,
+  ): VerdictLine[] => {
+    const seen = new Set<string>();
+    const out: VerdictLine[] = [];
+    for (const e of all.filter(filter).sort(cmp)) {
+      const fam = family(e.key);
+      if (seen.has(fam)) continue;
+      seen.add(fam);
+      out.push({ key: e.key, label: phrases[e.key] || e.key, subPct: e.subPct });
+      if (out.length >= limit) break;
+    }
+    return out;
+  };
+  const strengths = pick((e) => e.subPct >= strongAt, (a, b) => b.subPct - a.subPct, STRENGTH_PHRASE, maxStrengths);
+  const gaps = pick((e) => e.subPct <= weakAt, (a, b) => a.subPct - b.subPct, GAP_PHRASE, maxGaps);
+  return { strengths, gaps };
 }
