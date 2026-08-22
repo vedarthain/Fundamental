@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useSession, broadcastSessionChange } from "@/lib/session-client";
 import { UserMenu } from "./UserMenu";
+import { ScribblePad } from "./ScribblePad";
 
 /**
  * Top-bar navigation.
@@ -91,6 +92,7 @@ export function TopNavLinks() {
         {showSignIn && (
           <DesktopLink href="/login" label="Sign in" active={isActive(pathname, "/login")} />
         )}
+        {!loading && user !== null && <ScribblePad />}
         {!loading && user !== null && (
           <UserMenu email={user.email} displayName={user.displayName} isAdmin={isAdmin} />
         )}
