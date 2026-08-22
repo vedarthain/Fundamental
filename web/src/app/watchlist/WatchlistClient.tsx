@@ -20,6 +20,8 @@ import { band, bandColor, tierLabel } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { CandleChart } from "@/app/tools/scanner/CandleChart";
 import type { Candle } from "@/lib/candles";
+import { metricsForSector, METRIC_META, fmtMetric, type GlanceMetrics, type MetricKey } from "@/lib/glance";
+import type { StockVerdict } from "@/lib/explainer";
 
 type Row = {
   symbol: string;
@@ -54,6 +56,12 @@ type Row = {
   low_52w: number | null;
   from_high_pct: number | null;
   from_low_pct: number | null;
+  /** Sector-aware fundamentals for the peer-glance table. */
+  glance: GlanceMetrics | null;
+  /** Per-stock verdict — the metrics this stock most stands out on. */
+  verdict: StockVerdict | null;
+  /** Scorecard-driven fundamental rows for this stock's cluster. */
+  glance_keys?: MetricKey[];
 };
 
 // ── Corporate-actions / quarterly extras (lazy per-symbol) ──────────────────
@@ -153,7 +161,9 @@ export function WatchlistClient() {
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  // Master/detail: which stock is open in the right-hand panel.
+  // Master/detail: which stock is open in the right-hand panel. The detail
+  // deep-dive is the single unified view — chart + scorecard-driven
+  // fundamentals — so there's no separate mode toggle any more.
   const [selected, setSelected] = useState<string | null>(null);
   // Left-rail tree: node keys present here are expanded (default: all
   // collapsed — the user opens a sector by clicking its arrow). Sector key =
@@ -270,6 +280,16 @@ export function WatchlistClient() {
       return next;
     });
 
+  // Expand-all / collapse-all for the rail tree. Keys are every sector node
+  // plus every `${sector}//${industry}` node in the FULL tree, so one click
+  // opens (or closes) every stock regardless of the current search filter.
+  const allNodeKeys = fullTree.flatMap((s) => [
+    s.name,
+    ...s.industries.map((i) => `${s.name}//${i.name}`),
+  ]);
+  const allExpanded = allNodeKeys.length > 0 && allNodeKeys.every((k) => expanded.has(k));
+  const toggleAllNodes = () => setExpanded(allExpanded ? new Set() : new Set(allNodeKeys));
+
   // Flat symbol order following the tree (sector → industry → composite-desc)
   // so the "next" button rotates through the list in the same order it reads.
   const flatOrder = tree.flatMap((s) => s.industries.flatMap((i) => i.stocks.map((r) => r.symbol)));
@@ -368,6 +388,21 @@ export function WatchlistClient() {
                 className="w-full rounded-md border hairline bg-transparent pl-7 pr-2 py-1.5 text-[12px] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-600)]"
               />
             </div>
+          </div>
+
+          {/* Expand-all / collapse-all — one click opens or closes every stock.
+              Disabled while searching (matches force the tree open). */}
+          <div className="px-2 py-1.5 border-b hairline shrink-0 flex justify-end">
+            <button
+              type="button"
+              onClick={toggleAllNodes}
+              disabled={searching || allNodeKeys.length === 0}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] muted-text hover:text-[var(--color-ink)] hover:bg-[var(--color-paper)] transition-colors disabled:opacity-40 disabled:hover:bg-transparent"
+              title={searching ? "Clear search to collapse" : allExpanded ? "Collapse every sector & stock" : "Expand every sector & stock"}
+            >
+              <span aria-hidden className="text-[10px]">{allExpanded ? "⊟" : "⊞"}</span>
+              {allExpanded ? "Collapse all" : "Expand all"}
+            </button>
           </div>
 
           <div className="overflow-y-auto flex-1 min-h-0">
@@ -785,7 +820,12 @@ function WatchRow({
 
       {/* Price chart + latest results side by side, then quarterly-trend
           graph beside dividends, then two-column news. */}
-      <DetailExtras symbol={row.symbol} />
+      <DetailExtras
+        symbol={row.symbol}
+        glance={row.glance}
+        glanceKeys={row.glance_keys}
+        sector={row.sector_name}
+      />
 
       {/* Editable note — signed-in only (it lives on the server row). */}
       {signedIn ? (
@@ -978,7 +1018,17 @@ function useExtras(symbol: string): { data: Extras | null; err: boolean } {
  *           OPM / NPM / Dividend, each a single row with its own sparkline)
  *   Row B — recent news in two columns
  */
-function DetailExtras({ symbol }: { symbol: string }) {
+function DetailExtras({
+  symbol,
+  glance,
+  glanceKeys,
+  sector,
+}: {
+  symbol: string;
+  glance: GlanceMetrics | null;
+  glanceKeys: MetricKey[] | undefined;
+  sector: string | null;
+}) {
   const { data, err } = useExtras(symbol);
   const quarterly = data?.quarterly ?? [];
   const dividends = data?.dividends ?? [];
@@ -993,12 +1043,15 @@ function DetailExtras({ symbol }: { symbol: string }) {
   return (
     <div className="mt-3 space-y-4">
       {/* Row A: price chart squeezed to fit; fundamentals stacked on the right. */}
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_200px] gap-4 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_220px] gap-4 items-start">
         <ChartBlock symbol={symbol} />
         <FundamentalsColumn
           quarterly={quarterly}
           dividends={dividends}
           loading={loadingExtras}
+          glance={glance}
+          glanceKeys={glanceKeys}
+          sector={sector}
         />
       </div>
 
@@ -1014,88 +1067,192 @@ function DetailExtras({ symbol }: { symbol: string }) {
   );
 }
 
-/** Right-hand fundamentals stack: one row per metric (Sales, Net profit, OPM,
- *  NPM, Dividend), each showing the latest value, YoY where we have it, and a
- *  small sparkline of the metric's history. Quarterly series run latest-first
- *  from the API, so we reverse to chronological for the sparkline. */
+/** Sparkline colour: first→last non-null, flipped for "lower is better"
+ *  metrics. Flat/insufficient data reads muted. */
+function trendColorFor(series: (number | null)[], inverse?: boolean): string {
+  const nn = series.filter((v): v is number => v != null);
+  if (nn.length < 2) return "var(--color-muted)";
+  const up = nn[nn.length - 1] > nn[0];
+  const good = inverse ? !up : up;
+  return good ? "var(--color-score-good)" : "var(--color-delta-down)";
+}
+
+/** The four P&L flow metrics that our source reports quarterly (there is no
+ *  quarterly balance sheet, so returns/leverage/efficiency are annual-only). */
+const FLOW_KEYS: MetricKey[] = ["sales", "net_profit", "opm", "npm"];
+
+/** Right-hand fundamentals box with a Yearly ⇄ Quarterly toggle:
+ *
+ *   QUARTERLY — Revenue / Net profit / OPM / NPM, the only lines our source
+ *     reports quarterly, each an 8-quarter sparkline with YoY. Freshest read.
+ *   YEARLY — the scorecard fundamentals this stock's cluster actually weights
+ *     (flow YoY + RoCE for a compounder, debtor-days for IT, inventory-days for
+ *     realty …). Returns/leverage/efficiency are balance-sheet based and so are
+ *     annual-only; the dividend graph and the sector caveat sit here too.
+ *
+ *  Quarterly flow comes from `quarterly` (the extras API); yearly rows from the
+ *  `glance` annual series already on the row, ordered by `glanceKeys`. */
 function FundamentalsColumn({
   quarterly,
   dividends,
   loading,
+  glance,
+  glanceKeys,
+  sector,
 }: {
   quarterly: Quarter[];
   dividends: Dividend[];
   loading: boolean;
+  glance: GlanceMetrics | null;
+  glanceKeys: MetricKey[] | undefined;
+  sector: string | null;
 }) {
+  // Default to Yearly — that's where the cluster-specific fundamentals live
+  // (the whole point of the scorecard-driven rows); Quarterly is one click away.
+  const [mode, setMode] = useState<"y" | "q">("y");
+
   const latest = quarterly[0];
-  const chrono = [...quarterly].reverse(); // oldest → newest for the sparkline
-  const sales = chrono.map((q) => q.sales);
-  const np = chrono.map((q) => q.net_profit);
-  const opm = chrono.map((q) => q.opm_pct);
-  const npm = chrono.map((q) => q.npm_pct);
+  const sectorCfg = metricsForSector(sector);
+  const keys = glanceKeys && glanceKeys.length > 0 ? glanceKeys : sectorCfg.keys;
+  // Yearly rows: flow metrics first (Revenue / profit / margins), then the
+  // scorecard ratios — deduped, drawn from the annual `glance` series.
+  const yearlyKeys = [
+    ...FLOW_KEYS.filter((k) => keys.includes(k)),
+    ...keys.filter((k) => !FLOW_KEYS.includes(k)),
+  ];
+
+  // Quarterly flow series — last 8 quarters, oldest→newest for the sparkline.
+  const q8 = [...quarterly].slice(0, 8).reverse();
+  const qSales = q8.map((q) => q.sales);
+  const qNp = q8.map((q) => q.net_profit);
+  const qOpm = q8.map((q) => q.opm_pct);
+  const qNpm = q8.map((q) => q.npm_pct);
 
   // Dividend series: amounts over time (skip purpose-only rows for the graph).
   const divChrono = [...dividends].sort((a, b) => a.ex_date.localeCompare(b.ex_date));
   const divSeries = divChrono.map((d) => d.amount);
   const latestDiv = [...divChrono].reverse().find((d) => d.amount != null);
 
-  const noResults = quarterly.length === 0;
+  const hasQuarter = quarterly.length > 0;
+  const hasYearly = yearlyKeys.some((k) => glance?.[k]?.value != null);
+  const nothing = !hasQuarter && !hasYearly && dividends.length === 0;
+
+  // If the chosen cadence has no data but the other does, fall back so the box
+  // is never blank when there's something to show.
+  const effMode: "y" | "q" = nothing
+    ? mode
+    : mode === "q" && !hasQuarter
+      ? "y"
+      : mode === "y" && !hasYearly && dividends.length === 0
+        ? "q"
+        : mode;
 
   return (
-    <div className="rounded-md border hairline">
-      <div className="px-3 py-2 border-b hairline text-[9.5px] uppercase tracking-wide muted-text">
-        {latest ? (
-          <>
-            Fundamentals · {fmtQuarter(latest.period_end)}
-            <span className="normal-case tracking-normal"> · results {fmtShortDate(latest.period_end)}</span>
-          </>
-        ) : (
-          "Fundamentals"
-        )}
+    <div className="rounded-md border hairline overflow-hidden">
+      <div className="px-3 py-2 border-b hairline flex items-center justify-between gap-2">
+        <span className="text-[9.5px] uppercase tracking-wide muted-text">
+          Fundamentals
+          {effMode === "q" && latest && (
+            <span className="normal-case tracking-normal"> · {fmtQuarter(latest.period_end)}</span>
+          )}
+        </span>
+        {/* Yearly ⇄ Quarterly toggle. */}
+        <div className="inline-flex rounded-md border hairline overflow-hidden shrink-0">
+          {(["y", "q"] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              className="px-2 py-0.5 text-[10px] font-medium transition-colors border-l first:border-l-0 hairline"
+              style={
+                effMode === m
+                  ? { backgroundColor: "var(--color-accent-600)", color: "white" }
+                  : undefined
+              }
+              aria-pressed={effMode === m}
+            >
+              {m === "y" ? "Yearly" : "Quarterly"}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {noResults && dividends.length === 0 ? (
+      {nothing ? (
         <div className="px-3 py-3 text-[11px] muted-text italic">
           {loading ? "Loading…" : "No results on record."}
         </div>
-      ) : (
+      ) : effMode === "q" ? (
+        /* ── Quarterly: flow metrics, 8-quarter trend. ── */
         <div className="divide-y hairline">
           <MetricSpark
-            label="Sales"
+            label={sectorCfg.salesLabel}
             value={latest ? `₹${fmtCr(latest.sales)} Cr` : "—"}
             yoy={latest?.sales_yoy ?? null}
-            series={sales}
+            series={qSales}
+            color={trendColorFor(qSales)}
           />
           <MetricSpark
             label="Net profit"
             value={latest ? `₹${fmtCr(latest.net_profit)} Cr` : "—"}
             yoy={latest?.np_yoy ?? null}
-            series={np}
+            series={qNp}
+            color={trendColorFor(qNp)}
           />
           <MetricSpark
             label="OPM"
             value={latest?.opm_pct == null ? "—" : `${latest.opm_pct.toFixed(1)}%`}
-            series={opm}
+            series={qOpm}
+            color={trendColorFor(qOpm)}
           />
           <MetricSpark
             label="NPM"
             value={latest?.npm_pct == null ? "—" : `${latest.npm_pct.toFixed(1)}%`}
-            series={npm}
-          />
-          <MetricSpark
-            label="Dividend"
-            value={
-              latestDiv?.amount != null
-                ? `₹${latestDiv.amount}`
-                : dividends.length > 0
-                  ? (dividends[0].purpose ?? "—")
-                  : "—"
-            }
-            valueTitle={latestDiv ? `Latest dividend · ex ${fmtShortDate(latestDiv.ex_date)}` : undefined}
-            series={divSeries}
-            color="var(--color-delta-up)"
+            series={qNpm}
+            color={trendColorFor(qNpm)}
           />
         </div>
+      ) : (
+        /* ── Yearly: scorecard flow + ratios (annual) + dividend. ── */
+        <>
+          <div className="divide-y hairline">
+            {yearlyKeys.map((k) => {
+              const meta = METRIC_META[k];
+              const m = glance?.[k] ?? null;
+              const label = k === "sales" ? sectorCfg.salesLabel : meta.label;
+              return (
+                <MetricSpark
+                  key={k}
+                  label={label}
+                  value={fmtMetric(m?.value ?? null, meta.format)}
+                  yoy={FLOW_KEYS.includes(k) ? m?.yoy ?? null : null}
+                  series={m?.series ?? []}
+                  color={trendColorFor(m?.series ?? [], meta.inverse)}
+                  valueTitle={meta.help}
+                />
+              );
+            })}
+            {/* Dividend graph — always shown; not a scored metric. */}
+            <MetricSpark
+              label="Dividend"
+              value={
+                latestDiv?.amount != null
+                  ? `₹${latestDiv.amount}`
+                  : dividends.length > 0
+                    ? (dividends[0].purpose ?? "—")
+                    : "—"
+              }
+              valueTitle={latestDiv ? `Latest dividend · ex ${fmtShortDate(latestDiv.ex_date)}` : undefined}
+              series={divSeries}
+              color="var(--color-delta-up)"
+            />
+          </div>
+
+          {sectorCfg.note && (
+            <div className="px-3 py-2 text-[9.5px] muted-text italic leading-snug border-t hairline">
+              {sectorCfg.note}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -1126,7 +1283,7 @@ function MetricSpark({
           <span
             className="text-[9.5px] font-medium tabular-nums"
             style={{ color: yoy >= 0 ? "var(--color-delta-up)" : "var(--color-delta-down)" }}
-            title="Year-on-year change vs the same quarter last year"
+            title="Year-on-year change vs the prior comparable period"
           >
             {yoy >= 0 ? "+" : ""}
             {yoy.toFixed(1)}% YoY
