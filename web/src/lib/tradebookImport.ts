@@ -346,10 +346,21 @@ export function resolveTradeSymbol(t: ParsedTrade, uni: TradeUniverse): string |
   return null;
 }
 
-/** Trade-level dedup key: trade_id when present, else the natural composite. */
-export function tradeDedupKey(t: ParsedTrade & { symbol: string }): string {
+/**
+ * Trade-level dedup key: trade_id when present, else the natural composite.
+ *
+ * MUST be scoped to the user. A broker trade_id is only unique within one
+ * account, and the composite fallback (broker|date|symbol|side|qty|price|time)
+ * collides trivially across users — two people buying 10 INFY at the same price
+ * on the same day produce identical tuples. Without user_id in the key, the
+ * second user's real trade gets swallowed by ON CONFLICT DO NOTHING.
+ */
+export function tradeDedupKey(
+  t: ParsedTrade & { symbol: string },
+  userId: number | string,
+): string {
   const raw = t.tradeId
-    ? `${t.broker}|tid|${t.tradeId}`
-    : `${t.broker}|${t.tradeDate}|${t.symbol}|${t.side}|${t.quantity}|${t.price}|${t.tradeTime}`;
+    ? `${userId}|${t.broker}|tid|${t.tradeId}`
+    : `${userId}|${t.broker}|${t.tradeDate}|${t.symbol}|${t.side}|${t.quantity}|${t.price}|${t.tradeTime}`;
   return createHash("md5").update(raw).digest("hex");
 }

@@ -5,8 +5,11 @@
  *
  * Distinct from /api/portfolio/import, which loads a CURRENT-HOLDINGS snapshot.
  * A tradebook is the per-trade log. We APPEND trades (never replace) — each
- * export is a slice of history — and dedup on dedup_key so re-uploading an
- * overlapping window is idempotent (ON CONFLICT DO NOTHING).
+ * export is a slice of history — and dedup on (user_id, dedup_key) so
+ * re-uploading an overlapping window is idempotent (ON CONFLICT DO NOTHING).
+ * dedup_key is user-scoped (see tradeDedupKey): the composite fallback collides
+ * trivially across users, so the key MUST hash user_id or one user's identical
+ * trade would swallow another's.
  *
  * After the trades land we recompute the derived holding for every affected
  * symbol (derivedHoldings.ts): a symbol with NO real broker snapshot gets a
@@ -123,7 +126,7 @@ export async function POST(req: NextRequest) {
     .map(({ t, symbol }) => ({
       ...t,
       symbol: symbol!,
-      dedupKey: tradeDedupKey({ ...t, symbol: symbol! }),
+      dedupKey: tradeDedupKey({ ...t, symbol: symbol! }, session.userId),
     }));
 
   if (rows.length === 0) {
@@ -179,7 +182,7 @@ export async function POST(req: NextRequest) {
            ${r.symbol}, ${r.rawSymbol || r.symbol}, ${r.rawName || null},
            ${r.isin || null}, ${r.quantity}, ${r.price}, ${r.tradeId || null},
            ${r.orderId || null}, ${file.name}, ${r.dedupKey})
-        ON CONFLICT (dedup_key) DO NOTHING
+        ON CONFLICT (user_id, dedup_key) DO NOTHING
       `;
       inserted += res.count;
     }
