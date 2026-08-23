@@ -2100,8 +2100,25 @@ function FragmentRow({
           )}
         </td>
         <td className="px-2 py-2 text-right tabular-nums">{ins.quantity}</td>
-        <td className="px-2 py-2 text-right tabular-nums">{ins.avgCost != null ? ins.avgCost.toLocaleString("en-IN") : "—"}</td>
-        <td className="px-2 py-2 text-right tabular-nums">{ins.price != null ? ins.price.toLocaleString("en-IN") : "—"}</td>
+        <td
+          className="px-2 py-2 text-right tabular-nums"
+          style={{
+            color:
+              ins.avgCost != null && ins.price != null && ins.avgCost !== ins.price
+                ? ins.avgCost > ins.price
+                  ? GREEN
+                  : RED
+                : undefined,
+          }}
+        >
+          {ins.avgCost != null ? ins.avgCost.toLocaleString("en-IN") : "—"}
+        </td>
+        <td
+          className="px-2 py-2 text-right tabular-nums font-bold"
+          style={{ color: "var(--color-fg)" }}
+        >
+          {ins.price != null ? ins.price.toLocaleString("en-IN") : "—"}
+        </td>
         <td
           className="px-2 py-2 text-right tabular-nums"
           style={{ color: ins.targetHit ? GREEN : undefined, fontWeight: ins.targetHit ? 600 : undefined }}
