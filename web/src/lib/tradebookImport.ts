@@ -61,10 +61,31 @@ function num(x: string | undefined): number | null {
   return Number.isFinite(v) ? v : null;
 }
 
-/** Normalise a date token to YYYY-MM-DD. Accepts ISO (incl. "…T…"), DD-MM-YYYY
- *  and DD/MM/YYYY. Anything else is returned as-is (caller may drop it). */
+/** Month-name → 2-digit, keyed on the first three letters (Jan…Dec). */
+const MONTHS: Record<string, string> = {
+  jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
+  jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12",
+};
+
+/** Normalise a date token to YYYY-MM-DD. Accepts ISO (incl. "…T…"), DD-MM-YYYY,
+ *  DD/MM/YYYY, and month-name forms "Mon DD YYYY" / "DD Mon YYYY" (5paisa's
+ *  Trade Report writes "Aug 19 2026"). Anything else is returned as-is (caller
+ *  may drop it). */
 export function toIso(s: string): string {
-  const head = String(s).trim().split(/[ T]/)[0];
+  const raw = String(s).trim();
+  // Month-name forms first — they contain spaces, so they must be matched on the
+  // whole string BEFORE the space-split below turns "Aug 19 2026" into "Aug".
+  let mm = raw.match(/^([A-Za-z]{3,})\.?\s+(\d{1,2}),?\s+(\d{4})$/); // Mon DD YYYY
+  if (mm) {
+    const mo = MONTHS[mm[1].slice(0, 3).toLowerCase()];
+    if (mo) return `${mm[3]}-${mo}-${mm[2].padStart(2, "0")}`;
+  }
+  mm = raw.match(/^(\d{1,2})[-\s]([A-Za-z]{3,})\.?,?[-\s](\d{4})$/); // DD Mon YYYY
+  if (mm) {
+    const mo = MONTHS[mm[2].slice(0, 3).toLowerCase()];
+    if (mo) return `${mm[3]}-${mo}-${mm[1].padStart(2, "0")}`;
+  }
+  const head = raw.split(/[ T]/)[0];
   if (/^\d{4}-\d{2}-\d{2}$/.test(head)) return head;
   let m = head.match(/^(\d{2})-(\d{2})-(\d{4})$/);
   if (m) return `${m[3]}-${m[2]}-${m[1]}`;
@@ -137,19 +158,38 @@ function asObjects(rows: string[][], hidx: number): Record<string, string>[] {
 
 // ─────────────────────────── per-broker parsers ────────────────────────────
 
+/** snake_case a header cell: "Trade Type" → "trade_type", "ISIN" → "isin". */
+function snake(s: string): string {
+  return s.trim().toLowerCase().replace(/[\s.]+/g, "_");
+}
+
 function parseZerodha(rows: string[][]): ParsedTrade[] {
-  const h = headerIndex(rows, (r) => r.includes("symbol") && r.includes("trade_type"));
+  // Zerodha ships TWO shapes: the CSV export uses lowercase_underscore headers
+  // (symbol, trade_type, …); the XLSX export uses Title Case with spaces
+  // (Symbol, Trade Type, …). Normalise every header cell to snake_case so both
+  // map to the same keys — otherwise the XLSX yields "no trades found".
+  const h = headerIndex(rows, (r) => {
+    const s = r.map(snake);
+    return s.includes("symbol") && s.includes("trade_type");
+  });
   if (h < 0) return [];
-  return asObjects(rows, h)
-    .filter((d) => d.symbol)
-    .map((d) => ({
+  const hdr = rows[h].map(snake);
+  const out: ParsedTrade[] = [];
+  for (let i = h + 1; i < rows.length; i++) {
+    const r = rows[i];
+    const d: Record<string, string> = {};
+    for (let c = 0; c < hdr.length; c++) if (hdr[c]) d[hdr[c]] = (r[c] ?? "").trim();
+    if (!d.symbol) continue;
+    out.push({
       broker: "zerodha" as const,
       rawSymbol: d.symbol, rawName: d.symbol, isin: (d.isin ?? "").trim(),
       side: normalizeSide(d.trade_type ?? ""),
       quantity: num(d.quantity), price: num(d.price),
       tradeDate: toIso(d.trade_date ?? ""), tradeTime: (d.order_execution_time ?? "").trim(),
       tradeId: (d.trade_id ?? "").trim(), orderId: (d.order_id ?? "").trim(),
-    }));
+    });
+  }
+  return out;
 }
 
 function parseFyers(rows: string[][]): ParsedTrade[] {
@@ -288,11 +328,20 @@ export function resolveTradeSymbol(t: ParsedTrade, uni: TradeUniverse): string |
   }
   const nn = normalizeName(t.rawName);
   if (nn.length >= 4) {
-    const hits = new Set<string>();
+    // Exact normalized-name match wins outright — this disambiguates a family of
+    // near-names where a SHORTER universe name is a prefix of the trade name
+    // (e.g. "Raymond Lifestyle" would otherwise also match "Raymond" via the
+    // loose prefix rule and be dropped as ambiguous). Only fall back to prefix
+    // matching when there's no exact hit at all.
+    const exact = new Set<string>();
+    const prefix = new Set<string>();
     for (const { norm, symbol } of uni.byName) {
-      if (norm && (norm.startsWith(nn) || nn.startsWith(norm))) hits.add(symbol);
+      if (!norm) continue;
+      if (norm === nn) exact.add(symbol);
+      else if (norm.startsWith(nn) || nn.startsWith(norm)) prefix.add(symbol);
     }
-    if (hits.size === 1) return [...hits][0];
+    if (exact.size === 1) return [...exact][0];
+    if (exact.size === 0 && prefix.size === 1) return [...prefix][0];
   }
   return null;
 }
