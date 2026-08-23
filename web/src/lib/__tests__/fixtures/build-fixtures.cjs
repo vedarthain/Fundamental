@@ -55,6 +55,30 @@ const csv = [
 require("fs").writeFileSync(path.join(DIR, "zerodha-tradebook.csv"), csv);
 console.log("wrote zerodha-tradebook.csv");
 
+// ── Zerodha holdings — "Holdings Statement" XLSX (Symbol/Quantity split) ─────
+// The variant that regressed: parser only knew the Console CSV `Instrument`
+// shape. The statement carries a long preamble, then a header where quantity is
+// split across Available + Long Term (subset) + Pledged (Margin)/(Loan) buckets.
+write(
+  [
+    ["Zerodha Broking Ltd."],
+    ["Holdings Statement"],
+    ["Client ID", "AB1234"],
+    ...Array(18).fill([]),
+    [
+      "Symbol", "ISIN", "Sector", "Quantity Available", "Quantity Discrepant",
+      "Quantity Long Term", "Quantity Pledged (Margin)", "Quantity Pledged (Loan)",
+      "Average Price", "Previous Closing Price", "Unrealized P&L", "Unrealized P&L Pct.",
+    ],
+    ["360ONE", "INE466L01038", "FINANCIAL SERVICES", "8", "0", "8", "0", "0", "1029.825", "1199", "1353.4", "16.4275"],
+    ["INFY", "INE009A01021", "IT", "10", "0", "0", "0", "0", "1500.5", "1620", "1195", "7.96"],
+    // Pledged-only position: 0 available, 4 pledged (margin) — must still count.
+    ["TCS", "INE467B01029", "IT", "0", "0", "0", "4", "0", "3800", "3900.25", "401", "2.63"],
+  ],
+  "zerodha-holdings.xlsx",
+  "Equity",
+);
+
 // ── 5paisa tradebook — "Equity Transaction Report" (.xls, "Aug 19 2026") ─────
 // The date format ("Mon DD YYYY") + name-only Company column that regressed.
 write(

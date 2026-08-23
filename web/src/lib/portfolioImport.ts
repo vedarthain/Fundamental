@@ -218,27 +218,65 @@ function parseFyers(rows: string[][]): ParsedHolding[] {
 }
 
 function parseZerodha(rows: string[][]): ParsedHolding[] {
-  // header: r[0]==="Instrument". Cols: Instrument,Qty.,Avg. cost,LTP,
-  // Invested,Cur. val,P&L,Net chg.,Day chg.
-  const h = findRow(rows, (r) => r[0] === "Instrument");
-  if (h < 0) return [];
-  const out: ParsedHolding[] = [];
-  for (let i = h + 1; i < rows.length; i++) {
-    const r = rows[i];
-    if (!r[0]) continue;
-    const qty = n(r[1]);
-    if (qty == null) continue;
-    out.push({
-      rawSymbol: r[0],
-      isin: null,
-      quantity: qty,
-      avgCost: n(r[2]),
-      brokerLtp: n(r[3]),
-      brokerCurValue: n(r[5]),
-      brokerDayPct: n(r[8]),
-    });
+  // Zerodha ships TWO holdings shapes:
+  //  • Console CSV — header r[0]==="Instrument"; cols Instrument,Qty.,Avg. cost,
+  //    LTP,Invested,Cur. val,P&L,Net chg.,Day chg.
+  //  • Holdings Statement XLSX — header has Symbol,ISIN,…,Average Price,Previous
+  //    Closing Price; quantity is split across Available + Pledged columns.
+  const hCsv = findRow(rows, (r) => r[0] === "Instrument");
+  if (hCsv >= 0) {
+    const out: ParsedHolding[] = [];
+    for (let i = hCsv + 1; i < rows.length; i++) {
+      const r = rows[i];
+      if (!r[0]) continue;
+      const qty = n(r[1]);
+      if (qty == null) continue;
+      out.push({
+        rawSymbol: r[0], isin: null, quantity: qty,
+        avgCost: n(r[2]), brokerLtp: n(r[3]), brokerCurValue: n(r[5]), brokerDayPct: n(r[8]),
+      });
+    }
+    return out;
   }
-  return out;
+
+  const hXlsx = findRow(rows, (r) => r.includes("Symbol") && r.includes("Quantity Available"));
+  if (hXlsx >= 0) {
+    const hdr = rows[hXlsx];
+    const col = (name: string) => hdr.indexOf(name);
+    const iSym = col("Symbol"),
+      iIsin = col("ISIN"),
+      iAvail = col("Quantity Available"),
+      iPledM = col("Quantity Pledged (Margin)"),
+      iPledL = col("Quantity Pledged (Loan)"),
+      iAvg = col("Average Price"),
+      iPrev = col("Previous Closing Price");
+    const out: ParsedHolding[] = [];
+    for (let i = hXlsx + 1; i < rows.length; i++) {
+      const r = rows[i];
+      const sym = (r[iSym] ?? "").trim();
+      if (!sym) continue;
+      // Total held = free (Available) + both pledged buckets. "Long Term" is a
+      // SUBSET of Available (not additive), so it's deliberately excluded.
+      const qty =
+        (n(r[iAvail]) ?? 0) +
+        (iPledM >= 0 ? n(r[iPledM]) ?? 0 : 0) +
+        (iPledL >= 0 ? n(r[iPledL]) ?? 0 : 0);
+      if (qty <= 0) continue;
+      const prev = iPrev >= 0 ? n(r[iPrev]) : null;
+      out.push({
+        rawSymbol: sym,
+        isin: iIsin >= 0 ? r[iIsin] || null : null,
+        quantity: qty,
+        avgCost: iAvg >= 0 ? n(r[iAvg]) : null,
+        brokerLtp: prev, // "Previous Closing Price" — the app re-prices live anyway
+        brokerCurValue: prev != null ? Math.round(prev * qty * 100) / 100 : null,
+        brokerDayPct: null,
+      });
+    }
+    return out;
+  }
+
+  return [];
 }
 
 function parseFivepaisa(rows: string[][]): ParsedHolding[] {
