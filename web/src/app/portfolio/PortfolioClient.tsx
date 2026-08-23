@@ -2106,8 +2106,8 @@ function FragmentRow({
             color:
               ins.avgCost != null && ins.price != null && ins.avgCost !== ins.price
                 ? ins.avgCost > ins.price
-                  ? GREEN
-                  : RED
+                  ? RED
+                  : GREEN
                 : undefined,
           }}
         >
