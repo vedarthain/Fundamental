@@ -73,6 +73,26 @@ describe("parseTradebook: fivepaisa", () => {
   });
 });
 
+// ─────────────────────────── Fyers tradebook ───────────────────────────────
+describe("parseTradebook: fyers", () => {
+  it("reads the CSV export (preamble, 'Date & time', full company names)", async () => {
+    // Regression: the whole file parsed to 0 rows — a Status filter dropped every
+    // Status-less row, and the "Date & Time" key missed the real "Date & time".
+    const t = await parseTradebook("fyers", "fyers-tradebook.csv", bytes("fyers-tradebook.csv"));
+    expect(t.length).toBe(4);
+    for (const row of t) expect(row.tradeDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+
+    // Two partial fills of one order must survive as distinct trades (empty
+    // tradeId → dedup falls back to the qty/price/time composite).
+    const steel = t.filter((r) => r.rawName === "STEELCAST LIMITED");
+    expect(steel.length).toBe(2);
+    expect(steel.every((r) => r.tradeId === "")).toBe(true);
+    expect(new Set(steel.map((r) => r.quantity))).toEqual(new Set([30, 15]));
+    expect(steel[0].tradeDate).toBe("2026-08-05");
+    expect(steel[0].side).toBe("buy");
+  });
+});
+
 // ────────────────────── name resolution (exact-match fix) ───────────────────
 describe("resolveTradeSymbol", () => {
   const uni = buildTradeUniverse([
@@ -81,6 +101,8 @@ describe("resolveTradeSymbol", () => {
     { symbol: "RAYMONDREL", isin: "INE0OZ801011", company_name: "Raymond Realty Limited" },
     { symbol: "REDINGTON", isin: "INE891D01026", company_name: "Redington Limited" },
     { symbol: "INFY", isin: "INE009A01021", company_name: "Infosys Limited" },
+    { symbol: "CHOLAFIN", isin: "INE121A01024", company_name: "Cholamandalam Investment and Finance Company Limited" },
+    { symbol: "CHOLAHLDNG", isin: "INE149A01033", company_name: "Cholamandalam Financial Holdings Limited" },
   ]);
   const trade = (over: Partial<ParsedTrade>): ParsedTrade => ({
     broker: "fivepaisa", rawSymbol: "", rawName: "", isin: "", side: "sell",
@@ -93,6 +115,14 @@ describe("resolveTradeSymbol", () => {
     expect(resolveTradeSymbol(trade({ rawName: "Raymond Lifestyle" }), uni)).toBe("RAYMONDLSL");
     expect(resolveTradeSymbol(trade({ rawName: "Raymond" }), uni)).toBe("RAYMOND");
     expect(resolveTradeSymbol(trade({ rawName: "Redington" }), uni)).toBe("REDINGTON");
+  });
+
+  it("resolves a broker-TRUNCATED name via the token-prefix fallback", () => {
+    // Fyers abbreviates: "CHOLAMANDALAM IN & FIN CO" for "Cholamandalam
+    // Investment and Finance Company". Each trade token prefixes a distinct
+    // universe token → CHOLAFIN, and it stays ambiguous-safe against CHOLAHLDNG
+    // (Financial Holdings), where "IN"/"CO" match nothing.
+    expect(resolveTradeSymbol(trade({ rawName: "CHOLAMANDALAM IN & FIN CO" }), uni)).toBe("CHOLAFIN");
   });
 
   it("resolves by ISIN when present", () => {

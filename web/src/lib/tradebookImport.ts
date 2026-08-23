@@ -10,7 +10,8 @@
  *
  * Five formats:
  *   zerodha  — CSV, header row has "symbol"+"trade_type"
- *   fyers    — CSV, header row starts "Name"; symbol as "NSE:SYM-EQ"
+ *   fyers    — CSV, preamble then header starting "Name"; Name is a full
+ *              company name; datetime in "Date & time" as "DD Mon YYYY, hh:mm:ss AM"
  *   groww    — XLSX (first sheet), header "Stock name"; price = Value/Qty
  *   upstox   — XLSX (sheet "TRADE"), header "Date"
  *   fivepaisa— XLS  (first sheet), header "Transaction Date"
@@ -198,16 +199,36 @@ function parseFyers(rows: string[][]): ParsedTrade[] {
   const out: ParsedTrade[] = [];
   for (const d of asObjects(rows, h)) {
     if (!d.Name) continue;
-    if ((d.Status ?? "").trim() !== "Executed") continue;
+    // A Tradebook lists executed trades only. Some exports carry a Status
+    // column, the current one does NOT — so filter on it ONLY when present,
+    // otherwise every row (no Status) was being dropped as "not Executed".
+    if ("Status" in d && (d.Status ?? "").trim() !== "Executed") continue;
+    // Date column casing drifted: the current export uses "Date & time" and
+    // packs the clock after a comma ("05 Aug 2026, 09:49:14 AM"); older ones
+    // used "Date & Time". Split on the comma so toIso sees only "05 Aug 2026".
+    const when = (d["Date & time"] ?? d["Date & Time"] ?? "").trim();
+    const [datePart, ...timeParts] = when.split(",");
+    // Name is either a Fyers symbol ("NSE:STEELCAS-EQ") or, in this export, a
+    // full company name ("STEELCAST LIMITED"). Strip the exchange wrapper when
+    // present; otherwise keep the name for name-based universe resolution.
     const m = d.Name.match(/^[A-Z]+:(.+)-[A-Z]+$/);
-    const sym = m ? m[1] : d.Name;
+    const sym = m ? m[1] : "";
     out.push({
-      broker: "fyers", rawSymbol: sym, rawName: sym, isin: "",
+      broker: "fyers",
+      rawSymbol: sym,
+      rawName: m ? "" : d.Name,
+      isin: "",
       side: normalizeSide(d.Side ?? ""),
-      quantity: num(d.Qty), price: num(d["Traded price"]),
-      tradeDate: toIso(d["Date & Time"] ?? ""),
-      tradeTime: (d["Date & Time"] ?? "").split(" ").slice(1).join(" ").trim(),
-      tradeId: (d["Exchange order ID"] ?? "").replace(/[^0-9.]/g, ""),
+      quantity: num(d.Qty),
+      price: num(d["Traded price"]),
+      tradeDate: toIso(datePart.trim()),
+      tradeTime: timeParts.join(",").trim(),
+      // Exchange/OMS order IDs are ORDER ids — shared across the partial fills
+      // of one order (e.g. STEELCAST 30+15 under one id). Using them as a trade
+      // id would collapse those fills on dedup and silently drop quantity. Leave
+      // tradeId empty so dedup falls back to the date|qty|price|time composite,
+      // which keeps distinct fills distinct.
+      tradeId: "",
       orderId: (d["OMS order ID"] ?? "").replace(/[^0-9.]/g, ""),
     });
   }
@@ -342,6 +363,34 @@ export function resolveTradeSymbol(t: ParsedTrade, uni: TradeUniverse): string |
     }
     if (exact.size === 1) return [...exact][0];
     if (exact.size === 0 && prefix.size === 1) return [...prefix][0];
+
+    // Token-prefix fallback for BROKER-TRUNCATED names. Fyers abbreviates:
+    // "CHOLAMANDALAM IN & FIN CO" for "Cholamandalam Investment and Finance
+    // Company". String-prefix can't bridge that, but every trade token IS a
+    // prefix of a distinct universe token. Require each trade token (≥2 of them)
+    // to greedily match a distinct universe token by prefix, and accept only a
+    // UNIQUE hit — so "…IN & FIN CO" resolves CHOLAFIN but stays ambiguous-safe
+    // against CHOLAHLDNG (Financial Holdings), where "IN"/"CO" match nothing.
+    const tks = nn.split(" ").filter(Boolean);
+    if (tks.length >= 2) {
+      const tokenHits = new Set<string>();
+      for (const { norm, symbol } of uni.byName) {
+        if (!norm) continue;
+        const utoks = norm.split(" ").filter(Boolean);
+        const used = new Array(utoks.length).fill(false);
+        let allMatched = true;
+        for (const tk of tks) {
+          let found = -1;
+          for (let i = 0; i < utoks.length; i++) {
+            if (!used[i] && utoks[i].startsWith(tk)) { found = i; break; }
+          }
+          if (found < 0) { allMatched = false; break; }
+          used[found] = true;
+        }
+        if (allMatched) tokenHits.add(symbol);
+      }
+      if (tokenHits.size === 1) return [...tokenHits][0];
+    }
   }
   return null;
 }

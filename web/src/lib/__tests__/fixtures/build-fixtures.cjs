@@ -55,6 +55,34 @@ const csv = [
 require("fs").writeFileSync(path.join(DIR, "zerodha-tradebook.csv"), csv);
 console.log("wrote zerodha-tradebook.csv");
 
+// ── Fyers tradebook — CSV (preamble, "Date & time", truncated company names) ─
+// The variant that fully regressed (0 rows): a "Status" filter that dropped
+// every Status-less row, a "Date & Time" key that missed the real "Date & time"
+// column, a datetime with the clock after a comma, order IDs mis-used as trade
+// IDs (collapsing partial fills), and broker-truncated names ("…IN & FIN CO").
+const fyersTb = [
+  "Report Title,Tradebook report",
+  "Date Range,From 01/04/2026 to 31/03/2027",
+  "Client Name,TEST USER",
+  "Client ID,XX0000",
+  "PAN,AAAAA0000A",
+  "Download Timestamp,19/08/2026 11:47:57 IST",
+  "",
+  "Name,Date & time,Side,Product type,Qty,Traded price,Total value,Segment,Exchange order ID,OMS order ID",
+  // Two partial fills of ONE order (same Exchange/OMS order ID) — must survive
+  // as two distinct trades, not collapse to one.
+  'STEELCAST LIMITED,"05 Aug 2026, 09:49:14 AM",BUY,Delivery,30.00,340.35,"10,210.50",Equity,"=""1300000014614276""","=""26080500063241.0"""',
+  'STEELCAST LIMITED,"05 Aug 2026, 09:49:14 AM",BUY,Delivery,15.00,340.30,"5,104.50",Equity,"=""1300000014614276""","=""26080500063241.0"""',
+  // Broker-truncated name — resolves via the token-prefix fallback (CHOLAFIN),
+  // and must stay ambiguous-safe against CHOLAHLDNG.
+  'CHOLAMANDALAM IN & FIN CO,"23 Jul 2026, 11:41:42 AM",BUY,Delivery,6.00,"1,725.50","10,353.00",Equity,"=""1000000035723014""","=""26072300217104"""',
+  // Out-of-universe ETF — must resolve to null.
+  'CPSE ETF,"02 Jul 2026, 10:00:00 AM",BUY,Delivery,10.00,97.03,"970.30",Equity,"=""1""","=""2"""',
+  "",
+].join("\n");
+require("fs").writeFileSync(path.join(DIR, "fyers-tradebook.csv"), fyersTb);
+console.log("wrote fyers-tradebook.csv");
+
 // ── Zerodha holdings — "Holdings Statement" XLSX (Symbol/Quantity split) ─────
 // The variant that regressed: parser only knew the Console CSV `Instrument`
 // shape. The statement carries a long preamble, then a header where quantity is
