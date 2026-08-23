@@ -150,6 +150,23 @@ function xlsToMatrix(buf: ArrayBuffer): string[][] {
   return rows.map((r) => r.map((c) => String(c ?? "").trim()));
 }
 
+/** Read a PDF holdings statement into a one-line-per-row matrix. Fyers ships
+ *  its holdings as a PDF (no CSV/XLSX option); unpdf extracts each table row as
+ *  a single text line, so we hand each line back as a one-cell row and let the
+ *  broker parser regex-split it. unpdf bundles a serverless pdfjs build (no
+ *  native deps) so it runs on Vercel where poppler/pdftotext do not. Imported
+ *  lazily — the pdfjs bundle is large and only Fyers needs it. */
+async function pdfToMatrix(buf: ArrayBuffer): Promise<string[][]> {
+  const { extractText, getDocumentProxy } = await import("unpdf");
+  const pdf = await getDocumentProxy(new Uint8Array(buf));
+  const { text } = await extractText(pdf, { mergePages: true });
+  return text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+    .map((l) => [l]);
+}
+
 /** Turn an uploaded file into a cell matrix, from filename + bytes.
  *  Some brokers hand out a .xls that's really an HTML table or a CSV with an
  *  .xls extension — SheetJS auto-detects the true format, so we route by the
@@ -157,6 +174,15 @@ function xlsToMatrix(buf: ArrayBuffer): string[][] {
 export async function fileToMatrix(filename: string, buf: ArrayBuffer): Promise<string[][]> {
   const lower = filename.toLowerCase();
   if (lower.endsWith(".xlsx")) return xlsxToMatrix(buf);
+  if (lower.endsWith(".pdf")) {
+    try {
+      return await pdfToMatrix(buf);
+    } catch {
+      throw new PortfolioImportError(
+        "Couldn't read that PDF — make sure it's the Fyers holdings statement, not a scanned image.",
+      );
+    }
+  }
   if (lower.endsWith(".xls")) {
     try {
       return xlsToMatrix(buf);
@@ -192,7 +218,40 @@ function findRow(rows: string[][], pred: (r: string[]) => boolean): number {
 
 // ─────────────────────────── per-broker parsers ────────────────────────────
 
+// One Fyers holdings-statement PDF row, extracted as a single text line:
+//   NSE:STEELCAS-EQ 45.00 340.33 15,314.85 16,051.50 +736.65 (+4.81%) 356.70 INE124E01038
+// Cols: Name, Qty, Buy price, Invested value, Current value, Unrealised P&L
+// (amount + pct, one field), Previous close, ISIN. The P&L is skipped — the app
+// re-prices live. Symbol is kept whole (bareSymbol strips the NSE:/-EQ decoration).
+const FYERS_PDF_ROW =
+  /^(NSE:[A-Z0-9&]+-(?:EQ|BE))\s+([\d,]+\.\d+)\s+([\d,]+\.\d+)\s+[\d,]+\.\d+\s+([\d,]+\.\d+)\s+[+-][\d,]+\.\d+\s+\([+-][\d.]+%\)\s+([\d,]+\.\d+)\s+(INE[0-9A-Z]{9,10})$/;
+
+function parseFyersPdf(rows: string[][]): ParsedHolding[] {
+  const out: ParsedHolding[] = [];
+  for (const r of rows) {
+    const m = (r[0] ?? "").match(FYERS_PDF_ROW);
+    if (!m) continue;
+    const qty = n(m[2]);
+    if (qty == null) continue;
+    out.push({
+      rawSymbol: m[1],
+      isin: m[6] || null,
+      quantity: qty,
+      avgCost: n(m[3]), // Buy price
+      brokerLtp: n(m[5]), // Previous close — the app re-prices live anyway
+      brokerCurValue: n(m[4]), // Current value
+      brokerDayPct: null,
+    });
+  }
+  return out;
+}
+
 function parseFyers(rows: string[][]): ParsedHolding[] {
+  // Fyers holdings ship as a PDF (extracted to one line per row); the older CSV
+  // path is kept as a fallback. Try PDF-row detection first.
+  const pdf = parseFyersPdf(rows);
+  if (pdf.length > 0) return pdf;
+
   // header: r[0]==="Name" && last==="ISIN". Cols: Name,Qty,Buy,Invested,
   // Current,UPL,UPL%,PrevClose,ISIN. Name like "NSE:NTPC-EQ".
   const h = findRow(rows, (r) => r[0] === "Name" && r[r.length - 1] === "ISIN");

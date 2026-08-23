@@ -15,6 +15,42 @@ const XLSX = require("xlsx");
 const path = require("path");
 
 const DIR = __dirname;
+
+// Minimal single-page PDF writer: one Tj-drawn text line per array entry, each
+// on its own baseline so pdfjs (via unpdf) recovers them as separate lines.
+// Hand-rolled (uncompressed, correct xref offsets) so no PDF-writing dep is
+// needed just for a fixture. Used for the Fyers holdings statement, which the
+// broker ships ONLY as a PDF.
+const writePdf = (lines, file) => {
+  const esc = (s) => s.replace(/([\\()])/g, "\\$1");
+  let stream = "BT /F1 9 Tf\n";
+  let y = 800;
+  for (const line of lines) {
+    stream += `1 0 0 1 20 ${y} Tm (${esc(line)}) Tj\n`;
+    y -= 16;
+  }
+  stream += "ET";
+  const objs = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 820] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`,
+  ];
+  let pdf = "%PDF-1.4\n";
+  const offsets = [];
+  objs.forEach((body, i) => {
+    offsets.push(Buffer.byteLength(pdf));
+    pdf += `${i + 1} 0 obj\n${body}\nendobj\n`;
+  });
+  const xrefAt = Buffer.byteLength(pdf);
+  pdf += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, "0")} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xrefAt}\n%%EOF`;
+  require("fs").writeFileSync(path.join(DIR, file), pdf);
+  console.log("wrote", file);
+};
+
 const write = (aoa, file, sheetName = "Sheet1") => {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), sheetName);
@@ -142,6 +178,24 @@ write(
     ["WIPRO", "50", "301.5", "15075", "180.79", "9039.5", "-6035.5", "-40.04", "-10.5", "-0.12"],
   ],
   "fivepaisa-equity-portfolio.xls",
+);
+
+// ── Fyers holdings — "Holding statements report" PDF ─────────────────────────
+// Fyers ships holdings ONLY as a PDF. unpdf extracts each table row as one text
+// line; the parser regex-splits it. Columns: Name, Qty, Buy price, Invested
+// value, Current value, Unrealised P&L (amount + pct, one field), Previous
+// close, ISIN. Includes a loss row (BELRISE) and a truncated symbol (STEELCAS).
+writePdf(
+  [
+    "Holding statements report",
+    "Client name DEBASIS SAHOO Client ID XX0000 PAN AAAAA0000A",
+    "Holding details",
+    "Name Qty Buy price (Rs) Invested value (Rs) Current value (Rs) Unrealised P&L (Rs) Previous close (Rs) ISIN",
+    "NSE:STEELCAS-EQ 45.00 340.33 15,314.85 16,051.50 +736.65 (+4.81%) 356.70 INE124E01038",
+    "NSE:INFY-EQ 10.00 1,500.50 15,005.00 16,200.00 +1,195.00 (+7.96%) 1,620.00 INE009A01021",
+    "NSE:BELRISE-EQ 45.00 244.13 10,985.85 10,431.00 -554.85 (-5.05%) 231.80 INE894V01022",
+  ],
+  "fyers-holdings.pdf",
 );
 
 // ── 5paisa holdings — "Holding Statement" (.xls, must be REJECTED) ───────────

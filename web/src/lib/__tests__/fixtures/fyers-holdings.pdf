@@ -1,0 +1,40 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 820] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+5 0 obj
+<< /Length 658 >>
+stream
+BT /F1 9 Tf
+1 0 0 1 20 800 Tm (Holding statements report) Tj
+1 0 0 1 20 784 Tm (Client name DEBASIS SAHOO Client ID XX0000 PAN AAAAA0000A) Tj
+1 0 0 1 20 768 Tm (Holding details) Tj
+1 0 0 1 20 752 Tm (Name Qty Buy price \(Rs\) Invested value \(Rs\) Current value \(Rs\) Unrealised P&L \(Rs\) Previous close \(Rs\) ISIN) Tj
+1 0 0 1 20 736 Tm (NSE:STEELCAS-EQ 45.00 340.33 15,314.85 16,051.50 +736.65 \(+4.81%\) 356.70 INE124E01038) Tj
+1 0 0 1 20 720 Tm (NSE:INFY-EQ 10.00 1,500.50 15,005.00 16,200.00 +1,195.00 \(+7.96%\) 1,620.00 INE009A01021) Tj
+1 0 0 1 20 704 Tm (NSE:BELRISE-EQ 45.00 244.13 10,985.85 10,431.00 -554.85 \(-5.05%\) 231.80 INE894V01022) Tj
+ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000000311 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1020
+%%EOF
