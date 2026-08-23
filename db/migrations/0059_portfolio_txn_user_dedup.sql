@@ -50,6 +50,9 @@ BEGIN
 
   -- Re-create the uniqueness guarantee, now scoped to the user. This is the
   -- conflict target for `ON CONFLICT (user_id, dedup_key)` in import-trades.
-  CREATE UNIQUE INDEX portfolio_transaction_user_dedup_key_idx
+  -- IF NOT EXISTS so the runner can re-apply this file harmlessly if the schema
+  -- change was already made by hand (as it was, before the ledger was
+  -- reconciled) — migrations must be re-runnable.
+  CREATE UNIQUE INDEX IF NOT EXISTS portfolio_transaction_user_dedup_key_idx
       ON app.portfolio_transaction (user_id, dedup_key);
 END $$;
