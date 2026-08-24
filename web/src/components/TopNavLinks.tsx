@@ -15,11 +15,11 @@ import { ScribblePad } from "./ScribblePad";
  *  - md+ (desktop / tablet): inline nav with the "Tools" dropdown +
  *    UserMenu chip on the right. Same as before this commit.
  *
- *  - <md  (mobile): a persistent 5-tab row directly below the logo +
+ *  - <md  (mobile): a persistent tab row directly below the logo +
  *    search bar (no hamburger). Layout in layout.tsx stacks logo /
- *    search / tabs as three rows. Order: Market | Segments | News |
- *    Tools | Account.
- *      • Market and News are direct-nav links (tap → navigate).
+ *    search / tabs as three rows. Order: Segments | News | Tools |
+ *    Account.
+ *      • News is a direct-nav link (tap → navigate).
  *      • Segments, Tools, Account are popup dropdowns — tap opens a
  *        sheet of options anchored below the tab.
  *      • Ideas lives inside the Tools popup; Watchlist inside Account
@@ -30,7 +30,6 @@ type Submenu = { href: string; label: string; description?: string };
 type NavLink = { href: string; label: string; submenu?: Submenu[] };
 
 const LINKS: NavLink[] = [
-  { href: "/market",  label: "Market"  },
   {
     // Two complementary market-structure views under one tab.
     href: "/indices",
@@ -278,7 +277,6 @@ function MobileTabBar({ pathname, user, isAdmin, showWatchlist, showSignIn }: Mo
         className="flex border-t hairline overflow-x-auto"
         style={{ scrollbarWidth: "none" }}
       >
-        <TabLink  href="/market"  label="Market"  active={isActive(pathname, "/market")}  onClick={() => setPopup(null)} />
         <TabButton label="Segments" active={segmentsActive} isOpen={popup === "segments"} onClick={() => setPopup((p) => p === "segments" ? null : "segments")} />
         <TabLink  href="/news"    label="News"    active={isActive(pathname, "/news")}    onClick={() => setPopup(null)} />
         <TabButton label="Tools"   active={toolsActive}   isOpen={popup === "tools"}   onClick={() => setPopup((p) => p === "tools"   ? null : "tools"  )} />
@@ -503,7 +501,7 @@ function PopupSheet({
                       )}
                     </div>
                     <div className="text-[11.5px] muted-text mt-0.5 leading-snug">
-                      Force a fresh server render of /market, /sectors and their data caches.
+                      Force a fresh server render of /indices, /sectors and their data caches.
                     </div>
                   </button>
                 </>

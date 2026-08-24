@@ -222,9 +222,9 @@ function Hero({ snap }: { snap: Snapshot }) {
           />
           <BenefitPill
             icon="📈"
-            label="Today's market"
-            sub="Indices, movers, FII flows"
-            href="/market"
+            label="NSE indices"
+            sub="Levels, candles & constituents"
+            href="/indices"
           />
         </div>
 

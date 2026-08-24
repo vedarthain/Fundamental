@@ -4,17 +4,19 @@
  * IndicesClient — master-detail index board.
  *
  * Left: a selectable list of every tracked index (grouped Headline / Broad /
- * Sectoral) with its live level + 1D move. Right: the selected index in two
- * tabs — Chart (the price graph, reusing the shared PriceChart with live 1D
- * intraday) and Constituents (members with live price, 1D, real NSE weight).
+ * Sectoral / Financials) with its latest EOD level + 1D move. Right: the
+ * selected index in two tabs — Chart (a daily candlestick with 1W…ALL ranges,
+ * lazy-loaded from /api/indices/ohlc) and Constituents (members with live
+ * price, 1D, real NSE weight).
  *
- * Live ticks + today's intraday series come from /api/market/index-live,
- * polled every 60s (the 10-min index pinger writes them). On mobile the left
- * list collapses to a dropdown so the detail pane gets the full width.
+ * EOD-only: no Upstox live-tick layer. Index intraday needed an authenticated
+ * Upstox feed we deliberately dropped; the daily NSE driver keeps the last bar
+ * current to EOD. On mobile the left list collapses to a dropdown so the detail
+ * pane gets the full width.
  */
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { PriceChart, type PricePoint } from "@/components/PriceChart";
+import { IndexCandleChart } from "@/components/IndexCandleChart";
 
 export type IndexBoardRow = {
   code: string;
@@ -25,7 +27,6 @@ export type IndexBoardRow = {
   pct_change_1m: number | null;
   pct_change_1y: number | null;
   date: string;
-  sparkline: { date: string; close: number }[];
 };
 
 type ConstituentRow = {
@@ -51,21 +52,6 @@ const DOWN = "var(--color-delta-down)";
 const MUTED = "var(--color-muted)";
 const ACCENT = "var(--color-accent-600)";
 
-const LIVE_MAX_AGE_S = 15 * 60;
-
-type LiveTick = {
-  code: string;
-  ltp: number;
-  prev_close: number | null;
-  pct_change: number | null;
-  ts: string;
-  age_seconds: number;
-};
-type LiveData = {
-  ticks: Record<string, LiveTick>;
-  intraday: Record<string, { ts: string; ltp: number }[]>;
-};
-
 const GROUPS: { title: string; codes: string[] }[] = [
   { title: "Headline", codes: ["NIFTY50", "NIFTYBANK"] },
   { title: "Broad market", codes: ["NIFTY100", "NIFTY500", "NIFTYNEXT50", "NIFTYMIDCAP100", "NIFTYSMALLCAP100"] },
@@ -73,38 +59,7 @@ const GROUPS: { title: string; codes: string[] }[] = [
   { title: "Financials", codes: ["NIFTYFINSERVICE", "NIFTYFINSRV2550", "NIFTYPVTBANK", "NIFTYPSUBANK"] },
 ];
 
-// ── Live polling ────────────────────────────────────────────────────────────
-function useLiveIndexData(): LiveData {
-  const [data, setData] = useState<LiveData>({ ticks: {}, intraday: {} });
-  useEffect(() => {
-    let alive = true;
-    const pull = async () => {
-      try {
-        const res = await fetch("/api/market/index-live", { cache: "no-store" });
-        if (!res.ok) return;
-        const json = (await res.json()) as Partial<LiveData>;
-        if (alive) setData({ ticks: json.ticks ?? {}, intraday: json.intraday ?? {} });
-      } catch {
-        /* keep last good data */
-      }
-    };
-    pull();
-    const id = setInterval(pull, 60_000);
-    return () => { alive = false; clearInterval(id); };
-  }, []);
-  return data;
-}
-
 // ── Helpers ─────────────────────────────────────────────────────────────────
-function istDayKey(d: Date | string): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
-  }).format(new Date(d));
-}
-function todayTick(t: LiveTick | undefined): LiveTick | null {
-  if (!t || typeof t.ltp !== "number") return null;
-  return istDayKey(t.ts) === istDayKey(new Date()) ? t : null;
-}
 function fmtClock(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
@@ -118,20 +73,12 @@ function pctColorOf(v: number | null): string {
 function fmtPct(v: number | null, dp = 2): string {
   return v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(dp)}%`;
 }
-/** Live level + 1D for a row, preferring today's held tick. */
-function liveOf(row: IndexBoardRow, tick: LiveTick | undefined) {
-  const held = todayTick(tick);
-  return {
-    level: held ? held.ltp : row.close,
-    pct: held?.pct_change ?? row.pct_change_1d,
-    isLive: !!held && (tick?.age_seconds ?? Infinity) <= LIVE_MAX_AGE_S,
-    ts: held?.ts ?? tick?.ts ?? null,
-  };
+function fmtLevel(v: number): string {
+  return v.toLocaleString("en-IN", { maximumFractionDigits: 1 });
 }
 
 // ── Board ───────────────────────────────────────────────────────────────────
 export function IndicesClient({ indices }: { indices: IndexBoardRow[] }) {
-  const live = useLiveIndexData();
   const byCode = useMemo(() => new Map(indices.map((r) => [r.code, r])), [indices]);
   // Default to the first available code (prefer NIFTY50).
   const firstCode = byCode.has("NIFTY50") ? "NIFTY50" : indices[0]?.code ?? "";
@@ -145,7 +92,7 @@ export function IndicesClient({ indices }: { indices: IndexBoardRow[] }) {
       <header className="mb-4">
         <h1 className="font-display text-[22px] md:text-[26px] leading-tight">NSE Index Board</h1>
         <p className="muted-text text-[12px] mt-1">
-          All tracked Nifty indices · pick one to see its chart and constituents · live updates every ~10 min
+          All tracked Nifty indices · pick one to see its candlestick chart and constituents · daily EOD levels
         </p>
       </header>
 
@@ -181,7 +128,6 @@ export function IndicesClient({ indices }: { indices: IndexBoardRow[] }) {
                     <IndexListItem
                       key={r.code}
                       row={r}
-                      tick={live.ticks[r.code]}
                       selected={r.code === selected}
                       onSelect={() => setSelected(r.code)}
                     />
@@ -195,13 +141,7 @@ export function IndicesClient({ indices }: { indices: IndexBoardRow[] }) {
         {/* Detail pane */}
         <section className="min-w-0">
           {row ? (
-            <IndexDetail
-              row={row}
-              tick={live.ticks[row.code]}
-              intraday={live.intraday[row.code] ?? []}
-              tab={tab}
-              setTab={setTab}
-            />
+            <IndexDetail row={row} tab={tab} setTab={setTab} />
           ) : (
             <div className="card p-6 muted-text text-[13px]">No index data.</div>
           )}
@@ -213,14 +153,12 @@ export function IndicesClient({ indices }: { indices: IndexBoardRow[] }) {
 
 // ── Left list item ──────────────────────────────────────────────────────────
 function IndexListItem({
-  row, tick, selected, onSelect,
+  row, selected, onSelect,
 }: {
   row: IndexBoardRow;
-  tick?: LiveTick;
   selected: boolean;
   onSelect: () => void;
 }) {
-  const { level, pct, isLive } = liveOf(row, tick);
   return (
     <button
       type="button"
@@ -233,56 +171,39 @@ function IndexListItem({
       }
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[12px] font-medium leading-tight truncate flex items-center gap-1.5">
-          {row.name}
-          {isLive && <LiveDot />}
-        </span>
-        <span className="tabular-nums text-[11px] font-medium shrink-0" style={{ color: pctColorOf(pct) }}>
-          {fmtPct(pct, 2)}
+        <span className="text-[12px] font-medium leading-tight truncate">{row.name}</span>
+        <span className="tabular-nums text-[11px] font-medium shrink-0" style={{ color: pctColorOf(row.pct_change_1d) }}>
+          {fmtPct(row.pct_change_1d, 2)}
         </span>
       </div>
-      <div className="tabular-nums text-[12px] mt-0.5 muted-text">
-        {level.toLocaleString("en-IN", { maximumFractionDigits: 1 })}
-      </div>
+      <div className="tabular-nums text-[12px] mt-0.5 muted-text">{fmtLevel(row.close)}</div>
     </button>
   );
 }
 
 // ── Detail pane ─────────────────────────────────────────────────────────────
 function IndexDetail({
-  row, tick, intraday, tab, setTab,
+  row, tab, setTab,
 }: {
   row: IndexBoardRow;
-  tick?: LiveTick;
-  intraday: { ts: string; ltp: number }[];
   tab: "chart" | "constituents";
   setTab: (t: "chart" | "constituents") => void;
 }) {
-  const { level, pct, isLive, ts } = liveOf(row, tick);
-  const sparkData: PricePoint[] = row.sparkline;
-
   return (
     <div className="card overflow-hidden">
       {/* Header */}
       <div className="px-4 pt-3 pb-2 border-b hairline">
-        <div className="flex items-center gap-1.5">
-          <h2 className="font-display text-[18px] leading-tight">{row.name}</h2>
-          {isLive && <LiveDot />}
-        </div>
+        <h2 className="font-display text-[18px] leading-tight">{row.name}</h2>
         <div className="flex items-baseline gap-2 mt-0.5">
-          <span className="font-display text-[24px] tabular-nums leading-none">
-            {level.toLocaleString("en-IN", { maximumFractionDigits: 1 })}
+          <span className="font-display text-[24px] tabular-nums leading-none">{fmtLevel(row.close)}</span>
+          <span className="tabular-nums text-[13px] font-medium" style={{ color: pctColorOf(row.pct_change_1d) }}>
+            {fmtPct(row.pct_change_1d, 2)} <span className="muted-text font-normal">1D</span>
           </span>
-          <span className="tabular-nums text-[13px] font-medium" style={{ color: pctColorOf(pct) }}>
-            {fmtPct(pct, 2)} <span className="muted-text font-normal">1D</span>
-          </span>
-          {ts && (
-            <span className="text-[10.5px] muted-text tabular-nums ml-auto">
-              {isLive ? "updated" : "last"} {fmtClock(ts)} IST
-            </span>
+          {row.date && (
+            <span className="text-[10.5px] muted-text tabular-nums ml-auto">EOD {row.date}</span>
           )}
         </div>
-        {/* Range chips (read-only context; chart has its own range control) */}
+        {/* Trailing-window context (chart has its own range control) */}
         <div className="flex flex-wrap gap-3 mt-1.5 text-[10.5px] tabular-nums">
           <span className="muted-text">1W <span style={{ color: pctColorOf(row.pct_change_1w) }}>{fmtPct(row.pct_change_1w, 1)}</span></span>
           <span className="muted-text">1M <span style={{ color: pctColorOf(row.pct_change_1m) }}>{fmtPct(row.pct_change_1m, 1)}</span></span>
@@ -298,19 +219,7 @@ function IndexDetail({
 
       <div className="p-3 md:p-4">
         {tab === "chart" ? (
-          sparkData.length >= 2 ? (
-            <PriceChart
-              data={sparkData}
-              intraday={intraday}
-              currentPrice={level}
-              priceFetchedAt={ts ?? undefined}
-              prefix=""
-            />
-          ) : (
-            <div className="h-[200px] flex items-center justify-center muted-text text-[13px]">
-              No price history for this index.
-            </div>
-          )
+          <IndexCandleChart key={row.code} code={row.code} name={row.name} />
         ) : (
           <ConstituentsPanel key={row.code} code={row.code} />
         )}
@@ -413,14 +322,5 @@ function ConstituentsPanel({ code }: { code: string }) {
         </table>
       </div>
     </div>
-  );
-}
-
-function LiveDot() {
-  return (
-    <span className="relative inline-flex h-1.5 w-1.5 shrink-0">
-      <span className="absolute inline-flex h-full w-full rounded-full opacity-60 animate-ping" style={{ background: UP }} />
-      <span className="relative inline-flex h-1.5 w-1.5 rounded-full" style={{ background: UP }} />
-    </span>
   );
 }

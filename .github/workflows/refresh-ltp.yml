@@ -1,6 +1,6 @@
 # End-of-day data pipeline. Runs every weekday after market close,
 # sequencing every job that needs to land before the next morning's
-# /market dashboard render.
+# page renders.
 #
 # Pipeline (each step is idempotent; failure of a downstream step does
 # NOT roll back earlier writes — that's by design, daily rerun safe):
@@ -9,17 +9,19 @@
 #                              market_cap_cr recompute, cluster_stocks_panel_cache
 #                              refresh, golden.price_history OHLC insert.
 #   2. fetch-indices.py        NSE indices CSV → app.market_index_history
-#                              (so /market top tiles aren't frozen on yesterday's
-#                              close).
+#                              (the daily EOD candle behind the /indices chart —
+#                              keeps the last bar current).
 #   3. fetch-fii-dii.py        NSE FII/DII JSON → app.fii_dii_flow (one new row
 #                              per trading day; cheap upsert).
-#   4. build-market-snapshot.py  Rebuilds app.market_snapshot_cache so /market
-#                              reflects today's prices + indices + flows on
-#                              the next page render.
-#   5. /api/revalidate         Purges Next.js Data Cache (sectors + market +
+#   4. /api/revalidate         Purges Next.js Data Cache (sectors + market +
 #                              snapshot tags) so users get fresh data on the
 #                              next request, not whatever 1-hour cached blob
 #                              Vercel was serving.
+#
+# NOTE: the old step 4 (build-market-snapshot.py → app.market_snapshot_cache)
+# was removed when /market + /api/market/overview were retired — nothing reads
+# that cache table anymore. The "market" revalidate tag stays: /indices, /news
+# and /tools/52-week-high-low still tag their caches with it.
 #
 # Why a GitHub Action (not local launchd):
 #   - NSE bhavcopy is daily; you don't want to remember to refresh prices
@@ -96,17 +98,6 @@ jobs:
           PYTHONUNBUFFERED: "1"
         run: python scripts/fetch-fii-dii.py
         continue-on-error: true
-
-      # Rebuild the precomputed /market response into app.market_snapshot_cache.
-      # Reads from BOTH app + golden; needs both URLs in env. Without this
-      # step /market keeps serving yesterday's baked JSON even after the
-      # daily refresh lands fresh prices.
-      - name: Rebuild /market snapshot cache
-        env:
-          APP_DB_URL:    ${{ secrets.NEON_APP_URL }}
-          GOLDEN_DB_URL: ${{ secrets.NEON_GOLDEN_URL }}
-          PYTHONUNBUFFERED: "1"
-        run: python scripts/build-market-snapshot.py
 
       # Tell Vercel to drop the cached Next.js responses tagged for these
       # surfaces. Fail loudly on non-200 — the previous silent-failure mode

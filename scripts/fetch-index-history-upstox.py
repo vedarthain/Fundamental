@@ -80,8 +80,11 @@ INDEX_MAP: dict[str, str] = {
     "NIFTY100":        "Nifty 100",
     "NIFTY500":        "Nifty 500",
     "NIFTYNEXT50":     "Nifty Next 50",
-    "NIFTYMIDCAP100":  "Nifty Midcap 100",
-    "NIFTYSMALLCAP100":"Nifty Smallcap 100",
+    # Upstox uses UPPERCASE, abbreviated keys for these two (the lower-case
+    # "Nifty …" forms 400). The daily NSE driver overwrites display_name on the
+    # tail with the clean label, so the stored name stays "Nifty …".
+    "NIFTYMIDCAP100":  "NIFTY MIDCAP 100",
+    "NIFTYSMALLCAP100":"NIFTY SMLCAP 100",
 }
 
 UPSTOX_HIST = "https://api.upstox.com/v2/historical-candle/{key}/day/{to}/{frm}"

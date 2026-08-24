@@ -29,12 +29,11 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   // omitted as they carry no crawlable content.
   const staticPaths: Array<{ path: string; priority: number; freq: MetadataRoute.Sitemap[number]["changeFrequency"] }> = [
     { path: "/", priority: 1.0, freq: "daily" },
-    { path: "/market", priority: 0.9, freq: "daily" },
     { path: "/today", priority: 0.9, freq: "daily" },
     { path: "/news", priority: 0.8, freq: "daily" },
     { path: "/ideas", priority: 0.8, freq: "daily" },
+    { path: "/indices", priority: 0.8, freq: "daily" },
     { path: "/sectors", priority: 0.7, freq: "weekly" },
-    { path: "/indices", priority: 0.7, freq: "daily" },
     { path: "/tools", priority: 0.6, freq: "weekly" },
     { path: "/tools/screener", priority: 0.6, freq: "weekly" },
     { path: "/tools/peer-comparison", priority: 0.6, freq: "weekly" },

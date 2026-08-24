@@ -2,14 +2,14 @@
  * /indices — the all-Nifty index board.
  *
  * Server component: one cheap read of every tracked index's latest daily
- * level + 1D/1W/1M/1Y change + a 90-day sparkline, handed to a client
- * component that overlays the LIVE 10-min tick from /api/market/index-live.
+ * level + 1D/1W/1M/1Y change, handed to a client component that renders the
+ * board and lazy-loads each index's full daily-OHLC candlestick from
+ * /api/indices/ohlc on demand.
  *
- * The daily figures come from app.market_index_history (EOD, authoritative);
- * the live level + today's move are layered on the client so the board ticks
- * during market hours without busting this page's cache. Constituents
- * (Phase 2) expand per-card and read each member's live price from the same
- * 10-min equity pinger — not built yet; this ships the board first.
+ * EOD-only: the figures come from app.market_index_history (authoritative NSE
+ * daily driver + Upstox backfill). No Upstox live-tick layer — index intraday
+ * needed an authenticated feed we deliberately dropped. Constituents read each
+ * member's live price from the 10-min equity pinger (portfolio prices).
  */
 import { unstable_cache } from "next/cache";
 import { sql } from "@/lib/db";
@@ -18,10 +18,12 @@ import { IndicesClient, type IndexBoardRow } from "./IndicesClient";
 export const revalidate = 3600;
 
 async function loadIndices(): Promise<IndexBoardRow[]> {
-  // Latest level + trailing-window changes per index. Same shape the /market
-  // overview uses; LATERAL look-backs find the closest close at/under each
-  // window boundary (tolerant of weekends/holidays).
-  const rows = await sql<Omit<IndexBoardRow, "sparkline">[]>`
+  // Latest level + trailing-window changes per index. LATERAL look-backs find
+  // the closest close at/under each window boundary (tolerant of
+  // weekends/holidays). Cheap: one row per index. The candlestick chart's full
+  // OHLC history is loaded lazily per index via /api/indices/ohlc, so we no
+  // longer ship a per-index sparkline here.
+  const rows = await sql<IndexBoardRow[]>`
     WITH latest_date AS (
       SELECT MAX(date) AS d FROM app.market_index_history
     ),
@@ -58,25 +60,7 @@ async function loadIndices(): Promise<IndexBoardRow[]> {
      ORDER BY t.name
   `;
 
-  // Trailing daily closes per index (oldest-first) — feeds the left-list
-  // mini sparkline AND the detail-pane chart, so we keep enough depth for the
-  // chart's 1W…1Y ranges (~500 trading days ≈ 2 years).
-  const spark = await sql<{ index_code: string; date: string; close: number }[]>`
-    WITH ranked AS (
-      SELECT index_code, date::text AS date, close::float AS close,
-             ROW_NUMBER() OVER (PARTITION BY index_code ORDER BY date DESC) AS rn
-        FROM app.market_index_history
-    )
-    SELECT index_code, date, close FROM ranked WHERE rn <= 500 ORDER BY index_code, date
-  `;
-  const byCode = new Map<string, { date: string; close: number }[]>();
-  for (const r of spark) {
-    const arr = byCode.get(r.index_code) ?? [];
-    arr.push({ date: r.date, close: r.close });
-    byCode.set(r.index_code, arr);
-  }
-
-  return rows.map((r) => ({ ...r, sparkline: byCode.get(r.code) ?? [] }));
+  return rows;
 }
 
 const getCachedIndices = unstable_cache(loadIndices, ["indices-board"], {

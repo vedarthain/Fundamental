@@ -7,28 +7,22 @@
  * GitHub throttles sub-hourly scheduled jobs hard — we observed ~2 of 14
  * daily fires actually running, so equity prices were only sporadically
  * fresh. This route is hit by a reliable external pinger (cron-job.org)
- * instead, the same pattern that fixed the index ticks.
+ * instead.
  *
- * WHAT it updates (and what it deliberately does NOT):
+ * WHAT it updates:
  *   - app.screener_meta.current_price            ← live read by /stock,
  *     /watchlist, /sectors, /industry, /tools, screener. These all see
  *     fresh prices immediately (subject to their own cache TTLs, which we
  *     purge below).
  *   - app.cluster_stocks_panel_cache.current_price (latest snapshot only)
- *     ← live read by /sectors and the watchlist/overview panel queries.
+ *     ← live read by /sectors and the watchlist panel queries.
  *
- *   It does NOT rebuild app.market_snapshot_cache — that precomputed blob
- *   (read ONLY by /api/market/overview) is rebuilt by the daily EOD
- *   refresh-ltp pipeline. So the /market dashboard's mover *cards* show
- *   EOD prices intraday. That's acceptable: mover rankings are computed
- *   from EOD returns, not live price, so the ordering doesn't change
- *   intraday — only the displayed number would, on that one surface.
- *   (Headline indices on /market ARE live via the separate index pinger.)
+ * This is now the ONLY Upstox intraday pinger — the index-tick pinger and the
+ * /market dashboard it fed were retired; /indices is EOD-only.
  *
- * Auth + token handling mirror /api/cron/intraday-index: bearer
- * INTRADAY_CRON_TOKEN (falls back to REVALIDATE_TOKEN); a stale Upstox
- * token yields a soft 200 no-op so a missed morning reauth never trips the
- * pinger.
+ * Auth: bearer INTRADAY_CRON_TOKEN (falls back to REVALIDATE_TOKEN); a stale
+ * Upstox token yields a soft 200 no-op so a missed morning reauth never trips
+ * the pinger.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { revalidateTag } from "next/cache";
