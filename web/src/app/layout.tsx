@@ -186,7 +186,6 @@ function SiteFooter() {
               { href: "/tools",                    label: "Tools" },
               { href: "/tools/screener",           label: "Stock Screener" },
               { href: "/tools/scanner",            label: "Scanner" },
-              { href: "/tools/investing-trials",   label: "Investing Trials" },
               { href: "/tools/peer-comparison",    label: "Peer Comparison" },
               { href: "/ideas",                    label: "Ideas" },
             ]}

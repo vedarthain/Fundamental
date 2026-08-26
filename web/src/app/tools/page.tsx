@@ -30,19 +30,6 @@ const TOOLS: ToolCard[] = [
     accent: "var(--color-accent-600)",
   },
   {
-    href: "/tools/investing-trials",
-    title: "Investing Trials",
-    tagline: "Score with your own weights",
-    body:
-      "The platform's Industry Score weights Quality, Valuation, and Momentum based on cluster-tuned defaults. Investing Trials lets you set your own Q/V/M weights and see how the ranking shifts — useful for testing a thesis like 'pure value' or 'compounders only'.",
-    useFor: [
-      "Stress-test the platform's ranking",
-      "Build a value-tilted or quality-tilted view",
-      "Sanity-check stocks across different lenses",
-    ],
-    accent: "var(--color-score-good)",
-  },
-  {
     href: "/tools/peer-comparison",
     title: "Peer Comparison",
     tagline: "Stack 2-5 stocks side by side",
@@ -144,11 +131,6 @@ export default function ToolsLanding() {
             <span className="ink-text font-medium">Have specific criteria?</span> Use{" "}
             <Link href="/tools/screener" className="underline">Stock Screener</Link>{" "}
             — set thresholds, see all matches ranked.
-          </li>
-          <li>
-            <span className="ink-text font-medium">Want a custom scoring lens?</span> Use{" "}
-            <Link href="/tools/investing-trials" className="underline">Investing Trials</Link>{" "}
-            — tweak Q/V/M weights, see the ranking shift.
           </li>
           <li>
             <span className="ink-text font-medium">Narrowed to a few candidates?</span> Use{" "}

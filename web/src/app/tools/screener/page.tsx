@@ -601,12 +601,10 @@ export default async function ScreenerPage({
           </div>
         </header>
 
-        {/* CTA cards for the sibling tools (Investing Trials, Peer Comparison)
-            used to sit here, but they visually nested those tools under
-            Screener instead of treating them as siblings. The /tools landing
-            page + Tools dropdown in the top nav cover discovery; the contextual
-            link further down the page ("Want your own Q/V/M weights? → Try
-            Investing Trials") covers the educational cross-reference. */}
+        {/* CTA cards for sibling tools used to sit here, but they visually
+            nested those tools under Screener instead of treating them as
+            siblings. The /tools landing page + Tools dropdown in the top nav
+            cover discovery. */}
       </div>
 
       <div className="mt-6 max-w-[820px]">
@@ -1515,12 +1513,6 @@ function MethodologyFooter() {
             re-ranking — they reveal the shape of the quality. A stock can reach 90 on
             Industry Score driven entirely by momentum (M=95, Q=40, V=35) or by being
             well-rounded across all three. Q · V · M let you see which.
-          </p>
-          <p className="mt-2">
-            Want to apply your own Q / V / M weights?{" "}
-            <Link href="/tools/investing-trials" className="underline hover:no-underline ink-text">
-              Try Investing Trials →
-            </Link>
           </p>
         </Section>
       </div>
