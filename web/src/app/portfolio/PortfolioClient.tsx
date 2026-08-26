@@ -190,7 +190,7 @@ export function PortfolioClient({
           <>
             <SummaryCards t={t} snapshot={portfolio.snapshotDate} />
             <div className="mt-6">
-              <HoldingsSheets instruments={portfolio.instruments} totalValue={t.currentValue} />
+              <HoldingsSheets instruments={portfolio.instruments} totalValue={t.currentValue} priceAsOf={portfolio.priceAsOf} />
             </div>
           </>
         )
@@ -728,6 +728,8 @@ function RealizedLeaders({ realized }: { realized: RealizedPnl }) {
             <Link
               key={r.symbol}
               href={`/stock/${r.symbol}`}
+              target="_blank"
+              rel="noopener noreferrer"
               className="grid grid-cols-[minmax(90px,150px)_1fr_minmax(96px,auto)] items-center gap-3 group"
             >
               <div className="text-[12px] font-medium truncate group-hover:text-[var(--color-accent-700)]">{r.symbol}</div>
@@ -993,7 +995,7 @@ function BookedPnl({ realized }: { realized: RealizedPnl }) {
               {[...realized.rows].sort(rMakeCmp(sort.key, sort.dir)).map((r: RealizedLot) => (
                 <tr key={r.symbol} className="border-b hairline hover:bg-[var(--color-paper)]">
                   <td className="px-3 py-2">
-                    <Link href={`/stock/${r.symbol}`} className="font-medium hover:underline">
+                    <Link href={`/stock/${r.symbol}`} target="_blank" rel="noopener noreferrer" className="font-medium hover:underline">
                       {r.symbol}
                     </Link>
                     <div className="text-[10.5px] muted-text truncate max-w-[220px]">{r.name ?? ""}</div>
@@ -1700,7 +1702,7 @@ function buildGroups(instruments: Instrument[], mode: GroupMode): Group[] {
 // cells FragmentRow renders (grouped-mode group rows also colSpan against it).
 type SortKey =
   | "symbol" | "broker" | "qty" | "avg" | "price" | "target"
-  | "value" | "day" | "pnl" | "pnlPct" | "qvm" | "rank" | "held" | "wt";
+  | "value" | "day" | "pnl" | "pnlPct" | "qvm" | "comp" | "rank" | "held" | "wt";
 type SortDir = "asc" | "desc";
 
 const COLUMNS: {
@@ -1711,13 +1713,14 @@ const COLUMNS: {
   { key: "broker", label: "Broker", align: "left", cls: "px-2", numeric: false, title: "Broker(s) the position is held at" },
   { key: "qty", label: "Qty", align: "right", cls: "px-2", numeric: true },
   { key: "avg", label: "Avg", align: "right", cls: "px-2", numeric: true },
-  { key: "price", label: "Price", align: "right", cls: "px-2", numeric: true },
+  { key: "price", label: "LTP", align: "right", cls: "px-2", numeric: true, title: "Last traded price (latest daily close)" },
   { key: "target", label: "Target", align: "right", cls: "px-2", numeric: true, title: "Profit target: avg cost +25%" },
   { key: "value", label: "Value", align: "right", cls: "px-2", numeric: true },
   { key: "day", label: "Day", align: "right", cls: "px-2", numeric: true },
   { key: "pnl", label: "P&L", align: "right", cls: "px-2", numeric: true, title: "Unrealised profit / loss (₹)" },
   { key: "pnlPct", label: "Return", align: "right", cls: "px-2", numeric: true, title: "Unrealised return (%) on cost" },
   { key: "qvm", label: "Q/V/M", align: "center", cls: "px-2", numeric: true },
+  { key: "comp", label: "Comp", align: "center", cls: "px-2", numeric: true, title: "Composite percentile (Q/V/M roll-up) — higher is better" },
   { key: "rank", label: "Rank", align: "center", cls: "px-2", numeric: true },
   { key: "held", label: "Held", align: "right", cls: "px-2", numeric: true, title: "Time held (approx — measured from import date, not actual purchase date). Flags at 4 months." },
   { key: "wt", label: "Wt", align: "right", cls: "px-3", numeric: true },
@@ -1748,6 +1751,7 @@ function sortVal(ins: Instrument, key: SortKey): number | string | null {
       const vals = [ins.q, ins.v, ins.m].filter((x): x is number => x != null);
       return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
     }
+    case "comp": return ins.composite ?? null;
     case "rank": return ins.peerRank ?? null;
     case "held": return ins.monthsHeld ?? null;
   }
@@ -1772,7 +1776,7 @@ function makeCmp(key: SortKey, dir: SortDir) {
  *  and Others (ETFs, funds, bonds — anything we don't score) under two
  *  sub-tabs. `isMapped` is the same signal the sector allocation uses to
  *  bucket "ETFs & funds (unscored)". */
-function HoldingsSheets({ instruments, totalValue }: { instruments: Instrument[]; totalValue: number }) {
+function HoldingsSheets({ instruments, totalValue, priceAsOf }: { instruments: Instrument[]; totalValue: number; priceAsOf: string | null }) {
   const stocks = instruments.filter((i) => i.isMapped);
   const others = instruments.filter((i) => !i.isMapped);
   const [sub, setSub] = useState<"stocks" | "others">("stocks");
@@ -1809,7 +1813,7 @@ function HoldingsSheets({ instruments, totalValue }: { instruments: Instrument[]
         </div>
       ) : (
         <div className="mt-3">
-          <HoldingsTable instruments={active} totalValue={totalValue} flush />
+          <HoldingsTable instruments={active} totalValue={totalValue} priceAsOf={priceAsOf} flush />
         </div>
       )}
     </div>
@@ -1819,10 +1823,12 @@ function HoldingsSheets({ instruments, totalValue }: { instruments: Instrument[]
 function HoldingsTable({
   instruments,
   totalValue,
+  priceAsOf,
   flush = false,
 }: {
   instruments: Instrument[];
   totalValue: number;
+  priceAsOf: string | null;
   flush?: boolean;
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -1831,6 +1837,12 @@ function HoldingsTable({
   const [query, setQuery] = useState("");
   // Flat-view column sort. Defaults to Instrument A→Z (the landing view).
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: "symbol", dir: "asc" });
+
+  // Trading date behind the LTP column, shown as a highlighted "as of" tag
+  // under the header so the price is never mistaken for a live tick.
+  const asOfLabel = priceAsOf
+    ? new Date(priceAsOf + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short" })
+    : null;
 
   // Free-text filter on symbol or name — narrows the sheet as you type.
   const q = query.trim().toLowerCase();
@@ -1946,9 +1958,19 @@ function HoldingsTable({
                     aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : undefined}
                     onClick={sortable ? () => onSort(c.key) : undefined}
                   >
-                    <span className={`inline-flex items-center gap-0.5${c.align === "right" ? " flex-row-reverse" : ""}`}>
-                      {c.label}
-                      {active && arrow}
+                    <span className="inline-flex flex-col items-end gap-0.5">
+                      <span className={`inline-flex items-center gap-0.5${c.align === "right" ? " flex-row-reverse" : ""}`}>
+                        {c.label}
+                        {active && arrow}
+                      </span>
+                      {c.key === "price" && asOfLabel && (
+                        <span
+                          className="text-[8.5px] font-semibold normal-case tracking-normal leading-none"
+                          style={{ color: "var(--color-accent-700)" }}
+                        >
+                          as of {asOfLabel}
+                        </span>
+                      )}
                     </span>
                   </th>
                 );
@@ -2000,7 +2022,7 @@ function HoldingsTable({
                       <td className="px-2 py-1.5 text-right tabular-nums font-semibold" style={{ color: up(gPnlPct) ? GREEN : RED }}>
                         {pct(gPnlPct)}
                       </td>
-                      <td colSpan={3} />
+                      <td colSpan={4} />
                       <td className="px-3 py-1.5 text-right tabular-nums muted-text">{gWt}%</td>
                     </tr>
                   )}
@@ -2042,7 +2064,7 @@ function FragmentRow({
             <div className="min-w-0">
               <div className="font-medium truncate max-w-[220px]">
                 {ins.symbol ? (
-                  <Link href={`/stock/${ins.symbol}`} className="hover:underline" onClick={(e) => e.stopPropagation()}>
+                  <Link href={`/stock/${ins.symbol}`} target="_blank" rel="noopener noreferrer" className="hover:underline" onClick={(e) => e.stopPropagation()}>
                     {ins.symbol}
                   </Link>
                 ) : (
@@ -2125,6 +2147,13 @@ function FragmentRow({
           )}
         </td>
         <td className="px-2 py-2 text-center tabular-nums">
+          {ins.isMapped && ins.composite != null ? (
+            <span className="font-semibold">{fmtScore(ins.composite)}</span>
+          ) : (
+            <span className="muted-text">—</span>
+          )}
+        </td>
+        <td className="px-2 py-2 text-center tabular-nums">
           {ins.isMapped && ins.peerRank != null ? (
             <span className="muted-text">{ins.peerRank}/{ins.peerCount}</span>
           ) : (
@@ -2146,7 +2175,7 @@ function FragmentRow({
       </tr>
       {isOpen && ins.brokers.length > 1 && (
         <tr className="border-b hairline" style={{ background: "var(--color-paper)" }}>
-          <td colSpan={14} className="px-3 py-2">
+          <td colSpan={15} className="px-3 py-2">
             <div className="flex flex-wrap gap-x-6 gap-y-1 text-[11.5px] pl-6">
               {ins.brokers.map((b, i) => (
                 <span key={i} className="tabular-nums">

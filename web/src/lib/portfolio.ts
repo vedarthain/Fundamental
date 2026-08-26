@@ -81,6 +81,9 @@ export type Portfolio = {
   brokerAlloc: AllocSlice[];
   sectorAlloc: AllocSlice[];
   snapshotDate: string | null;
+  // Latest trading date behind the LTP column (max date in golden's daily
+  // close history for the held symbols). Surfaced as the "as of" under LTP.
+  priceAsOf: string | null;
   brokers: Broker[]; // which brokers the user has imported
 };
 
@@ -803,6 +806,7 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
       brokerAlloc: [],
       sectorAlloc: [],
       snapshotDate: null,
+      priceAsOf: null,
       brokers: [],
     };
   }
@@ -854,9 +858,9 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
   // Live price + 1D from golden: latest two closes per mapped symbol.
   const gsyms = mappedSyms.map((s) => s + ".NS");
   const gp = gsyms.length
-    ? await golden<{ symbol: string; close: string; rn: string }[]>`
-        SELECT symbol, close::text AS close, rn FROM (
-          SELECT symbol, close,
+    ? await golden<{ symbol: string; close: string; date: string; rn: string }[]>`
+        SELECT symbol, close::text AS close, date::text AS date, rn FROM (
+          SELECT symbol, close, date,
                  row_number() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
           FROM golden.price_history_1d
           WHERE symbol = ANY(${gsyms}) AND close IS NOT NULL
@@ -865,10 +869,16 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
     : [];
   const gLast = new Map<string, number>();
   const gPrev = new Map<string, number>();
+  // Newest close date across all held symbols → the LTP "as of" date.
+  let priceAsOf: string | null = null;
   for (const g of gp) {
     const bare = g.symbol.endsWith(".NS") ? g.symbol.slice(0, -3) : g.symbol;
-    if (Number(g.rn) === 1) gLast.set(bare, Number(g.close));
-    else gPrev.set(bare, Number(g.close));
+    if (Number(g.rn) === 1) {
+      gLast.set(bare, Number(g.close));
+      if (!priceAsOf || g.date > priceAsOf) priceAsOf = g.date;
+    } else {
+      gPrev.set(bare, Number(g.close));
+    }
   }
 
   const snapRow = await sql<{ d: string | null }[]>`
@@ -1074,6 +1084,7 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
       .map(([s, v]) => ({ label: s, value: Math.round(v * 100) / 100 }))
       .sort((a, b) => b.value - a.value),
     snapshotDate,
+    priceAsOf,
     brokers,
   };
 }
