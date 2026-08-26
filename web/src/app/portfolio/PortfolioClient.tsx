@@ -1715,7 +1715,8 @@ const COLUMNS: {
   { key: "target", label: "Target", align: "right", cls: "px-2", numeric: true, title: "Profit target: avg cost +25%" },
   { key: "value", label: "Value", align: "right", cls: "px-2", numeric: true },
   { key: "day", label: "Day", align: "right", cls: "px-2", numeric: true },
-  { key: "pnl", label: "P&L", align: "right", cls: "px-2", numeric: true },
+  { key: "pnl", label: "P&L", align: "right", cls: "px-2", numeric: true, title: "Unrealised profit / loss (₹)" },
+  { key: "pnlPct", label: "Return", align: "right", cls: "px-2", numeric: true, title: "Unrealised return (%) on cost" },
   { key: "qvm", label: "Q/V/M", align: "center", cls: "px-2", numeric: true },
   { key: "rank", label: "Rank", align: "center", cls: "px-2", numeric: true },
   { key: "held", label: "Held", align: "right", cls: "px-2", numeric: true, title: "Time held (approx — measured from import date, not actual purchase date). Flags at 4 months." },
@@ -1841,7 +1842,6 @@ function HoldingsTable({
   const onSort = (key: SortKey) =>
     setSort((cur) => {
       if (cur.key === key) return { key, dir: cur.dir === "asc" ? "desc" : "asc" };
-      // pnlPct has no COLUMNS entry (it shares the P&L header) — treat it as numeric.
       const col = COLUMNS.find((c) => c.key === key);
       return { key, dir: !col || col.numeric ? "desc" : "asc" }; // numbers → high-first, name → A→Z
     });
@@ -1938,38 +1938,6 @@ function HoldingsTable({
                   <span aria-hidden className="text-[8px] leading-none">{sort.dir === "asc" ? "▲" : "▼"}</span>
                 );
 
-                // P&L carries two measures — absolute rupees and return %.
-                // Give each its own sort target so you can rank by either.
-                if (c.key === "pnl") {
-                  const pctActive = sortable && sort.key === "pnlPct";
-                  return (
-                    <th
-                      key={c.key}
-                      className={`${alignCls} font-semibold ${c.cls} py-2`}
-                      title="Sort by absolute P&L (₹) or by return (%)"
-                      aria-sort={active || pctActive ? (sort.dir === "asc" ? "ascending" : "descending") : undefined}
-                    >
-                      <span className="inline-flex items-center gap-0.5 flex-row-reverse">
-                        <span
-                          className={`inline-flex items-center gap-0.5${sortable ? " cursor-pointer select-none hover:text-[var(--color-fg)]" : ""}`}
-                          onClick={sortable ? () => onSort("pnl") : undefined}
-                        >
-                          {active && arrow}
-                          P&amp;L
-                        </span>
-                        <span className="muted-text font-normal">/</span>
-                        <span
-                          className={`inline-flex items-center gap-0.5${sortable ? " cursor-pointer select-none hover:text-[var(--color-fg)]" : ""}${pctActive ? "" : " muted-text"}`}
-                          onClick={sortable ? () => onSort("pnlPct") : undefined}
-                        >
-                          {pctActive && arrow}
-                          %
-                        </span>
-                      </span>
-                    </th>
-                  );
-                }
-
                 return (
                   <th
                     key={c.key}
@@ -1997,6 +1965,7 @@ function HoldingsTable({
             )}
             {displayGroups.map((g) => {
               const gWt = totalValue > 0 ? Math.round((g.value / totalValue) * 1000) / 10 : 0;
+              const gPnlPct = g.invested > 0 ? (g.pnl / g.invested) * 100 : null;
               const grouped = mode !== "flat";
               const isCollapsed = grouped && collapsed.has(g.label);
               return (
@@ -2027,6 +1996,9 @@ function HoldingsTable({
                       </td>
                       <td className="px-2 py-1.5 text-right tabular-nums font-semibold" style={{ color: up(g.pnl) ? GREEN : RED }}>
                         {signed(g.pnl)}
+                      </td>
+                      <td className="px-2 py-1.5 text-right tabular-nums font-semibold" style={{ color: up(gPnlPct) ? GREEN : RED }}>
+                        {pct(gPnlPct)}
                       </td>
                       <td colSpan={3} />
                       <td className="px-3 py-1.5 text-right tabular-nums muted-text">{gWt}%</td>
@@ -2137,9 +2109,11 @@ function FragmentRow({
         <td className="px-2 py-2 text-right tabular-nums" style={{ color: ins.dayChangePct == null ? undefined : up(ins.dayChangePct) ? GREEN : RED }}>
           {pct(ins.dayChangePct)}
         </td>
-        <td className="px-2 py-2 text-right tabular-nums" style={{ color: up(ins.pnl) ? GREEN : RED }}>
-          <div>{signed(ins.pnl)}</div>
-          <div className="text-[10.5px]">{pct(ins.pnlPct)}</div>
+        <td className="px-2 py-2 text-right tabular-nums font-medium" style={{ color: up(ins.pnl) ? GREEN : RED }}>
+          {signed(ins.pnl)}
+        </td>
+        <td className="px-2 py-2 text-right tabular-nums" style={{ color: ins.pnlPct == null ? undefined : up(ins.pnlPct) ? GREEN : RED }}>
+          {pct(ins.pnlPct)}
         </td>
         <td className="px-2 py-2 text-center tabular-nums">
           {ins.isMapped ? (
@@ -2172,7 +2146,7 @@ function FragmentRow({
       </tr>
       {isOpen && ins.brokers.length > 1 && (
         <tr className="border-b hairline" style={{ background: "var(--color-paper)" }}>
-          <td colSpan={13} className="px-3 py-2">
+          <td colSpan={14} className="px-3 py-2">
             <div className="flex flex-wrap gap-x-6 gap-y-1 text-[11.5px] pl-6">
               {ins.brokers.map((b, i) => (
                 <span key={i} className="tabular-nums">
