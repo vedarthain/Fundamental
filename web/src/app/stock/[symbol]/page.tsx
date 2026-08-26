@@ -6,7 +6,8 @@ import { sql, golden } from "@/lib/db";
 import { band, bandColor, fmtPct, fmtRupeesCr, tierLabel, displayCompanyName, isRecentListing, listingYear, hasScoreableHistory, monthsSinceListing, ordinal } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { CallToggle } from "@/components/CallToggle";
-import { PriceChart, type PricePoint } from "@/components/PriceChart";
+import { PriceChart } from "@/components/PriceChart";
+import type { Candle } from "@/lib/candles";
 import { MetricTrendCard, type SparkPoint } from "@/components/Sparkline";
 import { type PillarTabContent } from "@/components/PillarTabs";
 import { StrengthsPanel } from "@/components/StrengthsPanel";
@@ -268,12 +269,25 @@ async function loadStock(symbol: string) {
   // Daily price history — full available range. golden_db keeps daily back to
   // ~1996 for most NSE stocks. ~7K rows × 30 bytes ≈ 50KB gzipped, fine to
   // ship to the client so the chart can support 1D/1W/1M zoom client-side.
-  const priceHistory = await golden<PricePoint[]>`
-    SELECT date::text, COALESCE(adj_close, close)::float AS close
+  const priceRows = await golden<
+    { d: string; o: number; h: number; l: number; c: number; ac: number | null; v: number | null }[]
+  >`
+    SELECT date::text AS d,
+           open::float8  AS o, high::float8 AS h, low::float8 AS l,
+           close::float8 AS c, adj_close::float8 AS ac, volume::float8 AS v
     FROM golden.price_history
     WHERE symbol = ${upper + ".NS"} AND interval = '1d'
+      AND close IS NOT NULL AND open IS NOT NULL
+      AND high IS NOT NULL AND low IS NOT NULL
     ORDER BY date ASC
-  `.catch(() => [] as PricePoint[]);
+  `.catch(() => [] as { d: string; o: number; h: number; l: number; c: number; ac: number | null; v: number | null }[]);
+  // Split-safe candles: scale each raw bar by its own adj_close/close factor so
+  // a split shows as continuous price action (not a phantom cliff), matching
+  // every other adj_close-based surface. Mirrors lib/candles.ts.
+  const priceHistory: Candle[] = priceRows.map((r) => {
+    const factor = r.ac != null && r.c > 0 ? r.ac / r.c : 1;
+    return { d: r.d, o: r.o * factor, h: r.h * factor, l: r.l * factor, c: r.c * factor, v: r.v ?? 0 };
+  });
   // Trailing liquidity: MEDIAN daily traded value (₹) over the last ~30 sessions.
   // price × volume = actual rupee turnover — the metric that decides whether a
   // position can be entered/exited without moving the price (raw share count is
@@ -301,23 +315,6 @@ async function loadStock(symbol: string) {
   const THINLY_TRADED_FLOOR = 5_000_000;
   const isThinlyTraded =
     medTurnover != null && liqSessions >= 15 && medTurnover < THINLY_TRADED_FLOOR;
-  // Intraday ticks (appended every ~10 min by the equity pinger) for the 1D
-  // chart's real session curve. Use the MOST RECENT tick-day, not strictly
-  // "today" — otherwise the chart is a straight line all weekend / before the
-  // first tick lands (today has no ticks, so it fell back to a 2-point line).
-  // The latest tick-day is today during market hours, Friday on a weekend.
-  // At most ~38 rows. Empty only if the symbol has never been pinged.
-  const intradayTicks = await sql<{ ts: string; ltp: number }[]>`
-    WITH latest AS (
-      SELECT MAX((ts AT TIME ZONE 'Asia/Kolkata')::date) AS d
-        FROM app.stock_intraday WHERE symbol = ${upper}
-    )
-    SELECT ts::text, ltp::float
-      FROM app.stock_intraday, latest
-     WHERE symbol = ${upper}
-       AND (ts AT TIME ZONE 'Asia/Kolkata')::date = latest.d
-     ORDER BY ts ASC
-  `.catch(() => [] as { ts: string; ltp: number }[]);
 
   // Peer-cluster stats for the header — cluster median (radar baseline) AND
   // this stock's rank within its (cluster, tier) peer group at the latest
@@ -488,7 +485,7 @@ async function loadStock(symbol: string) {
   }
 
   return {
-    stock, scorecard, annual, quarterly, priceHistory, intradayTicks, shareholding,
+    stock, scorecard, annual, quarterly, priceHistory, shareholding,
     corporateActions, stockNews, announcements, scoreHistory, oiAlert, nextEvent,
     isThinlyTraded, medTurnover, liqSessions,
     peerMedianComposite: peerStats[0]?.median ?? 50,
@@ -510,7 +507,7 @@ export default async function StockPage({
     getSession(),
   ]);
   if (!data) return notFound();
-  const { stock, scorecard, annual, quarterly, priceHistory, intradayTicks, shareholding, corporateActions, stockNews, announcements, scoreHistory, oiAlert, nextEvent, rankInIndustry, industryPeerCount, isThinlyTraded, medTurnover, liqSessions } = data;
+  const { stock, scorecard, annual, quarterly, priceHistory, shareholding, corporateActions, stockNews, announcements, scoreHistory, oiAlert, nextEvent, rankInIndustry, industryPeerCount, isThinlyTraded, medTurnover, liqSessions } = data;
 
   // Signed-in users can set price alerts on the chart; load their live lines.
   const priceAlerts: PriceAlert[] = session
@@ -900,13 +897,13 @@ export default async function StockPage({
                         shareholding={shareholding}
                       />
                     }
-                    details={<AboutCard stock={stock} priceHistoryStart={priceHistory[0]?.date ?? null} />}
+                    details={<AboutCard stock={stock} priceHistoryStart={priceHistory[0]?.d ?? null} />}
                   />
                 ) : (
-                  <AboutCard stock={stock} priceHistoryStart={priceHistory[0]?.date ?? null} />
+                  <AboutCard stock={stock} priceHistoryStart={priceHistory[0]?.d ?? null} />
                 )}
               </div>
-              <PriceChartCard symbol={stock.symbol} history={priceHistory} intraday={intradayTicks} currentPrice={stock.current_price} priceFetchedAt={stock.price_fetched_at} priceAlerts={priceAlerts} canSetAlerts={session != null} />
+              <PriceChartCard symbol={stock.symbol} history={priceHistory} currentPrice={stock.current_price} priceAlerts={priceAlerts} canSetAlerts={session != null} />
             </div>
             {stockNews.length > 0 && (
               <div className="mt-6">
@@ -1414,13 +1411,11 @@ function StockNewsCard({
 /* ----------------------------- Price chart card -------------------- */
 
 function PriceChartCard({
-  symbol, history, intraday, currentPrice, priceFetchedAt, priceAlerts, canSetAlerts,
+  symbol, history, currentPrice, priceAlerts, canSetAlerts,
 }: {
   symbol: string;
-  history: PricePoint[];
-  intraday?: { ts: string; ltp: number }[];
+  history: Candle[];
   currentPrice?: number | null;
-  priceFetchedAt?: string | null;
   priceAlerts?: { id: number; price: number; direction: "above" | "below"; status: "armed" | "triggered" }[];
   canSetAlerts?: boolean;
 }) {
@@ -1429,7 +1424,7 @@ function PriceChartCard({
   // pinned to the full history.
   return (
     <section className="card p-5">
-      <PriceChart symbol={symbol} data={history} intraday={intraday} currentPrice={currentPrice ?? undefined} priceFetchedAt={priceFetchedAt ?? undefined} priceAlerts={priceAlerts} canSetAlerts={canSetAlerts} />
+      <PriceChart symbol={symbol} candles={history} currentPrice={currentPrice ?? undefined} priceAlerts={priceAlerts} canSetAlerts={canSetAlerts} />
     </section>
   );
 }

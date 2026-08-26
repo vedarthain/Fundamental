@@ -1,12 +1,10 @@
 "use client";
 import { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import {
-  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
-} from "recharts";
+import { CandleChart, type AlertLine } from "@/app/tools/scanner/CandleChart";
+import type { Candle } from "@/lib/candles";
+import { WEEKLY_THRESHOLD_DAYS } from "@/lib/candleConfig";
 import { PCT_CAP, type RetWindow } from "@/lib/returnGuards";
-
-export type PricePoint = { date: string; close: number };
 
 /** One user price-alert line on the chart. Mirrors PriceAlert in
  *  lib/price-alerts (kept local so this client bundle never imports the
@@ -18,25 +16,11 @@ export type ChartPriceAlert = {
   status: "armed" | "triggered";
 };
 
-// Green = armed (watching), orange = triggered (crossed) — matches the Alerts
-// tab's severity colours so the two surfaces read the same.
-const ALERT_ARMED = "var(--color-score-good)";
-const ALERT_TRIGGERED = "var(--color-score-weak)";
+type Range = "1W" | "1M" | "3M" | "1Y" | "3Y" | "5Y" | "10Y" | "ALL";
+const RANGES: Range[] = ["1W", "1M", "3M", "1Y", "3Y", "5Y", "10Y", "ALL"];
 
-type Range = "1D" | "1W" | "1M" | "3M" | "1Y" | "3Y" | "5Y" | "10Y" | "ALL";
-
-// Ranges that have a shared plausibility cap (see returnGuards). A broken split
-// basis upstream can make a short-horizon return physically impossible; when it
-// exceeds the cap we suppress the headline number rather than print garbage.
-// 3M / 5Y / 10Y / ALL have no cap (no scanner equivalent, and long-horizon real
-// multibaggers are genuinely huge), so they render as-is.
-const RANGE_TO_CAP: Partial<Record<Range, RetWindow>> = {
-  "1D": "1d", "1W": "1w", "1M": "1m", "1Y": "1y", "3Y": "3y",
-};
-
-/** Lookback in calendar days. 1D is special-cased below to grab the last 2
- *  daily closes so we always have at least a 2-point line. */
-const RANGE_DAYS: Record<Exclude<Range, "1D" | "ALL">, number> = {
+/** Lookback in calendar days per range (ALL is special-cased). */
+const RANGE_DAYS: Record<Exclude<Range, "ALL">, number> = {
   "1W":  7,
   "1M":  30,
   "3M":  90,
@@ -46,58 +30,116 @@ const RANGE_DAYS: Record<Exclude<Range, "1D" | "ALL">, number> = {
   "10Y": 365 * 10,
 };
 
-const RANGES: Range[] = ["1D", "1W", "1M", "3M", "1Y", "3Y", "5Y", "10Y", "ALL"];
+// Ranges that carry a shared plausibility cap (see returnGuards). A broken split
+// basis upstream can make a short-horizon return physically impossible; when it
+// exceeds the cap we suppress the % rather than print garbage. 3M / 5Y / 10Y /
+// ALL have no cap (long-horizon real multibaggers are genuinely huge).
+const RANGE_TO_CAP: Partial<Record<Range, RetWindow>> = {
+  "1W": "1w", "1M": "1m", "1Y": "1y", "3Y": "3y",
+};
 
-/** Human label per range — used under the headline return when the visible
- *  span is under a year (CAGR isn't meaningful there). */
+/** Human label per range — used under the headline when the visible span is
+ *  under a year (CAGR isn't meaningful there). */
 const RANGE_LABEL: Record<Range, string> = {
-  "1D": "1 day", "1W": "1 week", "1M": "1 month", "3M": "3 months",
-  "1Y": "1 year", "3Y": "3 years", "5Y": "5 years", "10Y": "10 years",
-  "ALL": "all time",
+  "1W": "1 week", "1M": "1 month", "3M": "3 months", "1Y": "1 year",
+  "3Y": "3 years", "5Y": "5 years", "10Y": "10 years", "ALL": "all time",
 };
 
 /** Date-span label for the visible data — moves with the selected range.
  *  ≥2y → year range ("2002–2026"); shorter → "Mon YY – Mon YY". */
-function spanLabel(first: PricePoint | undefined, last: PricePoint | undefined, spanYears: number): string {
+function spanLabel(first: Candle | undefined, last: Candle | undefined, spanYears: number): string {
   if (!first || !last) return "—";
   if (spanYears >= 2) {
-    const a = first.date.slice(0, 4);
-    const b = last.date.slice(0, 4);
+    const a = first.d.slice(0, 4);
+    const b = last.d.slice(0, 4);
     return a === b ? a : `${a}–${b}`;
   }
   const fmt = (d: string) =>
     new Date(d).toLocaleDateString("en-IN", { month: "short", year: "2-digit" });
-  return `${fmt(first.date)} – ${fmt(last.date)}`;
+  return `${fmt(first.d)} – ${fmt(last.d)}`;
 }
 
-/** IST calendar date ("YYYY-MM-DD") of a timestamp — used to anchor the 1D
- *  curve on the close of the day before the intraday ticks. */
-function istDayOf(iso: string): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
-  }).format(new Date(iso));
+/** Monday-anchored ISO week bucket key for a "YYYY-MM-DD" date. */
+function weekKey(iso: string): string {
+  const dt = new Date(`${iso}T00:00:00Z`);
+  const dow = (dt.getUTCDay() + 6) % 7; // Mon=0 … Sun=6
+  dt.setUTCDate(dt.getUTCDate() - dow);
+  return dt.toISOString().slice(0, 10);
+}
+
+/** Roll an ascending daily series up to weekly OHLCV (open=first, high/low=week
+ *  extremes, close=last, volume=sum). Each bar labelled by its LAST trading day
+ *  so the rightmost candle tracks the latest date. Mirrors candles.ts/toWeekly
+ *  so long windows stay readable in the small SVG. */
+function toWeekly(daily: Candle[]): Candle[] {
+  const out: Candle[] = [];
+  let cur: Candle | null = null;
+  let curKey = "";
+  for (const c of daily) {
+    const key = weekKey(c.d);
+    if (key !== curKey) {
+      cur = { d: c.d, o: c.o, h: c.h, l: c.l, c: c.c, v: c.v };
+      out.push(cur);
+      curKey = key;
+    } else if (cur) {
+      cur.h = Math.max(cur.h, c.h);
+      cur.l = Math.min(cur.l, c.l);
+      cur.c = c.c;
+      cur.d = c.d;
+      cur.v += c.v;
+    }
+  }
+  return out;
+}
+
+/** Anchor close for a range: the last close ON OR BEFORE (lastDate − days) —
+ *  the same "on/before the target date" basis the scanner uses, so the chart's
+ *  headline return agrees with the scanner row. Falls back to the first bar when
+ *  the stock is younger than the window. Returns the % change to the last close,
+ *  guarded against a physically-impossible value. */
+function rangePct(candles: Candle[], range: Range): number | null {
+  if (candles.length < 2) return null;
+  const last = candles[candles.length - 1];
+  let anchor: Candle;
+  if (range === "ALL") {
+    anchor = candles[0];
+  } else {
+    const cutoff = new Date(last.d);
+    cutoff.setDate(cutoff.getDate() - RANGE_DAYS[range]);
+    const cut = cutoff.toISOString().slice(0, 10);
+    let onOrBefore: Candle | undefined;
+    for (const c of candles) {
+      if (c.d <= cut) onOrBefore = c;
+      else break;
+    }
+    anchor = onOrBefore ?? candles[0];
+  }
+  if (!anchor.c) return null;
+  const raw = (last.c / anchor.c - 1) * 100;
+  const cap = RANGE_TO_CAP[range];
+  if (cap != null && Math.abs(raw) > PCT_CAP[cap]) return null;
+  return raw;
+}
+
+function fmtPct(p: number): string {
+  return `${p >= 0 ? "+" : ""}${p.toFixed(Math.abs(p) >= 100 ? 0 : 2)}%`;
 }
 
 export function PriceChart({
-  data,
-  intraday,
+  candles,
   currentPrice,
-  priceFetchedAt,
   prefix = "₹",
   symbol,
   priceAlerts,
   canSetAlerts = false,
 }: {
-  data: PricePoint[];
+  /** Split-safe daily OHLC candles, ascending by date. */
+  candles: Candle[];
   /** Optional identity label shown in the card header (e.g. "3MINDIA"). */
   symbol?: string;
-  /** Today's intraday ticks (oldest-first), used to draw a real 1D curve
-   *  instead of a straight yesterday-close → current-price line. */
-  intraday?: { ts: string; ltp: number }[];
+  /** Live intraday LTP — shown as the headline price (the last candle is EOD). */
   currentPrice?: number;
-  priceFetchedAt?: string;
-  /** Value prefix for the headline/axis/tooltip. "₹" for stocks; pass "" for
-   *  index levels (which aren't a rupee amount). */
+  /** Value prefix for the headline. "₹" for stocks. */
   prefix?: string;
   /** User's live price-alert lines for this symbol (armed + triggered). */
   priceAlerts?: ChartPriceAlert[];
@@ -154,102 +196,69 @@ export function PriceChart({
     }
   }
 
-  // Filter the full daily series down to the selected range.
-  const filtered = useMemo(() => {
-    if (data.length === 0) return [];
-    if (range === "ALL") return data;
-    if (range === "1D") {
-      // Preferred: draw the real intraday curve from the latest session's
-      // ticks. The ts is a full ISO timestamp; the tickFormatter renders it as
-      // IST time (detected via length > 10).
-      if (intraday && intraday.length > 0) {
-        const pts = intraday.map((t) => ({ date: t.ts, close: t.ltp }));
-        // Anchor on the daily close from the day BEFORE the ticks' day so the
-        // line reads "prior close → session". Using data.slice(-1) is wrong
-        // once that point is the SAME day as the ticks (weekend / after EOD) —
-        // it would flat-line at the close value. p.date is "YYYY-MM-DD", so a
-        // lexicographic "<" against the ticks' IST day is correct.
-        const tickDay = istDayOf(intraday[0].ts);
-        const anchor = [...data].reverse().find((p) => p.date < tickDay);
-        return anchor ? [anchor, ...pts] : pts;
-      }
-      // Fallback (no ticks at all for this symbol): yesterday's EOD close →
-      // current price, a straight 2-point line.
-      const base = data.slice(-1);
-      if (currentPrice != null && base.length > 0) {
-        const todayIso = new Date().toISOString().slice(0, 10);
-        if (todayIso > base[0].date) {
-          const dateField = priceFetchedAt ?? `${todayIso}T15:30:00+05:30`;
-          return [...base, { date: dateField, close: currentPrice }];
-        }
-      }
-      return data.slice(-2);               // fallback: last 2 EOD closes
+  // Candles visible for the selected range, anchored on the LAST bar (not "now")
+  // so a day-or-two-stale tail still fills the window. Long spans roll up to
+  // weekly so the SVG stays readable.
+  const visible = useMemo(() => {
+    if (candles.length === 0) return [];
+    let sliced: Candle[];
+    if (range === "ALL") {
+      sliced = candles;
+    } else {
+      const last = candles[candles.length - 1].d;
+      const cutoff = new Date(last);
+      cutoff.setDate(cutoff.getDate() - RANGE_DAYS[range]);
+      const cut = cutoff.toISOString().slice(0, 10);
+      const f = candles.filter((c) => c.d >= cut);
+      sliced = f.length >= 2 ? f : candles.slice(-2);
     }
-    const days = RANGE_DAYS[range as Exclude<Range, "1D" | "ALL">];
-    const cutoff = Date.now() - days * 86_400_000;
-    const sliced = data.filter((p) => new Date(p.date).getTime() >= cutoff);
-    // If the range is so short there's no data (e.g. 1W on a freshly-listed
-    // stock), fall back to the last few points so the chart doesn't go blank.
-    return sliced.length >= 2 ? sliced : data.slice(-Math.max(2, Math.ceil(days / 7)));
-  }, [data, intraday, range, currentPrice, priceFetchedAt]);
+    const spanDays =
+      sliced.length >= 2
+        ? (new Date(sliced[sliced.length - 1].d).getTime() - new Date(sliced[0].d).getTime()) /
+          86_400_000
+        : 0;
+    return spanDays > WEEKLY_THRESHOLD_DAYS ? toWeekly(sliced) : sliced;
+  }, [candles, range]);
 
-  // Direction colour — green if last close ≥ first close in the visible range,
-  // red if it dropped. Uses our existing earthy score palette.
-  const positive =
-    filtered.length >= 2 && filtered[filtered.length - 1].close >= filtered[0].close;
-  const stroke = positive ? "var(--color-score-excellent)" : "var(--color-score-poor)";
-  const fillStop = positive ? "var(--color-score-good)" : "var(--color-score-weak)";
+  const weekly = useMemo(() => {
+    if (visible.length < 2) return false;
+    const spanDays =
+      (new Date(visible[visible.length - 1].d).getTime() - new Date(visible[0].d).getTime()) /
+      86_400_000;
+    return spanDays > WEEKLY_THRESHOLD_DAYS;
+  }, [visible]);
 
-  // Return anchor — the "N ago" reference point. The scanner measures from the
-  // most recent close ON OR BEFORE the target date; match that here (instead of
-  // filtered[0], the first point on/after) so the chart's headline return and
-  // the scanner's row agree for the same stock + timeframe. Falls back to the
-  // first visible point when the stock is younger than the window. `data` is
-  // date-ascending from SQL. 1D/ALL keep the visible-range anchor.
-  const headAnchor = useMemo<PricePoint | undefined>(() => {
-    if (range === "1D" || range === "ALL") return filtered[0];
-    const days = RANGE_DAYS[range];
-    const cutoff = Date.now() - days * 86_400_000;
-    let onOrBefore: PricePoint | undefined;
-    for (const p of data) {
-      if (new Date(p.date).getTime() <= cutoff) onOrBefore = p;
-      else break;
-    }
-    return onOrBefore ?? filtered[0];
-  }, [data, range, filtered]);
+  // Per-range % change — precomputed so each range button can show its own move.
+  const rangePctMap = useMemo(() => {
+    const m = {} as Record<Range, number | null>;
+    for (const r of RANGES) m[r] = rangePct(candles, r);
+    return m;
+  }, [candles]);
 
-  // Headline numbers — current price + period change.
-  const last = filtered[filtered.length - 1]?.close;
-  const first = headAnchor?.close;
-  const changeAbs = last != null && first != null ? last - first : null;
-  const rawChangePct = changeAbs != null && first ? (changeAbs / first) * 100 : null;
-  // Suppress a physically-impossible headline return (upstream broken split
-  // basis) so the chart never prints garbage — same guard the scanner uses.
-  const capWin = RANGE_TO_CAP[range];
-  const changePct =
-    rawChangePct != null && capWin != null && Math.abs(rawChangePct) > PCT_CAP[capWin]
-      ? null
-      : rawChangePct;
+  const alertLines: AlertLine[] = alerts.map((a) => ({
+    price: a.price,
+    status: a.status === "triggered" ? "triggered" : "armed",
+  }));
 
-  // Header stats — computed from the VISIBLE range so the identity line, the
-  // headline return and CAGR all move with the selected timeframe (instead of
-  // being pinned to the full 24y history).
-  const spanFirst = headAnchor;
-  const spanLast = filtered[filtered.length - 1];
+  // Headline: latest EOD close (or live LTP) + selected-range change + CAGR.
+  const first = visible[0];
+  const last = visible[visible.length - 1];
+  const headline = currentPrice ?? last?.c;
+  const changePct = rangePctMap[range];
   const spanYears =
-    spanFirst && spanLast
-      ? (new Date(spanLast.date).getTime() - new Date(spanFirst.date).getTime()) /
+    first && last
+      ? (new Date(last.d).getTime() - new Date(first.d).getTime()) /
         (365.25 * 24 * 3600 * 1000)
       : 0;
   const periodCagr =
-    changePct != null && spanYears > 1 && spanFirst && spanFirst.close > 0 && spanLast
-      ? (Math.pow(spanLast.close / spanFirst.close, 1 / spanYears) - 1) * 100
+    changePct != null && spanYears > 1 && first && first.c > 0 && last
+      ? (Math.pow(last.c / first.c, 1 / spanYears) - 1) * 100
       : null;
-  const subLabel = spanLabel(spanFirst, spanLast, spanYears);
+  const subLabel = spanLabel(first, last, spanYears);
   const cagrLabel =
     periodCagr != null ? `${periodCagr.toFixed(1)}% CAGR · ${spanYears.toFixed(0)}y` : RANGE_LABEL[range];
 
-  if (data.length === 0) {
+  if (candles.length === 0) {
     return (
       <div className="h-[260px] flex items-center justify-center muted-text text-[13px]">
         No price history available.
@@ -274,42 +283,38 @@ export function PriceChart({
               className="font-display text-[20px] tabular-nums leading-none"
               style={{ color: changePct >= 0 ? "var(--color-score-good)" : "var(--color-score-poor)" }}
             >
-              {changePct >= 0 ? "+" : ""}{changePct.toFixed(changePct >= 100 ? 0 : 2)}%
+              {fmtPct(changePct)}
             </div>
             <div className="text-[10px] muted-text mt-1">{cagrLabel}</div>
           </div>
         )}
       </div>
 
-      {/* Current price + absolute change, then range tabs. */}
+      {/* Headline price, then range tabs — each tab shows its own % change. */}
       <div className="flex flex-wrap items-end justify-between gap-3 mb-3">
         <div>
-          {last != null && (
-            <div className="flex items-baseline gap-2">
-              <span className="text-[18px] font-medium tabular-nums">
-                {prefix}{last.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
-              </span>
-              {changeAbs != null && (
-                <span
-                  className="text-[12px] font-medium tabular-nums"
-                  style={{ color: stroke }}
-                >
-                  {changeAbs >= 0 ? "+" : ""}
-                  {changeAbs.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
-                </span>
-              )}
-            </div>
+          {headline != null && (
+            <span className="text-[18px] font-medium tabular-nums">
+              {prefix}{headline.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+            </span>
           )}
         </div>
         <div className="flex flex-wrap gap-1">
           {RANGES.map((r) => {
             const active = r === range;
+            const p = rangePctMap[r];
+            const pColor =
+              p == null
+                ? "var(--color-muted)"
+                : p >= 0
+                  ? "var(--color-score-good)"
+                  : "var(--color-score-poor)";
             return (
               <button
                 key={r}
                 type="button"
                 onClick={() => setRange(r)}
-                className="px-2 py-0.5 rounded-md text-[11px] font-medium transition-colors"
+                className="flex flex-col items-center gap-0.5 px-2 py-0.5 rounded-md transition-colors"
                 style={
                   active
                     ? {
@@ -324,127 +329,23 @@ export function PriceChart({
                       }
                 }
               >
-                {r}
+                <span className="text-[11px] font-medium leading-none">{r}</span>
+                <span
+                  className="text-[9px] tabular-nums leading-none font-medium"
+                  style={{ color: active ? pColor : pColor, opacity: active ? 1 : 0.9 }}
+                >
+                  {p == null ? "—" : fmtPct(p)}
+                </span>
               </button>
             );
           })}
         </div>
       </div>
 
-      <ResponsiveContainer width="100%" height={260} minWidth={0}>
-        <AreaChart data={filtered} margin={{ top: 10, right: 8, left: 0, bottom: 0 }}>
-          <defs>
-            <linearGradient id="priceFill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={fillStop} stopOpacity={0.32} />
-              <stop offset="100%" stopColor={fillStop} stopOpacity={0} />
-            </linearGradient>
-          </defs>
-          <XAxis
-            dataKey="date"
-            tickFormatter={(d) => {
-              const dt = new Date(d);
-              // Determine the actual span of the visible data (not the selected
-              // range button) so we pick a label format that avoids duplicates.
-              // e.g. 3Y selected but stock only has 3 months of data → all ticks
-              // would be "2026" with year-only format. Instead, detect the real
-              // span and fall back to month+year when it's ≤ 18 months.
-              const spanDays =
-                filtered.length >= 2
-                  ? (new Date(filtered[filtered.length - 1].date).getTime() -
-                      new Date(filtered[0].date).getTime()) /
-                    86_400_000
-                  : 0;
-
-              if (range === "1D" || range === "1W" || range === "1M" || spanDays <= 31) {
-                // For the live intraday point (a full ISO timestamp, not just
-                // a date), show the time in IST instead of the date.
-                if (range === "1D" && d.length > 10) {
-                  return new Intl.DateTimeFormat("en-IN", {
-                    timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false,
-                  }).format(dt);
-                }
-                return dt.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
-              }
-              if (range === "3M" || range === "1Y" || spanDays <= 548 /* ~18 months */) {
-                return dt.toLocaleDateString("en-IN", { month: "short", year: "2-digit" });
-              }
-              // True multi-year span: year-only is safe (won't duplicate).
-              return String(dt.getFullYear());
-            }}
-            interval="preserveStartEnd"
-            minTickGap={50}
-            tick={{ fontSize: 11, fill: "var(--color-muted)" }}
-            axisLine={{ stroke: "var(--color-border-default)" }}
-            tickLine={false}
-          />
-          <YAxis
-            tickFormatter={(v) => `${prefix}${Math.round(v).toLocaleString("en-IN")}`}
-            tick={{ fontSize: 11, fill: "var(--color-muted)" }}
-            axisLine={false}
-            tickLine={false}
-            width={64}
-            domain={["auto", "auto"]}
-          />
-          <Tooltip
-            contentStyle={{
-              background: "var(--color-card)",
-              border: "1px solid var(--color-border-default)",
-              borderRadius: 8,
-              fontSize: 12,
-            }}
-            labelFormatter={(d) => {
-              const s = String(d ?? "");
-              if (range === "1D" && s.length > 10) {
-                // Live intraday point — show date + time in IST so the hover
-                // detail says which day the tick belongs to, not just the clock.
-                const dt = new Date(s);
-                const datePart = new Intl.DateTimeFormat("en-IN", {
-                  timeZone: "Asia/Kolkata", day: "numeric", month: "short",
-                }).format(dt);
-                const timePart = new Intl.DateTimeFormat("en-IN", {
-                  timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false,
-                }).format(dt);
-                return `${datePart}, ${timePart} IST (live)`;
-              }
-              return new Date(s).toLocaleDateString("en-IN", {
-                day: "numeric", month: "short", year: "numeric",
-              });
-            }}
-            formatter={(v: unknown) => [
-              `${prefix}${Number(v).toLocaleString("en-IN", { maximumFractionDigits: 1 })}`,
-              "Close",
-            ]}
-          />
-          <Area
-            type="monotone"
-            dataKey="close"
-            stroke={stroke}
-            strokeWidth={2}
-            fill="url(#priceFill)"
-            isAnimationActive={false}
-          />
-          {alerts.map((a) => {
-            const c = a.status === "triggered" ? ALERT_TRIGGERED : ALERT_ARMED;
-            return (
-              <ReferenceLine
-                key={a.id}
-                y={a.price}
-                stroke={c}
-                strokeDasharray="4 3"
-                strokeWidth={1.5}
-                ifOverflow="extendDomain"
-                label={{
-                  value: "A",
-                  position: "left",
-                  fill: c,
-                  fontSize: 11,
-                  fontWeight: 700,
-                }}
-              />
-            );
-          })}
-        </AreaChart>
-      </ResponsiveContainer>
+      {/* Candlestick + volume — split-safe OHLC, hover readout, alert lines. */}
+      <div className="w-full h-[300px]">
+        <CandleChart candles={visible} interactive weekly={weekly} alerts={alertLines} />
+      </div>
 
       {/* Price-alert controls — signed-in stock pages only. */}
       {canSetAlerts && symbol && (
@@ -487,7 +388,7 @@ export function PriceChart({
           {alerts.length > 0 && (
             <div className="flex flex-wrap gap-1.5 mt-2">
               {alerts.map((a) => {
-                const c = a.status === "triggered" ? ALERT_TRIGGERED : ALERT_ARMED;
+                const c = a.status === "triggered" ? "var(--color-score-weak)" : "var(--color-score-good)";
                 return (
                   <span
                     key={a.id}
