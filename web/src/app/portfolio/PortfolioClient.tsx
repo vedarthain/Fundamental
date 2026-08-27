@@ -187,12 +187,7 @@ export function PortfolioClient({
             </p>
           </div>
         ) : (
-          <>
-            <SummaryCards t={t} snapshot={portfolio.snapshotDate} />
-            <div className="mt-6">
-              <HoldingsSheets instruments={portfolio.instruments} totalValue={t.currentValue} priceAsOf={portfolio.priceAsOf} />
-            </div>
-          </>
+          <HoldingsSheets instruments={portfolio.instruments} totalValue={t.currentValue} priceAsOf={portfolio.priceAsOf} />
         )
       ) : tab === "performance" && owner ? (
         !portfolio.hasHoldings && realized.rows.length === 0 ? (
@@ -262,6 +257,9 @@ function PerformanceTab({ portfolio, realized, perf, timeline }: { portfolio: Po
 
   return (
     <div className="space-y-6">
+      {/* Current value / Invested / Total P&L — moved here from the Holdings tab. */}
+      <SummaryCards t={totals} snapshot={portfolio.snapshotDate} />
+
       {/* Zone 0 — headline strip */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Card
@@ -1837,6 +1835,9 @@ function HoldingsTable({
   const [query, setQuery] = useState("");
   // Flat-view column sort. Defaults to Instrument A→Z (the landing view).
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: "symbol", dir: "asc" });
+  // Flat-view P&L filter — winners only / losers only / all. Only meaningful in
+  // the flat (ungrouped) view; grouped modes ignore it and always show all.
+  const [pnlFilter, setPnlFilter] = useState<"all" | "profit" | "loss">("all");
 
   // Trading date behind the LTP column, shown as a highlighted "as of" tag
   // under the header so the price is never mistaken for a live tick.
@@ -1851,6 +1852,12 @@ function HoldingsTable({
         (i) => i.symbol?.toLowerCase().includes(q) || i.name.toLowerCase().includes(q),
       )
     : instruments;
+  // P&L filter (flat view only): profit = positive unrealised P&L, loss =
+  // negative. Zero / null-P&L rows fall out of both slices.
+  const pnlActive = mode === "flat" && pnlFilter !== "all";
+  const pnlFiltered = pnlActive
+    ? filtered.filter((i) => (pnlFilter === "profit" ? (i.pnl ?? 0) > 0 : (i.pnl ?? 0) < 0))
+    : filtered;
   const onSort = (key: SortKey) =>
     setSort((cur) => {
       if (cur.key === key) return { key, dir: cur.dir === "asc" ? "desc" : "asc" };
@@ -1858,7 +1865,7 @@ function HoldingsTable({
       return { key, dir: !col || col.numeric ? "desc" : "asc" }; // numbers → high-first, name → A→Z
     });
 
-  const groups = buildGroups(filtered, mode);
+  const groups = buildGroups(pnlFiltered, mode);
   // Only the Flat view is sortable — grouped modes keep their value-desc order
   // (per-column sort would collide with the collapsible group rows).
   const displayGroups =
@@ -1885,8 +1892,39 @@ function HoldingsTable({
             <IconList size={15} />
           </span>
           <h2 className="text-[14px] font-semibold">
-            Holdings ({q ? `${filtered.length} of ${instruments.length}` : instruments.length})
+            Holdings ({q || pnlActive ? `${pnlFiltered.length} of ${instruments.length}` : instruments.length})
           </h2>
+          {/* P&L filter — flat view only. Winners / losers / all. */}
+          {mode === "flat" && (
+            <div className="inline-flex rounded-md border overflow-hidden ml-1" style={{ borderColor: "var(--color-border-default)" }}>
+              {([
+                { v: "all", label: "All" },
+                { v: "profit", label: "Profit" },
+                { v: "loss", label: "Loss" },
+              ] as const).map((o) => {
+                const active = pnlFilter === o.v;
+                const activeStyle =
+                  o.v === "profit"
+                    ? { background: GREEN, color: "white" }
+                    : o.v === "loss"
+                      ? { background: RED, color: "white" }
+                      : { background: "var(--color-accent-600)", color: "white" };
+                return (
+                  <button
+                    key={o.v}
+                    type="button"
+                    onClick={() => setPnlFilter(o.v)}
+                    className="px-2.5 py-1 text-[11.5px] font-medium transition-colors"
+                    style={active ? activeStyle : { background: "transparent", color: "var(--color-muted)" }}
+                    aria-pressed={active}
+                    title={o.v === "profit" ? "Show only positions in profit" : o.v === "loss" ? "Show only positions in loss" : "Show all positions"}
+                  >
+                    {o.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <div className="relative">
@@ -1978,10 +2016,16 @@ function HoldingsTable({
             </tr>
           </thead>
           <tbody>
-            {filtered.length === 0 && (
+            {pnlFiltered.length === 0 && (
               <tr>
                 <td colSpan={COLUMNS.length} className="px-4 py-6 text-center muted-text text-[13px]">
-                  No holdings match “{query}”.
+                  {q
+                    ? `No holdings match “${query}”.`
+                    : pnlFilter === "profit"
+                      ? "No positions currently in profit."
+                      : pnlFilter === "loss"
+                        ? "No positions currently in loss."
+                        : "No holdings."}
                 </td>
               </tr>
             )}
