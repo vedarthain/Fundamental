@@ -763,7 +763,6 @@ function ThinRow({
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
           <span className="font-medium text-[13px] tabular-nums truncate">{row.symbol}</span>
-          <PBadge held={row.held} traded={row.traded} size={14} />
         </div>
         <div className="text-[10px] muted-text truncate leading-tight">{row.company_name}</div>
         {row.added_at && (
@@ -815,7 +814,6 @@ function WatchRow({
         <Link href={`/stock/${row.symbol}`} className="min-w-0 block shrink-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-medium text-[14px] tabular-nums">{row.symbol}</span>
-            <PBadge held={row.held} traded={row.traded} />
             <span className="muted-text text-[12px] truncate">{row.company_name}</span>
           </div>
           <div className="text-[10.5px] muted-text mt-0.5 flex items-center gap-2 flex-wrap">
@@ -908,22 +906,24 @@ function WatchRow({
           color={deltaColor(sinceAdd)}
         />
         <Metric
-          label="From 52W H"
-          title={
+          label="52W High"
+          title="52-week high (split-adjusted) and how far LTP sits below it"
+          value={
             row.high_52w != null
-              ? `52-week high ₹${row.high_52w.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`
-              : undefined
+              ? `${fmtPrice(row.high_52w)}${row.from_high_pct != null ? ` (${fmtSignedPct(row.from_high_pct)})` : ""}`
+              : "—"
           }
-          value={fmtSignedPct(row.from_high_pct)}
+          color={deltaColor(row.from_high_pct)}
         />
         <Metric
-          label="From 52W L"
-          title={
+          label="52W Low"
+          title="52-week low (split-adjusted) and how far LTP sits above it"
+          value={
             row.low_52w != null
-              ? `52-week low ₹${row.low_52w.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`
-              : undefined
+              ? `${fmtPrice(row.low_52w)}${row.from_low_pct != null ? ` (${fmtSignedPct(row.from_low_pct)})` : ""}`
+              : "—"
           }
-          value={fmtSignedPct(row.from_low_pct)}
+          color={deltaColor(row.from_low_pct)}
         />
         <Metric
           label="Rel Vol"
