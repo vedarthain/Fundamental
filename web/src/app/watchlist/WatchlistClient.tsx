@@ -39,6 +39,12 @@ type Row = {
   ret_1w: number | null;
   ret_1m: number | null;
   ret_1y: number | null;
+  /** Longer-horizon returns (fractions), precomputed weekly in the panel cache. */
+  ret_6m: number | null;
+  ret_2y: number | null;
+  ret_5y: number | null;
+  ret_10y: number | null;
+  ret_all: number | null;
   /** Persistence fields — 4-snapshot trend. Null if <2 snapshots of
    *  history (recent listing, missing data). */
   raw_delta: number | null;
@@ -57,6 +63,12 @@ type Row = {
   low_52w: number | null;
   from_high_pct: number | null;
   from_low_pct: number | null;
+  /** Volume context (daily-fresh from golden). */
+  vol: number | null;
+  avg_vol_30d: number | null;
+  rel_vol: number | null;
+  turnover_cr: number | null;
+  delivery_pct: number | null;
   /** Sector-aware fundamentals for the peer-glance table. */
   glance: GlanceMetrics | null;
   /** Per-stock verdict — the metrics this stock most stands out on. */
@@ -733,6 +745,15 @@ function WatchRow({
     ltp != null && row.close_on_add != null && row.close_on_add !== 0
       ? Math.round((ltp / row.close_on_add - 1) * 1000) / 10
       : null;
+  // "Added" cell: the add-day close and its date rolled into one — "₹266 @ 18 Aug '26".
+  // Falls back to just the add date (or "—") when no captured close exists yet.
+  const addedDateIso = row.close_on_add_date ?? (row.added_at ? row.added_at.slice(0, 10) : null);
+  const addedValue =
+    row.close_on_add != null
+      ? `${fmtPrice(row.close_on_add)}${addedDateIso ? ` @ ${formatShortDate(addedDateIso)}` : ""}`
+      : addedDateIso
+        ? formatShortDate(addedDateIso)
+        : "—";
   return (
     <div className="px-4 md:px-5 py-3 hover:bg-[var(--color-paper)]/60 transition-colors">
       <div className="flex items-start gap-3">
@@ -747,6 +768,19 @@ function WatchRow({
           </div>
         </Link>
 
+        {/* LTP — bold, right after the name; green/red vs the previous close. */}
+        <div
+          className="shrink-0 text-[15px] font-bold tabular-nums leading-none pt-0.5"
+          style={{ color: deltaColor(row.ret_1d) }}
+          title={
+            row.ret_1d != null
+              ? `${fmtSignedPct(row.ret_1d)} vs previous close`
+              : "Latest daily close (split-adjusted)"
+          }
+        >
+          {fmtPrice(ltp)}
+        </div>
+
         {/* Scores + returns — sit right next to the name. */}
         <div className="flex-1 min-w-0 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[10.5px] tabular-nums pt-0.5">
           <ReturnPill label="Q" value={row.quality_pct}   pct />
@@ -756,7 +790,12 @@ function WatchRow({
           <ReturnPill label="1D" value={row.ret_1d == null ? null : row.ret_1d / 100} signed />
           <ReturnPill label="1W" value={row.ret_1w} signed />
           <ReturnPill label="1M" value={row.ret_1m} signed />
+          <ReturnPill label="6M" value={row.ret_6m} signed />
           <ReturnPill label="1Y" value={row.ret_1y} signed />
+          <ReturnPill label="2Y" value={row.ret_2y} signed />
+          <ReturnPill label="5Y" value={row.ret_5y} signed />
+          <ReturnPill label="10Y" value={row.ret_10y} signed />
+          <ReturnPill label="ALL" value={row.ret_all} signed />
         </div>
 
         {/* Composite score badge */}
@@ -790,20 +829,17 @@ function WatchRow({
 
       {/* Price context strip: what you added at, where it is now, and how far
           it sits from its 52-week extremes. */}
-      <div className="mt-2.5 grid grid-cols-3 sm:grid-cols-6 gap-x-3 gap-y-2 tabular-nums">
+      <div className="mt-2.5 grid grid-cols-3 sm:grid-cols-4 gap-x-3 gap-y-2 tabular-nums">
         <Metric
           label="Added"
-          title={row.added_at ? `Added ${formatSnapshotDate(row.added_at.slice(0, 10))}` : undefined}
-          value={row.added_at ? formatShortDate(row.added_at.slice(0, 10)) : "—"}
-        />
-        <Metric
-          label="Close @ add"
           title={
             row.close_on_add_date
-              ? `Closing price on ${formatSnapshotDate(row.close_on_add_date)} — your reference point`
-              : "Captured when you added the stock"
+              ? `Closed ₹${row.close_on_add?.toLocaleString("en-IN", { maximumFractionDigits: 2 })} on ${formatSnapshotDate(row.close_on_add_date)} — your reference point`
+              : row.added_at
+                ? `Added ${formatSnapshotDate(row.added_at.slice(0, 10))}`
+                : undefined
           }
-          value={fmtPrice(row.close_on_add)}
+          value={addedValue}
         />
         <Metric label="LTP" title="Latest daily close (split-adjusted)" value={fmtPrice(ltp)} />
         <Metric
@@ -833,6 +869,34 @@ function WatchRow({
               : undefined
           }
           value={fmtSignedPct(row.from_low_pct)}
+        />
+        <Metric
+          label="Rel Vol"
+          title={
+            row.avg_vol_30d != null
+              ? `Latest volume vs its ~30-day average (${fmtVol(row.vol)} vs ${fmtVol(Math.round(row.avg_vol_30d))}). >1 = busier than usual.`
+              : "Latest volume relative to its ~30-day average"
+          }
+          value={row.rel_vol != null ? `${row.rel_vol.toFixed(2)}×` : "—"}
+          color={
+            row.rel_vol == null
+              ? undefined
+              : row.rel_vol >= 2
+                ? "var(--color-delta-up)"
+                : row.rel_vol < 0.5
+                  ? "var(--color-delta-down)"
+                  : undefined
+          }
+        />
+        <Metric
+          label="Turnover"
+          title="Value traded on the latest session (volume × close), in ₹ crore"
+          value={row.turnover_cr != null ? `₹${row.turnover_cr.toLocaleString("en-IN", { maximumFractionDigits: 1 })} Cr` : "—"}
+        />
+        <Metric
+          label="Delivery"
+          title="Share of latest-session volume that settled as delivery (not intraday churn). Higher = more conviction. Not always available."
+          value={row.delivery_pct != null ? `${row.delivery_pct.toFixed(0)}%` : "—"}
         />
       </div>
 
@@ -1461,6 +1525,15 @@ function fmtPrice(v: number | null): string {
   return `₹${v.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 }
 
+/** Compact share count in Indian units — "1.2 Cr", "3.4 L", "5.6K". */
+function fmtVol(v: number | null): string {
+  if (v == null) return "—";
+  if (v >= 1e7) return `${(v / 1e7).toFixed(1)} Cr`;
+  if (v >= 1e5) return `${(v / 1e5).toFixed(1)} L`;
+  if (v >= 1e3) return `${(v / 1e3).toFixed(1)}K`;
+  return String(v);
+}
+
 /** Signed percent (+/−, 1 dp), "—" when null. */
 function fmtSignedPct(v: number | null): string {
   if (v == null) return "—";
@@ -1566,12 +1639,20 @@ function ReturnPill({
   if (signed) {
     const v = value * 100;
     const color = v >= 0 ? "var(--color-delta-up)" : "var(--color-delta-down)";
-    const sign = v >= 0 ? "+" : "";
-    const txt = Math.abs(v) >= 10 ? Math.round(v).toString() : v.toFixed(1);
+    // Multi-year multibaggers read as absurd percentages (+96,800%). Once a
+    // gain clears ~10x, switch to the "×" multiple convention (969×) — the way
+    // long-horizon returns are actually quoted.
+    let body: string;
+    if (value >= 9) {
+      body = `${Math.round(value + 1).toLocaleString("en-IN")}×`;
+    } else {
+      const sign = v >= 0 ? "+" : "";
+      body = `${sign}${Math.abs(v) >= 10 ? Math.round(v).toString() : v.toFixed(1)}%`;
+    }
     return (
       <span>
         <span className="muted-text">{label}: </span>
-        <span className="font-medium" style={{ color }}>{sign}{txt}%</span>
+        <span className="font-medium" style={{ color }}>{body}</span>
       </span>
     );
   }

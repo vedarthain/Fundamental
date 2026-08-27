@@ -967,7 +967,26 @@ def _refresh_cluster_cache(conn, snap: "_date") -> int:
 # number rather than render one bad vendor bar as a headline return. Caps are set
 # well above any real move over the window (India's daily circuit is ±20%), so a
 # genuine multi-bagger micro-cap still passes; only data errors get nulled.
-_RET_CAP = {"w1": 2.0, "m1": 3.0, "y1": 5.0}
+# Longer horizons need much looser caps: a real multi-bagger over 5-10 years (or
+# "since inception") is a legitimate +1000%..+10000% and must survive, while a
+# split-scale defect over the same window is the only thing we're trying to nuke.
+#
+# Over multi-year windows real Indian multibaggers dwarf these short-horizon
+# bounds — split-adjusted, BAJFINANCE is a genuine ~14,700x since 2002, TITAN
+# ~969x, RELIANCE ~359x. A cap tight enough to catch a 1Y defect would null
+# every one of those, defeating the purpose of the 5Y/10Y/ALL pills. So the
+# long caps are set only to reject the physically-absurd (negative-price
+# artifacts, million-x scale breaks), not to second-guess a real compounder.
+_RET_CAP = {
+    "w1": 2.0,
+    "m1": 3.0,
+    "m6": 4.0,
+    "y1": 5.0,
+    "y2": 10.0,
+    "y5": 40.0,
+    "y10": 150.0,
+    "all": 30000.0,
+}
 
 
 def _sane_ret(ret: "float | None", horizon: str) -> "float | None":
@@ -1201,7 +1220,28 @@ def _refresh_stocks_panel_cache(app_c, golden_c, snap: "_date") -> int:
                 (SELECT date FROM golden.price_history p
                   WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
                     AND p.date <= (SELECT d FROM latest_d) - INTERVAL '365 days'
-                  ORDER BY p.date DESC LIMIT 1) AS d_y1
+                  ORDER BY p.date DESC LIMIT 1) AS d_y1,
+                (SELECT COALESCE(adj_close, close)::float FROM golden.price_history p
+                  WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
+                    AND p.date <= (SELECT d FROM latest_d) - INTERVAL '182 days'
+                  ORDER BY p.date DESC LIMIT 1) AS p_m6,
+                (SELECT COALESCE(adj_close, close)::float FROM golden.price_history p
+                  WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
+                    AND p.date <= (SELECT d FROM latest_d) - INTERVAL '730 days'
+                  ORDER BY p.date DESC LIMIT 1) AS p_y2,
+                (SELECT COALESCE(adj_close, close)::float FROM golden.price_history p
+                  WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
+                    AND p.date <= (SELECT d FROM latest_d) - INTERVAL '1825 days'
+                  ORDER BY p.date DESC LIMIT 1) AS p_y5,
+                (SELECT COALESCE(adj_close, close)::float FROM golden.price_history p
+                  WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
+                    AND p.date <= (SELECT d FROM latest_d) - INTERVAL '3652 days'
+                  ORDER BY p.date DESC LIMIT 1) AS p_y10,
+                -- Earliest adjusted-close bar golden has for the symbol → the
+                -- "since inception (as far as we can see)" anchor for ret_all.
+                (SELECT COALESCE(adj_close, close)::float FROM golden.price_history p
+                  WHERE p.symbol = s.symbol AND p.interval = '1d' AND p.close IS NOT NULL
+                  ORDER BY p.date ASC LIMIT 1) AS p_all
             FROM syms s
         """, (sym_ns_list,))
         prices = {r["symbol"]: r for r in cur.fetchall()}
@@ -1232,6 +1272,11 @@ def _refresh_stocks_panel_cache(app_c, golden_c, snap: "_date") -> int:
             _ret(p_now, p["p_w1"], "w1") if p else None,
             _ret(p_now, p["p_m1"], "m1") if p else None,
             _ret(p_now, p["p_y1"], "y1") if p else None,
+            _ret(p_now, p["p_m6"], "m6") if p else None,
+            _ret(p_now, p["p_y2"], "y2") if p else None,
+            _ret(p_now, p["p_y5"], "y5") if p else None,
+            _ret(p_now, p["p_y10"], "y10") if p else None,
+            _ret(p_now, p["p_all"], "all") if p else None,
         ))
 
     # ── 4. DELETE this snapshot's old rows + bulk INSERT ─────────────────
@@ -1247,13 +1292,15 @@ def _refresh_stocks_panel_cache(app_c, golden_c, snap: "_date") -> int:
                 market_cap_cr, current_price,
                 composite_pct, quality_pct, valuation_pct, momentum_pct,
                 maturity_tier,
-                ret_1w, ret_1m, ret_1y
+                ret_1w, ret_1m, ret_1y,
+                ret_6m, ret_2y, ret_5y, ret_10y, ret_all
             ) VALUES (
                 %s, %s, %s, %s,
                 %s, %s,
                 %s, %s, %s, %s,
                 %s,
-                %s, %s, %s
+                %s, %s, %s,
+                %s, %s, %s, %s, %s
             )
             """,
             rows,

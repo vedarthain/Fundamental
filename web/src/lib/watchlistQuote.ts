@@ -25,6 +25,11 @@ export type Quote = {
   low_52w: number | null;
   from_high_pct: number | null; // signed %: (ltp/high - 1)*100, ≤0
   from_low_pct: number | null; // signed %: (ltp/low - 1)*100, ≥0
+  vol: number | null; // latest session volume (shares)
+  avg_vol_30d: number | null; // ~30 trading-day average volume
+  rel_vol: number | null; // latest / avg (1.0 = normal; 2.0 = 2× typical)
+  turnover_cr: number | null; // latest volume × close, in ₹ crore
+  delivery_pct: number | null; // most recent non-null delivery %, conviction proxy
 };
 
 function bare(sym: string): string {
@@ -109,7 +114,7 @@ export async function loadQuotes(symbols: string[]): Promise<Map<string, Quote>>
   const cands = [...bareSyms, ...bareSyms.map((s) => `${s}.NS`)];
 
   try {
-    const [last2, hilo] = await Promise.all([
+    const [last2, hilo, vols] = await Promise.all([
       golden<{ symbol: string; c: string; rn: string }[]>`
         SELECT symbol, c, rn FROM (
           SELECT symbol, COALESCE(adj_close, close)::text AS c,
@@ -130,6 +135,29 @@ export async function loadQuotes(symbols: string[]): Promise<Map<string, Quote>>
           AND date >= CURRENT_DATE - 365
         GROUP BY symbol
       `,
+      // Volume context: latest session volume + turnover-basis close, the
+      // ~30-trading-day average volume (≈45 calendar days), and the most
+      // recent non-null delivery %. delivery_pct is only ~40% populated in
+      // golden, so we FILTER to the latest day that actually has it.
+      golden<{
+        symbol: string;
+        vol: string | null;
+        close: string | null;
+        avgvol: string | null;
+        delpct: string | null;
+      }[]>`
+        SELECT symbol,
+               (array_agg(volume ORDER BY date DESC))[1]::text AS vol,
+               (array_agg(close  ORDER BY date DESC))[1]::text AS close,
+               AVG(volume)::text AS avgvol,
+               (array_agg(delivery_pct ORDER BY date DESC)
+                  FILTER (WHERE delivery_pct IS NOT NULL))[1]::text AS delpct
+        FROM golden.price_history
+        WHERE interval = '1d' AND volume IS NOT NULL
+          AND symbol = ANY(${cands})
+          AND date >= CURRENT_DATE - 45
+        GROUP BY symbol
+      `,
     ]);
 
     const last = new Map<string, number>();
@@ -145,6 +173,17 @@ export async function loadQuotes(symbols: string[]): Promise<Map<string, Quote>>
       hi.set(bare(r.symbol), Number(r.hi));
       lo.set(bare(r.symbol), Number(r.lo));
     }
+    const vol = new Map<string, number>();
+    const rawClose = new Map<string, number>();
+    const avgVol = new Map<string, number>();
+    const delPct = new Map<string, number>();
+    for (const r of vols) {
+      const k = bare(r.symbol);
+      if (r.vol != null) vol.set(k, Number(r.vol));
+      if (r.close != null) rawClose.set(k, Number(r.close));
+      if (r.avgvol != null) avgVol.set(k, Number(r.avgvol));
+      if (r.delpct != null) delPct.set(k, Number(r.delpct));
+    }
 
     for (const s of bareSyms) {
       const ltp = last.get(s) ?? null;
@@ -154,6 +193,13 @@ export async function loadQuotes(symbols: string[]): Promise<Map<string, Quote>>
       const ret1d = ltp != null && pc != null && pc !== 0 ? Math.round((ltp / pc - 1) * 1000) / 10 : null;
       const fromHigh = ltp != null && h != null && h !== 0 ? Math.round((ltp / h - 1) * 1000) / 10 : null;
       const fromLow = ltp != null && l != null && l !== 0 ? Math.round((ltp / l - 1) * 1000) / 10 : null;
+      const v = vol.get(s) ?? null;
+      const av = avgVol.get(s) ?? null;
+      const rc = rawClose.get(s) ?? null;
+      const relVol = v != null && av != null && av !== 0 ? Math.round((v / av) * 100) / 100 : null;
+      // Turnover uses the raw (unadjusted) close × actual shares traded — the
+      // real ₹ that changed hands. 1 crore = 1e7.
+      const turnoverCr = v != null && rc != null ? Math.round((v * rc) / 1e7 * 10) / 10 : null;
       out.set(s, {
         ltp,
         prev_close: pc,
@@ -162,6 +208,11 @@ export async function loadQuotes(symbols: string[]): Promise<Map<string, Quote>>
         low_52w: l,
         from_high_pct: fromHigh,
         from_low_pct: fromLow,
+        vol: v,
+        avg_vol_30d: av,
+        rel_vol: relVol,
+        turnover_cr: turnoverCr,
+        delivery_pct: delPct.get(s) ?? null,
       });
     }
   } catch {

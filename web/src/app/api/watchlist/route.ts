@@ -49,6 +49,13 @@ type WatchRow = {
   ret_1w: number | null;
   ret_1m: number | null;
   ret_1y: number | null;
+  /** Longer-horizon price returns (fractions), precomputed weekly in the panel
+   *  cache. NULL when a young listing has no history at that horizon. */
+  ret_6m: number | null;
+  ret_2y: number | null;
+  ret_5y: number | null;
+  ret_10y: number | null;
+  ret_all: number | null;
   /** Multi-snapshot persistence — 4-week composite_pct trend.  All
    *  three fields null if the symbol has <2 snapshots of history. */
   raw_delta: number | null;
@@ -67,6 +74,12 @@ type WatchRow = {
   low_52w: number | null;
   from_high_pct: number | null;
   from_low_pct: number | null;
+  /** Volume context from golden (daily-fresh). */
+  vol: number | null;
+  avg_vol_30d: number | null;
+  rel_vol: number | null;
+  turnover_cr: number | null;
+  delivery_pct: number | null;
   /** Sector-aware fundamentals for the peer-glance table (null if no data). */
   glance: GlanceMetrics | null;
   /** Per-stock verdict — the metrics THIS stock most stands out on, derived
@@ -119,7 +132,12 @@ async function loadRows(symbols: string[]): Promise<WatchRow[]> {
       c.momentum_pct::float   AS momentum_pct,
       c.ret_1w::float         AS ret_1w,
       c.ret_1m::float         AS ret_1m,
-      c.ret_1y::float         AS ret_1y
+      c.ret_1y::float         AS ret_1y,
+      c.ret_6m::float         AS ret_6m,
+      c.ret_2y::float         AS ret_2y,
+      c.ret_5y::float         AS ret_5y,
+      c.ret_10y::float        AS ret_10y,
+      c.ret_all::float        AS ret_all
     FROM app.cluster_stocks_panel_cache c
     JOIN app.cluster cl ON cl.id = c.cluster_id
     JOIN app.meta_cluster mc ON mc.id = cl.meta_cluster_id
@@ -384,6 +402,11 @@ export async function GET(req: NextRequest) {
     row.low_52w       = q?.low_52w       ?? null;
     row.from_high_pct = q?.from_high_pct ?? null;
     row.from_low_pct  = q?.from_low_pct  ?? null;
+    row.vol           = q?.vol           ?? null;
+    row.avg_vol_30d   = q?.avg_vol_30d   ?? null;
+    row.rel_vol       = q?.rel_vol       ?? null;
+    row.turnover_cr   = q?.turnover_cr   ?? null;
+    row.delivery_pct  = q?.delivery_pct  ?? null;
 
     const m = meta.get(row.symbol);
     row.added_at          = m?.added_at          ?? null;
