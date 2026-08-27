@@ -1702,7 +1702,7 @@ type SortKey =
 type SortDir = "asc" | "desc";
 
 const COLUMNS: {
-  key: SortKey; label: string; align: "left" | "center" | "right";
+  key: SortKey; label: React.ReactNode; align: "left" | "center" | "right";
   cls: string; numeric: boolean; title?: string;
 }[] = [
   { key: "symbol", label: "Instrument", align: "left", cls: "px-3", numeric: false },
@@ -1714,8 +1714,11 @@ const COLUMNS: {
   { key: "value", label: "Value", align: "right", cls: "px-2", numeric: true },
   { key: "pnl", label: "P&L", align: "right", cls: "px-2", numeric: true, title: "Unrealised profit / loss (₹)" },
   { key: "pnlPct", label: "Return", align: "right", cls: "px-2", numeric: true, title: "Unrealised return (%) on cost" },
-  { key: "fallTop", label: "Fall from top", align: "right", cls: "px-2", numeric: true, title: "Fall from top — % below the highest daily close since this position was first tracked (0 at a fresh high). Split-adjusted." },
-  { key: "riseBottom", label: "Rise from bottom", align: "right", cls: "px-2", numeric: true, title: "Rise from bottom — % above the lowest daily close since first tracked (0 at a fresh low). Split-adjusted." },
+  // Two-line headers: spelled out, but stacked so the column stays narrow.
+  // A single "FALL FROM TOP" line (whitespace-nowrap) blew the table past its
+  // container and pushed Held/Wt off the right edge.
+  { key: "fallTop", label: (<span className="flex flex-col items-end leading-[1.1]"><span>Fall from</span><span>top</span></span>), align: "right", cls: "px-2", numeric: true, title: "Fall from top — % below the highest daily close since this position was first tracked (0 at a fresh high). Split-adjusted." },
+  { key: "riseBottom", label: (<span className="flex flex-col items-end leading-[1.1]"><span>Rise from</span><span>bottom</span></span>), align: "right", cls: "px-2", numeric: true, title: "Rise from bottom — % above the lowest daily close since first tracked (0 at a fresh low). Split-adjusted." },
   { key: "qvm", label: "Q/V/M", align: "center", cls: "px-2", numeric: true },
   { key: "comp", label: "Comp", align: "center", cls: "px-2", numeric: true, title: "Composite percentile (Q/V/M roll-up) — higher is better" },
   { key: "rank", label: "Rank", align: "center", cls: "px-2", numeric: true },
