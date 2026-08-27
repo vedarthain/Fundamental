@@ -39,10 +39,10 @@ ROOT = Path(__file__).resolve().parent.parent
 # Make the ETL package importable when running this script standalone.
 sys.path.insert(0, str(ROOT / "etl" / "src"))
 
-from fundamental_etl.dq import run_assertions, summarize  # noqa: E402
+from fundamental_etl.dq import run_assertions, run_golden_assertions, summarize  # noqa: E402
 
 
-def env_url(name: str) -> str:
+def env_url(name: str, required: bool = True) -> str | None:
     v = os.environ.get(name)
     if v:
         return v
@@ -51,6 +51,8 @@ def env_url(name: str) -> str:
         for line in env_path.read_text().splitlines():
             if line.startswith(name + "="):
                 return line.split("=", 1)[1].strip().strip('"').strip("'")
+    if not required:
+        return None
     raise SystemExit(
         f"✗ {name} not set — pass as env var or add to .env.local"
     )
@@ -68,6 +70,22 @@ def main() -> int:
     except psycopg.OperationalError as e:
         print(f"✗ FATAL: could not connect — {e}", file=sys.stderr)
         return 2
+
+    # Golden EOD price-feed checks (freshness/coverage/sentinels) — the "bhav
+    # copy imported but 0 stocks updated" guard. golden is a separate DB; run
+    # them when GOLDEN_DB_URL is available. If it isn't, warn loudly rather than
+    # silently skipping — a missing freshness check is itself a gap worth seeing.
+    golden_url = env_url("GOLDEN_DB_URL", required=False)
+    if golden_url:
+        try:
+            with psycopg.connect(golden_url) as gconn:
+                results = results + run_golden_assertions(gconn)
+        except psycopg.OperationalError as e:
+            print(f"✗ FATAL: could not connect to golden — {e}", file=sys.stderr)
+            return 2
+    else:
+        print("⚠ GOLDEN_DB_URL not set — SKIPPING golden price-feed freshness checks")
+        print()
 
     for r in results:
         print(r.short())

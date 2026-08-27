@@ -224,6 +224,106 @@ def _run_max_count(conn, name, sql, maximum) -> AssertionResult:
     )
 
 
+# ── Golden price-feed assertions ─────────────────────────────────────────────
+#
+# golden.price_history is the read-only upstream EOD mirror — it is NOT written
+# by this repo (the bhav-copy import lives upstream). The failure mode this
+# guards against: the bhav import "passes" (exit 0) but zero stocks actually
+# updated — an empty/short file parsed to 0 rows, a rolled-back transaction, an
+# ON CONFLICT DO NOTHING re-run that touched nothing, or a wrong-date write.
+# Every one of those leaves MAX(date) stuck, and every app.* check above would
+# sail straight past it.
+#
+# All three checks measure STATE, never rows-affected — an upsert-do-nothing
+# re-run reports "success, 0 rows touched", indistinguishable from a real
+# no-op unless you look at what's actually present:
+#   1. freshness — the newest 1d bar is within N calendar days of today.
+#                  Catches every silent no-op (max-date can't advance).
+#   2. coverage  — the whole liquid universe landed on that newest bar, not a
+#                  truncated slice.
+#   3. sentinels — a handful of always-liquid large caps carry a real (>0)
+#                  close, catching "rows present but null/zero prices".
+#
+# Requires a golden_db connection (a separate DB from app), so these live in a
+# dedicated runner rather than the app-only run_assertions above.
+
+_GOLDEN_FRESHNESS_MAX_DAYS = 4   # tolerates a long weekend / a single holiday
+_GOLDEN_COVERAGE_MIN = 1500      # ~1900 liquid NSE symbols on a normal session
+_GOLDEN_SENTINELS = (
+    "RELIANCE.NS", "HDFCBANK.NS", "TCS.NS", "INFY.NS", "ICICIBANK.NS",
+)
+
+
+def run_golden_assertions(golden: psycopg.Connection) -> list[AssertionResult]:
+    """Freshness / coverage / sanity checks on the golden EOD price feed.
+
+    Requires a golden_db connection. Never raises on empty data — an empty or
+    stuck feed simply FAILS the checks loudly (which is the whole point).
+    """
+    out: list[AssertionResult] = []
+    with golden.cursor(row_factory=dict_row) as cur:
+        # 1. Feed freshness — calendar days behind today. count_max: fail if the
+        #    newest bar is more than the ceiling of days old. A stuck feed (the
+        #    "0 stocks updated" no-op, repeated across sessions) trips this.
+        cur.execute(
+            """
+            SELECT COALESCE(CURRENT_DATE - MAX(date), 99999)::int AS n
+              FROM golden.price_history WHERE interval = '1d'
+            """
+        )
+        days_behind = (cur.fetchone() or {}).get("n") or 99999
+        out.append(AssertionResult(
+            name="golden.price_feed_days_behind",
+            passed=(days_behind <= _GOLDEN_FRESHNESS_MAX_DAYS),
+            actual_pct=float(days_behind),
+            threshold_pct=float(_GOLDEN_FRESHNESS_MAX_DAYS),
+            populated=days_behind, total=days_behind, shape="count_max",
+        ))
+
+        # 2. Coverage — distinct symbols on the newest bar. count: fail below a
+        #    floor. Catches a partial import (file truncated, only N symbols).
+        cur.execute(
+            """
+            SELECT COUNT(DISTINCT symbol)::int AS n
+              FROM golden.price_history
+             WHERE interval = '1d'
+               AND date = (SELECT MAX(date) FROM golden.price_history WHERE interval = '1d')
+            """
+        )
+        cov = (cur.fetchone() or {}).get("n") or 0
+        out.append(AssertionResult(
+            name="golden.latest_bar_symbol_coverage",
+            passed=(cov >= _GOLDEN_COVERAGE_MIN),
+            actual_pct=float(cov),
+            threshold_pct=float(_GOLDEN_COVERAGE_MIN),
+            populated=cov, total=cov, shape="count",
+        ))
+
+        # 3. Sentinels — always-liquid large caps with a real (>0) close on the
+        #    newest bar. Catches "rows landed but prices are null/zero" (garbage
+        #    file), which the count checks above would happily pass.
+        cur.execute(
+            """
+            SELECT COUNT(DISTINCT symbol)::int AS n
+              FROM golden.price_history
+             WHERE interval = '1d'
+               AND date = (SELECT MAX(date) FROM golden.price_history WHERE interval = '1d')
+               AND COALESCE(adj_close, close) > 0
+               AND symbol = ANY(%s)
+            """,
+            (list(_GOLDEN_SENTINELS),),
+        )
+        hits = (cur.fetchone() or {}).get("n") or 0
+        out.append(AssertionResult(
+            name="golden.sentinel_largecaps_priced",
+            passed=(hits >= len(_GOLDEN_SENTINELS)),
+            actual_pct=float(hits),
+            threshold_pct=float(len(_GOLDEN_SENTINELS)),
+            populated=hits, total=hits, shape="count",
+        ))
+    return out
+
+
 def run_assertions(conn: psycopg.Connection) -> list[AssertionResult]:
     """Run all DQ assertions against the given app DB connection.
 

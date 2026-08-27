@@ -1319,6 +1319,46 @@ def score_cmd(snapshot: str = typer.Option(None, help="YYYY-MM-DD; defaults to t
     configure_logging()
     snap = _date.fromisoformat(snapshot) if snapshot else _date.today()
     log.info("score_start", snapshot=snap.isoformat())
+
+    # Freshness gate — refuse to score off a stale price feed. A bhav-copy
+    # import that silently no-op'd leaves golden's newest bar stuck; scoring
+    # would then compute momentum/returns off stale closes and publish them as
+    # fresh. Abort HERE, before app.scores is touched, so we never overwrite
+    # good scores with stale-data ones. Only enforced for a live "today" run —
+    # an explicit historical --snapshot is a backfill where "days behind today"
+    # is meaningless and must not be blocked. A golden CONNECTION error is not
+    # the stale-data case this guards; it degrades to a warning (the downstream
+    # returns refresh already handles golden being unavailable gracefully).
+    if snapshot is None or snap == _date.today():
+        from .dq import run_golden_assertions
+        try:
+            with golden_conn() as gc:
+                gresults = run_golden_assertions(gc)
+        except Exception as e:
+            log.warning("score_golden_freshness_check_errored", error=str(e)[:200])
+            gresults = []
+        stale = next(
+            (r for r in gresults
+             if r.name == "golden.price_feed_days_behind" and not r.passed),
+            None,
+        )
+        if stale is not None:
+            log.error(
+                "score_aborted_stale_price_feed",
+                days_behind=int(stale.actual_pct),
+                max_allowed=int(stale.threshold_pct),
+            )
+            raise typer.Exit(code=1)
+        # Coverage / sentinel failures are logged but don't abort — they flag a
+        # partial or garbage import (a data-quality signal), not the poisoning
+        # stale-feed case the abort exists for.
+        for r in gresults:
+            if not r.passed:
+                log.warning(
+                    "dq_check_failed", name=r.name, actual=r.actual_pct,
+                    threshold=r.threshold_pct, populated=r.populated, total=r.total,
+                )
+
     with app_conn() as conn:
         counts = score_snapshot(conn, snap)
         conn.commit()
@@ -1363,8 +1403,17 @@ def score_cmd(snapshot: str = typer.Option(None, help="YYYY-MM-DD; defaults to t
         # column across 19,873 rows).  Each failure is logged as a warning
         # so the operator notices on the next score run.  Doesn't block.
         try:
-            from .dq import run_assertions, summarize
+            from .dq import run_assertions, run_golden_assertions, summarize
             results = run_assertions(conn)
+            # Golden EOD price-feed freshness/coverage — catches the "bhav copy
+            # imported but 0 stocks updated" silent no-op that every app.* check
+            # above would miss. Best-effort: a golden hiccup here is its own
+            # warning, not a reason to drop the app-side results.
+            try:
+                with golden_conn() as gc:
+                    results = results + run_golden_assertions(gc)
+            except Exception as e:
+                log.warning("dq_golden_checks_errored", error=str(e)[:200])
             passed, failed = summarize(results)
             for r in results:
                 if not r.passed:
