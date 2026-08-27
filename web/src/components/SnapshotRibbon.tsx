@@ -32,31 +32,40 @@ type SnapshotStats = {
 
 async function fetchSnapshot(): Promise<SnapshotStats> {
   // Minimal ribbon query — snapshot date, total stocks, total clusters.
-  const appRows = await sql<
-    { latest: Date | null; coverage: string; clusters: string }[]
-  >`
-    WITH latest AS (SELECT MAX(snapshot_date) AS d FROM app.scores)
-    SELECT
-      (SELECT d FROM latest) AS latest,
-      -- "Coverage" = how many NSE stocks we track = the active universe
-      -- (matches the home hero + screener breadcrumb). Counting scores at the
-      -- latest snapshot instead drifts a few low (e.g. 2,157 vs 2,163) when a
-      -- handful of active names miss a weekly score.
-      (SELECT COUNT(*) FROM app.universe WHERE is_active) AS coverage,
-      -- Populated peer groups at the latest snapshot (same definition the
-      -- /sectors page uses → consistent "46"). A raw COUNT(*) on app.cluster
-      -- over-counts: it includes 2 deprecated clusters + the empty
-      -- "unclassified" bucket that no stock is in.
-      (SELECT COUNT(*) FROM app.cluster_composite_cache
-        WHERE snapshot_date = (SELECT d FROM latest)) AS clusters
-  `;
+  // Wrapped so a DB hiccup degrades to an empty ribbon ("—") instead of
+  // throwing: this component is baked into the root layout, so an unhandled
+  // error here 500s *every* page. Same defensive posture as sitemap.ts.
+  try {
+    const appRows = await sql<
+      { latest: Date | null; coverage: string; clusters: string }[]
+    >`
+      WITH latest AS (SELECT MAX(snapshot_date) AS d FROM app.scores)
+      SELECT
+        (SELECT d FROM latest) AS latest,
+        -- "Coverage" = how many NSE stocks we track = the active universe
+        -- (matches the home hero + screener breadcrumb). Counting scores at the
+        -- latest snapshot instead drifts a few low (e.g. 2,157 vs 2,163) when a
+        -- handful of active names miss a weekly score.
+        (SELECT COUNT(*) FROM app.universe WHERE is_active) AS coverage,
+        -- Populated peer groups at the latest snapshot (same definition the
+        -- /sectors page uses → consistent "46"). A raw COUNT(*) on app.cluster
+        -- over-counts: it includes 2 deprecated clusters + the empty
+        -- "unclassified" bucket that no stock is in.
+        (SELECT COUNT(*) FROM app.cluster_composite_cache
+          WHERE snapshot_date = (SELECT d FROM latest)) AS clusters
+    `;
 
-  const r = appRows[0];
-  return {
-    latest: r.latest,
-    coverage: Number(r.coverage),
-    clusters: Number(r.clusters),
-  };
+    const r = appRows[0];
+    return {
+      latest: r?.latest ?? null,
+      coverage: Number(r?.coverage ?? 0),
+      clusters: Number(r?.clusters ?? 0),
+    };
+  } catch {
+    // DB unreachable at render time — show a neutral ribbon rather than
+    // taking the whole page down.
+    return { latest: null, coverage: 0, clusters: 0 };
+  }
 }
 
 // Cache for an hour — snapshot data only changes weekly, but an hour TTL
