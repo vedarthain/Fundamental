@@ -81,6 +81,10 @@ type WatchRow = {
   rel_vol: number | null;
   turnover_cr: number | null;
   delivery_pct: number | null;
+  /** LTP's trading date + whether it trails the feed's newest bar (per-symbol
+   *  staleness — a laggard from a delisting/merger/late backfill). */
+  ltp_date: string | null;
+  stale: boolean;
   /** Portfolio ownership — mirrors the scanner graph's tri-state "P" badge.
    *  held = currently in the portfolio; traded = ever bought (held or exited). */
   held: boolean;
@@ -436,6 +440,8 @@ export async function GET(req: NextRequest) {
     row.rel_vol       = q?.rel_vol       ?? null;
     row.turnover_cr   = q?.turnover_cr   ?? null;
     row.delivery_pct  = q?.delivery_pct  ?? null;
+    row.ltp_date      = q?.ltp_date      ?? null;
+    row.stale         = q?.stale         ?? false;
     row.held          = heldSet.has(row.symbol);
     row.traded        = row.held || tradedSet.has(row.symbol);
     const posn        = positions[row.symbol];

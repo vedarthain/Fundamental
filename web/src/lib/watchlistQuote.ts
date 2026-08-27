@@ -30,6 +30,8 @@ export type Quote = {
   rel_vol: number | null; // latest / avg (1.0 = normal; 2.0 = 2× typical)
   turnover_cr: number | null; // latest volume × close, in ₹ crore
   delivery_pct: number | null; // most recent non-null delivery %, conviction proxy
+  ltp_date: string | null; // trading date of the bar that produced LTP
+  stale: boolean; // true when this symbol's latest bar trails the feed's newest
 };
 
 function bare(sym: string): string {
@@ -114,10 +116,10 @@ export async function loadQuotes(symbols: string[]): Promise<Map<string, Quote>>
   const cands = [...bareSyms, ...bareSyms.map((s) => `${s}.NS`)];
 
   try {
-    const [last2, hilo, vols] = await Promise.all([
-      golden<{ symbol: string; c: string; rn: string }[]>`
-        SELECT symbol, c, rn FROM (
-          SELECT symbol, COALESCE(adj_close, close)::text AS c,
+    const [last2, hilo, vols, feed] = await Promise.all([
+      golden<{ symbol: string; c: string; d: string; rn: string }[]>`
+        SELECT symbol, c, d, rn FROM (
+          SELECT symbol, COALESCE(adj_close, close)::text AS c, date::text AS d,
                  row_number() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
           FROM golden.price_history
           WHERE interval = '1d' AND COALESCE(adj_close, close) IS NOT NULL
@@ -155,7 +157,17 @@ export async function loadQuotes(symbols: string[]): Promise<Map<string, Quote>>
           AND date >= CURRENT_DATE - 45
         GROUP BY symbol
       `,
+      // Feed watermark: the newest 1d bar golden holds across the WHOLE
+      // universe (not just the watched symbols). This is the yardstick for
+      // per-symbol staleness — a watched name whose latest bar trails this is
+      // lagging the herd (delisting, merger, late backfill). Global MAX so the
+      // yardstick can't drift old just because the watchlist is all laggards.
+      golden<{ d: string | null }[]>`
+        SELECT MAX(date)::text AS d
+        FROM golden.price_history WHERE interval = '1d'
+      `,
     ]);
+    const feedDate = feed[0]?.d ?? null;
 
     // Delivery % lives in a separate, isolated query: delivery_qty/delivery_pct
     // are a newer golden addition and may be absent on some deployments. Its own
@@ -180,10 +192,13 @@ export async function loadQuotes(symbols: string[]): Promise<Map<string, Quote>>
 
     const last = new Map<string, number>();
     const prev = new Map<string, number>();
+    const lastDate = new Map<string, string>();
     for (const r of last2) {
       const k = bare(r.symbol);
-      if (Number(r.rn) === 1) last.set(k, Number(r.c));
-      else prev.set(k, Number(r.c));
+      if (Number(r.rn) === 1) {
+        last.set(k, Number(r.c));
+        lastDate.set(k, r.d);
+      } else prev.set(k, Number(r.c));
     }
     const hi = new Map<string, number>();
     const lo = new Map<string, number>();
@@ -216,6 +231,10 @@ export async function loadQuotes(symbols: string[]): Promise<Map<string, Quote>>
       // Turnover uses the raw (unadjusted) close × actual shares traded — the
       // real ₹ that changed hands. 1 crore = 1e7.
       const turnoverCr = v != null && rc != null ? Math.round((v * rc) / 1e7 * 10) / 10 : null;
+      const ltpDate = lastDate.get(s) ?? null;
+      // Stale iff this symbol's newest bar predates the feed's newest. String
+      // compare is safe on ISO YYYY-MM-DD dates.
+      const stale = ltpDate != null && feedDate != null && ltpDate < feedDate;
       out.set(s, {
         ltp,
         prev_close: pc,
@@ -229,6 +248,8 @@ export async function loadQuotes(symbols: string[]): Promise<Map<string, Quote>>
         rel_vol: relVol,
         turnover_cr: turnoverCr,
         delivery_pct: delPct.get(s) ?? null,
+        ltp_date: ltpDate,
+        stale,
       });
     }
   } catch {

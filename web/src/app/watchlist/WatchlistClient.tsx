@@ -69,6 +69,9 @@ type Row = {
   rel_vol: number | null;
   turnover_cr: number | null;
   delivery_pct: number | null;
+  /** LTP's trading date + staleness vs the feed's newest bar. */
+  ltp_date?: string | null;
+  stale?: boolean;
   /** Portfolio ownership — drives the "P" badge (purple=held, grey=exited). */
   held?: boolean;
   traded?: boolean;
@@ -728,6 +731,21 @@ function PBadge({ held, traded, size = 16 }: { held?: boolean; traded?: boolean;
   );
 }
 
+/** Amber "stale" chip — shown only when a symbol's latest golden bar trails the
+ *  feed's newest. The as-of date lives in the tooltip so healthy rows stay
+ *  clutter-free (no per-row date text). */
+function StaleChip({ date }: { date: string }) {
+  return (
+    <span
+      className="inline-flex items-center rounded px-1 py-px text-[8.5px] font-semibold uppercase tracking-wide leading-none shrink-0"
+      style={{ color: "#92400e", backgroundColor: "#fef3c7" }}
+      title={`Stale — latest bar is ${formatShortDate(date)}, behind the rest of the feed`}
+    >
+      Stale
+    </span>
+  );
+}
+
 /** Compact left-rail row: symbol · LTP · since-add %. One click opens the
  *  full detail on the right. Kept deliberately dense so 100+ names stay
  *  scannable. */
@@ -822,17 +840,22 @@ function WatchRow({
           </div>
         </Link>
 
-        {/* LTP — bold, right after the name; green/red vs the previous close. */}
-        <div
-          className="shrink-0 text-[15px] font-bold tabular-nums leading-none pt-0.5"
-          style={{ color: deltaColor(row.ret_1d) }}
-          title={
-            row.ret_1d != null
-              ? `${fmtSignedPct(row.ret_1d)} vs previous close`
-              : "Latest daily close (split-adjusted)"
-          }
-        >
-          {fmtPrice(ltp)}
+        {/* LTP — bold, right after the name; green/red vs the previous close.
+            A "stale" chip appears only when this symbol's latest bar trails the
+            feed's newest (a laggard — delisting/merger/late backfill). */}
+        <div className="shrink-0 flex items-center gap-1.5 pt-0.5">
+          <span
+            className="text-[15px] font-bold tabular-nums leading-none"
+            style={{ color: deltaColor(row.ret_1d) }}
+            title={
+              row.ret_1d != null
+                ? `${fmtSignedPct(row.ret_1d)} vs previous close`
+                : "Latest daily close (split-adjusted)"
+            }
+          >
+            {fmtPrice(ltp)}
+          </span>
+          {row.stale && row.ltp_date ? <StaleChip date={row.ltp_date} /> : null}
         </div>
 
         {/* Scores + returns — sit right next to the name. */}
