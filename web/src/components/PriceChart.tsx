@@ -1,10 +1,64 @@
 "use client";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { CandleChart, type AlertLine } from "@/app/tools/scanner/CandleChart";
+import { CandleChart, type AlertLine, type ChartTool, type Drawing } from "@/app/tools/scanner/CandleChart";
 import type { Candle } from "@/lib/candles";
 import { WEEKLY_THRESHOLD_DAYS } from "@/lib/candleConfig";
 import { PCT_CAP, type RetWindow } from "@/lib/returnGuards";
+
+// localStorage key for persisted chart drawings — SHARED with the scanner's
+// Graph tab (GraphClient.tsx) so an hline/trend drawn there shows here too, and
+// vice-versa. Shape: Record<symbol, Drawing[]>.
+const DRAW_KEY = "er:chartDrawings:v1";
+
+// Toolbar glyphs — copied from the scanner Graph toolbar so the expanded chart
+// reads identically. Kept local to avoid importing from an app-route module.
+function RulerIcon({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M2 12l10-10 10 10-10 10z" />
+      <path d="M8 6l2 2M6 8l2 2M11 9l2 2M9 11l2 2M14 12l2 2M12 14l2 2" />
+    </svg>
+  );
+}
+function HLineIcon({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 12h18" />
+      <circle cx="7" cy="12" r="1.6" fill="currentColor" stroke="none" />
+      <circle cx="17" cy="12" r="1.6" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+function TrendIcon({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M4 19L20 5" />
+      <circle cx="4" cy="19" r="1.8" fill="currentColor" stroke="none" />
+      <circle cx="20" cy="5" r="1.8" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+function EraseIcon({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M4 20h16" />
+      <path d="M13.5 6.5l4 4L9 19H5l-1-4z" />
+    </svg>
+  );
+}
+function ExpandIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+    </svg>
+  );
+}
 
 /** One user price-alert line on the chart. Mirrors PriceAlert in
  *  lib/price-alerts (kept local so this client bundle never imports the
@@ -153,8 +207,64 @@ export function PriceChart({
   const [alertBusy, setAlertBusy] = useState(false);
   const [alertErr, setAlertErr] = useState<string | null>(null);
 
-  async function addAlert() {
-    const price = Number(alertInput);
+  // Expanded (fullscreen) view + drawing toolbar state — mirrors the scanner
+  // Graph tab. `tool` is the armed drawing/measure/alert tool; drawings persist
+  // to the shared localStorage map keyed by symbol.
+  const [expanded, setExpanded] = useState(false);
+  const [tool, setTool] = useState<ChartTool>("none");
+  const [drawings, setDrawings] = useState<Drawing[]>([]);
+
+  // Load this symbol's drawings from the shared map on mount / symbol change.
+  useEffect(() => {
+    if (!symbol) return;
+    try {
+      const raw = localStorage.getItem(DRAW_KEY);
+      const map = raw ? (JSON.parse(raw) as Record<string, Drawing[]>) : {};
+      setDrawings(map[symbol] ?? []);
+    } catch {
+      /* ignore corrupt/unavailable storage */
+    }
+  }, [symbol]);
+
+  // Persist a new drawings array back into the shared map (read-modify-write so
+  // other symbols' drawings are preserved).
+  const persistDrawings = useCallback(
+    (next: Drawing[]) => {
+      setDrawings(next);
+      if (!symbol) return;
+      try {
+        const raw = localStorage.getItem(DRAW_KEY);
+        const map = raw ? (JSON.parse(raw) as Record<string, Drawing[]>) : {};
+        if (next.length) map[symbol] = next;
+        else delete map[symbol];
+        localStorage.setItem(DRAW_KEY, JSON.stringify(map));
+      } catch {
+        /* ignore quota/unavailable storage */
+      }
+    },
+    [symbol],
+  );
+
+  const addDrawing = useCallback((d: Drawing) => persistDrawings([...drawings, d]), [drawings, persistDrawings]);
+  const deleteDrawing = useCallback((i: number) => persistDrawings(drawings.filter((_, k) => k !== i)), [drawings, persistDrawings]);
+  const clearDrawings = useCallback(() => persistDrawings([]), [persistDrawings]);
+
+  // Close the expanded overlay on Escape.
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setExpanded(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [expanded]);
+
+  // Reset the armed tool whenever the overlay closes.
+  useEffect(() => {
+    if (!expanded) setTool("none");
+  }, [expanded]);
+
+  async function createAlertAtPrice(price: number) {
     if (!Number.isFinite(price) || price <= 0) {
       setAlertErr("Enter a price above 0.");
       return;
@@ -178,6 +288,10 @@ export function PriceChart({
     } finally {
       setAlertBusy(false);
     }
+  }
+
+  async function addAlert() {
+    await createAlertAtPrice(Number(alertInput));
   }
 
   async function removeAlert(id: number) {
@@ -277,17 +391,29 @@ export function PriceChart({
             <span className="muted-text">{subLabel}</span>
           </div>
         </div>
-        {changePct != null && (
-          <div className="text-right shrink-0">
-            <div
-              className="font-display text-[20px] tabular-nums leading-none"
-              style={{ color: changePct >= 0 ? "var(--color-score-good)" : "var(--color-score-poor)" }}
-            >
-              {fmtPct(changePct)}
+        <div className="flex items-start gap-3 shrink-0">
+          {changePct != null && (
+            <div className="text-right">
+              <div
+                className="font-display text-[20px] tabular-nums leading-none"
+                style={{ color: changePct >= 0 ? "var(--color-score-good)" : "var(--color-score-poor)" }}
+              >
+                {fmtPct(changePct)}
+              </div>
+              <div className="text-[10px] muted-text mt-1">{cagrLabel}</div>
             </div>
-            <div className="text-[10px] muted-text mt-1">{cagrLabel}</div>
-          </div>
-        )}
+          )}
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            className="inline-flex items-center gap-1.5 rounded-md border hairline px-2 py-1 text-[12px] font-medium text-[var(--color-muted)] hover:text-[var(--color-ink)] hover:bg-[var(--color-paper)] transition-colors"
+            title="Enlarge — draw trend lines, measure moves, set alerts"
+            aria-label="Enlarge chart"
+          >
+            <ExpandIcon />
+            Enlarge
+          </button>
+        </div>
       </div>
 
       {/* Headline price, then range tabs — each tab shows its own % change. */}
@@ -342,9 +468,10 @@ export function PriceChart({
         </div>
       </div>
 
-      {/* Candlestick + volume — split-safe OHLC, hover readout, alert lines. */}
+      {/* Candlestick + volume — split-safe OHLC, hover readout, alert + drawing
+          lines (drawings are read-only inline; edit them in the enlarged view). */}
       <div className="w-full h-[300px]">
-        <CandleChart candles={visible} interactive weekly={weekly} alerts={alertLines} />
+        <CandleChart candles={visible} interactive weekly={weekly} alerts={alertLines} drawings={drawings} />
       </div>
 
       {/* Price-alert controls — signed-in stock pages only. */}
@@ -415,6 +542,171 @@ export function PriceChart({
               })}
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── Enlarged view ─────────────────────────────────────────────────
+          Fullscreen overlay reusing the same CandleChart with the scanner's
+          drawing toolbar (measure / h-line / trend / erase), click-to-place
+          alerts, and shared localStorage drawings. */}
+      {expanded && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 sm:p-8"
+          onClick={() => setExpanded(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${symbol ?? "Price"} expanded chart`}
+        >
+          <div
+            className="relative flex h-[88vh] w-[94vw] max-w-[1280px] flex-col rounded-2xl border hairline shadow-2xl"
+            style={{ background: "var(--color-card, #fff)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header: identity + headline + drawing toolbar + close. */}
+            <div className="flex flex-wrap items-center gap-3 border-b hairline px-4 py-3">
+              <div className="min-w-0">
+                <div className="font-display text-[16px] leading-tight">
+                  {symbol ?? "Price history"}
+                </div>
+                <div className="text-[11px] muted-text">{subLabel}</div>
+              </div>
+
+              {headline != null && (
+                <div className="text-right leading-tight">
+                  <div className="text-[15px] tabular-nums font-semibold">
+                    {prefix}
+                    {headline.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+                  </div>
+                  {changePct != null && (
+                    <div
+                      className="text-[11px] tabular-nums font-medium"
+                      style={{ color: changePct >= 0 ? "var(--color-score-good)" : "var(--color-score-poor)" }}
+                    >
+                      {fmtPct(changePct)} · {RANGE_LABEL[range]}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="ml-auto flex items-center gap-3">
+                {/* Drawing toolbar — Alert only shows for signed-in users. */}
+                <div className="flex items-center gap-1 rounded-lg border hairline p-0.5">
+                  {([
+                    ...(canSetAlerts && symbol
+                      ? [{ id: "alert" as const, label: "Alert", icon: <HLineIcon size={13} />, hint: "Click a level to set a price alert" }]
+                      : []),
+                    { id: "measure" as const, label: "Measure", icon: <RulerIcon size={13} />, hint: "Measure the move between two points" },
+                    { id: "hline" as const, label: "H-line", icon: <HLineIcon size={13} />, hint: "Add a horizontal price line" },
+                    { id: "trend" as const, label: "Trend", icon: <TrendIcon size={13} />, hint: "Draw a trend line between two points" },
+                    { id: "erase" as const, label: "Erase", icon: <EraseIcon size={13} />, hint: "Click a line to delete it" },
+                  ]).map((t) => {
+                    const active = tool === t.id;
+                    const activeStyle =
+                      t.id === "alert"
+                        ? { color: "var(--color-delta-up, #0a0)", background: "color-mix(in srgb, var(--color-delta-up, #0a0) 14%, transparent)" }
+                        : { color: "var(--color-accent-700)", background: "color-mix(in srgb, var(--color-accent-600) 12%, transparent)" };
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => setTool((cur) => (cur === t.id ? "none" : t.id))}
+                        className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[12px] font-medium hover:bg-[var(--color-paper)] transition-colors"
+                        style={active ? activeStyle : undefined}
+                        aria-pressed={active}
+                        title={t.hint}
+                      >
+                        {t.icon}
+                        {t.label}
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={clearDrawings}
+                    disabled={!drawings.length}
+                    className="inline-flex items-center rounded-md px-2 py-1 text-[12px] font-medium text-[var(--color-muted)] hover:bg-[var(--color-paper)] hover:text-[var(--color-ink)] disabled:opacity-40 transition-colors"
+                    title="Remove all drawings on this stock"
+                  >
+                    Clear
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setExpanded(false)}
+                  className="rounded-md border hairline px-2.5 py-1.5 text-[13px] font-medium hover:bg-[var(--color-paper)] transition-colors"
+                  aria-label="Close expanded chart"
+                  title="Close (Esc)"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {/* Range tabs (each showing its own % change), shared with the inline chart. */}
+            <div className="flex flex-wrap items-center gap-3 border-b hairline px-4 py-2">
+              <div className="flex flex-wrap gap-1">
+                {RANGES.map((r) => {
+                  const active = r === range;
+                  const p = rangePctMap[r];
+                  const pColor =
+                    p == null ? "var(--color-muted)" : p >= 0 ? "var(--color-score-good)" : "var(--color-score-poor)";
+                  return (
+                    <button
+                      key={r}
+                      type="button"
+                      onClick={() => setRange(r)}
+                      className="flex flex-col items-center gap-0.5 px-2 py-0.5 rounded-md transition-colors"
+                      style={
+                        active
+                          ? { background: "var(--color-accent-50)", color: "var(--color-accent-700)", border: "1px solid var(--color-accent-300)" }
+                          : { background: "transparent", color: "var(--color-muted)", border: "1px solid var(--color-border-default)" }
+                      }
+                    >
+                      <span className="text-[11px] font-medium leading-none">{r}</span>
+                      <span className="text-[9px] tabular-nums leading-none font-medium" style={{ color: pColor }}>
+                        {p == null ? "—" : fmtPct(p)}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              {tool !== "none" && (
+                <span className="text-[11px] muted-text">
+                  {tool === "alert"
+                    ? "Click a level to set an alert"
+                    : tool === "hline"
+                      ? "Click to place the line"
+                      : tool === "erase"
+                        ? "Click a line to delete"
+                        : "Click 2 points"}
+                </span>
+              )}
+              {alertErr && (
+                <span className="text-[11px]" style={{ color: "var(--color-score-poor)" }}>
+                  {alertErr}
+                </span>
+              )}
+            </div>
+
+            {/* The big interactive chart. */}
+            <div className="flex-1 min-h-0 p-2">
+              <CandleChart
+                candles={visible}
+                interactive
+                weekly={weekly}
+                tool={tool}
+                drawings={drawings}
+                alerts={alertLines}
+                onAddDrawing={addDrawing}
+                onDeleteDrawing={deleteDrawing}
+                onPlaceAlert={(price) => {
+                  void createAlertAtPrice(Math.round(price * 100) / 100);
+                  setTool("none");
+                }}
+              />
+            </div>
+          </div>
         </div>
       )}
     </div>
