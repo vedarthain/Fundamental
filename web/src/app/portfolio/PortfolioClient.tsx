@@ -1657,7 +1657,6 @@ type Group = {
   value: number;
   invested: number;
   pnl: number;
-  dayChange: number;
 };
 
 function buildGroups(instruments: Instrument[], mode: GroupMode): Group[] {
@@ -1669,7 +1668,6 @@ function buildGroups(instruments: Instrument[], mode: GroupMode): Group[] {
         value: instruments.reduce((s, i) => s + i.currentValue, 0),
         invested: instruments.reduce((s, i) => s + i.invested, 0),
         pnl: instruments.reduce((s, i) => s + i.pnl, 0),
-        dayChange: instruments.reduce((s, i) => s + (i.dayChangeValue ?? 0), 0),
       },
     ];
   }
@@ -1686,7 +1684,6 @@ function buildGroups(instruments: Instrument[], mode: GroupMode): Group[] {
     value: list.reduce((s, i) => s + i.currentValue, 0),
     invested: list.reduce((s, i) => s + i.invested, 0),
     pnl: list.reduce((s, i) => s + i.pnl, 0),
-    dayChange: list.reduce((s, i) => s + (i.dayChangeValue ?? 0), 0),
   }));
   // Value-desc, but always park the unscored bucket last.
   return groups.sort((a, b) => {
@@ -1700,7 +1697,7 @@ function buildGroups(instruments: Instrument[], mode: GroupMode): Group[] {
 // cells FragmentRow renders (grouped-mode group rows also colSpan against it).
 type SortKey =
   | "symbol" | "broker" | "qty" | "avg" | "price" | "target"
-  | "value" | "day" | "pnl" | "pnlPct" | "fallTop" | "riseBottom"
+  | "value" | "pnl" | "pnlPct" | "fallTop" | "riseBottom"
   | "qvm" | "comp" | "rank" | "held" | "wt";
 type SortDir = "asc" | "desc";
 
@@ -1715,11 +1712,10 @@ const COLUMNS: {
   { key: "price", label: "LTP", align: "right", cls: "px-2", numeric: true, title: "Last traded price (latest daily close)" },
   { key: "target", label: "Target", align: "right", cls: "px-2", numeric: true, title: "Profit target: avg cost +25%" },
   { key: "value", label: "Value", align: "right", cls: "px-2", numeric: true },
-  { key: "day", label: "Day", align: "right", cls: "px-2", numeric: true },
   { key: "pnl", label: "P&L", align: "right", cls: "px-2", numeric: true, title: "Unrealised profit / loss (₹)" },
   { key: "pnlPct", label: "Return", align: "right", cls: "px-2", numeric: true, title: "Unrealised return (%) on cost" },
-  { key: "fallTop", label: "Fall", align: "right", cls: "px-2", numeric: true, title: "Fall from top — % below the highest daily close since this position was first tracked (0 at a fresh high). Split-adjusted." },
-  { key: "riseBottom", label: "Rise", align: "right", cls: "px-2", numeric: true, title: "Rise from bottom — % above the lowest daily close since first tracked (0 at a fresh low). Split-adjusted." },
+  { key: "fallTop", label: "Fall from top", align: "right", cls: "px-2", numeric: true, title: "Fall from top — % below the highest daily close since this position was first tracked (0 at a fresh high). Split-adjusted." },
+  { key: "riseBottom", label: "Rise from bottom", align: "right", cls: "px-2", numeric: true, title: "Rise from bottom — % above the lowest daily close since first tracked (0 at a fresh low). Split-adjusted." },
   { key: "qvm", label: "Q/V/M", align: "center", cls: "px-2", numeric: true },
   { key: "comp", label: "Comp", align: "center", cls: "px-2", numeric: true, title: "Composite percentile (Q/V/M roll-up) — higher is better" },
   { key: "rank", label: "Rank", align: "center", cls: "px-2", numeric: true },
@@ -1745,7 +1741,6 @@ function sortVal(ins: Instrument, key: SortKey): number | string | null {
     case "price": return ins.price ?? null;
     case "target": return ins.targetPrice ?? null;
     case "value": case "wt": return ins.currentValue ?? null;
-    case "day": return ins.dayChangePct ?? null;
     case "pnl": return ins.pnl ?? null;
     case "pnlPct": return ins.pnlPct ?? null;
     case "fallTop": return ins.fallFromTopPct ?? null;
@@ -2073,9 +2068,6 @@ function HoldingsTable({
                       </td>
                       <td colSpan={5} />
                       <td className="px-2 py-1.5 text-right tabular-nums font-semibold">{inr(g.value)}</td>
-                      <td className="px-2 py-1.5 text-right tabular-nums" style={{ color: up(g.dayChange) ? GREEN : RED }}>
-                        {signed(g.dayChange)}
-                      </td>
                       <td className="px-2 py-1.5 text-right tabular-nums font-semibold" style={{ color: up(g.pnl) ? GREEN : RED }}>
                         {signed(g.pnl)}
                       </td>
@@ -2191,9 +2183,6 @@ function FragmentRow({
           )}
         </td>
         <td className="px-2 py-2 text-right tabular-nums font-medium">{inr(ins.currentValue)}</td>
-        <td className="px-2 py-2 text-right tabular-nums" style={{ color: ins.dayChangePct == null ? undefined : up(ins.dayChangePct) ? GREEN : RED }}>
-          {pct(ins.dayChangePct)}
-        </td>
         <td className="px-2 py-2 text-right tabular-nums font-medium" style={{ color: up(ins.pnl) ? GREEN : RED }}>
           {signed(ins.pnl)}
         </td>
