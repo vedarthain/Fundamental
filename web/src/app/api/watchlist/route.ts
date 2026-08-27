@@ -23,6 +23,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { loadPersistenceForSymbols } from "@/lib/persistence";
+import { loadPortfolioSymbols } from "@/lib/portfolio";
 import { loadQuotes, loadCloseOnAdd, loadCloseAsOf } from "@/lib/watchlistQuote";
 import { deriveGlance, scorecardGlanceKeys, type GlanceMetrics, type MetricKey, type QRow, type ARow } from "@/lib/glance";
 import { buildVerdict, type StockVerdict } from "@/lib/explainer";
@@ -80,6 +81,10 @@ type WatchRow = {
   rel_vol: number | null;
   turnover_cr: number | null;
   delivery_pct: number | null;
+  /** Portfolio ownership — mirrors the scanner graph's tri-state "P" badge.
+   *  held = currently in the portfolio; traded = ever bought (held or exited). */
+  held: boolean;
+  traded: boolean;
   /** Sector-aware fundamentals for the peer-glance table (null if no data). */
   glance: GlanceMetrics | null;
   /** Per-stock verdict — the metrics THIS stock most stands out on, derived
@@ -345,6 +350,24 @@ export async function GET(req: NextRequest) {
     // Scorecard-driven fundamental rows — which metrics matter for this cluster.
     loadScorecardKeys(symbols),
   ]);
+
+  // Portfolio ownership for the "P" badge (signed-in only). heldSet = currently
+  // held (same reconciliation rule as the scanner graph); tradedSet = ever
+  // bought (a cheap DISTINCT over the trade log) so exited names still show a
+  // grey P. Both empty when signed out — anonymous users have no portfolio.
+  let heldSet = new Set<string>();
+  let tradedSet = new Set<string>();
+  if (session) {
+    const [held, traded] = await Promise.all([
+      loadPortfolioSymbols(session.userId).catch(() => [] as string[]),
+      sql<{ symbol: string }[]>`
+        SELECT DISTINCT symbol FROM app.portfolio_transaction
+         WHERE user_id = ${session.userId} AND symbol IS NOT NULL
+      `.catch(() => [] as { symbol: string }[]),
+    ]);
+    heldSet = new Set(held.map((s) => s.toUpperCase()));
+    tradedSet = new Set(traded.map((r) => r.symbol.toUpperCase()));
+  }
   // Self-heal missing close_on_add. Rows added while golden lagged (e.g. a
   // post-merger ticker like PVRINOX whose bars backfilled late) got a null
   // close_on_add that was then frozen — the value is captured once at add-time
@@ -407,6 +430,8 @@ export async function GET(req: NextRequest) {
     row.rel_vol       = q?.rel_vol       ?? null;
     row.turnover_cr   = q?.turnover_cr   ?? null;
     row.delivery_pct  = q?.delivery_pct  ?? null;
+    row.held          = heldSet.has(row.symbol);
+    row.traded        = row.held || tradedSet.has(row.symbol);
 
     const m = meta.get(row.symbol);
     row.added_at          = m?.added_at          ?? null;

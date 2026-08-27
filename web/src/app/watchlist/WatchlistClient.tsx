@@ -69,6 +69,9 @@ type Row = {
   rel_vol: number | null;
   turnover_cr: number | null;
   delivery_pct: number | null;
+  /** Portfolio ownership — drives the "P" badge (purple=held, grey=exited). */
+  held?: boolean;
+  traded?: boolean;
   /** Sector-aware fundamentals for the peer-glance table. */
   glance: GlanceMetrics | null;
   /** Per-stock verdict — the metrics this stock most stands out on. */
@@ -169,6 +172,26 @@ function filterTree(tree: SectorNode[], query: string): SectorNode[] {
   return out;
 }
 
+// Persist the open stock so a refresh reopens what you were looking at,
+// instead of jumping to the top-scored name. Per-browser, best-effort.
+const SEL_KEY = "equityroots:watchlist:selected:v1";
+function readSelected(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(SEL_KEY);
+  } catch {
+    return null;
+  }
+}
+function writeSelected(sym: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(SEL_KEY, sym);
+  } catch {
+    // Quota/private-mode — non-fatal; selection just won't persist.
+  }
+}
+
 export function WatchlistClient() {
   const { symbols, hydrated, remove, count, signedIn } = useWatchlist();
   const [rows, setRows] = useState<Row[] | null>(null);
@@ -223,12 +246,21 @@ export function WatchlistClient() {
     }
     setSelected((cur) => {
       if (cur && rows.some((r) => r.symbol === cur)) return cur;
+      // Restore the last-viewed stock across a refresh before falling back to
+      // the top-scored name (which is why every reload jumped to one stock).
+      const saved = readSelected();
+      if (saved && rows.some((r) => r.symbol === saved)) return saved;
       const top = [...rows].sort(
         (a, b) => (b.composite_pct ?? 0) - (a.composite_pct ?? 0),
       )[0];
       return top?.symbol ?? null;
     });
   }, [rows]);
+
+  // Remember the open stock so the effect above can reopen it on refresh.
+  useEffect(() => {
+    if (selected) writeSelected(selected);
+  }, [selected]);
 
   // Arrow-key navigation through the list. rotate() is defined further down
   // (it needs flatOrder), so we stash the latest copy in a ref and let a
@@ -676,6 +708,23 @@ function TierBadge({ tier }: { tier: string }) {
   );
 }
 
+// Tri-state portfolio badge — same convention as the scanner graph tools:
+// purple "P" = currently held, grey "P" = ever bought but fully exited.
+const P_HELD = "#7c3aed";
+const P_EXITED = "#9ca3af";
+function PBadge({ held, traded, size = 16 }: { held?: boolean; traded?: boolean; size?: number }) {
+  if (!held && !traded) return null;
+  return (
+    <span
+      className="inline-flex items-center justify-center rounded-full font-bold leading-none shrink-0"
+      style={{ width: size, height: size, fontSize: size * 0.58, color: "#fff", backgroundColor: held ? P_HELD : P_EXITED }}
+      title={held ? "In your portfolio" : "Previously held — fully exited"}
+    >
+      P
+    </span>
+  );
+}
+
 /** Compact left-rail row: symbol · LTP · since-add %. One click opens the
  *  full detail on the right. Kept deliberately dense so 100+ names stay
  *  scannable. */
@@ -709,7 +758,10 @@ function ThinRow({
       }
     >
       <div className="flex-1 min-w-0">
-        <div className="font-medium text-[13px] tabular-nums truncate">{row.symbol}</div>
+        <div className="flex items-center gap-1.5">
+          <span className="font-medium text-[13px] tabular-nums truncate">{row.symbol}</span>
+          <PBadge held={row.held} traded={row.traded} size={14} />
+        </div>
         <div className="text-[10px] muted-text truncate leading-tight">{row.company_name}</div>
         {row.added_at && (
           <div className="text-[9.5px] muted-text/80 leading-tight tabular-nums">
@@ -758,8 +810,9 @@ function WatchRow({
     <div className="px-4 md:px-5 py-3 hover:bg-[var(--color-paper)]/60 transition-colors">
       <div className="flex items-start gap-3">
         <Link href={`/stock/${row.symbol}`} className="min-w-0 block shrink-0">
-          <div className="flex items-baseline gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="font-medium text-[14px] tabular-nums">{row.symbol}</span>
+            <PBadge held={row.held} traded={row.traded} />
             <span className="muted-text text-[12px] truncate">{row.company_name}</span>
           </div>
           <div className="text-[10.5px] muted-text mt-0.5 flex items-center gap-2 flex-wrap">
