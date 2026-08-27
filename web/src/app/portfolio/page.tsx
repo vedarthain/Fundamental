@@ -63,7 +63,7 @@ export default async function PortfolioPage() {
     : [null, null];
 
   return (
-    <div className="mx-auto max-w-[1200px] px-4 md:px-6 py-6 md:py-8">
+    <div className="mx-auto max-w-[1300px] px-4 md:px-6 py-6 md:py-8">
       <PortfolioClient
         portfolio={portfolio}
         realized={realized}
