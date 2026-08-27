@@ -73,19 +73,23 @@ async function fetchServerWatchlist(): Promise<{ signedIn: boolean; symbols: str
 }
 
 async function serverAdd(symbol: string): Promise<void> {
-  await fetch("/api/watchlist", {
+  const r = await fetch("/api/watchlist", {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ symbol }),
   });
+  // Throw on non-2xx (esp. 401 when the session has silently expired) so the
+  // caller can fall back to localStorage instead of silently dropping the add.
+  if (!r.ok) throw new Error(`watchlist add failed: ${r.status}`);
 }
 
 async function serverRemove(symbol: string): Promise<void> {
-  await fetch(`/api/watchlist?symbol=${encodeURIComponent(symbol)}`, {
+  const r = await fetch(`/api/watchlist?symbol=${encodeURIComponent(symbol)}`, {
     method: "DELETE",
     credentials: "include",
   });
+  if (!r.ok) throw new Error(`watchlist remove failed: ${r.status}`);
 }
 
 /**
@@ -197,11 +201,23 @@ function ensureLoaded(): void {
   if (state.hydrated || loadPromise) return;
   loadPromise = (async () => {
     const { signedIn, symbols } = await fetchServerWatchlist();
-    setState({
-      signedIn,
-      symbols: signedIn ? symbols : readLocal(),
-      hydrated: true,
-    });
+    if (!signedIn) {
+      setState({ signedIn: false, symbols: readLocal(), hydrated: true });
+      return;
+    }
+    // Signed in: the server list is authoritative. But self-heal any leftover
+    // localStorage symbols — these get stranded when a session silently expires
+    // mid-session (adds then fall back to localStorage) and no fresh login fires
+    // the one-time merge. Reconcile on EVERY signed-in load so the list can
+    // never drift out of the DB again. ON CONFLICT DO NOTHING server-side makes
+    // re-pushing already-saved names harmless.
+    const local = readLocal();
+    let merged = symbols;
+    if (local.length > 0) {
+      await mergeLocalWatchlistIntoServer(); // POSTs local, clears the key on success
+      merged = Array.from(new Set([...symbols, ...local])).slice(0, MAX_SYMBOLS);
+    }
+    setState({ signedIn: true, symbols: merged, hydrated: true });
   })();
 }
 
@@ -237,8 +253,17 @@ function mutateAdd(upper: string): void {
   if (state.symbols.includes(upper)) return;
   const next = [...state.symbols, upper].slice(0, MAX_SYMBOLS);
   setState({ symbols: next });
-  if (state.signedIn) serverAdd(upper).catch((e) => console.error("watchlist add failed", e));
-  else writeLocal(next);
+  if (state.signedIn) {
+    serverAdd(upper).catch((e) => {
+      console.error("watchlist add failed", e);
+      // Session likely died — stash the symbol in localStorage so the next
+      // signed-in load (ensureLoaded) merges it back onto the server instead of
+      // silently losing it. This is the exact hole that stranded a full list.
+      writeLocal(Array.from(new Set([...readLocal(), upper])).slice(0, MAX_SYMBOLS));
+    });
+  } else {
+    writeLocal(next);
+  }
 }
 
 function mutateRemove(upper: string): void {

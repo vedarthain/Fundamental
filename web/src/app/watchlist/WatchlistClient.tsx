@@ -281,6 +281,20 @@ export function WatchlistClient() {
       return next;
     });
 
+  // Clicking a sector header jumps the detail panel to that sector's first
+  // stock (reading order: first industry → top-scored stock), so selecting a
+  // sector lands you at the START of its stocks — and expands the node so the
+  // list is visible. Collapsing (clicking an already-open sector) still just
+  // toggles without hijacking the current selection.
+  const onSectorClick = (sec: SectorNode) => {
+    const isOpen = searching || expanded.has(sec.name);
+    toggleNode(sec.name);
+    if (!isOpen) {
+      const first = sec.industries[0]?.stocks[0]?.symbol;
+      if (first) setSelected(first);
+    }
+  };
+
   // Expand-all / collapse-all for the rail tree. Keys are every sector node
   // plus every `${sector}//${industry}` node in the FULL tree, so one click
   // opens (or closes) every stock regardless of the current search filter.
@@ -416,7 +430,7 @@ export function WatchlistClient() {
                   <div key={sec.name}>
                     <button
                       type="button"
-                      onClick={() => toggleNode(sec.name)}
+                      onClick={() => onSectorClick(sec)}
                       className="w-full flex items-center gap-2 px-3 py-2 border-b hairline text-left transition-colors hover:bg-[var(--color-paper)]"
                       aria-expanded={secOpen}
                     >
