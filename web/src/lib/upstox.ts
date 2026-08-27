@@ -16,10 +16,10 @@
  *
  * NOTE on TS-side LTP fetching: equity LTP fan-out still lives in
  * scripts/intraday-refresh-ltp.py (Python, updates screener_meta + panel
- * cache). But the lightweight INDEX tick (NIFTY 50 / NIFTY BANK only) is
- * fetched server-side here via fetchIndexQuotes() — see the cron route at
- * /api/cron/intraday-index. Indices are just 2 instrument keys, so a small
- * native fetch beats spinning up a Python runner on a 15-min cadence.
+ * cache) and in the /api/cron/intraday-equity route via fetchLtpsByKeys().
+ * The former intraday INDEX tick path (fetchIndexQuotes → market_index_intraday)
+ * has been retired; daily index OHLC comes from scripts/fetch-indices.py
+ * (NSE close CSV) into app.market_index_history.
  */
 import "server-only";
 import { createHmac, randomBytes, timingSafeEqual } from "crypto";
@@ -28,30 +28,6 @@ import { sql } from "@/lib/db";
 const UPSTOX_DIALOG_BASE  = "https://api.upstox.com/v2/login/authorization/dialog";
 const UPSTOX_TOKEN_URL    = "https://api.upstox.com/v2/login/authorization/token";
 const UPSTOX_LTP_URL      = "https://api.upstox.com/v2/market-quote/ltp";
-
-// Upstox instrument keys for all tracked NSE indices.
-// KEY = Upstox instrument key (NSE_INDEX|<NSE display name>)
-// VALUE = our internal index_code (matches market_index_history / market_index_intraday)
-// Names match exactly what NSE uses in its daily CSV — see fetch-indices.py INDEX_WHITELIST.
-export const INDEX_INSTRUMENT_KEYS: Record<string, string> = {
-  // Headline
-  "NSE_INDEX|Nifty 50":            "NIFTY50",
-  "NSE_INDEX|Nifty Bank":          "NIFTYBANK",
-  // Broad market
-  "NSE_INDEX|Nifty 100":           "NIFTY100",
-  "NSE_INDEX|Nifty 500":           "NIFTY500",
-  "NSE_INDEX|Nifty Next 50":       "NIFTYNEXT50",
-  "NSE_INDEX|Nifty Midcap 100":    "NIFTYMIDCAP100",
-  "NSE_INDEX|Nifty Smallcap 100":  "NIFTYSMALLCAP100",
-  // Sectoral
-  "NSE_INDEX|Nifty IT":            "NIFTYIT",
-  "NSE_INDEX|Nifty Auto":          "NIFTYAUTO",
-  "NSE_INDEX|Nifty FMCG":          "NIFTYFMCG",
-  "NSE_INDEX|Nifty Pharma":        "NIFTYPHARMA",
-  "NSE_INDEX|Nifty Energy":        "NIFTYENERGY",
-  "NSE_INDEX|Nifty Metal":         "NIFTYMETAL",
-  "NSE_INDEX|Nifty Realty":        "NIFTYREALTY",
-};
 
 export type UpstoxSession = {
   access_token: string | null;
@@ -235,9 +211,7 @@ function next0830Ist(): Date {
   return candidate;
 }
 
-// ── Intraday LTP client (indices + equities) ──────────────────────────────
-
-export type IndexQuote = { index_code: string; ltp: number };
+// ── Intraday LTP client (equities) ────────────────────────────────────────
 
 // Upstox accepts many instrument keys per /ltp call; we batch at 200 (well
 // under their documented limit) — same chunk size the Python equity path
@@ -323,22 +297,6 @@ export async function fetchLtpsByKeys(keys: string[]): Promise<Map<string, numbe
         out.set(key, v.last_price);
       }
     }
-  }
-  return out;
-}
-
-/**
- * Fetch live LTP for the two headline indices. Thin wrapper over
- * fetchLtpsByKeys that maps Upstox's instrument_token back to our internal
- * index_code. Returns [] if Upstox yields no usable rows; propagates
- * UpstoxTokenError so the caller can no-op cleanly.
- */
-export async function fetchIndexQuotes(): Promise<IndexQuote[]> {
-  const priceByKey = await fetchLtpsByKeys(Object.keys(INDEX_INSTRUMENT_KEYS));
-  const out: IndexQuote[] = [];
-  for (const [key, code] of Object.entries(INDEX_INSTRUMENT_KEYS)) {
-    const ltp = priceByKey.get(key);
-    if (typeof ltp === "number") out.push({ index_code: code, ltp });
   }
   return out;
 }
