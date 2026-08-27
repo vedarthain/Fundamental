@@ -1700,7 +1700,8 @@ function buildGroups(instruments: Instrument[], mode: GroupMode): Group[] {
 // cells FragmentRow renders (grouped-mode group rows also colSpan against it).
 type SortKey =
   | "symbol" | "broker" | "qty" | "avg" | "price" | "target"
-  | "value" | "day" | "pnl" | "pnlPct" | "qvm" | "comp" | "rank" | "held" | "wt";
+  | "value" | "day" | "pnl" | "pnlPct" | "fallTop" | "riseBottom"
+  | "qvm" | "comp" | "rank" | "held" | "wt";
 type SortDir = "asc" | "desc";
 
 const COLUMNS: {
@@ -1717,6 +1718,8 @@ const COLUMNS: {
   { key: "day", label: "Day", align: "right", cls: "px-2", numeric: true },
   { key: "pnl", label: "P&L", align: "right", cls: "px-2", numeric: true, title: "Unrealised profit / loss (₹)" },
   { key: "pnlPct", label: "Return", align: "right", cls: "px-2", numeric: true, title: "Unrealised return (%) on cost" },
+  { key: "fallTop", label: "Fall", align: "right", cls: "px-2", numeric: true, title: "Fall from top — % below the highest daily close since this position was first tracked (0 at a fresh high). Split-adjusted." },
+  { key: "riseBottom", label: "Rise", align: "right", cls: "px-2", numeric: true, title: "Rise from bottom — % above the lowest daily close since first tracked (0 at a fresh low). Split-adjusted." },
   { key: "qvm", label: "Q/V/M", align: "center", cls: "px-2", numeric: true },
   { key: "comp", label: "Comp", align: "center", cls: "px-2", numeric: true, title: "Composite percentile (Q/V/M roll-up) — higher is better" },
   { key: "rank", label: "Rank", align: "center", cls: "px-2", numeric: true },
@@ -1745,6 +1748,8 @@ function sortVal(ins: Instrument, key: SortKey): number | string | null {
     case "day": return ins.dayChangePct ?? null;
     case "pnl": return ins.pnl ?? null;
     case "pnlPct": return ins.pnlPct ?? null;
+    case "fallTop": return ins.fallFromTopPct ?? null;
+    case "riseBottom": return ins.riseFromBottomPct ?? null;
     case "qvm": {
       const vals = [ins.q, ins.v, ins.m].filter((x): x is number => x != null);
       return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
@@ -1865,6 +1870,14 @@ function HoldingsTable({
       return { key, dir: !col || col.numeric ? "desc" : "asc" }; // numbers → high-first, name → A→Z
     });
 
+  // Fall-from-top / rise-from-bottom are drawdown-vs-own-history reads that only
+  // make sense per position, so they show in the Flat view only. Grouped views
+  // drop them (a group has no single peak), which also keeps the row narrower.
+  const showDrawdown = mode === "flat";
+  const visibleColumns = showDrawdown
+    ? COLUMNS
+    : COLUMNS.filter((c) => c.key !== "fallTop" && c.key !== "riseBottom");
+
   const groups = buildGroups(pnlFiltered, mode);
   // Only the Flat view is sortable — grouped modes keep their value-desc order
   // (per-column sort would collide with the collapsible group rows).
@@ -1980,7 +1993,7 @@ function HoldingsTable({
         <table className="w-full text-[12.5px]">
           <thead>
             <tr className="text-[10.5px] uppercase tracking-wide muted-text border-b hairline">
-              {COLUMNS.map((c) => {
+              {visibleColumns.map((c) => {
                 const sortable = mode === "flat";
                 const active = sortable && sort.key === c.key;
                 const alignCls = c.align === "left" ? "text-left" : c.align === "center" ? "text-center" : "text-right";
@@ -2018,7 +2031,7 @@ function HoldingsTable({
           <tbody>
             {pnlFiltered.length === 0 && (
               <tr>
-                <td colSpan={COLUMNS.length} className="px-4 py-6 text-center muted-text text-[13px]">
+                <td colSpan={visibleColumns.length} className="px-4 py-6 text-center muted-text text-[13px]">
                   {q
                     ? `No holdings match “${query}”.`
                     : pnlFilter === "profit"
@@ -2066,6 +2079,7 @@ function HoldingsTable({
                       <td className="px-2 py-1.5 text-right tabular-nums font-semibold" style={{ color: up(gPnlPct) ? GREEN : RED }}>
                         {pct(gPnlPct)}
                       </td>
+                      {/* grouped views only (drawdown cols are flat-only) → 4 trailing cols */}
                       <td colSpan={4} />
                       <td className="px-3 py-1.5 text-right tabular-nums muted-text">{gWt}%</td>
                     </tr>
@@ -2079,6 +2093,8 @@ function HoldingsTable({
                         ins={ins}
                         wt={wt}
                         isOpen={isOpen}
+                        showDrawdown={showDrawdown}
+                        colCount={visibleColumns.length}
                         onToggle={() => setExpanded(isOpen ? null : ins.key)}
                       />
                     );
@@ -2094,8 +2110,8 @@ function HoldingsTable({
 }
 
 function FragmentRow({
-  ins, wt, isOpen, onToggle,
-}: { ins: Instrument; wt: number; isOpen: boolean; onToggle: () => void }) {
+  ins, wt, isOpen, showDrawdown, colCount, onToggle,
+}: { ins: Instrument; wt: number; isOpen: boolean; showDrawdown: boolean; colCount: number; onToggle: () => void }) {
   return (
     <>
       <tr
@@ -2181,6 +2197,24 @@ function FragmentRow({
         <td className="px-2 py-2 text-right tabular-nums" style={{ color: ins.pnlPct == null ? undefined : up(ins.pnlPct) ? GREEN : RED }}>
           {pct(ins.pnlPct)}
         </td>
+        {showDrawdown && (
+          <>
+            <td
+              className="px-2 py-2 text-right tabular-nums"
+              style={{ color: ins.fallFromTopPct == null ? undefined : ins.fallFromTopPct > 0 ? RED : "var(--color-muted)" }}
+              title={ins.fallFromTopPct == null ? undefined : ins.fallFromTopPct === 0 ? "At its high since first tracked" : `${ins.fallFromTopPct}% below its high since first tracked`}
+            >
+              {ins.fallFromTopPct == null ? "—" : ins.fallFromTopPct === 0 ? "0%" : `−${ins.fallFromTopPct}%`}
+            </td>
+            <td
+              className="px-2 py-2 text-right tabular-nums"
+              style={{ color: ins.riseFromBottomPct == null ? undefined : ins.riseFromBottomPct > 0 ? GREEN : "var(--color-muted)" }}
+              title={ins.riseFromBottomPct == null ? undefined : ins.riseFromBottomPct === 0 ? "At its low since first tracked" : `${ins.riseFromBottomPct}% above its low since first tracked`}
+            >
+              {ins.riseFromBottomPct == null ? "—" : ins.riseFromBottomPct === 0 ? "0%" : `+${ins.riseFromBottomPct}%`}
+            </td>
+          </>
+        )}
         <td className="px-2 py-2 text-center tabular-nums">
           {ins.isMapped ? (
             <span className="text-[11px]">
@@ -2219,7 +2253,7 @@ function FragmentRow({
       </tr>
       {isOpen && ins.brokers.length > 1 && (
         <tr className="border-b hairline" style={{ background: "var(--color-paper)" }}>
-          <td colSpan={15} className="px-3 py-2">
+          <td colSpan={colCount} className="px-3 py-2">
             <div className="flex flex-wrap gap-x-6 gap-y-1 text-[11.5px] pl-6">
               {ins.brokers.map((b, i) => (
                 <span key={i} className="tabular-nums">

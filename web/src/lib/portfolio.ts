@@ -41,6 +41,13 @@ export type Instrument = {
   // ── Portfolio discipline overlays (rules, not market data) ──
   targetPrice: number | null; // avgCost × 1.25 (+25% profit target)
   targetHit: boolean; // live price ≥ targetPrice
+  // ── Peak/trough drawdown since the position was first tracked ──
+  // Split-safe: both sides are adj_close, so the ratio is basis-independent.
+  // fallFromTopPct: % below the highest adj_close since firstImported (0 at a
+  // fresh high). riseFromBottomPct: % above the lowest adj_close (0 at a fresh
+  // low). Both ≥ 0. null for unmapped names or when the import date is unknown.
+  fallFromTopPct: number | null;
+  riseFromBottomPct: number | null;
   firstImported: string | null; // MIN(imported_at) across broker lots (ISO)
   monthsHeld: number | null; // months since firstImported (import-date proxy)
   overHoldLimit: boolean; // monthsHeld ≥ 4
@@ -947,6 +954,45 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
     });
   }
 
+  // ── Fall-from-top / rise-from-bottom: peak & trough adj_close for each held
+  //    equity since it was first tracked (firstImported). One grouped golden
+  //    scan bounded per-symbol via unnest(syms, sinces) — keeps the heavy work
+  //    in Postgres instead of shipping full price history to the app. Split-
+  //    safe because fall/rise are ratios of adj_close values. ──
+  const peakBySym = new Map<string, { peak: number; trough: number; last: number }>();
+  {
+    const syms: string[] = [];
+    const sinces: string[] = [];
+    for (const a of aggs.values()) {
+      if (!a.isMapped || !a.symbol || a.firstImported == null) continue;
+      syms.push(a.symbol + ".NS");
+      sinces.push(new Date(a.firstImported).toISOString().slice(0, 10));
+    }
+    if (syms.length) {
+      const rows = await golden<
+        { symbol: string; peak: string; trough: string; last: string }[]
+      >`
+        WITH bounds AS (
+          SELECT sym, since::date AS since
+            FROM unnest(${syms}::text[], ${sinces}::text[]) AS b(sym, since)
+        )
+        SELECT b.sym AS symbol,
+               MAX(COALESCE(p.adj_close, p.close))::text AS peak,
+               MIN(COALESCE(p.adj_close, p.close))::text AS trough,
+               (array_agg(COALESCE(p.adj_close, p.close) ORDER BY p.date DESC))[1]::text AS last
+          FROM bounds b
+          JOIN golden.price_history_1d p
+            ON p.symbol = b.sym AND p.date >= b.since
+         WHERE COALESCE(p.adj_close, p.close) IS NOT NULL
+         GROUP BY b.sym
+      `;
+      for (const r of rows) {
+        const bare = r.symbol.endsWith(".NS") ? r.symbol.slice(0, -3) : r.symbol;
+        peakBySym.set(bare, { peak: Number(r.peak), trough: Number(r.trough), last: Number(r.last) });
+      }
+    }
+  }
+
   const instruments: Instrument[] = [];
   for (const a of aggs.values()) {
     const c = a.symbol ? cache.get(a.symbol) : undefined;
@@ -1000,6 +1046,17 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
       : Math.round(((Date.now() - a.firstImported) / (1000 * 60 * 60 * 24 * 30.44)) * 10) / 10;
     const overHoldLimit = monthsHeld != null && monthsHeld >= 4;
 
+    // Fall-from-top / rise-from-bottom vs the peak/trough since first tracked.
+    let fallFromTopPct: number | null = null;
+    let riseFromBottomPct: number | null = null;
+    if (a.isMapped && a.symbol) {
+      const pk = peakBySym.get(a.symbol);
+      if (pk && pk.peak > 0 && pk.trough > 0) {
+        fallFromTopPct = Math.max(0, Math.round(((pk.peak - pk.last) / pk.peak) * 1000) / 10);
+        riseFromBottomPct = Math.max(0, Math.round(((pk.last - pk.trough) / pk.trough) * 1000) / 10);
+      }
+    }
+
     instruments.push({
       key: a.key,
       symbol: a.symbol,
@@ -1015,6 +1072,8 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
       pnlPct,
       targetPrice,
       targetHit,
+      fallFromTopPct,
+      riseFromBottomPct,
       firstImported,
       monthsHeld,
       overHoldLimit,
