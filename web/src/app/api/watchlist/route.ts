@@ -23,7 +23,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { loadPersistenceForSymbols } from "@/lib/persistence";
-import { loadPortfolioSymbols } from "@/lib/portfolio";
+import { loadPortfolioSymbols, loadHeldPositions } from "@/lib/portfolio";
 import { loadQuotes, loadCloseOnAdd, loadCloseAsOf } from "@/lib/watchlistQuote";
 import { deriveGlance, scorecardGlanceKeys, type GlanceMetrics, type MetricKey, type QRow, type ARow } from "@/lib/glance";
 import { buildVerdict, type StockVerdict } from "@/lib/explainer";
@@ -85,6 +85,9 @@ type WatchRow = {
    *  held = currently in the portfolio; traded = ever bought (held or exited). */
   held: boolean;
   traded: boolean;
+  /** Position summary for held names: shares held + P&L % (LTP vs avg cost). */
+  held_qty: number | null;
+  pos_pnl_pct: number | null;
   /** Sector-aware fundamentals for the peer-glance table (null if no data). */
   glance: GlanceMetrics | null;
   /** Per-stock verdict — the metrics THIS stock most stands out on, derived
@@ -357,16 +360,19 @@ export async function GET(req: NextRequest) {
   // grey P. Both empty when signed out — anonymous users have no portfolio.
   let heldSet = new Set<string>();
   let tradedSet = new Set<string>();
+  let positions: Record<string, { qty: number; avgCost: number | null }> = {};
   if (session) {
-    const [held, traded] = await Promise.all([
+    const [held, traded, pos] = await Promise.all([
       loadPortfolioSymbols(session.userId).catch(() => [] as string[]),
       sql<{ symbol: string }[]>`
         SELECT DISTINCT symbol FROM app.portfolio_transaction
          WHERE user_id = ${session.userId} AND symbol IS NOT NULL
       `.catch(() => [] as { symbol: string }[]),
+      loadHeldPositions(session.userId).catch(() => ({}) as Record<string, { qty: number; avgCost: number | null }>),
     ]);
     heldSet = new Set(held.map((s) => s.toUpperCase()));
     tradedSet = new Set(traded.map((r) => r.symbol.toUpperCase()));
+    positions = pos;
   }
   // Self-heal missing close_on_add. Rows added while golden lagged (e.g. a
   // post-merger ticker like PVRINOX whose bars backfilled late) got a null
@@ -432,6 +438,13 @@ export async function GET(req: NextRequest) {
     row.delivery_pct  = q?.delivery_pct  ?? null;
     row.held          = heldSet.has(row.symbol);
     row.traded        = row.held || tradedSet.has(row.symbol);
+    const posn        = positions[row.symbol];
+    row.held_qty      = posn?.qty ?? null;
+    const effLtp      = q?.ltp ?? row.current_price;
+    row.pos_pnl_pct   =
+      posn?.avgCost != null && posn.avgCost !== 0 && effLtp != null
+        ? Math.round((effLtp / posn.avgCost - 1) * 1000) / 10
+        : null;
 
     const m = meta.get(row.symbol);
     row.added_at          = m?.added_at          ?? null;

@@ -313,6 +313,32 @@ export async function loadPortfolioHeldQty(userId: number): Promise<Record<strin
   return out;
 }
 
+/** Held quantity + blended avg cost per symbol, for the watchlist's position
+ *  summary ("P · N sh · ±%"). Same reconciliation rule as loadPortfolioHeldQty:
+ *  a symbol with hand-entered trades is its 'derived' row only; snapshot-only
+ *  names sum their broker lots. avgCost is qty-weighted across surviving rows
+ *  (null if no cost was recorded). */
+export async function loadHeldPositions(
+  userId: number,
+): Promise<Record<string, { qty: number; avgCost: number | null }>> {
+  const rows = await sql<{ symbol: string; qty: number; avg: number | null }[]>`
+    SELECT h.symbol,
+           SUM(h.quantity)::float8 AS qty,
+           (SUM(h.avg_cost * h.quantity) / NULLIF(SUM(h.quantity), 0))::float8 AS avg
+      FROM app.portfolio_holding h
+     WHERE h.user_id = ${userId} AND h.symbol IS NOT NULL AND h.quantity > 0
+       AND (h.broker = 'derived'
+            OR h.symbol NOT IN (
+              SELECT symbol FROM app.portfolio_transaction
+               WHERE user_id = ${userId} AND source_file = 'manual-entry'
+                 AND symbol IS NOT NULL))
+     GROUP BY h.symbol
+  `;
+  const out: Record<string, { qty: number; avgCost: number | null }> = {};
+  for (const r of rows) if (r.qty > 0) out[r.symbol] = { qty: Math.round(r.qty), avgCost: r.avg };
+  return out;
+}
+
 /** One executed-trade marker for the chart tabs: buy/sell aggregated per
  *  (symbol, date, side), qty summed and price qty-weighted. `derived` flags a
  *  SYNTHETIC buy inferred from a broker snapshot that has no trade log — its

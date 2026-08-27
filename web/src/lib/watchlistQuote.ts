@@ -135,23 +135,20 @@ export async function loadQuotes(symbols: string[]): Promise<Map<string, Quote>>
           AND date >= CURRENT_DATE - 365
         GROUP BY symbol
       `,
-      // Volume context: latest session volume + turnover-basis close, the
-      // ~30-trading-day average volume (≈45 calendar days), and the most
-      // recent non-null delivery %. delivery_pct is only ~40% populated in
-      // golden, so we FILTER to the latest day that actually has it.
+      // Volume context: latest session volume + turnover-basis close and the
+      // ~30-trading-day average volume (≈45 calendar days). Only core OHLCV
+      // columns here so this can't fail on a golden that lacks the (newer)
+      // delivery columns — delivery % is fetched separately below.
       golden<{
         symbol: string;
         vol: string | null;
         close: string | null;
         avgvol: string | null;
-        delpct: string | null;
       }[]>`
         SELECT symbol,
                (array_agg(volume ORDER BY date DESC))[1]::text AS vol,
                (array_agg(close  ORDER BY date DESC))[1]::text AS close,
-               AVG(volume)::text AS avgvol,
-               (array_agg(delivery_pct ORDER BY date DESC)
-                  FILTER (WHERE delivery_pct IS NOT NULL))[1]::text AS delpct
+               AVG(volume)::text AS avgvol
         FROM golden.price_history
         WHERE interval = '1d' AND volume IS NOT NULL
           AND symbol = ANY(${cands})
@@ -159,6 +156,27 @@ export async function loadQuotes(symbols: string[]): Promise<Map<string, Quote>>
         GROUP BY symbol
       `,
     ]);
+
+    // Delivery % lives in a separate, isolated query: delivery_qty/delivery_pct
+    // are a newer golden addition and may be absent on some deployments. Its own
+    // try/catch means a missing column costs only the Delivery metric, never the
+    // core quote (LTP / 1D / 52W / volume) — the bug that blanked the whole row.
+    const delPct = new Map<string, number>();
+    try {
+      const del = await golden<{ symbol: string; delpct: string | null }[]>`
+        SELECT symbol,
+               (array_agg(delivery_pct ORDER BY date DESC)
+                  FILTER (WHERE delivery_pct IS NOT NULL))[1]::text AS delpct
+        FROM golden.price_history
+        WHERE interval = '1d' AND volume IS NOT NULL
+          AND symbol = ANY(${cands})
+          AND date >= CURRENT_DATE - 45
+        GROUP BY symbol
+      `;
+      for (const r of del) if (r.delpct != null) delPct.set(bare(r.symbol), Number(r.delpct));
+    } catch {
+      // delivery_pct column absent or golden hiccup — Delivery renders "—".
+    }
 
     const last = new Map<string, number>();
     const prev = new Map<string, number>();
@@ -176,13 +194,11 @@ export async function loadQuotes(symbols: string[]): Promise<Map<string, Quote>>
     const vol = new Map<string, number>();
     const rawClose = new Map<string, number>();
     const avgVol = new Map<string, number>();
-    const delPct = new Map<string, number>();
     for (const r of vols) {
       const k = bare(r.symbol);
       if (r.vol != null) vol.set(k, Number(r.vol));
       if (r.close != null) rawClose.set(k, Number(r.close));
       if (r.avgvol != null) avgVol.set(k, Number(r.avgvol));
-      if (r.delpct != null) delPct.set(k, Number(r.delpct));
     }
 
     for (const s of bareSyms) {

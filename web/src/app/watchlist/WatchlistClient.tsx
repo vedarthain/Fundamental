@@ -72,6 +72,9 @@ type Row = {
   /** Portfolio ownership — drives the "P" badge (purple=held, grey=exited). */
   held?: boolean;
   traded?: boolean;
+  /** Position summary for held names: shares held + P&L % (LTP vs avg cost). */
+  held_qty?: number | null;
+  pos_pnl_pct?: number | null;
   /** Sector-aware fundamentals for the peer-glance table. */
   glance: GlanceMetrics | null;
   /** Per-stock verdict — the metrics this stock most stands out on. */
@@ -894,7 +897,6 @@ function WatchRow({
           }
           value={addedValue}
         />
-        <Metric label="LTP" title="Latest daily close (split-adjusted)" value={fmtPrice(ltp)} />
         <Metric
           label="Since add"
           title={
@@ -960,6 +962,9 @@ function WatchRow({
         glance={row.glance}
         glanceKeys={row.glance_keys}
         sector={row.sector_name}
+        held={row.held}
+        heldQty={row.held_qty}
+        posPnlPct={row.pos_pnl_pct}
       />
 
       {/* Editable note — signed-in only (it lives on the server row). */}
@@ -1029,7 +1034,17 @@ const RANGE_OPTIONS: { label: string; days: number }[] = [
 /** Embeds the scanner's CandleChart, fetching candles from /api/scanner/ohlc
  *  for the selected range. Reuses an in-memory cache so range/stock switches
  *  that were already loaded are instant. */
-function ChartBlock({ symbol }: { symbol: string }) {
+function ChartBlock({
+  symbol,
+  held,
+  heldQty,
+  posPnlPct,
+}: {
+  symbol: string;
+  held?: boolean;
+  heldQty?: number | null;
+  posPnlPct?: number | null;
+}) {
   const [days, setDays] = useState(365);
   const [candles, setCandles] = useState<Candle[] | null>(null);
   const [err, setErr] = useState(false);
@@ -1065,7 +1080,26 @@ function ChartBlock({ symbol }: { symbol: string }) {
   return (
     <div className="mt-3">
       <div className="flex items-center justify-between mb-1.5 gap-2 flex-wrap">
-        <span className="text-[9.5px] uppercase tracking-wide muted-text">Price</span>
+        <div className="flex items-center gap-1.5">
+          <span className="text-[9.5px] uppercase tracking-wide muted-text">Price</span>
+          {held && heldQty != null ? (
+            <span className="flex items-center gap-1">
+              <PBadge held size={14} />
+              <span className="text-[10.5px] tabular-nums muted-text">
+                {heldQty.toLocaleString("en-IN")} SH
+              </span>
+              {posPnlPct != null ? (
+                <span
+                  className="text-[10.5px] tabular-nums font-medium"
+                  style={{ color: deltaColor(posPnlPct) }}
+                >
+                  {posPnlPct >= 0 ? "+" : ""}
+                  {posPnlPct}%
+                </span>
+              ) : null}
+            </span>
+          ) : null}
+        </div>
         <div className="flex flex-wrap rounded-md border hairline overflow-hidden">
           {RANGE_OPTIONS.map((o) => (
             <button
@@ -1158,11 +1192,17 @@ function DetailExtras({
   glance,
   glanceKeys,
   sector,
+  held,
+  heldQty,
+  posPnlPct,
 }: {
   symbol: string;
   glance: GlanceMetrics | null;
   glanceKeys: MetricKey[] | undefined;
   sector: string | null;
+  held?: boolean;
+  heldQty?: number | null;
+  posPnlPct?: number | null;
 }) {
   const { data, err } = useExtras(symbol);
   const quarterly = data?.quarterly ?? [];
@@ -1179,7 +1219,7 @@ function DetailExtras({
     <div className="mt-3 space-y-4">
       {/* Row A: price chart squeezed to fit; fundamentals stacked on the right. */}
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_220px] gap-4 items-start">
-        <ChartBlock symbol={symbol} />
+        <ChartBlock symbol={symbol} held={held} heldQty={heldQty} posPnlPct={posPnlPct} />
         <FundamentalsColumn
           quarterly={quarterly}
           dividends={dividends}
