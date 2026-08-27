@@ -1990,7 +1990,10 @@ function HoldingsTable({
         </div>
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full text-[12.5px]">
+        {/* whitespace-nowrap: keep every cell on one line (P&L, Broker, etc.
+            were wrapping once Fall/Rise widened the row); overflow-x-auto above
+            scrolls on narrow screens instead. */}
+        <table className="min-w-full text-[12.5px] whitespace-nowrap">
           <thead>
             <tr className="text-[10.5px] uppercase tracking-wide muted-text border-b hairline">
               {visibleColumns.map((c) => {
