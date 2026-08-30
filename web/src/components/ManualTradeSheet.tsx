@@ -17,6 +17,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { usePathname, useRouter } from "next/navigation";
 import { useSession } from "@/lib/session-client";
 
@@ -152,7 +153,13 @@ export function TradeSheet({ onClose, onChanged }: { onClose: () => void; onChan
       document.body.style.overflow = prev;
     };
   }, [onClose]);
-  return (
+  // Render through a portal to <body>. The desktop "T" trigger lives inside the
+  // sticky site header, which sets `backdrop-blur` — a `backdrop-filter` makes
+  // that header the containing block for any `position: fixed` descendant, so
+  // without the portal this overlay would be trapped inside the header strip
+  // instead of covering the viewport.
+  if (typeof document === "undefined") return null;
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
       style={{ background: "rgba(0,0,0,0.45)" }}
@@ -191,7 +198,8 @@ export function TradeSheet({ onClose, onChanged }: { onClose: () => void; onChan
         </div>
         <ManualTradePanel onChanged={onChanged} />
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
