@@ -7,6 +7,7 @@ import { TopNavLinks } from "@/components/TopNavLinks";
 import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import { EngagementTracker } from "@/components/EngagementTracker";
+import { QuickAddTradeFab } from "@/components/ManualTradeSheet";
 import "./globals.css";
 
 const inter = Inter({
@@ -56,6 +57,7 @@ export default function RootLayout({
         <SiteHeader />
         <main className="flex-1">{children}</main>
         <SiteFooter />
+        <QuickAddTradeFab />
         <Analytics />
         <SpeedInsights />
         <EngagementTracker />

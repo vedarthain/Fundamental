@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { useSession, broadcastSessionChange } from "@/lib/session-client";
 import { UserMenu } from "./UserMenu";
 import { ScribblePad } from "./ScribblePad";
+import { QuickAddTradeButton } from "./ManualTradeSheet";
 
 /**
  * Top-bar navigation.
@@ -89,6 +90,7 @@ export function TopNavLinks() {
         {showSignIn && (
           <DesktopLink href="/login" label="Sign in" active={isActive(pathname, "/login")} />
         )}
+        {!loading && user !== null && <QuickAddTradeButton />}
         {!loading && user !== null && <ScribblePad />}
         {!loading && user !== null && (
           <UserMenu email={user.email} displayName={user.displayName} isAdmin={isAdmin} />
