@@ -146,24 +146,41 @@ export async function POST(req: NextRequest) {
 
   const coveredSymbols = [...new Set(uniqueRows.map((r) => r.symbol))];
 
-  // CSV takes precedence over hand entry: if an imported trade matches a manual
-  // entry on (symbol, broker, trade_date, quantity), the manual row is the same
-  // real trade typed in by hand. We KEEP that manual row but stamp it matched_at
-  // so the Trade Log shows it greyed-out and tagged "Matched" — and every
-  // valuation walk (computeRealized, recomputeDerivedHolding) then excludes
-  // matched manual rows so the authoritative imported copy is counted, once.
-  // Match tuple is per the product spec (NOT dedup_key, which also keys on
-  // side/price/time and wouldn't catch a hand entry that rounded the price).
-  const supersedeTuples = [
-    ...new Map(
-      uniqueRows.map((r) => [`${r.symbol}|${r.tradeDate}|${r.quantity}`, r]),
-    ).values(),
-  ];
+  // CSV takes precedence over hand entry: an imported trade that corresponds to a
+  // manual entry means the user typed in a real trade by hand. We KEEP that manual
+  // row but stamp it matched_at so the Trade Log shows it greyed-out and tagged
+  // "Matched" — and every valuation walk (computeRealized, recomputeDerivedHolding)
+  // then excludes matched manual rows so the authoritative imported copy is counted,
+  // once. We match on (symbol, broker, date, side) + quantity — NOT dedup_key,
+  // which also keys on price/time and wouldn't catch a hand entry that rounded the
+  // price.
+  //
+  // SPLIT FILLS: a single logical order often fills in several ticks at the broker
+  // (e.g. a 6-share sell arrives as 1 + 5), while the user hand-enters the aggregate
+  // (6). So per (symbol, date, side) we accept a manual quantity that equals EITHER
+  // an individual fill OR the SUM of all fills in that group. (Sum-of-one covers the
+  // simple single-fill case.) Not solved here: two separate same-day orders on one
+  // symbol/side (a true subset-sum) — rare enough to leave for manual reconciliation.
+  const fillGroups = new Map<
+    string,
+    { symbol: string; date: string; side: string; qtys: number[] }
+  >();
+  for (const r of uniqueRows) {
+    const k = `${r.symbol}|${r.tradeDate}|${r.side}`;
+    let g = fillGroups.get(k);
+    if (!g) {
+      g = { symbol: r.symbol, date: r.tradeDate, side: r.side, qtys: [] };
+      fillGroups.set(k, g);
+    }
+    g.qtys.push(r.quantity!); // non-null: filtered to quantity > 0 above
+  }
 
   let inserted = 0;
   let matchedManual = 0;
   await sql.begin(async (tx) => {
-    for (const r of supersedeTuples) {
+    for (const g of fillGroups.values()) {
+      const sum = g.qtys.reduce((a, b) => a + b, 0);
+      const candidates = [...new Set([...g.qtys, Math.round(sum * 10000) / 10000])];
       // Flag only rows not already matched, so re-importing the same window
       // doesn't re-stamp (and the count reflects newly-matched entries).
       const upd = await tx`
@@ -173,9 +190,10 @@ export async function POST(req: NextRequest) {
            AND source_file = 'manual-entry'
            AND matched_at IS NULL
            AND broker = ${broker}
-           AND symbol = ${r.symbol}
-           AND trade_date = ${r.tradeDate}
-           AND quantity = ${r.quantity}
+           AND symbol = ${g.symbol}
+           AND trade_date = ${g.date}
+           AND side = ${g.side}
+           AND quantity = ANY(${candidates}::numeric[])
       `;
       matchedManual += upd.count;
     }

@@ -130,6 +130,34 @@ export async function POST(req: NextRequest) {
         (${session.userId}, ${broker}, ${date}, ${time}, ${side}, ${symbol}, ${symbol},
          ${company_name}, ${isin}, ${quantity}, ${price}, 'manual-entry', ${dedupKey})
     `;
+
+    // If this hand entry duplicates trades we ALREADY imported (same symbol,
+    // broker, date, side), flag it matched right away so it's greyed-out in the
+    // Trade Log and excluded from P&L — the mirror of the import-time matcher.
+    // Broker often splits one order into several fills, so we accept a quantity
+    // that equals an individual imported fill OR the sum of that day's fills.
+    const fills = await tx<{ quantity: number }[]>`
+      SELECT quantity::float8 AS quantity
+        FROM app.portfolio_transaction
+       WHERE user_id = ${session.userId}
+         AND source_file <> 'manual-entry'
+         AND broker = ${broker}
+         AND symbol = ${symbol}
+         AND trade_date = ${date}
+         AND side = ${side}
+    `;
+    if (fills.length > 0) {
+      const qtys = fills.map((f) => f.quantity);
+      const sum = Math.round(qtys.reduce((a, b) => a + b, 0) * 10000) / 10000;
+      if (new Set([...qtys, sum]).has(quantity)) {
+        await tx`
+          UPDATE app.portfolio_transaction
+             SET matched_at = now()
+           WHERE user_id = ${session.userId} AND dedup_key = ${dedupKey}
+        `;
+      }
+    }
+
     await recomputeDerivedHolding(tx, session.userId, symbol);
   });
 
