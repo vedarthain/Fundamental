@@ -95,6 +95,7 @@ export function PortfolioClient({
   const [kind, setKind] = useState<ImportKind>("holdings");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
+  const [tradeOpen, setTradeOpen] = useState(false); // quick-add trade sheet
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function onUpload() {
@@ -215,9 +216,40 @@ export function PortfolioClient({
             brokers={portfolio.brokers}
           />
 
-          <ManualTradePanel onChanged={() => router.refresh()} />
+          <div className="mt-4 card p-4 md:p-5 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-[14px] font-semibold">Log a one-off trade</div>
+              <p className="muted-text text-[11.5px] mt-0.5 leading-snug max-w-md">
+                Record a buy or sell between broker imports — updates your holdings, not just the chart.
+                Opens a quick entry sheet (also reachable via the <strong>+</strong> button, bottom-right, on any tab).
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setTradeOpen(true)}
+              className="px-4 py-2 rounded-md font-medium text-[13px] transition-colors inline-flex items-center gap-1.5 shrink-0"
+              style={{ backgroundColor: "var(--color-accent-600)", color: "white" }}
+            >
+              <IconEdit size={15} /> Add manual trade
+            </button>
+          </div>
         </>
       ) : null}
+
+      {/* Quick-add trade: floating button (thumb-reachable on mobile) → bottom
+          sheet / centered modal wrapping the full manual-trade entry form. */}
+      <button
+        type="button"
+        onClick={() => setTradeOpen(true)}
+        aria-label="Add a manual trade"
+        className="fixed z-40 bottom-5 right-5 h-14 w-14 rounded-full shadow-lg flex items-center justify-center transition-transform active:scale-95"
+        style={{ backgroundColor: "var(--color-accent-600)", color: "white" }}
+      >
+        <IconPlus size={26} />
+      </button>
+      {tradeOpen && (
+        <TradeSheet onClose={() => setTradeOpen(false)} onChanged={() => router.refresh()} />
+      )}
     </>
   );
 }
@@ -934,6 +966,28 @@ function BookedPnl({ realized }: { realized: RealizedPnl }) {
     );
   }
   const tt = realized.totals;
+  // Year-wise segregation, keyed off the sell year (lastSell). Rows with no
+  // recorded sell date are bucketed together and pushed to the very bottom
+  // ("max old year") — undated exits are almost always the oldest, pre-import
+  // history where the broker export dropped the timestamp.
+  const cmp = rMakeCmp(sort.key, sort.dir);
+  const byYear = new Map<string | null, RealizedLot[]>();
+  for (const r of realized.rows) {
+    const y = r.lastSell ? r.lastSell.slice(0, 4) : null;
+    (byYear.get(y) ?? byYear.set(y, []).get(y)!).push(r);
+  }
+  const groups = Array.from(byYear.entries())
+    .sort(([a], [b]) => {
+      if (a === b) return 0;
+      if (a === null) return 1; // undated → bottom (oldest)
+      if (b === null) return -1;
+      return b.localeCompare(a); // newest year first
+    })
+    .map(([year, rows]) => ({
+      year,
+      rows: [...rows].sort(cmp),
+      net: rows.reduce((s, r) => s + r.realized, 0),
+    }));
   return (
     <>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
@@ -990,7 +1044,20 @@ function BookedPnl({ realized }: { realized: RealizedPnl }) {
               </tr>
             </thead>
             <tbody>
-              {[...realized.rows].sort(rMakeCmp(sort.key, sort.dir)).map((r: RealizedLot) => (
+              {groups.map((g) => (
+                <Fragment key={g.year ?? "undated"}>
+                  <tr className="border-b hairline" style={{ background: "var(--color-paper)" }}>
+                    <td colSpan={4} className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide muted-text">
+                      {g.year ?? "No sell date"}
+                      <span className="ml-2 normal-case font-normal">· {g.rows.length} stock{g.rows.length === 1 ? "" : "s"}</span>
+                    </td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-[11px] font-semibold" style={{ color: up(g.net) ? GREEN : RED }}>
+                      {signed(g.net)}
+                    </td>
+                    <td className="px-2 py-1.5" />
+                    <td className="px-3 py-1.5 hidden sm:table-cell" />
+                  </tr>
+                  {g.rows.map((r: RealizedLot) => (
                 <tr key={r.symbol} className="border-b hairline hover:bg-[var(--color-paper)]">
                   <td className="px-3 py-2">
                     <Link href={`/stock/${r.symbol}`} target="_blank" rel="noopener noreferrer" className="font-medium hover:underline">
@@ -1009,6 +1076,8 @@ function BookedPnl({ realized }: { realized: RealizedPnl }) {
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums muted-text hidden sm:table-cell">{r.lastSell ?? "—"}</td>
                 </tr>
+                  ))}
+                </Fragment>
               ))}
             </tbody>
             <tfoot>
@@ -1214,7 +1283,67 @@ const MANUAL_BROKERS = [
   { value: "other", label: "Other" },
 ] as const;
 
-function ManualTradePanel({ onChanged }: { onChanged: () => void }) {
+// Quick-add overlay: a bottom sheet on mobile (slides up, thumb-reachable),
+// a centered modal on desktop. Wraps the full ManualTradePanel form so the FAB
+// and the Transactions-tab button share one code path. Closes on backdrop
+// click, the × button, or Escape.
+function TradeSheet({ onClose, onChanged }: { onClose: () => void; onChanged: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden"; // lock scroll behind the sheet
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [onClose]);
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
+      style={{ background: "rgba(0,0,0,0.45)" }}
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Add a manual trade"
+    >
+      <div
+        className="w-full sm:max-w-2xl max-h-[90vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl"
+        style={{ background: "var(--color-card)" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div
+          className="sticky top-0 z-10 flex items-center justify-between px-4 py-3 border-b hairline"
+          style={{ background: "var(--color-card)" }}
+        >
+          <div className="flex items-center gap-2">
+            <span
+              className="inline-flex items-center justify-center w-6 h-6 rounded-md"
+              style={{ background: "color-mix(in srgb, var(--color-accent-600) 12%, transparent)", color: "var(--color-accent-700)" }}
+            >
+              <IconEdit size={15} />
+            </span>
+            <h2 className="text-[14px] font-semibold">Add a manual trade</h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="h-8 w-8 rounded-md flex items-center justify-center hover:bg-[var(--color-paper)]"
+            style={{ color: "var(--color-muted)" }}
+          >
+            <IconClose size={18} />
+          </button>
+        </div>
+        <ManualTradePanel embedded onChanged={onChanged} />
+      </div>
+    </div>
+  );
+}
+
+function ManualTradePanel({ onChanged, embedded = false }: { onChanged: () => void; embedded?: boolean }) {
   const [trades, setTrades] = useState<ManualTrade[]>([]);
   const [symbol, setSymbol] = useState("");
   const [query, setQuery] = useState("");
@@ -1328,9 +1457,9 @@ function ManualTradePanel({ onChanged }: { onChanged: () => void }) {
   const inputStyle = { borderColor: "var(--color-border-default)" };
 
   return (
-    <div className="card p-4 md:p-5 mt-4">
-      <SectionHead icon={<IconEdit size={15} />} title="Add a manual trade" />
-      <p className="muted-text text-[11.5px] -mt-1 mb-3 leading-snug">
+    <div className={embedded ? "p-4 md:p-5" : "card p-4 md:p-5 mt-4"}>
+      {!embedded && <SectionHead icon={<IconEdit size={15} />} title="Add a manual trade" />}
+      <p className={`muted-text text-[11.5px] mb-3 leading-snug${embedded ? "" : " -mt-1"}`}>
         Log a buy or sell between broker imports — it updates your holdings, not just the chart.
         A real <strong>holdings snapshot</strong> for the same stock always wins for the current
         quantity; until then the position is computed from your trades.
@@ -2302,6 +2431,10 @@ const IconUpload = ({ className, size }: IconProps) =>
   svg(size, className, <><path d="M12 15V4" /><path d="m8 8 4-4 4 4" /><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" /></>);
 const IconEdit = ({ className, size }: IconProps) =>
   svg(size, className, <><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></>);
+const IconPlus = ({ className, size }: IconProps) =>
+  svg(size, className, <><path d="M12 5v14M5 12h14" /></>);
+const IconClose = ({ className, size }: IconProps) =>
+  svg(size, className, <><path d="M18 6 6 18M6 6l12 12" /></>);
 // Sector/industry glyphs for the holdings group headers.
 const IconFactory = ({ className, size }: IconProps) =>
   svg(size, className, <><path d="M3 21V10l6 4V10l6 4V7l6 4v10Z" /><path d="M3 21h18" /></>);
