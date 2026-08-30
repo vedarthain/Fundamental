@@ -14,12 +14,15 @@
 #   3. build-market-snapshot rebuild app.market_snapshot_cache for /market
 #   4. /api/revalidate       purge Vercel's Data Cache for the changed tags
 #
-# Cadence: Sunday 13:00 UTC = 18:30 IST — the day AFTER weekly-fetch.yml
-# (Sat 13:00 UTC + up to 180-min scrape), giving a wide margin so it always
-# reads fresh blobs even if Saturday's scrape was throttled/resumed. Decoupled by
-# fixed cron rather than chained: if fetch halts, this still scores on whatever
-# data exists (fundamentals are quarterly — a partial scrape still scores fine).
-# After a manual fetch re-run (e.g. post cookie-rotation), re-run this manually.
+# Trigger: CHAINED to weekly-fetch.yml via `workflow_run` — this runs the moment
+# the fetch workflow COMPLETES SUCCESSFULLY (Sat, once the ≤180-min scrape ends),
+# and is SKIPPED if fetch failed. "Success" here is precise: the fetch job exits
+# non-zero ONLY on Screener cookie expiry (auth_failed>0, cli.py). A throttled or
+# partial scrape still exits 0 → still counts as success → compute still runs, so
+# a slow week doesn't block scoring (fundamentals are quarterly; a partial scrape
+# scores fine). Only a dead-cookie fetch (no fresh blobs) gates compute out.
+# After a manual fetch re-run (e.g. post cookie-rotation), its success re-triggers
+# this automatically; workflow_dispatch below still allows a standalone re-run.
 #
 # Required secrets:
 #   NEON_APP_URL        — fundamental_app on Neon
@@ -31,8 +34,11 @@
 name: Weekly Compute + Score
 
 on:
-  schedule:
-    - cron: '0 13 * * 0'   # Sun 13:00 UTC = 18:30 IST (next day, after Sat weekly-fetch)
+  # Run ONLY after weekly-fetch finishes. The job-level `if` below then gates on
+  # conclusion == 'success', so a failed fetch (cookie expiry) skips compute.
+  workflow_run:
+    workflows: ["Weekly Fetch (Screener)"]
+    types: [completed]
   workflow_dispatch:
     inputs:
       snapshot_date:
@@ -52,6 +58,12 @@ env:
 jobs:
   compute:
     runs-on: ubuntu-latest
+    # Skip when the triggering fetch failed/was cancelled. Manual dispatch always
+    # runs (no upstream run attached). This is THE dependency gate: no successful
+    # fetch → no compute+score.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     # compute ~45 + score ~15 + rebuild ~3 on a warm Neon. But a cold/throttled
     # Sunday run has pushed compute-metrics to ~75-80 min, which blew the old
     # 90-min cap and got the build/revalidate steps canceled mid-run (scores had
