@@ -211,6 +211,30 @@ echo "=== Price history (incremental) ==="
 LOCAL_PH_MAX=$(psql "$LOCAL_GOLDEN" -tAc "SELECT MAX(date) FROM golden.price_history" 2>/dev/null || echo "")
 echo "  Local price history max date: ${LOCAL_PH_MAX:-<empty>}"
 
+# Column intersection — local golden.price_history may be AHEAD of prod (e.g.
+# delivery_qty/delivery_pct added locally but not yet on Neon). A blind
+# `SELECT *` then exports prod's narrower row while the local temp table
+# expects every local column, and COPY dies with "missing data for column …".
+# Pull only the columns BOTH sides have, in local ordinal order; any local-only
+# column keeps its default (NULL). Drift-proof: survives either side gaining a
+# column the other lacks.
+NEON_PH_COLS=$(psql "$NEON_GOLDEN_URL" -tAc "
+  SELECT column_name FROM information_schema.columns
+  WHERE table_schema='golden' AND table_name='price_history'
+  ORDER BY ordinal_position")
+LOCAL_PH_COLS=$(psql "$LOCAL_GOLDEN" -tAc "
+  SELECT column_name FROM information_schema.columns
+  WHERE table_schema='golden' AND table_name='price_history'
+  ORDER BY ordinal_position")
+PH_COLS=""
+while IFS= read -r col; do
+  [[ -z "$col" ]] && continue
+  if grep -qx "$col" <<< "$NEON_PH_COLS"; then
+    PH_COLS="${PH_COLS:+$PH_COLS,}$col"
+  fi
+done <<< "$LOCAL_PH_COLS"
+echo "  shared columns: $PH_COLS"
+
 GOLDEN_FILTER=$(psql "$NEON_APP_URL" -tAc "
   SELECT string_agg('''' || symbol || '.NS''', ',')
   FROM app.universe WHERE is_active
@@ -222,7 +246,7 @@ else
   DATE_FILTER="date > '$LOCAL_PH_MAX'"
 fi
 
-psql "$NEON_GOLDEN_URL" -c "\COPY (SELECT * FROM golden.price_history WHERE symbol IN ($GOLDEN_FILTER) AND interval = '1d' AND $DATE_FILTER) TO STDOUT" > "$TMP_DIR/price_history.tsv"
+psql "$NEON_GOLDEN_URL" -c "\COPY (SELECT $PH_COLS FROM golden.price_history WHERE symbol IN ($GOLDEN_FILTER) AND interval = '1d' AND $DATE_FILTER) TO STDOUT" > "$TMP_DIR/price_history.tsv"
 row_count=$(wc -l < "$TMP_DIR/price_history.tsv" | tr -d ' ')
 echo "  ${row_count} new price rows"
 
@@ -230,8 +254,8 @@ if [[ -s "$TMP_DIR/price_history.tsv" ]]; then
   psql "$LOCAL_GOLDEN" -v ON_ERROR_STOP=1 <<SQL
 DROP TABLE IF EXISTS _ph;
 CREATE TEMP TABLE _ph (LIKE golden.price_history INCLUDING ALL);
-\COPY _ph FROM '$TMP_DIR/price_history.tsv';
-INSERT INTO golden.price_history SELECT * FROM _ph
+\COPY _ph ($PH_COLS) FROM '$TMP_DIR/price_history.tsv';
+INSERT INTO golden.price_history ($PH_COLS) SELECT $PH_COLS FROM _ph
   ON CONFLICT (symbol, date, interval) DO UPDATE SET
     open   = EXCLUDED.open,
     high   = EXCLUDED.high,
