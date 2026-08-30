@@ -148,7 +148,7 @@ export function PortfolioClient({
           { v: "holdings", label: "Holdings" },
           { v: "performance", label: "Performance" },
           { v: "transactions", label: "Transactions" },
-          { v: "booked", label: "Booked P&L" },
+          { v: "booked", label: "P&L" },
         ] as const)
           .filter((o) => owner || o.v !== "performance")
           .map((o) => (
@@ -178,7 +178,7 @@ export function PortfolioClient({
       </div>
 
       {tab === "booked" ? (
-        <BookedPnl realized={realized} />
+        <BookedPnl realized={realized} instruments={portfolio.instruments} />
       ) : tab === "holdings" ? (
         !portfolio.hasHoldings ? (
           <div className="card p-8 text-center mt-6">
@@ -935,9 +935,48 @@ function rMakeCmp(key: RSortKey, dir: SortDir) {
   };
 }
 
-function BookedPnl({ realized }: { realized: RealizedPnl }) {
+// A light divider row inside an FY group, splitting Realized vs Unrealized.
+// Sits under the collapsible FY header; carries its own section subtotal.
+function SubHeadRow({ label, count, countLabel, net }: { label: string; count: number; countLabel: string; net: number }) {
+  return (
+    <tr className="border-b hairline">
+      <td colSpan={4} className="pl-8 pr-3 py-1 text-[10.5px] font-medium tracking-wide" style={{ color: "var(--color-muted)" }}>
+        {label}
+        <span className="ml-1.5 normal-case font-normal">· {count} {countLabel}</span>
+      </td>
+      <td className="px-2 py-1 text-right tabular-nums text-[10.5px] font-semibold" style={{ color: up(net) ? GREEN : RED }}>
+        {signed(net)}
+      </td>
+      <td className="px-2 py-1" />
+      <td className="px-3 py-1 hidden sm:table-cell" />
+    </tr>
+  );
+}
+
+// Indian financial year (April→March). A sell on 2026-03-31 is FY2025-26; a
+// sell on 2026-04-01 is FY2026-27. Returns null for missing/garbage dates.
+function fyOf(iso: string | null): string | null {
+  if (!iso) return null;
+  const y = Number(iso.slice(0, 4));
+  const m = Number(iso.slice(5, 7));
+  if (!y || !m) return null;
+  const start = m >= 4 ? y : y - 1;
+  return `FY${start}-${String(start + 1).slice(2)}`;
+}
+
+function BookedPnl({ realized, instruments }: { realized: RealizedPnl; instruments: Instrument[] }) {
   // Defaults to Booked P&L high→low (the server's original order).
   const [sort, setSort] = useState<{ key: RSortKey; dir: SortDir }>({ key: "realized", dir: "desc" });
+  // Year groups collapse to just the subtotal row. Start collapsed so the
+  // table opens as a compact year-by-year summary; click a year to expand.
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const toggleYear = (key: string) =>
+    setCollapsed((cur) => {
+      const next = new Set(cur);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   const onSort = (key: RSortKey) =>
     setSort((cur) => {
       if (cur.key === key) return { key, dir: cur.dir === "asc" ? "desc" : "asc" };
@@ -945,7 +984,9 @@ function BookedPnl({ realized }: { realized: RealizedPnl }) {
       return { key, dir: col.numeric ? "desc" : "asc" }; // numbers → high-first, name → A→Z
     });
 
-  if (realized.rows.length === 0) {
+  const openHoldings = instruments.filter((i) => i.quantity > 0);
+
+  if (realized.rows.length === 0 && openHoldings.length === 0) {
     return (
       <div className="card p-8 text-center mt-2">
         <h2 className="font-display text-[20px] mb-2">No booked P&amp;L yet</h2>
@@ -958,28 +999,38 @@ function BookedPnl({ realized }: { realized: RealizedPnl }) {
     );
   }
   const tt = realized.totals;
-  // Year-wise segregation, keyed off the sell year (lastSell). Rows with no
-  // recorded sell date are bucketed together and pushed to the very bottom
-  // ("max old year") — undated exits are almost always the oldest, pre-import
-  // history where the broker export dropped the timestamp.
+  // Financial-year segregation (April→March), keyed off the sell date.
+  //   • Each FY shows its REALIZED exits (booked P&L on sells that FY).
+  //   • Open positions are unrealized and belong to "now", so they all attach
+  //     to the CURRENT FY as an Unrealized sub-section — regardless of when the
+  //     shares were bought. Older FYs therefore only ever show realized rows.
+  //   • Exits with no recorded date bucket together at the very bottom.
   const cmp = rMakeCmp(sort.key, sort.dir);
-  const byYear = new Map<string | null, RealizedLot[]>();
+  const now = new Date();
+  const curFy = fyOf(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`);
+  const byFy = new Map<string | null, RealizedLot[]>();
   for (const r of realized.rows) {
-    const y = r.lastSell ? r.lastSell.slice(0, 4) : null;
-    (byYear.get(y) ?? byYear.set(y, []).get(y)!).push(r);
+    const fy = fyOf(r.lastSell);
+    (byFy.get(fy) ?? byFy.set(fy, []).get(fy)!).push(r);
   }
-  const groups = Array.from(byYear.entries())
+  // Guarantee the current FY exists as a home for open holdings, even with no
+  // sells this year.
+  if (openHoldings.length > 0 && curFy && !byFy.has(curFy)) byFy.set(curFy, []);
+  const uSort = (a: Instrument, b: Instrument) => b.pnl - a.pnl; // unrealized: gainers first
+  const groups = Array.from(byFy.entries())
     .sort(([a], [b]) => {
       if (a === b) return 0;
       if (a === null) return 1; // undated → bottom (oldest)
       if (b === null) return -1;
-      return b.localeCompare(a); // newest year first
+      return b.localeCompare(a); // newest FY first
     })
-    .map(([year, rows]) => ({
-      year,
-      rows: [...rows].sort(cmp),
-      net: rows.reduce((s, r) => s + r.realized, 0),
-    }));
+    .map(([fy, rows]) => {
+      const realizedRows = [...rows].sort(cmp);
+      const realizedNet = rows.reduce((s, r) => s + r.realized, 0);
+      const unrealized = fy === curFy ? [...openHoldings].sort(uSort) : [];
+      const unrealizedNet = unrealized.reduce((s, i) => s + i.pnl, 0);
+      return { fy, realizedRows, realizedNet, unrealized, unrealizedNet, net: realizedNet + unrealizedNet };
+    });
   return (
     <>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
@@ -1036,12 +1087,24 @@ function BookedPnl({ realized }: { realized: RealizedPnl }) {
               </tr>
             </thead>
             <tbody>
-              {groups.map((g) => (
-                <Fragment key={g.year ?? "undated"}>
-                  <tr className="border-b hairline" style={{ background: "var(--color-paper)" }}>
+              {groups.map((g) => {
+                const key = g.fy ?? "undated";
+                const isCollapsed = collapsed.has(key);
+                const count = g.realizedRows.length + g.unrealized.length;
+                return (
+                <Fragment key={key}>
+                  {/* ── FY header (collapsible) — combined net for the year ── */}
+                  <tr
+                    className="border-b hairline cursor-pointer hover:bg-[var(--color-paper)]"
+                    style={{ background: "var(--color-paper)" }}
+                    onClick={() => toggleYear(key)}
+                  >
                     <td colSpan={4} className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide muted-text">
-                      {g.year ?? "No sell date"}
-                      <span className="ml-2 normal-case font-normal">· {g.rows.length} stock{g.rows.length === 1 ? "" : "s"}</span>
+                      <span aria-hidden className="inline-block w-3 text-[8px] leading-none mr-1 align-middle">
+                        {isCollapsed ? "▶" : "▼"}
+                      </span>
+                      {g.fy ?? "No sell date"}
+                      <span className="ml-2 normal-case font-normal">· {count} stock{count === 1 ? "" : "s"}</span>
                     </td>
                     <td className="px-2 py-1.5 text-right tabular-nums text-[11px] font-semibold" style={{ color: up(g.net) ? GREEN : RED }}>
                       {signed(g.net)}
@@ -1049,28 +1112,77 @@ function BookedPnl({ realized }: { realized: RealizedPnl }) {
                     <td className="px-2 py-1.5" />
                     <td className="px-3 py-1.5 hidden sm:table-cell" />
                   </tr>
-                  {g.rows.map((r: RealizedLot) => (
-                <tr key={r.symbol} className="border-b hairline hover:bg-[var(--color-paper)]">
-                  <td className="px-3 py-2">
-                    <Link href={`/stock/${r.symbol}`} target="_blank" rel="noopener noreferrer" className="font-medium hover:underline">
-                      {r.symbol}
-                    </Link>
-                    <div className="text-[10.5px] muted-text truncate max-w-[220px]">{r.name ?? ""}</div>
-                  </td>
-                  <td className="px-2 py-2 text-right tabular-nums">{r.qtySold}</td>
-                  <td className="px-2 py-2 text-right tabular-nums">{inr(r.costOfSold)}</td>
-                  <td className="px-2 py-2 text-right tabular-nums">{inr(r.proceeds)}</td>
-                  <td className="px-2 py-2 text-right tabular-nums font-medium" style={{ color: up(r.realized) ? GREEN : RED }}>
-                    {signed(r.realized)}
-                  </td>
-                  <td className="px-2 py-2 text-right tabular-nums" style={{ color: r.realizedPct == null ? undefined : up(r.realizedPct) ? GREEN : RED }}>
-                    {pct(r.realizedPct)}
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums muted-text hidden sm:table-cell">{r.lastSell ?? "—"}</td>
-                </tr>
-                  ))}
+
+                  {!isCollapsed && (
+                    <>
+                      {/* ── Realized sub-section ── */}
+                      {g.realizedRows.length > 0 && (
+                        <SubHeadRow
+                          label="Realized"
+                          count={g.realizedRows.length}
+                          countLabel="sold"
+                          net={g.realizedNet}
+                        />
+                      )}
+                      {g.realizedRows.map((r: RealizedLot) => (
+                        <tr key={`r-${r.symbol}`} className="border-b hairline hover:bg-[var(--color-paper)]">
+                          <td className="px-3 py-2">
+                            <Link href={`/stock/${r.symbol}`} target="_blank" rel="noopener noreferrer" className="font-medium hover:underline">
+                              {r.symbol}
+                            </Link>
+                            <div className="text-[10.5px] muted-text truncate max-w-[220px]">{r.name ?? ""}</div>
+                          </td>
+                          <td className="px-2 py-2 text-right tabular-nums">{r.qtySold}</td>
+                          <td className="px-2 py-2 text-right tabular-nums">{inr(r.costOfSold)}</td>
+                          <td className="px-2 py-2 text-right tabular-nums">{inr(r.proceeds)}</td>
+                          <td className="px-2 py-2 text-right tabular-nums font-medium" style={{ color: up(r.realized) ? GREEN : RED }}>
+                            {signed(r.realized)}
+                          </td>
+                          <td className="px-2 py-2 text-right tabular-nums" style={{ color: r.realizedPct == null ? undefined : up(r.realizedPct) ? GREEN : RED }}>
+                            {pct(r.realizedPct)}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums muted-text hidden sm:table-cell">{r.lastSell ?? "—"}</td>
+                        </tr>
+                      ))}
+
+                      {/* ── Unrealized sub-section (open positions, current FY only) ── */}
+                      {g.unrealized.length > 0 && (
+                        <SubHeadRow
+                          label="Unrealized · open"
+                          count={g.unrealized.length}
+                          countLabel="held"
+                          net={g.unrealizedNet}
+                        />
+                      )}
+                      {g.unrealized.map((i: Instrument) => (
+                        <tr key={`u-${i.key}`} className="border-b hairline hover:bg-[var(--color-paper)]">
+                          <td className="px-3 py-2">
+                            {i.symbol ? (
+                              <Link href={`/stock/${i.symbol}`} target="_blank" rel="noopener noreferrer" className="font-medium hover:underline">
+                                {i.symbol}
+                              </Link>
+                            ) : (
+                              <span className="font-medium">{i.name}</span>
+                            )}
+                            <div className="text-[10.5px] muted-text truncate max-w-[220px]">{i.symbol ? i.name : ""}</div>
+                          </td>
+                          <td className="px-2 py-2 text-right tabular-nums">{i.quantity}</td>
+                          <td className="px-2 py-2 text-right tabular-nums">{inr(i.invested)}</td>
+                          <td className="px-2 py-2 text-right tabular-nums">{inr(i.currentValue)}</td>
+                          <td className="px-2 py-2 text-right tabular-nums font-medium" style={{ color: up(i.pnl) ? GREEN : RED }}>
+                            {signed(i.pnl)}
+                          </td>
+                          <td className="px-2 py-2 text-right tabular-nums" style={{ color: i.pnlPct == null ? undefined : up(i.pnlPct) ? GREEN : RED }}>
+                            {pct(i.pnlPct)}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums muted-text hidden sm:table-cell">Open</td>
+                        </tr>
+                      ))}
+                    </>
+                  )}
                 </Fragment>
-              ))}
+                );
+              })}
             </tbody>
             <tfoot>
               <tr className="border-t-2 hairline font-semibold" style={{ background: "var(--color-paper)" }}>
