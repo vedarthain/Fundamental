@@ -238,7 +238,15 @@ def fetch_many(
                   AND (m.last_scraped_at IS NULL
                        OR m.last_scraped_at < NOW() - (%s || ' hours')::interval
                        OR m.last_status <> 'ok')
-                ORDER BY m.last_scraped_at NULLS FIRST, u.symbol
+                -- Failures first. A symbol whose last scrape was NOT 'ok'
+                -- (auth_failed / http_error / parse_error) is retried BEFORE
+                -- aged-but-healthy names. Without this, a just-failed row sorts
+                -- to the back (its last_scraped_at is recent) and, under
+                -- --max-runtime-min, can be skipped run after run — leaving the
+                -- exact rows that trip cookie_health/freshness perpetually red.
+                -- NULLS-first keeps never-scraped names ahead of stale ones.
+                ORDER BY (m.last_status IS DISTINCT FROM 'ok') DESC,
+                         m.last_scraped_at NULLS FIRST, u.symbol
                 """,
                 (str(skip_recent_hours),),
             )
