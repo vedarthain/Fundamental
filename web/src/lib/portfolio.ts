@@ -601,6 +601,10 @@ async function computeRealized(
       FROM app.portfolio_transaction t
       LEFT JOIN app.universe u ON u.symbol = t.symbol
      WHERE t.user_id = ${userId} AND t.symbol IS NOT NULL
+       -- A manual entry matched by an import is kept for the Trade Log but is
+       -- the SAME real trade as its imported copy — exclude it here so P&L
+       -- counts the authoritative imported row once, never twice.
+       AND NOT (t.source_file = 'manual-entry' AND t.matched_at IS NOT NULL)
      ORDER BY t.symbol, t.trade_date ASC, t.trade_time ASC NULLS FIRST, t.id ASC
   `;
 
@@ -727,6 +731,76 @@ async function computeRealized(
 export async function loadRealizedPnl(userId: number): Promise<RealizedPnl> {
   const { rows, totals } = await computeRealized(userId);
   return { rows, totals };
+}
+
+// ── raw trade ledger (Trade Log tab) ────────────────────────────────────────
+//
+// The unaggregated per-transaction list, split into two ledgers the UI keeps
+// visually separate: hand-entered ("manual") and broker-imported. A manual row
+// that an import later matched carries matched=true — the UI greys it out and
+// tags it "Matched" (its value is already represented by the imported copy).
+export type TradeRow = {
+  id: string;
+  symbol: string;
+  name: string | null;
+  broker: string;
+  brokerLabel: string;
+  side: "buy" | "sell";
+  date: string; // trade_date (ISO)
+  time: string | null;
+  quantity: number;
+  price: number;
+  matched: boolean; // manual only: superseded by an imported copy
+  sourceFile: string | null; // imported only: the upload filename
+};
+export type TradeLog = { manual: TradeRow[]; imported: TradeRow[] };
+
+const TRADE_BROKER_LABEL: Record<string, string> = {
+  ...BROKER_LABEL,
+  other: "Other",
+  manual: "Manual",
+};
+
+export async function loadTradeLog(userId: number): Promise<TradeLog> {
+  const rows = await sql<
+    {
+      id: string; symbol: string; name: string | null; broker: string; side: string;
+      d: string; t: string | null; qty: string; price: string;
+      matched_at: string | null; source_file: string | null; is_manual: boolean;
+    }[]
+  >`
+    SELECT t.id::text, t.symbol, u.company_name AS name, t.broker, t.side,
+           t.trade_date::text AS d, t.trade_time AS t,
+           t.quantity::text AS qty, t.price::text AS price,
+           t.matched_at::text AS matched_at, t.source_file,
+           (t.source_file = 'manual-entry') AS is_manual
+      FROM app.portfolio_transaction t
+      LEFT JOIN app.universe u ON u.symbol = t.symbol
+     WHERE t.user_id = ${userId} AND t.symbol IS NOT NULL
+     ORDER BY t.trade_date DESC, t.trade_time DESC NULLS LAST, t.id DESC
+  `;
+  const manual: TradeRow[] = [];
+  const imported: TradeRow[] = [];
+  for (const r of rows) {
+    const row: TradeRow = {
+      id: r.id,
+      symbol: r.symbol,
+      name: r.name,
+      broker: r.broker,
+      brokerLabel: TRADE_BROKER_LABEL[r.broker] ?? r.broker,
+      side: r.side === "sell" ? "sell" : "buy",
+      date: r.d,
+      time: r.t,
+      quantity: Number(r.qty),
+      price: Number(r.price),
+      matched: r.matched_at != null,
+      sourceFile: r.is_manual ? null : r.source_file,
+    };
+    (r.is_manual ? manual : imported).push(row);
+  }
+  // Matched manual rows sink to the bottom of the manual ledger.
+  manual.sort((a, b) => (a.matched === b.matched ? 0 : a.matched ? 1 : -1));
+  return { manual, imported };
 }
 
 // ── realized performance over time ──────────────────────────────────────────

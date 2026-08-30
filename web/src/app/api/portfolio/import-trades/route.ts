@@ -148,8 +148,11 @@ export async function POST(req: NextRequest) {
 
   // CSV takes precedence over hand entry: if an imported trade matches a manual
   // entry on (symbol, broker, trade_date, quantity), the manual row is the same
-  // real trade typed in by hand — drop it so the import doesn't double-count.
-  // Dedup tuple is per the product spec (NOT dedup_key, which also keys on
+  // real trade typed in by hand. We KEEP that manual row but stamp it matched_at
+  // so the Trade Log shows it greyed-out and tagged "Matched" — and every
+  // valuation walk (computeRealized, recomputeDerivedHolding) then excludes
+  // matched manual rows so the authoritative imported copy is counted, once.
+  // Match tuple is per the product spec (NOT dedup_key, which also keys on
   // side/price/time and wouldn't catch a hand entry that rounded the price).
   const supersedeTuples = [
     ...new Map(
@@ -158,19 +161,23 @@ export async function POST(req: NextRequest) {
   ];
 
   let inserted = 0;
-  let supersededManual = 0;
+  let matchedManual = 0;
   await sql.begin(async (tx) => {
     for (const r of supersedeTuples) {
-      const del = await tx`
-        DELETE FROM app.portfolio_transaction
+      // Flag only rows not already matched, so re-importing the same window
+      // doesn't re-stamp (and the count reflects newly-matched entries).
+      const upd = await tx`
+        UPDATE app.portfolio_transaction
+           SET matched_at = now()
          WHERE user_id = ${session.userId}
            AND source_file = 'manual-entry'
+           AND matched_at IS NULL
            AND broker = ${broker}
            AND symbol = ${r.symbol}
            AND trade_date = ${r.tradeDate}
            AND quantity = ${r.quantity}
       `;
-      supersededManual += del.count;
+      matchedManual += upd.count;
     }
     for (const r of uniqueRows) {
       const res = await tx`
@@ -199,7 +206,7 @@ export async function POST(req: NextRequest) {
     imported: inserted,
     skipped: uniqueRows.length - inserted, // already-present (deduped) trades
     mappedSymbols: coveredSymbols.length,
-    supersededManual, // hand entries replaced by the authoritative CSV trade
+    matchedManual, // hand entries matched by an authoritative CSV trade (kept, flagged)
     outsideCoverage: [...skippedSymbols],
     dateRange: dates.length ? { from: dates[0], to: dates[dates.length - 1] } : null,
   });

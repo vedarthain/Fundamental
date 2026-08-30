@@ -19,7 +19,7 @@ import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
   PieChart, Pie, Cell, BarChart, Bar, ScatterChart, Scatter, ZAxis, ReferenceLine,
 } from "recharts";
-import type { Portfolio, Instrument, RealizedPnl, RealizedLot, PerformanceStats, RealizedTimeline } from "@/lib/portfolio";
+import type { Portfolio, Instrument, RealizedPnl, RealizedLot, PerformanceStats, RealizedTimeline, TradeLog, TradeRow } from "@/lib/portfolio";
 import { TradeSheet } from "@/components/ManualTradeSheet";
 
 const BROKERS = [
@@ -80,12 +80,14 @@ type PortfolioTab = "holdings" | "performance" | "transactions" | "booked";
 export function PortfolioClient({
   portfolio,
   realized,
+  tradeLog,
   owner = false,
   perf = null,
   timeline = null,
 }: {
   portfolio: Portfolio;
   realized: RealizedPnl;
+  tradeLog: TradeLog;
   owner?: boolean; // gates the (personal, owner-only) Performance analysis tab
   perf?: PerformanceStats | null; // time-weighted stats (owner-only)
   timeline?: RealizedTimeline | null; // realized-over-time analytics (owner-only)
@@ -234,6 +236,8 @@ export function PortfolioClient({
               <IconEdit size={15} /> Add manual trade
             </button>
           </div>
+
+          <TradeLogView log={tradeLog} />
         </>
       ) : null}
 
@@ -903,7 +907,7 @@ const R_COLUMNS: {
   { key: "qtySold", label: "Qty sold", align: "right", cls: "px-2", numeric: true },
   { key: "costOfSold", label: "Cost basis", align: "right", cls: "px-2", numeric: true },
   { key: "proceeds", label: "Proceeds", align: "right", cls: "px-2", numeric: true },
-  { key: "realized", label: "Booked P&L", align: "right", cls: "px-2", numeric: true },
+  { key: "realized", label: "P&L", align: "right", cls: "px-2", numeric: true },
   { key: "realizedPct", label: "Return", align: "right", cls: "px-2", numeric: true },
   { key: "lastSell", label: "Last sell", align: "right", cls: "px-3", numeric: false, hideSm: true },
 ];
@@ -935,12 +939,26 @@ function rMakeCmp(key: RSortKey, dir: SortDir) {
   };
 }
 
-// A light divider row inside an FY group, splitting Realized vs Unrealized.
-// Sits under the collapsible FY header; carries its own section subtotal.
-function SubHeadRow({ label, count, countLabel, net }: { label: string; count: number; countLabel: string; net: number }) {
+// A light divider row inside an FY group, splitting Realized vs Unrealized (and,
+// one level deeper, Stocks vs Other instruments). Carries its own subtotal, and
+// when `onToggle` is supplied it becomes a collapsible section header.
+function SubHeadRow({
+  label, count, countLabel, net, deep = false, collapsed, onToggle,
+}: {
+  label: string; count: number; countLabel: string; net: number;
+  deep?: boolean; collapsed?: boolean; onToggle?: () => void;
+}) {
   return (
-    <tr className="border-b hairline">
-      <td colSpan={4} className="pl-8 pr-3 py-1 text-[10.5px] font-medium tracking-wide" style={{ color: "var(--color-muted)" }}>
+    <tr
+      className={`border-b hairline${onToggle ? " cursor-pointer hover:bg-[var(--color-paper)]" : ""}`}
+      onClick={onToggle}
+    >
+      <td colSpan={4} className={`${deep ? "pl-12" : "pl-8"} pr-3 py-1 text-[10.5px] font-medium tracking-wide`} style={{ color: "var(--color-muted)" }}>
+        {onToggle && (
+          <span aria-hidden className="inline-block w-3 text-[8px] leading-none mr-1 align-middle">
+            {collapsed ? "▶" : "▼"}
+          </span>
+        )}
         {label}
         <span className="ml-1.5 normal-case font-normal">· {count} {countLabel}</span>
       </td>
@@ -949,6 +967,35 @@ function SubHeadRow({ label, count, countLabel, net }: { label: string; count: n
       </td>
       <td className="px-2 py-1" />
       <td className="px-3 py-1 hidden sm:table-cell" />
+    </tr>
+  );
+}
+
+// One open position rendered as an Unrealized row (mark-to-market). Column order
+// mirrors the Realized rows so the two sub-sections line up.
+function UnrealRow({ i }: { i: Instrument }) {
+  return (
+    <tr className="border-b hairline hover:bg-[var(--color-paper)]">
+      <td className="px-3 py-2">
+        {i.symbol ? (
+          <Link href={`/stock/${i.symbol}`} target="_blank" rel="noopener noreferrer" className="font-medium hover:underline">
+            {i.symbol}
+          </Link>
+        ) : (
+          <span className="font-medium">{i.name}</span>
+        )}
+        <div className="text-[10.5px] muted-text truncate max-w-[220px]">{i.symbol ? i.name : ""}</div>
+      </td>
+      <td className="px-2 py-2 text-right tabular-nums">{i.quantity}</td>
+      <td className="px-2 py-2 text-right tabular-nums">{inr(i.invested)}</td>
+      <td className="px-2 py-2 text-right tabular-nums">{inr(i.currentValue)}</td>
+      <td className="px-2 py-2 text-right tabular-nums font-medium" style={{ color: up(i.pnl) ? GREEN : RED }}>
+        {signed(i.pnl)}
+      </td>
+      <td className="px-2 py-2 text-right tabular-nums" style={{ color: i.pnlPct == null ? undefined : up(i.pnlPct) ? GREEN : RED }}>
+        {pct(i.pnlPct)}
+      </td>
+      <td className="px-3 py-2 text-right tabular-nums muted-text hidden sm:table-cell">Open</td>
     </tr>
   );
 }
@@ -1035,7 +1082,7 @@ function BookedPnl({ realized, instruments }: { realized: RealizedPnl; instrumen
     <>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
         <Card
-          label="Net booked P&L"
+          label="Net P&L"
           value={signed(tt.realized)}
           valueColor={up(tt.realized) ? GREEN : RED}
           sub={pct(tt.realizedPct)}
@@ -1061,7 +1108,7 @@ function BookedPnl({ realized, instruments }: { realized: RealizedPnl; instrumen
           >
             <IconList size={15} />
           </span>
-          <h2 className="text-[14px] font-semibold">Booked profit &amp; loss ({realized.rows.length})</h2>
+          <h2 className="text-[14px] font-semibold">Profit &amp; loss ({realized.rows.length})</h2>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-[12.5px]">
@@ -1113,18 +1160,32 @@ function BookedPnl({ realized, instruments }: { realized: RealizedPnl; instrumen
                     <td className="px-3 py-1.5 hidden sm:table-cell" />
                   </tr>
 
-                  {!isCollapsed && (
+                  {!isCollapsed && (() => {
+                    const rKey = `${key}#r`;
+                    const uKey = `${key}#u`;
+                    const rCollapsed = collapsed.has(rKey);
+                    const uCollapsed = collapsed.has(uKey);
+                    // Segregate open positions: mapped equities ("Stocks") on top,
+                    // ETFs/funds ("Other instruments") below.
+                    const uStocks = g.unrealized.filter((i) => i.isMapped);
+                    const uOther = g.unrealized.filter((i) => !i.isMapped);
+                    const uStocksNet = uStocks.reduce((s, i) => s + i.pnl, 0);
+                    const uOtherNet = uOther.reduce((s, i) => s + i.pnl, 0);
+                    const split = uStocks.length > 0 && uOther.length > 0; // both kinds present
+                    return (
                     <>
-                      {/* ── Realized sub-section ── */}
+                      {/* ── Realized sub-section (collapsible) ── */}
                       {g.realizedRows.length > 0 && (
                         <SubHeadRow
                           label="Realized"
                           count={g.realizedRows.length}
                           countLabel="sold"
                           net={g.realizedNet}
+                          collapsed={rCollapsed}
+                          onToggle={() => toggleYear(rKey)}
                         />
                       )}
-                      {g.realizedRows.map((r: RealizedLot) => (
+                      {!rCollapsed && g.realizedRows.map((r: RealizedLot) => (
                         <tr key={`r-${r.symbol}`} className="border-b hairline hover:bg-[var(--color-paper)]">
                           <td className="px-3 py-2">
                             <Link href={`/stock/${r.symbol}`} target="_blank" rel="noopener noreferrer" className="font-medium hover:underline">
@@ -1145,41 +1206,32 @@ function BookedPnl({ realized, instruments }: { realized: RealizedPnl; instrumen
                         </tr>
                       ))}
 
-                      {/* ── Unrealized sub-section (open positions, current FY only) ── */}
+                      {/* ── Unrealized sub-section (open positions, current FY only) — collapsible ── */}
                       {g.unrealized.length > 0 && (
                         <SubHeadRow
                           label="Unrealized · open"
                           count={g.unrealized.length}
                           countLabel="held"
                           net={g.unrealizedNet}
+                          collapsed={uCollapsed}
+                          onToggle={() => toggleYear(uKey)}
                         />
                       )}
-                      {g.unrealized.map((i: Instrument) => (
-                        <tr key={`u-${i.key}`} className="border-b hairline hover:bg-[var(--color-paper)]">
-                          <td className="px-3 py-2">
-                            {i.symbol ? (
-                              <Link href={`/stock/${i.symbol}`} target="_blank" rel="noopener noreferrer" className="font-medium hover:underline">
-                                {i.symbol}
-                              </Link>
-                            ) : (
-                              <span className="font-medium">{i.name}</span>
-                            )}
-                            <div className="text-[10.5px] muted-text truncate max-w-[220px]">{i.symbol ? i.name : ""}</div>
-                          </td>
-                          <td className="px-2 py-2 text-right tabular-nums">{i.quantity}</td>
-                          <td className="px-2 py-2 text-right tabular-nums">{inr(i.invested)}</td>
-                          <td className="px-2 py-2 text-right tabular-nums">{inr(i.currentValue)}</td>
-                          <td className="px-2 py-2 text-right tabular-nums font-medium" style={{ color: up(i.pnl) ? GREEN : RED }}>
-                            {signed(i.pnl)}
-                          </td>
-                          <td className="px-2 py-2 text-right tabular-nums" style={{ color: i.pnlPct == null ? undefined : up(i.pnlPct) ? GREEN : RED }}>
-                            {pct(i.pnlPct)}
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums muted-text hidden sm:table-cell">Open</td>
-                        </tr>
-                      ))}
+                      {!uCollapsed && (
+                        <>
+                          {split && (
+                            <SubHeadRow deep label="Stocks" count={uStocks.length} countLabel="held" net={uStocksNet} />
+                          )}
+                          {uStocks.map((i) => <UnrealRow key={`u-${i.key}`} i={i} />)}
+                          {uOther.length > 0 && (
+                            <SubHeadRow deep label="Other instruments" count={uOther.length} countLabel="held" net={uOtherNet} />
+                          )}
+                          {uOther.map((i) => <UnrealRow key={`u-${i.key}`} i={i} />)}
+                        </>
+                      )}
                     </>
-                  )}
+                    );
+                  })()}
                 </Fragment>
                 );
               })}
@@ -1208,6 +1260,145 @@ function BookedPnl({ realized, instruments }: { realized: RealizedPnl; instrumen
         </p>
       </div>
     </>
+  );
+}
+
+// ─────────────────────────── trade log ─────────────────────────────────────
+
+// The raw per-transaction ledger, split into two visually-separate tables:
+// hand-entered ("Manual") and broker-imported. A manual row that a later import
+// matched is greyed out and tagged "Matched" — its position is already carried
+// by the authoritative imported copy, so it no longer feeds P&L.
+function TradeLogView({ log }: { log: TradeLog }) {
+  const { manual, imported } = log;
+  const matchedCount = manual.filter((t) => t.matched).length;
+  if (manual.length === 0 && imported.length === 0) {
+    return (
+      <div className="card p-6 text-center mt-4">
+        <div className="text-[13px] muted-text">
+          No trades logged yet. Import a broker tradebook above, or add a manual trade.
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="mt-4 space-y-4">
+      <TradeTable
+        title="Manual trades"
+        rows={manual}
+        emptyHint="No hand-entered trades. Use “Add manual trade” to log one."
+        note={
+          matchedCount > 0
+            ? `${matchedCount} manual ${matchedCount === 1 ? "entry has" : "entries have"} been matched by an import — greyed out below, and excluded from P&L so they aren’t counted twice.`
+            : undefined
+        }
+      />
+      <TradeTable
+        title="Imported trades"
+        rows={imported}
+        emptyHint="No imported trades. Upload a broker tradebook on the panel above."
+      />
+    </div>
+  );
+}
+
+function TradeTable({
+  title, rows, emptyHint, note,
+}: {
+  title: string;
+  rows: TradeRow[];
+  emptyHint: string;
+  note?: string;
+}) {
+  return (
+    <div className="card overflow-hidden">
+      <div className="px-4 py-3 border-b hairline flex items-center gap-2">
+        <span
+          className="inline-flex items-center justify-center w-6 h-6 rounded-md shrink-0"
+          style={{ background: "color-mix(in srgb, var(--color-accent-600) 12%, transparent)", color: "var(--color-accent-700)" }}
+        >
+          <IconList size={15} />
+        </span>
+        <h2 className="text-[14px] font-semibold">{title} ({rows.length})</h2>
+      </div>
+      {note && (
+        <p className="muted-text text-[11.5px] px-4 py-2 leading-snug border-b hairline">{note}</p>
+      )}
+      {rows.length === 0 ? (
+        <div className="px-4 py-6 text-center text-[12.5px] muted-text">{emptyHint}</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-[12.5px]">
+            <thead>
+              <tr className="text-[10.5px] uppercase tracking-wide muted-text border-b hairline">
+                <th className="text-left font-semibold px-3 py-2">Date</th>
+                <th className="text-left font-semibold px-2 py-2">Side</th>
+                <th className="text-left font-semibold px-2 py-2">Instrument</th>
+                <th className="text-right font-semibold px-2 py-2">Qty</th>
+                <th className="text-right font-semibold px-2 py-2">Price</th>
+                <th className="text-right font-semibold px-2 py-2 hidden sm:table-cell">Value</th>
+                <th className="text-right font-semibold px-3 py-2 hidden md:table-cell">Broker</th>
+                <th className="text-right font-semibold px-3 py-2">{title === "Manual trades" ? "Status" : "Source"}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => {
+                const dim = r.matched; // greyed out for matched manual rows
+                return (
+                  <tr
+                    key={r.id}
+                    className="border-b hairline hover:bg-[var(--color-paper)]"
+                    style={dim ? { opacity: 0.5 } : undefined}
+                  >
+                    <td className="px-3 py-2 tabular-nums muted-text whitespace-nowrap">{r.date}</td>
+                    <td className="px-2 py-2">
+                      <span
+                        className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide"
+                        style={{
+                          color: r.side === "buy" ? GREEN : RED,
+                          background: `color-mix(in srgb, ${r.side === "buy" ? GREEN : RED} 12%, transparent)`,
+                        }}
+                      >
+                        {r.side}
+                      </span>
+                    </td>
+                    <td className="px-2 py-2">
+                      {r.symbol ? (
+                        <Link href={`/stock/${r.symbol}`} target="_blank" rel="noopener noreferrer" className="font-medium hover:underline">
+                          {r.symbol}
+                        </Link>
+                      ) : (
+                        <span className="font-medium">{r.name}</span>
+                      )}
+                      <div className="text-[10.5px] muted-text truncate max-w-[200px]">{r.symbol ? r.name ?? "" : ""}</div>
+                    </td>
+                    <td className="px-2 py-2 text-right tabular-nums">{r.quantity}</td>
+                    <td className="px-2 py-2 text-right tabular-nums">{inr(r.price, 2)}</td>
+                    <td className="px-2 py-2 text-right tabular-nums hidden sm:table-cell">{inr(r.quantity * r.price)}</td>
+                    <td className="px-3 py-2 text-right muted-text hidden md:table-cell">{r.brokerLabel}</td>
+                    <td className="px-3 py-2 text-right">
+                      {r.matched ? (
+                        <span
+                          className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide"
+                          style={{ color: "var(--color-muted)", background: "var(--color-paper)" }}
+                          title="This hand entry matches an imported trade — kept for reference, not counted in P&L."
+                        >
+                          Matched
+                        </span>
+                      ) : (
+                        <span className="text-[10.5px] muted-text truncate inline-block max-w-[160px] align-middle">
+                          {r.sourceFile ?? "—"}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 

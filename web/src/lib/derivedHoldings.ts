@@ -58,6 +58,9 @@ export async function recomputeDerivedHolding(
            (source_file = 'manual-entry') AS manual
       FROM app.portfolio_transaction
      WHERE user_id = ${userId} AND symbol = ${symbol}
+       -- Skip manual entries superseded by an imported copy (matched_at set) —
+       -- the import is authoritative; counting both would double the position.
+       AND NOT (source_file = 'manual-entry' AND matched_at IS NOT NULL)
      ORDER BY trade_date ASC, trade_time ASC NULLS FIRST, id ASC
   `;
   const hasManual = txns.some((t) => t.manual);

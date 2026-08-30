@@ -163,7 +163,12 @@ export function TradeSheet({ onClose, onChanged }: { onClose: () => void; onChan
     <div
       className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
       style={{ background: "rgba(0,0,0,0.45)" }}
-      onClick={onClose}
+      // Close on any click that lands on the backdrop itself. The target guard
+      // means a click that bubbled up from inside the card (or the tail of a
+      // text-selection drag) won't dismiss the sheet.
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
       role="dialog"
       aria-modal="true"
       aria-label="Add a manual trade"
