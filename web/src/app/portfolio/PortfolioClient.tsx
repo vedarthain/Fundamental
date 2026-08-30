@@ -939,6 +939,36 @@ function rMakeCmp(key: RSortKey, dir: SortDir) {
   };
 }
 
+// The same sortable columns mapped onto an open position (Instrument), so the
+// Realized and Unrealized sub-sections sort together under one clicked header.
+// "Cost basis"→invested, "Proceeds"→current value, "P&L"→pnl, "Return"→pnlPct.
+function iSortVal(i: Instrument, key: RSortKey): number | string | null {
+  switch (key) {
+    case "symbol": return (i.symbol ?? i.name ?? "").toLowerCase();
+    case "qtySold": return i.quantity;
+    case "costOfSold": return i.invested;
+    case "proceeds": return i.currentValue;
+    case "realized": return i.pnl;
+    case "realizedPct": return i.pnlPct;
+    case "lastSell": return null; // open positions have no sell date
+  }
+}
+
+function iMakeCmp(key: RSortKey, dir: SortDir) {
+  const s = dir === "asc" ? 1 : -1;
+  return (a: Instrument, b: Instrument) => {
+    const va = iSortVal(a, key);
+    const vb = iSortVal(b, key);
+    if (va == null && vb == null) return 0;
+    if (va == null) return 1;
+    if (vb == null) return -1;
+    if (typeof va === "string" || typeof vb === "string") {
+      return String(va).localeCompare(String(vb)) * s;
+    }
+    return (va - vb) * s;
+  };
+}
+
 // A light divider row inside an FY group, splitting Realized vs Unrealized (and,
 // one level deeper, Stocks vs Other instruments). Carries its own subtotal, and
 // when `onToggle` is supplied it becomes a collapsible section header.
@@ -1014,16 +1044,22 @@ function fyOf(iso: string | null): string | null {
 function BookedPnl({ realized, instruments }: { realized: RealizedPnl; instruments: Instrument[] }) {
   // Defaults to Booked P&L high→low (the server's original order).
   const [sort, setSort] = useState<{ key: RSortKey; dir: SortDir }>({ key: "realized", dir: "desc" });
-  // Year groups collapse to just the subtotal row. Start collapsed so the
-  // table opens as a compact year-by-year summary; click a year to expand.
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const toggleYear = (key: string) =>
-    setCollapsed((cur) => {
+  // Everything starts COLLAPSED. We track the set of EXPANDED keys (not
+  // collapsed ones) so the default empty set hides every FY group AND its
+  // Realized/Unrealized sub-sections until the user clicks in.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggle = (key: string) =>
+    setExpanded((cur) => {
       const next = new Set(cur);
       if (next.has(key)) next.delete(key);
       else next.add(key);
       return next;
     });
+  const isOpen = (key: string) => expanded.has(key);
+  // Sub-filter beside the heading: All / Stocks (mapped equities) / Others
+  // (ETFs, funds — everything unmapped). Realized exits are always equities, so
+  // "Others" surfaces only unrealized open non-equity positions.
+  const [view, setView] = useState<"all" | "stocks" | "others">("all");
   const onSort = (key: RSortKey) =>
     setSort((cur) => {
       if (cur.key === key) return { key, dir: cur.dir === "asc" ? "desc" : "asc" };
@@ -1063,7 +1099,7 @@ function BookedPnl({ realized, instruments }: { realized: RealizedPnl; instrumen
   // Guarantee the current FY exists as a home for open holdings, even with no
   // sells this year.
   if (openHoldings.length > 0 && curFy && !byFy.has(curFy)) byFy.set(curFy, []);
-  const uSort = (a: Instrument, b: Instrument) => b.pnl - a.pnl; // unrealized: gainers first
+  const iCmp = iMakeCmp(sort.key, sort.dir); // same active column, applied to open positions
   const groups = Array.from(byFy.entries())
     .sort(([a], [b]) => {
       if (a === b) return 0;
@@ -1074,7 +1110,7 @@ function BookedPnl({ realized, instruments }: { realized: RealizedPnl; instrumen
     .map(([fy, rows]) => {
       const realizedRows = [...rows].sort(cmp);
       const realizedNet = rows.reduce((s, r) => s + r.realized, 0);
-      const unrealized = fy === curFy ? [...openHoldings].sort(uSort) : [];
+      const unrealized = fy === curFy ? [...openHoldings].sort(iCmp) : [];
       const unrealizedNet = unrealized.reduce((s, i) => s + i.pnl, 0);
       return { fy, realizedRows, realizedNet, unrealized, unrealizedNet, net: realizedNet + unrealizedNet };
     });
@@ -1108,7 +1144,30 @@ function BookedPnl({ realized, instruments }: { realized: RealizedPnl; instrumen
           >
             <IconList size={15} />
           </span>
-          <h2 className="text-[14px] font-semibold">Profit &amp; loss ({realized.rows.length})</h2>
+          <h2 className="text-[14px] font-semibold">Profit &amp; loss</h2>
+          {/* Stocks / Others sub-tabs — filter the table to mapped equities or
+              the ETFs/funds bucket. "All" keeps the combined FY view. */}
+          <div className="ml-auto inline-flex rounded-md border overflow-hidden text-[12px]" style={{ borderColor: "var(--color-border-default)" }}>
+            {([
+              { v: "all", label: "All" },
+              { v: "stocks", label: "Stocks" },
+              { v: "others", label: "Others" },
+            ] as const).map((o) => (
+              <button
+                key={o.v}
+                type="button"
+                onClick={() => setView(o.v)}
+                className="px-3 py-1 font-medium transition-colors"
+                style={
+                  view === o.v
+                    ? { backgroundColor: "var(--color-accent-600)", color: "white" }
+                    : { color: "var(--color-muted)" }
+                }
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-[12.5px]">
@@ -1136,56 +1195,68 @@ function BookedPnl({ realized, instruments }: { realized: RealizedPnl; instrumen
             <tbody>
               {groups.map((g) => {
                 const key = g.fy ?? "undated";
-                const isCollapsed = collapsed.has(key);
-                const count = g.realizedRows.length + g.unrealized.length;
+                // ── Stocks / Others sub-tab filtering ──
+                // Realized exits are always mapped equities, so "Others" hides them.
+                const realizedShown = view === "others" ? [] : g.realizedRows;
+                const uShown =
+                  view === "stocks" ? g.unrealized.filter((i) => i.isMapped)
+                  : view === "others" ? g.unrealized.filter((i) => !i.isMapped)
+                  : g.unrealized;
+                if (realizedShown.length === 0 && uShown.length === 0) return null; // nothing in this FY for the filter
+                const realizedNet = realizedShown.reduce((s, r) => s + r.realized, 0);
+                const uNet = uShown.reduce((s, i) => s + i.pnl, 0);
+                const headNet = realizedNet + uNet;
+                const count = realizedShown.length + uShown.length;
+                const groupCollapsed = !isOpen(key);
                 return (
                 <Fragment key={key}>
                   {/* ── FY header (collapsible) — combined net for the year ── */}
                   <tr
                     className="border-b hairline cursor-pointer hover:bg-[var(--color-paper)]"
                     style={{ background: "var(--color-paper)" }}
-                    onClick={() => toggleYear(key)}
+                    onClick={() => toggle(key)}
                   >
                     <td colSpan={4} className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide muted-text">
                       <span aria-hidden className="inline-block w-3 text-[8px] leading-none mr-1 align-middle">
-                        {isCollapsed ? "▶" : "▼"}
+                        {groupCollapsed ? "▶" : "▼"}
                       </span>
                       {g.fy ?? "No sell date"}
-                      <span className="ml-2 normal-case font-normal">· {count} stock{count === 1 ? "" : "s"}</span>
+                      <span className="ml-2 normal-case font-normal">· {count} item{count === 1 ? "" : "s"}</span>
                     </td>
-                    <td className="px-2 py-1.5 text-right tabular-nums text-[11px] font-semibold" style={{ color: up(g.net) ? GREEN : RED }}>
-                      {signed(g.net)}
+                    <td className="px-2 py-1.5 text-right tabular-nums text-[11px] font-semibold" style={{ color: up(headNet) ? GREEN : RED }}>
+                      {signed(headNet)}
                     </td>
                     <td className="px-2 py-1.5" />
                     <td className="px-3 py-1.5 hidden sm:table-cell" />
                   </tr>
 
-                  {!isCollapsed && (() => {
+                  {!groupCollapsed && (() => {
                     const rKey = `${key}#r`;
                     const uKey = `${key}#u`;
-                    const rCollapsed = collapsed.has(rKey);
-                    const uCollapsed = collapsed.has(uKey);
+                    const rCollapsed = !isOpen(rKey);
+                    const uCollapsed = !isOpen(uKey);
                     // Segregate open positions: mapped equities ("Stocks") on top,
-                    // ETFs/funds ("Other instruments") below.
-                    const uStocks = g.unrealized.filter((i) => i.isMapped);
-                    const uOther = g.unrealized.filter((i) => !i.isMapped);
+                    // ETFs/funds ("Other instruments") below. Only split in the
+                    // "All" view — the Stocks/Others tabs already isolate one kind.
+                    const uStocks = uShown.filter((i) => i.isMapped);
+                    const uOther = uShown.filter((i) => !i.isMapped);
                     const uStocksNet = uStocks.reduce((s, i) => s + i.pnl, 0);
                     const uOtherNet = uOther.reduce((s, i) => s + i.pnl, 0);
-                    const split = uStocks.length > 0 && uOther.length > 0; // both kinds present
+                    const split = view === "all" && uStocks.length > 0 && uOther.length > 0;
                     return (
                     <>
                       {/* ── Realized sub-section (collapsible) ── */}
-                      {g.realizedRows.length > 0 && (
+                      {realizedShown.length > 0 && (
                         <SubHeadRow
                           label="Realized"
-                          count={g.realizedRows.length}
+                          count={realizedShown.length}
                           countLabel="sold"
-                          net={g.realizedNet}
+                          net={realizedNet}
                           collapsed={rCollapsed}
-                          onToggle={() => toggleYear(rKey)}
+                          onToggle={() => toggle(rKey)}
                         />
                       )}
-                      {!rCollapsed && g.realizedRows.map((r: RealizedLot) => (
+                      {!rCollapsed && realizedShown.map((r: RealizedLot) => (
                         <tr key={`r-${r.symbol}`} className="border-b hairline hover:bg-[var(--color-paper)]">
                           <td className="px-3 py-2">
                             <Link href={`/stock/${r.symbol}`} target="_blank" rel="noopener noreferrer" className="font-medium hover:underline">
@@ -1207,14 +1278,14 @@ function BookedPnl({ realized, instruments }: { realized: RealizedPnl; instrumen
                       ))}
 
                       {/* ── Unrealized sub-section (open positions, current FY only) — collapsible ── */}
-                      {g.unrealized.length > 0 && (
+                      {uShown.length > 0 && (
                         <SubHeadRow
                           label="Unrealized · open"
-                          count={g.unrealized.length}
+                          count={uShown.length}
                           countLabel="held"
-                          net={g.unrealizedNet}
+                          net={uNet}
                           collapsed={uCollapsed}
-                          onToggle={() => toggleYear(uKey)}
+                          onToggle={() => toggle(uKey)}
                         />
                       )}
                       {!uCollapsed && (
