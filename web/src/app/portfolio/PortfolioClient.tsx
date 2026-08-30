@@ -13,7 +13,7 @@
  */
 
 import { useRouter } from "next/navigation";
-import { Fragment, useRef, useState } from "react";
+import { Fragment, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -1340,6 +1340,49 @@ function BookedPnl({ realized, instruments }: { realized: RealizedPnl; instrumen
 // hand-entered ("Manual") and broker-imported. A manual row that a later import
 // matched is greyed out and tagged "Matched" — its position is already carried
 // by the authoritative imported copy, so it no longer feeds P&L.
+// Month-year buckets present in a trade list, newest first, for the export
+// picker. e.g. "2026-08" → { value: "2026-08", label: "Aug 2026" }.
+const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function tradePeriods(rows: TradeRow[]): { value: string; label: string }[] {
+  const set = new Set<string>();
+  for (const r of rows) if (r.date) set.add(r.date.slice(0, 7));
+  return [...set]
+    .sort((a, b) => b.localeCompare(a))
+    .map((ym) => {
+      const [y, m] = ym.split("-");
+      return { value: ym, label: `${MONTH_ABBR[Number(m) - 1] ?? m} ${y}` };
+    });
+}
+
+// Build a CSV of the selected month-year (or all) and trigger a browser
+// download — no server round-trip; the rows are already in the client.
+function downloadTradesCsv(rows: TradeRow[], period: string) {
+  const filtered = period === "all" ? rows : rows.filter((r) => r.date?.slice(0, 7) === period);
+  const esc = (v: string | number) => {
+    const s = String(v ?? "");
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const header = ["Date", "Side", "Symbol", "Name", "Quantity", "Price", "Value", "Broker", "Source"];
+  const lines = [header.join(",")];
+  for (const r of filtered) {
+    lines.push(
+      [r.date, r.side, r.symbol, r.name ?? "", r.quantity, r.price,
+       (r.quantity * r.price).toFixed(2), r.brokerLabel, r.sourceFile ?? ""]
+        .map(esc)
+        .join(","),
+    );
+  }
+  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `imported-trades-${period}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 function TradeLogView({ log }: { log: TradeLog }) {
   const { manual, imported } = log;
   const matchedCount = manual.filter((t) => t.matched).length;
@@ -1368,19 +1411,23 @@ function TradeLogView({ log }: { log: TradeLog }) {
         title="Imported trades"
         rows={imported}
         emptyHint="No imported trades. Upload a broker tradebook on the panel above."
+        exportable
       />
     </div>
   );
 }
 
 function TradeTable({
-  title, rows, emptyHint, note,
+  title, rows, emptyHint, note, exportable,
 }: {
   title: string;
   rows: TradeRow[];
   emptyHint: string;
   note?: string;
+  exportable?: boolean;
 }) {
+  const periods = useMemo(() => (exportable ? tradePeriods(rows) : []), [exportable, rows]);
+  const [period, setPeriod] = useState<string>("all");
   return (
     <div className="card overflow-hidden">
       <div className="px-4 py-3 border-b hairline flex items-center gap-2">
@@ -1391,6 +1438,30 @@ function TradeTable({
           <IconList size={15} />
         </span>
         <h2 className="text-[14px] font-semibold">{title} ({rows.length})</h2>
+        {exportable && rows.length > 0 && (
+          <div className="ml-auto flex items-center gap-1.5">
+            <select
+              value={period}
+              onChange={(e) => setPeriod(e.target.value)}
+              className="text-[11.5px] rounded-md border px-2 py-1 bg-transparent"
+              style={{ borderColor: "var(--color-border-default)" }}
+              aria-label="Export period"
+            >
+              <option value="all">All time</option>
+              {periods.map((p) => (
+                <option key={p.value} value={p.value}>{p.label}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => downloadTradesCsv(rows, period)}
+              className="text-[11.5px] font-medium rounded-md px-2.5 py-1 transition-colors"
+              style={{ backgroundColor: "var(--color-accent-600)", color: "white" }}
+            >
+              Export CSV
+            </button>
+          </div>
+        )}
       </div>
       {note && (
         <p className="muted-text text-[11.5px] px-4 py-2 leading-snug border-b hairline">{note}</p>
