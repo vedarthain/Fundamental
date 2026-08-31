@@ -15,6 +15,7 @@
 import { unstable_cache } from "next/cache";
 import { sql, golden } from "@/lib/db";
 import { NewsClient, type FeedItem, type NewsCategory, type StockTag, type TalkedItem } from "./NewsClient";
+import { MorningBriefCard } from "./MorningBriefCard";
 
 // No session reads — safe to ISR cache at the edge. Revalidate every 5 min
 // (matching getNews TTL so users see fresh headlines without a forced
@@ -393,6 +394,9 @@ export default async function NewsPage() {
           Headlines tagged to the stocks they mention — each with our Industry Score, price &amp; today&apos;s move
         </p>
       </header>
+
+      {/* Admin-only Morning Brief (self-gating client fetch; hidden for non-admins). */}
+      <MorningBriefCard />
 
       {news.length === 0 ? (
         <div className="card p-6 muted-text text-[13px]">No headlines yet.</div>
