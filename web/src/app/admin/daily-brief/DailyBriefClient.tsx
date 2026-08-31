@@ -286,11 +286,41 @@ function BriefView({ brief }: { brief: StoredBrief }) {
           {brief.sourcePages ?? "?"} pages · {brief.model ?? "—"}
         </span>
       </div>
+      {brief.sections.length > 1 && (
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 6,
+            marginBottom: "1rem",
+            paddingBottom: "0.75rem",
+            borderBottom: "1px solid var(--color-border, #e2e5ec)",
+          }}
+        >
+          {brief.sections.map((sec, si) => (
+            <a
+              key={si}
+              href={`#brief-sec-${si}`}
+              style={{
+                fontSize: "0.72rem",
+                fontWeight: 600,
+                background: "#eef2ff",
+                color: "#1E2761",
+                padding: "2px 9px",
+                borderRadius: 999,
+                textDecoration: "none",
+              }}
+            >
+              {sec.heading} <span style={{ opacity: 0.6 }}>{sec.items.length}</span>
+            </a>
+          ))}
+        </div>
+      )}
       {brief.sections.length === 0 ? (
         <p style={{ color: "var(--color-muted)", fontSize: "0.85rem" }}>No items.</p>
       ) : (
         brief.sections.map((sec, si) => (
-          <div key={si} style={{ marginBottom: "1rem" }}>
+          <div key={si} id={`brief-sec-${si}`} style={{ marginBottom: "1rem", scrollMarginTop: "1rem" }}>
             <h3
               style={{
                 fontSize: "0.8rem",

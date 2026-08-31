@@ -197,7 +197,7 @@ SPECIFICITY IS MANDATORY. Every item MUST carry concrete facts pulled from the t
 - BAD (NEVER produce): "Market data tables indicate trading activity", "Multiple companies reported quarterly results", "Several companies filed regulatory disclosures". These are worthless category labels. If you cannot state a specific fact, DROP the item entirely.
 
 Rules:
-- Group items into sections (e.g. "Markets", "Companies", "Economy & Policy", "Sectors"). Use only sections with real content. Order sections by importance.
+- Group items into GRANULAR thematic categories, not broad buckets — this is important, the reader scans by category. Prefer sector/theme headings so each category is short: e.g. "Telecom", "Auto & EV", "Banking & Financials", "IT & Technology", "Pharma & Healthcare", "Energy & Oil", "Metals & Mining", "Consumer & Retail", "Infrastructure & Realty", "Markets & Indices", "Economy & Policy", "Deals & M&A". Create a category whenever you have 2+ related items; fold genuine one-offs into the closest category. Aim for 4-10 categories. NEVER dump everything into one giant "Companies" section. Order categories by importance to an Indian equity investor.
 - Each item: a specific factual title and a 1-3 sentence summary carrying the key numbers/facts. Neutral wire-service tone. Rewrite in your own words — do NOT copy sentences verbatim.
 - Aim for 8-20 substantive items if the source supports it. Quality over padding, but do not be lazy — extract every genuine story you can find.
 - For every item, list the NSE-listed companies it is about in "mentions" as their common company names (e.g. "Vodafone Idea", "Bharti Airtel", "TVS Motor"). Only companies clearly central to the item. Leave "mentions" as [] if none.

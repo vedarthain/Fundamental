@@ -63,8 +63,23 @@ export function MorningBriefCard() {
 
       {open && (
         <div className="px-4 pb-4">
+          {/* Category index — jump to a section instead of scrolling the list. */}
+          {brief.sections.length > 1 && (
+            <div className="mb-3 flex flex-wrap gap-1.5 border-b hairline pb-3">
+              {brief.sections.map((sec, si) => (
+                <a
+                  key={si}
+                  href={`#mb-sec-${si}`}
+                  className="rounded-full bg-[#eef2ff] px-2.5 py-[2px] text-[11px] font-semibold text-[#1E2761] no-underline"
+                >
+                  {sec.heading}
+                  <span className="ml-1 opacity-60">{sec.items.length}</span>
+                </a>
+              ))}
+            </div>
+          )}
           {brief.sections.map((sec, si) => (
-            <div key={si} className="mb-3">
+            <div key={si} id={`mb-sec-${si}`} className="mb-3 scroll-mt-20">
               <h3 className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-[#1E2761]">
                 {sec.heading}
               </h3>
