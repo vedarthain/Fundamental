@@ -154,6 +154,31 @@ function stripFence(s: string): string {
 }
 
 /**
+ * Parse the model's JSON robustly. Handles: (a) clean JSON, (b) a ```json fence,
+ * (c) stray prose before/after the object (grab the outermost {...}). Truncated
+ * output (hit max_tokens) is NOT salvageable here — the caller detects that via
+ * stop_reason and raises a clearer error.
+ */
+function parseBriefJson(rawText: string): { sections?: unknown } {
+  const cleaned = stripFence(rawText);
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    // Fall back to the outermost brace span in case the model wrapped it in prose.
+    const first = cleaned.indexOf("{");
+    const last = cleaned.lastIndexOf("}");
+    if (first !== -1 && last > first) {
+      try {
+        return JSON.parse(cleaned.slice(first, last + 1));
+      } catch {
+        /* fall through */
+      }
+    }
+    throw new Error("Claude returned unparseable JSON for the brief.");
+  }
+}
+
+/**
  * Call Claude to synthesize the brief. Returns sections with raw model
  * "mentions" (company-name strings) NOT yet resolved to symbols.
  */
@@ -168,34 +193,42 @@ async function synthesize(
   }
   const client = new Anthropic({ apiKey });
 
-  const msg = await client.messages.create({
-    model: BRIEF_MODEL,
-    max_tokens: 8000,
-    system: [
-      {
-        type: "text",
-        text: SYSTEM_PROMPT,
-        cache_control: { type: "ephemeral" },
-      },
-    ],
-    messages: [
-      {
-        role: "user",
-        content: `Newspaper: ${paperLabel}\nEdition date: ${briefDate}\n\nExtracted pages:\n\n${pageText}`,
-      },
-    ],
-  });
+  // Stream so a large brief (whole paper → many items) can't hit the serverless
+  // function timeout, and give it enough room that the JSON is never truncated
+  // mid-object (truncation was the classic "unparseable JSON" cause at 8k).
+  const msg = await client.messages
+    .stream({
+      model: BRIEF_MODEL,
+      max_tokens: 16000,
+      system: [
+        {
+          type: "text",
+          text: SYSTEM_PROMPT,
+          cache_control: { type: "ephemeral" },
+        },
+      ],
+      messages: [
+        {
+          role: "user",
+          content: `Newspaper: ${paperLabel}\nEdition date: ${briefDate}\n\nExtracted pages:\n\n${pageText}`,
+        },
+      ],
+    })
+    .finalMessage();
 
   const textPart = msg.content.find((b) => b.type === "text");
   const rawText = textPart && "text" in textPart ? textPart.text : "";
   if (!rawText) throw new Error("Claude returned no text for the brief.");
 
-  let parsed: { sections?: unknown };
-  try {
-    parsed = JSON.parse(stripFence(rawText));
-  } catch {
-    throw new Error("Claude returned unparseable JSON for the brief.");
+  // If we ran out of output budget the JSON is cut off — say so plainly instead
+  // of surfacing a generic parse error the reader can't act on.
+  if (msg.stop_reason === "max_tokens") {
+    throw new Error(
+      "The brief was too long and got cut off before finishing. Re-run to try again.",
+    );
   }
+
+  const parsed = parseBriefJson(rawText);
 
   const sectionsRaw = Array.isArray(parsed.sections) ? (parsed.sections as RawSection[]) : [];
   return sectionsRaw
