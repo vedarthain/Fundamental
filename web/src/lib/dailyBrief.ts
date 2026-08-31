@@ -2,13 +2,13 @@
  * Daily "Morning Brief" — admin-only epaper synthesis.
  *
  * PIPELINE (all in-memory; the PDF is NEVER persisted):
- *   1. unpdf extracts per-page text from the uploaded epaper PDF.
- *   2. A keyword-density filter drops the notice/AGM/allotment/tender pages,
- *      keeping the ~handful of real news pages (see NOISE/NEWS below). We err
- *      toward KEEPING — a missed news page is worse than an extra noisy one.
- *   3. Claude (claude-sonnet-4-6) synthesizes the kept text into a structured
- *      brief: sections → items → { title, summary, mentions }. The system
- *      prompt is stable and cache_control-marked so re-runs hit the prompt cache.
+ *   1. unpdf extracts per-page text from the epaper PDF (in the BROWSER).
+ *   2. We collect the substantive pages (drop near-empty ad pages, cap the
+ *      count) and send the WHOLE paper — the model, not a heuristic, decides
+ *      what's news vs notice/table/ad (see filterNewsPages + SYSTEM_PROMPT).
+ *   3. Claude (Haiku) synthesizes the text into a structured brief: sections →
+ *      items → { title, summary, mentions }. The system prompt is stable and
+ *      cache_control-marked so re-runs hit the prompt cache.
  *   4. Model-named company "mentions" are resolved against app.universe here on
  *      the server (exact symbol, else company_name match) — the model never sees
  *      the 2,150-symbol list, and only symbols WE can price get linked.
@@ -21,7 +21,10 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { sql } from "@/lib/db";
 
-export const BRIEF_MODEL = "claude-sonnet-4-6";
+// Haiku is plenty capable for newspaper→brief synthesis (proven on a full FE
+// edition) and ~3x cheaper than Sonnet. The quality that matters comes from
+// feeding it the WHOLE paper, not from a bigger model.
+export const BRIEF_MODEL = "claude-haiku-4-5";
 
 // Supported epaper sources. Value is the storage key (app.daily_brief.paper).
 export const BRIEF_PAPERS = {
@@ -65,58 +68,17 @@ export type StoredBrief = {
 // 1 + 2.  PDF → per-page text → news-page filter
 // ────────────────────────────────────────────────────────────────────────────
 
-// Boilerplate/legal noise that dominates the ad/notice pages we want to drop.
-// Includes formal-disclosure markers: in a financial paper the SEBI results
-// tables and statutory notices are the MOST keyword-dense pages, so we must
-// recognise their formal vocabulary to keep them from crowding out real news.
-const NOISE = [
-  "postal ballot", "e-voting", "notice is hereby", "annual general meeting",
-  "extraordinary general", "agm", "egm", "allotment", "letter of offer",
-  "public announcement", "registered office", "corporate identity number",
-  "cin:", "cin ", "book closure", "record date", "unclaimed", "transfer to iepf",
-  "investor education", "tender", "auction", "expression of interest",
-  "request for proposal", "rfp", "prospectus", "red herring", "basis of allotment",
-  "scheme of arrangement", "nclt", "insolvency", "liquidation", "e-auction",
-  "sale notice", "possession notice", "sarfaesi", "demand notice",
-  // Statutory financial-results & balance-sheet table vocabulary:
-  "quarter ended", "year ended", "half year ended", "period ended",
-  "balance sheet", "cash flow", "unaudited", "audited", "standalone",
-  "consolidated results", "statement of", "extract of", "particulars",
-  "listing regulations", "listing obligations", "face value", "isin",
-  "regd. office", "regd office", "corresponding", "preceding", "iepf",
-];
-// Signals a page is real editorial/news copy.
-const NEWS = [
-  "said", "reported", "according to", "company", "market", "shares", "stock",
-  "revenue", "profit", "growth", "quarter", "crore", "percent", "per cent",
-  "government", "rbi", "sebi", "economy", "sector", "investors", "analysts",
-  "rose", "fell", "gained", "board", "ceo", "managing director", "billion",
-];
-
-function countHits(hay: string, needles: string[]): number {
-  let n = 0;
-  for (const w of needles) {
-    let i = hay.indexOf(w);
-    while (i !== -1) {
-      n++;
-      i = hay.indexOf(w, i + w.length);
-    }
-  }
-  return n;
-}
-
 /**
- * Given per-page text (already extracted in the browser — see DailyBriefClient),
- * keep the editorial-news pages and drop the tables/notices/ads.
+ * Collect the substantive pages to hand to the model.
  *
- * The key discriminator is DIGIT RATIO. A financial paper's worst pages for us —
- * stock-price lists, SEBI results tables, balance sheets — are number-dense;
- * editorial prose (the Vi tariff story, the E2W sales feature) is not. A pure
- * NEWS-keyword filter is backwards here because those tables are stuffed with
- * "profit/revenue/crore/board", so they out-score real stories. We therefore
- * drop number-heavy pages, drop notice-vocabulary pages, and keep prose. Claude
- * does the final editorial judgement (see SYSTEM_PROMPT) — this stage only has
- * to stop the junk pages from crowding out the news.
+ * We deliberately do NOT try to pick the "news" pages with a keyword/heuristic
+ * filter — that approach kept mis-selecting the statutory/results/table pages
+ * (they're the most keyword-dense in a financial paper) and starved the model of
+ * the actual stories. The model is far better at editorial selection than any
+ * heuristic, so we send it the WHOLE paper and let the prompt (SYSTEM_PROMPT)
+ * reject notices/tables/ads. We only:
+ *   - drop near-empty pages (full-page image ads extract to almost nothing), and
+ *   - cap the page count so a pathological edition can't blow the context window.
  *
  * Extraction lives on the client so the PDF binary never traverses a serverless
  * function (Vercel caps request bodies at ~4.5 MB; epapers are 10-50 MB). Only
@@ -127,47 +89,16 @@ export function filterNewsPages(
 ): { text: string; keptPages: number; totalPages: number } {
   const total = pages.length;
 
-  const scored = pages.map((rawIn, idx) => {
-    const raw = rawIn ?? "";
-    const lower = raw.toLowerCase();
-    const words = lower.split(/\s+/).filter(Boolean).length;
-    const news = countHits(lower, NEWS);
-    const noise = countHits(lower, NOISE);
-    // Digit ratio: digits / (digits + letters). Prose ≈ 0.02-0.06; price/results
-    // tables ≈ 0.20-0.45. The single best signal for "table vs article".
-    const digits = (raw.match(/\d/g) ?? []).length;
-    const letters = (raw.match(/[A-Za-z]/g) ?? []).length;
-    const digitRatio = digits + letters > 0 ? digits / (digits + letters) : 0;
-    // Per-1000-word densities so page length doesn't dominate.
-    const newsDensity = words > 0 ? (news / words) * 1000 : 0;
-    const noiseDensity = words > 0 ? (noise / words) * 1000 : 0;
-    return { idx, raw, words, newsDensity, noiseDensity, digitRatio };
-  });
+  const substantive = pages
+    .map((raw, idx) => ({ idx, raw: (raw ?? "").trim() }))
+    .filter((p) => p.raw.split(/\s+/).filter(Boolean).length >= 80) // skip image-only ad pages
+    .slice(0, 40); // hard cap — bounds tokens on a huge edition (Haiku ctx = 200K)
 
-  const kept = scored.filter((pg) => {
-    if (pg.words < 120) return false; // near-empty / image-only ad page
-    if (pg.digitRatio > 0.16) return false; // price list / results table, not prose
-    if (pg.noiseDensity > 8 && pg.noiseDensity >= pg.newsDensity) return false; // notice/disclosure page
-    return pg.newsDensity >= 3; // some editorial density (loose — tables already gone)
-  });
-
-  // Fallback: if the filter was too aggressive (nothing survived), keep the
-  // most prose-like pages (lowest digit ratio, enough words) so the admin still
-  // gets *something* to review.
-  const fallback = [...scored]
-    .filter((p) => p.words >= 120)
-    .sort((a, b) => a.digitRatio - b.digitRatio)
-    .slice(0, 12);
-
-  const survivors = (kept.length > 0 ? kept : fallback)
-    .sort((a, b) => a.idx - b.idx)
-    .slice(0, 16); // hard cap — text is cheap (~16 pages ≈ well within budget)
-
-  const text = survivors
-    .map((pg) => `--- PAGE ${pg.idx + 1} ---\n${pg.raw.trim()}`)
+  const text = substantive
+    .map((p) => `--- PAGE ${p.idx + 1} ---\n${p.raw}`)
     .join("\n\n");
 
-  return { text, keptPages: survivors.length, totalPages: total };
+  return { text, keptPages: substantive.length, totalPages: total };
 }
 
 // ────────────────────────────────────────────────────────────────────────────
