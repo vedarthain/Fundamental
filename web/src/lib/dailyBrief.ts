@@ -97,21 +97,24 @@ function countHits(hay: string, needles: string[]): number {
 }
 
 /**
- * Extract per-page text, then keep only the news-looking pages.
+ * Given per-page text (already extracted in the browser — see DailyBriefClient),
+ * keep only the news-looking pages.
  * Heuristic: keep a page when its news-signal density clears a floor AND it
  * isn't drowned in legal-notice noise. A page with almost no words (image ads)
  * is dropped. Bias toward keeping when uncertain; hard-cap the survivors so a
  * pathological file can't blow the token budget.
+ *
+ * Extraction lives on the client so the PDF binary never traverses a serverless
+ * function (Vercel caps request bodies at ~4.5 MB; epapers are 10-50 MB). Only
+ * the extracted text is sent to the API, which then calls this.
  */
-export async function extractNewsPages(
-  buf: ArrayBuffer,
-): Promise<{ text: string; keptPages: number; totalPages: number }> {
-  const { extractText, getDocumentProxy } = await import("unpdf");
-  const pdf = await getDocumentProxy(new Uint8Array(buf));
-  const { text: pages } = await extractText(pdf, { mergePages: false });
+export function filterNewsPages(
+  pages: string[],
+): { text: string; keptPages: number; totalPages: number } {
   const total = pages.length;
 
-  const scored = pages.map((raw, idx) => {
+  const scored = pages.map((rawIn, idx) => {
+    const raw = rawIn ?? "";
     const lower = raw.toLowerCase();
     const words = lower.split(/\s+/).filter(Boolean).length;
     const news = countHits(lower, NEWS);
@@ -295,18 +298,21 @@ async function resolveMentions(mentions: string[]): Promise<Map<string, string>>
 // ────────────────────────────────────────────────────────────────────────────
 
 /**
- * Full pipeline for an uploaded PDF: extract → filter → synthesize → resolve →
- * upsert. Returns the stored brief. The PDF bytes are used only transiently.
+ * Full pipeline for browser-extracted page text: filter → synthesize → resolve →
+ * upsert. Returns the stored brief. No PDF ever reaches the server — the client
+ * extracts text and sends only the per-page strings (see DailyBriefClient).
  */
-export async function processBriefUpload(
+export async function processBriefPages(
   paper: BriefPaper,
   briefDate: string,
-  buf: ArrayBuffer,
+  pages: string[],
 ): Promise<StoredBrief> {
   const paperLabel = BRIEF_PAPERS[paper];
-  const { text, keptPages } = await extractNewsPages(buf);
+  const { text, keptPages } = filterNewsPages(pages);
   if (!text.trim()) {
-    throw new Error("No readable text in that PDF — is it a scanned image rather than a text PDF?");
+    throw new Error(
+      "No readable news text in that PDF. If it's a scanned-image edition (no selectable text), synthesis isn't possible without OCR.",
+    );
   }
 
   const rawSections = await synthesize(paperLabel, briefDate, text);

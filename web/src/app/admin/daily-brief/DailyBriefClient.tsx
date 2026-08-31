@@ -88,11 +88,24 @@ export default function DailyBriefClient() {
     setBusy(true);
     setMsg(null);
     try {
-      const fd = new FormData();
-      fd.append("paper", paper);
-      fd.append("date", date);
-      fd.append("file", file);
-      const r = await fetch("/api/admin/daily-brief", { method: "POST", body: fd });
+      // Extract the PDF text IN THE BROWSER — the binary never leaves this
+      // machine, and we send only the per-page text. This sidesteps Vercel's
+      // ~4.5 MB serverless upload limit (a full epaper is 10-50 MB).
+      const buf = await file.arrayBuffer();
+      const { extractText, getDocumentProxy } = await import("unpdf");
+      const pdf = await getDocumentProxy(new Uint8Array(buf));
+      const { text } = await extractText(pdf, { mergePages: false });
+      const pages = (text as string[]).map((p) => p ?? "");
+      if (pages.every((p) => p.trim().length === 0)) {
+        throw new Error(
+          "No selectable text found — this looks like a scanned-image PDF. The brief needs a text-layer PDF (OCR isn't supported).",
+        );
+      }
+      const r = await fetch("/api/admin/daily-brief", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paper, date, pages }),
+      });
       // Read as text first: platform-level failures (413 body-too-large, 504
       // timeout) return an HTML error page, not JSON. Parsing that blindly threw
       // an opaque "unexpected character" error and hid the real status.
@@ -203,8 +216,9 @@ export default function DailyBriefClient() {
           </button>
         </form>
         <p style={{ color: "var(--color-muted)", fontSize: "0.8rem", marginTop: "0.75rem" }}>
-          The PDF is processed in memory and discarded — only the synthesized brief is stored.
-          Private to admin.
+          The PDF is read in your browser — only the extracted text is sent, and only the
+          synthesized brief is stored. The file never leaves your machine. Text-layer PDFs
+          only (scanned-image editions need OCR, which isn&apos;t supported). Private to admin.
         </p>
         {msg && (
           <p

@@ -1,19 +1,21 @@
 /**
  * Admin-only Morning Brief API.
  *
- *   POST   multipart { paper, date, file }  → extract+synthesize+store one brief
+ *   POST   json { paper, date, pages[] }     → filter+synthesize+store one brief
  *   GET    ?paper=&date=                     → one brief (both) | list (neither)
  *   DELETE ?id=                              → remove one brief
  *
- * Every method is gated on isAdminRequest(). The uploaded PDF is processed in
- * memory and DISCARDED — only the derived brief JSON is persisted (see
- * src/lib/dailyBrief.ts + migration 0065). ETFs/notices are filtered out before
- * synthesis; symbols are resolved to app.universe server-side.
+ * Every method is gated on isAdminRequest(). The PDF is extracted to text IN THE
+ * BROWSER — only the per-page text reaches this API, never the binary — so a
+ * 10-50 MB epaper doesn't hit Vercel's ~4.5 MB serverless body limit, and the
+ * source PDF never leaves the admin's machine. Only the derived brief JSON is
+ * persisted (see src/lib/dailyBrief.ts + migration 0065). Notices are filtered
+ * out before synthesis; symbols are resolved to app.universe server-side.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { isAdminRequest } from "@/lib/auth";
 import {
-  processBriefUpload,
+  processBriefPages,
   getBrief,
   latestBrief,
   listBriefs,
@@ -26,21 +28,23 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 120; // synthesis can take a while on a big edition
 
-const MAX_BYTES = 40 * 1024 * 1024; // 40 MB — a full epaper PDF is chunky
+// Defensive ceiling on the extracted text payload (the client already extracts).
+// ~5M chars is far more than any real edition and still well under the body limit.
+const MAX_TEXT_CHARS = 5_000_000;
 
 export async function POST(req: NextRequest) {
   if (!(await isAdminRequest())) {
     return NextResponse.json({ error: "admin only" }, { status: 401 });
   }
 
-  let form: FormData;
+  let body: { paper?: unknown; date?: unknown; pages?: unknown };
   try {
-    form = await req.formData();
+    body = await req.json();
   } catch {
-    return NextResponse.json({ error: "expected multipart/form-data" }, { status: 400 });
+    return NextResponse.json({ error: "expected JSON body" }, { status: 400 });
   }
 
-  const paper = String(form.get("paper") ?? "").trim();
+  const paper = String(body.paper ?? "").trim();
   if (!isBriefPaper(paper)) {
     return NextResponse.json(
       { error: `unknown paper — expected one of ${Object.keys(BRIEF_PAPERS).join(", ")}` },
@@ -48,7 +52,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const date = String(form.get("date") ?? "").trim();
+  const date = String(body.date ?? "").trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return NextResponse.json({ error: "date must be YYYY-MM-DD" }, { status: 400 });
   }
@@ -56,20 +60,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "edition date can't be in the future" }, { status: 400 });
   }
 
-  const file = form.get("file");
-  if (!(file instanceof File) || file.size === 0) {
-    return NextResponse.json({ error: "no PDF uploaded" }, { status: 400 });
+  if (!Array.isArray(body.pages) || body.pages.length === 0) {
+    return NextResponse.json({ error: "no extracted page text (client-side extraction failed?)" }, { status: 400 });
   }
-  if (!file.name.toLowerCase().endsWith(".pdf")) {
-    return NextResponse.json({ error: "upload the epaper PDF (.pdf)" }, { status: 400 });
+  const pages = body.pages.map((p) => String(p ?? ""));
+  const totalChars = pages.reduce((n, p) => n + p.length, 0);
+  if (totalChars === 0) {
+    return NextResponse.json(
+      { error: "extracted text was empty — likely a scanned-image PDF (no text layer)" },
+      { status: 400 },
+    );
   }
-  if (file.size > MAX_BYTES) {
-    return NextResponse.json({ error: "PDF too large (max 40 MB)" }, { status: 400 });
+  if (totalChars > MAX_TEXT_CHARS) {
+    return NextResponse.json({ error: "extracted text too large" }, { status: 413 });
   }
 
   try {
-    const buf = await file.arrayBuffer();
-    const brief = await processBriefUpload(paper, date, buf);
+    const brief = await processBriefPages(paper, date, pages);
     return NextResponse.json({ ok: true, brief });
   } catch (e) {
     return NextResponse.json(
