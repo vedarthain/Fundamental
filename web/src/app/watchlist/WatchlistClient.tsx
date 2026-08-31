@@ -13,7 +13,7 @@
  *   - error: friendly retry button
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useWatchlist, saveWatchlistNote } from "@/lib/watchlist";
 import { band, bandColor, tierLabel } from "@/lib/score";
@@ -198,8 +198,28 @@ function writeSelected(sym: string): void {
   }
 }
 
-export function WatchlistClient() {
-  const { symbols, hydrated, remove, count, signedIn } = useWatchlist();
+/**
+ * When supplied, `source` drives the list from an external symbol set (e.g. the
+ * Portfolio tab feeds current holdings) instead of the saved watchlist. In that
+ * mode the remove/× affordance is hidden — you don't "unsave" a holding — and
+ * the header/empty copy come from the source. Omit it for the normal watchlist.
+ */
+export type WatchSource = {
+  symbols: string[];
+  hydrated: boolean;
+  /** Rendered in place of the watchlist EmptyState when there are 0 symbols. */
+  empty: ReactNode;
+  /** Header/missing-section noun, e.g. "in your portfolio". */
+  ownerLabel: string;
+};
+
+export function WatchlistClient({ source }: { source?: WatchSource } = {}) {
+  const wl = useWatchlist();
+  const symbols = source ? source.symbols : wl.symbols;
+  const hydrated = source ? source.hydrated : wl.hydrated;
+  const count = symbols.length;
+  const signedIn = source ? true : wl.signedIn;
+  const remove = wl.remove;
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -289,7 +309,7 @@ export function WatchlistClient() {
   }
 
   if (count === 0) {
-    return <EmptyState />;
+    return source ? <>{source.empty}</> : <EmptyState />;
   }
 
   if (loading && rows === null) {
@@ -370,7 +390,7 @@ export function WatchlistClient() {
     <div className="space-y-3">
       <div className="flex items-center gap-3 flex-wrap text-[12px] muted-text tabular-nums">
         <span>
-          {count} {count === 1 ? "stock" : "stocks"} on your watchlist
+          {count} {count === 1 ? "stock" : "stocks"} {source ? source.ownerLabel : "on your watchlist"}
         </span>
         <span className="opacity-70">
           Sectors ({tree.length}) · Industries ({industryCount})
@@ -579,6 +599,7 @@ export function WatchlistClient() {
                   row={sel}
                   signedIn={signedIn}
                   onRemove={() => remove(sel.symbol)}
+                  showRemove={!source}
                 />
               </>
             );
@@ -589,7 +610,7 @@ export function WatchlistClient() {
       {missing.length > 0 && (
         <section className="card p-4">
           <div className="text-[12px] muted-text mb-2">
-            {missing.length} symbol{missing.length === 1 ? "" : "s"} in your watchlist no longer appear in our universe (delisted, renamed, or scoring paused):
+            {missing.length} symbol{missing.length === 1 ? "" : "s"} {source ? source.ownerLabel : "in your watchlist"} no longer appear in our universe (delisted, renamed, or scoring paused):
           </div>
           <div className="flex flex-wrap gap-1.5">
             {missing.map((sym) => (
@@ -599,15 +620,17 @@ export function WatchlistClient() {
                 style={{ borderColor: "var(--color-border-default)", backgroundColor: "var(--color-paper)" }}
               >
                 {sym}
-                <button
-                  type="button"
-                  onClick={() => remove(sym)}
-                  className="muted-text hover:text-[var(--color-ink)] ml-0.5"
-                  aria-label={`Remove ${sym}`}
-                  title="Remove from watchlist"
-                >
-                  ×
-                </button>
+                {!source && (
+                  <button
+                    type="button"
+                    onClick={() => remove(sym)}
+                    className="muted-text hover:text-[var(--color-ink)] ml-0.5"
+                    aria-label={`Remove ${sym}`}
+                    title="Remove from watchlist"
+                  >
+                    ×
+                  </button>
+                )}
               </span>
             ))}
           </div>
@@ -803,10 +826,12 @@ function WatchRow({
   row,
   signedIn,
   onRemove,
+  showRemove = true,
 }: {
   row: Row;
   signedIn: boolean;
   onRemove: () => void;
+  showRemove?: boolean;
 }) {
   const compositeBand = band(row.composite_pct);
   const compositeColor = bandColor(compositeBand);
@@ -892,16 +917,19 @@ function WatchRow({
         {/* Buy/Sell call toggle — shares state with the scanner + Calls tab. */}
         <CallToggle symbol={row.symbol} size="sm" />
 
-        {/* Quick remove */}
-        <button
-          type="button"
-          onClick={onRemove}
-          className="muted-text hover:text-[var(--color-delta-down)] transition-colors text-[16px] leading-none px-1"
-          aria-label={`Remove ${row.symbol} from watchlist`}
-          title="Remove from watchlist"
-        >
-          ×
-        </button>
+        {/* Quick remove — hidden when the list is sourced (e.g. Portfolio tab),
+            where "remove" has no meaning. */}
+        {showRemove && (
+          <button
+            type="button"
+            onClick={onRemove}
+            className="muted-text hover:text-[var(--color-delta-down)] transition-colors text-[16px] leading-none px-1"
+            aria-label={`Remove ${row.symbol} from watchlist`}
+            title="Remove from watchlist"
+          >
+            ×
+          </button>
+        )}
       </div>
 
       {/* Price context strip: what you added at, where it is now, and how far

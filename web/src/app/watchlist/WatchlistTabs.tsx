@@ -8,9 +8,10 @@
 import { useState } from "react";
 import { WatchlistClient } from "./WatchlistClient";
 import { CallsClient } from "./CallsClient";
+import { PortfolioWatchClient } from "./PortfolioWatchClient";
 import { useCalls } from "@/lib/stockCalls";
 
-type View = "watchlist" | "calls";
+type View = "watchlist" | "calls" | "portfolio";
 
 export function WatchlistTabs() {
   const [view, setView] = useState<View>("watchlist");
@@ -40,8 +41,15 @@ export function WatchlistTabs() {
       <div className="mb-3 inline-flex items-center gap-1 rounded-lg border hairline p-1">
         {tab("watchlist", "Watchlist")}
         {tab("calls", "Calls", activeCount)}
+        {tab("portfolio", "Portfolio")}
       </div>
-      {view === "watchlist" ? <WatchlistClient /> : <CallsClient />}
+      {view === "watchlist" ? (
+        <WatchlistClient />
+      ) : view === "calls" ? (
+        <CallsClient />
+      ) : (
+        <PortfolioWatchClient />
+      )}
     </div>
   );
 }
