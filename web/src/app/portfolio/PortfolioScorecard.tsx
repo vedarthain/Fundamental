@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * PortfolioWatchClient — the "Portfolio" tab on /watchlist. Feeds the exact same
+ * PortfolioScorecard — the "Scorecard" tab on /portfolio. Feeds the exact same
  * card renderer as the watchlist (WatchlistClient), but sourced from the signed-in
  * user's *current holdings* (qty > 0) rather than their saved list. The remove/×
  * affordance is suppressed by WatchlistClient when a `source` is supplied — you
@@ -12,10 +12,9 @@
  * the watchlist, so scores/prices/returns render identically.
  */
 import { useEffect, useState } from "react";
-import Link from "next/link";
-import { WatchlistClient, type WatchSource } from "./WatchlistClient";
+import { WatchlistClient, type WatchSource } from "../watchlist/WatchlistClient";
 
-export function PortfolioWatchClient() {
+export function PortfolioScorecard() {
   const [symbols, setSymbols] = useState<string[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
@@ -39,18 +38,16 @@ export function PortfolioWatchClient() {
     })();
   }, []);
 
-  // Signed-out users have no portfolio — nudge them the same way the watchlist does.
+  // Signed-out users have no portfolio — nudge them to sign in.
   if (hydrated && signedIn === false) {
     return (
       <div className="card p-8 text-center">
-        <div className="text-[14px] mb-2">Sign in to see your portfolio</div>
-        <div className="muted-text text-[12px] mb-4">
-          Your portfolio is built from your uploaded trades. Once you&apos;re signed
-          in, your current holdings appear here scored like the rest of the universe.
+        <div className="text-[14px] mb-2">Sign in to see your scorecard</div>
+        <div className="muted-text text-[12px]">
+          Your scorecard is built from your uploaded trades. Once you&apos;re
+          signed in, your current holdings appear here scored like the rest of
+          the universe.
         </div>
-        <Link href="/portfolio" className="text-[12px] underline">
-          Go to your portfolio
-        </Link>
       </div>
     );
   }
@@ -62,13 +59,11 @@ export function PortfolioWatchClient() {
     empty: (
       <div className="card p-8 text-center">
         <div className="text-[14px] mb-2">No holdings yet</div>
-        <div className="muted-text text-[12px] mb-4">
+        <div className="muted-text text-[12px]">
           Stocks you currently hold (quantity &gt; 0) show up here, scored and
-          tracked just like your watchlist.
+          tracked just like your watchlist. Import holdings on the Transactions
+          tab to populate it.
         </div>
-        <Link href="/portfolio" className="text-[12px] underline">
-          Manage your portfolio
-        </Link>
       </div>
     ),
   };

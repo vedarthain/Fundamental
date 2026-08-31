@@ -21,6 +21,7 @@ import {
 } from "recharts";
 import type { Portfolio, Instrument, RealizedPnl, RealizedLot, PerformanceStats, RealizedTimeline, TradeLog, TradeRow } from "@/lib/portfolio";
 import { TradeSheet } from "@/components/ManualTradeSheet";
+import { PortfolioScorecard } from "./PortfolioScorecard";
 
 const BROKERS = [
   { value: "upstox", label: "Upstox" },
@@ -75,7 +76,7 @@ type ImportResult = {
   error?: string;
 };
 
-type PortfolioTab = "holdings" | "performance" | "transactions" | "booked";
+type PortfolioTab = "holdings" | "performance" | "transactions" | "booked" | "scorecard";
 
 export function PortfolioClient({
   portfolio,
@@ -151,8 +152,9 @@ export function PortfolioClient({
           { v: "performance", label: "Performance" },
           { v: "transactions", label: "Transactions" },
           { v: "booked", label: "P&L" },
+          { v: "scorecard", label: "Scorecard" },
         ] as const)
-          .filter((o) => owner || o.v !== "performance")
+          .filter((o) => owner || (o.v !== "performance" && o.v !== "scorecard"))
           .map((o) => (
           <button
             key={o.v}
@@ -239,6 +241,8 @@ export function PortfolioClient({
 
           <TradeLogView log={tradeLog} />
         </>
+      ) : tab === "scorecard" && owner ? (
+        <PortfolioScorecard />
       ) : null}
 
       {/* Quick-add trade sheet: opened by the Transactions-tab button here, or
