@@ -93,8 +93,27 @@ export default function DailyBriefClient() {
       fd.append("date", date);
       fd.append("file", file);
       const r = await fetch("/api/admin/daily-brief", { method: "POST", body: fd });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.detail || d.error || "generation failed");
+      // Read as text first: platform-level failures (413 body-too-large, 504
+      // timeout) return an HTML error page, not JSON. Parsing that blindly threw
+      // an opaque "unexpected character" error and hid the real status.
+      const raw = await r.text();
+      let d: { ok?: boolean; brief?: StoredBrief; error?: string; detail?: string } | null = null;
+      try {
+        d = raw ? JSON.parse(raw) : null;
+      } catch {
+        /* non-JSON — fall through to status-based messaging below */
+      }
+      if (!r.ok || !d?.ok || !d.brief) {
+        const msg =
+          d?.detail ||
+          d?.error ||
+          (r.status === 413
+            ? "PDF exceeds the ~4.5 MB serverless upload limit. Compress or split the epaper (see note below)."
+            : r.status === 504
+              ? "Timed out generating the brief (120s). Try a smaller / fewer-page PDF."
+              : `Server error (HTTP ${r.status}).${raw ? ` ${raw.slice(0, 120)}` : ""}`);
+        throw new Error(msg);
+      }
       setBrief(d.brief);
       setMsg({
         kind: "ok",
