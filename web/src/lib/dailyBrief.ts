@@ -66,6 +66,9 @@ export type StoredBrief = {
 // ────────────────────────────────────────────────────────────────────────────
 
 // Boilerplate/legal noise that dominates the ad/notice pages we want to drop.
+// Includes formal-disclosure markers: in a financial paper the SEBI results
+// tables and statutory notices are the MOST keyword-dense pages, so we must
+// recognise their formal vocabulary to keep them from crowding out real news.
 const NOISE = [
   "postal ballot", "e-voting", "notice is hereby", "annual general meeting",
   "extraordinary general", "agm", "egm", "allotment", "letter of offer",
@@ -75,6 +78,12 @@ const NOISE = [
   "request for proposal", "rfp", "prospectus", "red herring", "basis of allotment",
   "scheme of arrangement", "nclt", "insolvency", "liquidation", "e-auction",
   "sale notice", "possession notice", "sarfaesi", "demand notice",
+  // Statutory financial-results & balance-sheet table vocabulary:
+  "quarter ended", "year ended", "half year ended", "period ended",
+  "balance sheet", "cash flow", "unaudited", "audited", "standalone",
+  "consolidated results", "statement of", "extract of", "particulars",
+  "listing regulations", "listing obligations", "face value", "isin",
+  "regd. office", "regd office", "corresponding", "preceding", "iepf",
 ];
 // Signals a page is real editorial/news copy.
 const NEWS = [
@@ -98,11 +107,16 @@ function countHits(hay: string, needles: string[]): number {
 
 /**
  * Given per-page text (already extracted in the browser — see DailyBriefClient),
- * keep only the news-looking pages.
- * Heuristic: keep a page when its news-signal density clears a floor AND it
- * isn't drowned in legal-notice noise. A page with almost no words (image ads)
- * is dropped. Bias toward keeping when uncertain; hard-cap the survivors so a
- * pathological file can't blow the token budget.
+ * keep the editorial-news pages and drop the tables/notices/ads.
+ *
+ * The key discriminator is DIGIT RATIO. A financial paper's worst pages for us —
+ * stock-price lists, SEBI results tables, balance sheets — are number-dense;
+ * editorial prose (the Vi tariff story, the E2W sales feature) is not. A pure
+ * NEWS-keyword filter is backwards here because those tables are stuffed with
+ * "profit/revenue/crore/board", so they out-score real stories. We therefore
+ * drop number-heavy pages, drop notice-vocabulary pages, and keep prose. Claude
+ * does the final editorial judgement (see SYSTEM_PROMPT) — this stage only has
+ * to stop the junk pages from crowding out the news.
  *
  * Extraction lives on the client so the PDF binary never traverses a serverless
  * function (Vercel caps request bodies at ~4.5 MB; epapers are 10-50 MB). Only
@@ -119,23 +133,35 @@ export function filterNewsPages(
     const words = lower.split(/\s+/).filter(Boolean).length;
     const news = countHits(lower, NEWS);
     const noise = countHits(lower, NOISE);
+    // Digit ratio: digits / (digits + letters). Prose ≈ 0.02-0.06; price/results
+    // tables ≈ 0.20-0.45. The single best signal for "table vs article".
+    const digits = (raw.match(/\d/g) ?? []).length;
+    const letters = (raw.match(/[A-Za-z]/g) ?? []).length;
+    const digitRatio = digits + letters > 0 ? digits / (digits + letters) : 0;
     // Per-1000-word densities so page length doesn't dominate.
     const newsDensity = words > 0 ? (news / words) * 1000 : 0;
     const noiseDensity = words > 0 ? (noise / words) * 1000 : 0;
-    return { idx, raw, words, newsDensity, noiseDensity };
+    return { idx, raw, words, newsDensity, noiseDensity, digitRatio };
   });
 
   const kept = scored.filter((pg) => {
     if (pg.words < 120) return false; // near-empty / image-only ad page
-    if (pg.noiseDensity > 12 && pg.noiseDensity > pg.newsDensity) return false; // legal-notice page
-    return pg.newsDensity >= 6; // has real editorial density
+    if (pg.digitRatio > 0.16) return false; // price list / results table, not prose
+    if (pg.noiseDensity > 8 && pg.noiseDensity >= pg.newsDensity) return false; // notice/disclosure page
+    return pg.newsDensity >= 3; // some editorial density (loose — tables already gone)
   });
 
   // Fallback: if the filter was too aggressive (nothing survived), keep the
-  // wordiest pages so the admin still gets *something* to review.
-  const survivors = (kept.length > 0 ? kept : [...scored].sort((a, b) => b.words - a.words).slice(0, 6))
+  // most prose-like pages (lowest digit ratio, enough words) so the admin still
+  // gets *something* to review.
+  const fallback = [...scored]
+    .filter((p) => p.words >= 120)
+    .sort((a, b) => a.digitRatio - b.digitRatio)
+    .slice(0, 12);
+
+  const survivors = (kept.length > 0 ? kept : fallback)
     .sort((a, b) => a.idx - b.idx)
-    .slice(0, 8); // hard cap — bounds tokens (~8 pages ≈ well within budget)
+    .slice(0, 16); // hard cap — text is cheap (~16 pages ≈ well within budget)
 
   const text = survivors
     .map((pg) => `--- PAGE ${pg.idx + 1} ---\n${pg.raw.trim()}`)
@@ -150,16 +176,31 @@ export function filterNewsPages(
 
 // Stable system prompt — cache_control-marked so repeated same-day/next-day
 // runs read it from the prompt cache instead of re-billing the prefix.
-const SYSTEM_PROMPT = `You are the editor of a concise daily market brief for a single Indian equity investor.
+const SYSTEM_PROMPT = `You are the editor of a concise daily market brief for a single Indian equity investor. You are sharp, specific, and allergic to vague filler.
 
-You will be given the raw extracted text of a few pages from an Indian financial newspaper. Your job is to distill it into a structured "Morning Brief".
+You will be given the raw extracted text of pages from an Indian financial newspaper. The extraction is messy: headlines, body paragraphs, chart labels, captions, ads, public notices, and results tables are all interleaved and out of order. Your job is to find the real EDITORIAL NEWS STORIES and distill each into a specific, fact-carrying brief item.
+
+WHAT TO EXTRACT (in priority order):
+- Company-specific news: earnings, deals, launches, management moves, guidance, capex, orders, regulatory actions, stake changes.
+- Sector/industry trends with named players (e.g. telecom ARPU, EV/2-wheeler sales, banking credit growth).
+- Macro & policy: RBI, SEBI, government, budget, rates, inflation, trade.
+- Market moves with a reason (index levels, big movers and WHY).
+
+WHAT TO IGNORE COMPLETELY (do not create items for these):
+- Statutory/public notices, AGM/EGM notices, postal ballots, allotments, tenders.
+- SEBI-format financial-result tables and balance sheets (the formatted disclosure tables — NOT genuine earnings news stories).
+- Raw stock-price / market-data tables (lists of scrips with numbers).
+- Advertisements, classifieds, lifestyle, sports, opinion fluff.
+
+SPECIFICITY IS MANDATORY. Every item MUST carry concrete facts pulled from the text: named companies, people, numbers (revenue, growth %, prices, ARPU, subscriber/sales counts, ₹ amounts), and the actual development.
+- GOOD: "Vodafone Idea faces a tariff dilemma: it needs ARPU hikes (Q1 FY27 ARPU ₹195) but a steep rise risks its first subscriber gains since the merger (193.1mn base), even as Jio (ARPU ₹185) and Airtel (ARPU ₹264) push premium plans."
+- BAD (NEVER produce): "Market data tables indicate trading activity", "Multiple companies reported quarterly results", "Several companies filed regulatory disclosures". These are worthless category labels. If you cannot state a specific fact, DROP the item entirely.
 
 Rules:
-- Focus on India equity markets, listed companies, sectors, macro (RBI/SEBI/government policy), and results/earnings. Ignore lifestyle, sports, opinion fluff, classifieds and advertisements.
-- Group items into a few sections (e.g. "Markets", "Companies", "Economy & Policy", "Sectors"). Use only sections that have real content.
-- Each item: a short factual title and a 1-2 sentence summary. Neutral wire-service tone. Do NOT copy sentences verbatim from the source — rewrite in your own words.
-- For every item, list the NSE-listed companies it is about in "mentions" as their common company names (e.g. "Reliance Industries", "HDFC Bank"). Only include companies that are clearly the subject. Leave "mentions" as [] if none.
-- Omit anything that is a public notice, AGM/EGM notice, allotment, tender, or advertisement.
+- Group items into sections (e.g. "Markets", "Companies", "Economy & Policy", "Sectors"). Use only sections with real content. Order sections by importance.
+- Each item: a specific factual title and a 1-3 sentence summary carrying the key numbers/facts. Neutral wire-service tone. Rewrite in your own words — do NOT copy sentences verbatim.
+- Aim for 8-20 substantive items if the source supports it. Quality over padding, but do not be lazy — extract every genuine story you can find.
+- For every item, list the NSE-listed companies it is about in "mentions" as their common company names (e.g. "Vodafone Idea", "Bharti Airtel", "TVS Motor"). Only companies clearly central to the item. Leave "mentions" as [] if none.
 
 Respond with ONLY a JSON object (no markdown code fences, no prose) of exactly this shape:
 {"sections":[{"heading":"string","items":[{"title":"string","summary":"string","mentions":["string"]}]}]}`;
