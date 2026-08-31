@@ -194,6 +194,16 @@ export function UserMenu({ email, displayName, isAdmin = false }: Props) {
                 <AdminBadge />
               </Link>
               <Link
+                href="/admin/daily-brief"
+                role="menuitem"
+                onClick={() => setOpen(false)}
+                className="block px-4 py-2.5 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
+                title="Admin · epaper → Claude-synthesized daily Morning Brief"
+              >
+                News-Brief{" "}
+                <AdminBadge />
+              </Link>
+              <Link
                 href="/admin/reports"
                 role="menuitem"
                 onClick={() => setOpen(false)}

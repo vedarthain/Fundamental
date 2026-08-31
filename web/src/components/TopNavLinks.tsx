@@ -471,6 +471,14 @@ function PopupSheet({
                     onClose={onClose}
                   />
                   <PopupLink
+                    href="/admin/daily-brief"
+                    label="News-Brief"
+                    sublabel="Epaper → Claude daily Morning Brief"
+                    badge="ADMIN"
+                    active={isActive(pathname, "/admin/daily-brief")}
+                    onClose={onClose}
+                  />
+                  <PopupLink
                     href="/admin/reports"
                     label="Reports"
                     sublabel="Generate NIFTY 500 scorecard export"
