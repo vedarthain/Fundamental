@@ -326,16 +326,40 @@ export async function GET(req: NextRequest) {
   // overriding).  Otherwise, for signed-in users, fall back to the
   // server-side watchlist.
   let symbols: string[] = [];
+  // Reused by the ownership block below so we don't fetch held names twice.
+  let heldFromList: string[] | null = null;
   if (param !== null) {
     symbols = cleanSymbolList(param);
   } else if (session) {
-    const rows = await sql<{ symbol: string }[]>`
-      SELECT symbol FROM app.user_watchlist
-       WHERE user_id = ${session.userId}
-       ORDER BY added_at DESC
-       LIMIT ${MAX_SYMBOLS}
-    `;
-    symbols = rows.map((r) => r.symbol);
+    // One-directional inclusion: every name you currently HOLD (active
+    // portfolio) or have an OPEN Buy/Sell call on appears on the watchlist,
+    // even if you never hearted it. This is a read-time union — NOT persisted
+    // into user_watchlist — so selling out or clearing the call drops the name
+    // automatically, and hearting a watchlist name never writes back to the
+    // portfolio or calls. (Exited/traded-but-not-held names are excluded: only
+    // active positions ride along.)
+    const [wl, held, callSyms] = await Promise.all([
+      sql<{ symbol: string }[]>`
+        SELECT symbol FROM app.user_watchlist
+         WHERE user_id = ${session.userId}
+         ORDER BY added_at DESC
+         LIMIT ${MAX_SYMBOLS}
+      `,
+      loadPortfolioSymbols(session.userId).catch(() => [] as string[]),
+      sql<{ symbol: string }[]>`
+        SELECT DISTINCT symbol FROM app.stock_call
+         WHERE user_id = ${session.userId} AND cleared_at IS NULL
+      `.catch(() => [] as { symbol: string }[]),
+    ]);
+    heldFromList = held;
+    const base = wl.map((r) => r.symbol);
+    const extra = [
+      ...held.map((s) => s.toUpperCase()),
+      ...callSyms.map((r) => r.symbol.toUpperCase()),
+    ];
+    // Stored watchlist first (recency order), then any held/called names not
+    // already present, capped at MAX_SYMBOLS.
+    symbols = Array.from(new Set([...base, ...extra])).slice(0, MAX_SYMBOLS);
   }
 
   const [rows, snapshotDate, persistence, quotes, meta, glance, verdicts, scorecardKeys] = await Promise.all([
@@ -367,7 +391,11 @@ export async function GET(req: NextRequest) {
   let positions: Record<string, { qty: number; avgCost: number | null }> = {};
   if (session) {
     const [held, traded, pos] = await Promise.all([
-      loadPortfolioSymbols(session.userId).catch(() => [] as string[]),
+      // Reuse the list already fetched during symbol resolution when available
+      // (the no-args signed-in path); the ?symbols= path fetches it fresh.
+      heldFromList != null
+        ? Promise.resolve(heldFromList)
+        : loadPortfolioSymbols(session.userId).catch(() => [] as string[]),
       sql<{ symbol: string }[]>`
         SELECT DISTINCT symbol FROM app.portfolio_transaction
          WHERE user_id = ${session.userId} AND symbol IS NOT NULL
