@@ -22,6 +22,8 @@ export type CallSide = "B" | "S";
 export type StockCall = {
   symbol: string;
   company_name: string | null;
+  sector: string | null;
+  industry: string | null;
   side: CallSide;
   anchor_date: string;
   anchor_price: number;
@@ -72,6 +74,8 @@ export async function GET() {
     {
       symbol: string;
       company_name: string | null;
+      sector: string | null;
+      industry: string | null;
       side: CallSide;
       anchor_date: string;
       anchor_price: number;
@@ -81,6 +85,8 @@ export async function GET() {
   >`
     SELECT c.symbol,
            u.company_name,
+           u.sector,
+           u.industry,
            c.side,
            c.anchor_date::text AS anchor_date,
            c.anchor_price::float AS anchor_price,
@@ -127,8 +133,10 @@ export async function POST(req: NextRequest) {
   if (!side) return NextResponse.json({ error: "side must be 'B' or 'S'" }, { status: 400 });
 
   // Symbol must be a live universe equity.
-  const uni = await sql<{ symbol: string; company_name: string | null }[]>`
-    SELECT symbol, company_name FROM app.universe
+  const uni = await sql<
+    { symbol: string; company_name: string | null; sector: string | null; industry: string | null }[]
+  >`
+    SELECT symbol, company_name, sector, industry FROM app.universe
      WHERE is_active AND symbol = ${symbol} LIMIT 1
   `;
   if (uni.length === 0)
@@ -157,6 +165,8 @@ export async function POST(req: NextRequest) {
   const call: StockCall = {
     symbol,
     company_name: uni[0].company_name,
+    sector: uni[0].sector,
+    industry: uni[0].industry,
     side,
     anchor_date: new Date().toISOString().slice(0, 10),
     anchor_price: anchorPrice,

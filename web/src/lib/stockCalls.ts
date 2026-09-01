@@ -24,6 +24,8 @@ export type CallEntry = {
   anchor_date: string;
   anchor_price: number;
   company_name: string | null;
+  sector: string | null;
+  industry: string | null;
   ltp: number | null;
   pct_move: number | null;
   cleared_at: string | null;
@@ -84,6 +86,8 @@ function toRecord(list: StockCall[]): Record<string, CallEntry> {
       anchor_date: c.anchor_date,
       anchor_price: c.anchor_price,
       company_name: c.company_name,
+      sector: c.sector,
+      industry: c.industry,
       ltp: c.ltp,
       pct_move: c.pct_move,
       cleared_at: c.cleared_at,
@@ -202,6 +206,8 @@ function mutateSet(symbol: string, side: CallSide): void {
     anchor_date: new Date().toISOString().slice(0, 10),
     anchor_price: prev?.anchor_price ?? 0,
     company_name: prev?.company_name ?? null,
+    sector: prev?.sector ?? null,
+    industry: prev?.industry ?? null,
     ltp: prev?.ltp ?? null,
     pct_move: 0,
     cleared_at: null,

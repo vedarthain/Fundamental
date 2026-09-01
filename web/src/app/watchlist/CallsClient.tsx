@@ -34,6 +34,11 @@ function pctFmt(n: number | null): { text: string; color: string } {
   const color = n > 0 ? BUY : n < 0 ? SELL : "var(--color-muted)";
   return { text: `${sign}${n.toFixed(1)}%`, color };
 }
+/** "Sector · Industry" for the subline — skips whichever side is missing. */
+function sectorLine(sector: string | null, industry: string | null): string {
+  return [sector, industry].map((s) => (s ?? "").trim()).filter(Boolean).join(" · ");
+}
+
 /** YYYY-MM-DD (or ISO) → "5 Jul '26". */
 function shortDate(iso: string | null): string {
   if (!iso) return "—";
@@ -124,12 +129,22 @@ function Section({
                 return (
                   <tr key={c.symbol} className="border-b hairline last:border-0 hover:bg-[var(--color-paper)]">
                     <td className="px-2.5 py-1.5 min-w-0">
-                      <Link href={`/stock/${c.symbol}`} className="font-semibold hover:underline">
+                      <Link
+                        href={`/stock/${c.symbol}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-semibold hover:underline"
+                      >
                         {c.symbol}
                       </Link>
                       <div className="text-[10.5px] muted-text truncate max-w-[200px]">
                         {displayCompanyName(c.company_name, c.symbol)}
                       </div>
+                      {sectorLine(c.sector, c.industry) && (
+                        <div className="text-[10px] muted-text opacity-80 truncate max-w-[220px]">
+                          {sectorLine(c.sector, c.industry)}
+                        </div>
+                      )}
                     </td>
                     <td className="px-2.5 py-1.5 text-center">
                       <CallToggle symbol={c.symbol} size="sm" />
@@ -199,12 +214,22 @@ function ClearedSection({
               return (
                 <tr key={c.symbol} className="border-b hairline last:border-0 hover:bg-[var(--color-paper)]">
                   <td className="px-2.5 py-1.5 min-w-0">
-                    <Link href={`/stock/${c.symbol}`} className="font-semibold hover:underline">
+                    <Link
+                      href={`/stock/${c.symbol}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-semibold hover:underline"
+                    >
                       {c.symbol}
                     </Link>
                     <div className="text-[10.5px] muted-text truncate max-w-[200px]">
                       {displayCompanyName(c.company_name, c.symbol)}
                     </div>
+                    {sectorLine(c.sector, c.industry) && (
+                      <div className="text-[10px] muted-text opacity-80 truncate max-w-[220px]">
+                        {sectorLine(c.sector, c.industry)}
+                      </div>
+                    )}
                   </td>
                   <td className="px-2.5 py-1.5 text-center">
                     <span
