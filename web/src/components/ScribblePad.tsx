@@ -6,9 +6,10 @@
  * date-stamped entry in a newest-first journal below. Entries are per-user
  * (server-persisted via /api/notes), so they follow you across devices.
  *
- * Append-only by design: there's no in-place edit — "changing" a note is a
- * delete + a new one, which keeps every entry's date honest. Click-outside and
- * Escape close the panel (same pattern as UserMenu).
+ * Entries can be edited in place (pencil) or deleted (✕). An edit preserves the
+ * entry's created_at, so the note keeps its authored date + journal position —
+ * we're fixing an old record's text, not re-dating it. Click-outside and Escape
+ * close the panel (same pattern as UserMenu).
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -36,6 +37,10 @@ export function ScribblePad() {
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // In-place edit state: the id of the note being edited + its working text.
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   // Lazy-load on first open so the nav render stays cheap for users who never
@@ -76,11 +81,14 @@ export function ScribblePad() {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key !== "Escape") return;
+      // Escape cancels an in-progress edit first; only closes the pad otherwise.
+      if (editingId != null) cancelEdit();
+      else setOpen(false);
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [open]);
+  }, [open, editingId]);
 
   async function onSave() {
     const body = draft.trim();
@@ -102,6 +110,42 @@ export function ScribblePad() {
       setError("Couldn’t save. Try again.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  function startEdit(n: Note) {
+    setEditingId(n.id);
+    setEditDraft(n.body);
+    setError(null);
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditDraft("");
+  }
+
+  async function onEditSave() {
+    if (editingId == null) return;
+    const body = editDraft.trim();
+    if (!body || editSaving) return;
+    setEditSaving(true);
+    setError(null);
+    try {
+      const r = await fetch("/api/notes", {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: editingId, body }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = (await r.json()) as { note: Note };
+      // created_at is preserved server-side, so position/order don't shift.
+      setNotes((prev) => prev.map((x) => (x.id === data.note.id ? data.note : x)));
+      cancelEdit();
+    } catch {
+      setError("Couldn’t save edit. Try again.");
+    } finally {
+      setEditSaving(false);
     }
   }
 
@@ -196,17 +240,70 @@ export function ScribblePad() {
                     {fmtDate(n.created_at)}
                     <span className="muted-text font-normal ml-1.5">{fmtTime(n.created_at)}</span>
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => onDelete(n.id)}
-                    className="text-[11px] muted-text opacity-0 group-hover:opacity-100 transition-opacity hover:text-[var(--color-delta-down)]"
-                    title="Delete this note"
-                    aria-label="Delete note"
-                  >
-                    ✕
-                  </button>
+                  {editingId !== n.id && (
+                    <span className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        type="button"
+                        onClick={() => startEdit(n)}
+                        className="text-[11px] muted-text hover:text-[var(--color-accent-600)]"
+                        title="Edit this note"
+                        aria-label="Edit note"
+                      >
+                        ✎
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onDelete(n.id)}
+                        className="text-[11px] muted-text hover:text-[var(--color-delta-down)]"
+                        title="Delete this note"
+                        aria-label="Delete note"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  )}
                 </div>
-                <p className="mt-0.5 text-[12.5px] leading-snug whitespace-pre-wrap break-words">{n.body}</p>
+                {editingId === n.id ? (
+                  <div className="mt-1">
+                    <textarea
+                      value={editDraft}
+                      onChange={(e) => setEditDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                          e.preventDefault();
+                          void onEditSave();
+                        } else if (e.key === "Escape") {
+                          e.preventDefault();
+                          cancelEdit();
+                        }
+                      }}
+                      rows={3}
+                      maxLength={4000}
+                      autoFocus
+                      className="w-full resize-y rounded-md border hairline bg-transparent px-2.5 py-2 text-[12.5px] leading-snug focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-600)]"
+                    />
+                    <div className="mt-1.5 flex items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={cancelEdit}
+                        className="px-2.5 py-1 rounded-md text-[12px] font-medium border hairline transition-colors hover:bg-[var(--color-paper)]"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={onEditSave}
+                        disabled={!editDraft.trim() || editSaving}
+                        className="px-3 py-1 rounded-md text-[12px] font-medium transition-colors disabled:opacity-50"
+                        style={{ backgroundColor: "var(--color-accent-600)", color: "white" }}
+                      >
+                        {editSaving ? "Saving…" : "Save"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="mt-0.5 text-[12.5px] leading-snug whitespace-pre-wrap break-words">{n.body}</p>
+                )}
               </div>
             ))}
           </div>
