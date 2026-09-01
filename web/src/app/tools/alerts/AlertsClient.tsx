@@ -14,6 +14,8 @@ import Link from "next/link";
 import type { AlertRow, AlertEnrichment, Severity } from "@/lib/alerts";
 import { band, bandColor } from "@/lib/score";
 import { CandleChart } from "@/app/tools/scanner/CandleChart";
+import type { Drawing, AlertLine } from "@/app/tools/scanner/CandleChart";
+import { useChartDrawings, usePriceAlertLines } from "@/lib/chartOverlays";
 import type { Candle } from "@/lib/candles";
 
 const SEV_COLOR: Record<Severity, string> = {
@@ -141,10 +143,14 @@ function AlertChart({
   symbol,
   readout,
   qty,
+  drawings,
+  alertLines,
 }: {
   symbol: string;
   readout?: { avg: number; pct: number } | null;
   qty?: number | null;
+  drawings?: Drawing[];
+  alertLines?: AlertLine[];
 }) {
   const [days, setDays] = useState(365);
   const [candles, setCandles] = useState<Candle[] | null>(null);
@@ -235,7 +241,13 @@ function AlertChart({
             No price history.
           </div>
         ) : (
-          <CandleChart candles={candles} interactive weekly={days > 730} />
+          <CandleChart
+            candles={candles}
+            interactive
+            weekly={days > 730}
+            drawings={drawings}
+            alerts={alertLines}
+          />
         )}
       </div>
     </div>
@@ -305,6 +317,10 @@ export function AlertsClient({
   heldQty?: Record<string, number>;
 }) {
   const router = useRouter();
+  // Shared overlays so the lines a user drew (or the price alerts they armed) on
+  // the scanner Graph tab also render on this alert chart.
+  const getDrawings = useChartDrawings();
+  const getAlertLines = usePriceAlertLines();
   const [active, setActive] = useState<AlertRow[]>(initialActive);
   const [dismissed, setDismissed] = useState<AlertRow[]>(initialDismissed);
   const [checking, startCheck] = useTransition();
@@ -599,6 +615,8 @@ export function AlertsClient({
                       symbol={sel.symbol}
                       readout={positionReadout(sel.ruleKey, sel.context)}
                       qty={heldQty[sel.symbol] ?? null}
+                      drawings={getDrawings(sel.symbol)}
+                      alertLines={getAlertLines(sel.symbol)}
                     />
                   </div>
                 ) : (

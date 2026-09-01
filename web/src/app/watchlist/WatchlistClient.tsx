@@ -20,6 +20,8 @@ import { band, bandColor, tierLabel } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { CallToggle } from "@/components/CallToggle";
 import { CandleChart } from "@/app/tools/scanner/CandleChart";
+import type { Drawing, AlertLine } from "@/app/tools/scanner/CandleChart";
+import { useChartDrawings, usePriceAlertLines } from "@/lib/chartOverlays";
 import type { Candle } from "@/lib/candles";
 import { metricsForSector, METRIC_META, fmtMetric, type GlanceMetrics, type MetricKey } from "@/lib/glance";
 import type { StockVerdict } from "@/lib/explainer";
@@ -1099,6 +1101,12 @@ function ChartBlock({
   const [days, setDays] = useState(365);
   const [candles, setCandles] = useState<Candle[] | null>(null);
   const [err, setErr] = useState(false);
+  // Shared overlays — the same drawn lines / armed price alerts that show on the
+  // scanner Graph tab render here too, price/date-anchored to this range.
+  const getDrawings = useChartDrawings();
+  const getAlertLines = usePriceAlertLines();
+  const drawings: Drawing[] = getDrawings(symbol);
+  const alertLines: AlertLine[] = getAlertLines(symbol);
 
   useEffect(() => {
     const key = `${symbol}:${days}`;
@@ -1183,7 +1191,13 @@ function ChartBlock({
             No price history.
           </div>
         ) : (
-          <CandleChart candles={candles} interactive weekly={days > 730} />
+          <CandleChart
+            candles={candles}
+            interactive
+            weekly={days > 730}
+            drawings={drawings}
+            alerts={alertLines}
+          />
         )}
       </div>
     </div>
