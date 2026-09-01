@@ -10,6 +10,7 @@
 import Link from "next/link";
 import { getSession } from "@/lib/auth";
 import { loadAlerts, loadAlertEnrichment } from "@/lib/alerts";
+import { loadPortfolioHeldQty } from "@/lib/portfolio";
 import { AlertsClient } from "./AlertsClient";
 
 export const dynamic = "force-dynamic";
@@ -61,6 +62,10 @@ export default async function AlertsPage() {
     [...active, ...dismissed].map((a) => a.symbol),
   );
 
+  // Held share count per symbol (broker-truth, same reconciliation the watchlist
+  // badge uses) so the chart badge can show "N SH" alongside cost/P&L.
+  const heldQty = await loadPortfolioHeldQty(session.userId).catch(() => ({}));
+
   return (
     <div className="mx-auto max-w-[1600px] px-4 md:px-6 py-4 md:py-5">
       <header className="mb-3">
@@ -72,6 +77,7 @@ export default async function AlertsPage() {
         initialActive={active}
         initialDismissed={dismissed}
         enrich={enrich}
+        heldQty={heldQty}
       />
     </div>
   );

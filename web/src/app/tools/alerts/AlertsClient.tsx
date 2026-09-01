@@ -137,7 +137,15 @@ const candleCache = new Map<string, Candle[]>();
 // The single detail chart — fills its parent's height so it uses the full pane.
 // Same /api/scanner/ohlc source + CandleChart renderer as the watchlist, down to
 // the range set and the cost-relative badge next to "Price".
-function AlertChart({ symbol, readout }: { symbol: string; readout?: { avg: number; pct: number } | null }) {
+function AlertChart({
+  symbol,
+  readout,
+  qty,
+}: {
+  symbol: string;
+  readout?: { avg: number; pct: number } | null;
+  qty?: number | null;
+}) {
   const [days, setDays] = useState(365);
   const [candles, setCandles] = useState<Candle[] | null>(null);
   const [err, setErr] = useState(false);
@@ -175,6 +183,11 @@ function AlertChart({ symbol, readout }: { symbol: string; readout?: { avg: numb
       <div className="flex items-center justify-between mb-1.5 gap-2 flex-wrap">
         <div className="flex items-center gap-1.5">
           <span className="text-[9.5px] uppercase tracking-wide muted-text">Price</span>
+          {qty != null && qty > 0 && (
+            <span className="text-[10.5px] tabular-nums muted-text">
+              {qty.toLocaleString("en-IN")} SH
+            </span>
+          )}
           {readout && (
             <span className="flex items-center gap-1 text-[10.5px] tabular-nums">
               <span className="muted-text">avg {rupee(readout.avg)}</span>
@@ -284,10 +297,12 @@ export function AlertsClient({
   initialActive,
   initialDismissed,
   enrich = {},
+  heldQty = {},
 }: {
   initialActive: AlertRow[];
   initialDismissed: AlertRow[];
   enrich?: Record<string, AlertEnrichment>;
+  heldQty?: Record<string, number>;
 }) {
   const router = useRouter();
   const [active, setActive] = useState<AlertRow[]>(initialActive);
@@ -583,6 +598,7 @@ export function AlertsClient({
                       key={sel.symbol}
                       symbol={sel.symbol}
                       readout={positionReadout(sel.ruleKey, sel.context)}
+                      qty={heldQty[sel.symbol] ?? null}
                     />
                   </div>
                 ) : (
