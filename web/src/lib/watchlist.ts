@@ -266,6 +266,21 @@ function mutateAdd(upper: string): void {
   }
 }
 
+/**
+ * Add a symbol to the in-memory watchlist WITHOUT persisting it. Used by the
+ * calls store so a fresh Buy/Sell call (or any read-time-unioned name) shows up
+ * on the watchlist immediately. The server GET already unions active holdings +
+ * open calls into the list, but the module store hydrates once and won't refetch
+ * on its own — this mirrors that union live. Deliberately does NOT hit the
+ * server or localStorage: the read-time union is the source of truth, so this is
+ * a display-only nudge (unwatching still can't strand a held/called name).
+ */
+export function includeVirtualSymbol(symbol: string): void {
+  const upper = symbol.toUpperCase();
+  if (state.symbols.includes(upper)) return;
+  setState({ symbols: [...state.symbols, upper].slice(0, MAX_SYMBOLS) });
+}
+
 function mutateRemove(upper: string): void {
   if (!state.symbols.includes(upper)) return;
   const next = state.symbols.filter((s) => s !== upper);

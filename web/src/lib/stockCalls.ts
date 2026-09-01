@@ -16,6 +16,7 @@
  */
 import { useCallback, useSyncExternalStore } from "react";
 import type { CallSide, StockCall } from "@/app/api/calls/route";
+import { includeVirtualSymbol } from "@/lib/watchlist";
 
 export type { CallSide, StockCall };
 
@@ -215,6 +216,9 @@ function mutateSet(symbol: string, side: CallSide): void {
     cleared_pct: null,
   };
   setState({ calls });
+  // Mirror the server's read-time union live: a fresh call should appear on the
+  // watchlist immediately, without waiting for a hard reload to re-hydrate it.
+  includeVirtualSymbol(symbol);
   serverSet(symbol, side).then(reload).catch((e) => console.error("call set failed", e));
 }
 
