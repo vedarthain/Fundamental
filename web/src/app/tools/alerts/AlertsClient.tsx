@@ -93,19 +93,51 @@ function RetPill({ label, value }: { label: string; value: number | null }) {
   );
 }
 
+// Same range set as the /watchlist price chart (1W … ALL) so the two graphs
+// read identically. "ALL" over-asks; the OHLC route clamps to listed history.
 const RANGE_OPTIONS: { label: string; days: number }[] = [
+  { label: "1W", days: 7 },
   { label: "1M", days: 31 },
   { label: "6M", days: 180 },
   { label: "1Y", days: 365 },
   { label: "2Y", days: 730 },
   { label: "5Y", days: 1825 },
+  { label: "10Y", days: 3660 },
+  { label: "ALL", days: 11000 },
 ];
+
+/** ₹ with Indian grouping, no decimals — for the position badge. */
+function rupee(n: number): string {
+  return `₹${Math.round(n).toLocaleString("en-IN")}`;
+}
+
+/**
+ * The cost-relative readout for the chart badge — mirrors the watchlist's
+ * "held + P&L%" chip, but sourced from the alert's own context (which carries
+ * avg cost + the gain/loss that tripped the rule). Only the cost-basis rules
+ * (target_hit / deep_drawdown) have this; others return null (no badge).
+ */
+function positionReadout(ruleKey: string, ctx: Record<string, unknown>): { avg: number; pct: number } | null {
+  const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  const avg = num(ctx.avg);
+  if (avg == null) return null;
+  if (ruleKey === "target_hit") {
+    const g = num(ctx.gainPct);
+    return g == null ? null : { avg, pct: g };
+  }
+  if (ruleKey === "deep_drawdown") {
+    const l = num(ctx.lossPct);
+    return l == null ? null : { avg, pct: -l };
+  }
+  return null;
+}
 // Reuse across re-renders / re-opens so a range already fetched is instant.
 const candleCache = new Map<string, Candle[]>();
 
 // The single detail chart — fills its parent's height so it uses the full pane.
-// Same /api/scanner/ohlc source + CandleChart renderer as the watchlist.
-function AlertChart({ symbol }: { symbol: string }) {
+// Same /api/scanner/ohlc source + CandleChart renderer as the watchlist, down to
+// the range set and the cost-relative badge next to "Price".
+function AlertChart({ symbol, readout }: { symbol: string; readout?: { avg: number; pct: number } | null }) {
   const [days, setDays] = useState(365);
   const [candles, setCandles] = useState<Candle[] | null>(null);
   const [err, setErr] = useState(false);
@@ -141,8 +173,24 @@ function AlertChart({ symbol }: { symbol: string }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center justify-between mb-1.5 gap-2 flex-wrap">
-        <span className="text-[9.5px] uppercase tracking-wide muted-text">Price</span>
-        <div className="flex rounded-md border hairline overflow-hidden">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[9.5px] uppercase tracking-wide muted-text">Price</span>
+          {readout && (
+            <span className="flex items-center gap-1 text-[10.5px] tabular-nums">
+              <span className="muted-text">avg {rupee(readout.avg)}</span>
+              <span
+                className="font-medium"
+                style={{
+                  color: readout.pct >= 0 ? "var(--color-delta-up)" : "var(--color-delta-down)",
+                }}
+              >
+                {readout.pct >= 0 ? "+" : ""}
+                {readout.pct.toFixed(1)}%
+              </span>
+            </span>
+          )}
+        </div>
+        <div className="flex flex-wrap rounded-md border hairline overflow-hidden">
           {RANGE_OPTIONS.map((o) => (
             <button
               key={o.days}
@@ -531,7 +579,11 @@ export function AlertsClient({
                 {/* Single chart, filling the rest of the pane. */}
                 {sel.ruleKey !== "hold_limit" ? (
                   <div className="mt-3 flex-1 min-h-0">
-                    <AlertChart key={sel.symbol} symbol={sel.symbol} />
+                    <AlertChart
+                      key={sel.symbol}
+                      symbol={sel.symbol}
+                      readout={positionReadout(sel.ruleKey, sel.context)}
+                    />
                   </div>
                 ) : (
                   <div className="mt-3 flex-1 min-h-[200px] flex items-center justify-center muted-text text-[12.5px]">
