@@ -281,6 +281,21 @@ export function includeVirtualSymbol(symbol: string): void {
   setState({ symbols: [...state.symbols, upper].slice(0, MAX_SYMBOLS) });
 }
 
+/**
+ * Force a re-pull of the server watchlist — the read-time union of saved names
+ * + active holdings + open calls. The module store hydrates once and won't
+ * refetch on its own, so a server-side change to the portfolio (a broker import
+ * or a manual trade, both of which just `router.refresh()` the page) wouldn't
+ * otherwise reach the store. Call this after such a change so a newly held name
+ * appears — or a fully-exited one disappears — live, without a hard reload.
+ * Signed-out falls back to the local list (no server holdings/calls exist).
+ */
+export async function refreshWatchlist(): Promise<void> {
+  const { signedIn, symbols } = await fetchServerWatchlist();
+  if (signedIn) setState({ signedIn: true, symbols, hydrated: true });
+  else setState({ signedIn: false, symbols: readLocal(), hydrated: true });
+}
+
 function mutateRemove(upper: string): void {
   if (!state.symbols.includes(upper)) return;
   const next = state.symbols.filter((s) => s !== upper);

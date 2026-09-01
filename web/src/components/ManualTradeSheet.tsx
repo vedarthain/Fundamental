@@ -20,6 +20,7 @@ import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePathname, useRouter } from "next/navigation";
 import { useSession } from "@/lib/session-client";
+import { refreshWatchlist } from "@/lib/watchlist";
 
 const GREEN = "var(--color-delta-up, #15803D)";
 const RED = "var(--color-delta-down, #DC2626)";
@@ -296,6 +297,9 @@ export function ManualTradePanel({ onChanged }: { onChanged: () => void }) {
         setPrice("");
         await load();
         onChanged();
+        // A manual buy/sell can add a new holding or fully exit one; re-pull the
+        // watchlist union so the change reaches the (once-hydrated) store live.
+        void refreshWatchlist();
       }
     } catch {
       setMsg({ err: "Network error — try again." });
@@ -313,6 +317,7 @@ export function ManualTradePanel({ onChanged }: { onChanged: () => void }) {
       if (r.ok) {
         await load();
         onChanged();
+        void refreshWatchlist(); // removing a manual trade can drop a holding
       }
     } catch {
       /* ignore */

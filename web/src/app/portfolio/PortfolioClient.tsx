@@ -22,6 +22,7 @@ import {
 import type { Portfolio, Instrument, RealizedPnl, RealizedLot, PerformanceStats, RealizedTimeline, TradeLog, TradeRow } from "@/lib/portfolio";
 import { TradeSheet } from "@/components/ManualTradeSheet";
 import { PortfolioScorecard } from "./PortfolioScorecard";
+import { refreshWatchlist } from "@/lib/watchlist";
 
 const BROKERS = [
   { value: "upstox", label: "Upstox" },
@@ -123,6 +124,9 @@ export function PortfolioClient({
         setResult({ ...data, kind });
         if (fileRef.current) fileRef.current.value = "";
         router.refresh();
+        // Newly held names ride along to the watchlist (read-time union); the
+        // module store won't refetch on router.refresh alone, so nudge it.
+        void refreshWatchlist();
       }
     } catch {
       setResult({ error: "Network error — try again." });
