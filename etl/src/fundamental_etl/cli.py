@@ -648,6 +648,17 @@ def sync_universe_cmd(
                  "fast (30d) while retirement is slow (60d) — a name dark 30–60 days "
                  "sits in a buffer: neither re-onboarded nor retired. Only used with "
                  "--deactivate."),
+    include_funds: bool = typer.Option(
+        False, "--include-funds", help="Onboard ETFs / mutual-fund units too. Off by "
+               "default: NSE trades ETFs in the EQ series and Upstox tags them "
+               "instrument_type='EQ', so the only reliable company-vs-fund signal is the "
+               "ISIN prefix (INF=fund, INE=company). We exclude INF-ISIN symbols so the "
+               "scored universe stays operating-companies-only. golden still holds every "
+               "scrip regardless — this filter is app-universe scope, not the raw lake."),
+    retire_funds: bool = typer.Option(
+        False, "--retire-funds", help="One-off cleanup: flip is_active=false for EXISTING "
+               "active universe members whose ISIN is a fund/ETF (INF prefix). Use to "
+               "purge ETFs that were onboarded before the INF filter existed."),
 ):
     """Reconcile app.universe against golden's live NSE listing master.
 
@@ -718,8 +729,44 @@ def sync_universe_cmd(
         # Retire only names with NO bar inside the (longer) deactivate window.
         gone = sorted(s for s, act in existing.items() if act and s not in live_for_retire)
 
+        # ── 2b. ETF / mutual-fund exclusion (ISIN prefix) ────────────────────
+        # NSE trades ETFs in the EQ series and Upstox tags them
+        # instrument_type='EQ', so neither the bhavcopy series nor Upstox's type
+        # tells a fund apart from a company. The reliable discriminator is the
+        # ISIN prefix: 'INF' = mutual-fund/ETF unit, 'INE' = company equity. We
+        # source each candidate's ISIN from golden's identity row, falling back
+        # to app.upstox_instrument. A candidate with NO ISIN anywhere (a
+        # just-listed name Upstox hasn't indexed yet) is treated as a company and
+        # onboarded — better to admit a rare stray fund than to drop a fresh IPO;
+        # --retire-funds later purges any that turn out to be INF once known.
+        def _isin_map(symbols: list[str], seed: dict[str, str | None]) -> dict[str, str | None]:
+            out = {s: (seed.get(s) or None) for s in symbols}
+            missing = [s for s, v in out.items() if not v]
+            if missing:
+                with conn.cursor() as c2:
+                    c2.execute(
+                        "SELECT symbol, isin FROM app.upstox_instrument WHERE symbol = ANY(%s)",
+                        (missing,),
+                    )
+                    for r in c2.fetchall():
+                        if r["isin"]:
+                            out[r["symbol"]] = r["isin"]
+            return out
+
+        excluded_funds: list[str] = []
+        if not include_funds and new_syms:
+            seed = {s: live[s]["isin"] for s in new_syms}
+            isin_by = _isin_map(new_syms, seed)
+            excluded_funds = sorted(
+                s for s, v in isin_by.items() if v and v.upper().startswith("INF"))
+            if excluded_funds:
+                drop = set(excluded_funds)
+                new_syms = [s for s in new_syms if s not in drop]
+
         print(f"golden live NSE symbols (≤{min_price_days}d): {len(live_onboard)}")
         print(f"app.universe rows:       {len(existing)}")
+        print(f"ETF/fund excluded (INF): {len(excluded_funds)}"
+              f"{'  (use --include-funds to keep)' if excluded_funds else ''}")
         print(f"NEW to onboard:          {len(new_syms)}")
         print(f"gone-dark (>{deactivate_days}d, active): {len(gone)}"
               f"{'  (use --deactivate to retire)' if gone and not deactivate else ''}")
@@ -785,7 +832,39 @@ def sync_universe_cmd(
                     )
             conn.commit()
 
+        # ── 5. Optional one-off: retire EXISTING active members that are funds ──
+        # Purges ETFs/mutual-fund units (INF ISIN) that were onboarded before the
+        # INF filter existed. ISIN from app.universe first, else upstox_instrument.
+        fund_retired = 0
+        if retire_funds:
+            with conn.cursor() as cur:
+                cur.execute("SELECT symbol, isin FROM app.universe WHERE is_active")
+                seed = {r["symbol"]: r["isin"] for r in cur.fetchall()}
+            active_syms = sorted(seed.keys())
+            isin_by = _isin_map(active_syms, seed)
+            fund_syms = sorted(
+                s for s, v in isin_by.items() if v and v.upper().startswith("INF"))
+            if fund_syms:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE app.universe SET is_active = false, synced_at = now() "
+                        "WHERE symbol = ANY(%s) AND is_active "
+                        "RETURNING symbol, company_name",
+                        (fund_syms,),
+                    )
+                    fr = cur.fetchall()
+                    fund_retired = len(fr)
+                    if fr:
+                        cur.executemany(
+                            "INSERT INTO app.universe_event (symbol, event, company_name, source) "
+                            "VALUES (%s, 'removed', %s, 'fund')",
+                            [(r["symbol"], r["company_name"]) for r in fr],
+                        )
+                conn.commit()
+            print(f"Fund cleanup: retired {fund_retired} existing ETF/fund member(s).")
+
     log.info("sync_universe_done", inserted=inserted, retired=retired,
+             excluded_funds=len(excluded_funds), fund_retired=fund_retired,
              new_detected=len(new_syms), gone_detected=len(gone))
     print(f"\nInserted {inserted} new symbol(s); retired {retired}.")
     if inserted:

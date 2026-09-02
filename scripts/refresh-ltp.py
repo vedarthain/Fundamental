@@ -37,6 +37,11 @@ Why one script instead of two:
   - Replaces the yfinance-based refresh-ohlc.py which had rate-limit
     risk and was slower (~30 min vs ~30 sec for bhavcopy)
 
+Scope note: golden (steps 4 + its FK parent golden.stocks) mirrors the FULL
+equity bhavcopy — every EQ/BE/BZ/BL scrip, tracked or not — so new NSE listings
+land in golden the day they list and sync-universe can onboard them. The
+app-side write (step 1, screener_meta) stays gated to the tracked universe.
+
 What it does NOT do:
   - Doesn't add new rows to screener_meta (only updates existing symbols)
   - Doesn't fetch longer intervals (1wk / 1mo / 3mo). The web app's
@@ -293,9 +298,11 @@ def find_latest_bhavcopy(today: date) -> tuple[date, str] | None:
 def fetch_known_symbols(conn: psycopg.Connection) -> dict[str, str]:
     """Return {symbol: company_name} for every tracked active stock.
 
-    Used as the gating filter for both update_ltps and insert_ohlc — we never
-    push data for symbols outside our tracked universe (keeps prod scope tight
-    and prevents bhavcopy from inflating golden.stocks with random tickers).
+    Used ONLY to gate the app-side write (update_ltps → screener_meta, which
+    legitimately has rows only for tracked stocks). The golden writers
+    (upsert_golden_stocks, insert_ohlc) deliberately do NOT gate on this —
+    golden is the raw lake and mirrors the full equity bhavcopy so new NSE
+    listings land the day they list (see the module docstring).
     """
     with conn.cursor() as cur:
         cur.execute("""
@@ -394,21 +401,25 @@ def upsert_golden_stocks(
     bars: dict[str, dict],
     known: dict[str, str],
 ) -> int:
-    """Upsert each tracked symbol into golden.stocks before its price row.
+    """Upsert EVERY equity symbol in today's bhavcopy into golden.stocks.
 
     golden.price_history has a FK to golden.stocks(symbol), so we have to
-    ensure the parent row exists. Without this step a brand-new IPO that
-    showed up in today's bhavcopy would fail the FK constraint on the
-    price_history insert.
+    ensure the parent row exists before its price row. We insert ALL parsed
+    symbols (not just the tracked universe) so a brand-new IPO lands in golden
+    the day it lists — that's what lets sync-universe onboard it into
+    app.universe on the next weekly run. Gating this on the tracked universe
+    was a self-locking deadlock: golden only got what was already tracked, and
+    onboarding only saw what was in golden.
 
     Idempotent — ON CONFLICT DO NOTHING means existing rows are unchanged.
     Only fills the minimum required (NOT NULL) columns: symbol, exchange,
-    company_name, is_active. Richer metadata (ISIN, listing_date, sector)
-    comes via the weekly sync-neon.sh.
+    company_name, is_active. For an untracked symbol company_name falls back to
+    the ticker; richer metadata (ISIN, listing_date, sector) comes via the
+    weekly sync-neon.sh.
     """
     rows = [
         (sym + YF_SUFFIX, "NSE", known.get(sym, sym), True)
-        for sym in bars if sym in known
+        for sym in bars
     ]
     if not rows:
         return 0
@@ -433,8 +444,8 @@ def insert_ohlc(
 ) -> int:
     """INSERT today's OHLC bar (interval='1d') into golden.price_history.
 
-    Filters to symbols in `known` (the tracked universe) and assumes
-    golden.stocks has been pre-populated for them by upsert_golden_stocks.
+    Writes EVERY equity symbol in the bhavcopy (not just the tracked universe);
+    golden.stocks has been pre-populated for all of them by upsert_golden_stocks.
     Uses ON CONFLICT DO NOTHING — re-running the script later in the day, or
     after a missed-day backfill, is harmless.
     """
@@ -452,7 +463,7 @@ def insert_ohlc(
             b["open"], b["high"], b["low"], b["close"], b["close"], b["volume"],
             DATA_SOURCE,
         )
-        for sym, b in bars.items() if sym in known
+        for sym, b in bars.items()
     ]
     if not rows:
         return 0
@@ -510,9 +521,9 @@ def main() -> None:
         print("  NEON_GOLDEN_URL not set — skipping OHLC INSERT into golden.price_history")
         return
     with connect_with_retry(golden_url) as conn:
-        # Pre-step: ensure each tracked symbol exists in golden.stocks. This
-        # auto-registers brand-new IPOs the first time we see them so the
-        # price_history FK doesn't fail. Idempotent.
+        # Pre-step: ensure EVERY bhavcopy symbol exists in golden.stocks. This
+        # auto-registers brand-new IPOs the day they list so the price_history
+        # FK doesn't fail — and so sync-universe can onboard them. Idempotent.
         stocks_seen = upsert_golden_stocks(conn, bars, known)
         print(f"  ensured {stocks_seen:,} symbols in golden.stocks (FK parent)")
         submitted = insert_ohlc(conn, bars, known, trade_date)
