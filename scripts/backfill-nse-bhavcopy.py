@@ -488,7 +488,23 @@ def main() -> None:
         print()
 
         batch_rows: list[tuple] = []
-        BATCH_COMMIT = 50  # flush to DB every N dates
+        BATCH_COMMIT = 10  # flush to DB every N trading days
+        dates_since_flush = 0
+
+        def _flush() -> None:
+            """Commit whatever's buffered. Safe to call with an empty batch."""
+            nonlocal batch_rows, total_inserted, dates_since_flush
+            if not batch_rows:
+                dates_since_flush = 0
+                return
+            if dry:
+                total_inserted += len(batch_rows)  # would-be count
+            else:
+                inserted = insert_ohlc_batch(golden_conn, batch_rows, repair=args.repair)
+                golden_conn.commit()
+                total_inserted += max(inserted, 0)
+            batch_rows = []
+            dates_since_flush = 0
 
         for i, d in enumerate(all_dates, 1):
             if d in covered:
@@ -520,20 +536,24 @@ def main() -> None:
                     ohlc["volume"],
                 ))
 
-            # Flush batch every BATCH_COMMIT dates
-            if len(batch_rows) >= BATCH_COMMIT * len(rename_map) or i == n:
-                if not dry and batch_rows:
-                    inserted = insert_ohlc_batch(golden_conn, batch_rows, repair=args.repair)
-                    golden_conn.commit()
-                    total_inserted += max(inserted, 0)
-                elif dry:
-                    total_inserted += len(batch_rows)  # would-be count
-                batch_rows = []
+            # Flush every BATCH_COMMIT *trading* days. Counting days (not rows)
+            # keeps commits small and frequent so a dropped Neon connection can
+            # never cost more than the last few days of work.
+            dates_since_flush += 1
+            if dates_since_flush >= BATCH_COMMIT:
+                _flush()
 
             if i % 50 == 0 or i == n:
                 _progress(i, n, total_inserted, total_holidays, total_skipped)
 
             time.sleep(args.throttle)
+
+        # Final flush AFTER the loop — never gated on the last date being a
+        # trading day. Previously the only flush trigger was `i == n` inside the
+        # loop, which the `bars is None` holiday `continue` skipped, silently
+        # dropping the entire buffered batch when the range ended on a holiday.
+        _flush()
+        _progress(n, n, total_inserted, total_holidays, total_skipped)
 
         print()
         print(f"{'DRY RUN — ' if dry else ''}Done.")
