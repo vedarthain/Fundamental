@@ -19,10 +19,7 @@ import { useWatchlist, saveWatchlistNote } from "@/lib/watchlist";
 import { band, bandColor, tierLabel } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { CallToggle } from "@/components/CallToggle";
-import { CandleChart } from "@/app/tools/scanner/CandleChart";
-import type { Drawing, AlertLine } from "@/app/tools/scanner/CandleChart";
-import { useChartDrawings, usePriceAlertLines } from "@/lib/chartOverlays";
-import type { Candle } from "@/lib/candles";
+import { PriceChart } from "@/components/PriceChart";
 import { metricsForSector, METRIC_META, fmtMetric, type GlanceMetrics, type MetricKey } from "@/lib/glance";
 import type { StockVerdict } from "@/lib/explainer";
 
@@ -117,7 +114,6 @@ type Extras = {
 
 // In-memory caches so re-opening a stock (or re-rendering) doesn't refetch.
 const extrasCache = new Map<string, Extras>();
-const candleCache = new Map<string, Candle[]>();
 
 // ── Sector → industry tree (left rail grouping) ─────────────────────────────
 type IndustryNode = { name: string; stocks: Row[] };
@@ -1018,6 +1014,7 @@ function WatchRow({
         held={row.held}
         heldQty={row.held_qty}
         posPnlPct={row.pos_pnl_pct}
+        signedIn={signedIn}
       />
 
       {/* Editable note — signed-in only (it lives on the server row). */}
@@ -1070,139 +1067,6 @@ function WatchRow({
   );
 }
 
-// ── Price chart ─────────────────────────────────────────────────────────────
-
-const RANGE_OPTIONS: { label: string; days: number }[] = [
-  { label: "1W", days: 7 },
-  { label: "1M", days: 31 },
-  { label: "6M", days: 180 },
-  { label: "1Y", days: 365 },
-  { label: "2Y", days: 730 },
-  { label: "5Y", days: 1825 },
-  { label: "10Y", days: 3660 },
-  // "ALL" over-asks; the OHLC route clamps to full listed history.
-  { label: "ALL", days: 11000 },
-];
-
-/** Embeds the scanner's CandleChart, fetching candles from /api/scanner/ohlc
- *  for the selected range. Reuses an in-memory cache so range/stock switches
- *  that were already loaded are instant. */
-function ChartBlock({
-  symbol,
-  held,
-  heldQty,
-  posPnlPct,
-}: {
-  symbol: string;
-  held?: boolean;
-  heldQty?: number | null;
-  posPnlPct?: number | null;
-}) {
-  const [days, setDays] = useState(365);
-  const [candles, setCandles] = useState<Candle[] | null>(null);
-  const [err, setErr] = useState(false);
-  // Shared overlays — the same drawn lines / armed price alerts that show on the
-  // scanner Graph tab render here too, price/date-anchored to this range.
-  const getDrawings = useChartDrawings();
-  const getAlertLines = usePriceAlertLines();
-  const drawings: Drawing[] = getDrawings(symbol);
-  const alertLines: AlertLine[] = getAlertLines(symbol);
-
-  useEffect(() => {
-    const key = `${symbol}:${days}`;
-    const cached = candleCache.get(key);
-    if (cached) {
-      setCandles(cached);
-      setErr(false);
-      return;
-    }
-    let alive = true;
-    setCandles(null);
-    setErr(false);
-    fetch(`/api/scanner/ohlc?syms=${encodeURIComponent(symbol)}&days=${days}`)
-      .then((r) => {
-        if (!r.ok) throw new Error(String(r.status));
-        return r.json();
-      })
-      .then((j: { data: Record<string, Candle[]> }) => {
-        if (!alive) return;
-        const c = j.data?.[symbol] ?? [];
-        candleCache.set(key, c);
-        setCandles(c);
-      })
-      .catch(() => alive && setErr(true));
-    return () => {
-      alive = false;
-    };
-  }, [symbol, days]);
-
-  return (
-    <div className="mt-3">
-      <div className="flex items-center justify-between mb-1.5 gap-2 flex-wrap">
-        <div className="flex items-center gap-1.5">
-          <span className="text-[9.5px] uppercase tracking-wide muted-text">Price</span>
-          {held && heldQty != null ? (
-            <span className="flex items-center gap-1">
-              <PBadge held size={14} />
-              <span className="text-[10.5px] tabular-nums muted-text">
-                {heldQty.toLocaleString("en-IN")} SH
-              </span>
-              {posPnlPct != null ? (
-                <span
-                  className="text-[10.5px] tabular-nums font-medium"
-                  style={{ color: deltaColor(posPnlPct) }}
-                >
-                  {posPnlPct >= 0 ? "+" : ""}
-                  {posPnlPct}%
-                </span>
-              ) : null}
-            </span>
-          ) : null}
-        </div>
-        <div className="flex flex-wrap rounded-md border hairline overflow-hidden">
-          {RANGE_OPTIONS.map((o) => (
-            <button
-              key={o.days}
-              type="button"
-              onClick={() => setDays(o.days)}
-              className="px-2 py-0.5 text-[10.5px] tabular-nums transition-colors border-l first:border-l-0 hairline"
-              style={
-                days === o.days
-                  ? { backgroundColor: "var(--color-accent-600)", color: "white" }
-                  : undefined
-              }
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="h-[300px] w-full rounded-md border hairline overflow-hidden">
-        {err ? (
-          <div className="h-full flex items-center justify-center muted-text text-[12px]">
-            Couldn&apos;t load price data.
-          </div>
-        ) : candles === null ? (
-          <div className="h-full flex items-center justify-center muted-text text-[12px]">
-            Loading chart…
-          </div>
-        ) : candles.length === 0 ? (
-          <div className="h-full flex items-center justify-center muted-text text-[12px]">
-            No price history.
-          </div>
-        ) : (
-          <CandleChart
-            candles={candles}
-            interactive
-            weekly={days > 730}
-            drawings={drawings}
-            alerts={alertLines}
-          />
-        )}
-      </div>
-    </div>
-  );
-}
 
 // ── Corporate actions + quarterly results ───────────────────────────────────
 
@@ -1260,6 +1124,7 @@ function DetailExtras({
   held,
   heldQty,
   posPnlPct,
+  signedIn,
 }: {
   symbol: string;
   glance: GlanceMetrics | null;
@@ -1268,6 +1133,7 @@ function DetailExtras({
   held?: boolean;
   heldQty?: number | null;
   posPnlPct?: number | null;
+  signedIn?: boolean;
 }) {
   const { data, err } = useExtras(symbol);
   const quarterly = data?.quarterly ?? [];
@@ -1284,7 +1150,29 @@ function DetailExtras({
     <div className="mt-3 space-y-4">
       {/* Row A: price chart squeezed to fit; fundamentals stacked on the right. */}
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_220px] gap-4 items-start">
-        <ChartBlock symbol={symbol} held={held} heldQty={heldQty} posPnlPct={posPnlPct} />
+        {/* Shared chart module — same expand / draw / price-alert features as
+            the stock page. Self-fetches candles by symbol; alert controls show
+            when signed in. Held position badge sits above it. */}
+        <div className="min-w-0">
+          {held && heldQty != null ? (
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <PBadge held size={14} />
+              <span className="text-[10.5px] tabular-nums muted-text">
+                {heldQty.toLocaleString("en-IN")} SH
+              </span>
+              {posPnlPct != null ? (
+                <span
+                  className="text-[10.5px] tabular-nums font-medium"
+                  style={{ color: deltaColor(posPnlPct) }}
+                >
+                  {posPnlPct >= 0 ? "+" : ""}
+                  {posPnlPct}%
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+          <PriceChart symbol={symbol} canSetAlerts={!!signedIn} />
+        </div>
         <FundamentalsColumn
           quarterly={quarterly}
           dividends={dividends}

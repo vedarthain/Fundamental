@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { CandleChart, type AlertLine, type ChartTool, type Drawing } from "@/app/tools/scanner/CandleChart";
 import type { Candle } from "@/lib/candles";
 import { WEEKLY_THRESHOLD_DAYS } from "@/lib/candleConfig";
+import { usePriceAlerts } from "@/lib/chartOverlays";
 import { PCT_CAP, type RetWindow } from "@/lib/returnGuards";
 
 // localStorage key for persisted chart drawings — SHARED with the scanner's
@@ -180,29 +181,62 @@ function fmtPct(p: number): string {
 }
 
 export function PriceChart({
-  candles,
+  candles: candlesProp,
   currentPrice,
   prefix = "₹",
   symbol,
   priceAlerts,
   canSetAlerts = false,
+  fetchDays = 11000,
 }: {
-  /** Split-safe daily OHLC candles, ascending by date. */
-  candles: Candle[];
+  /** Split-safe daily OHLC candles, ascending by date. When omitted (and a
+   *  `symbol` is given), the chart self-fetches from /api/scanner/ohlc — this
+   *  is the client-side path used outside server components (e.g. watchlist). */
+  candles?: Candle[];
   /** Optional identity label shown in the card header (e.g. "3MINDIA"). */
   symbol?: string;
   /** Live intraday LTP — shown as the headline price (the last candle is EOD). */
   currentPrice?: number;
   /** Value prefix for the headline. "₹" for stocks. */
   prefix?: string;
-  /** User's live price-alert lines for this symbol (armed + triggered). */
+  /** User's live price-alert lines for this symbol (armed + triggered). When
+   *  omitted (and a `symbol` is given), lines are read from the shared alerts
+   *  hook — the client-side path used outside server components. */
   priceAlerts?: ChartPriceAlert[];
-  /** Whether to render the create/manage controls (signed-in stock pages). */
+  /** Whether to render the create/manage controls (signed-in contexts). */
   canSetAlerts?: boolean;
+  /** Days of history to self-fetch when `candles` isn't provided. Default is
+   *  intentionally large (the OHLC route clamps to full listed history) so the
+   *  range tabs — including "ALL" — all have data to slice locally. */
+  fetchDays?: number;
 }) {
   const [range, setRange] = useState<Range>("1Y");
   const router = useRouter();
-  const alerts = priceAlerts ?? [];
+
+  // Self-fetch candles when not passed as a server prop. Runs once per symbol.
+  const [fetched, setFetched] = useState<Candle[] | null>(null);
+  useEffect(() => {
+    if (candlesProp || !symbol) return;
+    let alive = true;
+    setFetched(null);
+    fetch(`/api/scanner/ohlc?syms=${encodeURIComponent(symbol)}&days=${fetchDays}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { data?: Record<string, Candle[]> } | null) => {
+        if (alive) setFetched(j?.data?.[symbol] ?? []);
+      })
+      .catch(() => alive && setFetched([]));
+    return () => {
+      alive = false;
+    };
+  }, [candlesProp, symbol, fetchDays]);
+
+  const candles = candlesProp ?? fetched ?? [];
+  const selfFetching = !candlesProp && fetched === null;
+
+  // Alerts: server prop when given (SSR stock page), else the shared client
+  // hook. `refresh()` re-syncs every mounted chart after a create/delete.
+  const alertHook = usePriceAlerts(!priceAlerts && !!symbol);
+  const alerts = priceAlerts ?? (symbol ? alertHook.get(symbol) : []);
   const [alertInput, setAlertInput] = useState("");
   const [alertBusy, setAlertBusy] = useState(false);
   const [alertErr, setAlertErr] = useState<string | null>(null);
@@ -282,7 +316,8 @@ export function PriceChart({
         throw new Error(j.error || `HTTP ${r.status}`);
       }
       setAlertInput("");
-      router.refresh();
+      alertHook.refresh(); // client-hook charts (watchlist)
+      router.refresh();    // server-prop charts (stock page)
     } catch (e) {
       setAlertErr(e instanceof Error ? e.message : "Could not add alert.");
     } finally {
@@ -302,6 +337,7 @@ export function PriceChart({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ id }),
       });
+      alertHook.refresh();
       router.refresh();
     } catch {
       /* refresh re-reads truth regardless */
@@ -375,7 +411,7 @@ export function PriceChart({
   if (candles.length === 0) {
     return (
       <div className="h-[260px] flex items-center justify-center muted-text text-[13px]">
-        No price history available.
+        {selfFetching ? "Loading chart…" : "No price history available."}
       </div>
     );
   }
