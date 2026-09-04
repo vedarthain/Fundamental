@@ -90,6 +90,10 @@ NS_ONLY           = True    # restrict detection to .NS symbols (our universe)
 DETECT_LOOKBACK_Y = 3       # only auto-detect events within this many years
                             # older splits are already reflected in historical market prices
                             # and must not be re-applied to recent anchor-date prices
+PERSIST_DAYS      = 5       # a real split's new price level holds; a raw-close
+PERSIST_REBOUND   = 1.5     # sawtooth bounces back. If any of the next N closes
+                            # is >= REBOUND × the drop-day close, it's an artifact,
+                            # not a corporate action — skip it.
 
 
 def closest_standard_fraction(ratio: float) -> tuple[float, float] | None:
@@ -226,6 +230,9 @@ def main() -> None:
     ap.add_argument("--symbol",     help="Restrict to one symbol, e.g. KOTAKBANK.NS")
     ap.add_argument("--dry-run",    action="store_true", help="Show plan, no DB writes")
     ap.add_argument("--detect-only", action="store_true", help="Phase 1 only (skip bridge + apply)")
+    ap.add_argument("--since-days", type=int, default=None,
+                    help="Phase 1: only scan drops in the last N days (weekly safety-net report). "
+                         "Omit to scan the full DETECT_LOOKBACK_Y history.")
     ap.add_argument("--apply-only",  action="store_true", help="Bridge + Phase 2 (skip detect)")
     ap.add_argument("--bridge-only", action="store_true", help="Phase 0 only (skip detect + apply)")
     ap.add_argument("--skip-bridge", action="store_true", help="Skip Phase 0 (app→golden bridge)")
@@ -319,6 +326,19 @@ def main() -> None:
             ns_clause  = "AND ph.symbol LIKE '%%.NS'" if (NS_ONLY and not args.symbol) else ""
             sym_params: list = [args.symbol] if args.symbol else []
 
+            # --since-days N restricts the scan to a recent window. The full
+            # history is dominated by a recurring raw-close sawtooth on a
+            # handful of names (ZYDUSWELL, WIPRO…) that snaps to a clean
+            # fraction ~2900 times — useless as a periodic report. A weekly
+            # safety net only cares about splits MISSED in the last week, so the
+            # window collapses the noise to a reviewable handful.
+            if args.since_days is not None:
+                window_clause = "AND date >= CURRENT_DATE - (%s * INTERVAL '1 day')"
+                window_param  = [args.since_days]
+            else:
+                window_clause = "AND date >= CURRENT_DATE - (%s * INTERVAL '1 year')"
+                window_param  = [DETECT_LOOKBACK_Y]
+
             # Find all large single-day drops across 1d price history.
             # LAG() gives the previous trading day's close for the same symbol.
             with conn.cursor() as cur:
@@ -330,7 +350,7 @@ def main() -> None:
                             LAG(date)  OVER (PARTITION BY symbol ORDER BY date) AS prev_date
                         FROM golden.price_history ph
                         WHERE interval = '1d'
-                          AND date >= CURRENT_DATE - (%s * INTERVAL '1 year')
+                          {window_clause}
                           {sym_clause} {ns_clause}
                     )
                     SELECT symbol, date, close, prev_close, prev_date,
@@ -340,7 +360,7 @@ def main() -> None:
                       AND close / prev_close < %s
                       AND close / prev_close > 0.08
                     ORDER BY symbol, date
-                """, [DETECT_LOOKBACK_Y] + sym_params + [MIN_PREV_PRICE, DROP_THRESHOLD])
+                """, window_param + sym_params + [MIN_PREV_PRICE, DROP_THRESHOLD])
                 drops = cur.fetchall()
 
             print(f"  Scanning {len(drops)} large drops (>{int((1-DROP_THRESHOLD)*100)}% in one day)…",
@@ -358,6 +378,7 @@ def main() -> None:
             detected: list[dict] = []
             skipped_no_fraction = 0
             skipped_known = 0
+            skipped_reverted = 0
 
             for symbol, date, close, prev_close, prev_date, ratio in drops:
                 ratio = float(ratio)  # may be Decimal from psycopg
@@ -376,6 +397,24 @@ def main() -> None:
                 )
                 if already_known:
                     skipped_known += 1
+                    continue
+
+                # Persistence gate: a genuine split holds its new price level; a
+                # raw-close sawtooth artifact snaps back up within days. If any of
+                # the next PERSIST_DAYS closes rebounds to >= REBOUND × drop-day
+                # close, this drop is an artifact — skip it. (This is what kills
+                # the ZYDUSWELL/WIPRO ~5× oscillation that otherwise floods the
+                # scan with thousands of false candidates.)
+                with conn.cursor() as pcur:
+                    pcur.execute(
+                        "SELECT close FROM golden.price_history "
+                        "WHERE symbol = %s AND interval = '1d' AND date > %s "
+                        "ORDER BY date LIMIT %s",
+                        (symbol, date, PERSIST_DAYS),
+                    )
+                    after = [float(r[0]) for r in pcur.fetchall() if r[0] is not None]
+                if any(a >= float(close) * PERSIST_REBOUND for a in after):
+                    skipped_reverted += 1
                     continue
 
                 detected.append({
@@ -398,6 +437,7 @@ def main() -> None:
             print(
                 f"  {len(detected)} new events | "
                 f"{skipped_known} already recorded | "
+                f"{skipped_reverted} reverting artifacts (sawtooth) | "
                 f"{skipped_no_fraction} non-clean-fraction drops (demergers etc.)",
                 file=sys.stderr,
             )

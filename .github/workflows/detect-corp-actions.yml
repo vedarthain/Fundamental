@@ -1,0 +1,96 @@
+# Weekly safety-net scan for UNANNOUNCED splits/bonuses.
+#
+# The daily EOD job (refresh-ltp.yml → apply-corp-adjustments.py --apply-only)
+# only adjusts adj_close for corporate actions that made it into
+# app.corporate_action via the feed. If a split/bonus is never announced there
+# (feed miss), it goes unadjusted — a raw cliff on the chart with nothing to
+# correct it. Phase 1 auto-detect catches those by spotting large single-day
+# raw-close drops that snap to a clean split/bonus fraction.
+#
+# Why REPORT-ONLY (--dry-run), not auto-insert:
+#   Phase 1 writes 'price_detect' rows into golden.corporate_actions, and those
+#   rows are read by TWO consumers — apply-corp-adjustments Phase 2 AND the
+#   scoring engine (metrics.py load_split_factors). The apply-time confirmation
+#   gate protects the chart, but the scoring engine reads split_factor directly
+#   with no gate. A false positive (e.g. a raw bhavcopy sawtooth that happens to
+#   snap to a fraction) would therefore silently corrupt Q/V/M metrics — an
+#   invisible failure worse than the chart cliff. So this workflow only REPORTS
+#   candidates; a human reviews them and runs the real insert by hand:
+#       python scripts/apply-corp-adjustments.py --detect-only            # insert
+#       python scripts/apply-corp-adjustments.py --apply-only --symbol X  # adjust
+#
+# Output: any DETECTED lines are surfaced as a step-summary table + a workflow
+# warning annotation, so a hit is visible in the Actions UI without digging
+# through logs. Writes nothing to any database.
+#
+# Required secret:
+#   NEON_GOLDEN_URL — Postgres URL for golden_db on Neon (read-only here).
+
+name: Detect unannounced corporate actions
+
+on:
+  # Sundays 05:00 UTC = 10:30 IST — off-market, and an hour after the
+  # constituents refresh so the two weekend jobs don't overlap.
+  schedule:
+    - cron: '0 5 * * 0'
+  # Manual trigger — run an immediate scan after suspecting a missed split.
+  workflow_dispatch: {}
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    # Read-only full-universe scan of golden.price_history; off the critical
+    # path, so a slow run is harmless.
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install psycopg
+        run: pip install 'psycopg[binary]==3.2.*'
+
+      # --detect-only skips the app->golden bridge (needs only golden) and
+      # --dry-run guarantees no INSERT. --since-days 30 restricts the scan to
+      # the last month (this runs weekly, so 30d gives comfortable overlap) and
+      # the built-in persistence gate drops the raw-close sawtooth artifacts —
+      # together they collapse ~2900 full-history candidates to a reviewable
+      # handful. Detect output goes to stderr, so we capture 2>&1 and grep for
+      # DETECTED lines. Never fails the run — a detection is a heads-up.
+      - name: Scan for unannounced splits/bonuses (report-only)
+        env:
+          GOLDEN_DB_URL:    ${{ secrets.NEON_GOLDEN_URL }}
+          PYTHONUNBUFFERED: "1"
+        run: |
+          set -o pipefail
+          OUT=$(python scripts/apply-corp-adjustments.py --detect-only --dry-run --since-days 30 2>&1) || true
+          echo "$OUT"
+          HITS=$(echo "$OUT" | grep 'DETECTED' || true)
+          if [ -n "$HITS" ]; then
+            COUNT=$(echo "$HITS" | wc -l | tr -d ' ')
+            {
+              echo "## ⚠️ $COUNT unannounced corporate-action candidate(s)"
+              echo ""
+              echo "These raw single-day drops snap to a clean split/bonus fraction but"
+              echo "are NOT in golden.corporate_actions. Review, then insert by hand:"
+              echo '```'
+              echo "$HITS"
+              echo '```'
+              echo ""
+              echo "To record + adjust a confirmed one:"
+              echo '```'
+              echo "python scripts/apply-corp-adjustments.py --detect-only            # insert price_detect rows"
+              echo "python scripts/apply-corp-adjustments.py --apply-only --symbol X  # recompute adj_close"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::$COUNT unannounced corporate-action candidate(s) found — see the run summary and review before inserting."
+          else
+            echo "No unannounced corporate-action candidates. Feed is complete." >> "$GITHUB_STEP_SUMMARY"
+          fi
