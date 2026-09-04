@@ -8,6 +8,11 @@
 #   1. refresh-ltp.py          NSE bhavcopy → screener_meta.current_price,
 #                              market_cap_cr recompute, cluster_stocks_panel_cache
 #                              refresh, golden.price_history OHLC insert.
+#   1b. apply-corp-adjustments.py --apply-only
+#                              Bridge app.corporate_action → golden.corporate_actions
+#                              (numeric split_factor) then recompute adj_close for
+#                              the raw rows just inserted, so bonus/split ex-days
+#                              don't leave a fake cliff on the chart. continue-on-error.
 #   2. fetch-indices.py        NSE indices CSV → app.market_index_history
 #                              (the daily EOD candle behind the /indices chart —
 #                              keeps the last bar current).
@@ -61,7 +66,7 @@ jobs:
     # Index-constituent seeding was moved OUT to its own weekly workflow
     # (refresh-constituents.yml) — it was a daily NSE-bound step in this tight
     # critical path despite membership only changing at semi-annual rebalances.
-    timeout-minutes: 8
+    timeout-minutes: 12
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -80,6 +85,26 @@ jobs:
           NEON_GOLDEN_URL: ${{ secrets.NEON_GOLDEN_URL }}
           PYTHONUNBUFFERED: "1"
         run: python scripts/refresh-ltp.py
+
+      # Recompute split/bonus-adjusted closes for the raw bhavcopy rows just
+      # inserted above. Without this, a stock that went ex-bonus/split today
+      # would show a fake cliff on its chart until the (previously unscheduled)
+      # adjustment was run by hand — the WIPRO/KOTAKBANK sawtooth bug.
+      #
+      # --apply-only runs Phase 0 (bridge app.corporate_action → golden, so
+      # freshly-fetched events get a numeric split_factor) then Phase 2 (apply
+      # cumulative adj_close). Phase 1 auto-detect is skipped on purpose: it
+      # scans RAW close for single-day drops and the bhavcopy sawtooth can look
+      # like a false bonus. Idempotent + data_source-aware, so a daily re-run is
+      # safe; continue-on-error keeps a slow/failed adjustment from blocking the
+      # cache purge — the next day's run self-heals.
+      - name: Apply corporate-action adjustments (adj_close)
+        env:
+          APP_DB_URL:     ${{ secrets.NEON_APP_URL }}
+          GOLDEN_DB_URL:  ${{ secrets.NEON_GOLDEN_URL }}
+          PYTHONUNBUFFERED: "1"
+        run: python scripts/apply-corp-adjustments.py --apply-only
+        continue-on-error: true
 
       # Indices + FII/DII land into their own tables. Failure here doesn't
       # roll back the bhavcopy write above — we still want the LTP refresh
