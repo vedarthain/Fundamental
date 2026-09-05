@@ -8,11 +8,6 @@
 #   1. refresh-ltp.py          NSE bhavcopy → screener_meta.current_price,
 #                              market_cap_cr recompute, cluster_stocks_panel_cache
 #                              refresh, golden.price_history OHLC insert.
-#   1b. apply-corp-adjustments.py --apply-only
-#                              Bridge app.corporate_action → golden.corporate_actions
-#                              (numeric split_factor) then recompute adj_close for
-#                              the raw rows just inserted, so bonus/split ex-days
-#                              don't leave a fake cliff on the chart. continue-on-error.
 #   2. fetch-indices.py        NSE indices CSV → app.market_index_history
 #                              (the daily EOD candle behind the /indices chart —
 #                              keeps the last bar current).
@@ -27,6 +22,15 @@
 # was removed when /market + /api/market/overview were retired — nothing reads
 # that cache table anymore. The "market" revalidate tag stays: /indices, /news
 # and /tools/52-week-high-low still tag their caches with it.
+#
+# NOTE: the corporate-action adjustment (adj_close recompute) was MOVED OUT of
+# this critical path into refresh-adjustments.yml (triggered on this workflow's
+# completion). It used to be an in-line `continue-on-error` step, but a daily
+# full re-adjust of all ~400 symbols crept past the 12-min job timeout on
+# 2026-09-04 (#89) — a JOB timeout CANCELS the whole job, which continue-on-error
+# does NOT catch, so the cache purge below was silently skipped. Decoupling it
+# means a slow adjustment can never again cancel the bhavcopy/indices/FII/cache
+# steps, and the adjustment now runs incrementally (--changed-only).
 #
 # Why a GitHub Action (not local launchd):
 #   - NSE bhavcopy is daily; you don't want to remember to refresh prices
@@ -86,26 +90,6 @@ jobs:
           PYTHONUNBUFFERED: "1"
         run: python scripts/refresh-ltp.py
 
-      # Recompute split/bonus-adjusted closes for the raw bhavcopy rows just
-      # inserted above. Without this, a stock that went ex-bonus/split today
-      # would show a fake cliff on its chart until the (previously unscheduled)
-      # adjustment was run by hand — the WIPRO/KOTAKBANK sawtooth bug.
-      #
-      # --apply-only runs Phase 0 (bridge app.corporate_action → golden, so
-      # freshly-fetched events get a numeric split_factor) then Phase 2 (apply
-      # cumulative adj_close). Phase 1 auto-detect is skipped on purpose: it
-      # scans RAW close for single-day drops and the bhavcopy sawtooth can look
-      # like a false bonus. Idempotent + data_source-aware, so a daily re-run is
-      # safe; continue-on-error keeps a slow/failed adjustment from blocking the
-      # cache purge — the next day's run self-heals.
-      - name: Apply corporate-action adjustments (adj_close)
-        env:
-          APP_DB_URL:     ${{ secrets.NEON_APP_URL }}
-          GOLDEN_DB_URL:  ${{ secrets.NEON_GOLDEN_URL }}
-          PYTHONUNBUFFERED: "1"
-        run: python scripts/apply-corp-adjustments.py --apply-only
-        continue-on-error: true
-
       # Indices + FII/DII land into their own tables. Failure here doesn't
       # roll back the bhavcopy write above — we still want the LTP refresh
       # to land even if NSE's index CSV is temporarily 404 or their
@@ -146,4 +130,33 @@ jobs:
           if [ "$HTTP_CODE" != "200" ]; then
             echo "::error::Cache purge failed (HTTP $HTTP_CODE) — check REVALIDATE_TOKEN secret matches Vercel."
             exit 1
+          fi
+
+      # Un-silence the pipeline. GitHub's default email fires on FAILED runs but
+      # NOT on CANCELLED ones (e.g. a job-timeout cancel), which is exactly how
+      # #89 slipped by unnoticed. This step runs on both failure() and
+      # cancelled() and opens/updates a de-duped GitHub issue, so a broken daily
+      # EOD refresh is always visible regardless of notification settings.
+      - name: Raise a loud alert on failure
+        if: failure() || cancelled()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TITLE="🚨 Daily LTP + OHLC refresh FAILED"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          BODY=$(printf '%s\n' \
+            "The daily EOD refresh (bhavcopy → OHLC → indices → FII/DII → cache purge) did not complete cleanly at $(date -u '+%Y-%m-%d %H:%M UTC')." \
+            "" \
+            "Status: ${{ job.status }}. A 'cancelled' status usually means the 12-min job timeout fired." \
+            "" \
+            "Run log: $RUN_URL" \
+            "" \
+            "Impact: today's OHLC candle may be missing and/or the Vercel cache was not purged (site serving stale pages). The pipeline is idempotent — investigate, then re-run the workflow.")
+          EXISTING=$(gh issue list --state open --search "$TITLE in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+            echo "Appended to existing alert issue #$EXISTING"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+            echo "Opened a new alert issue"
           fi

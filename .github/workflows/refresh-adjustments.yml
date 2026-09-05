@@ -1,0 +1,105 @@
+# Corporate-action adjustment (adj_close recompute) — DECOUPLED from the daily
+# EOD critical path (refresh-ltp.yml).
+#
+# WHY A SEPARATE WORKFLOW:
+#   This step used to live inline in refresh-ltp.yml as a `continue-on-error`
+#   step. On 2026-09-04 (run #89) a daily FULL re-adjust of all ~400 symbols'
+#   entire adj_close history crossed the 12-min job timeout. A job timeout
+#   CANCELS the whole job — which continue-on-error does NOT catch — so the
+#   downstream cache purge was silently skipped and the run showed "cancelled"
+#   with no notification. Splitting it out means a slow/failed adjustment can
+#   never again cancel the bhavcopy → indices → FII/DII → cache-purge steps.
+#
+# WHAT IT DOES:
+#   apply-corp-adjustments.py --apply-only --changed-only
+#     Phase 0  Bridge app.corporate_action → golden.corporate_actions (numeric
+#              split_factor), capturing the exact set of symbols whose events
+#              actually changed this run.
+#     Phase 2  Recompute cumulative adj_close ONLY for those changed symbols
+#              (--changed-only). A symbol with an unchanged event set already
+#              has correct adj_close from a prior run, and today's new bhavcopy
+#              row is dated after every past ex_date, so it needs no scaling.
+#              This turns a daily O(all-symbols × full-history) rewrite into
+#              O(changed) — seconds instead of >12 min.
+#     Phase 1 auto-detect is skipped (--apply-only): it scans RAW close for
+#     single-day drops and the bhavcopy sawtooth can look like a false bonus.
+#
+#   NOTE: --changed-only is safe for the daily go-forward path (new rows are
+#   current-dated). After a HISTORICAL bhavcopy backfill (which inserts raw rows
+#   dated BEFORE past ex_dates), run a full recompute by hand:
+#     etl/.venv/bin/python scripts/apply-corp-adjustments.py --apply-only
+#
+# Required secrets: NEON_APP_URL, NEON_GOLDEN_URL.
+
+name: Apply corp-action adjustments
+
+on:
+  # Fire right after the daily EOD refresh finishes, so today's raw bhavcopy
+  # rows already exist in golden.price_history before we adjust them.
+  workflow_run:
+    workflows: ["Refresh LTP + OHLC"]
+    types: [completed]
+
+  # Manual trigger — for testing or a one-off re-adjust.
+  workflow_dispatch: {}
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  adjust:
+    runs-on: ubuntu-latest
+    # Only run when the triggering EOD refresh actually succeeded (a failed /
+    # cancelled refresh means the raw rows may be missing). Manual dispatch
+    # always runs.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    # Generous ceiling: incremental adjustment is seconds, but a day with many
+    # changed symbols (or a manual full re-run) gets headroom. A timeout here
+    # can no longer harm the daily critical path — it's fully decoupled.
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install psycopg
+        run: pip install 'psycopg[binary]==3.2.*'
+
+      - name: Apply corporate-action adjustments (adj_close)
+        env:
+          APP_DB_URL:     ${{ secrets.NEON_APP_URL }}
+          GOLDEN_DB_URL:  ${{ secrets.NEON_GOLDEN_URL }}
+          PYTHONUNBUFFERED: "1"
+        run: python scripts/apply-corp-adjustments.py --apply-only --changed-only
+
+      # Loud, de-duped alert on failure OR cancel (timeout). No continue-on-error
+      # here — a broken adjustment should be visible, not swallowed.
+      - name: Raise a loud alert on failure
+        if: failure() || cancelled()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TITLE="🚨 Corp-action adjustment (adj_close) FAILED"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          BODY=$(printf '%s\n' \
+            "The corporate-action adjustment run did not complete cleanly at $(date -u '+%Y-%m-%d %H:%M UTC')." \
+            "" \
+            "Status: ${{ job.status }}." \
+            "" \
+            "Run log: $RUN_URL" \
+            "" \
+            "Impact: charts for stocks that went ex-split/bonus recently may show a fake cliff until the next successful run. The script is idempotent — investigate, then re-run the workflow.")
+          EXISTING=$(gh issue list --state open --search "$TITLE in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+            echo "Appended to existing alert issue #$EXISTING"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+            echo "Opened a new alert issue"
+          fi

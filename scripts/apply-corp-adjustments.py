@@ -236,9 +236,21 @@ def main() -> None:
     ap.add_argument("--apply-only",  action="store_true", help="Bridge + Phase 2 (skip detect)")
     ap.add_argument("--bridge-only", action="store_true", help="Phase 0 only (skip detect + apply)")
     ap.add_argument("--skip-bridge", action="store_true", help="Skip Phase 0 (app→golden bridge)")
+    ap.add_argument("--changed-only", action="store_true",
+                    help="Phase 2: re-adjust only symbols whose events actually changed in "
+                         "Phase 0/1 THIS run (the daily go-forward path). Safe only when new "
+                         "price rows are current-dated (daily bhavcopy). After a HISTORICAL "
+                         "backfill, run a full recompute (omit this flag) so gap-filled "
+                         "pre-ex-date rows get adjusted.")
     args = ap.parse_args()
 
     golden_url = args.golden_url or env_url("GOLDEN_DB_URL")
+
+    # Symbols whose corporate_actions rows were genuinely inserted/changed this
+    # run (Phase 0 bridge + Phase 1 detect). Under --changed-only, Phase 2
+    # re-adjusts ONLY these — the daily path re-rewrote all ~400 symbols' full
+    # adj_close history every run, which crossed the 12-min CI timeout.
+    changed_symbols: set[str] = set()
 
     # Phase 0 (bridge) runs by default; it is upstream of detect + apply.
     run_bridge = not (args.skip_bridge or args.detect_only)
@@ -298,6 +310,10 @@ def main() -> None:
             else:
                 with conn.cursor() as cur:
                     for row in bridged:
+                        # RETURNING + the DISTINCT-FROM WHERE gives us the exact set
+                        # of symbols that actually changed: a pure INSERT returns its
+                        # symbol; an ON CONFLICT whose values are unchanged fires no
+                        # UPDATE and returns nothing. That set drives --changed-only.
                         cur.execute("""
                             INSERT INTO golden.corporate_actions
                               (symbol, ex_date, action_type, ratio_num, ratio_den,
@@ -309,11 +325,20 @@ def main() -> None:
                               split_factor = EXCLUDED.split_factor,
                               purpose      = EXCLUDED.purpose,
                               source       = 'fundamental_app:indianapi'
+                            WHERE golden.corporate_actions.split_factor IS DISTINCT FROM EXCLUDED.split_factor
+                               OR golden.corporate_actions.ratio_num    IS DISTINCT FROM EXCLUDED.ratio_num
+                               OR golden.corporate_actions.ratio_den    IS DISTINCT FROM EXCLUDED.ratio_den
+                               OR golden.corporate_actions.purpose      IS DISTINCT FROM EXCLUDED.purpose
+                            RETURNING symbol
                         """, row)
+                        r = cur.fetchone()
+                        if r:
+                            changed_symbols.add(r[0])
                 conn.commit()
                 print(f"  Bridged {len(bridged)} events into golden.corporate_actions "
                       f"({skipped_ratio} unparseable ratio skipped, "
-                      f"{reverse_splits} reverse-split(s))", file=sys.stderr)
+                      f"{reverse_splits} reverse-split(s)); "
+                      f"{len(changed_symbols)} symbol(s) changed", file=sys.stderr)
 
         if args.bridge_only:
             return
@@ -458,6 +483,7 @@ def main() -> None:
                             d["snap_factor"],
                             f"Auto-detected: ratio={d['ratio']:.4f} ≈ {d['snap_factor']:.4f}",
                         ))
+                        changed_symbols.add(d["symbol"])
                 conn.commit()
                 print(f"  Inserted {len(detected)} events into golden.corporate_actions",
                       file=sys.stderr)
@@ -489,6 +515,20 @@ def main() -> None:
                 by_symbol[symbol].append((ex_date, float(split_factor), action_type))
 
             print(f"  {len(by_symbol)} symbols have adjustable events", file=sys.stderr)
+
+            # Daily go-forward: only re-adjust symbols whose events changed this
+            # run. A symbol with an unchanged event set already has correct
+            # adj_close from a prior run, and today's new bhavcopy row is dated
+            # AFTER every past ex_date, so it needs no scaling. This turns Phase 2
+            # from an O(all-symbols × full-history) daily rewrite into O(changed).
+            if args.changed_only:
+                before = len(by_symbol)
+                by_symbol = {s: e for s, e in by_symbol.items() if s in changed_symbols}
+                print(f"  --changed-only: {len(by_symbol)} of {before} symbol(s) changed "
+                      f"this run — skipping the rest", file=sys.stderr)
+                if not by_symbol:
+                    print("  Nothing changed — adj_close already current. Done.", file=sys.stderr)
+                    return
 
             if args.dry_run:
                 n_skipped = 0
