@@ -1,0 +1,78 @@
+# Market-cap tier (Large / Mid / Small) refresh.
+#
+# Populates app.universe.market_cap_category from AMFI's official SEBI
+# categorisation (see scripts/fetch-amfi-categorization.py). AMFI republishes
+# the list only twice a year (~Jan & Jul, for the six months ended 31 Dec /
+# 30 Jun), so monthly is already far more often than needed — it just
+# guarantees we pick up a new period within a few weeks without anyone
+# remembering to trigger it. The fetcher is idempotent: on months with no new
+# file it simply re-applies the same categorisation.
+#
+# Why its own workflow: cap tiers change semi-annually and have nothing to do
+# with the daily EOD price path — no reason to couple them.
+#
+# Required secret:
+#   NEON_APP_URL — Postgres URL for fundamental_app on Neon (same as the other
+#                  data workflows; no new setup).
+
+name: Refresh market-cap tiers
+
+on:
+  # 1st of every month, 05:00 UTC = 10:30 IST — off-market, off other cadences.
+  schedule:
+    - cron: '0 5 1 * *'
+  # Manual trigger — for an immediate re-categorise right after AMFI publishes.
+  workflow_dispatch: {}
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    # Generous: one listing-page scrape + one ~600 KB XLSX download + a batched
+    # UPDATE. Off the critical path, so slack here is harmless.
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install deps
+        run: pip install 'psycopg[binary]==3.2.*' 'openpyxl==3.1.*'
+
+      - name: Refresh market-cap tiers
+        env:
+          APP_DB_URL:       ${{ secrets.NEON_APP_URL }}
+          PYTHONUNBUFFERED: "1"
+        run: python scripts/fetch-amfi-categorization.py
+
+      # Loud, de-duped alert on failure OR cancel — a broken cap-tier refresh
+      # should be visible, not silent.
+      - name: Raise a loud alert on failure
+        if: failure() || cancelled()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TITLE="🚨 Market-cap tier refresh FAILED"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          BODY=$(printf '%s\n' \
+            "The AMFI market-cap tier refresh did not complete cleanly at $(date -u '+%Y-%m-%d %H:%M UTC')." \
+            "" \
+            "Status: ${{ job.status }}." \
+            "" \
+            "Run log: $RUN_URL" \
+            "" \
+            "Likely cause: AMFI moved the listing-page URL or changed the XLSX schema (the fetcher discovers the file by scraping amfiindia.com/otherdata/categorisation-of-stocks). Existing tiers stay as-is until fixed — the script aborts rather than write garbage.")
+          EXISTING=$(gh issue list --state open --search "$TITLE in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+            echo "Appended to existing alert issue #$EXISTING"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+            echo "Opened a new alert issue"
+          fi
