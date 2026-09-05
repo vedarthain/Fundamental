@@ -1504,46 +1504,77 @@ function TradeTable({
 }) {
   const periods = useMemo(() => (exportable ? tradePeriods(rows) : []), [exportable, rows]);
   const [period, setPeriod] = useState<string>("all");
+  // Free-text filter across symbol / name / side / broker / date / source.
+  const [q, setQ] = useState("");
+  const filtered = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    if (!needle) return rows;
+    return rows.filter((r) =>
+      [r.symbol, r.name, r.side, r.brokerLabel, r.date, r.sourceFile]
+        .some((f) => f != null && String(f).toLowerCase().includes(needle)),
+    );
+  }, [rows, q]);
   return (
     <div className="card overflow-hidden">
-      <div className="px-4 py-3 border-b hairline flex items-center gap-2">
+      <div className="px-4 py-3 border-b hairline flex flex-wrap items-center gap-2">
         <span
           className="inline-flex items-center justify-center w-6 h-6 rounded-md shrink-0"
           style={{ background: "color-mix(in srgb, var(--color-accent-600) 12%, transparent)", color: "var(--color-accent-700)" }}
         >
           <IconList size={15} />
         </span>
-        <h2 className="text-[14px] font-semibold">{title} ({rows.length})</h2>
-        {exportable && rows.length > 0 && (
-          <div className="ml-auto flex items-center gap-1.5">
-            <select
-              value={period}
-              onChange={(e) => setPeriod(e.target.value)}
-              className="text-[11.5px] rounded-md border px-2 py-1 bg-transparent"
-              style={{ borderColor: "var(--color-border-default)" }}
-              aria-label="Export period"
-            >
-              <option value="all">All time</option>
-              {periods.map((p) => (
-                <option key={p.value} value={p.value}>{p.label}</option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={() => downloadTradesCsv(rows, period)}
-              className="text-[11.5px] font-medium rounded-md px-2.5 py-1 transition-colors"
-              style={{ backgroundColor: "var(--color-accent-600)", color: "white" }}
-            >
-              Export CSV
-            </button>
-          </div>
-        )}
+        <h2 className="text-[14px] font-semibold">
+          {title} ({q.trim() ? `${filtered.length} of ${rows.length}` : rows.length})
+        </h2>
+        <div className="ml-auto flex items-center gap-1.5">
+          {rows.length > 0 && (
+            <div className="relative">
+              <input
+                type="search"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Search symbol, broker…"
+                className="text-[11.5px] rounded-md border pl-2 pr-2 py-1 bg-transparent w-[150px] sm:w-[180px]"
+                style={{ borderColor: "var(--color-border-default)" }}
+                aria-label={`Search ${title}`}
+              />
+            </div>
+          )}
+          {exportable && rows.length > 0 && (
+            <>
+              <select
+                value={period}
+                onChange={(e) => setPeriod(e.target.value)}
+                className="text-[11.5px] rounded-md border px-2 py-1 bg-transparent"
+                style={{ borderColor: "var(--color-border-default)" }}
+                aria-label="Export period"
+              >
+                <option value="all">All time</option>
+                {periods.map((p) => (
+                  <option key={p.value} value={p.value}>{p.label}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => downloadTradesCsv(rows, period)}
+                className="text-[11.5px] font-medium rounded-md px-2.5 py-1 transition-colors"
+                style={{ backgroundColor: "var(--color-accent-600)", color: "white" }}
+              >
+                Export CSV
+              </button>
+            </>
+          )}
+        </div>
       </div>
       {note && (
         <p className="muted-text text-[11.5px] px-4 py-2 leading-snug border-b hairline">{note}</p>
       )}
       {rows.length === 0 ? (
         <div className="px-4 py-6 text-center text-[12.5px] muted-text">{emptyHint}</div>
+      ) : filtered.length === 0 ? (
+        <div className="px-4 py-6 text-center text-[12.5px] muted-text">
+          No trades match “{q.trim()}”.
+        </div>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-[12.5px]">
@@ -1560,7 +1591,7 @@ function TradeTable({
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => {
+              {filtered.map((r) => {
                 const dim = r.matched; // greyed out for matched manual rows
                 return (
                   <tr
