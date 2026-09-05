@@ -533,16 +533,33 @@ export async function loadPortfolioTrades(
 
 // ─────────────────────────── booked (realized) P&L ─────────────────────────
 
+// Long-term capital-gains threshold for listed Indian equity: held for MORE
+// than 12 months. We approximate "12 months" as 365 days (close enough for a
+// display label; not tax advice).
+const LT_DAYS = 365;
+
+// Whether a row's matched buy lots are all long-term, all short-term, a blend,
+// or unknown (a lot with no recorded buy date — e.g. a broker opening snapshot).
+export type RealizedTerm = "long" | "short" | "mixed" | "unknown";
+
 export type RealizedLot = {
   symbol: string;
   name: string | null;
+  sellFy: string | null;      // FY (April→March) of the sells in this row
   qtySold: number;
-  proceeds: number; // Σ (sell price × qty)
-  costOfSold: number; // Σ (avg cost at time of sale × qty)
-  realized: number; // proceeds − costOfSold
+  avgBuy: number | null;      // Σ (buy cost of consumed lots) ÷ qty
+  avgSell: number;            // Σ proceeds ÷ qty
+  proceeds: number;           // Σ (sell price × qty)
+  costOfSold: number;         // Σ (FIFO buy price × qty) of the consumed lots
+  realized: number;           // proceeds − costOfSold
   realizedPct: number | null; // realized ÷ costOfSold
-  firstBuy: string | null;
-  lastSell: string | null;
+  buyFirst: string | null;    // earliest consumed buy date
+  buyLast: string | null;     // latest consumed buy date
+  sellFirst: string | null;   // earliest sell date in this FY
+  sellLast: string | null;    // latest sell date in this FY
+  term: RealizedTerm;
+  ltRealized: number;         // realized attributable to long-term matches
+  stRealized: number;         // realized attributable to short-term matches
 };
 
 export type RealizedPnl = {
@@ -557,18 +574,28 @@ export type RealizedPnl = {
   };
 };
 
-// One realized sell, booked at the running average cost at the moment of sale.
-// Emitted by the same walk that produces the per-symbol rollup, so the Booked
-// P&L tab and the realized-over-time analytics can never disagree.
+// One realized sell, booked against the FIFO lots it consumed. Emitted by the
+// same walk that produces the per-symbol/FY rollup, so the Booked P&L tab and
+// the realized-over-time analytics can never disagree.
 type SellEvent = {
   symbol: string;
   name: string | null;
   date: string;        // sell date (ISO)
   qty: number;
   proceeds: number;
-  cost: number;        // avg-cost basis of the sold qty
+  cost: number;        // FIFO cost basis of the sold qty
   realized: number;    // proceeds − cost
-  holdingDays: number | null; // sell date − symbol's first observed buy (proxy)
+  holdingDays: number | null; // qty-weighted holding period of the consumed lots
+};
+
+// Per-symbol rollup (across all FYs) — feeds the realized-over-time analytics,
+// which reason about a symbol's whole closed history, not FY-sliced rows.
+type SymbolAgg = {
+  symbol: string;
+  realized: number;
+  realizedPct: number | null;
+  firstBuy: string | null;
+  lastSell: string | null;
 };
 
 function daysBetween(a: string, b: string): number | null {
@@ -577,21 +604,34 @@ function daysBetween(a: string, b: string): number | null {
   return Math.max(0, Math.round((tb - ta) / 86_400_000));
 }
 
+// Indian financial year (April→March) of an ISO date. 2026-03-31 → FY2025-26;
+// 2026-04-01 → FY2026-27. Returns null for missing/garbage dates.
+function fyOfDate(iso: string | null): string | null {
+  if (!iso) return null;
+  const y = Number(iso.slice(0, 4));
+  const m = Number(iso.slice(5, 7));
+  if (!y || !m) return null;
+  const start = m >= 4 ? y : y - 1;
+  return `FY${start}-${String(start + 1).slice(2)}`;
+}
+
 /**
- * Booked (realized) P&L from the trade log, average-cost method. Walking each
- * symbol's transactions in order, a buy blends into the running avg cost; a sell
- * books (sell price − avg cost) × qty against that basis. Only symbols that have
- * ever been (partly) sold appear. Unrealized gains on still-open positions are
- * NOT here — those live in the Holdings table. Cost basis unknown (a sell before
- * any buy in a windowed export) contributes 0 cost, so proceeds count as pure
- * realized — flagged implicitly by realizedPct being null-safe.
+ * Booked (realized) P&L from the trade log, FIFO lot-matching. Walking each
+ * symbol's transactions in order, a buy pushes a dated lot; a sell consumes the
+ * OLDEST open lots first, booking (sell price − that lot's buy price) × qty and
+ * recording the lot's holding period (→ long- vs short-term). Only symbols that
+ * have ever been (partly) sold appear. Unrealized gains on still-open positions
+ * are NOT here — those live in the Holdings table. A sell with no available lot
+ * (a windowed export whose buys pre-date the window) books nothing for the
+ * uncovered qty, exactly as the old average-cost walk did.
  *
- * Returns the per-symbol rows + totals AND the raw sell events, so callers that
- * want a time series (loadRealizedTimeline) reuse the exact same matching.
+ * Rows are one per (symbol, sell-FY) so a position trimmed across an April
+ * boundary lands in the correct year. Returns those rows + totals, the raw sell
+ * events, and a per-symbol rollup — so loadRealizedTimeline reuses this matching.
  */
 async function computeRealized(
   userId: number,
-): Promise<{ rows: RealizedLot[]; totals: RealizedPnl["totals"]; events: SellEvent[] }> {
+): Promise<{ rows: RealizedLot[]; totals: RealizedPnl["totals"]; events: SellEvent[]; symbolAgg: SymbolAgg[] }> {
   const txns = await sql<
     { symbol: string; d: string; side: string; qty: number; price: number; name: string | null; manual: boolean }[]
   >`
@@ -625,18 +665,21 @@ async function computeRealized(
     if (r.avg != null) { s.costSum += r.qty * r.avg; s.costQty += r.qty; }
   }
 
-  type Acc = {
-    name: string | null;
-    qty: number; // open qty
-    avg: number; // running avg cost
-    qtySold: number;
-    proceeds: number;
-    costOfSold: number;
-    firstBuy: string | null;
-    lastSell: string | null;
+  // A dated open buy lot in the FIFO queue. `date` is null only for a broker
+  // opening snapshot (no trade date) — those book a cost basis but no holding
+  // period, so any sell that consumes them is term "unknown".
+  type Lot = { date: string | null; qty: number; price: number };
+
+  // One FIFO match — a slice of a sell paired with the buy lot it consumed.
+  type Match = {
+    symbol: string; name: string | null;
+    sellDate: string; buyDate: string | null;
+    qty: number; buyPrice: number; sellPrice: number;
+    longTerm: boolean | null; // null when the buy lot has no date
   };
-  const bySym = new Map<string, Acc>();
+  const matches: Match[] = [];
   const events: SellEvent[] = [];
+  const symbolAgg: SymbolAgg[] = [];
 
   // Group the (already symbol-ordered) txns so we can pick a per-symbol regime.
   type TxnRow = (typeof txns)[number];
@@ -651,62 +694,134 @@ async function computeRealized(
     const hasManual = list.some((t) => t.manual);
     const seeded = hasSnapshot && hasManual; // snapshot + manual → seed & manual-only
     const walk = seeded ? list.filter((t) => t.manual) : list;
+    const name = list[0]?.name ?? null;
 
-    const a: Acc = {
-      name: list[0]?.name ?? null,
-      qty: 0, avg: 0, qtySold: 0, proceeds: 0, costOfSold: 0, firstBuy: null, lastSell: null,
-    };
+    // FIFO queue of open lots. A seeded snapshot is the opening lot (no date).
+    const lots: Lot[] = [];
     if (seeded && snap) {
-      a.qty = snap.qty;
-      a.avg = snap.costQty > 0 ? snap.costSum / snap.costQty : 0;
+      lots.push({ date: null, qty: snap.qty, price: snap.costQty > 0 ? snap.costSum / snap.costQty : 0 });
     }
-    bySym.set(symbol, a);
+
+    let symRealized = 0, symCost = 0, symFirstBuy: string | null = null, symLastSell: string | null = null;
 
     for (const t of walk) {
       if (t.side === "buy") {
-        if (a.firstBuy == null) a.firstBuy = t.d;
-        const next = a.qty + t.qty;
-        a.avg = next > 0 ? (a.qty * a.avg + t.qty * t.price) / next : 0;
-        a.qty = next;
+        if (symFirstBuy == null) symFirstBuy = t.d;
+        lots.push({ date: t.d, qty: t.qty, price: t.price });
       } else {
-        // sell: book against current avg, up to the open qty (ignore oversells).
-        const sold = a.qty > 0 ? Math.min(t.qty, a.qty) : 0;
-        if (sold > 0) {
-          const proceeds = sold * t.price;
-          const cost = sold * a.avg;
-          a.qtySold += sold;
-          a.proceeds += proceeds;
-          a.costOfSold += cost;
-          a.qty -= sold;
-          a.lastSell = t.d;
+        // sell: consume the OLDEST lots first, up to available qty (ignore the
+        // uncovered remainder of an oversell — matches the old walk's behavior).
+        let remaining = t.qty;
+        let eCost = 0, eQty = 0, eHoldQtyDays = 0, eHoldQty = 0;
+        while (remaining > 1e-9 && lots.length > 0) {
+          const lot = lots[0];
+          const take = Math.min(remaining, lot.qty);
+          const hd = lot.date ? daysBetween(lot.date, t.d) : null;
+          matches.push({
+            symbol, name, sellDate: t.d, buyDate: lot.date, qty: take,
+            buyPrice: lot.price, sellPrice: t.price,
+            longTerm: hd == null ? null : hd > LT_DAYS,
+          });
+          eCost += take * lot.price;
+          eQty += take;
+          if (hd != null) { eHoldQtyDays += hd * take; eHoldQty += take; }
+          lot.qty -= take;
+          remaining -= take;
+          if (lot.qty <= 1e-9) lots.shift();
+        }
+        if (eQty > 0) {
+          const proceeds = eQty * t.price;
+          symRealized += proceeds - eCost;
+          symCost += eCost;
+          symLastSell = t.d;
           events.push({
-            symbol, name: a.name, date: t.d, qty: sold,
-            proceeds, cost, realized: proceeds - cost,
-            holdingDays: a.firstBuy ? daysBetween(a.firstBuy, t.d) : null,
+            symbol, name, date: t.d, qty: eQty,
+            proceeds, cost: eCost, realized: proceeds - eCost,
+            holdingDays: eHoldQty > 0 ? Math.round(eHoldQtyDays / eHoldQty) : null,
           });
         }
       }
     }
+
+    if (symCost > 0 || symRealized !== 0) {
+      symbolAgg.push({
+        symbol,
+        realized: Math.round(symRealized * 100) / 100,
+        realizedPct: symCost > 0 ? Math.round((symRealized / symCost) * 1000) / 10 : null,
+        firstBuy: symFirstBuy,
+        lastSell: symLastSell,
+      });
+    }
+  }
+
+  // Roll FIFO matches up into one row per (symbol, sell-FY).
+  type RowAcc = {
+    symbol: string; name: string | null; sellFy: string | null;
+    qty: number; cost: number; proceeds: number;
+    buyFirst: string | null; buyLast: string | null;
+    sellFirst: string | null; sellLast: string | null;
+    lt: number; st: number; hasLong: boolean; hasShort: boolean; hasUnknown: boolean;
+  };
+  const minD = (a: string | null, b: string | null) => (a == null ? b : b == null ? a : a < b ? a : b);
+  const maxD = (a: string | null, b: string | null) => (a == null ? b : b == null ? a : a > b ? a : b);
+  const rowMap = new Map<string, RowAcc>();
+  for (const m of matches) {
+    const fy = fyOfDate(m.sellDate);
+    const key = `${m.symbol}|${fy ?? ""}`;
+    let acc = rowMap.get(key);
+    if (!acc) {
+      acc = {
+        symbol: m.symbol, name: m.name, sellFy: fy,
+        qty: 0, cost: 0, proceeds: 0,
+        buyFirst: null, buyLast: null, sellFirst: null, sellLast: null,
+        lt: 0, st: 0, hasLong: false, hasShort: false, hasUnknown: false,
+      };
+      rowMap.set(key, acc);
+    }
+    const realized = m.qty * (m.sellPrice - m.buyPrice);
+    acc.qty += m.qty;
+    acc.cost += m.qty * m.buyPrice;
+    acc.proceeds += m.qty * m.sellPrice;
+    acc.buyFirst = minD(acc.buyFirst, m.buyDate);
+    acc.buyLast = maxD(acc.buyLast, m.buyDate);
+    acc.sellFirst = minD(acc.sellFirst, m.sellDate);
+    acc.sellLast = maxD(acc.sellLast, m.sellDate);
+    if (m.longTerm === true) { acc.lt += realized; acc.hasLong = true; }
+    else if (m.longTerm === false) { acc.st += realized; acc.hasShort = true; }
+    else acc.hasUnknown = true;
   }
 
   const rows: RealizedLot[] = [];
   let pProceeds = 0, pCost = 0, winners = 0, losers = 0;
-  for (const [symbol, a] of bySym) {
-    if (a.qtySold <= 0) continue;
-    const realized = a.proceeds - a.costOfSold;
+  for (const acc of rowMap.values()) {
+    if (acc.qty <= 0) continue;
+    const realized = acc.proceeds - acc.cost;
+    const term: RealizedTerm =
+      acc.hasLong && !acc.hasShort && !acc.hasUnknown ? "long"
+      : acc.hasShort && !acc.hasLong && !acc.hasUnknown ? "short"
+      : !acc.hasLong && !acc.hasShort ? "unknown"
+      : "mixed";
     rows.push({
-      symbol,
-      name: a.name,
-      qtySold: Math.round(a.qtySold * 10000) / 10000,
-      proceeds: Math.round(a.proceeds * 100) / 100,
-      costOfSold: Math.round(a.costOfSold * 100) / 100,
+      symbol: acc.symbol,
+      name: acc.name,
+      sellFy: acc.sellFy,
+      qtySold: Math.round(acc.qty * 10000) / 10000,
+      avgBuy: acc.qty > 0 ? Math.round((acc.cost / acc.qty) * 100) / 100 : null,
+      avgSell: Math.round((acc.proceeds / acc.qty) * 100) / 100,
+      proceeds: Math.round(acc.proceeds * 100) / 100,
+      costOfSold: Math.round(acc.cost * 100) / 100,
       realized: Math.round(realized * 100) / 100,
-      realizedPct: a.costOfSold > 0 ? Math.round((realized / a.costOfSold) * 1000) / 10 : null,
-      firstBuy: a.firstBuy,
-      lastSell: a.lastSell,
+      realizedPct: acc.cost > 0 ? Math.round((realized / acc.cost) * 1000) / 10 : null,
+      buyFirst: acc.buyFirst,
+      buyLast: acc.buyLast,
+      sellFirst: acc.sellFirst,
+      sellLast: acc.sellLast,
+      term,
+      ltRealized: Math.round(acc.lt * 100) / 100,
+      stRealized: Math.round(acc.st * 100) / 100,
     });
-    pProceeds += a.proceeds;
-    pCost += a.costOfSold;
+    pProceeds += acc.proceeds;
+    pCost += acc.cost;
     if (realized >= 0) winners++;
     else losers++;
   }
@@ -724,10 +839,11 @@ async function computeRealized(
       losers,
     },
     events,
+    symbolAgg,
   };
 }
 
-/** Public per-symbol booked P&L (drops the raw sell events). */
+/** Public booked P&L rows (one per symbol × sell-FY); drops the raw events. */
 export async function loadRealizedPnl(userId: number): Promise<RealizedPnl> {
   const { rows, totals } = await computeRealized(userId);
   return { rows, totals };
@@ -831,7 +947,7 @@ export type RealizedTimeline = {
 };
 
 export async function loadRealizedTimeline(userId: number): Promise<RealizedTimeline | null> {
-  const { rows, events } = await computeRealized(userId);
+  const { symbolAgg, events } = await computeRealized(userId);
   if (events.length === 0) return null;
 
   // Monthly rupee buckets keyed YYYY-MM (win/loss counted per sell event).
@@ -857,7 +973,7 @@ export async function loadRealizedTimeline(userId: number): Promise<RealizedTime
     }));
 
   // Per-symbol hold-period vs return scatter (needs a real cost basis + span).
-  const scatter = rows
+  const scatter = symbolAgg
     .filter((r) => r.realizedPct != null && r.firstBuy && r.lastSell)
     .map((r) => ({
       symbol: r.symbol,
@@ -866,11 +982,11 @@ export async function loadRealizedTimeline(userId: number): Promise<RealizedTime
       realized: r.realized,
     }));
 
-  const wins = rows.filter((r) => r.realizedPct != null && r.realized >= 0);
-  const losses = rows.filter((r) => r.realizedPct != null && r.realized < 0);
+  const wins = symbolAgg.filter((r) => r.realizedPct != null && r.realized >= 0);
+  const losses = symbolAgg.filter((r) => r.realizedPct != null && r.realized < 0);
   const sellWins = events.filter((e) => e.realized >= 0).length;
   const holdDays = scatter.map((s) => s.holdingDays);
-  const sorted = [...rows].sort((a, b) => b.realized - a.realized);
+  const sorted = [...symbolAgg].sort((a, b) => b.realized - a.realized);
   const mean = (xs: number[]) => (xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : null);
   const r1 = (x: number | null) => (x == null ? null : Math.round(x * 10) / 10);
 
@@ -879,7 +995,7 @@ export async function loadRealizedTimeline(userId: number): Promise<RealizedTime
     scatter,
     stats: {
       closedTrades: events.length,
-      closedSymbols: rows.length,
+      closedSymbols: symbolAgg.length,
       winRate: events.length ? Math.round((sellWins / events.length) * 1000) / 10 : null,
       avgWinPct: r1(mean(wins.map((r) => r.realizedPct!))),
       avgLossPct: r1(mean(losses.map((r) => r.realizedPct!))),

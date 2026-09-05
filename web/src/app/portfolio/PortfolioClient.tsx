@@ -19,7 +19,7 @@ import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
   PieChart, Pie, Cell, BarChart, Bar, ScatterChart, Scatter, ZAxis, ReferenceLine,
 } from "recharts";
-import type { Portfolio, Instrument, RealizedPnl, RealizedLot, PerformanceStats, RealizedTimeline, TradeLog, TradeRow } from "@/lib/portfolio";
+import type { Portfolio, Instrument, RealizedPnl, RealizedLot, RealizedTerm, PerformanceStats, RealizedTimeline, TradeLog, TradeRow } from "@/lib/portfolio";
 import { TradeSheet } from "@/components/ManualTradeSheet";
 import { PortfolioScorecard } from "./PortfolioScorecard";
 import { refreshWatchlist } from "@/lib/watchlist";
@@ -906,19 +906,22 @@ function ConvictionCheck({ mapped, mappedValue }: { mapped: Instrument[]; mapped
 // ─────────────────────────── booked (realized) P&L ─────────────────────────
 
 // Sortable columns for the Booked P&L table. Order MUST match the <thead>/<tbody>.
-type RSortKey = "symbol" | "qtySold" | "costOfSold" | "proceeds" | "realized" | "realizedPct" | "lastSell";
+type RSortKey = "symbol" | "qtySold" | "costOfSold" | "proceeds" | "realized" | "realizedPct" | "term";
 
 const R_COLUMNS: {
   key: RSortKey; label: string; align: "left" | "right"; cls: string; numeric: boolean; hideSm?: boolean;
 }[] = [
   { key: "symbol", label: "Instrument", align: "left", cls: "px-3", numeric: false },
   { key: "qtySold", label: "Qty sold", align: "right", cls: "px-2", numeric: true },
-  { key: "costOfSold", label: "Cost basis", align: "right", cls: "px-2", numeric: true },
-  { key: "proceeds", label: "Proceeds", align: "right", cls: "px-2", numeric: true },
+  { key: "costOfSold", label: "Buy", align: "right", cls: "px-2", numeric: true },
+  { key: "proceeds", label: "Sell", align: "right", cls: "px-2", numeric: true },
   { key: "realized", label: "P&L", align: "right", cls: "px-2", numeric: true },
   { key: "realizedPct", label: "Return", align: "right", cls: "px-2", numeric: true },
-  { key: "lastSell", label: "Last sell", align: "right", cls: "px-3", numeric: false, hideSm: true },
+  { key: "term", label: "Term", align: "right", cls: "px-3", numeric: false },
 ];
+
+// Sort order for the term badge: long-held first, then short, mixed, unknown.
+const TERM_RANK: Record<RealizedTerm, number> = { long: 0, short: 1, mixed: 2, unknown: 3 };
 
 function rSortVal(r: RealizedLot, key: RSortKey): number | string | null {
   switch (key) {
@@ -928,7 +931,7 @@ function rSortVal(r: RealizedLot, key: RSortKey): number | string | null {
     case "proceeds": return r.proceeds;
     case "realized": return r.realized;
     case "realizedPct": return r.realizedPct; // may be null → sorted last
-    case "lastSell": return r.lastSell; // ISO date string sorts lexically → chronologically
+    case "term": return TERM_RANK[r.term];
   }
 }
 
@@ -958,7 +961,7 @@ function iSortVal(i: Instrument, key: RSortKey): number | string | null {
     case "proceeds": return i.currentValue;
     case "realized": return i.pnl;
     case "realizedPct": return i.pnlPct;
-    case "lastSell": return null; // open positions have no sell date
+    case "term": return null; // open positions carry no realized term
   }
 }
 
@@ -1004,7 +1007,7 @@ function SubHeadRow({
         {signed(net)}
       </td>
       <td className="px-2 py-1" />
-      <td className="px-3 py-1 hidden sm:table-cell" />
+      <td className="px-3 py-1" />
     </tr>
   );
 }
@@ -1025,15 +1028,21 @@ function UnrealRow({ i }: { i: Instrument }) {
         <div className="text-[10.5px] muted-text truncate max-w-[220px]">{i.symbol ? i.name : ""}</div>
       </td>
       <td className="px-2 py-2 text-right tabular-nums">{i.quantity}</td>
-      <td className="px-2 py-2 text-right tabular-nums">{inr(i.invested)}</td>
-      <td className="px-2 py-2 text-right tabular-nums">{inr(i.currentValue)}</td>
+      <td className="px-2 py-2 text-right tabular-nums">
+        {rate(i.quantity > 0 ? i.invested / i.quantity : null)}
+        <div className="text-[10px] muted-text">avg cost</div>
+      </td>
+      <td className="px-2 py-2 text-right tabular-nums">
+        {rate(i.quantity > 0 ? i.currentValue / i.quantity : null)}
+        <div className="text-[10px] muted-text">live</div>
+      </td>
       <td className="px-2 py-2 text-right tabular-nums font-medium" style={{ color: up(i.pnl) ? GREEN : RED }}>
         {signed(i.pnl)}
       </td>
       <td className="px-2 py-2 text-right tabular-nums" style={{ color: i.pnlPct == null ? undefined : up(i.pnlPct) ? GREEN : RED }}>
         {pct(i.pnlPct)}
       </td>
-      <td className="px-3 py-2 text-right tabular-nums muted-text hidden sm:table-cell">Open</td>
+      <td className="px-3 py-2 text-right muted-text text-[10px]">Open</td>
     </tr>
   );
 }
@@ -1047,6 +1056,54 @@ function fyOf(iso: string | null): string | null {
   if (!y || !m) return null;
   const start = m >= 4 ? y : y - 1;
   return `FY${start}-${String(start + 1).slice(2)}`;
+}
+
+// A per-share rate: ₹184.20 (two decimals, Indian grouping).
+function rate(n: number | null): string {
+  if (n == null) return "—";
+  return `₹${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+const MON_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+// "2024-02-03" → "3 Feb '24".
+function shortDate(iso: string | null): string {
+  if (!iso) return "—";
+  const yy = iso.slice(2, 4);
+  const mo = Number(iso.slice(5, 7));
+  const d = Number(iso.slice(8, 10));
+  if (!mo || !d) return iso;
+  return `${d} ${MON_ABBR[mo - 1] ?? iso.slice(5, 7)} '${yy}`;
+}
+// A collapsed date span: single date when both ends coincide, else "a – b".
+function dateRange(a: string | null, b: string | null): string {
+  if (!a && !b) return "—";
+  if (!a) return shortDate(b);
+  if (!b || a === b) return shortDate(a);
+  return `${shortDate(a)} – ${shortDate(b)}`;
+}
+
+// Long-/short-term (or mixed) capital-gains badge for a realized row. Mixed
+// rows carry a tooltip with the LT vs ST rupee split.
+function TermBadge({ term, lt, st }: { term: RealizedTerm; lt?: number; st?: number }) {
+  if (term === "unknown") return <span className="muted-text">—</span>;
+  const style: Record<Exclude<RealizedTerm, "unknown">, { label: string; fg: string; bg: string }> = {
+    long: { label: "Long", fg: "var(--color-accent-700)", bg: "color-mix(in srgb, var(--color-accent-600) 12%, transparent)" },
+    short: { label: "Short", fg: "#b45309", bg: "color-mix(in srgb, #f59e0b 16%, transparent)" },
+    mixed: { label: "Mixed", fg: "var(--color-muted)", bg: "color-mix(in srgb, var(--color-muted) 14%, transparent)" },
+  };
+  const s = style[term];
+  const title = term === "mixed" && lt != null && st != null
+    ? `Long-term ${signed(lt)} · Short-term ${signed(st)}`
+    : term === "long" ? "Held > 12 months" : term === "short" ? "Held ≤ 12 months" : undefined;
+  return (
+    <span
+      title={title}
+      className="inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold"
+      style={{ color: s.fg, background: s.bg }}
+    >
+      {s.label}
+    </span>
+  );
 }
 
 function BookedPnl({ realized, instruments }: { realized: RealizedPnl; instruments: Instrument[] }) {
@@ -1101,7 +1158,7 @@ function BookedPnl({ realized, instruments }: { realized: RealizedPnl; instrumen
   const curFy = fyOf(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`);
   const byFy = new Map<string | null, RealizedLot[]>();
   for (const r of realized.rows) {
-    const fy = fyOf(r.lastSell);
+    const fy = r.sellFy;
     (byFy.get(fy) ?? byFy.set(fy, []).get(fy)!).push(r);
   }
   // Guarantee the current FY exists as a home for open holdings, even with no
@@ -1135,11 +1192,11 @@ function BookedPnl({ realized, instruments }: { realized: RealizedPnl; instrumen
           accent={up(tt.realized) ? GREEN : RED}
         />
         <Card label="Sale proceeds" value={inr(tt.proceeds)} sub="realized exits" icon={<IconWallet size={15} />} />
-        <Card label="Cost of sold" value={inr(tt.costOfSold)} sub="avg-cost basis" icon={<IconDeposit size={15} />} />
+        <Card label="Cost of sold" value={inr(tt.costOfSold)} sub="FIFO basis" icon={<IconDeposit size={15} />} />
         <Card
           label="Win / loss"
           value={`${tt.winners} / ${tt.losers}`}
-          sub={`${realized.rows.length} stocks sold`}
+          sub={`${new Set(realized.rows.map((r) => r.symbol)).size} stocks sold`}
           icon={<IconPulse size={15} />}
         />
       </div>
@@ -1235,7 +1292,7 @@ function BookedPnl({ realized, instruments }: { realized: RealizedPnl; instrumen
                       {signed(headNet)}
                     </td>
                     <td className="px-2 py-1.5" />
-                    <td className="px-3 py-1.5 hidden sm:table-cell" />
+                    <td className="px-3 py-1.5" />
                   </tr>
 
                   {!groupCollapsed && (() => {
@@ -1273,15 +1330,23 @@ function BookedPnl({ realized, instruments }: { realized: RealizedPnl; instrumen
                             <div className="text-[10.5px] muted-text truncate max-w-[220px]">{r.name ?? ""}</div>
                           </td>
                           <td className="px-2 py-2 text-right tabular-nums">{r.qtySold}</td>
-                          <td className="px-2 py-2 text-right tabular-nums">{inr(r.costOfSold)}</td>
-                          <td className="px-2 py-2 text-right tabular-nums">{inr(r.proceeds)}</td>
+                          <td className="px-2 py-2 text-right tabular-nums">
+                            {rate(r.avgBuy)}
+                            <div className="text-[10px] muted-text">{dateRange(r.buyFirst, r.buyLast)}</div>
+                          </td>
+                          <td className="px-2 py-2 text-right tabular-nums">
+                            {rate(r.avgSell)}
+                            <div className="text-[10px] muted-text">{dateRange(r.sellFirst, r.sellLast)}</div>
+                          </td>
                           <td className="px-2 py-2 text-right tabular-nums font-medium" style={{ color: up(r.realized) ? GREEN : RED }}>
                             {signed(r.realized)}
                           </td>
                           <td className="px-2 py-2 text-right tabular-nums" style={{ color: r.realizedPct == null ? undefined : up(r.realizedPct) ? GREEN : RED }}>
                             {pct(r.realizedPct)}
                           </td>
-                          <td className="px-3 py-2 text-right tabular-nums muted-text hidden sm:table-cell">{r.lastSell ?? "—"}</td>
+                          <td className="px-3 py-2 text-right">
+                            <TermBadge term={r.term} lt={r.ltRealized} st={r.stRealized} />
+                          </td>
                         </tr>
                       ))}
 
@@ -1327,14 +1392,17 @@ function BookedPnl({ realized, instruments }: { realized: RealizedPnl; instrumen
                 <td className="px-2 py-2 text-right tabular-nums" style={{ color: up(tt.realizedPct) ? GREEN : RED }}>
                   {pct(tt.realizedPct)}
                 </td>
-                <td className="px-3 py-2 hidden sm:table-cell" />
+                <td className="px-3 py-2" />
               </tr>
             </tfoot>
           </table>
         </div>
         <p className="muted-text text-[11px] px-4 py-2.5 leading-snug border-t hairline">
-          Average-cost method. A sale before any recorded buy (common in date-windowed exports) has
-          no cost basis, so its proceeds book as pure gain — import the full history for accuracy.
+          FIFO lot-matching — each sell consumes your oldest open lots first. Buy/Sell show the
+          qty-weighted rate over the matched lots; dates below are the lot span. Long-term = held
+          &gt; 12 months; a row spanning both is tagged “Mixed” (hover for the split). Sells are
+          filed under their sell-date financial year. A sale whose buys pre-date a windowed export
+          has no cost basis, so its uncovered qty books nothing — import full history for accuracy.
           Not tax advice.
         </p>
       </div>
