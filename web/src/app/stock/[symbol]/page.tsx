@@ -653,7 +653,7 @@ export default async function StockPage({
             >
               NSE
             </span>
-            <CapTierBadge category={stock.market_cap_category as "large_cap" | "mid_cap" | "small_cap" | null} />
+            <CapTierBadge category={stock.market_cap_category as "large_cap" | "mid_cap" | "small_cap" | null} listingDate={stock.listing_date} />
             {stock.current_price != null && (
               <>
                 <span>·</span>

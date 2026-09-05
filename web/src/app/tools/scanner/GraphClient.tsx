@@ -19,6 +19,7 @@ import { displayCompanyName } from "@/lib/score";
 import type { GraphUniverse, GraphSector, GraphIndustry, GraphStock } from "@/lib/graphUniverse";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { CallToggle } from "@/components/CallToggle";
+import CapTierBadge, { hasCapTierBadge } from "@/components/CapTierBadge";
 import { useWatchlist } from "@/lib/watchlist";
 import { WindowPicker } from "./WindowPicker";
 import { BookmarkMenu } from "./BookmarkMenu";
@@ -1429,6 +1430,11 @@ export default function GraphClient({
                     <div className="text-[10.5px] muted-text truncate">
                       {displayCompanyName(st.name, st.symbol)}
                     </div>
+                    {hasCapTierBadge(st.market_cap_category as "large_cap" | "mid_cap" | "small_cap" | null, st.listing_date) && (
+                      <div className="mt-0.5">
+                        <CapTierBadge category={st.market_cap_category as "large_cap" | "mid_cap" | "small_cap" | null} listingDate={st.listing_date} />
+                      </div>
+                    )}
                   </div>
                   <div className="text-right shrink-0 tabular-nums">
                     <div className="flex items-center justify-end gap-2.5">
@@ -1627,6 +1633,7 @@ export default function GraphClient({
                     <span className="muted-text truncate">
                       {displayCompanyName(focus.name, focus.symbol)}
                     </span>
+                    <CapTierBadge category={focus.market_cap_category as "large_cap" | "mid_cap" | "small_cap" | null} listingDate={focus.listing_date} className="shrink-0" />
                     <span className="flex items-center gap-3 shrink-0">
                       <GrowthTag label="1D" v={pct100(returns.data[focus.symbol]?.ret_1d)} />
                       <GrowthTag label="1W" v={pct100(returns.data[focus.symbol]?.ret_1w)} />

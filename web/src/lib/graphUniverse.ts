@@ -15,6 +15,8 @@ import { sql } from "@/lib/db";
 export type GraphStock = {
   symbol: string;
   name: string | null;
+  market_cap_category: string | null;
+  listing_date: string | null;
   composite_pct: number | null;
   quality_pct: number | null;
   value_pct: number | null;
@@ -40,6 +42,8 @@ type Row = {
   industry: string | null;
   symbol: string;
   name: string | null;
+  market_cap_category: string | null;
+  listing_date: string | null;
   composite_pct: number | null;
   quality_pct: number | null;
   value_pct: number | null;
@@ -67,6 +71,8 @@ export async function loadGraphUniverse(): Promise<GraphUniverse> {
              c.name  AS industry,
              p.symbol,
              u.company_name AS name,
+             u.market_cap_category,
+             u.listing_date::text AS listing_date,
              p.composite_pct::float8 AS composite_pct,
              p.quality_pct::float8 AS quality_pct,
              p.valuation_pct::float8 AS value_pct
@@ -105,6 +111,8 @@ export async function loadGraphUniverse(): Promise<GraphUniverse> {
     industry.stocks.push({
       symbol: r.symbol,
       name: r.name,
+      market_cap_category: r.market_cap_category,
+      listing_date: r.listing_date,
       composite_pct: r.composite_pct,
       quality_pct: r.quality_pct,
       value_pct: r.value_pct,
