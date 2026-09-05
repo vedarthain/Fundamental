@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { sql } from "@/lib/db";
 import { band, bandColor, fmtPct, tierLabel, tierLabelPlural, displayCompanyName } from "@/lib/score";
+import CapTierBadge from "@/components/CapTierBadge";
 import { Controls } from "./Controls";
 import { MetaChips, type MetaOption } from "./MetaChips";
 import { SubClusterChips, type ClusterRow } from "./SubClusterChips";
@@ -26,6 +27,7 @@ type Row = {
   industry_name: string;
   sector_name: string;
   maturity_tier: string;
+  market_cap_category: string | null;
   market_cap_cr: number | null;
   current_price: number | null;
   price_fetched_at: string | null;
@@ -339,6 +341,7 @@ async function loadRows(
              c.name AS industry_name,
              mc.name AS sector_name,
              r.maturity_tier,
+             u.market_cap_category,
              sm.market_cap_cr,
              sm.current_price::float AS current_price,
              sm.last_scraped_at::text AS price_fetched_at,
@@ -435,7 +438,7 @@ async function loadRows(
         ${rangeFilters}
     )
     SELECT symbol, company_name, industry_id, industry_name, sector_name,
-           maturity_tier, market_cap_cr, current_price, price_fetched_at,
+           maturity_tier, market_cap_category, market_cap_cr, current_price, price_fetched_at,
            quality_pct, valuation_pct, momentum_pct, composite_pct,
            peer_rank, peer_count, leading_pillar, score_status,
            pe_ttm, pb, roe_3y, ret_12m_rel, div_yield, op_margin_3y,
@@ -1215,6 +1218,11 @@ function IndustryBlock({
                     {!compact && (
                       <div className="text-[10.5px] muted-text truncate max-w-[180px]">
                         {displayCompanyName(r.company_name, r.symbol)}
+                      </div>
+                    )}
+                    {!compact && r.market_cap_category && (
+                      <div className="mt-0.5">
+                        <CapTierBadge category={r.market_cap_category as "large_cap" | "mid_cap" | "small_cap"} />
                       </div>
                     )}
                   </td>

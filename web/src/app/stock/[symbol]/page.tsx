@@ -5,6 +5,7 @@ import type { Metadata } from "next";
 import { sql, golden } from "@/lib/db";
 import { band, bandColor, fmtPct, fmtRupeesCr, tierLabel, displayCompanyName, isRecentListing, listingYear, hasScoreableHistory, monthsSinceListing, ordinal } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
+import CapTierBadge from "@/components/CapTierBadge";
 import { CallToggle } from "@/components/CallToggle";
 import { PriceChart } from "@/components/PriceChart";
 import type { Candle } from "@/lib/candles";
@@ -62,6 +63,7 @@ type Stock = {
   company_name: string;
   sector: string | null;
   industry: string | null;
+  market_cap_category: string | null;
   listing_date: string | null;
   years_of_data: number | null;
   business_summary: string | null;
@@ -202,7 +204,7 @@ async function loadStock(symbol: string) {
   // universe for every scored symbol, so sourcing them here is equivalent.
   const rows = await sql<Stock[]>`
     SELECT
-      u.symbol, u.company_name, u.sector, u.industry, u.listing_date::text, u.years_of_data,
+      u.symbol, u.company_name, u.sector, u.industry, u.market_cap_category, u.listing_date::text, u.years_of_data,
       u.business_summary, u.website, u.employees,
       u.ceo_name, u.ceo_title,
       ca.cluster_id AS industry_id, c.name AS industry_name, mc.id AS sector_id, mc.name AS sector_name,
@@ -651,6 +653,7 @@ export default async function StockPage({
             >
               NSE
             </span>
+            <CapTierBadge category={stock.market_cap_category as "large_cap" | "mid_cap" | "small_cap" | null} />
             {stock.current_price != null && (
               <>
                 <span>·</span>
