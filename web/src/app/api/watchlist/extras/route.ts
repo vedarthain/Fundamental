@@ -46,6 +46,7 @@ type NewsItem = {
   url: string | null;
   published_at: string;
 };
+type Shareholding = { period_end: string; promoter_pct: number | null };
 
 export async function GET(req: NextRequest) {
   const raw = (req.nextUrl.searchParams.get("symbol") ?? "").trim().toUpperCase();
@@ -54,7 +55,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const [dividends, bonuses, quarterlyRaw, news] = await Promise.all([
+    const [dividends, bonuses, quarterlyRaw, news, shareholding] = await Promise.all([
       sql<Dividend[]>`
         SELECT ex_date::text AS ex_date, amount::float AS amount, purpose
           FROM app.corporate_action
@@ -98,6 +99,15 @@ export async function GET(req: NextRequest) {
          ORDER BY n.published_at DESC
          LIMIT 8
       `,
+      // ~12 quarters of promoter holding, newest-first — drives the promoter
+      // growth sparkline + QoQ / YoY deltas in the fundamentals column.
+      sql<Shareholding[]>`
+        SELECT period_end::text AS period_end, promoter_pct::float AS promoter_pct
+          FROM app.shareholding_pattern
+         WHERE symbol = ${raw} AND promoter_pct IS NOT NULL
+         ORDER BY period_end DESC
+         LIMIT 12
+      `,
     ]);
 
     // Attach YoY growth (this quarter vs the same quarter a year earlier). Rows
@@ -126,10 +136,11 @@ export async function GET(req: NextRequest) {
       bonuses,
       quarterly: quarterlyOut,
       news,
+      shareholding,
     });
   } catch (err) {
     console.error("watchlist extras failed:", err);
     // Degrade gracefully — the detail panel still renders the chart + scores.
-    return NextResponse.json({ symbol: raw, dividends: [], bonuses: [], quarterly: [], news: [] });
+    return NextResponse.json({ symbol: raw, dividends: [], bonuses: [], quarterly: [], news: [], shareholding: [] });
   }
 }

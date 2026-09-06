@@ -105,11 +105,13 @@ type NewsItem = {
   url: string | null;
   published_at: string;
 };
+type Shareholding = { period_end: string; promoter_pct: number | null };
 type Extras = {
   dividends: Dividend[];
   bonuses: Bonus[];
   quarterly: Quarter[];
   news: NewsItem[];
+  shareholding: Shareholding[];
 };
 
 // In-memory caches so re-opening a stock (or re-rendering) doesn't refetch.
@@ -1098,6 +1100,7 @@ function useExtras(symbol: string): { data: Extras | null; err: boolean } {
           bonuses: j.bonuses ?? [],
           quarterly: j.quarterly ?? [],
           news: j.news ?? [],
+          shareholding: j.shareholding ?? [],
         };
         extrasCache.set(symbol, e);
         setData(e);
@@ -1139,6 +1142,7 @@ function DetailExtras({
   const quarterly = data?.quarterly ?? [];
   const dividends = data?.dividends ?? [];
   const news = data?.news ?? [];
+  const shareholding = data?.shareholding ?? [];
   const loadingExtras = data === null && !err;
   const nothing =
     data !== null &&
@@ -1176,6 +1180,7 @@ function DetailExtras({
         <FundamentalsColumn
           quarterly={quarterly}
           dividends={dividends}
+          shareholding={shareholding}
           loading={loadingExtras}
           glance={glance}
           glanceKeys={glanceKeys}
@@ -1223,6 +1228,7 @@ const FLOW_KEYS: MetricKey[] = ["sales", "net_profit", "opm", "npm"];
 function FundamentalsColumn({
   quarterly,
   dividends,
+  shareholding,
   loading,
   glance,
   glanceKeys,
@@ -1230,6 +1236,7 @@ function FundamentalsColumn({
 }: {
   quarterly: Quarter[];
   dividends: Dividend[];
+  shareholding: Shareholding[];
   loading: boolean;
   glance: GlanceMetrics | null;
   glanceKeys: MetricKey[] | undefined;
@@ -1261,17 +1268,33 @@ function FundamentalsColumn({
   const divSeries = divChrono.map((d) => d.amount);
   const latestDiv = [...divChrono].reverse().find((d) => d.amount != null);
 
+  // Promoter holding: API hands rows newest-first. Sparkline wants oldest→newest.
+  // Deltas are in percentage POINTS (pp): promoter 62%→63% is +1.0pp, not +1.6%.
+  // QoQ = latest vs prior quarter; YoY = latest vs 4 quarters back.
+  const promLatest = shareholding[0]?.promoter_pct ?? null;
+  const promQoQ =
+    promLatest != null && shareholding[1]?.promoter_pct != null
+      ? promLatest - (shareholding[1].promoter_pct as number)
+      : null;
+  const promYoY =
+    promLatest != null && shareholding[4]?.promoter_pct != null
+      ? promLatest - (shareholding[4].promoter_pct as number)
+      : null;
+  const promSeries = [...shareholding].reverse().map((s) => s.promoter_pct);
+  const hasPromoter = shareholding.some((s) => s.promoter_pct != null);
+
   const hasQuarter = quarterly.length > 0;
   const hasYearly = yearlyKeys.some((k) => glance?.[k]?.value != null);
-  const nothing = !hasQuarter && !hasYearly && dividends.length === 0;
+  const nothing = !hasQuarter && !hasYearly && dividends.length === 0 && !hasPromoter;
 
   // If the chosen cadence has no data but the other does, fall back so the box
-  // is never blank when there's something to show.
+  // is never blank when there's something to show. Promoter lives in the Yearly
+  // view (like dividend), so it counts toward keeping us on Yearly.
   const effMode: "y" | "q" = nothing
     ? mode
     : mode === "q" && !hasQuarter
       ? "y"
-      : mode === "y" && !hasYearly && dividends.length === 0
+      : mode === "y" && !hasYearly && dividends.length === 0 && !hasPromoter
         ? "q"
         : mode;
 
@@ -1373,6 +1396,15 @@ function FundamentalsColumn({
               series={divSeries}
               color="var(--color-delta-up)"
             />
+            {/* Promoter holding — current %, growth sparkline, QoQ + YoY (pp). */}
+            {hasPromoter && (
+              <PromoterSpark
+                value={promLatest != null ? `${promLatest.toFixed(1)}%` : "—"}
+                qoq={promQoQ}
+                yoy={promYoY}
+                series={promSeries}
+              />
+            )}
           </div>
 
           {sectorCfg.note && (
@@ -1424,6 +1456,54 @@ function MetricSpark({
         </span>
         <div className="w-[84px] shrink-0">
           <Sparkline values={series} color={color} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Promoter-holding row: current % + growth sparkline, with QoQ and YoY deltas
+ *  expressed in percentage POINTS (pp). Deltas below ±0.1pp read as "flat" (and
+ *  aren't colored) — sub-0.1pp drift is usually rounding / ESOP noise, not a
+ *  promoter buying or selling. Colour follows sign otherwise. */
+function PromoterSpark({
+  value,
+  qoq,
+  yoy,
+  series,
+}: {
+  value: string;
+  qoq: number | null;
+  yoy: number | null;
+  series: (number | null)[];
+}) {
+  const NOISE = 0.1; // pp
+  const fmtDelta = (d: number | null): { text: string; color: string } => {
+    if (d == null) return { text: "—", color: "var(--color-muted)" };
+    if (Math.abs(d) < NOISE) return { text: "≈0", color: "var(--color-muted)" };
+    const sign = d > 0 ? "+" : "−";
+    const color = d > 0 ? "var(--color-delta-up)" : "var(--color-delta-down)";
+    return { text: `${sign}${Math.abs(d).toFixed(1)}`, color };
+  };
+  const q = fmtDelta(qoq);
+  const y = fmtDelta(yoy);
+  return (
+    <div className="px-3 py-1.5">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-[9.5px] uppercase tracking-wide muted-text">Promoters</span>
+        <span className="text-[9.5px] font-medium tabular-nums" title="Change in promoter holding, in percentage points (pp)">
+          <span style={{ color: q.color }}>{q.text}</span>
+          <span className="muted-text"> QoQ · </span>
+          <span style={{ color: y.color }}>{y.text}</span>
+          <span className="muted-text"> YoY</span>
+        </span>
+      </div>
+      <div className="mt-0.5 flex items-end justify-between gap-2">
+        <span className="text-[12.5px] font-medium tabular-nums leading-tight" title="Latest promoter holding (% of shares)">
+          {value}
+        </span>
+        <div className="w-[84px] shrink-0">
+          <Sparkline values={series} color="var(--color-accent-600)" />
         </div>
       </div>
     </div>

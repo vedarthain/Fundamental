@@ -6,6 +6,7 @@ import { sql, golden } from "@/lib/db";
 import { band, bandColor, fmtPct, fmtRupeesCr, tierLabel, displayCompanyName, isRecentListing, listingYear, hasScoreableHistory, monthsSinceListing, ordinal } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import CapTierBadge from "@/components/CapTierBadge";
+import PromoterTrendChart from "@/components/PromoterTrendChart";
 import { CallToggle } from "@/components/CallToggle";
 import { PriceChart } from "@/components/PriceChart";
 import type { Candle } from "@/lib/candles";
@@ -381,9 +382,10 @@ async function loadStock(symbol: string) {
   `.catch(() => [] as Scorecard[]);
   const scorecard = scRow[0] ?? null;
 
-  // Latest 4 quarters of shareholding pattern. Latest one drives the chart;
-  // the previous one provides delta arrows so the user sees movement, not just
-  // a static breakdown.
+  // Up to 40 quarters (~10y) of shareholding pattern. The breakdown table shows
+  // only the most recent few; the fuller history feeds the promoter trend graph
+  // (app.shareholding_pattern accumulates permanently, so this window lengthens
+  // over the years). Latest row also drives the governance pledge alert.
   const shareholding = await sql<ShareholdingRow[]>`
     SELECT period_end::text,
            promoter_pct::float    AS promoter_pct,
@@ -396,7 +398,7 @@ async function loadStock(symbol: string) {
     FROM app.shareholding_pattern
     WHERE symbol = ${upper}
     ORDER BY period_end DESC
-    LIMIT 4
+    LIMIT 40
   `.catch(() => [] as ShareholdingRow[]);
 
   // Corporate actions (dividends — BSE serves the actual per-share amounts;
@@ -1693,6 +1695,9 @@ function FundamentalsTables({
   });
 
   const shOldFirst = [...shareholding].reverse();
+  // The breakdown table stays readable at the 6 most recent quarters; the full
+  // history (shOldFirst) feeds the promoter trend graph above it.
+  const shTable = shOldFirst.slice(-6);
   const hasShareholding = shOldFirst.some(
     (r) => r.promoter_pct != null || r.fii_pct != null || r.dii_pct != null,
   );
@@ -1814,21 +1819,26 @@ function FundamentalsTables({
           title="Shareholding"
           explainer="Who owns the company. High, steady promoter holding signals skin in the game; rising FII/DII (foreign & domestic institutions) means professional investors are buying. Any pledged promoter shares are a warning — the promoter has borrowed against their stake."
         >
-          <FundamentalsBlock
-            title="By holder type (% of shares)"
-            rows={[
-              { label: "Promoters",          cells: shOldFirst.map((r) => cell(r.promoter_pct,   fmtPct1)) },
-              ...(shOldFirst.some((r) => (r.pledge_pct ?? 0) > 0)
-                ? [{ label: "— of which pledged", cells: shOldFirst.map((r) => cell(r.pledge_pct ?? null, fmtPct1)), polarity: "up-bad" as Polarity }]
-                : []),
-              { label: "Foreign inst. (FII)", cells: shOldFirst.map((r) => cell(r.fii_pct,        fmtPct1)) },
-              { label: "Domestic inst. (DII)", cells: shOldFirst.map((r) => cell(r.dii_pct,       fmtPct1)) },
-              { label: "Government",          cells: shOldFirst.map((r) => cell(r.government_pct,  fmtPct1)) },
-              { label: "Public & others",     cells: shOldFirst.map((r) => cell(r.public_pct,      fmtPct1)) },
-              { label: "No. of shareholders", cells: shOldFirst.map((r) => cell(r.shareholders,   fmtCount)) },
-            ]}
-            headers={shOldFirst.map((r) => qLabel(r.period_end))}
-          />
+          {/* Promoter holding trajectory over all stored quarters — the movement
+              (e.g. 80% → 90%) plus QoQ / YoY, above the quarter-by-quarter table. */}
+          <PromoterTrendChart points={shOldFirst} />
+          <div className="mt-3">
+            <FundamentalsBlock
+              title="By holder type (% of shares)"
+              rows={[
+                { label: "Promoters",          cells: shTable.map((r) => cell(r.promoter_pct,   fmtPct1)) },
+                ...(shTable.some((r) => (r.pledge_pct ?? 0) > 0)
+                  ? [{ label: "— of which pledged", cells: shTable.map((r) => cell(r.pledge_pct ?? null, fmtPct1)), polarity: "up-bad" as Polarity }]
+                  : []),
+                { label: "Foreign inst. (FII)", cells: shTable.map((r) => cell(r.fii_pct,        fmtPct1)) },
+                { label: "Domestic inst. (DII)", cells: shTable.map((r) => cell(r.dii_pct,       fmtPct1)) },
+                { label: "Government",          cells: shTable.map((r) => cell(r.government_pct,  fmtPct1)) },
+                { label: "Public & others",     cells: shTable.map((r) => cell(r.public_pct,      fmtPct1)) },
+                { label: "No. of shareholders", cells: shTable.map((r) => cell(r.shareholders,   fmtCount)) },
+              ]}
+              headers={shTable.map((r) => qLabel(r.period_end))}
+            />
+          </div>
         </MetricCard>
       )}
     </div>

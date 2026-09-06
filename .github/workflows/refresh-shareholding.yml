@@ -1,0 +1,92 @@
+# Quarterly shareholding-pattern refresh (promoter / FII / DII / pledge %).
+#
+# Scrapes each active symbol's Screener company page and upserts every quarter
+# it exposes into app.shareholding_pattern. The upsert is ON CONFLICT (symbol,
+# period_end) DO UPDATE with NO deletes, so history ACCUMULATES permanently —
+# once a quarter is stored it survives even after Screener drops it from its
+# rolling ~12-quarter window. That's what turns this table into a multi-year
+# promoter-holding graph over time.
+#
+# Why --refresh matters: fetch-shareholding defaults to skip_existing=True,
+# which skips any symbol that already has a row — so WITHOUT --refresh a stock
+# that was backfilled once would NEVER pick up a new quarter. --refresh forces a
+# re-scrape; the upsert dedups (rewrites existing quarters, inserts the new one).
+#
+# Why monthly (not just post-quarter): SEBI requires the shareholding pattern
+# within 21 days of each quarter-end (Mar/Jun/Sep/Dec). Monthly guarantees we
+# catch each new filing within a few weeks, retries any month a scrape was
+# throttled, and — being idempotent — costs nothing but a re-write on the ~8
+# months with no new quarter.
+#
+# Required secrets (all already configured for weekly-fetch — no new setup):
+#   NEON_APP_URL         — Postgres URL for fundamental_app on Neon
+#   SCREENER_SESSIONID   — Screener auth cookie (page scrape)
+#   SCREENER_CSRFTOKEN   — Screener CSRF token
+
+name: Refresh shareholding pattern
+
+on:
+  # 3rd of every month, 06:00 UTC = 11:30 IST — off-market, staggered a day
+  # after the cap-tier refresh (1st) so the two scrapes don't overlap.
+  schedule:
+    - cron: '0 6 3 * *'
+  # Manual trigger — for an immediate re-scrape right after a quarter's filings.
+  workflow_dispatch: {}
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    # ~2,600 active symbols × 1.5s throttle ≈ 65 min of pacing plus fetch time.
+    # 180 leaves comfortable margin; the scrape is off the daily critical path.
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install fundamental-etl
+        run: pip install -e ./etl
+
+      # --refresh = skip_existing off, so every active symbol is re-scraped and
+      # the new quarter is upserted. Idempotent on months with no new filing.
+      - name: Refresh shareholding pattern
+        env:
+          APP_DB_URL:         ${{ secrets.NEON_APP_URL }}
+          SCREENER_SESSIONID: ${{ secrets.SCREENER_SESSIONID }}
+          SCREENER_CSRFTOKEN: ${{ secrets.SCREENER_CSRFTOKEN }}
+          PYTHONUNBUFFERED:   "1"
+        run: python -m fundamental_etl.cli fetch-shareholding --refresh
+
+      # Loud, de-duped alert on failure OR cancel — a silently-stalled refresh
+      # would quietly freeze the promoter graph, which is exactly the failure
+      # mode this workflow exists to prevent.
+      - name: Raise a loud alert on failure
+        if: failure() || cancelled()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TITLE="🚨 Shareholding refresh FAILED"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          BODY=$(printf '%s\n' \
+            "The monthly shareholding-pattern refresh did not complete cleanly at $(date -u '+%Y-%m-%d %H:%M UTC')." \
+            "" \
+            "Status: ${{ job.status }}." \
+            "" \
+            "Run log: $RUN_URL" \
+            "" \
+            "Likely cause: Screener auth cookie expired (rotate SCREENER_SESSIONID / SCREENER_CSRFTOKEN) or the job hit its 180-min timeout mid-scrape. Existing shareholding history is untouched (the upsert only adds/updates), so a fixed re-run simply resumes.")
+          EXISTING=$(gh issue list --state open --search "$TITLE in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+            echo "Appended to existing alert issue #$EXISTING"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+            echo "Opened a new alert issue"
+          fi
