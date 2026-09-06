@@ -437,16 +437,29 @@ export async function GET(req: NextRequest) {
       loadHeldPositions(session.userId).catch(() => ({}) as Record<string, { qty: number; avgCost: number | null }>),
     ]);
     heldSet = new Set(held.map((s) => s.toUpperCase()));
-    // Build per-symbol markers, the traded set, and earliest-buy — all from the
-    // single grouped read above (rows already ascending by trade_date).
+    positions = pos;
+    // From the raw trade log we take only two cheap facts: the traded set (drives
+    // the grey "P" for exited names) and the earliest recorded BUY date per
+    // symbol. We deliberately do NOT paint raw transactions as chart markers: a
+    // broker CSV records a split/bonus as a sell-old + buy-new pair (e.g.
+    // GODFRYPHLP's 1:3 on 2025-09-16), which would show a phantom "Sell" for a
+    // position that was never exited, and raw prices sit ~Nx off the split-
+    // adjusted candles. Markers are synthesized from holdings below instead.
     for (const r of trades) {
       const key = r.symbol.toUpperCase();
       tradedSet.add(key);
-      const mark: TradeMark = { d: r.d, side: r.side === "sell" ? "S" : "B", price: r.price, qty: Math.round(r.qty) };
-      (tradesBySym[key] ??= []).push(mark);
-      if (mark.side === "B" && !boughtOn.has(key)) boughtOn.set(key, r.d);
+      if (r.side !== "sell" && !boughtOn.has(key)) boughtOn.set(key, r.d);
     }
-    positions = pos;
+    // One "B" per HELD name, sourced from app.portfolio_holding: outstanding qty
+    // + effective (already split-adjusted) avg cost, anchored to the earliest real
+    // buy date. Answers "when did I buy this and what do I hold?" — never a sell,
+    // always consistent with the position header, and no golden reconciliation.
+    for (const [sym, p] of Object.entries(positions)) {
+      const key = sym.toUpperCase();
+      const d = boughtOn.get(key);
+      if (!d || p.qty <= 0 || p.avgCost == null) continue;
+      tradesBySym[key] = [{ d, side: "B", price: p.avgCost, qty: p.qty }];
+    }
   }
   // Self-heal missing close_on_add. Rows added while golden lagged (e.g. a
   // post-merger ticker like PVRINOX whose bars backfilled late) got a null
