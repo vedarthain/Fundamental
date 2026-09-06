@@ -48,17 +48,20 @@ export default function CapTierBadge({
   category,
   listingDate,
   className = "",
+  textClass = "text-[10px]",
 }: {
   category: CapCategory;
   listingDate?: string | null;
   className?: string;
+  /** Font-size utility for the badge text; override to shrink it per-context. */
+  textClass?: string;
 }) {
   const label = capTierLabel(category);
   if (label && category) {
     const tone = TONE[category] ?? TONE.small_cap;
     return (
       <span
-        className={`inline-flex items-center rounded px-1.5 py-[1px] text-[10px] font-semibold tracking-wide ${className}`}
+        className={`inline-flex items-center rounded px-1.5 py-[1px] ${textClass} font-semibold tracking-wide ${className}`}
         style={{ background: tone.bg, color: tone.fg }}
         title="Market-cap tier per AMFI's official SEBI categorisation (Large = top 100 by 6-month avg market cap, Mid = 101–250, Small = 251+). Refreshed twice a year."
       >
@@ -72,7 +75,7 @@ export default function CapTierBadge({
   if (months != null && months <= NEW_LISTING_MONTHS) {
     return (
       <span
-        className={`inline-flex items-center rounded px-1.5 py-[1px] text-[10px] font-semibold tracking-wide ${className}`}
+        className={`inline-flex items-center rounded px-1.5 py-[1px] ${textClass} font-semibold tracking-wide ${className}`}
         style={{
           background: "color-mix(in srgb, var(--color-ink) 6%, transparent)",
           color: "var(--color-ink)",

@@ -738,7 +738,7 @@ function TierBadge({ tier }: { tier: string }) {
   const c = TIER_COLORS[tier] ?? { stripe: "var(--color-muted)", bg: "var(--color-paper)", label: "var(--color-muted)" };
   return (
     <span
-      className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10.5px] uppercase tracking-wide font-semibold shrink-0"
+      className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[9px] uppercase tracking-wide font-semibold shrink-0"
       style={{ backgroundColor: c.bg, color: c.label }}
       title="Company maturity tier"
     >
@@ -904,11 +904,19 @@ function WatchRow({
             </span>
             {row.stale && row.ltp_date ? <StaleChip date={row.ltp_date} /> : null}
           </div>
-          <div className="text-[10.5px] muted-text mt-0.5 flex items-center gap-2 flex-wrap">
-            <span>{row.sector_name ?? "—"} · {row.industry_name ?? "—"}</span>
-            {row.maturity_tier && <TierBadge tier={row.maturity_tier} />}
-            <CapTierBadge category={row.market_cap_category as CapCategory} listingDate={row.listing_date} />
+          <div className="text-[10.5px] muted-text mt-0.5">
+            {row.sector_name ?? "—"} · {row.industry_name ?? "—"}
           </div>
+          {(row.maturity_tier || row.market_cap_category || row.listing_date) && (
+            <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+              {row.maturity_tier && <TierBadge tier={row.maturity_tier} />}
+              <CapTierBadge
+                category={row.market_cap_category as CapCategory}
+                listingDate={row.listing_date}
+                textClass="text-[9px]"
+              />
+            </div>
+          )}
         </div>
 
         {/* Returns on a single line; Q/V/M scores on the line below. */}
