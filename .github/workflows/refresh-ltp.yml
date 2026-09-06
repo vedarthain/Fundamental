@@ -62,6 +62,12 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
+# Default GITHUB_TOKEN is read-only here; without this the failure-alert step
+# (gh issue create) fails with "Resource not accessible by integration".
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   refresh:
     runs-on: ubuntu-latest

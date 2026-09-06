@@ -39,6 +39,14 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
+# The default GITHUB_TOKEN is read-only on this repo, so the failure-alert step
+# (gh issue create/comment) was failing with "Resource not accessible by
+# integration (createIssue)" — silently disabling the very safety net this
+# workflow relies on. Grant issues:write so the alert can actually open.
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   refresh:
     runs-on: ubuntu-latest
