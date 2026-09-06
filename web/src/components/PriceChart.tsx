@@ -427,10 +427,6 @@ export function PriceChart({
       <div className="flex items-start justify-between gap-3 mb-2">
         <div>
           <div className="text-[11px] uppercase tracking-wide muted-text">Price history</div>
-          <div className="font-display text-[18px] mt-0.5">
-            {symbol && <>{symbol} · </>}
-            <span className="muted-text">{subLabel}</span>
-          </div>
         </div>
         <div className="flex items-start gap-3 shrink-0">
           {changePct != null && (

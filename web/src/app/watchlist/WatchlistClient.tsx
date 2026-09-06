@@ -79,8 +79,10 @@ type Row = {
   /** Portfolio ownership — drives the "P" badge (purple=held, grey=exited). */
   held?: boolean;
   traded?: boolean;
-  /** Position summary for held names: shares held + P&L % (LTP vs avg cost). */
+  /** Position summary for held names: shares held + avg cost + P&L % (LTP vs
+   *  avg cost). */
   held_qty?: number | null;
+  avg_cost?: number | null;
   pos_pnl_pct?: number | null;
   /** Earliest recorded Buy date for held/traded names → "Bought <date>" chip. */
   bought_on?: string | null;
@@ -763,18 +765,21 @@ function PBadge({ held, traded, size = 16 }: { held?: boolean; traded?: boolean;
   );
 }
 
-/** "Bought <date>" chip — the earliest recorded Buy for a held/traded name,
- *  from app.portfolio_transaction. Mirrors the scanner graph's HoldDateBadge so
- *  "when did I buy this?" is answerable without opening the chart. */
-function BoughtBadge({ date }: { date: string }) {
-  const label = formatShortDate(date);
+/** Held-position summary chip — "P 6 SH @₹1,586 -25.3%". Sits under the
+ *  composite/Buy-Sell controls so the position (qty, avg cost, unrealized P&L)
+ *  reads as a single glanceable line without opening the detail chart. */
+function HoldChip({ qty, avgCost, pnlPct }: { qty: number; avgCost?: number | null; pnlPct?: number | null }) {
   return (
-    <span
-      className="text-[10.5px] tabular-nums font-medium shrink-0"
-      style={{ color: P_HELD }}
-      title={`Earliest recorded purchase ${label}`}
-    >
-      Bought {label}
+    <span className="inline-flex items-center gap-1.5 text-[10.5px] tabular-nums font-medium">
+      <PBadge held size={14} />
+      <span>{qty.toLocaleString("en-IN")} SH</span>
+      {avgCost != null && <span className="muted-text">@{fmtPrice(avgCost)}</span>}
+      {pnlPct != null && (
+        <span style={{ color: deltaColor(pnlPct) }}>
+          {pnlPct >= 0 ? "+" : ""}
+          {pnlPct.toFixed(1)}%
+        </span>
+      )}
     </span>
   );
 }
@@ -879,84 +884,88 @@ function WatchRow({
   return (
     <div className="px-4 md:px-5 py-3 hover:bg-[var(--color-paper)]/60 transition-colors">
       <div className="flex items-start gap-3">
-        <Link href={`/stock/${row.symbol}`} className="min-w-0 block shrink-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-medium text-[14px] tabular-nums">{row.symbol}</span>
-            <span className="muted-text text-[12px] truncate">{row.company_name}</span>
+        {/* Identity + live price on one line; sector/tier chips below. */}
+        <div className="min-w-0 shrink-0">
+          <div className="flex items-center gap-2">
+            <Link href={`/stock/${row.symbol}`} className="flex items-center gap-2 min-w-0 hover:opacity-80">
+              <span className="font-medium text-[14px] tabular-nums">{row.symbol}</span>
+              <span className="muted-text text-[12px] truncate">{row.company_name}</span>
+            </Link>
+            <span
+              className="text-[15px] font-bold tabular-nums leading-none"
+              style={{ color: deltaColor(row.ret_1d) }}
+              title={
+                row.ret_1d != null
+                  ? `${fmtSignedPct(row.ret_1d)} vs previous close`
+                  : "Latest daily close (split-adjusted)"
+              }
+            >
+              {fmtPrice(ltp)}
+            </span>
+            {row.stale && row.ltp_date ? <StaleChip date={row.ltp_date} /> : null}
           </div>
           <div className="text-[10.5px] muted-text mt-0.5 flex items-center gap-2 flex-wrap">
             <span>{row.sector_name ?? "—"} · {row.industry_name ?? "—"}</span>
             {row.maturity_tier && <TierBadge tier={row.maturity_tier} />}
             <CapTierBadge category={row.market_cap_category as CapCategory} listingDate={row.listing_date} />
-            {row.bought_on && <BoughtBadge date={row.bought_on} />}
           </div>
-        </Link>
-
-        {/* LTP — bold, right after the name; green/red vs the previous close.
-            A "stale" chip appears only when this symbol's latest bar trails the
-            feed's newest (a laggard — delisting/merger/late backfill). */}
-        <div className="shrink-0 flex items-center gap-1.5 pt-0.5">
-          <span
-            className="text-[15px] font-bold tabular-nums leading-none"
-            style={{ color: deltaColor(row.ret_1d) }}
-            title={
-              row.ret_1d != null
-                ? `${fmtSignedPct(row.ret_1d)} vs previous close`
-                : "Latest daily close (split-adjusted)"
-            }
-          >
-            {fmtPrice(ltp)}
-          </span>
-          {row.stale && row.ltp_date ? <StaleChip date={row.ltp_date} /> : null}
         </div>
 
-        {/* Scores + returns — sit right next to the name. */}
-        <div className="flex-1 min-w-0 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[10.5px] tabular-nums pt-0.5">
-          <ReturnPill label="Q" value={row.quality_pct}   pct />
-          <ReturnPill label="V" value={row.valuation_pct} pct />
-          <ReturnPill label="M" value={row.momentum_pct}  pct />
-          <span className="muted-text">·</span>
-          <ReturnPill label="1D" value={row.ret_1d == null ? null : row.ret_1d / 100} signed />
-          <ReturnPill label="1W" value={row.ret_1w} signed />
-          <ReturnPill label="1M" value={row.ret_1m} signed />
-          <ReturnPill label="6M" value={row.ret_6m} signed />
-          <ReturnPill label="1Y" value={row.ret_1y} signed />
-          <ReturnPill label="2Y" value={row.ret_2y} signed />
-          <ReturnPill label="5Y" value={row.ret_5y} signed />
-          <ReturnPill label="10Y" value={row.ret_10y} signed />
-          <ReturnPill label="ALL" value={row.ret_all} signed />
+        {/* Returns on a single line; Q/V/M scores on the line below. */}
+        <div className="flex-1 min-w-0 pt-0.5">
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[10.5px] tabular-nums">
+            <ReturnPill label="1D" value={row.ret_1d == null ? null : row.ret_1d / 100} signed />
+            <ReturnPill label="1W" value={row.ret_1w} signed />
+            <ReturnPill label="1M" value={row.ret_1m} signed />
+            <ReturnPill label="6M" value={row.ret_6m} signed />
+            <ReturnPill label="1Y" value={row.ret_1y} signed />
+            <ReturnPill label="2Y" value={row.ret_2y} signed />
+            <ReturnPill label="5Y" value={row.ret_5y} signed />
+            <ReturnPill label="10Y" value={row.ret_10y} signed />
+            <ReturnPill label="ALL" value={row.ret_all} signed />
+          </div>
+          <div className="flex items-baseline gap-x-3 text-[10.5px] tabular-nums mt-1">
+            <ReturnPill label="Q" value={row.quality_pct}   pct />
+            <ReturnPill label="V" value={row.valuation_pct} pct />
+            <ReturnPill label="M" value={row.momentum_pct}  pct />
+          </div>
         </div>
 
-        {/* Composite score badge */}
-        {row.composite_pct != null && (
-          <span
-            className="inline-block min-w-[40px] text-center px-2 py-0.5 rounded-md tabular-nums font-medium text-[12px]"
-            style={{
-              backgroundColor: compositeColor,
-              color: compositeBand === "neutral" ? "var(--color-ink)" : "white",
-            }}
-            title="Composite peer-cluster score"
-          >
-            {Math.round(row.composite_pct)}
-          </span>
-        )}
-
-        {/* Buy/Sell call toggle — shares state with the scanner + Calls tab. */}
-        <CallToggle symbol={row.symbol} size="sm" />
-
-        {/* Quick remove — hidden when the list is sourced (e.g. Portfolio tab),
-            where "remove" has no meaning. */}
-        {showRemove && (
-          <button
-            type="button"
-            onClick={onRemove}
-            className="muted-text hover:text-[var(--color-delta-down)] transition-colors text-[16px] leading-none px-1"
-            aria-label={`Remove ${row.symbol} from watchlist`}
-            title="Remove from watchlist"
-          >
-            ×
-          </button>
-        )}
+        {/* Composite + B/S on top; the held "P" summary sits directly below. */}
+        <div className="shrink-0 flex flex-col items-end gap-1.5">
+          <div className="flex items-center gap-2">
+            {row.composite_pct != null && (
+              <span
+                className="inline-block min-w-[40px] text-center px-2 py-0.5 rounded-md tabular-nums font-medium text-[12px]"
+                style={{
+                  backgroundColor: compositeColor,
+                  color: compositeBand === "neutral" ? "var(--color-ink)" : "white",
+                }}
+                title="Composite peer-cluster score"
+              >
+                {Math.round(row.composite_pct)}
+              </span>
+            )}
+            {/* Buy/Sell call toggle — shares state with the scanner + Calls tab. */}
+            <CallToggle symbol={row.symbol} size="sm" />
+            {/* Quick remove — hidden when the list is sourced (e.g. Portfolio
+                tab), where "remove" has no meaning. */}
+            {showRemove && (
+              <button
+                type="button"
+                onClick={onRemove}
+                className="muted-text hover:text-[var(--color-delta-down)] transition-colors text-[16px] leading-none px-1"
+                aria-label={`Remove ${row.symbol} from watchlist`}
+                title="Remove from watchlist"
+              >
+                ×
+              </button>
+            )}
+          </div>
+          {row.held && row.held_qty != null && (
+            <HoldChip qty={row.held_qty} avgCost={row.avg_cost} pnlPct={row.pos_pnl_pct} />
+          )}
+        </div>
       </div>
 
       {/* Price context strip: what you added at, where it is now, and how far
@@ -1040,9 +1049,6 @@ function WatchRow({
         glance={row.glance}
         glanceKeys={row.glance_keys}
         sector={row.sector_name}
-        held={row.held}
-        heldQty={row.held_qty}
-        posPnlPct={row.pos_pnl_pct}
         signedIn={signedIn}
         trades={row.trades}
       />
@@ -1152,9 +1158,6 @@ function DetailExtras({
   glance,
   glanceKeys,
   sector,
-  held,
-  heldQty,
-  posPnlPct,
   signedIn,
   trades,
 }: {
@@ -1162,9 +1165,6 @@ function DetailExtras({
   glance: GlanceMetrics | null;
   glanceKeys: MetricKey[] | undefined;
   sector: string | null;
-  held?: boolean;
-  heldQty?: number | null;
-  posPnlPct?: number | null;
   signedIn?: boolean;
   trades?: TradeMark[];
 }) {
@@ -1186,25 +1186,9 @@ function DetailExtras({
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_220px] gap-4 items-start">
         {/* Shared chart module — same expand / draw / price-alert features as
             the stock page. Self-fetches candles by symbol; alert controls show
-            when signed in. Held position badge sits above it. */}
+            when signed in. The held-position summary now lives in the card
+            header (HoldChip), so the chart starts clean here. */}
         <div className="min-w-0">
-          {held && heldQty != null ? (
-            <div className="flex items-center gap-1.5 mb-1.5">
-              <PBadge held size={14} />
-              <span className="text-[10.5px] tabular-nums muted-text">
-                {heldQty.toLocaleString("en-IN")} SH
-              </span>
-              {posPnlPct != null ? (
-                <span
-                  className="text-[10.5px] tabular-nums font-medium"
-                  style={{ color: deltaColor(posPnlPct) }}
-                >
-                  {posPnlPct >= 0 ? "+" : ""}
-                  {posPnlPct}%
-                </span>
-              ) : null}
-            </div>
-          ) : null}
           <PriceChart symbol={symbol} canSetAlerts={!!signedIn} trades={trades} />
         </div>
         <FundamentalsColumn

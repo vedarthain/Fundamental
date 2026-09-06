@@ -93,8 +93,11 @@ type WatchRow = {
    *  held = currently in the portfolio; traded = ever bought (held or exited). */
   held: boolean;
   traded: boolean;
-  /** Position summary for held names: shares held + P&L % (LTP vs avg cost). */
+  /** Position summary for held names: shares held + avg cost + P&L % (LTP vs
+   *  avg cost). avg_cost is the raw broker average — powers the "@<cost>" in the
+   *  header P badge. */
   held_qty: number | null;
+  avg_cost: number | null;
   pos_pnl_pct: number | null;
   /** Earliest recorded Buy date for this name (from app.portfolio_transaction).
    *  Null unless signed in and the name has a buy leg — powers the "Bought
@@ -515,6 +518,7 @@ export async function GET(req: NextRequest) {
     row.trades        = tradesBySym[row.symbol] ?? [];
     const posn        = positions[row.symbol];
     row.held_qty      = posn?.qty ?? null;
+    row.avg_cost      = posn?.avgCost ?? null;
     const effLtp      = q?.ltp ?? row.current_price;
     row.pos_pnl_pct   =
       posn?.avgCost != null && posn.avgCost !== 0 && effLtp != null

@@ -625,9 +625,6 @@ function renderChart(
             return { t, x: cx(idx), barY, cy, buy, col: buy ? BUY_COL : SELL_COL };
           })
           .filter((m): m is NonNullable<typeof m> => m !== null);
-        // Always-on labels only on the expanded chart, and only when uncluttered;
-        // small charts rely on hover to avoid a wall of overlapping text.
-        const showLabels = !compact && drawn.length <= 10;
         return drawn.map((m, i) => {
           const { t, x, barY, cy, buy, col } = m;
           const derived = t.derived === true;
@@ -636,8 +633,6 @@ function renderChart(
           const tip = derived
             ? `≈ Buy ${t.qty} @ ${fmtPrice(t.price)} · ${t.d} (inferred from holding — date approx.)`
             : `${buy ? "Buy" : "Sell"} ${t.qty} @ ${fmtPrice(t.price)} · ${t.d}`;
-          const label = `${derived ? "≈ " : ""}${t.side} ${t.qty} @ ${fmtPrice(t.price)}`;
-          const ly = buy ? cy + 15 : cy - 15;
           return (
             <g key={`tx-${i}-${t.d}-${t.side}`} opacity={derived ? 0.75 : 1}>
               <line
@@ -661,24 +656,6 @@ function renderChart(
               <text pointerEvents="none" x={x} y={cy + (compact ? 2.6 : 3.3)} textAnchor="middle" fontSize={compact ? 7.5 : 9.5} fontWeight={800} fill={derived ? col : "#fff"}>
                 {t.side}
               </text>
-              {showLabels && (
-                <text
-                  pointerEvents="none"
-                  x={x}
-                  y={ly}
-                  textAnchor="middle"
-                  dominantBaseline={buy ? "hanging" : "auto"}
-                  fontSize={9}
-                  fontWeight={700}
-                  fill={col}
-                  stroke={CARD}
-                  strokeWidth={2.6}
-                  paintOrder="stroke"
-                  style={{ strokeLinejoin: "round" }}
-                >
-                  {label}
-                </text>
-              )}
             </g>
           );
         });
