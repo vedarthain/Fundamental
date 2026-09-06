@@ -35,6 +35,24 @@ const MAX_SYMBOLS = 1000;
 const NOTE_MAX = 500;
 const SYMBOL_RE = /^[A-Z0-9&-]+$/;
 
+// TEMP instrumentation — measure where the watchlist GET spends its time so we
+// can target the right fix (defer eager loaders vs cache the shared ones) and
+// cut Neon compute. Wraps each awaited loader, records its wall-ms into `marks`,
+// and one structured line is logged per request. Remove once the fix lands.
+function timed<T>(marks: Record<string, number>, label: string, p: Promise<T>): Promise<T> {
+  const s = Date.now();
+  return p.then(
+    (v) => {
+      marks[label] = Date.now() - s;
+      return v;
+    },
+    (e) => {
+      marks[label] = Date.now() - s;
+      throw e;
+    },
+  );
+}
+
 type WatchRow = {
   symbol: string;
   company_name: string | null;
@@ -318,8 +336,11 @@ async function loadSnapshotDate(): Promise<string | null> {
 }
 
 export async function GET(req: NextRequest) {
+  const t0 = Date.now();
+  const marks: Record<string, number> = {};
   const param = req.nextUrl.searchParams.get("symbols");
   const session = await getSession();
+  marks.session = Date.now() - t0;
 
   // If the client passed a specific symbol list, use that (signed-out
   // clients reading their local list, or signed-in clients explicitly
@@ -338,6 +359,7 @@ export async function GET(req: NextRequest) {
     // automatically, and hearting a watchlist name never writes back to the
     // portfolio or calls. (Exited/traded-but-not-held names are excluded: only
     // active positions ride along.)
+    const resolveStart = Date.now();
     const [wl, held, callSyms] = await Promise.all([
       sql<{ symbol: string }[]>`
         SELECT symbol FROM app.user_watchlist
@@ -351,6 +373,7 @@ export async function GET(req: NextRequest) {
          WHERE user_id = ${session.userId} AND cleared_at IS NULL
       `.catch(() => [] as { symbol: string }[]),
     ]);
+    marks.resolve = Date.now() - resolveStart;
     heldFromList = held;
     const base = wl.map((r) => r.symbol);
     const extra = [
@@ -362,25 +385,31 @@ export async function GET(req: NextRequest) {
     symbols = Array.from(new Set([...base, ...extra])).slice(0, MAX_SYMBOLS);
   }
 
+  const mainStart = Date.now();
   const [rows, snapshotDate, persistence, quotes, meta, glance, verdicts, scorecardKeys] = await Promise.all([
-    loadRows(symbols),
-    loadSnapshotDate(),
+    timed(marks, "rows", loadRows(symbols)),
+    timed(marks, "snapshotDate", loadSnapshotDate()),
     // Multi-snapshot trend per symbol. Two cheap reads regardless of
     // watchlist size, then merged in Node.
-    loadPersistenceForSymbols(symbols),
+    timed(marks, "persistence", loadPersistenceForSymbols(symbols)),
     // Fresh daily quote (LTP, 1D move, 52W high/low) from golden.
-    loadQuotes(symbols),
+    timed(marks, "quotes", loadQuotes(symbols)),
     // Per-user cost-basis snapshot + note. Empty when signed out.
-    session
-      ? loadMeta(session.userId, symbols)
-      : Promise.resolve(new Map<string, WatchMeta>()),
+    timed(
+      marks,
+      "meta",
+      session
+        ? loadMeta(session.userId, symbols)
+        : Promise.resolve(new Map<string, WatchMeta>()),
+    ),
     // Sector-aware fundamentals for the peer-glance table.
-    loadGlance(symbols),
+    timed(marks, "glance", loadGlance(symbols)),
     // Per-stock verdict — the metrics each stock most stands out on.
-    loadVerdicts(symbols),
+    timed(marks, "verdicts", loadVerdicts(symbols)),
     // Scorecard-driven fundamental rows — which metrics matter for this cluster.
-    loadScorecardKeys(symbols),
+    timed(marks, "scorecardKeys", loadScorecardKeys(symbols)),
   ]);
+  marks.mainWave = Date.now() - mainStart;
 
   // Portfolio ownership for the "P" badge (signed-in only). heldSet = currently
   // held (same reconciliation rule as the scanner graph); tradedSet = ever
@@ -390,6 +419,7 @@ export async function GET(req: NextRequest) {
   let tradedSet = new Set<string>();
   let positions: Record<string, { qty: number; avgCost: number | null }> = {};
   if (session) {
+    const ownStart = Date.now();
     const [held, traded, pos] = await Promise.all([
       // Reuse the list already fetched during symbol resolution when available
       // (the no-args signed-in path); the ?symbols= path fetches it fresh.
@@ -405,6 +435,7 @@ export async function GET(req: NextRequest) {
     heldSet = new Set(held.map((s) => s.toUpperCase()));
     tradedSet = new Set(traded.map((r) => r.symbol.toUpperCase()));
     positions = pos;
+    marks.ownership = Date.now() - ownStart;
   }
   // Self-heal missing close_on_add. Rows added while golden lagged (e.g. a
   // post-merger ticker like PVRINOX whose bars backfilled late) got a null
@@ -490,6 +521,11 @@ export async function GET(req: NextRequest) {
     row.verdict = verdicts.get(row.symbol) ?? null;
     row.glance_keys = scorecardKeys.get(row.symbol) ?? [];
   }
+  // TEMP: one structured timing line per request — read in Vercel logs.
+  marks.total = Date.now() - t0;
+  console.log(
+    `[watchlist-timing] n=${symbols.length} signedIn=${session !== null} ${JSON.stringify(marks)}`,
+  );
   return NextResponse.json({
     rows,
     symbols,
