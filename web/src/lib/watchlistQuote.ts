@@ -17,11 +17,26 @@
  */
 import { unstable_cache } from "next/cache";
 import { golden } from "@/lib/db";
+import { guardedPctChange } from "@/lib/returnGuards";
 
 export type Quote = {
   ltp: number | null; // latest adjusted close
   prev_close: number | null; // prior session's adjusted close
   ret_1d: number | null; // percent, last vs prev
+  // Trailing-window returns computed LIVE off golden EOD closes, using the exact
+  // same method as the price chart's range tabs (rangePct): anchor = nearest
+  // adjusted close on-or-before (latestBar − N calendar days), else first bar.
+  // Sourced here (not from the weekly panel cache) so the header pills agree with
+  // the chart instead of drifting to a stale snapshot date. Capped windows reuse
+  // returnGuards so one broken vendor split basis can't print a nonsense number.
+  ret_1w: number | null;
+  ret_1m: number | null;
+  ret_3m: number | null;
+  ret_1y: number | null;
+  ret_3y: number | null;
+  ret_5y: number | null;
+  ret_10y: number | null;
+  ret_all: number | null;
   high_52w: number | null;
   low_52w: number | null;
   from_high_pct: number | null; // signed %: (ltp/high - 1)*100, ≤0
@@ -146,7 +161,7 @@ async function fetchQuotes(bareSymsSorted: string[]): Promise<Record<string, Quo
   const cands = [...bareSyms, ...bareSyms.map((s) => `${s}.NS`)];
 
   try {
-    const [last2, hilo, vols, feed] = await Promise.all([
+    const [last2, hilo, vols, feed, rets] = await Promise.all([
       golden<{ symbol: string; c: string; d: string; rn: string }[]>`
         SELECT symbol, c, d, rn FROM (
           SELECT symbol, COALESCE(adj_close, close)::text AS c, date::text AS d,
@@ -195,6 +210,70 @@ async function fetchQuotes(bareSymsSorted: string[]): Promise<Record<string, Quo
       golden<{ d: string | null }[]>`
         SELECT MAX(date)::text AS d
         FROM golden.price_history WHERE interval = '1d'
+      `,
+      // Trailing-window return anchors — the SAME method the price chart uses
+      // (rangePct): for each window, the nearest adjusted close ON OR BEFORE
+      // (symbol's latest bar − N calendar days); plus the first-ever bar as the
+      // ALL anchor and the young-stock fallback. Computed off the full history
+      // (no date floor) so 5Y/10Y/ALL have real anchors. One row per symbol; the
+      // per-window return is finished in JS so it can reuse returnGuards' caps.
+      golden<{
+        symbol: string;
+        first_c: string | null;
+        c_1w: string | null;
+        c_1m: string | null;
+        c_3m: string | null;
+        c_1y: string | null;
+        c_3y: string | null;
+        c_5y: string | null;
+        c_10y: string | null;
+      }[]>`
+        WITH latest AS (
+          SELECT symbol, MAX(date) AS ld
+          FROM golden.price_history
+          WHERE interval = '1d' AND COALESCE(adj_close, close) IS NOT NULL
+            AND symbol = ANY(${cands})
+          GROUP BY symbol
+        ),
+        firstbar AS (
+          SELECT DISTINCT ON (symbol) symbol, COALESCE(adj_close, close) AS c
+          FROM golden.price_history
+          WHERE interval = '1d' AND COALESCE(adj_close, close) IS NOT NULL
+            AND symbol = ANY(${cands})
+          ORDER BY symbol, date ASC
+        )
+        SELECT l.symbol,
+               fb.c::text   AS first_c,
+               a1w.c::text  AS c_1w,
+               a1m.c::text  AS c_1m,
+               a3m.c::text  AS c_3m,
+               a1y.c::text  AS c_1y,
+               a3y.c::text  AS c_3y,
+               a5y.c::text  AS c_5y,
+               a10y.c::text AS c_10y
+        FROM latest l
+        JOIN firstbar fb ON fb.symbol = l.symbol
+        LEFT JOIN LATERAL (SELECT COALESCE(adj_close, close) AS c FROM golden.price_history ph
+          WHERE ph.symbol = l.symbol AND ph.interval = '1d' AND COALESCE(ph.adj_close, ph.close) IS NOT NULL
+            AND ph.date <= l.ld - 7    ORDER BY ph.date DESC LIMIT 1) a1w  ON true
+        LEFT JOIN LATERAL (SELECT COALESCE(adj_close, close) AS c FROM golden.price_history ph
+          WHERE ph.symbol = l.symbol AND ph.interval = '1d' AND COALESCE(ph.adj_close, ph.close) IS NOT NULL
+            AND ph.date <= l.ld - 30   ORDER BY ph.date DESC LIMIT 1) a1m  ON true
+        LEFT JOIN LATERAL (SELECT COALESCE(adj_close, close) AS c FROM golden.price_history ph
+          WHERE ph.symbol = l.symbol AND ph.interval = '1d' AND COALESCE(ph.adj_close, ph.close) IS NOT NULL
+            AND ph.date <= l.ld - 90   ORDER BY ph.date DESC LIMIT 1) a3m  ON true
+        LEFT JOIN LATERAL (SELECT COALESCE(adj_close, close) AS c FROM golden.price_history ph
+          WHERE ph.symbol = l.symbol AND ph.interval = '1d' AND COALESCE(ph.adj_close, ph.close) IS NOT NULL
+            AND ph.date <= l.ld - 365  ORDER BY ph.date DESC LIMIT 1) a1y  ON true
+        LEFT JOIN LATERAL (SELECT COALESCE(adj_close, close) AS c FROM golden.price_history ph
+          WHERE ph.symbol = l.symbol AND ph.interval = '1d' AND COALESCE(ph.adj_close, ph.close) IS NOT NULL
+            AND ph.date <= l.ld - 1095 ORDER BY ph.date DESC LIMIT 1) a3y  ON true
+        LEFT JOIN LATERAL (SELECT COALESCE(adj_close, close) AS c FROM golden.price_history ph
+          WHERE ph.symbol = l.symbol AND ph.interval = '1d' AND COALESCE(ph.adj_close, ph.close) IS NOT NULL
+            AND ph.date <= l.ld - 1825 ORDER BY ph.date DESC LIMIT 1) a5y  ON true
+        LEFT JOIN LATERAL (SELECT COALESCE(adj_close, close) AS c FROM golden.price_history ph
+          WHERE ph.symbol = l.symbol AND ph.interval = '1d' AND COALESCE(ph.adj_close, ph.close) IS NOT NULL
+            AND ph.date <= l.ld - 3650 ORDER BY ph.date DESC LIMIT 1) a10y ON true
       `,
     ]);
     const feedDate = feed[0]?.d ?? null;
@@ -246,6 +325,28 @@ async function fetchQuotes(bareSymsSorted: string[]): Promise<Record<string, Quo
       if (r.avgvol != null) avgVol.set(k, Number(r.avgvol));
     }
 
+    // Per-symbol return anchors (nearest close on/before latest−N days). The ALL
+    // anchor and the young-stock fallback are the first bar. Values kept null when
+    // the symbol lacks that history so the pill collapses to "—".
+    type Anchors = {
+      first: number | null;
+      w1w: number | null; w1m: number | null; w3m: number | null;
+      w1y: number | null; w3y: number | null; w5y: number | null; w10y: number | null;
+    };
+    const anchors = new Map<string, Anchors>();
+    const num = (x: string | null) => (x == null ? null : Number(x));
+    for (const r of rets) {
+      anchors.set(bare(r.symbol), {
+        first: num(r.first_c),
+        w1w: num(r.c_1w), w1m: num(r.c_1m), w3m: num(r.c_3m),
+        w1y: num(r.c_1y), w3y: num(r.c_3y), w5y: num(r.c_5y), w10y: num(r.c_10y),
+      });
+    }
+    // Uncapped % change, rounded to 1 dp (matches ret_1d's formatting). Used for
+    // 3M/5Y/10Y/ALL, which rangePct leaves uncapped (real long-horizon multibaggers).
+    const pct = (lastC: number | null, base: number | null): number | null =>
+      lastC != null && base != null && base !== 0 ? Math.round((lastC / base - 1) * 1000) / 10 : null;
+
     for (const s of bareSyms) {
       const ltp = last.get(s) ?? null;
       const pc = prev.get(s) ?? null;
@@ -265,10 +366,32 @@ async function fetchQuotes(bareSymsSorted: string[]): Promise<Record<string, Quo
       // Stale iff this symbol's newest bar predates the feed's newest. String
       // compare is safe on ISO YYYY-MM-DD dates.
       const stale = ltpDate != null && feedDate != null && ltpDate < feedDate;
+      // Trailing-window returns off the SAME latest close (ltp) the chart uses.
+      // Anchor = window close ?? first bar (young-stock fallback), mirroring
+      // rangePct. Capped windows (1w/1m/1y/3y) go through returnGuards; the rest
+      // are uncapped like the chart's 3M/5Y/10Y/ALL.
+      const a = anchors.get(s);
+      const anc = (w: number | null | undefined) => (w ?? a?.first ?? null);
+      const ret1w = guardedPctChange(ltp, anc(a?.w1w), "1w");
+      const ret1m = guardedPctChange(ltp, anc(a?.w1m), "1m");
+      const ret3m = pct(ltp, anc(a?.w3m));
+      const ret1y = guardedPctChange(ltp, anc(a?.w1y), "1y");
+      const ret3y = guardedPctChange(ltp, anc(a?.w3y), "3y");
+      const ret5y = pct(ltp, anc(a?.w5y));
+      const ret10y = pct(ltp, anc(a?.w10y));
+      const retAll = pct(ltp, a?.first ?? null);
       out.set(s, {
         ltp,
         prev_close: pc,
         ret_1d: ret1d,
+        ret_1w: ret1w,
+        ret_1m: ret1m,
+        ret_3m: ret3m,
+        ret_1y: ret1y,
+        ret_3y: ret3y,
+        ret_5y: ret5y,
+        ret_10y: ret10y,
+        ret_all: retAll,
         high_52w: h,
         low_52w: l,
         from_high_pct: fromHigh,

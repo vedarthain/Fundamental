@@ -51,13 +51,16 @@ type WatchRow = {
   quality_pct: number | null;
   valuation_pct: number | null;
   momentum_pct: number | null;
+  /** Trailing-window price returns (fractions) computed LIVE off golden EOD with
+   *  the chart's exact rangePct method — so the header pills agree with the graph
+   *  tabs instead of the stale weekly panel snapshot. NULL when a young listing
+   *  has no history at that horizon. Windows mirror the chart: 1W/1M/3M/1Y/3Y/5Y/
+   *  10Y/ALL. */
   ret_1w: number | null;
   ret_1m: number | null;
+  ret_3m: number | null;
   ret_1y: number | null;
-  /** Longer-horizon price returns (fractions), precomputed weekly in the panel
-   *  cache. NULL when a young listing has no history at that horizon. */
-  ret_6m: number | null;
-  ret_2y: number | null;
+  ret_3y: number | null;
   ret_5y: number | null;
   ret_10y: number | null;
   ret_all: number | null;
@@ -158,15 +161,7 @@ async function loadRows(symbols: string[]): Promise<WatchRow[]> {
       c.composite_pct::float  AS composite_pct,
       c.quality_pct::float    AS quality_pct,
       c.valuation_pct::float  AS valuation_pct,
-      c.momentum_pct::float   AS momentum_pct,
-      c.ret_1w::float         AS ret_1w,
-      c.ret_1m::float         AS ret_1m,
-      c.ret_1y::float         AS ret_1y,
-      c.ret_6m::float         AS ret_6m,
-      c.ret_2y::float         AS ret_2y,
-      c.ret_5y::float         AS ret_5y,
-      c.ret_10y::float        AS ret_10y,
-      c.ret_all::float        AS ret_all
+      c.momentum_pct::float   AS momentum_pct
     FROM app.cluster_stocks_panel_cache c
     JOIN app.cluster cl ON cl.id = c.cluster_id
     JOIN app.meta_cluster mc ON mc.id = cl.meta_cluster_id
@@ -514,6 +509,18 @@ export async function GET(req: NextRequest) {
     const q = quotes.get(row.symbol);
     row.ltp           = q?.ltp           ?? null;
     row.ret_1d        = q?.ret_1d        ?? null;
+    // Period returns arrive as PERCENT from the quote; ReturnPill (and the row
+    // contract) expect FRACTIONS, so divide by 100 here — same convention the
+    // panel cache used to store.
+    const asFrac = (p: number | null | undefined) => (p == null ? null : p / 100);
+    row.ret_1w        = asFrac(q?.ret_1w);
+    row.ret_1m        = asFrac(q?.ret_1m);
+    row.ret_3m        = asFrac(q?.ret_3m);
+    row.ret_1y        = asFrac(q?.ret_1y);
+    row.ret_3y        = asFrac(q?.ret_3y);
+    row.ret_5y        = asFrac(q?.ret_5y);
+    row.ret_10y       = asFrac(q?.ret_10y);
+    row.ret_all       = asFrac(q?.ret_all);
     row.high_52w      = q?.high_52w      ?? null;
     row.low_52w       = q?.low_52w       ?? null;
     row.from_high_pct = q?.from_high_pct ?? null;

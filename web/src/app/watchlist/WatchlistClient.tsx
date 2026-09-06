@@ -40,12 +40,14 @@ type Row = {
   quality_pct: number | null;
   valuation_pct: number | null;
   momentum_pct: number | null;
+  /** Trailing-window returns (fractions) computed live off golden EOD with the
+   *  chart's rangePct method — windows mirror the graph tabs so the header pills
+   *  and the chart agree. */
   ret_1w: number | null;
   ret_1m: number | null;
+  ret_3m: number | null;
   ret_1y: number | null;
-  /** Longer-horizon returns (fractions), precomputed weekly in the panel cache. */
-  ret_6m: number | null;
-  ret_2y: number | null;
+  ret_3y: number | null;
   ret_5y: number | null;
   ret_10y: number | null;
   ret_all: number | null;
@@ -799,6 +801,21 @@ function StaleChip({ date }: { date: string }) {
   );
 }
 
+/** "EOD · <date>" tag on the returns row — makes explicit that every price and
+ *  return on the card is the last END-OF-DAY close (yesterday's, until the next
+ *  pipeline refresh lands today's), NOT a live intraday quote. Muted so it reads
+ *  as a footnote, not a metric. */
+function EodTag({ date }: { date: string }) {
+  return (
+    <span
+      className="muted-text text-[9.5px] opacity-70 whitespace-nowrap"
+      title={`End-of-day close as of ${formatSnapshotDate(date)}. Prices and returns update once the daily EOD pipeline refreshes — until then this is the prior session's close, not a live quote.`}
+    >
+      EOD · {formatShortDate(date)}
+    </span>
+  );
+}
+
 /** Compact left-rail row: symbol · LTP · since-add %. One click opens the
  *  full detail on the right. Kept deliberately dense so 100+ names stay
  *  scannable. */
@@ -925,12 +942,13 @@ function WatchRow({
             <ReturnPill label="1D" value={row.ret_1d == null ? null : row.ret_1d / 100} signed />
             <ReturnPill label="1W" value={row.ret_1w} signed />
             <ReturnPill label="1M" value={row.ret_1m} signed />
-            <ReturnPill label="6M" value={row.ret_6m} signed />
+            <ReturnPill label="3M" value={row.ret_3m} signed />
             <ReturnPill label="1Y" value={row.ret_1y} signed />
-            <ReturnPill label="2Y" value={row.ret_2y} signed />
+            <ReturnPill label="3Y" value={row.ret_3y} signed />
             <ReturnPill label="5Y" value={row.ret_5y} signed />
             <ReturnPill label="10Y" value={row.ret_10y} signed />
             <ReturnPill label="ALL" value={row.ret_all} signed />
+            {row.ltp_date && <EodTag date={row.ltp_date} />}
           </div>
           <div className="flex items-baseline gap-x-3 text-[10.5px] tabular-nums mt-1">
             <ReturnPill label="Q" value={row.quality_pct}   pct />
