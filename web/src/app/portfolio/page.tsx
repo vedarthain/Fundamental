@@ -50,34 +50,18 @@ export default async function PortfolioPage() {
     );
   }
 
-  // TEMP instrumentation — measure where the portfolio server load spends its
-  // time (each loader recomputes P&L from the full trade log joined to live
-  // quotes, uncached). One structured line per open, read in Vercel logs.
-  // Remove once the caching fix lands.
-  const t0 = Date.now();
-  const marks: Record<string, number> = {};
-  const timed = <T,>(label: string, p: Promise<T>): Promise<T> => {
-    const s = Date.now();
-    return p.then((v) => ((marks[label] = Date.now() - s), v));
-  };
-
   const [portfolio, realized, tradeLog, owner] = await Promise.all([
-    timed("portfolio", loadPortfolio(session.userId)),
-    timed("realized", loadRealizedPnl(session.userId)),
-    timed("tradeLog", loadTradeLog(session.userId)),
-    timed("adminCheck", isAdminRequest()), // Performance tab is owner-only for now.
+    loadPortfolio(session.userId),
+    loadRealizedPnl(session.userId),
+    loadTradeLog(session.userId),
+    isAdminRequest(), // Performance tab is owner-only for now.
   ]);
 
   // Time-weighted stats + realized timeline are only surfaced on the owner-gated
   // Performance tab, so skip the extra queries for everyone else.
-  const perfStart = Date.now();
   const [perf, timeline] = owner
     ? await Promise.all([loadPerformanceStats(session.userId), loadRealizedTimeline(session.userId)])
     : [null, null];
-  if (owner) marks.perfWave = Date.now() - perfStart;
-
-  marks.total = Date.now() - t0;
-  console.log(`[portfolio-timing] owner=${owner} ${JSON.stringify(marks)}`);
 
   return (
     <div className="mx-auto max-w-[1300px] px-4 md:px-6 py-6 md:py-8">

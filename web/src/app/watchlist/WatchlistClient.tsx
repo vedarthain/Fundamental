@@ -20,6 +20,8 @@ import { band, bandColor, tierLabel } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { CallToggle } from "@/components/CallToggle";
 import { PriceChart } from "@/components/PriceChart";
+import type { TradeMark } from "@/app/tools/scanner/CandleChart";
+import CapTierBadge, { type CapCategory } from "@/components/CapTierBadge";
 import { metricsForSector, METRIC_META, fmtMetric, type GlanceMetrics, type MetricKey } from "@/lib/glance";
 import type { StockVerdict } from "@/lib/explainer";
 
@@ -29,6 +31,9 @@ type Row = {
   sector_name: string | null;
   industry_name: string | null;
   maturity_tier: string;
+  /** SEBI market-cap tier + listing date (from app.universe) → CapTierBadge. */
+  market_cap_category?: string | null;
+  listing_date?: string | null;
   market_cap_cr: number | null;
   current_price: number | null;
   composite_pct: number | null;
@@ -77,6 +82,10 @@ type Row = {
   /** Position summary for held names: shares held + P&L % (LTP vs avg cost). */
   held_qty?: number | null;
   pos_pnl_pct?: number | null;
+  /** Earliest recorded Buy date for held/traded names → "Bought <date>" chip. */
+  bought_on?: string | null;
+  /** Real executed trades → B/S markers on the card's price chart. */
+  trades?: TradeMark[];
   /** Sector-aware fundamentals for the peer-glance table. */
   glance: GlanceMetrics | null;
   /** Per-stock verdict — the metrics this stock most stands out on. */
@@ -754,6 +763,22 @@ function PBadge({ held, traded, size = 16 }: { held?: boolean; traded?: boolean;
   );
 }
 
+/** "Bought <date>" chip — the earliest recorded Buy for a held/traded name,
+ *  from app.portfolio_transaction. Mirrors the scanner graph's HoldDateBadge so
+ *  "when did I buy this?" is answerable without opening the chart. */
+function BoughtBadge({ date }: { date: string }) {
+  const label = formatShortDate(date);
+  return (
+    <span
+      className="text-[10.5px] tabular-nums font-medium shrink-0"
+      style={{ color: P_HELD }}
+      title={`Earliest recorded purchase ${label}`}
+    >
+      Bought {label}
+    </span>
+  );
+}
+
 /** Amber "stale" chip — shown only when a symbol's latest golden bar trails the
  *  feed's newest. The as-of date lives in the tooltip so healthy rows stay
  *  clutter-free (no per-row date text). */
@@ -862,6 +887,8 @@ function WatchRow({
           <div className="text-[10.5px] muted-text mt-0.5 flex items-center gap-2 flex-wrap">
             <span>{row.sector_name ?? "—"} · {row.industry_name ?? "—"}</span>
             {row.maturity_tier && <TierBadge tier={row.maturity_tier} />}
+            <CapTierBadge category={row.market_cap_category as CapCategory} listingDate={row.listing_date} />
+            {row.bought_on && <BoughtBadge date={row.bought_on} />}
           </div>
         </Link>
 
@@ -1017,6 +1044,7 @@ function WatchRow({
         heldQty={row.held_qty}
         posPnlPct={row.pos_pnl_pct}
         signedIn={signedIn}
+        trades={row.trades}
       />
 
       {/* Editable note — signed-in only (it lives on the server row). */}
@@ -1128,6 +1156,7 @@ function DetailExtras({
   heldQty,
   posPnlPct,
   signedIn,
+  trades,
 }: {
   symbol: string;
   glance: GlanceMetrics | null;
@@ -1137,6 +1166,7 @@ function DetailExtras({
   heldQty?: number | null;
   posPnlPct?: number | null;
   signedIn?: boolean;
+  trades?: TradeMark[];
 }) {
   const { data, err } = useExtras(symbol);
   const quarterly = data?.quarterly ?? [];
@@ -1175,7 +1205,7 @@ function DetailExtras({
               ) : null}
             </div>
           ) : null}
-          <PriceChart symbol={symbol} canSetAlerts={!!signedIn} />
+          <PriceChart symbol={symbol} canSetAlerts={!!signedIn} trades={trades} />
         </div>
         <FundamentalsColumn
           quarterly={quarterly}

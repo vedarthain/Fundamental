@@ -1,7 +1,7 @@
 "use client";
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { CandleChart, type AlertLine, type ChartTool, type Drawing } from "@/app/tools/scanner/CandleChart";
+import { CandleChart, type AlertLine, type ChartTool, type Drawing, type TradeMark } from "@/app/tools/scanner/CandleChart";
 import type { Candle } from "@/lib/candles";
 import { WEEKLY_THRESHOLD_DAYS } from "@/lib/candleConfig";
 import { usePriceAlerts } from "@/lib/chartOverlays";
@@ -188,6 +188,7 @@ export function PriceChart({
   priceAlerts,
   canSetAlerts = false,
   fetchDays = 11000,
+  trades,
 }: {
   /** Split-safe daily OHLC candles, ascending by date. When omitted (and a
    *  `symbol` is given), the chart self-fetches from /api/scanner/ohlc — this
@@ -209,6 +210,10 @@ export function PriceChart({
    *  intentionally large (the OHLC route clamps to full listed history) so the
    *  range tabs — including "ALL" — all have data to slice locally. */
   fetchDays?: number;
+  /** Real executed trades to pin as B/S markers (same source as the scanner
+   *  graph). Rendered on both the inline and fullscreen charts so "when did I
+   *  buy this?" is answerable without leaving the watchlist. */
+  trades?: TradeMark[];
 }) {
   const [range, setRange] = useState<Range>("1Y");
   const router = useRouter();
@@ -507,7 +512,7 @@ export function PriceChart({
       {/* Candlestick + volume — split-safe OHLC, hover readout, alert + drawing
           lines (drawings are read-only inline; edit them in the enlarged view). */}
       <div className="w-full h-[300px]">
-        <CandleChart candles={visible} interactive weekly={weekly} alerts={alertLines} drawings={drawings} />
+        <CandleChart candles={visible} interactive weekly={weekly} alerts={alertLines} drawings={drawings} trades={trades} />
       </div>
 
       {/* Price-alert controls — signed-in stock pages only. */}
@@ -734,6 +739,7 @@ export function PriceChart({
                 tool={tool}
                 drawings={drawings}
                 alerts={alertLines}
+                trades={trades}
                 onAddDrawing={addDrawing}
                 onDeleteDrawing={deleteDrawing}
                 onPlaceAlert={(price) => {

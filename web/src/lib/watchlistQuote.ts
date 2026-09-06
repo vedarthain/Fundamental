@@ -15,6 +15,7 @@
  * golden symbols carry a ".NS" suffix; watchlist symbols are bare. We query for
  * both spellings so the index is used, then key the result by the bare symbol.
  */
+import { unstable_cache } from "next/cache";
 import { golden } from "@/lib/db";
 
 export type Quote = {
@@ -106,12 +107,41 @@ export async function loadCloseAsOf(
   return out;
 }
 
-/** Load quote context for a set of bare NSE symbols. Never throws — a golden
- *  hiccup yields an empty map and the UI renders "—". */
+/** IST calendar date (YYYY-MM-DD) — used as a cache-key component so quotes
+ *  roll over cleanly at the trading-day boundary regardless of the revalidate
+ *  window. NSE is IST, so bucket on IST midnight, not UTC. */
+function istDateKey(): string {
+  return new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+/** Public entry point. Wraps the golden fetch in a per-(symbol-set, trading-day)
+ *  cache so repeat opens of the same watchlist cost ZERO golden queries on a warm
+ *  hit — the golden read (52W GROUP BY + whole-table feed watermark) was ~99% of
+ *  watchlist latency. unstable_cache JSON-serialises, so the cached layer returns
+ *  a plain Record (a Map would round-trip to {}), rebuilt into a Map here.
+ *
+ *  Freshness: revalidate 900s bounds staleness to 15 min; the IST date in the key
+ *  guarantees a clean rollover at day boundary; and the EOD price refresh purges
+ *  the "panel-cache" tag, so a fresh close lands immediately after the pipeline. */
 export async function loadQuotes(symbols: string[]): Promise<Map<string, Quote>> {
+  const bareSyms = Array.from(new Set(symbols.map(bare))).filter(Boolean).sort();
+  if (bareSyms.length === 0) return new Map<string, Quote>();
+  const dateKey = istDateKey();
+  const cached = unstable_cache(
+    () => fetchQuotes(bareSyms),
+    ["watchlist-quotes", dateKey, bareSyms.join(",")],
+    { revalidate: 900, tags: ["watchlist-quotes", "panel-cache"] },
+  );
+  const rec = await cached();
+  return new Map<string, Quote>(Object.entries(rec));
+}
+
+/** The uncached golden fetch. Returns a plain Record (cache-serialisable). Never
+ *  throws — a golden hiccup yields {} and the UI renders "—". */
+async function fetchQuotes(bareSymsSorted: string[]): Promise<Record<string, Quote>> {
   const out = new Map<string, Quote>();
-  const bareSyms = Array.from(new Set(symbols.map(bare))).filter(Boolean);
-  if (bareSyms.length === 0) return out;
+  const bareSyms = bareSymsSorted;
+  if (bareSyms.length === 0) return {};
   // Query both spellings so golden's index is usable regardless of suffix.
   const cands = [...bareSyms, ...bareSyms.map((s) => `${s}.NS`)];
 
@@ -255,5 +285,5 @@ export async function loadQuotes(symbols: string[]): Promise<Map<string, Quote>>
   } catch {
     // Non-fatal — return whatever we built (likely empty); UI shows "—".
   }
-  return out;
+  return Object.fromEntries(out);
 }
