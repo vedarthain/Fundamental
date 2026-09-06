@@ -20,6 +20,9 @@
 #
 # Required secrets (all already configured for weekly-fetch — no new setup):
 #   NEON_APP_URL         — Postgres URL for fundamental_app on Neon
+#   NEON_GOLDEN_URL      — Postgres URL for golden_db on Neon. Not read by this
+#                          scrape, but Settings (config.py) requires golden_db_url
+#                          at import time, so the CLI won't start without it.
 #   SCREENER_SESSIONID   — Screener auth cookie (page scrape)
 #   SCREENER_CSRFTOKEN   — Screener CSRF token
 
@@ -59,6 +62,7 @@ jobs:
       - name: Refresh shareholding pattern
         env:
           APP_DB_URL:         ${{ secrets.NEON_APP_URL }}
+          GOLDEN_DB_URL:      ${{ secrets.NEON_GOLDEN_URL }}
           SCREENER_SESSIONID: ${{ secrets.SCREENER_SESSIONID }}
           SCREENER_CSRFTOKEN: ${{ secrets.SCREENER_CSRFTOKEN }}
           PYTHONUNBUFFERED:   "1"
