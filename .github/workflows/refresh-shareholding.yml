@@ -42,9 +42,12 @@ env:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    # ~2,600 active symbols × 1.5s throttle ≈ 65 min of pacing plus fetch time.
-    # 180 leaves comfortable margin; the scrape is off the daily critical path.
-    timeout-minutes: 180
+    # ~2,600 active symbols. Real per-symbol cost (fetch + parse + retries) is
+    # ~7s, not the throttle alone, so a full pass runs ~5h — the first live run
+    # paced ~950 symbols in ~110 min. 360 leaves margin under Actions' 6h hard
+    # cap; the scrape is monthly and off the daily critical path, so a long
+    # runtime costs nothing but minutes.
+    timeout-minutes: 360
     steps:
       - name: Checkout
         uses: actions/checkout@v4
