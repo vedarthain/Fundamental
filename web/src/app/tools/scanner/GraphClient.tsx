@@ -96,6 +96,28 @@ function HoldGainBadge({ trades, last }: { trades?: TradeMark[]; last: number | 
   );
 }
 
+// Purchase date beside the P badge — the LATEST buy date, matching the single
+// buy marker drawn on the grid chart (latestBuyMark). Only rendered when the
+// Portfolio (P) filter is active, so it answers "when did I buy this?" without
+// opening the chart. Hidden when there's no buy on record.
+function HoldDateBadge({ trades }: { trades?: TradeMark[] }) {
+  const buys = latestBuyMark(trades);
+  if (!buys.length) return null;
+  const raw = buys[0].d;
+  const dt = new Date(raw + "T00:00:00");
+  const label = isNaN(dt.getTime())
+    ? raw
+    : dt.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  return (
+    <span
+      className="text-[10.5px] tabular-nums font-medium shrink-0 muted-text"
+      title={`Latest purchase ${label}`}
+    >
+      Bought {label}
+    </span>
+  );
+}
+
 // Held share count beside the P badge — broker-truth quantity (what you actually
 // hold), not a net of the incomplete trade log. Hidden when unknown.
 function HoldQtyBadge({ qty }: { qty?: number }) {
@@ -1496,6 +1518,7 @@ export default function GraphClient({
                     <>
                       <HoldQtyBadge qty={portfolioQty[st.symbol]} />
                       <HoldGainBadge trades={tradesBySymbol[st.symbol]} last={last?.c ?? null} />
+                      {pOnly && <HoldDateBadge trades={tradesBySymbol[st.symbol]} />}
                     </>
                   )}
                   <div className="flex items-center gap-2.5 text-[10px] font-medium ml-2">
@@ -1647,6 +1670,7 @@ export default function GraphClient({
                       <>
                         <HoldQtyBadge qty={portfolioQty[focus.symbol]} />
                         <HoldGainBadge trades={tradesBySymbol[focus.symbol]} last={last?.c ?? null} />
+                        {pOnly && <HoldDateBadge trades={tradesBySymbol[focus.symbol]} />}
                       </>
                     )}
                   </div>

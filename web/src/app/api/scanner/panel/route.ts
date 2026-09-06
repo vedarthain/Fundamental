@@ -20,7 +20,7 @@ const CACHE_TAGS = ["scanner", "panel-cache"];
 const HOUR = 3600;
 
 const cachedAllStocks = unstable_cache(loadAllStocks, ["scanner:allStocks:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
-const cachedGraphUniverse = unstable_cache(loadGraphUniverse, ["scanner:graph:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
+const cachedGraphUniverse = unstable_cache(loadGraphUniverse, ["scanner:graph:v2"], { revalidate: HOUR, tags: CACHE_TAGS });
 
 export async function GET(req: Request) {
   const panel = new URL(req.url).searchParams.get("panel");
