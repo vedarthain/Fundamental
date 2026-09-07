@@ -35,6 +35,18 @@ export const dynamic = "force-dynamic";
 // (see the file header); scanner carries ?warm=1 to short-circuit its loaders.
 const WARM_PATHS = ["/watchlist", "/portfolio", "/tools/scanner?warm=1"];
 
+// Active window: keep warm only 08:00–22:00 IST (the hours the app is actually
+// used). Enforced HERE, not just on the cron-job.org schedule, so a wrong
+// timezone on the pinger side can't silently widen the window — an off-hours
+// ping becomes a cheap no-op. IST = UTC+5:30: shift the clock and read the hour.
+const WARM_START_HOUR_IST = 8; // inclusive — first warm hour
+const WARM_END_HOUR_IST = 22; // exclusive — last ping fires at 21:55, warm through 22:00
+function withinActiveWindowIST(): boolean {
+  const istMs = Date.now() + 5.5 * 60 * 60 * 1000;
+  const hour = new Date(istMs).getUTCHours();
+  return hour >= WARM_START_HOUR_IST && hour < WARM_END_HOUR_IST;
+}
+
 function authOk(req: NextRequest): boolean {
   const expected = process.env.INTRADAY_CRON_TOKEN || process.env.REVALIDATE_TOKEN;
   if (!expected) return false;
@@ -46,6 +58,11 @@ function authOk(req: NextRequest): boolean {
 }
 
 async function warm(req: NextRequest): Promise<NextResponse> {
+  // Outside 08:00–22:00 IST: skip the fan-out entirely (no page warming, no cost
+  // beyond this one trivial invocation). The app isn't used overnight.
+  if (!withinActiveWindowIST()) {
+    return NextResponse.json({ ok: true, skipped: "outside 08:00-22:00 IST" });
+  }
   // Warm the deployment that received this ping (prod in practice). Same-origin
   // fetches keep us on the right region's instances.
   const origin = req.nextUrl.origin;
