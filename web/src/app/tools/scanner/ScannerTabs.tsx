@@ -11,7 +11,7 @@
  * the tab is the only chrome. Each panel self-contains its own header + table.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MomentumSignal } from "@/lib/momentum";
 import type { TrendLeaderSignal } from "@/lib/trendLeaders";
 import type { SupportFloorSignal } from "@/lib/supportFloor";
@@ -102,20 +102,70 @@ export default function ScannerTabs({
   const [allStocksData, setAllStocksData] = useState<{ snapDate: string | null; rows: AllStockRow[] } | null>(null);
   const [graphUniverse, setGraphUniverse] = useState<GraphUniverse | null>(null);
 
+  // In-flight guards so a prefetch + a tab-open (or two rapid hovers) can't fire
+  // the same panel fetch twice. The state var tells us it's *arrived*; these
+  // tell us it's *on the way*.
+  const graphLoading = useRef(false);
+  const allLoading = useRef(false);
+
+  const loadGraph = useCallback(() => {
+    if (graphUniverse !== null || graphLoading.current) return;
+    graphLoading.current = true;
+    fetch("/api/scanner/panel?panel=graph")
+      .then((r) => r.json())
+      .then((d) => setGraphUniverse(d.universe ?? null))
+      .catch(() => {
+        graphLoading.current = false; // let a later open/hover retry
+        setGraphUniverse(null);
+      });
+  }, [graphUniverse]);
+
+  const loadAll = useCallback(() => {
+    if (allStocksData !== null || allLoading.current) return;
+    allLoading.current = true;
+    fetch("/api/scanner/panel?panel=all")
+      .then((r) => r.json())
+      .then((d) => setAllStocksData({ snapDate: d.snapDate ?? null, rows: d.rows ?? [] }))
+      .catch(() => {
+        allLoading.current = false;
+        setAllStocksData({ snapDate: null, rows: [] });
+      });
+  }, [allStocksData]);
+
+  // Graph is the primary read on this page, and it's a click away from a cold
+  // panel fetch — so PREFETCH it in the background as soon as the scanner mounts
+  // (once, on idle), NOT only when the tab is opened. By the time the user clicks
+  // "Graph" the candle universe is already in state → instant, no spinner. This
+  // adds one background fetch (~365 KB, hourly-cached server-side) without
+  // bloating the initial RSC payload. "All stocks" stays strictly on-open (it's
+  // the heavier 700 KB payload and a less common destination) but is prefetched
+  // on hover below.
   useEffect(() => {
-    if (tab === "all" && allStocksData === null) {
-      fetch("/api/scanner/panel?panel=all")
-        .then((r) => r.json())
-        .then((d) => setAllStocksData({ snapDate: d.snapDate ?? null, rows: d.rows ?? [] }))
-        .catch(() => setAllStocksData({ snapDate: null, rows: [] }));
+    const w = window as Window & { requestIdleCallback?: (cb: () => void) => number };
+    if (typeof w.requestIdleCallback === "function") {
+      w.requestIdleCallback(() => loadGraph());
+    } else {
+      const t = setTimeout(loadGraph, 200);
+      return () => clearTimeout(t);
     }
-    if (tab === "graph" && graphUniverse === null) {
-      fetch("/api/scanner/panel?panel=graph")
-        .then((r) => r.json())
-        .then((d) => setGraphUniverse(d.universe ?? null))
-        .catch(() => setGraphUniverse(null));
-    }
-  }, [tab, allStocksData, graphUniverse]);
+  }, [loadGraph]);
+
+  // Open-tab fetches: covers the case where the mount prefetch hasn't landed yet
+  // (or "all", which isn't prefetched on mount). Idempotent via the guards above.
+  useEffect(() => {
+    if (tab === "all") loadAll();
+    if (tab === "graph") loadGraph();
+  }, [tab, loadAll, loadGraph]);
+
+  // Hover/focus prefetch: start the fetch the instant the pointer reaches the
+  // tab button, so even the first "All stocks" open feels warm.
+  const prefetchTab = useCallback(
+    (id: Tab) => {
+      if (id === "graph") loadGraph();
+      if (id === "all") loadAll();
+    },
+    [loadGraph, loadAll],
+  );
   // Sectors ⇄ Peer groups toggle inside the merged "sectors" tab. Seed from
   // ?rot= so a deep-link (or the redirected ?tab=peers) opens the right cut.
   const [rotView, setRotView] = useState<RotView>(() => {
@@ -242,6 +292,8 @@ export default function ScannerTabs({
                   role="tab"
                   aria-selected={active}
                   onClick={() => selectTab(t.id)}
+                  onPointerEnter={() => prefetchTab(t.id)}
+                  onFocus={() => prefetchTab(t.id)}
                   className="w-full text-left rounded-lg px-3 py-2.5 transition-colors border"
                   style={
                     active
