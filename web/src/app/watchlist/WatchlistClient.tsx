@@ -399,6 +399,21 @@ export function WatchlistClient({ source }: { source?: WatchSource } = {}) {
   };
   rotateRef.current = rotate;
 
+  // Removing the stock you're currently viewing used to blank the selection,
+  // which let the "restore-or-fall-back" effect above snap the panel to the
+  // top-composite name (e.g. KHAITANLTD) instead of leaving you where you were.
+  // Pick the reading-order neighbour BEFORE removing so the panel advances to
+  // the next stock in the list (falling back to the previous one, or empty when
+  // it was the last), mirroring the Prev/Next rotation.
+  const removeStock = (sym: string) => {
+    if (selected === sym) {
+      const idx = flatOrder.indexOf(sym);
+      const neighbour = idx === -1 ? null : (flatOrder[idx + 1] ?? flatOrder[idx - 1] ?? null);
+      setSelected(neighbour);
+    }
+    remove(sym);
+  };
+
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-3 flex-wrap text-[12px] muted-text tabular-nums">
@@ -611,7 +626,7 @@ export function WatchlistClient({ source }: { source?: WatchSource } = {}) {
                 <WatchRow
                   row={sel}
                   signedIn={signedIn}
-                  onRemove={() => remove(sel.symbol)}
+                  onRemove={() => removeStock(sel.symbol)}
                   showRemove={!source}
                 />
               </>
