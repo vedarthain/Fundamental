@@ -331,8 +331,15 @@ async function loadSnapshotDate(): Promise<string | null> {
 }
 
 export async function GET(req: NextRequest) {
+  // Lightweight phase timing — logs one line to Vercel logs per request so we can
+  // see WHICH block eats the wall time (cold-start vs golden waterfall vs markers).
+  // Remove once the latency work is done.
+  const _t0 = Date.now();
+  const _marks: [string, number][] = [];
+  const _mark = (label: string) => _marks.push([label, Date.now() - _t0]);
   const param = req.nextUrl.searchParams.get("symbols");
   const session = await getSession();
+  _mark("session");
 
   // If the client passed a specific symbol list, use that (signed-out
   // clients reading their local list, or signed-in clients explicitly
@@ -374,6 +381,7 @@ export async function GET(req: NextRequest) {
     // already present, capped at MAX_SYMBOLS.
     symbols = Array.from(new Set([...base, ...extra])).slice(0, MAX_SYMBOLS);
   }
+  _mark("resolve-symbols");
 
   const [rows, snapshotDate, persistence, quotes, meta, glance, verdicts, scorecardKeys] = await Promise.all([
     loadRows(symbols),
@@ -394,6 +402,7 @@ export async function GET(req: NextRequest) {
     // Scorecard-driven fundamental rows — which metrics matter for this cluster.
     loadScorecardKeys(symbols),
   ]);
+  _mark("data");
 
   // Portfolio ownership for the "P" badge (signed-in only). heldSet = currently
   // held (same reconciliation rule as the scanner graph); tradedSet = ever
@@ -479,6 +488,7 @@ export async function GET(req: NextRequest) {
       }
     }
   }
+  _mark("markers");
   // Self-heal missing close_on_add. Rows added while golden lagged (e.g. a
   // post-merger ticker like PVRINOX whose bars backfilled late) got a null
   // close_on_add that was then frozen — the value is captured once at add-time
@@ -578,6 +588,11 @@ export async function GET(req: NextRequest) {
     row.verdict = verdicts.get(row.symbol) ?? null;
     row.glance_keys = scorecardKeys.get(row.symbol) ?? [];
   }
+  _mark("total");
+  // Cumulative ms at each phase boundary — deltas show per-block cost.
+  console.log(
+    `[watchlist-timing] n=${symbols.length} ` + _marks.map(([l, ms]) => `${l}=${ms}ms`).join(" "),
+  );
   return NextResponse.json({
     rows,
     symbols,
