@@ -71,7 +71,7 @@ export type ChartPriceAlert = {
   status: "armed" | "triggered";
 };
 
-type Range = "1W" | "1M" | "3M" | "1Y" | "3Y" | "5Y" | "10Y" | "ALL";
+export type Range = "1W" | "1M" | "3M" | "1Y" | "3Y" | "5Y" | "10Y" | "ALL";
 const RANGES: Range[] = ["1W", "1M", "3M", "1Y", "3Y", "5Y", "10Y", "ALL"];
 
 /** Lookback in calendar days per range (ALL is special-cased). */
@@ -189,6 +189,7 @@ export function PriceChart({
   canSetAlerts = false,
   fetchDays = 11000,
   trades,
+  rangeReturns,
 }: {
   /** Split-safe daily OHLC candles, ascending by date. When omitted (and a
    *  `symbol` is given), the chart self-fetches from /api/scanner/ohlc — this
@@ -214,6 +215,13 @@ export function PriceChart({
    *  graph). Rendered on both the inline and fullscreen charts so "when did I
    *  buy this?" is answerable without leaving the watchlist. */
   trades?: TradeMark[];
+  /** Authoritative per-range returns (PERCENT) from an external source of truth
+   *  — e.g. the watchlist header pills, computed server-side off daily golden EOD.
+   *  When a range is present here it OVERRIDES the chart's own rangePct (which is
+   *  computed off the weekly-rolled candles the chart displays and can drift a few
+   *  days at the anchor). This guarantees the tab % and the header pill show ONE
+   *  number. Missing keys fall back to the locally computed value. */
+  rangeReturns?: Partial<Record<Range, number | null>>;
 }) {
   const [range, setRange] = useState<Range>("1Y");
   const router = useRouter();
@@ -386,9 +394,13 @@ export function PriceChart({
   // Per-range % change — precomputed so each range button can show its own move.
   const rangePctMap = useMemo(() => {
     const m = {} as Record<Range, number | null>;
-    for (const r of RANGES) m[r] = rangePct(candles, r);
+    for (const r of RANGES) {
+      // Prefer the external source of truth (header pills) so the tab and the
+      // pill can't disagree; fall back to computing off the displayed candles.
+      m[r] = rangeReturns && r in rangeReturns ? rangeReturns[r] ?? null : rangePct(candles, r);
+    }
     return m;
-  }, [candles]);
+  }, [candles, rangeReturns]);
 
   const alertLines: AlertLine[] = alerts.map((a) => ({
     price: a.price,

@@ -19,7 +19,7 @@ import { useWatchlist, saveWatchlistNote } from "@/lib/watchlist";
 import { band, bandColor, tierLabel } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { CallToggle } from "@/components/CallToggle";
-import { PriceChart } from "@/components/PriceChart";
+import { PriceChart, type Range as ChartRange } from "@/components/PriceChart";
 import type { TradeMark } from "@/app/tools/scanner/CandleChart";
 import CapTierBadge, { type CapCategory } from "@/components/CapTierBadge";
 import { metricsForSector, METRIC_META, fmtMetric, type GlanceMetrics, type MetricKey } from "@/lib/glance";
@@ -1077,6 +1077,7 @@ function WatchRow({
         sector={row.sector_name}
         signedIn={signedIn}
         trades={row.trades}
+        rangeReturns={rowRangeReturns(row)}
       />
 
       {/* Editable note — signed-in only (it lives on the server row). */}
@@ -1179,6 +1180,24 @@ function useExtras(symbol: string): { data: Extras | null; err: boolean } {
  *           OPM / NPM / Dividend, each a single row with its own sparkline)
  *   Row B — recent news in two columns
  */
+/** Map a row's header returns (stored as FRACTIONS) to the chart's per-range
+ *  PERCENT scale, keyed by chart Range. Feeding this to PriceChart makes the
+ *  graph's range tabs render the exact same value as the header pills, so the
+ *  1Y (etc.) can never show two different numbers. */
+function rowRangeReturns(row: Row): Partial<Record<ChartRange, number | null>> {
+  const p = (frac: number | null) => (frac == null ? null : frac * 100);
+  return {
+    "1W": p(row.ret_1w),
+    "1M": p(row.ret_1m),
+    "3M": p(row.ret_3m),
+    "1Y": p(row.ret_1y),
+    "3Y": p(row.ret_3y),
+    "5Y": p(row.ret_5y),
+    "10Y": p(row.ret_10y),
+    "ALL": p(row.ret_all),
+  };
+}
+
 function DetailExtras({
   symbol,
   glance,
@@ -1186,6 +1205,7 @@ function DetailExtras({
   sector,
   signedIn,
   trades,
+  rangeReturns,
 }: {
   symbol: string;
   glance: GlanceMetrics | null;
@@ -1193,6 +1213,9 @@ function DetailExtras({
   sector: string | null;
   signedIn?: boolean;
   trades?: TradeMark[];
+  /** Header pill returns (PERCENT) passed to the chart so its range tabs show
+   *  the exact same number as the pills — one source of truth, no drift. */
+  rangeReturns?: Partial<Record<ChartRange, number | null>>;
 }) {
   const { data, err } = useExtras(symbol);
   const quarterly = data?.quarterly ?? [];
@@ -1215,7 +1238,7 @@ function DetailExtras({
             when signed in. The held-position summary now lives in the card
             header (HoldChip), so the chart starts clean here. */}
         <div className="min-w-0">
-          <PriceChart symbol={symbol} canSetAlerts={!!signedIn} trades={trades} />
+          <PriceChart symbol={symbol} canSetAlerts={!!signedIn} trades={trades} rangeReturns={rangeReturns} />
         </div>
         <FundamentalsColumn
           quarterly={quarterly}

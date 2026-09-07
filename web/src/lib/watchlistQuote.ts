@@ -161,7 +161,7 @@ async function fetchQuotes(bareSymsSorted: string[]): Promise<Record<string, Quo
   const cands = [...bareSyms, ...bareSyms.map((s) => `${s}.NS`)];
 
   try {
-    const [last2, hilo, vols, feed, rets] = await Promise.all([
+    const [last2, hilo, vols, rets] = await Promise.all([
       golden<{ symbol: string; c: string; d: string; rn: string }[]>`
         SELECT symbol, c, d, rn FROM (
           SELECT symbol, COALESCE(adj_close, close)::text AS c, date::text AS d,
@@ -201,15 +201,6 @@ async function fetchQuotes(bareSymsSorted: string[]): Promise<Record<string, Quo
           AND symbol = ANY(${cands})
           AND date >= CURRENT_DATE - 45
         GROUP BY symbol
-      `,
-      // Feed watermark: the newest 1d bar golden holds across the WHOLE
-      // universe (not just the watched symbols). This is the yardstick for
-      // per-symbol staleness — a watched name whose latest bar trails this is
-      // lagging the herd (delisting, merger, late backfill). Global MAX so the
-      // yardstick can't drift old just because the watchlist is all laggards.
-      golden<{ d: string | null }[]>`
-        SELECT MAX(date)::text AS d
-        FROM golden.price_history WHERE interval = '1d'
       `,
       // Trailing-window return anchors — the SAME method the price chart uses
       // (rangePct): for each window, the nearest adjusted close ON OR BEFORE
@@ -276,7 +267,6 @@ async function fetchQuotes(bareSymsSorted: string[]): Promise<Record<string, Quo
             AND ph.date <= l.ld - 3650 ORDER BY ph.date DESC LIMIT 1) a10y ON true
       `,
     ]);
-    const feedDate = feed[0]?.d ?? null;
 
     // Delivery % lives in a separate, isolated query: delivery_qty/delivery_pct
     // are a newer golden addition and may be absent on some deployments. Its own
@@ -309,6 +299,15 @@ async function fetchQuotes(bareSymsSorted: string[]): Promise<Record<string, Quo
         lastDate.set(k, r.d);
       } else prev.set(k, Number(r.c));
     }
+    // Staleness yardstick: the newest latest-bar date among the WATCHED symbols.
+    // NSE trades every name on the same sessions, so on a normal day all fresh
+    // names share this date and a laggard (delisting / late backfill) trails it —
+    // exactly the signal the old global-universe MAX(date) gave, but derived from
+    // data already in hand instead of a 1.7s full-partition scan of 21M rows. The
+    // only lost case (all watched names stale together) is rare and low-stakes.
+    let feedDate: string | null = null;
+    for (const d of lastDate.values()) if (feedDate == null || d > feedDate) feedDate = d;
+
     const hi = new Map<string, number>();
     const lo = new Map<string, number>();
     for (const r of hilo) {
