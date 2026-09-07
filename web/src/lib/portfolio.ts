@@ -15,6 +15,8 @@
  * with a per-broker breakdown kept for drill-down.
  */
 import "server-only";
+import { createHash } from "crypto";
+import { unstable_cache } from "next/cache";
 import { sql, golden } from "@/lib/db";
 import { BROKER_LABEL, bareSymbol, type Broker } from "@/lib/portfolioImport";
 
@@ -1008,7 +1010,52 @@ export async function loadRealizedTimeline(userId: number): Promise<RealizedTime
   };
 }
 
-/** Load + value a user's portfolio, aggregated per instrument. */
+/** The empty-portfolio shape — returned for users with no imported holdings. */
+function emptyPortfolio(): Portfolio {
+  return {
+    hasHoldings: false,
+    instruments: [],
+    totals: {
+      invested: 0, currentValue: 0, pnl: 0, pnlPct: null, dayChangeValue: 0,
+      dayChangePct: null, mappedValue: 0, unmappedValue: 0, holdingCount: 0, mappedCount: 0,
+    },
+    brokerAlloc: [],
+    sectorAlloc: [],
+    snapshotDate: null,
+    priceAsOf: null,
+    brokers: [],
+  };
+}
+
+/** IST calendar date (YYYY-MM-DD) — a cache-key component so a cached valuation
+ *  rolls over cleanly at the trading-day boundary (fresh EOD closes) regardless
+ *  of the revalidate window. NSE is IST, so bucket on IST midnight, not UTC. */
+function istDateKey(): string {
+  return new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+/** Content fingerprint of everything loadPortfolio's valuation depends on: the
+ *  holdings rows (qty/avg-cost/broker values/imported_at) plus the manual-trade
+ *  symbol set. Any import or manual trade rewrites portfolio_holding, so the
+ *  hash changes and the cache misses cleanly — no explicit invalidation needed. */
+function portfolioFingerprint(holdings: HoldingRow[], manualSymbols: string[]): string {
+  const rows = holdings
+    .map((h) =>
+      [h.broker, h.symbol, h.isin, h.raw_symbol, h.is_mapped, h.quantity, h.avg_cost,
+       h.broker_cur_value, h.broker_day_pct, h.imported_at].join("|"),
+    )
+    .sort();
+  const payload = `${rows.join("\n")}##${manualSymbols.join(",")}`;
+  return createHash("sha1").update(payload).digest("hex");
+}
+
+/** Load + value a user's portfolio, aggregated per instrument.
+ *
+ *  The two cheap app-DB reads (holdings + manual symbols) run every call — they
+ *  double as the cache fingerprint. The expensive tail (two golden hops + the
+ *  cluster ranking + aggregation) is wrapped in unstable_cache keyed by
+ *  (userId, IST day, holdings fingerprint), so repeat opens of an unchanged
+ *  portfolio cost ZERO golden queries on a warm hit. */
 export async function loadPortfolio(userId: number): Promise<Portfolio> {
   const holdings = await sql<HoldingRow[]>`
     SELECT broker, raw_symbol, isin, symbol, is_mapped, quantity::text,
@@ -1017,22 +1064,7 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
       FROM app.portfolio_holding
      WHERE user_id = ${userId}
   `;
-
-  if (holdings.length === 0) {
-    return {
-      hasHoldings: false,
-      instruments: [],
-      totals: {
-        invested: 0, currentValue: 0, pnl: 0, pnlPct: null, dayChangeValue: 0,
-        dayChangePct: null, mappedValue: 0, unmappedValue: 0, holdingCount: 0, mappedCount: 0,
-      },
-      brokerAlloc: [],
-      sectorAlloc: [],
-      snapshotDate: null,
-      priceAsOf: null,
-      brokers: [],
-    };
-  }
+  if (holdings.length === 0) return emptyPortfolio();
 
   // Symbols the user has hand-entered trades for. Each such symbol is reconciled
   // into a single synthetic 'derived' row (snapshot opening lot + manual trades,
@@ -1043,7 +1075,26 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
     SELECT DISTINCT symbol FROM app.portfolio_transaction
      WHERE user_id = ${userId} AND source_file = 'manual-entry' AND symbol IS NOT NULL
   `;
-  const manualSymbols = new Set(manualRows.map((r) => r.symbol));
+  const manualSymbols = manualRows.map((r) => r.symbol).sort();
+
+  const fp = portfolioFingerprint(holdings, manualSymbols);
+  const dateKey = istDateKey();
+  const cached = unstable_cache(
+    () => computePortfolio(holdings, manualSymbols),
+    ["portfolio", String(userId), dateKey, fp],
+    { revalidate: 900, tags: ["portfolio", "panel-cache"] },
+  );
+  return cached();
+}
+
+/** The heavy, cache-wrapped valuation: golden prices + cluster scores +
+ *  per-instrument aggregation. Takes the already-fetched holdings and manual
+ *  symbols so the cache layer can skip it entirely on a warm hit. */
+async function computePortfolio(
+  holdings: HoldingRow[],
+  manualSymbolList: string[],
+): Promise<Portfolio> {
+  const manualSymbols = new Set(manualSymbolList);
   const visibleHoldings = holdings.filter(
     (h) => h.broker === "derived" || !h.symbol || !manualSymbols.has(h.symbol),
   );
@@ -1051,45 +1102,52 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
   const mappedSyms = [...new Set(visibleHoldings.filter((h) => h.symbol).map((h) => h.symbol!))];
 
   // Scores + sector/industry from the latest cache snapshot.
-  const cacheRows = mappedSyms.length
-    ? await sql<CacheRow[]>`
-        WITH ranked AS (
-          SELECT p.symbol, p.cluster_id, p.maturity_tier, p.current_price,
-                 p.quality_pct, p.valuation_pct, p.momentum_pct, p.composite_pct,
-                 p.ret_1w, p.ret_1m, p.ret_1y,
-                 RANK() OVER (PARTITION BY p.cluster_id, p.maturity_tier
-                              ORDER BY p.composite_pct DESC NULLS LAST) AS peer_rank,
-                 COUNT(*) OVER (PARTITION BY p.cluster_id, p.maturity_tier) AS peer_count
-          FROM app.cluster_stocks_panel_cache p
-          WHERE p.snapshot_date = (SELECT max(snapshot_date) FROM app.cluster_stocks_panel_cache)
-        )
-        SELECT r.symbol, u.company_name,
-               mc.name AS sector, c.name AS industry, r.maturity_tier,
-               r.current_price, r.quality_pct, r.valuation_pct, r.momentum_pct,
-               r.composite_pct, r.ret_1w, r.ret_1m, r.ret_1y,
-               r.peer_rank, r.peer_count
-          FROM ranked r
-          JOIN app.universe u ON u.symbol = r.symbol
-          LEFT JOIN app.cluster c ON c.id = r.cluster_id
-          LEFT JOIN app.meta_cluster mc ON mc.id = c.meta_cluster_id
-         WHERE r.symbol = ANY(${mappedSyms})
-      `
-    : [];
+  // Three independent reads — cluster scores (app), latest-two closes (golden),
+  // and the snapshot watermark (app) — fired together instead of in series.
+  const gsyms = mappedSyms.map((s) => s + ".NS");
+  const [cacheRows, gp, snapRow] = await Promise.all([
+    mappedSyms.length
+      ? sql<CacheRow[]>`
+          WITH ranked AS (
+            SELECT p.symbol, p.cluster_id, p.maturity_tier, p.current_price,
+                   p.quality_pct, p.valuation_pct, p.momentum_pct, p.composite_pct,
+                   p.ret_1w, p.ret_1m, p.ret_1y,
+                   RANK() OVER (PARTITION BY p.cluster_id, p.maturity_tier
+                                ORDER BY p.composite_pct DESC NULLS LAST) AS peer_rank,
+                   COUNT(*) OVER (PARTITION BY p.cluster_id, p.maturity_tier) AS peer_count
+            FROM app.cluster_stocks_panel_cache p
+            WHERE p.snapshot_date = (SELECT max(snapshot_date) FROM app.cluster_stocks_panel_cache)
+          )
+          SELECT r.symbol, u.company_name,
+                 mc.name AS sector, c.name AS industry, r.maturity_tier,
+                 r.current_price, r.quality_pct, r.valuation_pct, r.momentum_pct,
+                 r.composite_pct, r.ret_1w, r.ret_1m, r.ret_1y,
+                 r.peer_rank, r.peer_count
+            FROM ranked r
+            JOIN app.universe u ON u.symbol = r.symbol
+            LEFT JOIN app.cluster c ON c.id = r.cluster_id
+            LEFT JOIN app.meta_cluster mc ON mc.id = c.meta_cluster_id
+           WHERE r.symbol = ANY(${mappedSyms})
+        `
+      : Promise.resolve([] as CacheRow[]),
+    gsyms.length
+      ? golden<{ symbol: string; close: string; date: string; rn: string }[]>`
+          SELECT symbol, close::text AS close, date::text AS date, rn FROM (
+            SELECT symbol, close, date,
+                   row_number() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
+            FROM golden.price_history_1d
+            WHERE symbol = ANY(${gsyms}) AND close IS NOT NULL
+          ) t WHERE rn <= 2
+        `
+      : Promise.resolve([] as { symbol: string; close: string; date: string; rn: string }[]),
+    sql<{ d: string | null }[]>`
+      SELECT max(snapshot_date)::text AS d FROM app.cluster_stocks_panel_cache
+    `,
+  ]);
   const cache = new Map<string, CacheRow>();
   for (const r of cacheRows) cache.set(r.symbol, r);
 
   // Live price + 1D from golden: latest two closes per mapped symbol.
-  const gsyms = mappedSyms.map((s) => s + ".NS");
-  const gp = gsyms.length
-    ? await golden<{ symbol: string; close: string; date: string; rn: string }[]>`
-        SELECT symbol, close::text AS close, date::text AS date, rn FROM (
-          SELECT symbol, close, date,
-                 row_number() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
-          FROM golden.price_history_1d
-          WHERE symbol = ANY(${gsyms}) AND close IS NOT NULL
-        ) t WHERE rn <= 2
-      `
-    : [];
   const gLast = new Map<string, number>();
   const gPrev = new Map<string, number>();
   // Newest close date across all held symbols → the LTP "as of" date.
@@ -1104,9 +1162,6 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
     }
   }
 
-  const snapRow = await sql<{ d: string | null }[]>`
-    SELECT max(snapshot_date)::text AS d FROM app.cluster_stocks_panel_cache
-  `;
   const snapshotDate = snapRow[0]?.d ?? null;
 
   // ── Aggregate per instrument. Key: universe symbol (mapped) else isin
