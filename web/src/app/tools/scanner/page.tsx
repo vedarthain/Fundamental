@@ -69,6 +69,11 @@ export default async function MomentumPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const sp = await searchParams;
+  // Keep-warm short-circuit: `?warm=1` boots the serverless function and loads
+  // this route's (heavy) bundle to defeat cold-start, then returns immediately —
+  // BEFORE any loader touches Neon. Lets a cron ping keep the function warm at
+  // zero database cost. Not a real render path; never linked in the UI.
+  if (one(sp.warm) === "1") return null;
   const tabParam = one(sp.tab);
   // "peers" folded into the "sectors" tab (a toggle inside it now switches
   // Sectors ⇄ Peer groups). Redirect the old deep-link so a bookmarked
