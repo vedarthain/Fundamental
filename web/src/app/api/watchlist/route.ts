@@ -23,7 +23,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { loadPersistenceForSymbols } from "@/lib/persistence";
-import { loadPortfolioSymbols, loadHeldPositions, type TradeMark } from "@/lib/portfolio";
+import { loadPortfolioSymbols, loadHeldPositions, loadSnapshotDerivedBuys, type TradeMark } from "@/lib/portfolio";
 import { loadQuotes, loadCloseOnAdd, loadCloseAsOf } from "@/lib/watchlistQuote";
 import { deriveGlance, scorecardGlanceKeys, type GlanceMetrics, type MetricKey, type QRow, type ARow } from "@/lib/glance";
 import { buildVerdict, type StockVerdict } from "@/lib/explainer";
@@ -449,11 +449,34 @@ export async function GET(req: NextRequest) {
     // + effective (already split-adjusted) avg cost, anchored to the earliest real
     // buy date. Answers "when did I buy this and what do I hold?" — never a sell,
     // always consistent with the position header, and no golden reconciliation.
+    // A held name with NO real buy date (broker-snapshot-only, e.g. LTFOODS) is
+    // collected instead for a synthesised entry marker below.
+    const snapNeeded: string[] = [];
     for (const [sym, p] of Object.entries(positions)) {
       const key = sym.toUpperCase();
+      if (p.qty <= 0 || p.avgCost == null) continue;
       const d = boughtOn.get(key);
-      if (!d || p.qty <= 0 || p.avgCost == null) continue;
+      if (!d) {
+        snapNeeded.push(key);
+        continue;
+      }
       tradesBySym[key] = [{ d, side: "B", price: p.avgCost, qty: p.qty }];
+    }
+    // Snapshot-only held names get a `derived` synthetic buy — the historical bar
+    // whose split-adjusted close is nearest the avg cost — so they show an entry
+    // point (rendered faintly, "≈") instead of a bare "P" with no marker. Scoped
+    // to the names on this watchlist so the golden read stays cheap. Names with a
+    // real trade log keep the holdings-based single "B" above (no phantom split
+    // legs). loadSnapshotDerivedBuys already excludes anything with a logged buy.
+    const watchSet = new Set(symbols.map((s) => s.toUpperCase()));
+    const snapScope = snapNeeded.filter((k) => watchSet.has(k));
+    if (snapScope.length > 0) {
+      const derived = await loadSnapshotDerivedBuys(session.userId, snapScope).catch(
+        () => ({}) as Record<string, TradeMark[]>,
+      );
+      for (const [key, marks] of Object.entries(derived)) {
+        if (!tradesBySym[key]) tradesBySym[key] = marks;
+      }
     }
   }
   // Self-heal missing close_on_add. Rows added while golden lagged (e.g. a
