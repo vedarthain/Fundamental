@@ -953,16 +953,11 @@ function WatchRow({
 
         {/* Returns on a single line; Q/V/M scores on the line below. */}
         <div className="flex-1 min-w-0 pt-0.5">
+          {/* Just the color-coded 1D move + the EOD date. The 1W…ALL trailing
+              ladder was removed — it's redundant with the chart's own range
+              buttons (and rangeReturns) directly below. */}
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[10.5px] tabular-nums">
             <ReturnPill label="1D" value={row.ret_1d == null ? null : row.ret_1d / 100} signed />
-            <ReturnPill label="1W" value={row.ret_1w} signed />
-            <ReturnPill label="1M" value={row.ret_1m} signed />
-            <ReturnPill label="3M" value={row.ret_3m} signed />
-            <ReturnPill label="1Y" value={row.ret_1y} signed />
-            <ReturnPill label="3Y" value={row.ret_3y} signed />
-            <ReturnPill label="5Y" value={row.ret_5y} signed />
-            <ReturnPill label="10Y" value={row.ret_10y} signed />
-            <ReturnPill label="ALL" value={row.ret_all} signed />
             {row.ltp_date && <EodTag date={row.ltp_date} />}
           </div>
           <div className="flex items-baseline gap-x-3 text-[10.5px] tabular-nums mt-1">
