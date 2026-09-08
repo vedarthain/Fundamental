@@ -930,37 +930,42 @@ function WatchRow({
           )}
         </div>
 
-        {/* Q/V/M scores, then your entry context (Added / Since add) on the same
-            line and the 52-week extremes beneath. The 1D move + EOD date moved
-            down to sit directly on top of the price chart (see DetailExtras). */}
-        <div className="flex-1 min-w-0 pt-0.5 flex flex-col gap-y-1.5">
-          <div className="flex items-baseline gap-x-3 gap-y-1 flex-wrap text-[10.5px] tabular-nums">
-            <ReturnPill label="Q" value={row.quality_pct}   pct />
-            <ReturnPill label="V" value={row.valuation_pct} pct />
-            <ReturnPill label="M" value={row.momentum_pct}  pct />
-            <InlineStat
-              label="Added"
-              value={addedValue}
-              title={
-                row.close_on_add_date
-                  ? `Closed ₹${row.close_on_add?.toLocaleString("en-IN", { maximumFractionDigits: 2 })} on ${formatSnapshotDate(row.close_on_add_date)} — your reference point`
-                  : row.added_at
-                    ? `Added ${formatSnapshotDate(row.added_at.slice(0, 10))}`
-                    : undefined
-              }
-            />
-            <InlineStat
-              label="Since add"
-              value={fmtSignedPct(sinceAdd)}
-              color={deltaColor(sinceAdd)}
-              title={
-                row.close_on_add != null
-                  ? `LTP vs your add-day close ₹${row.close_on_add.toLocaleString("en-IN", { maximumFractionDigits: 2 })} — your P&L since watching`
-                  : "Set when you add the stock"
-              }
-            />
+        {/* Entry context (Added / Since add) on the left, Q/V/M pushed to the
+            far right; the 52-week extremes hug the right edge beneath. A
+            vertical hairline partitions this block from the name. The 1D move +
+            EOD date moved down to sit on top of the price chart (DetailExtras). */}
+        <div className="flex-1 min-w-0 pt-0.5 pl-3 border-l hairline flex flex-col gap-y-1.5">
+          <div className="flex items-baseline justify-between gap-x-3 gap-y-1 text-[10.5px] tabular-nums">
+            <div className="flex items-baseline gap-x-3 gap-y-1 flex-wrap min-w-0">
+              <InlineStat
+                label="Added"
+                value={addedValue}
+                title={
+                  row.close_on_add_date
+                    ? `Closed ₹${row.close_on_add?.toLocaleString("en-IN", { maximumFractionDigits: 2 })} on ${formatSnapshotDate(row.close_on_add_date)} — your reference point`
+                    : row.added_at
+                      ? `Added ${formatSnapshotDate(row.added_at.slice(0, 10))}`
+                      : undefined
+                }
+              />
+              <InlineStat
+                label="Since add"
+                value={fmtSignedPct(sinceAdd)}
+                color={deltaColor(sinceAdd)}
+                title={
+                  row.close_on_add != null
+                    ? `LTP vs your add-day close ₹${row.close_on_add.toLocaleString("en-IN", { maximumFractionDigits: 2 })} — your P&L since watching`
+                    : "Set when you add the stock"
+                }
+              />
+            </div>
+            <div className="flex items-baseline gap-x-3 shrink-0">
+              <ReturnPill label="Q" value={row.quality_pct}   pct />
+              <ReturnPill label="V" value={row.valuation_pct} pct />
+              <ReturnPill label="M" value={row.momentum_pct}  pct />
+            </div>
           </div>
-          <div className="flex items-baseline gap-x-3 gap-y-1 flex-wrap text-[10.5px] tabular-nums">
+          <div className="flex items-baseline justify-end gap-x-3 gap-y-1 text-[10.5px] tabular-nums">
             <InlineStat
               label="52W High"
               title="52-week high (split-adjusted) and how far LTP sits below it"
