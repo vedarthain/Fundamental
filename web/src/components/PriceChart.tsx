@@ -464,7 +464,7 @@ export function PriceChart({
             <div className="text-right">
               <div
                 className="font-display text-[20px] tabular-nums leading-none"
-                style={{ color: changePct >= 0 ? "var(--color-score-good)" : "var(--color-score-poor)" }}
+                style={{ color: changePct >= 0 ? "var(--color-delta-up)" : "var(--color-delta-down)" }}
               >
                 {fmtPct(changePct)}
               </div>
@@ -523,8 +523,8 @@ export function PriceChart({
               p == null
                 ? "var(--color-muted)"
                 : p >= 0
-                  ? "var(--color-score-good)"
-                  : "var(--color-score-poor)";
+                  ? "var(--color-delta-up)"
+                  : "var(--color-delta-down)";
             return (
               <button
                 key={r}
@@ -547,8 +547,8 @@ export function PriceChart({
               >
                 <span className="text-[11px] font-medium leading-none">{r}</span>
                 <span
-                  className="text-[9px] tabular-nums leading-none font-medium"
-                  style={{ color: active ? pColor : pColor, opacity: active ? 1 : 0.9 }}
+                  className="text-[9.5px] tabular-nums leading-none font-semibold"
+                  style={{ color: pColor }}
                 >
                   {p == null ? "—" : fmtPct(p)}
                 </span>
