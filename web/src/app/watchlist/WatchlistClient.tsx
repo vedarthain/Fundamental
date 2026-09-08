@@ -951,16 +951,10 @@ function WatchRow({
           )}
         </div>
 
-        {/* Returns on a single line; Q/V/M scores on the line below. */}
+        {/* Q/V/M scores. The 1D move + EOD date moved down to sit directly on
+            top of the price chart (see DetailExtras). */}
         <div className="flex-1 min-w-0 pt-0.5">
-          {/* Just the color-coded 1D move + the EOD date. The 1W…ALL trailing
-              ladder was removed — it's redundant with the chart's own range
-              buttons (and rangeReturns) directly below. */}
-          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[10.5px] tabular-nums">
-            <ReturnPill label="1D" value={row.ret_1d == null ? null : row.ret_1d / 100} signed />
-            {row.ltp_date && <EodTag date={row.ltp_date} />}
-          </div>
-          <div className="flex items-baseline gap-x-3 text-[10.5px] tabular-nums mt-1">
+          <div className="flex items-baseline gap-x-3 text-[10.5px] tabular-nums">
             <ReturnPill label="Q" value={row.quality_pct}   pct />
             <ReturnPill label="V" value={row.valuation_pct} pct />
             <ReturnPill label="M" value={row.momentum_pct}  pct />
@@ -1088,6 +1082,8 @@ function WatchRow({
         signedIn={signedIn}
         trades={row.trades}
         rangeReturns={rowRangeReturns(row)}
+        ret1d={row.ret_1d}
+        ltpDate={row.ltp_date}
       />
 
       {/* Editable note — signed-in only (it lives on the server row). */}
@@ -1216,6 +1212,8 @@ function DetailExtras({
   signedIn,
   trades,
   rangeReturns,
+  ret1d,
+  ltpDate,
 }: {
   symbol: string;
   glance: GlanceMetrics | null;
@@ -1226,6 +1224,10 @@ function DetailExtras({
   /** Header pill returns (PERCENT) passed to the chart so its range tabs show
    *  the exact same number as the pills — one source of truth, no drift. */
   rangeReturns?: Partial<Record<ChartRange, number | null>>;
+  /** 1D move (percent) + EOD date, rendered as a thin strip directly above the
+   *  price chart (relocated out of the card header). */
+  ret1d?: number | null;
+  ltpDate?: string | null;
 }) {
   const { data, err } = useExtras(symbol);
   const quarterly = data?.quarterly ?? [];
@@ -1248,6 +1250,14 @@ function DetailExtras({
             when signed in. The held-position summary now lives in the card
             header (HoldChip), so the chart starts clean here. */}
         <div className="min-w-0">
+          {/* Color-coded 1D move + EOD date, sitting directly on top of the
+              chart (relocated from the card header). */}
+          {(ret1d != null || ltpDate) && (
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[10.5px] tabular-nums mb-1.5">
+              <ReturnPill label="1D" value={ret1d == null ? null : ret1d / 100} signed />
+              {ltpDate && <EodTag date={ltpDate} />}
+            </div>
+          )}
           <PriceChart symbol={symbol} canSetAlerts={!!signedIn} trades={trades} rangeReturns={rangeReturns} />
         </div>
         <FundamentalsColumn
