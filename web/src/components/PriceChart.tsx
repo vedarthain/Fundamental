@@ -180,6 +180,12 @@ function fmtPct(p: number): string {
   return `${p >= 0 ? "+" : ""}${p.toFixed(Math.abs(p) >= 100 ? 0 : 2)}%`;
 }
 
+/** Tighter format for the 1-day move under the headline: "-5.8%" / "+12%". */
+function fmt1d(p: number): string {
+  const sign = p >= 0 ? "+" : "";
+  return `${sign}${Math.abs(p) >= 10 ? Math.round(p).toString() : p.toFixed(1)}%`;
+}
+
 export function PriceChart({
   candles: candlesProp,
   currentPrice,
@@ -190,6 +196,8 @@ export function PriceChart({
   fetchDays = 11000,
   trades,
   rangeReturns,
+  dayChangePct,
+  asOfLabel,
 }: {
   /** Split-safe daily OHLC candles, ascending by date. When omitted (and a
    *  `symbol` is given), the chart self-fetches from /api/scanner/ohlc — this
@@ -222,6 +230,12 @@ export function PriceChart({
    *  days at the anchor). This guarantees the tab % and the header pill show ONE
    *  number. Missing keys fall back to the locally computed value. */
   rangeReturns?: Partial<Record<Range, number | null>>;
+  /** Latest 1-day move (PERCENT, e.g. -5.8). When present, the headline price is
+   *  color-coded red/green by its sign and a "1D: …" line renders beneath it. */
+  dayChangePct?: number | null;
+  /** Pre-formatted EOD "as of" date (e.g. "07 Sept '26"), shown next to the 1D
+   *  move under the headline price. */
+  asOfLabel?: string;
 }) {
   const [range, setRange] = useState<Range>("1Y");
   const router = useRouter();
@@ -465,13 +479,35 @@ export function PriceChart({
         </div>
       </div>
 
-      {/* Headline price, then range tabs — each tab shows its own % change. */}
+      {/* Headline price, then range tabs — each tab shows its own % change.
+          When a 1-day move is supplied, the price is color-coded by its sign and
+          the "1D · EOD" line sits directly beneath it. */}
       <div className="flex flex-wrap items-end justify-between gap-3 mb-3">
         <div>
           {headline != null && (
-            <span className="text-[18px] font-medium tabular-nums">
+            <span
+              className="text-[18px] font-medium tabular-nums"
+              style={
+                dayChangePct != null
+                  ? { color: dayChangePct >= 0 ? "var(--color-delta-up)" : "var(--color-delta-down)" }
+                  : undefined
+              }
+            >
               {prefix}{headline.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
             </span>
+          )}
+          {(dayChangePct != null || asOfLabel) && (
+            <div className="flex items-baseline gap-2 text-[10.5px] tabular-nums mt-1">
+              {dayChangePct != null && (
+                <span
+                  className="font-medium"
+                  style={{ color: dayChangePct >= 0 ? "var(--color-delta-up)" : "var(--color-delta-down)" }}
+                >
+                  1D: {fmt1d(dayChangePct)}
+                </span>
+              )}
+              {asOfLabel && <span className="muted-text opacity-70 whitespace-nowrap">EOD · {asOfLabel}</span>}
+            </div>
           )}
         </div>
         <div className="flex flex-wrap gap-1">

@@ -820,17 +820,6 @@ function StaleChip({ date }: { date: string }) {
  *  return on the card is the last END-OF-DAY close (yesterday's, until the next
  *  pipeline refresh lands today's), NOT a live intraday quote. Muted so it reads
  *  as a footnote, not a metric. */
-function EodTag({ date }: { date: string }) {
-  return (
-    <span
-      className="muted-text text-[9.5px] opacity-70 whitespace-nowrap"
-      title={`End-of-day close as of ${formatSnapshotDate(date)}. Prices and returns update once the daily EOD pipeline refreshes — until then this is the prior session's close, not a live quote.`}
-    >
-      EOD · {formatShortDate(date)}
-    </span>
-  );
-}
-
 /** Compact left-rail row: symbol · LTP · since-add %. One click opens the
  *  full detail on the right. Kept deliberately dense so 100+ names stay
  *  scannable. */
@@ -916,24 +905,14 @@ function WatchRow({
   return (
     <div className="px-4 md:px-5 py-3 hover:bg-[var(--color-paper)]/60 transition-colors">
       <div className="flex items-start gap-3">
-        {/* Identity + live price on one line; sector/tier chips below. */}
+        {/* Identity + sector/tier chips below. The live price moved onto the
+            chart header (color-coded by the 1D move), so it's no longer here. */}
         <div className="min-w-0 shrink-0">
           <div className="flex items-center gap-2">
             <Link href={`/stock/${row.symbol}`} className="flex items-center gap-2 min-w-0 hover:opacity-80">
               <span className="font-medium text-[14px] tabular-nums">{row.symbol}</span>
               <span className="muted-text text-[12px] truncate">{row.company_name}</span>
             </Link>
-            <span
-              className="text-[15px] font-bold tabular-nums leading-none"
-              style={{ color: deltaColor(row.ret_1d) }}
-              title={
-                row.ret_1d != null
-                  ? `${fmtSignedPct(row.ret_1d)} vs previous close`
-                  : "Latest daily close (split-adjusted)"
-              }
-            >
-              {fmtPrice(ltp)}
-            </span>
             {row.stale && row.ltp_date ? <StaleChip date={row.ltp_date} /> : null}
           </div>
           <div className="text-[10.5px] muted-text mt-0.5">
@@ -1250,15 +1229,14 @@ function DetailExtras({
             when signed in. The held-position summary now lives in the card
             header (HoldChip), so the chart starts clean here. */}
         <div className="min-w-0">
-          {/* Color-coded 1D move + EOD date, sitting directly on top of the
-              chart (relocated from the card header). */}
-          {(ret1d != null || ltpDate) && (
-            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[10.5px] tabular-nums mb-1.5">
-              <ReturnPill label="1D" value={ret1d == null ? null : ret1d / 100} signed />
-              {ltpDate && <EodTag date={ltpDate} />}
-            </div>
-          )}
-          <PriceChart symbol={symbol} canSetAlerts={!!signedIn} trades={trades} rangeReturns={rangeReturns} />
+          <PriceChart
+            symbol={symbol}
+            canSetAlerts={!!signedIn}
+            trades={trades}
+            rangeReturns={rangeReturns}
+            dayChangePct={ret1d}
+            asOfLabel={ltpDate ? formatShortDate(ltpDate) : undefined}
+          />
         </div>
         <FundamentalsColumn
           quarterly={quarterly}
