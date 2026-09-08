@@ -714,6 +714,12 @@ export default function GraphClient({
   // clicking its arrow. (We still auto-open the sector of a restored selection.)
   const [openSectors, setOpenSectors] = useState<Set<string>>(() => new Set());
   const [openIndustries, setOpenIndustries] = useState<Set<string>>(() => new Set());
+  // While a tree search is active every matching branch auto-expands so results
+  // are visible. These track branches the user has EXPLICITLY collapsed during
+  // that search, so a manual collapse still wins over the auto-expand (otherwise
+  // the chevron looks dead). Cleared when the search box empties.
+  const [closedSectors, setClosedSectors] = useState<Set<string>>(() => new Set());
+  const [closedIndustries, setClosedIndustries] = useState<Set<string>>(() => new Set());
 
   // Remember the Graph tab's position (industry + sector-wide page + window) so a
   // browser refresh lands you back exactly where you were instead of resetting to
@@ -939,6 +945,17 @@ export default function GraphClient({
     setPage(idx);
   }
   function toggleSector(name: string) {
+    // During a search, sectors are auto-open — toggle the "explicitly closed"
+    // set instead so a manual collapse sticks.
+    if (searching) {
+      setClosedSectors((prev) => {
+        const next = new Set(prev);
+        if (next.has(name)) next.delete(name);
+        else next.add(name);
+        return next;
+      });
+      return;
+    }
     setOpenSectors((prev) => {
       const next = new Set(prev);
       if (next.has(name)) next.delete(name);
@@ -947,6 +964,15 @@ export default function GraphClient({
     });
   }
   function toggleIndustryStocks(id: string) {
+    if (searching) {
+      setClosedIndustries((prev) => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+      return;
+    }
     setOpenIndustries((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -1298,7 +1324,16 @@ export default function GraphClient({
             <input
               type="search"
               value={treeQuery}
-              onChange={(e) => setTreeQuery(e.target.value)}
+              onChange={(e) => {
+                const v = e.target.value;
+                setTreeQuery(v);
+                // Reset the per-search manual-collapse memory when the box clears
+                // so the next search starts fully auto-expanded again.
+                if (v.trim().length === 0) {
+                  setClosedSectors(new Set());
+                  setClosedIndustries(new Set());
+                }
+              }}
               placeholder="Search stock or industry…"
               aria-label="Search charts by stock or industry"
               className="w-full rounded-md border hairline bg-[var(--color-paper)] pl-7 pr-2 py-1.5 text-[12px] outline-none focus:border-[var(--color-accent-600)]"
@@ -1310,7 +1345,7 @@ export default function GraphClient({
             </p>
           )}
           {treeSectors.map((s) => {
-            const open = searching || openSectors.has(s.name);
+            const open = searching ? !closedSectors.has(s.name) : openSectors.has(s.name);
             const isActiveSector = s.name === activeSectorName;
             return (
               <div key={s.name} className="mb-0.5">
@@ -1345,7 +1380,7 @@ export default function GraphClient({
                   <div className="ml-2 border-l hairline pl-1.5">
                     {s.industries.map((ind) => {
                       const isSel = ind.id === activeInd;
-                      const stocksOpen = searching || openIndustries.has(ind.id);
+                      const stocksOpen = searching ? !closedIndustries.has(ind.id) : openIndustries.has(ind.id);
                       return (
                         <div key={ind.id}>
                           <div
