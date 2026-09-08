@@ -930,13 +930,57 @@ function WatchRow({
           )}
         </div>
 
-        {/* Q/V/M scores. The 1D move + EOD date moved down to sit directly on
-            top of the price chart (see DetailExtras). */}
-        <div className="flex-1 min-w-0 pt-0.5">
-          <div className="flex items-baseline gap-x-3 text-[10.5px] tabular-nums">
+        {/* Q/V/M scores, then your entry context (Added / Since add) on the same
+            line and the 52-week extremes beneath. The 1D move + EOD date moved
+            down to sit directly on top of the price chart (see DetailExtras). */}
+        <div className="flex-1 min-w-0 pt-0.5 flex flex-col gap-y-1.5">
+          <div className="flex items-baseline gap-x-3 gap-y-1 flex-wrap text-[10.5px] tabular-nums">
             <ReturnPill label="Q" value={row.quality_pct}   pct />
             <ReturnPill label="V" value={row.valuation_pct} pct />
             <ReturnPill label="M" value={row.momentum_pct}  pct />
+            <InlineStat
+              label="Added"
+              value={addedValue}
+              title={
+                row.close_on_add_date
+                  ? `Closed ₹${row.close_on_add?.toLocaleString("en-IN", { maximumFractionDigits: 2 })} on ${formatSnapshotDate(row.close_on_add_date)} — your reference point`
+                  : row.added_at
+                    ? `Added ${formatSnapshotDate(row.added_at.slice(0, 10))}`
+                    : undefined
+              }
+            />
+            <InlineStat
+              label="Since add"
+              value={fmtSignedPct(sinceAdd)}
+              color={deltaColor(sinceAdd)}
+              title={
+                row.close_on_add != null
+                  ? `LTP vs your add-day close ₹${row.close_on_add.toLocaleString("en-IN", { maximumFractionDigits: 2 })} — your P&L since watching`
+                  : "Set when you add the stock"
+              }
+            />
+          </div>
+          <div className="flex items-baseline gap-x-3 gap-y-1 flex-wrap text-[10.5px] tabular-nums">
+            <InlineStat
+              label="52W High"
+              title="52-week high (split-adjusted) and how far LTP sits below it"
+              value={
+                row.high_52w != null
+                  ? `${fmtPrice(row.high_52w)}${row.from_high_pct != null ? ` (${fmtSignedPct(row.from_high_pct)})` : ""}`
+                  : "—"
+              }
+              color={deltaColor(row.from_high_pct)}
+            />
+            <InlineStat
+              label="52W Low"
+              title="52-week low (split-adjusted) and how far LTP sits above it"
+              value={
+                row.low_52w != null
+                  ? `${fmtPrice(row.low_52w)}${row.from_low_pct != null ? ` (${fmtSignedPct(row.from_low_pct)})` : ""}`
+                  : "—"
+              }
+              color={deltaColor(row.from_low_pct)}
+            />
           </div>
         </div>
 
@@ -977,82 +1021,10 @@ function WatchRow({
         </div>
       </div>
 
-      {/* Price context strip: what you added at, where it is now, and how far
-          it sits from its 52-week extremes. */}
-      <div className="mt-2.5 grid grid-cols-3 sm:grid-cols-4 gap-x-3 gap-y-2 tabular-nums">
-        <Metric
-          label="Added"
-          title={
-            row.close_on_add_date
-              ? `Closed ₹${row.close_on_add?.toLocaleString("en-IN", { maximumFractionDigits: 2 })} on ${formatSnapshotDate(row.close_on_add_date)} — your reference point`
-              : row.added_at
-                ? `Added ${formatSnapshotDate(row.added_at.slice(0, 10))}`
-                : undefined
-          }
-          value={addedValue}
-        />
-        <Metric
-          label="Since add"
-          title={
-            row.close_on_add != null
-              ? `LTP vs your add-day close ₹${row.close_on_add.toLocaleString("en-IN", { maximumFractionDigits: 2 })} — your P&L since watching`
-              : "Set when you add the stock"
-          }
-          value={fmtSignedPct(sinceAdd)}
-          color={deltaColor(sinceAdd)}
-        />
-        <Metric
-          label="52W High"
-          title="52-week high (split-adjusted) and how far LTP sits below it"
-          value={
-            row.high_52w != null
-              ? `${fmtPrice(row.high_52w)}${row.from_high_pct != null ? ` (${fmtSignedPct(row.from_high_pct)})` : ""}`
-              : "—"
-          }
-          color={deltaColor(row.from_high_pct)}
-        />
-        <Metric
-          label="52W Low"
-          title="52-week low (split-adjusted) and how far LTP sits above it"
-          value={
-            row.low_52w != null
-              ? `${fmtPrice(row.low_52w)}${row.from_low_pct != null ? ` (${fmtSignedPct(row.from_low_pct)})` : ""}`
-              : "—"
-          }
-          color={deltaColor(row.from_low_pct)}
-        />
-        <Metric
-          label="Rel Vol"
-          title={
-            row.avg_vol_30d != null
-              ? `Latest volume vs its ~30-day average (${fmtVol(row.vol)} vs ${fmtVol(Math.round(row.avg_vol_30d))}). >1 = busier than usual.`
-              : "Latest volume relative to its ~30-day average"
-          }
-          value={row.rel_vol != null ? `${row.rel_vol.toFixed(2)}×` : "—"}
-          color={
-            row.rel_vol == null
-              ? undefined
-              : row.rel_vol >= 2
-                ? "var(--color-delta-up)"
-                : row.rel_vol < 0.5
-                  ? "var(--color-delta-down)"
-                  : undefined
-          }
-        />
-        <Metric
-          label="Turnover"
-          title="Value traded on the latest session (volume × close), in ₹ crore"
-          value={row.turnover_cr != null ? `₹${row.turnover_cr.toLocaleString("en-IN", { maximumFractionDigits: 1 })} Cr` : "—"}
-        />
-        <Metric
-          label="Delivery"
-          title="Share of latest-session volume that settled as delivery (not intraday churn). Higher = more conviction. Not always available."
-          value={row.delivery_pct != null ? `${row.delivery_pct.toFixed(0)}%` : "—"}
-        />
-      </div>
-
       {/* Price chart + latest results side by side, then quarterly-trend
-          graph beside dividends, then two-column news. */}
+          graph beside dividends, then two-column news. The session-liquidity
+          stats (Rel Vol / Turnover / Delivery) ride next to the chart's price-
+          alert "Add" button via extraStats. */}
       <DetailExtras
         symbol={row.symbol}
         glance={row.glance}
@@ -1063,6 +1035,38 @@ function WatchRow({
         rangeReturns={rowRangeReturns(row)}
         ret1d={row.ret_1d}
         ltpDate={row.ltp_date}
+        extraStats={
+          <div className="flex items-baseline gap-x-3 gap-y-1 flex-wrap text-[10.5px] tabular-nums">
+            <InlineStat
+              label="Rel Vol"
+              title={
+                row.avg_vol_30d != null
+                  ? `Latest volume vs its ~30-day average (${fmtVol(row.vol)} vs ${fmtVol(Math.round(row.avg_vol_30d))}). >1 = busier than usual.`
+                  : "Latest volume relative to its ~30-day average"
+              }
+              value={row.rel_vol != null ? `${row.rel_vol.toFixed(2)}×` : "—"}
+              color={
+                row.rel_vol == null
+                  ? undefined
+                  : row.rel_vol >= 2
+                    ? "var(--color-delta-up)"
+                    : row.rel_vol < 0.5
+                      ? "var(--color-delta-down)"
+                      : undefined
+              }
+            />
+            <InlineStat
+              label="Turnover"
+              title="Value traded on the latest session (volume × close), in ₹ crore"
+              value={row.turnover_cr != null ? `₹${row.turnover_cr.toLocaleString("en-IN", { maximumFractionDigits: 1 })} Cr` : "—"}
+            />
+            <InlineStat
+              label="Delivery"
+              title="Share of latest-session volume that settled as delivery (not intraday churn). Higher = more conviction. Not always available."
+              value={row.delivery_pct != null ? `${row.delivery_pct.toFixed(0)}%` : "—"}
+            />
+          </div>
+        }
       />
 
       {/* Editable note — signed-in only (it lives on the server row). */}
@@ -1193,6 +1197,7 @@ function DetailExtras({
   rangeReturns,
   ret1d,
   ltpDate,
+  extraStats,
 }: {
   symbol: string;
   glance: GlanceMetrics | null;
@@ -1207,6 +1212,9 @@ function DetailExtras({
    *  price chart (relocated out of the card header). */
   ret1d?: number | null;
   ltpDate?: string | null;
+  /** Rel Vol / Turnover / Delivery, rendered inline next to the chart's price-
+   *  alert "Add" button. */
+  extraStats?: ReactNode;
 }) {
   const { data, err } = useExtras(symbol);
   const quarterly = data?.quarterly ?? [];
@@ -1236,6 +1244,7 @@ function DetailExtras({
             rangeReturns={rangeReturns}
             dayChangePct={ret1d}
             asOfLabel={ltpDate ? formatShortDate(ltpDate) : undefined}
+            extraStats={extraStats}
           />
         </div>
         <FundamentalsColumn
@@ -1685,7 +1694,10 @@ function fmtShortDate(iso: string): string {
 
 // ── Metric cell + formatters ────────────────────────────────────────────────
 
-function Metric({
+/** Inline "label: value" stat matching the Q/V/M ReturnPill rhythm — used for
+ *  the entry-context (Added / Since add), 52-week extremes, and the chart's
+ *  liquidity stats so they all read as one consistent inline family. */
+function InlineStat({
   label,
   value,
   title,
@@ -1697,12 +1709,10 @@ function Metric({
   color?: string;
 }) {
   return (
-    <div className="min-w-0" title={title}>
-      <div className="text-[9.5px] uppercase tracking-wide muted-text leading-tight">{label}</div>
-      <div className="text-[12px] font-medium leading-tight mt-0.5" style={color ? { color } : undefined}>
-        {value}
-      </div>
-    </div>
+    <span title={title} className="whitespace-nowrap">
+      <span className="muted-text">{label}: </span>
+      <span className="font-medium" style={color ? { color } : undefined}>{value}</span>
+    </span>
   );
 }
 

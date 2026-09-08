@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { CandleChart, type AlertLine, type ChartTool, type Drawing, type TradeMark } from "@/app/tools/scanner/CandleChart";
 import type { Candle } from "@/lib/candles";
@@ -198,6 +198,7 @@ export function PriceChart({
   rangeReturns,
   dayChangePct,
   asOfLabel,
+  extraStats,
 }: {
   /** Split-safe daily OHLC candles, ascending by date. When omitted (and a
    *  `symbol` is given), the chart self-fetches from /api/scanner/ohlc — this
@@ -236,6 +237,10 @@ export function PriceChart({
   /** Pre-formatted EOD "as of" date (e.g. "07 Sept '26"), shown next to the 1D
    *  move under the headline price. */
   asOfLabel?: string;
+  /** Optional stats (e.g. Rel Vol / Turnover / Delivery) rendered inline to the
+   *  right of the price-alert "Add" button. Only shows when the alert controls
+   *  render (signed-in). */
+  extraStats?: ReactNode;
 }) {
   const [range, setRange] = useState<Range>("1Y");
   const router = useRouter();
@@ -595,6 +600,7 @@ export function PriceChart({
                 {alertErr}
               </span>
             )}
+            {extraStats && <div className="ml-auto">{extraStats}</div>}
           </div>
 
           {alerts.length > 0 && (
