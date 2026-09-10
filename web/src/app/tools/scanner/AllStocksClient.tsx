@@ -15,6 +15,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { displayCompanyName, tierLabel } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
+import { IntradayPriceBadge } from "@/components/IntradayPriceBadge";
 import type { AllStockRow } from "@/lib/allStocks";
 import { RowSparkline } from "./RowSparkline";
 import { WindowPicker } from "./WindowPicker";
@@ -521,7 +522,17 @@ export default function AllStocksClient({
                       <div className="truncate text-[10.5px] opacity-70">{r.peer_group ?? "—"}</div>
                     </td>
                     <td className="px-2 py-2 text-right tabular-nums">
-                      {r.current_price == null ? "—" : `₹${r.current_price.toLocaleString("en-IN")}`}
+                      {r.current_price == null ? (
+                        "—"
+                      ) : (
+                        <div className="inline-flex flex-col items-end leading-tight">
+                          <IntradayPriceBadge
+                            price={r.current_price}
+                            fetchedAt={r.price_fetched_at}
+                            className="flex-wrap justify-end"
+                          />
+                        </div>
+                      )}
                     </td>
                     {[r.ret_1d, r.ret_1w, r.ret_1m, r.ret_1y, r.ret_3y].map((v, i) => {
                       const s = retFmt(v);

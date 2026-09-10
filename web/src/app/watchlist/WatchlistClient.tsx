@@ -22,6 +22,7 @@ import { CallToggle } from "@/components/CallToggle";
 import { PriceChart, type Range as ChartRange } from "@/components/PriceChart";
 import type { TradeMark } from "@/app/tools/scanner/CandleChart";
 import CapTierBadge, { type CapCategory } from "@/components/CapTierBadge";
+import { IntradayPriceBadge } from "@/components/IntradayPriceBadge";
 import { metricsForSector, METRIC_META, fmtMetric, type GlanceMetrics, type MetricKey } from "@/lib/glance";
 import type { StockVerdict } from "@/lib/explainer";
 
@@ -36,6 +37,8 @@ type Row = {
   listing_date?: string | null;
   market_cap_cr: number | null;
   current_price: number | null;
+  /** Intraday pinger's last-refresh time for current_price (ISO) → IST pill. */
+  price_fetched_at?: string | null;
   composite_pct: number | null;
   quality_pct: number | null;
   valuation_pct: number | null;
@@ -918,6 +921,15 @@ function WatchRow({
           <div className="text-[10.5px] muted-text mt-0.5">
             {row.sector_name ?? "—"} · {row.industry_name ?? "—"}
           </div>
+          {row.current_price != null && (
+            <div className="mt-0.5">
+              <IntradayPriceBadge
+                price={row.current_price}
+                fetchedAt={row.price_fetched_at ?? null}
+                className="text-[11px] muted-text font-medium"
+              />
+            </div>
+          )}
           {(row.maturity_tier || row.market_cap_category || row.listing_date) && (
             <div className="mt-1 flex items-center gap-1.5 flex-wrap">
               {row.maturity_tier && <TierBadge tier={row.maturity_tier} />}

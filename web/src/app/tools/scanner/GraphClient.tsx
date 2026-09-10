@@ -18,6 +18,7 @@ import { Star } from "lucide-react";
 import { displayCompanyName } from "@/lib/score";
 import type { GraphUniverse, GraphSector, GraphIndustry, GraphStock } from "@/lib/graphUniverse";
 import { WatchlistButton } from "@/components/WatchlistButton";
+import { IntradayPriceBadge } from "@/components/IntradayPriceBadge";
 import { CallToggle } from "@/components/CallToggle";
 import CapTierBadge, { hasCapTierBadge } from "@/components/CapTierBadge";
 import { useWatchlist } from "@/lib/watchlist";
@@ -1774,6 +1775,15 @@ export default function GraphClient({
                         </span>
                       )}
                     </div>
+                    {returns.data[focus.symbol]?.current_price != null && (
+                      <div className="mt-0.5 flex justify-end">
+                        <IntradayPriceBadge
+                          price={returns.data[focus.symbol]?.current_price ?? null}
+                          fetchedAt={returns.data[focus.symbol]?.price_fetched_at ?? null}
+                          className="text-[11px] muted-text font-medium"
+                        />
+                      </div>
+                    )}
                   </div>
                   <WindowPicker options={GRAPH_WINDOWS} days={days} onSelect={setDays} loading={candles.loading} />
                   <button

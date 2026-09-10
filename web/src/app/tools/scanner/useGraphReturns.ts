@@ -14,7 +14,12 @@
  */
 import { useEffect, useRef, useState } from "react";
 
-export type StockReturns = { ret_1d: number | null; ret_1w: number | null };
+export type StockReturns = {
+  ret_1d: number | null;
+  ret_1w: number | null;
+  current_price?: number | null; // live intraday pinger price
+  price_fetched_at?: string | null; // IST timestamp of that fire
+};
 type ReturnsMap = Record<string, StockReturns>;
 
 export function useGraphReturns(symbols: string[]) {

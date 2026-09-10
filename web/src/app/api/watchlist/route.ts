@@ -47,6 +47,9 @@ type WatchRow = {
   listing_date: string | null;
   market_cap_cr: number | null;
   current_price: number | null;
+  /** Intraday pinger's last-refresh time for current_price (screener_meta),
+   *  ISO string — powers the "HH:MM IST" freshness pill. Null when never pinged. */
+  price_fetched_at: string | null;
   composite_pct: number | null;
   quality_pct: number | null;
   valuation_pct: number | null;
@@ -158,6 +161,7 @@ async function loadRows(symbols: string[]): Promise<WatchRow[]> {
       u.listing_date::text    AS listing_date,
       c.market_cap_cr::float  AS market_cap_cr,
       c.current_price::float  AS current_price,
+      sm.price_fetched_at::text AS price_fetched_at,
       c.composite_pct::float  AS composite_pct,
       c.quality_pct::float    AS quality_pct,
       c.valuation_pct::float  AS valuation_pct,
@@ -166,6 +170,7 @@ async function loadRows(symbols: string[]): Promise<WatchRow[]> {
     JOIN app.cluster cl ON cl.id = c.cluster_id
     JOIN app.meta_cluster mc ON mc.id = cl.meta_cluster_id
     LEFT JOIN app.universe u ON u.symbol = c.symbol
+    LEFT JOIN app.screener_meta sm ON sm.symbol = c.symbol
     WHERE c.snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_stocks_panel_cache)
       AND c.symbol = ANY(${symbols})
   `;

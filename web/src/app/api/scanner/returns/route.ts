@@ -19,7 +19,12 @@ import { sql, golden } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
-type ReturnsRow = { ret_1d: number | null; ret_1w: number | null };
+type ReturnsRow = {
+  ret_1d: number | null;
+  ret_1w: number | null;
+  current_price: number | null; // live intraday pinger price (app.screener_meta)
+  price_fetched_at: string | null; // IST timestamp of that pinger fire
+};
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -45,6 +50,19 @@ export async function GET(req: Request) {
     for (const r of weekly) ret1wBySym.set(r.symbol, r.ret_1w);
   } catch {
     /* leave 1W empty */
+  }
+
+  // Live intraday price + freshness from the pinger table (app.screener_meta).
+  const priceBySym = new Map<string, { price: number | null; at: string | null }>();
+  try {
+    const live = await sql<{ symbol: string; current_price: number | null; price_fetched_at: string | null }[]>`
+      SELECT symbol, current_price::float8 AS current_price, price_fetched_at::text AS price_fetched_at
+        FROM app.screener_meta
+       WHERE symbol = ANY(${symbols})
+    `;
+    for (const r of live) priceBySym.set(r.symbol, { price: r.current_price, at: r.price_fetched_at });
+  } catch {
+    /* leave live price empty */
   }
 
   const ret1dBySym = new Map<string, number>();
@@ -81,9 +99,12 @@ export async function GET(req: Request) {
 
   const data: Record<string, ReturnsRow> = {};
   for (const sym of symbols) {
+    const live = priceBySym.get(sym);
     data[sym] = {
       ret_1d: ret1dBySym.get(sym) ?? null,
       ret_1w: ret1wBySym.get(sym) ?? null,
+      current_price: live?.price ?? null,
+      price_fetched_at: live?.at ?? null,
     };
   }
   return NextResponse.json({ data });

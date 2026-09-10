@@ -26,6 +26,10 @@ export type AllStockRow = {
   peer_group: string | null; // cluster.name
   maturity_tier: string | null; // veteran | mature | mid | new (years of financial history)
   current_price: number | null;
+  // When current_price is the live intraday pinger value (app.screener_meta), this is
+  // the IST timestamp of that fire. Null when the shown price is the golden EOD close —
+  // so the freshness pill only ever stamps a price it actually describes.
+  price_fetched_at: string | null;
   ret_1d: number | null; // percent
   ret_1w: number | null; // percent
   ret_1m: number | null; // percent
@@ -52,6 +56,8 @@ type PanelRow = {
   listing_date: string | null;
   years_of_data: number | null;
   cache_price: number | null;
+  intraday_price: number | null; // app.screener_meta.current_price — the ~7×/day pinger value
+  price_fetched_at: string | null; // when that pinger last fired for this symbol
   composite_pct: number | null;
   is_n500: boolean;
 };
@@ -92,10 +98,13 @@ export async function loadAllStocks(): Promise<AllStocksData> {
              u.listing_date::text AS listing_date,
              u.years_of_data::float8 AS years_of_data,
              p.current_price::float8 AS cache_price,
+             sm.current_price::float8 AS intraday_price,
+             sm.price_fetched_at::text AS price_fetched_at,
              p.composite_pct::float8 AS composite_pct,
              (ic.symbol IS NOT NULL) AS is_n500
         FROM app.cluster_stocks_panel_cache p
         LEFT JOIN app.universe u       ON u.symbol = p.symbol
+        LEFT JOIN app.screener_meta sm ON sm.symbol = p.symbol
         LEFT JOIN app.cluster c        ON c.id = p.cluster_id
         LEFT JOIN app.meta_cluster mc  ON mc.id = c.meta_cluster_id
         LEFT JOIN app.index_constituent ic
@@ -194,7 +203,9 @@ export async function loadAllStocks(): Promise<AllStocksData> {
 
   const rows: AllStockRow[] = panel.map((p) => {
     const lastPx = last.get(p.symbol);
-    const price = lastPx ?? p.cache_price ?? null;
+    // Prefer the live intraday pinger price; fall back to golden EOD close, then cache.
+    const usingIntraday = p.intraday_price != null;
+    const price = p.intraday_price ?? lastPx ?? p.cache_price ?? null;
     return {
       symbol: p.symbol,
       company_name: p.company_name,
@@ -202,6 +213,8 @@ export async function loadAllStocks(): Promise<AllStocksData> {
       peer_group: p.peer_group,
       maturity_tier: p.maturity_tier,
       current_price: price == null ? null : Math.round(price * 100) / 100,
+      // Only stamp a freshness time when the shown price is actually the intraday one.
+      price_fetched_at: usingIntraday ? p.price_fetched_at : null,
       ret_1d: pctChange(lastPx, prev.get(p.symbol), "1d"),
       ret_1w: pctChange(lastPx, wAgo.get(p.symbol), "1w"),
       ret_1m: pctChange(lastPx, mAgo.get(p.symbol), "1m"),
