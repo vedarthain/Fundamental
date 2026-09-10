@@ -594,6 +594,22 @@ export function WatchlistClient({ source }: { source?: WatchSource } = {}) {
               );
             }
             const pos = flatOrder.indexOf(sel.symbol);
+            // Position of the selected stock WITHIN its own industry (resets to
+            // 1/N each time you cross into the next industry). Walk the same
+            // sector→industry→stocks tree the list renders from so the counter
+            // always matches the visible grouping.
+            let indPos = -1;
+            let indTotal = 0;
+            outer: for (const s of tree) {
+              for (const ind of s.industries) {
+                const i = ind.stocks.findIndex((r) => r.symbol === sel.symbol);
+                if (i >= 0) {
+                  indPos = i;
+                  indTotal = ind.stocks.length;
+                  break outer;
+                }
+              }
+            }
             return (
               <>
                 {/* Rotate bar — step through the watchlist without leaving the
@@ -601,6 +617,17 @@ export function WatchlistClient({ source }: { source?: WatchSource } = {}) {
                 <div className="flex items-center justify-between gap-2 px-4 md:px-5 py-2 border-b hairline bg-[var(--color-paper)]/50">
                   <span className="text-[11px] muted-text tabular-nums flex items-center gap-2">
                     {pos >= 0 ? `${pos + 1} / ${flatOrder.length}` : `${flatOrder.length}`}
+                    {indPos >= 0 && (
+                      <span
+                        className="rounded px-1.5 py-[1px] font-medium tabular-nums"
+                        style={{
+                          background: "color-mix(in srgb, var(--color-muted) 10%, transparent)",
+                        }}
+                        title={`Stock ${indPos + 1} of ${indTotal} in ${sel.industry_name ?? "this industry"}`}
+                      >
+                        {indPos + 1}/{indTotal} in {sel.industry_name ?? "industry"}
+                      </span>
+                    )}
                     <span className="hidden sm:inline opacity-70">· use ← → keys</span>
                   </span>
                   <div className="inline-flex rounded-md border hairline overflow-hidden">
