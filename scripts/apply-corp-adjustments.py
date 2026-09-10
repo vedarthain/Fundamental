@@ -187,7 +187,7 @@ def dedup_events(events: list[tuple]) -> list[tuple]:
     different type (bonus + split, e.g. BAJFINANCE) are genuinely stacked and
     both kept.
     """
-    announced = [e for e in events if e[2] in ("bonus", "split")]
+    announced = [e for e in events if e[2] in ("bonus", "split", "demerger")]
     kept = list(announced)
     for e in events:
         if e[2] != "price_detect":
@@ -340,6 +340,51 @@ def main() -> None:
                       f"{reverse_splits} reverse-split(s)); "
                       f"{len(changed_symbols)} symbol(s) changed", file=sys.stderr)
 
+            # ── Manual overrides (demergers & other non-clean corporate actions) ──
+            # The indianapi feed carries NO usable demerger ratio/ex-date (only a
+            # free-text "Scheme of Arrangement" board_meeting row), and Phase-1
+            # auto-detect deliberately refuses non-clean fractions. So demergers
+            # are hand-curated in app.corporate_action_manual with an explicit
+            # adj_factor — e.g. INDIAGLYCO 2026-09-02: NSE special pre-open
+            # ex-price 225.0 / cum close 1111.7 = 0.2024 — and bridged here as
+            # action_type 'demerger', which Phase 2 applies exactly like a split
+            # factor (multiplying every pre-ex_date adj_close by it).
+            with psycopg.connect(app_url) as app_conn, app_conn.cursor() as acur:
+                acur.execute(f"""
+                    SELECT symbol, ex_date, action_type, adj_factor, note
+                    FROM app.corporate_action_manual
+                    WHERE ex_date IS NOT NULL
+                    {a_sym_clause}
+                    ORDER BY symbol, ex_date
+                """, a_sym_params)
+                manual_rows = acur.fetchall()
+
+            if args.dry_run:
+                print(f"  [DRY-RUN] would bridge {len(manual_rows)} manual override(s)",
+                      file=sys.stderr)
+            else:
+                with conn.cursor() as cur:
+                    for symbol, ex_date, atype, adj_factor, note in manual_rows:
+                        cur.execute("""
+                            INSERT INTO golden.corporate_actions
+                              (symbol, ex_date, action_type, split_factor, purpose, source)
+                            VALUES (%s, %s, %s, %s, %s, 'fundamental_app:manual')
+                            ON CONFLICT (symbol, ex_date, action_type) DO UPDATE SET
+                              split_factor = EXCLUDED.split_factor,
+                              purpose      = EXCLUDED.purpose,
+                              source       = 'fundamental_app:manual'
+                            WHERE golden.corporate_actions.split_factor IS DISTINCT FROM EXCLUDED.split_factor
+                               OR golden.corporate_actions.purpose      IS DISTINCT FROM EXCLUDED.purpose
+                            RETURNING symbol
+                        """, (f"{symbol}.NS", ex_date, atype, float(adj_factor),
+                              note or f"{atype} manual override"))
+                        r = cur.fetchone()
+                        if r:
+                            changed_symbols.add(r[0])
+                conn.commit()
+                print(f"  Bridged {len(manual_rows)} manual override(s) into "
+                      f"golden.corporate_actions", file=sys.stderr)
+
         if args.bridge_only:
             return
 
@@ -396,7 +441,7 @@ def main() -> None:
                 cur.execute("""
                     SELECT symbol, ex_date
                     FROM golden.corporate_actions
-                    WHERE action_type IN ('bonus', 'split', 'price_detect')
+                    WHERE action_type IN ('bonus', 'split', 'price_detect', 'demerger')
                 """)
                 existing: set[tuple] = {(r[0], r[1]) for r in cur.fetchall()}
 
@@ -503,7 +548,7 @@ def main() -> None:
                 cur.execute(f"""
                     SELECT symbol, ex_date, split_factor, action_type
                     FROM golden.corporate_actions
-                    WHERE action_type IN ('bonus', 'split', 'price_detect')
+                    WHERE action_type IN ('bonus', 'split', 'price_detect', 'demerger')
                       AND ex_date >= CURRENT_DATE - (%s * INTERVAL '1 year')
                     {sym_clause}
                     ORDER BY symbol, ex_date ASC
