@@ -1,0 +1,91 @@
+# Daily Upstox instrument-master sync.
+#
+# WHY THIS EXISTS:
+#   The intraday price pinger (/api/cron/intraday-equity) can only fetch a
+#   stock's LTP if app.upstox_instrument holds its symbol → instrument_key
+#   mapping. That table is derived entirely from Upstox's published NSE
+#   instrument dump (refreshed by them ~06:00 IST daily). It had NO scheduled
+#   refresh — it was populated ONCE (2026-05-27) and left to rot. By
+#   2026-09-10, 90+ stocks added to the universe since then had no mapping, so
+#   the pinger silently skipped them and they were stuck on stale EOD prices
+#   (e.g. KHAITANLTD showed yesterday's close with no intraday time). This
+#   workflow keeps the map current so newly-listed / newly-added names get
+#   live intraday prices the next trading morning.
+#
+# WHAT IT DOES:
+#   scripts/fetch-upstox-instruments.py downloads Upstox's NSE.json.gz, filters
+#   to plain NSE equity rows, and does a transactional full-replace of
+#   app.upstox_instrument (idempotent; safe to re-run).
+#
+# TIMING:
+#   01:30 UTC = 07:00 IST. Upstox refreshes their dump ~06:00 IST, and NSE
+#   opens 09:15 IST — so this lands the fresh map ~2h before the first pinger
+#   fire of the day. Mon-Fri only (no trading on weekends).
+#
+# Required secret (already used by the other refresh workflows):
+#   NEON_APP_URL — Postgres URL for fundamental_app on Neon.
+
+name: Sync Upstox instruments
+
+on:
+  schedule:
+    - cron: '30 1 * * 1-5'
+  # Manual trigger — useful right after adding stocks to the universe so their
+  # mappings land without waiting for the next morning's scheduled run.
+  workflow_dispatch: {}
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install psycopg
+        run: pip install 'psycopg[binary]==3.2.*'
+
+      - name: Sync Upstox instrument master
+        env:
+          APP_DB_URL:       ${{ secrets.NEON_APP_URL }}
+          PYTHONUNBUFFERED: "1"
+        run: python scripts/fetch-upstox-instruments.py
+
+      # A silently-broken instrument sync is exactly how this rotted for 3.5
+      # months last time. Open/append a de-duped issue on any failure so it's
+      # visible regardless of email settings — same pattern as refresh-ltp.yml.
+      - name: Raise a loud alert on failure
+        if: failure() || cancelled()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TITLE="🚨 Upstox instrument sync FAILED"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          BODY=$(printf '%s\n' \
+            "The daily Upstox instrument-master sync did not complete cleanly at $(date -u '+%Y-%m-%d %H:%M UTC')." \
+            "" \
+            "Status: ${{ job.status }}." \
+            "" \
+            "Run log: $RUN_URL" \
+            "" \
+            "Impact: app.upstox_instrument is stale — stocks added to the universe since the last good run will get no intraday price (the pinger skips unmapped symbols). The script is idempotent; investigate, then re-run the workflow.")
+          EXISTING=$(gh issue list --state open --search "$TITLE in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+            echo "Appended to existing alert issue #$EXISTING"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+            echo "Opened a new alert issue"
+          fi

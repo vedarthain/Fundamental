@@ -127,24 +127,50 @@ def filter_equities(raw_rows: list[dict]) -> list[dict]:
     return out
 
 
+def dedupe(rows: list[dict]) -> list[dict]:
+    """Collapse rows so each `symbol` AND each `instrument_key` appears once.
+
+    The table has unique constraints on both columns. The dump is normally
+    clean, but a bad row (two symbols on one key, or vice-versa) would break
+    the insert — keep the first occurrence of each and drop later clashes.
+    """
+    seen_sym: set[str] = set()
+    seen_key: set[str] = set()
+    out: list[dict] = []
+    for r in rows:
+        if r["symbol"] in seen_sym or r["instrument_key"] in seen_key:
+            continue
+        seen_sym.add(r["symbol"])
+        seen_key.add(r["instrument_key"])
+        out.append(r)
+    return out
+
+
 def upsert(conn: psycopg.Connection, rows: list[dict]) -> tuple[int, int]:
-    """Returns (inserted_or_updated, deleted_stale)."""
+    """Full transactional replace. Returns (inserted, deleted_stale).
+
+    The table is ENTIRELY derived from Upstox's daily dump, so a delete-all +
+    re-insert is the correct idempotent operation. The prior upsert-then-prune
+    shape broke on symbol re-assignments: when the dump moves an
+    instrument_key to a new symbol, the incoming INSERT collides with the old
+    row's `instrument_key` unique constraint *before* the stale-prune DELETE
+    runs. A clean sweep inside one transaction sidesteps both unique
+    constraints entirely. Wrapped by the caller's `with conn` so it commits
+    atomically or rolls back whole.
+    """
+    rows = dedupe(rows)
     if not rows:
         return (0, 0)
-    written = 0
     with conn.cursor() as cur:
-        # Batch via unnest for speed.  ~2,200 rows is small but no reason
-        # to do per-row INSERTs.
+        cur.execute("SELECT count(*) FROM app.upstox_instrument")
+        before = int(cur.fetchone()[0])
+        cur.execute("DELETE FROM app.upstox_instrument")
+        # Batch via unnest for speed — one round-trip for ~2,600 rows.
         cur.execute(
             """
             INSERT INTO app.upstox_instrument (symbol, instrument_key, isin, name, updated_at)
             SELECT s, k, i, n, NOW()
               FROM unnest(%s::text[], %s::text[], %s::text[], %s::text[]) AS x(s, k, i, n)
-            ON CONFLICT (symbol) DO UPDATE
-              SET instrument_key = EXCLUDED.instrument_key,
-                  isin           = EXCLUDED.isin,
-                  name           = EXCLUDED.name,
-                  updated_at     = NOW()
             """,
             (
                 [r["symbol"]         for r in rows],
@@ -154,18 +180,9 @@ def upsert(conn: psycopg.Connection, rows: list[dict]) -> tuple[int, int]:
             ),
         )
         written = cur.rowcount or 0
-
-        # Drop rows whose symbol disappeared from Upstox's dump (delisted
-        # or otherwise gone). Stale rows would lead to "instrument not
-        # found" errors on the LTP API. Compare via ANY() rather than
-        # NOT IN to keep the plan index-friendly.
-        symbols = [r["symbol"] for r in rows]
-        cur.execute(
-            "DELETE FROM app.upstox_instrument WHERE NOT (symbol = ANY(%s))",
-            (symbols,),
-        )
-        deleted = cur.rowcount or 0
-    return (written, deleted)
+    # "Deleted stale" for the log = rows that were present before but aren't in
+    # the fresh dump (net shrink); negative deltas (net growth) report 0.
+    return (written, max(0, before - written))
 
 
 def parse_args():
