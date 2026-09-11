@@ -50,6 +50,10 @@ export type Instrument = {
   // low). Both ≥ 0. null for unmapped names or when the import date is unknown.
   fallFromTopPct: number | null;
   riseFromBottomPct: number | null;
+  // Where the fall/rise window is anchored: "buy" = earliest manual-trade
+  // trade_date (a real purchase date), "import" = MIN(imported_at) proxy for
+  // broker-snapshot lots that carry no buy date, null when neither is known.
+  drawdownAnchor: "buy" | "import" | null;
   firstImported: string | null; // MIN(imported_at) across broker lots (ISO)
   monthsHeld: number | null; // months since firstImported (import-date proxy)
   overHoldLimit: boolean; // monthsHeld ≥ 4
@@ -1088,11 +1092,28 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
   `;
   const manualSymbols = manualRows.map((r) => r.symbol).sort();
 
+  // Earliest real purchase date per symbol (from hand-entered / imported trade
+  // rows). Used to anchor the fall-from-top / rise-from-bottom window on the
+  // actual buy date wherever we have one, instead of the import-date proxy.
+  // MIN is dupe-safe: a manual entry matched by an import shares the same date.
+  const buyDateRows = await sql<{ symbol: string; d: string }[]>`
+    SELECT symbol, MIN(trade_date)::text AS d
+      FROM app.portfolio_transaction
+     WHERE user_id = ${userId} AND symbol IS NOT NULL AND side = 'buy'
+     GROUP BY symbol
+  `;
+  const firstBuyBySym: Record<string, string> = {};
+  for (const r of buyDateRows) if (r.d) firstBuyBySym[r.symbol] = r.d;
+
   const fp = portfolioFingerprint(holdings, manualSymbols);
+  // Fold the buy-date map into the cache key so adding an earlier trade for an
+  // already-tracked symbol (which need not change the holdings fingerprint)
+  // still busts the cache and re-anchors the window.
+  const buyFp = Object.entries(firstBuyBySym).sort().map(([s, d]) => `${s}:${d}`).join(",");
   const dateKey = istDateKey();
   const cached = unstable_cache(
-    () => computePortfolio(holdings, manualSymbols),
-    ["portfolio", String(userId), dateKey, fp],
+    () => computePortfolio(holdings, manualSymbols, firstBuyBySym),
+    ["portfolio", String(userId), dateKey, fp, buyFp],
     { revalidate: 900, tags: ["portfolio", "panel-cache"] },
   );
   return cached();
@@ -1104,6 +1125,7 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
 async function computePortfolio(
   holdings: HoldingRow[],
   manualSymbolList: string[],
+  firstBuyBySym: Record<string, string> = {},
 ): Promise<Portfolio> {
   const manualSymbols = new Set(manualSymbolList);
   const visibleHoldings = holdings.filter(
@@ -1246,9 +1268,13 @@ async function computePortfolio(
     const syms: string[] = [];
     const sinces: string[] = [];
     for (const a of aggs.values()) {
-      if (!a.isMapped || !a.symbol || a.firstImported == null) continue;
+      if (!a.isMapped || !a.symbol) continue;
+      // Prefer the real purchase date; fall back to the import-date proxy.
+      const buy = firstBuyBySym[a.symbol];
+      const since = buy ?? (a.firstImported == null ? null : new Date(a.firstImported).toISOString().slice(0, 10));
+      if (since == null) continue;
       syms.push(a.symbol + ".NS");
-      sinces.push(new Date(a.firstImported).toISOString().slice(0, 10));
+      sinces.push(since);
     }
     if (syms.length) {
       const rows = await golden<
@@ -1328,14 +1354,17 @@ async function computePortfolio(
       : Math.round(((Date.now() - a.firstImported) / (1000 * 60 * 60 * 24 * 30.44)) * 10) / 10;
     const overHoldLimit = monthsHeld != null && monthsHeld >= 4;
 
-    // Fall-from-top / rise-from-bottom vs the peak/trough since first tracked.
+    // Fall-from-top / rise-from-bottom vs the peak/trough since the anchor date.
     let fallFromTopPct: number | null = null;
     let riseFromBottomPct: number | null = null;
+    let drawdownAnchor: "buy" | "import" | null = null;
     if (a.isMapped && a.symbol) {
       const pk = peakBySym.get(a.symbol);
       if (pk && pk.peak > 0 && pk.trough > 0) {
         fallFromTopPct = Math.max(0, Math.round(((pk.peak - pk.last) / pk.peak) * 1000) / 10);
         riseFromBottomPct = Math.max(0, Math.round(((pk.last - pk.trough) / pk.trough) * 1000) / 10);
+        // Whichever anchor the window actually used (mirrors the since logic).
+        drawdownAnchor = firstBuyBySym[a.symbol] ? "buy" : a.firstImported != null ? "import" : null;
       }
     }
 
@@ -1356,6 +1385,7 @@ async function computePortfolio(
       targetHit,
       fallFromTopPct,
       riseFromBottomPct,
+      drawdownAnchor,
       firstImported,
       monthsHeld,
       overHoldLimit,

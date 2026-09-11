@@ -1973,8 +1973,8 @@ const COLUMNS: {
   // Two-line headers: spelled out, but stacked so the column stays narrow.
   // A single "FALL FROM TOP" line (whitespace-nowrap) blew the table past its
   // container and pushed Held/Wt off the right edge.
-  { key: "fallTop", label: (<span className="flex flex-col items-end leading-[1.1]"><span>Fall from</span><span>top</span></span>), align: "right", cls: "px-1.5", numeric: true, title: "Fall from top — % below the highest daily close since import date, i.e. when this holding was first tracked (0 at a fresh high). Not your buy date: broker exports carry no purchase date. Split-adjusted." },
-  { key: "riseBottom", label: (<span className="flex flex-col items-end leading-[1.1]"><span>Rise from</span><span>bottom</span></span>), align: "right", cls: "px-1.5", numeric: true, title: "Rise from bottom — % above the lowest daily close since import date, i.e. when this holding was first tracked (0 at a fresh low). Not your buy date: broker exports carry no purchase date. Split-adjusted." },
+  { key: "fallTop", label: (<span className="flex flex-col items-end leading-[1.1]"><span>Fall from</span><span>top</span></span>), align: "right", cls: "px-1.5", numeric: true, title: "Fall from top — % below the highest daily close since your purchase date where a trade date is known, otherwise since import date (broker snapshots carry no buy date). 0 at a fresh high. Split-adjusted." },
+  { key: "riseBottom", label: (<span className="flex flex-col items-end leading-[1.1]"><span>Rise from</span><span>bottom</span></span>), align: "right", cls: "px-1.5", numeric: true, title: "Rise from bottom — % above the lowest daily close since your purchase date where a trade date is known, otherwise since import date (broker snapshots carry no buy date). 0 at a fresh low. Split-adjusted." },
   { key: "qvm", label: "Q/V/M", align: "center", cls: "px-1.5", numeric: true },
   { key: "comp", label: "Comp", align: "center", cls: "px-1.5", numeric: true, title: "Composite percentile (Q/V/M roll-up) — higher is better" },
   { key: "rank", label: "Rank", align: "center", cls: "px-1.5", numeric: true },
@@ -2453,14 +2453,14 @@ function FragmentRow({
             <td
               className="px-1.5 py-2 text-right tabular-nums font-semibold"
               style={{ color: ins.fallFromTopPct == null ? undefined : ins.fallFromTopPct > 0 ? RED : "var(--color-muted)" }}
-              title={ins.fallFromTopPct == null ? undefined : ins.fallFromTopPct === 0 ? "At its high since import date" : `${ins.fallFromTopPct}% below its high since import date`}
+              title={ins.fallFromTopPct == null ? undefined : (() => { const anc = ins.drawdownAnchor === "buy" ? "your purchase date" : "import date"; return ins.fallFromTopPct === 0 ? `At its high since ${anc}` : `${ins.fallFromTopPct}% below its high since ${anc}`; })()}
             >
               {ins.fallFromTopPct == null ? "—" : ins.fallFromTopPct === 0 ? "0%" : `−${ins.fallFromTopPct}%`}
             </td>
             <td
               className="px-1.5 py-2 text-right tabular-nums"
               style={{ color: ins.riseFromBottomPct == null ? undefined : ins.riseFromBottomPct > 0 ? "var(--color-fg)" : "var(--color-muted)" }}
-              title={ins.riseFromBottomPct == null ? undefined : ins.riseFromBottomPct === 0 ? "At its low since import date" : `${ins.riseFromBottomPct}% above its low since import date`}
+              title={ins.riseFromBottomPct == null ? undefined : (() => { const anc = ins.drawdownAnchor === "buy" ? "your purchase date" : "import date"; return ins.riseFromBottomPct === 0 ? `At its low since ${anc}` : `${ins.riseFromBottomPct}% above its low since ${anc}`; })()}
             >
               {ins.riseFromBottomPct == null ? "—" : ins.riseFromBottomPct === 0 ? "0%" : `+${ins.riseFromBottomPct}%`}
             </td>
