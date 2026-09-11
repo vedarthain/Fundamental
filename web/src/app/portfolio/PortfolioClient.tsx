@@ -2366,6 +2366,14 @@ function HoldingsTable({
 function FragmentRow({
   ins, wt, isOpen, showDrawdown, colCount, onToggle,
 }: { ins: Instrument; wt: number; isOpen: boolean; showDrawdown: boolean; colCount: number; onToggle: () => void }) {
+  // Drawdown colouring is relative to the position's own P&L, so each row
+  // highlights the one column that carries news and mutes the other:
+  //   winner -> fall-from-top is red (gains being handed back)
+  //   loser  -> rise-from-bottom is green (recovering off the low)
+  // The remaining column renders neutral, so exactly one figure per row
+  // competes for attention. Derived from the row's own P&L rather than the
+  // All / Profit / Loss pill, so it stays correct under every filter.
+  const inProfit = (ins.pnl ?? 0) > 0;
   return (
     <>
       <tr
@@ -2452,14 +2460,14 @@ function FragmentRow({
           <>
             <td
               className="px-1.5 py-2 text-right tabular-nums font-semibold"
-              style={{ color: ins.fallFromTopPct == null ? undefined : ins.fallFromTopPct > 0 ? "var(--color-fg)" : "var(--color-muted)" }}
+              style={{ color: ins.fallFromTopPct == null ? undefined : ins.fallFromTopPct > 0 ? (inProfit ? RED : "var(--color-fg)") : "var(--color-muted)" }}
               title={ins.fallFromTopPct == null ? undefined : (() => { const anc = ins.drawdownAnchor === "buy" ? "your purchase date" : "import date"; return ins.fallFromTopPct === 0 ? `At its high since ${anc}` : `${ins.fallFromTopPct}% below its high since ${anc}`; })()}
             >
               {ins.fallFromTopPct == null ? "—" : ins.fallFromTopPct === 0 ? "0%" : `−${ins.fallFromTopPct}%`}
             </td>
             <td
               className="px-1.5 py-2 text-right tabular-nums"
-              style={{ color: ins.riseFromBottomPct == null ? undefined : ins.riseFromBottomPct > 0 ? GREEN : "var(--color-muted)" }}
+              style={{ color: ins.riseFromBottomPct == null ? undefined : ins.riseFromBottomPct > 0 ? (inProfit ? "var(--color-fg)" : GREEN) : "var(--color-muted)" }}
               title={ins.riseFromBottomPct == null ? undefined : (() => { const anc = ins.drawdownAnchor === "buy" ? "your purchase date" : "import date"; return ins.riseFromBottomPct === 0 ? `At its low since ${anc}` : `${ins.riseFromBottomPct}% above its low since ${anc}`; })()}
             >
               {ins.riseFromBottomPct == null ? "—" : ins.riseFromBottomPct === 0 ? "0%" : `+${ins.riseFromBottomPct}%`}
