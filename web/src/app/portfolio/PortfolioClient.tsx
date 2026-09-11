@@ -1961,25 +1961,25 @@ const COLUMNS: {
   key: SortKey; label: React.ReactNode; align: "left" | "center" | "right";
   cls: string; numeric: boolean; title?: string;
 }[] = [
-  { key: "symbol", label: "Instrument", align: "left", cls: "px-3", numeric: false },
-  { key: "broker", label: "Broker", align: "left", cls: "px-2", numeric: false, title: "Broker(s) the position is held at" },
-  { key: "qty", label: "Qty", align: "right", cls: "px-2", numeric: true },
-  { key: "avg", label: "Avg", align: "right", cls: "px-2", numeric: true },
-  { key: "price", label: "LTP", align: "right", cls: "px-2", numeric: true, title: "Last traded price (latest daily close)" },
-  { key: "target", label: "Target", align: "right", cls: "px-2", numeric: true, title: "Profit target: avg cost +25%" },
-  { key: "value", label: "Value", align: "right", cls: "px-2", numeric: true },
-  { key: "pnl", label: "P&L", align: "right", cls: "px-2", numeric: true, title: "Unrealised profit / loss (₹)" },
-  { key: "pnlPct", label: "Return", align: "right", cls: "px-2", numeric: true, title: "Unrealised return (%) on cost" },
+  { key: "symbol", label: "Instrument", align: "left", cls: "px-2", numeric: false },
+  { key: "broker", label: "Broker", align: "left", cls: "px-1.5", numeric: false, title: "Broker(s) the position is held at" },
+  { key: "qty", label: "Qty", align: "right", cls: "px-1.5", numeric: true },
+  { key: "avg", label: "Avg", align: "right", cls: "px-1.5", numeric: true },
+  { key: "price", label: "LTP", align: "right", cls: "px-1.5", numeric: true, title: "Last traded price (latest daily close)" },
+  { key: "target", label: "Target", align: "right", cls: "px-1.5", numeric: true, title: "Profit target: avg cost +25%" },
+  { key: "value", label: "Value", align: "right", cls: "px-1.5", numeric: true },
+  { key: "pnl", label: "P&L", align: "right", cls: "px-1.5", numeric: true, title: "Unrealised profit / loss (₹)" },
+  { key: "pnlPct", label: "Return", align: "right", cls: "px-1.5", numeric: true, title: "Unrealised return (%) on cost" },
   // Two-line headers: spelled out, but stacked so the column stays narrow.
   // A single "FALL FROM TOP" line (whitespace-nowrap) blew the table past its
   // container and pushed Held/Wt off the right edge.
-  { key: "fallTop", label: (<span className="flex flex-col items-end leading-[1.1]"><span>Fall from</span><span>top</span></span>), align: "right", cls: "px-2", numeric: true, title: "Fall from top — % below the highest daily close since this position was first tracked (0 at a fresh high). Split-adjusted." },
-  { key: "riseBottom", label: (<span className="flex flex-col items-end leading-[1.1]"><span>Rise from</span><span>bottom</span></span>), align: "right", cls: "px-2", numeric: true, title: "Rise from bottom — % above the lowest daily close since first tracked (0 at a fresh low). Split-adjusted." },
-  { key: "qvm", label: "Q/V/M", align: "center", cls: "px-2", numeric: true },
-  { key: "comp", label: "Comp", align: "center", cls: "px-2", numeric: true, title: "Composite percentile (Q/V/M roll-up) — higher is better" },
-  { key: "rank", label: "Rank", align: "center", cls: "px-2", numeric: true },
-  { key: "held", label: "Held", align: "right", cls: "px-2", numeric: true, title: "Time held (approx — measured from import date, not actual purchase date). Flags at 4 months." },
-  { key: "wt", label: "Wt", align: "right", cls: "px-3", numeric: true },
+  { key: "fallTop", label: (<span className="flex flex-col items-end leading-[1.1]"><span>Fall from</span><span>top</span></span>), align: "right", cls: "px-1.5", numeric: true, title: "Fall from top — % below the highest daily close since import date, i.e. when this holding was first tracked (0 at a fresh high). Not your buy date: broker exports carry no purchase date. Split-adjusted." },
+  { key: "riseBottom", label: (<span className="flex flex-col items-end leading-[1.1]"><span>Rise from</span><span>bottom</span></span>), align: "right", cls: "px-1.5", numeric: true, title: "Rise from bottom — % above the lowest daily close since import date, i.e. when this holding was first tracked (0 at a fresh low). Not your buy date: broker exports carry no purchase date. Split-adjusted." },
+  { key: "qvm", label: "Q/V/M", align: "center", cls: "px-1.5", numeric: true },
+  { key: "comp", label: "Comp", align: "center", cls: "px-1.5", numeric: true, title: "Composite percentile (Q/V/M roll-up) — higher is better" },
+  { key: "rank", label: "Rank", align: "center", cls: "px-1.5", numeric: true },
+  { key: "held", label: "Held", align: "right", cls: "px-1.5", numeric: true, title: "Time held (approx — measured from import date, not actual purchase date). Flags at 4 months." },
+  { key: "wt", label: "Wt", align: "right", cls: "px-2", numeric: true },
 ];
 
 // Broker cell text: the single broker's label, or "N brokers" when the position
@@ -2247,7 +2247,7 @@ function HoldingsTable({
         {/* whitespace-nowrap: keep every cell on one line (P&L, Broker, etc.
             were wrapping once Fall/Rise widened the row); overflow-x-auto above
             scrolls on narrow screens instead. */}
-        <table className="min-w-full text-[12.5px] whitespace-nowrap">
+        <table className="min-w-full text-[11px] whitespace-nowrap">
           <thead>
             <tr className="text-[10.5px] uppercase tracking-wide muted-text border-b hairline">
               {visibleColumns.map((c) => {
@@ -2372,11 +2372,11 @@ function FragmentRow({
         className="border-b hairline hover:bg-[var(--color-paper)] cursor-pointer"
         onClick={onToggle}
       >
-        <td className="px-3 py-2">
+        <td className="px-2 py-2">
           <div className="flex items-center gap-1.5">
             <span className="text-[9px] muted-text w-2">{ins.brokers.length > 1 ? (isOpen ? "▾" : "▸") : ""}</span>
             <div className="min-w-0">
-              <div className="font-medium truncate max-w-[220px]">
+              <div className="font-medium truncate max-w-[150px]">
                 {ins.symbol ? (
                   <Link href={`/stock/${ins.symbol}`} target="_blank" rel="noopener noreferrer" className="hover:underline" onClick={(e) => e.stopPropagation()}>
                     {ins.symbol}
@@ -2385,7 +2385,7 @@ function FragmentRow({
                   ins.name
                 )}
               </div>
-              <div className="text-[10.5px] muted-text truncate max-w-[220px] flex items-center gap-1">
+              <div className="text-[10.5px] muted-text truncate max-w-[150px] flex items-center gap-1">
                 {ins.derived && (
                   <span
                     className="inline-block px-1 py-[1px] rounded text-[9px] font-semibold uppercase tracking-wide shrink-0"
@@ -2400,16 +2400,16 @@ function FragmentRow({
             </div>
           </div>
         </td>
-        <td className="px-2 py-2">
+        <td className="px-1.5 py-2">
           {ins.brokers.length > 1 ? (
             <span className="muted-text">{ins.brokers.length} brokers</span>
           ) : (
             <span>{ins.brokers[0]?.brokerLabel ?? "—"}</span>
           )}
         </td>
-        <td className="px-2 py-2 text-right tabular-nums">{ins.quantity}</td>
+        <td className="px-1.5 py-2 text-right tabular-nums">{ins.quantity}</td>
         <td
-          className="px-2 py-2 text-right tabular-nums"
+          className="px-1.5 py-2 text-right tabular-nums"
           style={{
             color:
               ins.avgCost != null && ins.price != null && ins.avgCost !== ins.price
@@ -2422,13 +2422,13 @@ function FragmentRow({
           {ins.avgCost != null ? ins.avgCost.toLocaleString("en-IN") : "—"}
         </td>
         <td
-          className="px-2 py-2 text-right tabular-nums font-bold"
+          className="px-1.5 py-2 text-right tabular-nums font-bold"
           style={{ color: "var(--color-fg)" }}
         >
           {ins.price != null ? ins.price.toLocaleString("en-IN") : "—"}
         </td>
         <td
-          className="px-2 py-2 text-right tabular-nums"
+          className="px-1.5 py-2 text-right tabular-nums"
           style={{ color: ins.targetHit ? GREEN : undefined, fontWeight: ins.targetHit ? 600 : undefined }}
           title={ins.targetPrice != null ? `Profit target +25% off avg cost${ins.targetHit ? " — reached" : ""}` : undefined}
         >
@@ -2441,32 +2441,32 @@ function FragmentRow({
             "—"
           )}
         </td>
-        <td className="px-2 py-2 text-right tabular-nums font-medium">{inr(ins.currentValue)}</td>
-        <td className="px-2 py-2 text-right tabular-nums font-medium" style={{ color: up(ins.pnl) ? GREEN : RED }}>
+        <td className="px-1.5 py-2 text-right tabular-nums font-medium">{inr(ins.currentValue)}</td>
+        <td className="px-1.5 py-2 text-right tabular-nums font-medium" style={{ color: up(ins.pnl) ? GREEN : RED }}>
           {signed(ins.pnl)}
         </td>
-        <td className="px-2 py-2 text-right tabular-nums" style={{ color: ins.pnlPct == null ? undefined : up(ins.pnlPct) ? GREEN : RED }}>
+        <td className="px-1.5 py-2 text-right tabular-nums" style={{ color: ins.pnlPct == null ? undefined : up(ins.pnlPct) ? GREEN : RED }}>
           {pct(ins.pnlPct)}
         </td>
         {showDrawdown && (
           <>
             <td
-              className="px-2 py-2 text-right tabular-nums"
+              className="px-1.5 py-2 text-right tabular-nums font-semibold"
               style={{ color: ins.fallFromTopPct == null ? undefined : ins.fallFromTopPct > 0 ? RED : "var(--color-muted)" }}
-              title={ins.fallFromTopPct == null ? undefined : ins.fallFromTopPct === 0 ? "At its high since first tracked" : `${ins.fallFromTopPct}% below its high since first tracked`}
+              title={ins.fallFromTopPct == null ? undefined : ins.fallFromTopPct === 0 ? "At its high since import date" : `${ins.fallFromTopPct}% below its high since import date`}
             >
               {ins.fallFromTopPct == null ? "—" : ins.fallFromTopPct === 0 ? "0%" : `−${ins.fallFromTopPct}%`}
             </td>
             <td
-              className="px-2 py-2 text-right tabular-nums"
-              style={{ color: ins.riseFromBottomPct == null ? undefined : ins.riseFromBottomPct > 0 ? GREEN : "var(--color-muted)" }}
-              title={ins.riseFromBottomPct == null ? undefined : ins.riseFromBottomPct === 0 ? "At its low since first tracked" : `${ins.riseFromBottomPct}% above its low since first tracked`}
+              className="px-1.5 py-2 text-right tabular-nums"
+              style={{ color: ins.riseFromBottomPct == null ? undefined : ins.riseFromBottomPct > 0 ? "var(--color-fg)" : "var(--color-muted)" }}
+              title={ins.riseFromBottomPct == null ? undefined : ins.riseFromBottomPct === 0 ? "At its low since import date" : `${ins.riseFromBottomPct}% above its low since import date`}
             >
               {ins.riseFromBottomPct == null ? "—" : ins.riseFromBottomPct === 0 ? "0%" : `+${ins.riseFromBottomPct}%`}
             </td>
           </>
         )}
-        <td className="px-2 py-2 text-center tabular-nums">
+        <td className="px-1.5 py-2 text-center tabular-nums">
           {ins.isMapped ? (
             <span className="text-[11px]">
               {fmtScore(ins.q)}/{fmtScore(ins.v)}/{fmtScore(ins.m)}
@@ -2475,14 +2475,14 @@ function FragmentRow({
             <span className="muted-text">—</span>
           )}
         </td>
-        <td className="px-2 py-2 text-center tabular-nums">
+        <td className="px-1.5 py-2 text-center tabular-nums">
           {ins.isMapped && ins.composite != null ? (
             <span className="font-semibold">{fmtScore(ins.composite)}</span>
           ) : (
             <span className="muted-text">—</span>
           )}
         </td>
-        <td className="px-2 py-2 text-center tabular-nums">
+        <td className="px-1.5 py-2 text-center tabular-nums">
           {ins.isMapped && ins.peerRank != null ? (
             <span className="muted-text">{ins.peerRank}/{ins.peerCount}</span>
           ) : (
@@ -2490,7 +2490,7 @@ function FragmentRow({
           )}
         </td>
         <td
-          className="px-2 py-2 text-right tabular-nums"
+          className="px-1.5 py-2 text-right tabular-nums"
           style={{ color: ins.overHoldLimit ? RED : "var(--color-muted)" }}
           title={
             ins.monthsHeld != null
@@ -2500,7 +2500,7 @@ function FragmentRow({
         >
           {ins.monthsHeld != null ? `${ins.monthsHeld}m` : "—"}
         </td>
-        <td className="px-3 py-2 text-right tabular-nums muted-text">{wt}%</td>
+        <td className="px-2 py-2 text-right tabular-nums muted-text">{wt}%</td>
       </tr>
       {isOpen && ins.brokers.length > 1 && (
         <tr className="border-b hairline" style={{ background: "var(--color-paper)" }}>
