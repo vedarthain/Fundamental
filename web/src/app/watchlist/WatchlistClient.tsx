@@ -885,6 +885,22 @@ function ThinRow({
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
           <span className="font-medium text-[13px] tabular-nums truncate">{row.symbol}</span>
+          {/* Shares held. The detail panel already carries this via HoldChip,
+              but the left rail is what gets scanned across 100+ names, so the
+              position size belongs here too. Hidden for names you don't hold,
+              which keeps the plain watchlist unchanged. */}
+          {row.held && row.held_qty != null && (
+            <span
+              className="inline-flex items-center rounded px-1 py-px text-[9px] font-semibold tabular-nums leading-none shrink-0"
+              style={{
+                background: "color-mix(in srgb, var(--color-accent-600) 12%, transparent)",
+                color: "var(--color-accent-700)",
+              }}
+              title={`You hold ${row.held_qty.toLocaleString("en-IN")} share${row.held_qty === 1 ? "" : "s"}`}
+            >
+              {row.held_qty.toLocaleString("en-IN")} SH
+            </span>
+          )}
         </div>
         <div className="text-[10px] muted-text truncate leading-tight">{row.company_name}</div>
         {row.added_at && (
