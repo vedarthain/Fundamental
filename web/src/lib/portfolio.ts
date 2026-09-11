@@ -1345,26 +1345,28 @@ async function computePortfolio(
     const targetPrice = blendedAvg != null ? Math.round(blendedAvg * 1.25 * 100) / 100 : null;
     const targetHit = targetPrice != null && price != null && price >= targetPrice;
 
-    // Holding period ≈ months since first import. NOTE: broker exports carry no
-    // purchase date, and re-importing a broker resets imported_at — so this
-    // measures "tracked since", not true buy date. Honest proxy, flagged in UI.
+    // Holding period + drawdown window both anchor on the real purchase date
+    // (earliest trade_date) where we have one, falling back to the import-date
+    // proxy only for broker snapshots that carry no buy date. `anchor` records
+    // which was used so the UI can label it honestly.
+    const buyMs = a.symbol && firstBuyBySym[a.symbol] ? Date.parse(firstBuyBySym[a.symbol]) : NaN;
+    const anchorMs: number | null = !Number.isNaN(buyMs) ? buyMs : a.firstImported;
+    const drawdownAnchor: "buy" | "import" | null =
+      !Number.isNaN(buyMs) ? "buy" : a.firstImported != null ? "import" : null;
     const firstImported = a.firstImported == null ? null : new Date(a.firstImported).toISOString();
-    const monthsHeld = a.firstImported == null
+    const monthsHeld = anchorMs == null
       ? null
-      : Math.round(((Date.now() - a.firstImported) / (1000 * 60 * 60 * 24 * 30.44)) * 10) / 10;
+      : Math.round(((Date.now() - anchorMs) / (1000 * 60 * 60 * 24 * 30.44)) * 10) / 10;
     const overHoldLimit = monthsHeld != null && monthsHeld >= 4;
 
     // Fall-from-top / rise-from-bottom vs the peak/trough since the anchor date.
     let fallFromTopPct: number | null = null;
     let riseFromBottomPct: number | null = null;
-    let drawdownAnchor: "buy" | "import" | null = null;
     if (a.isMapped && a.symbol) {
       const pk = peakBySym.get(a.symbol);
       if (pk && pk.peak > 0 && pk.trough > 0) {
         fallFromTopPct = Math.max(0, Math.round(((pk.peak - pk.last) / pk.peak) * 1000) / 10);
         riseFromBottomPct = Math.max(0, Math.round(((pk.last - pk.trough) / pk.trough) * 1000) / 10);
-        // Whichever anchor the window actually used (mirrors the since logic).
-        drawdownAnchor = firstBuyBySym[a.symbol] ? "buy" : a.firstImported != null ? "import" : null;
       }
     }
 

@@ -1978,7 +1978,7 @@ const COLUMNS: {
   { key: "qvm", label: "Q/V/M", align: "center", cls: "px-1.5", numeric: true },
   { key: "comp", label: "Comp", align: "center", cls: "px-1.5", numeric: true, title: "Composite percentile (Q/V/M roll-up) — higher is better" },
   { key: "rank", label: "Rank", align: "center", cls: "px-1.5", numeric: true },
-  { key: "held", label: "Held", align: "right", cls: "px-1.5", numeric: true, title: "Time held (approx — measured from import date, not actual purchase date). Flags at 4 months." },
+  { key: "held", label: "Held", align: "right", cls: "px-1.5", numeric: true, title: "Time held (approx — measured from your purchase date where a trade date is known, otherwise from import date). Flags at 4 months." },
   { key: "wt", label: "Wt", align: "right", cls: "px-2", numeric: true },
 ];
 
@@ -2494,7 +2494,7 @@ function FragmentRow({
           style={{ color: ins.overHoldLimit ? RED : "var(--color-muted)" }}
           title={
             ins.monthsHeld != null
-              ? `~${ins.monthsHeld} months since first tracked (import date, not actual buy date)${ins.overHoldLimit ? " — past 4-month limit" : ""}`
+              ? `~${ins.monthsHeld} months since ${ins.drawdownAnchor === "buy" ? "your purchase date" : "import date (no buy date on record)"}${ins.overHoldLimit ? " — past 4-month limit" : ""}`
               : "No import date on record"
           }
         >
