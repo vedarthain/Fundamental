@@ -366,28 +366,53 @@ export async function loadHoldingEntryMarks(
   const positions = await loadHeldPositions(userId).catch(
     () => ({}) as Record<string, { qty: number; avgCost: number | null }>,
   );
-  // Earliest real BUY date per symbol from the trade log. MIN is dupe-safe.
-  const buyRows = await sql<{ symbol: string; d: string }[]>`
-    SELECT symbol, MIN(trade_date)::text AS d
+  // Full buy/sell log per symbol, chronological. We walk it to find the start of
+  // the CURRENT continuous holding streak — the last time the running position
+  // went from flat to positive. MIN(trade_date) is wrong for re-entries: a name
+  // bought, fully sold, then re-bought would anchor to the dead lot's date (e.g.
+  // GODFRYPHLP: buy 3 → sell 3 → net 0, then a fresh unlogged snapshot lot).
+  const txRows = await sql<{ symbol: string; side: string; qty: number; d: string }[]>`
+    SELECT symbol, side, quantity::float8 AS qty, trade_date::text AS d
       FROM app.portfolio_transaction
-     WHERE user_id = ${userId} AND symbol IS NOT NULL AND side = 'buy'
-     GROUP BY symbol
-  `.catch(() => [] as { symbol: string; d: string }[]);
-  const boughtOn = new Map<string, string>();
-  for (const r of buyRows) if (r.d) boughtOn.set(r.symbol.toUpperCase(), r.d);
+     WHERE user_id = ${userId} AND symbol IS NOT NULL
+       ${restrict ? sql`AND upper(symbol) = ANY(${restrict})` : sql``}
+     ORDER BY symbol, trade_date ASC, trade_time ASC NULLS FIRST, id ASC
+  `.catch(() => [] as { symbol: string; side: string; qty: number; d: string }[]);
+  // symbol(upper) → { streakStart, netQty }. streakStart is null when the log
+  // leaves the position flat/exited (netQty ≤ 0) — those are unlogged re-entries.
+  const streak = new Map<string, { start: string | null; net: number }>();
+  for (const t of txRows) {
+    const key = t.symbol.toUpperCase();
+    let s = streak.get(key);
+    if (!s) { s = { start: null, net: 0 }; streak.set(key, s); }
+    if (t.side === "sell") {
+      s.net -= t.qty;
+      if (s.net <= 0) { s.net = 0; s.start = null; } // streak closed
+    } else {
+      if (s.net <= 0) s.start = t.d; // 0 → positive: a new streak begins here
+      s.net += t.qty;
+    }
+  }
 
   const out: Record<string, TradeMark[]> = {};
-  const snapNeeded: string[] = [];
+  const derivedNeeded: string[] = [];  // no supporting streak → synthesise a date
+  const reentryForce: string[] = [];   // ↑ but the name DOES have a logged buy
   for (const [sym, p] of Object.entries(positions)) {
     const key = sym.toUpperCase();
     if (restrictSet && !restrictSet.has(key)) continue;
     if (p.qty <= 0 || p.avgCost == null) continue;
-    const d = boughtOn.get(key);
-    if (!d) { snapNeeded.push(key); continue; } // snapshot-only → synthesised below
-    out[key] = [{ d, side: "B", price: p.avgCost, qty: p.qty }];
+    const s = streak.get(key);
+    if (s && s.net > 0 && s.start) {
+      // Log explains the current holding: anchor on the streak start, price =
+      // the position's (already-adjusted) avg cost so it matches the header.
+      out[key] = [{ d: s.start, side: "B", price: p.avgCost, qty: p.qty }];
+    } else {
+      derivedNeeded.push(key);
+      if (s) reentryForce.push(key); // had trades but they don't cover the holding
+    }
   }
-  if (snapNeeded.length > 0) {
-    const derived = await loadSnapshotDerivedBuys(userId, snapNeeded).catch(
+  if (derivedNeeded.length > 0) {
+    const derived = await loadSnapshotDerivedBuys(userId, derivedNeeded, reentryForce).catch(
       () => ({}) as Record<string, TradeMark[]>,
     );
     for (const [key, marks] of Object.entries(derived)) {
@@ -479,12 +504,19 @@ function makeReconciler() {
 // `restrictSymbols` (bare, uppercase) scopes the holding query so callers like
 // the watchlist only pay for the names actually on screen. Returns UPPERCASE-
 // keyed markers. Shared by the portfolio graph and the watchlist card charts.
+// `forceIncludeSymbols` (bare, uppercase) opts specific names back IN even
+// though they DO have a logged buy — used for re-entered positions whose
+// current holding is NOT explained by the trade log (the logged lot was sold
+// off, so a real "B" marker would land on the dead lot's date). For those the
+// only honest anchor is this price-nearest synthesis.
 export async function loadSnapshotDerivedBuys(
   userId: number,
   restrictSymbols?: string[],
+  forceIncludeSymbols?: string[],
 ): Promise<Record<string, TradeMark[]>> {
   const restrict = restrictSymbols?.map((s) => s.toUpperCase());
   if (restrict && restrict.length === 0) return {};
+  const force = forceIncludeSymbols?.map((s) => s.toUpperCase()) ?? [];
   const snapOnly = await sql<{ symbol: string; qty: number; avg: number; imp: string }[]>`
     SELECT h.symbol,
            SUM(h.quantity)::float8                                   AS qty,
@@ -494,9 +526,12 @@ export async function loadSnapshotDerivedBuys(
      WHERE h.user_id = ${userId} AND h.broker <> 'derived'
        AND h.symbol IS NOT NULL AND h.quantity > 0 AND h.avg_cost IS NOT NULL
        ${restrict ? sql`AND upper(h.symbol) = ANY(${restrict})` : sql``}
-       AND h.symbol NOT IN (
-         SELECT DISTINCT symbol FROM app.portfolio_transaction
-          WHERE user_id = ${userId} AND symbol IS NOT NULL AND side = 'buy'
+       AND (
+         upper(h.symbol) = ANY(${force})
+         OR h.symbol NOT IN (
+           SELECT DISTINCT symbol FROM app.portfolio_transaction
+            WHERE user_id = ${userId} AND symbol IS NOT NULL AND side = 'buy'
+         )
        )
      GROUP BY h.symbol
   `.catch(() => [] as { symbol: string; qty: number; avg: number; imp: string }[]);
