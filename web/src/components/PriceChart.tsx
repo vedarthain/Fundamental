@@ -564,35 +564,7 @@ export function PriceChart({
         <CandleChart candles={visible} interactive weekly={weekly} alerts={alertLines} drawings={drawings} trades={trades} />
       </div>
 
-      {/* Legible echo of the chart's B markers below the graph, so the "when +
-          at what price did I buy" is readable without hovering the dot. Derived
-          (snapshot-inferred) buys are flagged "≈ approx" — their date is a guess. */}
-      {trades && trades.some((t) => t.side === "B") && (
-        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px]">
-          {trades
-            .filter((t) => t.side === "B")
-            .map((t, i) => (
-              <span key={`buy-${i}-${t.d}`} className="inline-flex items-center gap-1 tabular-nums">
-                <span
-                  className="inline-block h-2 w-2 rounded-full"
-                  style={{ backgroundColor: "#16a34a", opacity: t.derived ? 0.6 : 1 }}
-                  aria-hidden
-                />
-                <span className="font-semibold" style={{ color: "#16a34a" }}>
-                  {t.derived ? "≈ " : ""}Bought {t.qty}
-                </span>
-                <span className="muted-text">@</span>
-                <span className="font-medium">
-                  {prefix}{t.price.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
-                </span>
-                <span className="muted-text">
-                  · {new Date(`${t.d}T00:00:00`).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
-                  {t.derived ? " (approx)" : ""}
-                </span>
-              </span>
-            ))}
-        </div>
-      )}
+      <BuyMarkerCaption trades={trades} prefix={prefix} className="mt-2" />
 
       {/* Price-alert controls — signed-in stock pages only. */}
       {canSetAlerts && symbol && (
@@ -828,9 +800,50 @@ export function PriceChart({
                 }}
               />
             </div>
+            <BuyMarkerCaption trades={trades} prefix={prefix} className="px-2 pb-2" />
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Readable echo of the chart's B markers ("Bought N @ ₹price · date"), shared
+ *  by the inline and enlarged charts. Snapshot-inferred buys render faded and
+ *  flagged "≈ approx" — their date is a price-nearest guess, not a logged fill. */
+function BuyMarkerCaption({
+  trades,
+  prefix,
+  className,
+}: {
+  trades?: TradeMark[];
+  prefix: string;
+  className?: string;
+}) {
+  const buys = trades?.filter((t) => t.side === "B") ?? [];
+  if (buys.length === 0) return null;
+  return (
+    <div className={`flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] ${className ?? ""}`}>
+      {buys.map((t, i) => (
+        <span key={`buy-${i}-${t.d}`} className="inline-flex items-center gap-1 tabular-nums">
+          <span
+            className="inline-block h-2 w-2 rounded-full"
+            style={{ backgroundColor: "#16a34a", opacity: t.derived ? 0.6 : 1 }}
+            aria-hidden
+          />
+          <span className="font-semibold" style={{ color: "#16a34a" }}>
+            {t.derived ? "≈ " : ""}Bought {t.qty}
+          </span>
+          <span className="muted-text">@</span>
+          <span className="font-medium">
+            {prefix}{t.price.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+          </span>
+          <span className="muted-text">
+            · {new Date(`${t.d}T00:00:00`).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
+            {t.derived ? " (approx)" : ""}
+          </span>
+        </span>
+      ))}
     </div>
   );
 }
