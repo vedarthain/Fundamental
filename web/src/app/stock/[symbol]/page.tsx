@@ -292,6 +292,42 @@ async function loadStock(symbol: string) {
     const factor = r.ac != null && r.c > 0 ? r.ac / r.c : 1;
     return { d: r.d, o: r.o * factor, h: r.h * factor, l: r.l * factor, c: r.c * factor, v: r.v ?? 0 };
   });
+  // Day move: live LTP vs the previous session's close.
+  //
+  // `current_price` is the RAW price written by the intraday pinger, so the
+  // reference has to be the RAW `close` too — pairing it with `adj_close`
+  // would bake every historical dividend/split adjustment into a one-day
+  // number and show a permanent phantom gain.
+  //
+  // The reference bar is the last session STRICTLY BEFORE the session the LTP
+  // belongs to — and that session is dated by `price_fetched_at`, not by the
+  // wall clock. Anchoring on "today" is wrong: on a weekend or holiday the
+  // newest golden bar is the very session the LTP came from, so the price gets
+  // compared against itself and every stock reads 0.00%.
+  //
+  // Dating off the fetch timestamp settles the number at 15:30 for free:
+  //   - intraday   -> fetch date is today, today's bar isn't in golden yet,
+  //                   reference = yesterday's close.
+  //   - after close-> pinger writes the EOD close, golden ingests today's bar,
+  //                   but that bar is excluded by the `<` test, so the
+  //                   reference stays yesterday and the figure freezes.
+  //   - weekend    -> fetch date is Friday, reference = Thursday. Holds.
+  const ltpSessionIst = stock.price_fetched_at
+    ? new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
+      }).format(new Date(stock.price_fetched_at))
+    : null;
+  let prevClose: number | null = null;
+  if (ltpSessionIst) {
+    for (let i = priceRows.length - 1; i >= 0; i--) {
+      const r = priceRows[i];
+      if (r.d < ltpSessionIst && r.c > 0) { prevClose = r.c; break; }
+    }
+  }
+  const dayChangePct =
+    prevClose != null && stock.current_price != null
+      ? ((stock.current_price - prevClose) / prevClose) * 100
+      : null;
   // Trailing liquidity: MEDIAN daily traded value (₹) over the last ~30 sessions.
   // price × volume = actual rupee turnover — the metric that decides whether a
   // position can be entered/exited without moving the price (raw share count is
@@ -490,7 +526,7 @@ async function loadStock(symbol: string) {
   }
 
   return {
-    stock, scorecard, annual, quarterly, priceHistory, shareholding,
+    stock, scorecard, annual, quarterly, priceHistory, dayChangePct, shareholding,
     corporateActions, stockNews, announcements, scoreHistory, oiAlert, nextEvent,
     isThinlyTraded, medTurnover, liqSessions,
     peerMedianComposite: peerStats[0]?.median ?? 50,
@@ -512,7 +548,7 @@ export default async function StockPage({
     getSession(),
   ]);
   if (!data) return notFound();
-  const { stock, scorecard, annual, quarterly, priceHistory, shareholding, corporateActions, stockNews, announcements, scoreHistory, oiAlert, nextEvent, rankInIndustry, industryPeerCount, isThinlyTraded, medTurnover, liqSessions } = data;
+  const { stock, scorecard, annual, quarterly, priceHistory, dayChangePct, shareholding, corporateActions, stockNews, announcements, scoreHistory, oiAlert, nextEvent, rankInIndustry, industryPeerCount, isThinlyTraded, medTurnover, liqSessions } = data;
 
   // Signed-in users can set price alerts on the chart; load their live lines.
   const priceAlerts: PriceAlert[] = session
@@ -670,6 +706,15 @@ export default async function StockPage({
               <>
                 <span>·</span>
                 <span className="tabular-nums">₹{stock.current_price.toLocaleString("en-IN")}</span>
+                {dayChangePct != null && (
+                  <span
+                    className="tabular-nums font-semibold"
+                    style={{ color: dayChangePct >= 0 ? "var(--color-delta-up, #15803D)" : "var(--color-delta-down, #DC2626)" }}
+                    title="Move vs the previous session's close. Updates through the session and settles at the 15:30 IST close."
+                  >
+                    {dayChangePct >= 0 ? "+" : "−"}{Math.abs(dayChangePct).toFixed(2)}%
+                  </span>
+                )}
                 {stock.price_fetched_at && (
                   <span
                     className="inline-flex items-center rounded px-1.5 py-[1px] text-[10px] font-medium tabular-nums"
