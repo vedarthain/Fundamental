@@ -345,6 +345,58 @@ export async function loadHeldPositions(
   return out;
 }
 
+/** Split-safe ENTRY markers for a price chart: ONE "B" per held name, sourced
+ *  from holdings (outstanding qty + already-adjusted avg cost) anchored to the
+ *  earliest real buy date — the same construction the watchlist uses. This is
+ *  deliberately NOT the raw trade log: a broker CSV records a split/bonus as a
+ *  sell-old + buy-new pair (e.g. GODFRYPHLP's 1:3 on 2025-09-16), which would
+ *  paint a phantom "Sell" on a position that was never exited and prices ~Nx off
+ *  the split-adjusted candles. A held name with no logged buy (broker-snapshot
+ *  only) gets a synthetic `derived` entry via loadSnapshotDerivedBuys.
+ *  `restrictSymbols` (bare, uppercase) scopes the golden reconciliation so a
+ *  single-stock page doesn't reconcile the whole portfolio. */
+export async function loadHoldingEntryMarks(
+  userId: number,
+  restrictSymbols?: string[],
+): Promise<Record<string, TradeMark[]>> {
+  const restrict = restrictSymbols?.map((s) => s.toUpperCase());
+  if (restrict && restrict.length === 0) return {};
+  const restrictSet = restrict ? new Set(restrict) : null;
+
+  const positions = await loadHeldPositions(userId).catch(
+    () => ({}) as Record<string, { qty: number; avgCost: number | null }>,
+  );
+  // Earliest real BUY date per symbol from the trade log. MIN is dupe-safe.
+  const buyRows = await sql<{ symbol: string; d: string }[]>`
+    SELECT symbol, MIN(trade_date)::text AS d
+      FROM app.portfolio_transaction
+     WHERE user_id = ${userId} AND symbol IS NOT NULL AND side = 'buy'
+     GROUP BY symbol
+  `.catch(() => [] as { symbol: string; d: string }[]);
+  const boughtOn = new Map<string, string>();
+  for (const r of buyRows) if (r.d) boughtOn.set(r.symbol.toUpperCase(), r.d);
+
+  const out: Record<string, TradeMark[]> = {};
+  const snapNeeded: string[] = [];
+  for (const [sym, p] of Object.entries(positions)) {
+    const key = sym.toUpperCase();
+    if (restrictSet && !restrictSet.has(key)) continue;
+    if (p.qty <= 0 || p.avgCost == null) continue;
+    const d = boughtOn.get(key);
+    if (!d) { snapNeeded.push(key); continue; } // snapshot-only → synthesised below
+    out[key] = [{ d, side: "B", price: p.avgCost, qty: p.qty }];
+  }
+  if (snapNeeded.length > 0) {
+    const derived = await loadSnapshotDerivedBuys(userId, snapNeeded).catch(
+      () => ({}) as Record<string, TradeMark[]>,
+    );
+    for (const [key, marks] of Object.entries(derived)) {
+      if (!out[key]) out[key] = marks;
+    }
+  }
+  return out;
+}
+
 /** One executed-trade marker for the chart tabs: buy/sell aggregated per
  *  (symbol, date, side), qty summed and price qty-weighted. `derived` flags a
  *  SYNTHETIC buy inferred from a broker snapshot that has no trade log — its

@@ -28,6 +28,7 @@ import { loadPersistenceForSymbol } from "@/lib/persistence";
 import { getOIAlertForSymbol, type OIAlert } from "@/lib/oi-alerts";
 import { getSession } from "@/lib/auth";
 import { loadPriceAlertsForSymbol, type PriceAlert } from "@/lib/price-alerts";
+import { loadHoldingEntryMarks, type TradeMark } from "@/lib/portfolio";
 import { AlertTriangle } from "lucide-react";
 
 // Stock fundamentals + scores change weekly at most. 6h cache cuts Neon wakes
@@ -518,6 +519,15 @@ export default async function StockPage({
     ? await loadPriceAlertsForSymbol(session.userId, stock.symbol).catch(() => [])
     : [];
 
+  // Split-safe "when did I buy this?" marker for the price chart — same holdings-
+  // sourced single-B construction as the watchlist (never raw trades, so a post-
+  // buy split can't paint a phantom sell). Scoped to this one symbol.
+  const entryMarks: TradeMark[] = session
+    ? (await loadHoldingEntryMarks(session.userId, [stock.symbol]).catch(
+        () => ({}) as Record<string, TradeMark[]>,
+      ))[stock.symbol.toUpperCase()] ?? []
+    : [];
+
   // Some app.universe.company_name rows are polluted with the ".NS" Yahoo
   // suffix (e.g. "INFY.NS"). Strip it once here so every downstream render —
   // header, About card, BusinessVisual, TrendCommentary, page metadata — shows
@@ -908,7 +918,7 @@ export default async function StockPage({
                   <AboutCard stock={stock} priceHistoryStart={priceHistory[0]?.d ?? null} />
                 )}
               </div>
-              <PriceChartCard symbol={stock.symbol} history={priceHistory} currentPrice={stock.current_price} priceAlerts={priceAlerts} canSetAlerts={session != null} />
+              <PriceChartCard symbol={stock.symbol} history={priceHistory} currentPrice={stock.current_price} priceAlerts={priceAlerts} canSetAlerts={session != null} trades={entryMarks} />
             </div>
             {stockNews.length > 0 && (
               <div className="mt-6">
@@ -1416,20 +1426,21 @@ function StockNewsCard({
 /* ----------------------------- Price chart card -------------------- */
 
 function PriceChartCard({
-  symbol, history, currentPrice, priceAlerts, canSetAlerts,
+  symbol, history, currentPrice, priceAlerts, canSetAlerts, trades,
 }: {
   symbol: string;
   history: Candle[];
   currentPrice?: number | null;
   priceAlerts?: { id: number; price: number; direction: "above" | "below"; status: "armed" | "triggered" }[];
   canSetAlerts?: boolean;
+  trades?: TradeMark[];
 }) {
   // Header (identity line + headline return + CAGR) is rendered inside
   // PriceChart so it can react to the selected timeframe rather than being
   // pinned to the full history.
   return (
     <section className="card p-5">
-      <PriceChart symbol={symbol} candles={history} currentPrice={currentPrice ?? undefined} priceAlerts={priceAlerts} canSetAlerts={canSetAlerts} />
+      <PriceChart symbol={symbol} candles={history} currentPrice={currentPrice ?? undefined} priceAlerts={priceAlerts} canSetAlerts={canSetAlerts} trades={trades} />
     </section>
   );
 }
