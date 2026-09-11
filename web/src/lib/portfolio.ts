@@ -294,6 +294,106 @@ export async function loadPortfolioSymbols(userId: number): Promise<string[]> {
   return rows.map((r) => r.symbol);
 }
 
+/** Trailing portfolio return over 1D / 1W / 1M, as percentages. */
+export type PortfolioReturns = {
+  ret1d: number | null;
+  ret1w: number | null;
+  ret1m: number | null;
+  /** snap_date of the newest snapshot the figures are measured to. */
+  asOf: string | null;
+};
+
+/**
+ * Time-weighted trailing return of the whole portfolio.
+ *
+ * The naive formula — value_now / value_then − 1 — is WRONG here and quietly
+ * so. Money moves in and out of this portfolio: deploy fresh capital and the
+ * naive number books your own deposit as a gain. Measured on real data this
+ * isn't a rounding concern, it flips signs: over one month the naive figure
+ * read −0.33% while the true return was +2.01%, because ~₹62K of new capital
+ * landed mid-window.
+ *
+ * So we chain daily returns instead, netting the day's external cashflow out
+ * of the closing value before comparing it to the previous close:
+ *
+ *     r_t  = (V_t − F_t) / V_{t−1} − 1
+ *     TWR  = Π (1 + r_t) − 1
+ *
+ * Cashflows come from actual trades (quantity × price), NOT from deltas in
+ * total_cost. Cost-basis deltas are exact for buys but understate sells by the
+ * realized gain, which would bias every window containing an exit.
+ *
+ * Two reads, both tiny and indexed by user_id.
+ */
+export async function loadPortfolioReturns(userId: number): Promise<PortfolioReturns> {
+  const [snaps, flows] = await Promise.all([
+    sql<{ d: string; v: string }[]>`
+      SELECT snap_date::text AS d, total_value::text AS v
+        FROM app.portfolio_snapshot
+       WHERE user_id = ${userId} AND total_value IS NOT NULL
+       ORDER BY snap_date ASC
+    `.catch(() => [] as { d: string; v: string }[]),
+    sql<{ d: string; f: string }[]>`
+      SELECT trade_date::text AS d,
+             SUM(CASE WHEN side = 'buy' THEN quantity * price
+                      ELSE -(quantity * price) END)::text AS f
+        FROM app.portfolio_transaction
+       WHERE user_id = ${userId}
+         AND quantity IS NOT NULL AND price IS NOT NULL
+       GROUP BY trade_date
+    `.catch(() => [] as { d: string; f: string }[]),
+  ]);
+
+  const series = snaps
+    .map((r) => ({ d: r.d, v: Number(r.v) }))
+    .filter((r) => Number.isFinite(r.v));
+  const empty: PortfolioReturns = { ret1d: null, ret1w: null, ret1m: null, asOf: null };
+  if (series.length < 2) return empty;
+
+  const flowByDate = new Map<string, number>();
+  for (const r of flows) {
+    const f = Number(r.f);
+    if (Number.isFinite(f)) flowByDate.set(r.d, f);
+  }
+
+  const last = series[series.length - 1];
+
+  /** Chain from the last snapshot on/before `last − days` up to the newest. */
+  const twr = (days: number): number | null => {
+    const cutoff = new Date(`${last.d}T00:00:00Z`);
+    cutoff.setUTCDate(cutoff.getUTCDate() - days);
+    const cutoffKey = cutoff.toISOString().slice(0, 10);
+
+    // Walk back to the last snapshot at or before the cutoff. Using the
+    // snapshot ON the boundary (rather than the first one after) means a
+    // missing day widens the window slightly instead of silently dropping
+    // the return that happened across the gap.
+    let startIdx = -1;
+    for (let i = series.length - 1; i >= 0; i--) {
+      if (series[i].d <= cutoffKey) { startIdx = i; break; }
+    }
+    if (startIdx < 0 || startIdx === series.length - 1) return null;
+
+    let factor = 1;
+    for (let i = startIdx + 1; i < series.length; i++) {
+      const prev = series[i - 1];
+      const cur = series[i];
+      if (!(prev.v > 0)) return null;
+      // External money that entered/left strictly after the previous snapshot
+      // up to and including this one.
+      let flow = 0;
+      for (const [d, f] of flowByDate) {
+        if (d > prev.d && d <= cur.d) flow += f;
+      }
+      factor *= (cur.v - flow) / prev.v;
+    }
+    if (!Number.isFinite(factor) || factor <= 0) return null;
+    return Math.round((factor - 1) * 1000) / 10;
+  };
+
+  return { ret1d: twr(1), ret1w: twr(7), ret1m: twr(30), asOf: last.d };
+}
+
 /**
  * Held quantity per symbol for the Graph tab's "P · N sh" badge. Uses the SAME
  * reconciliation rule as loadPortfolioSymbols: a symbol with hand-entered trades

@@ -5,7 +5,7 @@
  */
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
-import { loadPortfolioSymbols } from "@/lib/portfolio";
+import { loadPortfolioSymbols, loadPortfolioReturns } from "@/lib/portfolio";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,8 +13,13 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const session = await getSession();
   if (!session) {
-    return NextResponse.json({ signedIn: false, symbols: [] }, { status: 200 });
+    return NextResponse.json({ signedIn: false, symbols: [], returns: null }, { status: 200 });
   }
-  const symbols = await loadPortfolioSymbols(session.userId);
-  return NextResponse.json({ signedIn: true, symbols });
+  // Trailing returns ride along on the membership call the Scorecard tab
+  // already makes, so the performance strip costs no extra client round trip.
+  const [symbols, returns] = await Promise.all([
+    loadPortfolioSymbols(session.userId),
+    loadPortfolioReturns(session.userId).catch(() => null),
+  ]);
+  return NextResponse.json({ signedIn: true, symbols, returns });
 }
