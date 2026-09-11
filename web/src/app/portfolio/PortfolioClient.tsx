@@ -2442,7 +2442,7 @@ function FragmentRow({
           )}
         </td>
         <td className="px-1.5 py-2 text-right tabular-nums font-medium">{inr(ins.currentValue)}</td>
-        <td className="px-1.5 py-2 text-right tabular-nums font-medium" style={{ color: up(ins.pnl) ? GREEN : RED }}>
+        <td className="px-1.5 py-2 text-right tabular-nums font-medium" style={{ color: "var(--color-fg)" }}>
           {signed(ins.pnl)}
         </td>
         <td className="px-1.5 py-2 text-right tabular-nums" style={{ color: ins.pnlPct == null ? undefined : up(ins.pnlPct) ? GREEN : RED }}>
@@ -2452,14 +2452,14 @@ function FragmentRow({
           <>
             <td
               className="px-1.5 py-2 text-right tabular-nums font-semibold"
-              style={{ color: ins.fallFromTopPct == null ? undefined : ins.fallFromTopPct > 0 ? RED : "var(--color-muted)" }}
+              style={{ color: ins.fallFromTopPct == null ? undefined : ins.fallFromTopPct > 0 ? "var(--color-fg)" : "var(--color-muted)" }}
               title={ins.fallFromTopPct == null ? undefined : (() => { const anc = ins.drawdownAnchor === "buy" ? "your purchase date" : "import date"; return ins.fallFromTopPct === 0 ? `At its high since ${anc}` : `${ins.fallFromTopPct}% below its high since ${anc}`; })()}
             >
               {ins.fallFromTopPct == null ? "—" : ins.fallFromTopPct === 0 ? "0%" : `−${ins.fallFromTopPct}%`}
             </td>
             <td
               className="px-1.5 py-2 text-right tabular-nums"
-              style={{ color: ins.riseFromBottomPct == null ? undefined : ins.riseFromBottomPct > 0 ? "var(--color-fg)" : "var(--color-muted)" }}
+              style={{ color: ins.riseFromBottomPct == null ? undefined : ins.riseFromBottomPct > 0 ? GREEN : "var(--color-muted)" }}
               title={ins.riseFromBottomPct == null ? undefined : (() => { const anc = ins.drawdownAnchor === "buy" ? "your purchase date" : "import date"; return ins.riseFromBottomPct === 0 ? `At its low since ${anc}` : `${ins.riseFromBottomPct}% above its low since ${anc}`; })()}
             >
               {ins.riseFromBottomPct == null ? "—" : ins.riseFromBottomPct === 0 ? "0%" : `+${ins.riseFromBottomPct}%`}
