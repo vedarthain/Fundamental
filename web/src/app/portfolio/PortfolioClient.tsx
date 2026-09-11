@@ -22,6 +22,7 @@ import {
 import type { Portfolio, Instrument, RealizedPnl, RealizedLot, RealizedTerm, PerformanceStats, RealizedTimeline, TradeLog, TradeRow } from "@/lib/portfolio";
 import { TradeSheet } from "@/components/ManualTradeSheet";
 import { PortfolioScorecard } from "./PortfolioScorecard";
+import { PortfolioReturnsTable } from "./PortfolioReturnsTable";
 import { refreshWatchlist } from "@/lib/watchlist";
 
 const BROKERS = [
@@ -77,7 +78,7 @@ type ImportResult = {
   error?: string;
 };
 
-type PortfolioTab = "holdings" | "performance" | "transactions" | "booked" | "scorecard";
+type PortfolioTab = "holdings" | "performance" | "transactions" | "booked" | "scorecard" | "returns";
 
 export function PortfolioClient({
   portfolio,
@@ -157,8 +158,9 @@ export function PortfolioClient({
           { v: "transactions", label: "Transactions" },
           { v: "booked", label: "P&L" },
           { v: "scorecard", label: "Scorecard" },
+          { v: "returns", label: "Returns" },
         ] as const)
-          .filter((o) => owner || (o.v !== "performance" && o.v !== "scorecard"))
+          .filter((o) => owner || (o.v !== "performance" && o.v !== "scorecard" && o.v !== "returns"))
           .map((o) => (
           <button
             key={o.v}
@@ -247,6 +249,8 @@ export function PortfolioClient({
         </>
       ) : tab === "scorecard" && owner ? (
         <PortfolioScorecard />
+      ) : tab === "returns" && owner ? (
+        <PortfolioReturnsTable />
       ) : null}
 
       {/* Quick-add trade sheet: opened by the Transactions-tab button here, or
