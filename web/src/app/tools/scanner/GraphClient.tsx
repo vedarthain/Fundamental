@@ -1070,9 +1070,14 @@ export default function GraphClient({
   return (
     <div className="flex flex-col">
       <header className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-2">
-          <div className="min-w-[200px] flex-1">
+          {/* basis-[340px] is what makes the flex-wrap actually fire: the button
+              group is shrink-0, so without a real basis the title block just
+              collapsed to its 200px min and the subtitle truncated away the
+              "showing 65-68 : 17/24" counters. Now the buttons drop to their own
+              row first, and the subtitle wraps rather than hiding text. */}
+          <div className="min-w-[260px] flex-1 basis-[340px]">
             <h1 className="font-display text-[20px] tracking-tight leading-tight truncate">Charts by industry</h1>
-            <p className="text-[12px] muted-text truncate">
+            <p className="text-[12px] muted-text">
               {curPage ? (
                 <>
                   <span className="ink-text font-medium">{activeSectorName}</span> ·{" "}
