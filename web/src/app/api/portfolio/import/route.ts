@@ -30,7 +30,10 @@ import {
   PortfolioImportError,
   type UniverseMap,
 } from "@/lib/portfolioImport";
-import { recomputeDerivedHoldings } from "@/lib/derivedHoldings";
+import {
+  recomputeDerivedHoldings,
+  clearDerivedHoldingsExitedPerSnapshots,
+} from "@/lib/derivedHoldings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -137,6 +140,7 @@ export async function POST(req: NextRequest) {
   // snapshot rows and deletes the derived row. Same tx → never double-counts.
   const coveredSymbols = [...new Set(rows.filter((r) => r.symbol).map((r) => r.symbol!))];
 
+  let exited: string[] = [];
   await sql.begin(async (tx) => {
     await tx`
       DELETE FROM app.portfolio_holding
@@ -154,6 +158,11 @@ export async function POST(req: NextRequest) {
       `;
     }
     await recomputeDerivedHoldings(tx, session.userId, coveredSymbols);
+    // coveredSymbols can only name instruments PRESENT in the file, so a name
+    // you fully exited is never recomputed and its derived row would survive
+    // forever. Absence from a holdings export is positive proof of a zero
+    // position — sweep those out. See clearDerivedHoldingsExitedPerSnapshots.
+    exited = await clearDerivedHoldingsExitedPerSnapshots(tx, session.userId);
   });
 
   const mapped = rows.filter((r) => r.is_mapped).length;
@@ -169,6 +178,8 @@ export async function POST(req: NextRequest) {
     mapped,
     unmapped: unmapped.length,
     unmappedSymbols: unmapped,
+    exited: exited.length,
+    exitedSymbols: exited,
   });
 }
 

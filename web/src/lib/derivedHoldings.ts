@@ -141,6 +141,81 @@ export async function recomputeDerivedHolding(
   `;
 }
 
+/**
+ * Drop derived holdings that every relevant broker snapshot says you no longer
+ * own.
+ *
+ * recomputeDerivedHolding only ever runs for symbols someone hands it, and a
+ * holdings import can only hand it the symbols *present in the file*. That
+ * leaves a blind spot: a name you fully exited disappears from the export, so
+ * it is never recomputed, and its derived row survives forever. Absence from a
+ * broker's holdings snapshot is not "no information" — a holdings export is a
+ * COMPLETE list of what you own there, so a missing name is positive proof of a
+ * zero position.
+ *
+ * Recomputing wouldn't rescue it either: derivation walks the tradebook, and
+ * tradebooks can be incomplete. A real case — BAJAJ-AUTO netted to 3 shares
+ * across every logged trade while the broker's own snapshot had shown 4, so
+ * three shares left in a transaction that never appeared in any export. Derived
+ * from trades it reads 3 forever; the snapshot says you hold none. The snapshot
+ * wins.
+ *
+ * A derived row is only removed when ALL of these hold, which is deliberately
+ * conservative — silently deleting a real position is far worse than keeping a
+ * stale one:
+ *
+ *   1. the symbol has imported (non-manual) trades, so we can tell which
+ *      brokers ever traded it;
+ *   2. EVERY such broker has a holdings snapshot on file — a broker that has
+ *      never uploaded holdings has not testified, and its silence must not be
+ *      read as an exit;
+ *   3. none of those snapshots lists the symbol;
+ *   4. the symbol has no hand-entered trades. A manual entry is a deliberate
+ *      correction that intentionally layers over the snapshot (see the header
+ *      note), so it outranks this sweep.
+ */
+export async function clearDerivedHoldingsExitedPerSnapshots(
+  db: Db,
+  userId: number,
+): Promise<string[]> {
+  const gone = await db<{ symbol: string }[]>`
+    DELETE FROM app.portfolio_holding d
+     WHERE d.user_id = ${userId}
+       AND d.broker = 'derived'
+       -- (1) we know which brokers traded it
+       AND EXISTS (
+         SELECT 1 FROM app.portfolio_transaction t
+          WHERE t.user_id = ${userId} AND t.symbol = d.symbol
+            AND t.source_file <> 'manual-entry'
+       )
+       -- (4) hand-entered corrections outrank this sweep
+       AND NOT EXISTS (
+         SELECT 1 FROM app.portfolio_transaction t
+          WHERE t.user_id = ${userId} AND t.symbol = d.symbol
+            AND t.source_file = 'manual-entry'
+       )
+       -- (2) no broker that traded it is still silent on holdings
+       AND NOT EXISTS (
+         SELECT 1 FROM app.portfolio_transaction t
+          WHERE t.user_id = ${userId} AND t.symbol = d.symbol
+            AND t.source_file <> 'manual-entry'
+            AND NOT EXISTS (
+              SELECT 1 FROM app.portfolio_holding h
+               WHERE h.user_id = ${userId} AND h.broker <> 'derived'
+                 AND h.broker = t.broker
+            )
+       )
+       -- (3) and none of those snapshots lists it
+       AND NOT EXISTS (
+         SELECT 1 FROM app.portfolio_holding h
+          WHERE h.user_id = ${userId} AND h.broker <> 'derived'
+            AND h.symbol = d.symbol
+       )
+     RETURNING d.symbol
+  `;
+  return gone.map((r) => r.symbol);
+}
+
 /** Recompute derived holdings for many symbols (e.g. after a bulk import). */
 export async function recomputeDerivedHoldings(
   db: Db,
