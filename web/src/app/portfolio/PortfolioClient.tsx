@@ -75,6 +75,9 @@ type ImportResult = {
   mappedSymbols?: number;
   outsideCoverage?: string[];
   dateRange?: { from: string; to: string } | null;
+  exited?: number;
+  exitedSymbols?: string[];
+  empty?: boolean; // valid export, zero trades in the window (not an error)
   error?: string;
 };
 
@@ -1766,6 +1769,14 @@ function ImportPanel({
         >
           {result.error ? (
             <span style={{ color: RED }}>{result.error}</span>
+          ) : result.empty ? (
+            // Valid file, zero trades — you didn't trade in that window. Say
+            // that plainly instead of "0 new trades across 0 stocks", which
+            // reads like a failure.
+            <span>
+              <strong>{result.brokerLabel}</strong>: no trades in that file — the
+              export covers a period you didn&apos;t trade in. Nothing to import.
+            </span>
           ) : result.kind === "trades" ? (
             <span>
               <strong>{result.brokerLabel}</strong>: {result.imported} new trade

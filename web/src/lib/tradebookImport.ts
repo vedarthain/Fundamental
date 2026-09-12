@@ -108,7 +108,7 @@ async function xlsxMatrix(buf: ArrayBuffer, sheet?: string): Promise<string[][]>
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(buf);
   const ws = (sheet && wb.getWorksheet(sheet)) || wb.worksheets[0];
-  if (!ws) return [];
+  if (!ws) return []; // no sheets at all → no header will match → format error
   const out: string[][] = [];
   ws.eachRow({ includeEmpty: true }, (row) => {
     const cells: string[] = [];
@@ -139,9 +139,34 @@ async function toMatrix(filename: string, buf: ArrayBuffer, sheet?: string): Pro
 
 // ─────────────────────────── header → objects ──────────────────────────────
 
-function headerIndex(rows: string[][], pred: (r: string[]) => boolean): number {
+/**
+ * Thrown when a file has NO recognisable header row for the chosen broker —
+ * i.e. it really isn't that broker's tradebook (or the vendor renamed the
+ * columns on us, which is what the Fyers "Symbol name" break was).
+ *
+ * This exists to keep that case DISTINCT from "header found, zero data rows".
+ * Both used to surface as an empty array, so a legitimately empty export — a
+ * date window in which you simply didn't trade — was reported to the user as
+ * "this doesn't look like a Groww tradebook. Check you picked the right
+ * broker." Blaming the user's broker selection for an empty window is the same
+ * misdiagnosis the Fyers header rename caused; a parse that found the header
+ * and read zero trades SUCCEEDED, and must be allowed to say so.
+ */
+export class TradebookFormatError extends Error {
+  constructor(broker: string) {
+    super(`no ${broker} tradebook header row found`);
+    this.name = "TradebookFormatError";
+  }
+}
+
+/** Index of the first row matching `pred`. Throws if none does. */
+function headerIndex(
+  rows: string[][],
+  broker: string,
+  pred: (r: string[]) => boolean,
+): number {
   for (let i = 0; i < rows.length; i++) if (pred(rows[i])) return i;
-  return -1;
+  throw new TradebookFormatError(broker);
 }
 
 /** Rows below the matched header, each as an object keyed by header cell. */
@@ -169,11 +194,10 @@ function parseZerodha(rows: string[][]): ParsedTrade[] {
   // (symbol, trade_type, …); the XLSX export uses Title Case with spaces
   // (Symbol, Trade Type, …). Normalise every header cell to snake_case so both
   // map to the same keys — otherwise the XLSX yields "no trades found".
-  const h = headerIndex(rows, (r) => {
+  const h = headerIndex(rows, "zerodha", (r) => {
     const s = r.map(snake);
     return s.includes("symbol") && s.includes("trade_type");
   });
-  if (h < 0) return [];
   const hdr = rows[h].map(snake);
   const out: ParsedTrade[] = [];
   for (let i = h + 1; i < rows.length; i++) {
@@ -197,13 +221,19 @@ function parseFyers(rows: string[][]): ParsedTrade[] {
   // Fyers renamed the first column between exports: files downloaded up to
   // Aug 2026 lead with "Name", ones from Sep 2026 lead with "Symbol name" and
   // insert a duplicate "Symbol code" column after it. Matching only "Name"
-  // meant the header was never found, headerIndex returned -1, and the parser
-  // returned [] — which the upload route surfaces as "this doesn't look like a
-  // fyers tradebook", blaming the user's broker choice for a format change.
+  // meant the header was never found, so the upload route surfaced "this
+  // doesn't look like a fyers tradebook" — blaming the user's broker choice
+  // for a vendor format change.
   // Accept both spellings. Column order doesn't matter: asObjects keys rows by
   // header cell, so the extra "Symbol code" column shifts nothing.
-  const h = headerIndex(rows, (r) => r[0] === "Name" || r[0] === "Symbol name");
-  if (h < 0) return [];
+  // Testing r[0] alone is not enough: "Name" is also the first cell of other
+  // brokers' preambles (Groww's order history opens with `Name,<your name>`),
+  // so a Groww file uploaded as Fyers matched row 0 and emitted junk trades
+  // instead of erroring. Require a real data column alongside it.
+  const h = headerIndex(rows, "fyers", (r) => {
+    if (r[0] !== "Name" && r[0] !== "Symbol name") return false;
+    return r.some((c) => c.trim() === "Qty");
+  });
   const out: ParsedTrade[] = [];
   for (const d of asObjects(rows, h)) {
     const name = (d.Name ?? d["Symbol name"] ?? "").trim();
@@ -245,8 +275,7 @@ function parseFyers(rows: string[][]): ParsedTrade[] {
 }
 
 function parseGroww(rows: string[][]): ParsedTrade[] {
-  const h = headerIndex(rows, (r) => (r[0] ?? "").trim() === "Stock name");
-  if (h < 0) return [];
+  const h = headerIndex(rows, "groww", (r) => (r[0] ?? "").trim() === "Stock name");
   const out: ParsedTrade[] = [];
   for (const d of asObjects(rows, h)) {
     if (!d.Symbol) continue;
@@ -266,8 +295,7 @@ function parseGroww(rows: string[][]): ParsedTrade[] {
 }
 
 function parseUpstox(rows: string[][]): ParsedTrade[] {
-  const h = headerIndex(rows, (r) => (r[0] ?? "").trim() === "Date");
-  if (h < 0) return [];
+  const h = headerIndex(rows, "upstox", (r) => (r[0] ?? "").trim() === "Date");
   return asObjects(rows, h)
     .filter((d) => d.Company)
     .map((d) => ({
@@ -281,8 +309,7 @@ function parseUpstox(rows: string[][]): ParsedTrade[] {
 }
 
 function parseFivepaisa(rows: string[][]): ParsedTrade[] {
-  const h = headerIndex(rows, (r) => (r[0] ?? "").trim() === "Transaction Date");
-  if (h < 0) return [];
+  const h = headerIndex(rows, "fivepaisa", (r) => (r[0] ?? "").trim() === "Transaction Date");
   return asObjects(rows, h)
     .filter((d) => d["Company Name"])
     .map((d) => ({

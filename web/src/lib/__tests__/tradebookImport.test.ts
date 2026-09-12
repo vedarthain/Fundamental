@@ -6,6 +6,7 @@ import {
   toIso,
   buildTradeUniverse,
   resolveTradeSymbol,
+  TradebookFormatError,
   type ParsedTrade,
 } from "@/lib/tradebookImport";
 
@@ -124,6 +125,38 @@ describe("parseTradebook: fyers", () => {
     const steel = t.filter((r) => r.rawName === "STEELCAST LIMITED");
     expect(new Set(steel.map((r) => r.quantity))).toEqual(new Set([30, 15]));
     expect(steel[0].tradeDate).toBe("2026-08-05");
+  });
+});
+
+// ───────────────── empty window vs. wrong file (must NOT be the same) ───────
+describe("empty export vs. wrong broker", () => {
+  const EMPTY = "groww-order-history-empty.csv";
+
+  it("an export with a valid header and zero rows parses to [] — not an error", async () => {
+    // Regression: a Groww order-history download for a window in which the user
+    // simply didn't trade has a correct header and no data rows. The parser
+    // returned [] and the upload route turned that into a 400 reading "this
+    // doesn't look like a groww tradebook export. Check you picked the right
+    // broker." — pinning a true fact about the user's trading on their broker
+    // selection. An empty window is a SUCCESSFUL import of nothing.
+    const t = await parseTradebook("groww", EMPTY, bytes(EMPTY));
+    expect(t).toEqual([]);
+  });
+
+  it("a genuinely wrong file still throws TradebookFormatError", async () => {
+    // The distinction only pays off if the real failure still fails: same file,
+    // wrong broker → no matching header row → hard error, not a silent success.
+    await expect(parseTradebook("zerodha", EMPTY, bytes(EMPTY))).rejects.toBeInstanceOf(
+      TradebookFormatError,
+    );
+    await expect(parseTradebook("fyers", EMPTY, bytes(EMPTY))).rejects.toBeInstanceOf(
+      TradebookFormatError,
+    );
+  });
+
+  it("a populated export is unaffected by the throw-on-missing-header change", async () => {
+    const t = await parseTradebook("zerodha", "zerodha-tradebook.csv", bytes("zerodha-tradebook.csv"));
+    expect(t.length).toBe(2);
   });
 });
 

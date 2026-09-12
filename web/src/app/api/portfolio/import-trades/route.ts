@@ -30,9 +30,13 @@ import {
   buildTradeUniverse,
   resolveTradeSymbol,
   tradeDedupKey,
+  TradebookFormatError,
   type TradeUniverse,
 } from "@/lib/tradebookImport";
-import { recomputeDerivedHoldings } from "@/lib/derivedHoldings";
+import {
+  recomputeDerivedHoldings,
+  clearDerivedHoldingsExitedPerSnapshots,
+} from "@/lib/derivedHoldings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -85,9 +89,16 @@ export async function POST(req: NextRequest) {
   let parsed;
   try {
     parsed = await parseTradebook(broker, file.name, buf);
-  } catch {
+  } catch (e) {
+    // Only a MISSING HEADER means the file isn't this broker's tradebook. Say
+    // so explicitly; anything else is a genuine read failure.
+    const wrongFormat = e instanceof TradebookFormatError;
     return NextResponse.json(
-      { error: "couldn't read that file — is it the tradebook export for this broker?" },
+      {
+        error: wrongFormat
+          ? `this doesn't look like a ${BROKER_LABEL[broker]} tradebook export — no ${BROKER_LABEL[broker]} header row found. Check you picked the right broker.`
+          : "couldn't read that file — is it the tradebook export for this broker?",
+      },
       { status: 400 },
     );
   }
@@ -95,13 +106,26 @@ export async function POST(req: NextRequest) {
   // Keep only real buys/sells (parsers may pass through other statuses/sides).
   parsed = parsed.filter((t) => t.side === "buy" || t.side === "sell");
 
+  // Zero trades but a VALID header = an empty date window. You simply didn't
+  // trade in that period — a correct, successful, idempotent import of nothing.
+  // This used to 400 with "this doesn't look like a <broker> tradebook", which
+  // pinned a true statement about your trading on the broker you selected.
   if (parsed.length === 0) {
-    return NextResponse.json(
-      {
-        error: `no trades found — this doesn't look like a ${BROKER_LABEL[broker]} tradebook export. Check you picked the right broker.`,
-      },
-      { status: 400 },
-    );
+    return NextResponse.json({
+      ok: true,
+      broker,
+      brokerLabel: BROKER_LABEL[broker],
+      parsed: 0,
+      imported: 0,
+      skipped: 0,
+      mappedSymbols: 0,
+      matchedManual: 0,
+      outsideCoverage: [],
+      exited: 0,
+      exitedSymbols: [],
+      dateRange: null,
+      empty: true,
+    });
   }
 
   const uni = await loadUniverse();
@@ -177,6 +201,7 @@ export async function POST(req: NextRequest) {
 
   let inserted = 0;
   let matchedManual = 0;
+  let exited: string[] = [];
   await sql.begin(async (tx) => {
     for (const g of fillGroups.values()) {
       const sum = g.qtys.reduce((a, b) => a + b, 0);
@@ -212,6 +237,10 @@ export async function POST(req: NextRequest) {
       inserted += res.count;
     }
     await recomputeDerivedHoldings(tx, session.userId, coveredSymbols);
+    // A tradebook can MINT a derived row for a name every broker snapshot says
+    // you no longer own (incomplete tradebook ⇒ non-zero net). Sweep those out
+    // immediately — see clearDerivedHoldingsExitedPerSnapshots.
+    exited = await clearDerivedHoldingsExitedPerSnapshots(tx, session.userId);
   });
 
   const dates = uniqueRows.map((r) => r.tradeDate).sort();
@@ -226,6 +255,8 @@ export async function POST(req: NextRequest) {
     mappedSymbols: coveredSymbols.length,
     matchedManual, // hand entries matched by an authoritative CSV trade (kept, flagged)
     outsideCoverage: [...skippedSymbols],
+    exited: exited.length,
+    exitedSymbols: exited,
     dateRange: dates.length ? { from: dates[0], to: dates[dates.length - 1] } : null,
   });
 }
