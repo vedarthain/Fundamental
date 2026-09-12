@@ -194,11 +194,20 @@ function parseZerodha(rows: string[][]): ParsedTrade[] {
 }
 
 function parseFyers(rows: string[][]): ParsedTrade[] {
-  const h = headerIndex(rows, (r) => r[0] === "Name");
+  // Fyers renamed the first column between exports: files downloaded up to
+  // Aug 2026 lead with "Name", ones from Sep 2026 lead with "Symbol name" and
+  // insert a duplicate "Symbol code" column after it. Matching only "Name"
+  // meant the header was never found, headerIndex returned -1, and the parser
+  // returned [] — which the upload route surfaces as "this doesn't look like a
+  // fyers tradebook", blaming the user's broker choice for a format change.
+  // Accept both spellings. Column order doesn't matter: asObjects keys rows by
+  // header cell, so the extra "Symbol code" column shifts nothing.
+  const h = headerIndex(rows, (r) => r[0] === "Name" || r[0] === "Symbol name");
   if (h < 0) return [];
   const out: ParsedTrade[] = [];
   for (const d of asObjects(rows, h)) {
-    if (!d.Name) continue;
+    const name = (d.Name ?? d["Symbol name"] ?? "").trim();
+    if (!name) continue;
     // A Tradebook lists executed trades only. Some exports carry a Status
     // column, the current one does NOT — so filter on it ONLY when present,
     // otherwise every row (no Status) was being dropped as "not Executed".
@@ -211,12 +220,12 @@ function parseFyers(rows: string[][]): ParsedTrade[] {
     // Name is either a Fyers symbol ("NSE:STEELCAS-EQ") or, in this export, a
     // full company name ("STEELCAST LIMITED"). Strip the exchange wrapper when
     // present; otherwise keep the name for name-based universe resolution.
-    const m = d.Name.match(/^[A-Z]+:(.+)-[A-Z]+$/);
+    const m = name.match(/^[A-Z]+:(.+)-[A-Z]+$/);
     const sym = m ? m[1] : "";
     out.push({
       broker: "fyers",
       rawSymbol: sym,
-      rawName: m ? "" : d.Name,
+      rawName: m ? "" : name,
       isin: "",
       side: normalizeSide(d.Side ?? ""),
       quantity: num(d.Qty),

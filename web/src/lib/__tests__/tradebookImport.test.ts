@@ -91,6 +91,40 @@ describe("parseTradebook: fyers", () => {
     expect(steel[0].tradeDate).toBe("2026-08-05");
     expect(steel[0].side).toBe("buy");
   });
+
+  it("reads the Sep-2026 layout where the first column is 'Symbol name'", async () => {
+    // Regression: Fyers renamed the leading column from "Name" to "Symbol name"
+    // and inserted a duplicate "Symbol code" beside it. The header matcher tested
+    // r[0] === "Name" exactly, so it found no header, returned [], and the upload
+    // route reported "this doesn't look like a fyers tradebook" — pinning a
+    // vendor format change on the user's broker selection.
+    const t = await parseTradebook(
+      "fyers",
+      "fyers-tradebook-symbolname.csv",
+      bytes("fyers-tradebook-symbolname.csv"),
+    );
+    expect(t.length).toBe(5);
+    for (const row of t) {
+      expect(row.tradeDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(row.quantity).toBeGreaterThan(0);
+      expect(row.price).toBeGreaterThan(0);
+      expect(["buy", "sell"]).toContain(row.side);
+      // The company name must survive: rawSymbol is empty for this export, so
+      // name-based universe resolution is the only way these map to tickers.
+      expect(row.rawName).not.toBe("");
+    }
+
+    // Thousands separators inside quoted fields must not truncate the price.
+    const coforge = t.filter((r) => r.rawName === "COFORGE LIMITED");
+    expect(coforge.length).toBe(2);
+    expect(coforge.every((r) => r.side === "sell")).toBe(true);
+    expect(new Set(coforge.map((r) => r.price))).toEqual(new Set([1903.5, 1903.7]));
+
+    // Partial fills of one order stay distinct here too.
+    const steel = t.filter((r) => r.rawName === "STEELCAST LIMITED");
+    expect(new Set(steel.map((r) => r.quantity))).toEqual(new Set([30, 15]));
+    expect(steel[0].tradeDate).toBe("2026-08-05");
+  });
 });
 
 // ────────────────────── name resolution (exact-match fix) ───────────────────

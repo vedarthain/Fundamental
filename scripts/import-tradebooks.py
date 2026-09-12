@@ -109,26 +109,52 @@ def parse_fyers(path):
     out = []
     with open(path, newline="") as f:
         rows = list(csv.reader(f))
-    # find header row (starts with "Name")
-    hidx = next(i for i, r in enumerate(rows) if r and r[0] == "Name")
-    hdr = rows[hidx]
+    # Find the header row. Fyers renamed the leading column between exports:
+    # files up to Aug 2026 lead with "Name", ones from Sep 2026 lead with
+    # "Symbol name" plus a duplicate "Symbol code" beside it. Accept both, and
+    # raise a readable error instead of letting next() throw a bare
+    # StopIteration when neither is present.
+    hidx = next((i for i, r in enumerate(rows)
+                 if r and r[0].strip() in ("Name", "Symbol name")), -1)
+    if hidx < 0:
+        raise ValueError(
+            f"{os.path.basename(path)}: no Fyers header row found "
+            f"(expected a line starting with 'Name' or 'Symbol name')")
+    hdr = [c.strip() for c in rows[hidx]]
     for r in rows[hidx + 1:]:
         if not r or not r[0] or r[0] == "":
             continue
         d = dict(zip(hdr, r))
-        if d.get("Status", "").strip() != "Executed":
+        # A tradebook lists executed trades only. Some exports carry a Status
+        # column, the current ones do NOT — so filter on it ONLY when present,
+        # otherwise every row (no Status) gets dropped as "not Executed".
+        if "Status" in d and d.get("Status", "").strip() != "Executed":
             continue
-        name = d["Name"].strip()  # NSE:SYMBOL-EQ
+        name = (d.get("Name") or d.get("Symbol name") or "").strip()
+        if not name:
+            continue
+        # Either a Fyers symbol ("NSE:STEELCAS-EQ") or a full company name
+        # ("STEELCAST LIMITED"). Keep the company name in raw_name when there's
+        # no exchange wrapper — putting it in raw_symbol defeats name-based
+        # universe resolution, which is the only way these map to a ticker.
         m = re.match(r"^[A-Z]+:(.+)-[A-Z]+$", name)
-        sym = m.group(1) if m else name
-        dt = d["Date & Time"].strip()  # 05-08-2026 09:28:38
-        dd, tt = (dt.split(" ", 1) + [""])[:2]
+        sym = m.group(1) if m else ""
+        # Column casing drifted ("Date & Time" -> "Date & time") and the clock is
+        # packed after a comma ("05 Aug 2026, 09:49:14 AM"). Split on the comma so
+        # to_iso sees only the date part.
+        dt = (d.get("Date & time") or d.get("Date & Time") or "").strip()
+        dd, _, tt = dt.partition(",")
         out.append(dict(
-            broker="fyers", raw_symbol=sym, raw_name=sym, isin="",
-            side=d["Side"].strip().lower(),
+            broker="fyers", raw_symbol=sym, raw_name=("" if m else name), isin="",
+            side=d.get("Side", "").strip().lower(),
             quantity=num(d["Qty"]), price=num(d["Traded price"]),
-            trade_date=to_iso(dd), trade_time=tt,
-            trade_id=re.sub(r'[^0-9.]', '', d.get("Exchange order ID", "")),
+            trade_date=to_iso(dd.strip()), trade_time=tt.strip(),
+            # Exchange/OMS order IDs are ORDER ids — shared across the partial
+            # fills of one order (e.g. STEELCAST 30+15 under one id). Using one
+            # as a trade id collapses those fills on dedup and silently drops
+            # quantity. Leave it empty so dedup falls back to the
+            # date|qty|price|time composite, which keeps distinct fills distinct.
+            trade_id="",
             order_id=re.sub(r'[^0-9.]', '', d.get("OMS order ID", "")),
             source_file=os.path.basename(path)))
     return out
@@ -147,9 +173,30 @@ def _fmt_date(v):
         return v.strftime("%Y-%m-%d")
     return str(v).strip()
 
+MONTHS = {m: f"{i + 1:02d}" for i, m in enumerate(
+    ["jan", "feb", "mar", "apr", "may", "jun",
+     "jul", "aug", "sep", "oct", "nov", "dec"])}
+
 def to_iso(s):
-    """Normalize a date token to YYYY-MM-DD. Accepts ISO or DD-MM-YYYY."""
-    s = str(s).strip().split(" ")[0]
+    """Normalize a date token to YYYY-MM-DD.
+
+    Accepts ISO, DD-MM-YYYY, DD/MM/YYYY, and the month-name forms Fyers emits
+    ("05 Aug 2026"). The month-name branches MUST run before the space-split
+    below, which would otherwise reduce "05 Aug 2026" to "05" and return it
+    verbatim as the trade date. Mirrors toIso() in web/src/lib/tradebookImport.ts.
+    """
+    raw = str(s).strip()
+    m = re.match(r"^([A-Za-z]{3,})\.?\s+(\d{1,2}),?\s+(\d{4})$", raw)  # Mon DD YYYY
+    if m:
+        mo = MONTHS.get(m.group(1)[:3].lower())
+        if mo:
+            return f"{m.group(3)}-{mo}-{int(m.group(2)):02d}"
+    m = re.match(r"^(\d{1,2})[-\s]([A-Za-z]{3,})\.?,?[-\s](\d{4})$", raw)  # DD Mon YYYY
+    if m:
+        mo = MONTHS.get(m.group(2)[:3].lower())
+        if mo:
+            return f"{m.group(3)}-{mo}-{int(m.group(1)):02d}"
+    s = raw.split(" ")[0]
     if re.match(r"^\d{4}-\d{2}-\d{2}$", s):
         return s
     m = re.match(r"^(\d{2})-(\d{2})-(\d{4})$", s)
