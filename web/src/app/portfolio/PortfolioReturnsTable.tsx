@@ -39,7 +39,16 @@ type ApiRow = {
   pos_pnl_pct?: number | null; // PERCENT — LTP vs avg cost
 };
 
-type SortKey = "symbol" | "buy" | "ltp" | "pnl" | "d1" | "w1" | "m1" | "y1";
+type SortKey = "symbol" | "qty" | "buy" | "ltp" | "pnl" | "d1" | "w1" | "m1" | "y1";
+
+/**
+ * Profit / Loss segregation is by the position's OWN unrealised return, not by
+ * any trailing-window column — 1Y being green says nothing about whether you're
+ * up on the name. Positions with no computable return (no avg cost, or no LTP)
+ * are unclassifiable, so they appear under "All" only rather than being silently
+ * dumped into "Loss" by a `<= 0` test on a null.
+ */
+type Bucket = "all" | "profit" | "loss";
 
 type Display = {
   symbol: string;
@@ -77,6 +86,7 @@ export function PortfolioReturnsTable() {
   const [rows, setRows] = useState<Display[] | null>(null);
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [bucket, setBucket] = useState<Bucket>("all");
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({
     key: "symbol",
     dir: "asc",
@@ -124,10 +134,28 @@ export function PortfolioReturnsTable() {
     };
   }, []);
 
+  const counts = useMemo(() => {
+    const c = { all: rows?.length ?? 0, profit: 0, loss: 0 };
+    for (const r of rows ?? []) {
+      if (r.pnl == null) continue;
+      if (r.pnl > 0) c.profit++;
+      else if (r.pnl < 0) c.loss++;
+    }
+    return c;
+  }, [rows]);
+
   const sorted = useMemo(() => {
     if (!rows) return null;
+    const inBucket = (r: Display) =>
+      bucket === "all"
+        ? true
+        : r.pnl == null
+          ? false
+          : bucket === "profit"
+            ? r.pnl > 0
+            : r.pnl < 0;
     const dir = sort.dir === "asc" ? 1 : -1;
-    return [...rows].sort((a, b) => {
+    return rows.filter(inBucket).sort((a, b) => {
       if (sort.key === "symbol") return dir * a.symbol.localeCompare(b.symbol);
       const av = a[sort.key];
       const bv = b[sort.key];
@@ -138,7 +166,7 @@ export function PortfolioReturnsTable() {
       if (bv == null) return -1;
       return dir * (av - bv);
     });
-  }, [rows, sort]);
+  }, [rows, sort, bucket]);
 
   if (signedIn === false) {
     return (
@@ -161,7 +189,10 @@ export function PortfolioReturnsTable() {
   if (sorted == null) {
     return <div className="card p-8 text-center muted-text text-[13px]">Loading…</div>;
   }
-  if (sorted.length === 0) {
+  // Only bail out when there are genuinely no holdings. An empty *bucket*
+  // ("no losers today") must still render the pills, otherwise the filter
+  // traps you on a blank card with no way back to All.
+  if (counts.all === 0) {
     return (
       <div className="card p-8 text-center">
         <div className="text-[14px] mb-2">No holdings yet</div>
@@ -173,6 +204,7 @@ export function PortfolioReturnsTable() {
   }
 
   const cols: { key: SortKey; label: string; title: string }[] = [
+    { key: "qty", label: "Qty", title: "Shares you currently hold" },
     { key: "buy", label: "Buy", title: "Your average cost per share" },
     { key: "ltp", label: "LTP", title: "Last traded price" },
     { key: "pnl", label: "Return", title: "Your unrealised return: LTP vs your average cost" },
@@ -193,22 +225,71 @@ export function PortfolioReturnsTable() {
   const arrow = (key: SortKey) => (sort.key === key ? (sort.dir === "asc" ? " ▲" : " ▼") : "");
 
   return (
-    <div className="card overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-3 border-b hairline">
-        <h2 className="text-[14px] font-semibold">
-          Returns{" "}
-          <span className="muted-text font-normal">({sorted.length})</span>
-        </h2>
+    // `overflow-hidden` on the card would also trap the sticky header (any
+    // non-visible overflow creates the anchoring scrollport), so it too is
+    // dropped from md up. Below md it stays, to clip the rounded corners.
+    <div className="card overflow-hidden md:overflow-visible">
+      <div className="flex items-center justify-between gap-3 flex-wrap px-4 py-3 border-b hairline">
+        <div className="flex items-center gap-3 flex-wrap">
+          <h2 className="text-[14px] font-semibold">
+            Returns{" "}
+            <span className="muted-text font-normal">({sorted.length})</span>
+          </h2>
+          <div className="flex items-center gap-1">
+            {(
+              [
+                { v: "all", label: "All", tint: null },
+                { v: "profit", label: "Profit", tint: "var(--color-delta-up, #15803D)" },
+                { v: "loss", label: "Loss", tint: "var(--color-delta-down, #DC2626)" },
+              ] as const
+            ).map((p) => {
+              const active = bucket === p.v;
+              return (
+                <button
+                  key={p.v}
+                  type="button"
+                  onClick={() => setBucket(p.v)}
+                  className="rounded-full px-2.5 py-1 text-[11px] font-semibold tabular-nums transition-colors"
+                  style={{
+                    background: active
+                      ? `color-mix(in srgb, ${p.tint ?? "var(--color-fg)"} 12%, transparent)`
+                      : "transparent",
+                    color: active ? (p.tint ?? "var(--color-fg)") : "var(--color-muted)",
+                    border: `1px solid ${
+                      active
+                        ? `color-mix(in srgb, ${p.tint ?? "var(--color-fg)"} 32%, transparent)`
+                        : "var(--color-hairline, rgba(0,0,0,0.10))"
+                    }`,
+                  }}
+                >
+                  {p.label} {counts[p.v]}
+                </button>
+              );
+            })}
+          </div>
+        </div>
         <span className="muted-text text-[11px]">
           Return is yours · 1D–1Y are the stock&apos;s
         </span>
       </div>
-      <div className="overflow-x-auto">
+      {/* `overflow-x-auto` makes this a scroll container on BOTH axes (CSS
+          forces a `visible` axis to `auto` when the other isn't visible), and a
+          sticky <th> then anchors to this box instead of the viewport — i.e. it
+          never sticks. So horizontal scrolling is kept only below md, where the
+          table genuinely doesn't fit; from md up the overflow goes back to
+          visible and the sticky header works. */}
+      <div className="overflow-x-auto md:overflow-visible">
         <table className="w-full text-[12.5px]">
           <thead>
-            <tr className="border-b hairline text-[11px] uppercase tracking-wide muted-text">
+            <tr className="text-[11px] uppercase tracking-wide muted-text">
+              {/* top-[84px] = SnapshotRibbon (28px) + SiteHeader (56px). Same
+                  offset StockPageTabs uses, so the column headers park directly
+                  under the site header instead of sliding beneath it. z-20 stays
+                  below the header's z-30 — the header must win any overlap.
+                  The background must be opaque or rows show through it. */}
               <th
-                className="px-3 py-2 text-left font-semibold cursor-pointer select-none"
+                className="sticky top-[84px] z-20 px-3 py-2 text-left font-semibold cursor-pointer select-none border-b hairline"
+                style={{ backgroundColor: "var(--color-paper)" }}
                 onClick={() => toggle("symbol")}
               >
                 Stock{arrow("symbol")}
@@ -216,7 +297,8 @@ export function PortfolioReturnsTable() {
               {cols.map((c) => (
                 <th
                   key={c.key}
-                  className="px-3 py-2 text-right font-semibold cursor-pointer select-none whitespace-nowrap"
+                  className="sticky top-[84px] z-20 px-3 py-2 text-right font-semibold cursor-pointer select-none whitespace-nowrap border-b hairline"
+                  style={{ backgroundColor: "var(--color-paper)" }}
                   title={c.title}
                   onClick={() => toggle(c.key)}
                 >
@@ -227,31 +309,33 @@ export function PortfolioReturnsTable() {
             </tr>
           </thead>
           <tbody>
+            {sorted.length === 0 && (
+              <tr>
+                <td colSpan={cols.length + 1} className="px-3 py-8 text-center muted-text text-[12px]">
+                  {bucket === "profit"
+                    ? "Nothing in profit right now."
+                    : "Nothing at a loss right now."}
+                </td>
+              </tr>
+            )}
             {sorted.map((r) => (
               <tr key={r.symbol} className="border-b hairline hover:bg-[var(--color-paper)]">
                 <td className="px-3 py-2">
-                  <div className="flex items-center gap-1.5">
-                    <Link
-                      href={`/stock/${r.symbol}`}
-                      className="font-medium hover:underline tabular-nums"
-                    >
-                      {r.symbol}
-                    </Link>
-                    {r.qty != null && (
-                      <span
-                        className="inline-flex items-center rounded px-1 py-px text-[9px] font-semibold tabular-nums leading-none shrink-0"
-                        style={{
-                          background: "color-mix(in srgb, var(--color-accent-600) 12%, transparent)",
-                          color: "var(--color-accent-700)",
-                        }}
-                      >
-                        {r.qty.toLocaleString("en-IN")} SH
-                      </span>
-                    )}
-                  </div>
+                  <Link
+                    href={`/stock/${r.symbol}`}
+                    className="font-medium hover:underline tabular-nums"
+                  >
+                    {r.symbol}
+                  </Link>
                   {r.name && (
                     <div className="text-[10.5px] muted-text truncate max-w-[220px]">{r.name}</div>
                   )}
+                </td>
+                {/* Quantity is a count, not money — no ₹, and an em dash rather
+                    than "0" when the broker didn't report one, so a missing
+                    figure never reads as a closed position. */}
+                <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap muted-text">
+                  {r.qty == null ? "—" : r.qty.toLocaleString("en-IN")}
                 </td>
                 <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
                   {fmtLtp(r.buy)}
