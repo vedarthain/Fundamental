@@ -49,6 +49,21 @@ function decodeSymbolParam(raw: string): string {
   }
 }
 
+// A symbol with no app.cluster_assignment row has no sector/industry (see
+// loadStock). Show that honestly rather than rendering "null · null" — and
+// never claim a peer group we don't have.
+const UNCLASSIFIED = "Unclassified";
+
+function classificationLabel(sector: string | null, industry: string | null): string {
+  if (sector && industry) return `${sector} · ${industry}`;
+  return sector || industry || UNCLASSIFIED;
+}
+
+/** Industry name for prose, or a neutral stand-in when unclustered. */
+function industryLabel(industry: string | null): string {
+  return industry || "its peer group";
+}
+
 type ShareholdingRow = {
   period_end: string;
   pledge_pct?: number | null;
@@ -73,11 +88,12 @@ type Stock = {
   employees: number | null;
   ceo_name: string | null;
   ceo_title: string | null;
-  industry_id: string;
-  industry_name: string;
-  sector_id: string;
-  sector_name: string;
-  maturity_tier: string;
+  // NULL when the symbol has no app.cluster_assignment row — see loadStock.
+  industry_id: string | null;
+  industry_name: string | null;
+  sector_id: string | null;
+  sector_name: string | null;
+  maturity_tier: string | null; // NULL for unscraped/unclustered symbols
   market_cap_cr: number | null;
   current_price: number | null;
   price_fetched_at: string | null;
@@ -148,7 +164,7 @@ export async function generateMetadata(
   const { symbol } = await params;
   const upper = decodeSymbolParam(symbol).toUpperCase();
   const rows = await sql<{
-    company_name: string; industry_name: string; sector_name: string;
+    company_name: string; industry_name: string | null; sector_name: string | null;
     listing_date: string | null; years_of_data: number | null;
     composite_pct: number | null; quality_pct: number | null;
     valuation_pct: number | null; momentum_pct: number | null;
@@ -157,9 +173,12 @@ export async function generateMetadata(
            u.listing_date::text AS listing_date, u.years_of_data,
            s.composite_pct, s.quality_pct, s.valuation_pct, s.momentum_pct
     FROM app.universe u
-    JOIN app.cluster_assignment ca USING (symbol)
-    JOIN app.cluster c ON c.id = ca.cluster_id
-    JOIN app.meta_cluster mc ON mc.id = c.meta_cluster_id
+    -- LEFT, not INNER: an unclustered symbol still has a real page (see
+    -- loadStock). An INNER JOIN here would title it "stock not found" and ship
+    -- that to Google for 472 live pages.
+    LEFT JOIN app.cluster_assignment ca USING (symbol)
+    LEFT JOIN app.cluster c ON c.id = ca.cluster_id
+    LEFT JOIN app.meta_cluster mc ON mc.id = c.meta_cluster_id
     LEFT JOIN app.scores s
       ON s.symbol = u.symbol
      AND s.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
@@ -181,8 +200,15 @@ export async function generateMetadata(
   const scorePhrase = scoreable && r.composite_pct != null
     ? `Composite ${r.composite_pct}/100 (${band(r.composite_pct)}) — Quality ${r.quality_pct ?? "—"}, Valuation ${r.valuation_pct ?? "—"}, Momentum ${r.momentum_pct ?? "—"}.`
     : `Fundamental profile — quality, valuation and momentum.`;
-  const description =
-    `${name} (${upper}) scored against its real industry peers in ${r.industry_name} (${r.sector_name}). ${scorePhrase} See the full breakdown, peer ranking and 10-year fundamentals on EquityRoots.`;
+  // Only promise peer scoring when a peer group actually exists.
+  const peerPhrase =
+    r.industry_name && r.sector_name
+      ? `scored against its real industry peers in ${r.industry_name} (${r.sector_name}).`
+      : `— fundamentals, price history and financials.`;
+  const seeAlso = r.industry_name
+    ? "See the full breakdown, peer ranking and 10-year fundamentals on EquityRoots."
+    : "See the price history, financials and 10-year fundamentals on EquityRoots.";
+  const description = `${name} (${upper}) ${peerPhrase} ${scorePhrase} ${seeAlso}`;
 
   return {
     title,
@@ -204,6 +230,21 @@ async function loadStock(symbol: string) {
   // last-scored OLDER snapshot and showing a stale composite as if it were
   // current. Verified scores.cluster_id/maturity_tier == cluster_assignment/
   // universe for every scored symbol, so sourcing them here is equivalent.
+  //
+  // cluster_assignment is LEFT-JOINed for the SAME reason. It used to be an
+  // INNER JOIN, which quietly reintroduced the 404 the paragraph above exists
+  // to prevent: 472 of 2,622 active symbols (18%) have no cluster row, so every
+  // one of them 404'd — E2E among them. Those are all stubs the Screener.in
+  // metadata scrape never enriched (company_name == symbol, sector NULL, no
+  // screener_meta), and clustering keys off sector/industry. But 430 of the 472
+  // DO have annual fundamentals, and golden has full price history, so the page
+  // has plenty to show. A missing cluster means missing CLASSIFICATION, not a
+  // missing stock — render the page and withhold the peer-relative parts.
+  //
+  // Everything cluster-derived is therefore nullable downstream: the peer rank,
+  // cluster scorecard and score-history cluster average all filter on
+  // `cluster_id = NULL`, which matches no rows and yields empty results, and
+  // each is already .catch()-guarded and null-checked at the render site.
   const rows = await sql<Stock[]>`
     SELECT
       u.symbol, u.company_name, u.sector, u.industry, u.market_cap_category, u.listing_date::text, u.years_of_data,
@@ -216,9 +257,9 @@ async function loadStock(symbol: string) {
       s.quality_components, s.valuation_components, s.momentum_components,
       s.score_status
     FROM app.universe u
-    JOIN app.cluster_assignment ca USING (symbol)
-    JOIN app.cluster c ON c.id = ca.cluster_id
-    JOIN app.meta_cluster mc ON mc.id = c.meta_cluster_id
+    LEFT JOIN app.cluster_assignment ca USING (symbol)
+    LEFT JOIN app.cluster c ON c.id = ca.cluster_id
+    LEFT JOIN app.meta_cluster mc ON mc.id = c.meta_cluster_id
     LEFT JOIN app.screener_meta sm USING (symbol)
     LEFT JOIN app.scores s
       ON s.symbol = u.symbol
@@ -589,7 +630,9 @@ export default async function StockPage({
     symbol: stock.symbol,
     market_cap_cr: stock.market_cap_cr,
     current_price: stock.current_price,
-    industry_name: stock.industry_name,
+    // Narration prose reads better with a neutral stand-in than a literal
+    // "Unclassified" dropped mid-sentence.
+    industry_name: industryLabel(stock.industry_name),
     composite_pct: stock.composite_pct,
   };
 
@@ -658,10 +701,16 @@ export default async function StockPage({
           they were just browsing. Falls back to /sectors root if either
           identifier is missing. */}
       <Link
-        href={`/sectors?sector=${encodeURIComponent(stock.sector_id)}&industry=${encodeURIComponent(stock.industry_id)}`}
+        href={
+          stock.sector_id && stock.industry_id
+            ? `/sectors?sector=${encodeURIComponent(stock.sector_id)}&industry=${encodeURIComponent(stock.industry_id)}`
+            : "/sectors"
+        }
         className="text-[12px] muted-text hover:text-[var(--color-accent-600)]"
       >
-        ← {stock.sector_name} · {stock.industry_name}
+        ← {stock.sector_name && stock.industry_name
+          ? classificationLabel(stock.sector_name, stock.industry_name)
+          : "All sectors"}
       </Link>
 
       {/* Header — name + percentile badge.
@@ -671,7 +720,9 @@ export default async function StockPage({
       <header className="mt-3 flex flex-col md:flex-row items-start md:justify-between gap-4 md:gap-8">
         <div>
           <div className="text-[12px] muted-text uppercase tracking-wide flex flex-wrap items-center gap-x-1.5 gap-y-1">
-            <span>{stock.sector_name} · {stock.industry_name} · {tierLabel(stock.maturity_tier)}</span>
+            <span>
+              {classificationLabel(stock.sector_name, stock.industry_name)} · {tierLabel(stock.maturity_tier)}
+            </span>
             {isRecentListing(stock.listing_date) && stock.maturity_tier !== "new" && (
               <span
                 className="inline-flex items-center rounded px-1.5 py-[1px] text-[10px] font-semibold normal-case"
@@ -841,7 +892,7 @@ export default async function StockPage({
           where possible, italic so it reads as an annotation. */}
       {scoreable && stock.composite_pct != null && (
         <p className="text-[11px] muted-text italic mt-2 leading-snug">
-          * Ranked within {stock.industry_name} · {tierLabel(stock.maturity_tier)}
+          * Ranked within {industryLabel(stock.industry_name)} · {tierLabel(stock.maturity_tier)}
           {industryPeerCount != null && industryPeerCount > 1 ? ` (${industryPeerCount}-stock peer group)` : ""} —
           position among peers in the same industry and maturity, not the whole
           market. Not a buy/sell recommendation.
@@ -993,7 +1044,7 @@ export default async function StockPage({
               <h2 className="font-display text-[20px] mb-2">Strengths and gaps</h2>
               <p className="text-[13px] muted-text mb-6">
                 The charts are this stock&apos;s underlying metric trends across all three
-                pillars; the bars below show where it ranks within {stock.industry_name} ·{" "}
+                pillars; the bars below show where it ranks within {industryLabel(stock.industry_name)} ·{" "}
                 {tierLabel(stock.maturity_tier)} peers (the middle line is the cluster median).
               </p>
               <StrengthsPanel tabs={pillarTabs} strengthRows={strengthRows} />
@@ -1171,10 +1222,14 @@ function AboutCard({
   const facts: { label: string; value: string }[] = [];
   if (stock.industry) facts.push({ label: "Industry", value: stock.industry });
   if (stock.sector) facts.push({ label: "Sector", value: stock.sector });
-  facts.push({
-    label: "Cluster",
-    value: `${stock.industry_name} · ${tierLabel(stock.maturity_tier)}`,
-  });
+  // Omit the Cluster fact entirely when unclustered — an empty peer group is
+  // not a fact worth asserting, and "Unclassified · …" reads like a real one.
+  if (stock.industry_name) {
+    facts.push({
+      label: "Cluster",
+      value: `${stock.industry_name} · ${tierLabel(stock.maturity_tier)}`,
+    });
+  }
   if (stock.market_cap_cr != null) {
     facts.push({ label: "Market cap", value: fmtRupeesCr(stock.market_cap_cr) });
   }
@@ -1638,8 +1693,8 @@ function computePillarTrends(
 
 function CompositeExplainer(props: {
   composite: number | null;
-  cluster: string;
-  tier: string;
+  cluster: string | null; // null when the symbol has no cluster assignment
+  tier: string | null;
 }) {
   return (
     <footer className="mt-12 pt-6 border-t hairline">
@@ -1648,7 +1703,7 @@ function CompositeExplainer(props: {
       </div>
       <p className="text-[12.5px] leading-relaxed muted-text max-w-[820px]">
         The <strong className="ink-text">Industry Score</strong> is this stock&apos;s overall
-        percentile (0&ndash;100) within its peer group: <em>{props.cluster}</em>,{" "}
+        percentile (0&ndash;100) within its peer group: <em>{industryLabel(props.cluster)}</em>,{" "}
         {tierLabel(props.tier)}. It is a weighted blend of three pillars — Quality,
         Valuation, Momentum — using sector-tuned weights, then re-ranked against the
         same peers so the final number is itself a percentile. Higher = better.{" "}

@@ -139,8 +139,15 @@ export async function getOIAlerts(
  */
 export async function getOIAlertForSymbol(
   symbol: string,
-  /** meta_cluster_id from app.meta_cluster.id — e.g. "financials", "materials" */
-  sectorId: string,
+  /**
+   * meta_cluster_id from app.meta_cluster.id — e.g. "financials", "materials".
+   * NULL for a symbol with no cluster assignment (the Screener.in metadata
+   * scrape never enriched it). We can't prove such a stock ISN'T a financial,
+   * so the exemption below can't fire — but the alert is a caveat on reported
+   * profit, not a verdict, and withholding it would blind ~472 pages. Run the
+   * check and accept the small false-positive risk on unclassified financials.
+   */
+  sectorId: string | null,
 ): Promise<OIAlert | null> {
   if (sectorId === "financials") return null;
 
