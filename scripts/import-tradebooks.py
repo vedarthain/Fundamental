@@ -14,7 +14,7 @@ Usage:
   python scripts/import-tradebooks.py --recompute-all --commit  # rebuild all
                                                   # derived holdings, no import
 """
-import os, sys, re, glob, shutil, hashlib
+import os, sys, re, glob, hashlib
 from datetime import datetime, date
 import psycopg as psycopg2
 import openpyxl
@@ -80,6 +80,50 @@ def resolve(rec, ref):
     return None
 
 # ---------- parsers: yield normalized dicts ----------
+#
+# PARITY NOTE. These parsers are the Python twin of
+# web/src/lib/tradebookImport.ts. Nothing enforces that at runtime, so the two
+# drifted badly once already (the Fyers Sep-2026 header rename was fixed in TS
+# while Python still raised a bare StopIteration).
+#
+# web/src/lib/__tests__/tradebookParity.test.ts now runs BOTH sides over the
+# SAME fixtures in web/src/lib/__tests__/fixtures/ — it shells out to
+# `--dump-json` below and diffs the records against parseTradebook(). Keep any
+# parser change in lockstep and let that test prove it; it runs in `npm test`.
+
+
+class TradebookFormatError(ValueError):
+    """
+    No recognisable header row for the chosen broker — the file really isn't
+    that broker's tradebook (or the vendor renamed the columns on us).
+
+    Deliberately DISTINCT from "header found, zero data rows". A broker export
+    covering a window in which you simply didn't trade has a perfectly good
+    header and no rows; that is a successful import of nothing, not an error.
+    Collapsing the two is what made the web uploader tell the user "this
+    doesn't look like a groww tradebook — check you picked the right broker"
+    about a file that was exactly right.
+    """
+
+
+def header_index(rows, broker, pred):
+    """Index of the first row matching `pred`. Raises TradebookFormatError.
+
+    Replaces three different failure modes that used to be spread across the
+    parsers: a bare next() throwing StopIteration (groww, upstox), a silent
+    `return []` (5paisa), and an ad-hoc ValueError (fyers).
+    """
+    for i, r in enumerate(rows):
+        if r and pred([("" if c is None else str(c)) for c in r]):
+            return i
+    raise TradebookFormatError(f"no {broker} tradebook header row found")
+
+
+def snake(s):
+    """'Trade Type' -> 'trade_type', 'ISIN' -> 'isin'."""
+    return re.sub(r"[\s.]+", "_", str(s).strip().lower())
+
+
 def num(x):
     if x is None:
         return None
@@ -88,21 +132,37 @@ def num(x):
     return float(str(x).replace(",", "").strip())
 
 def parse_zerodha(path):
+    # Zerodha ships TWO shapes: the CSV export uses lowercase_underscore headers
+    # (symbol, trade_type, …), the XLSX export Title Case with spaces (Symbol,
+    # Trade Type, …). csv.DictReader took row 0 verbatim, so a Title Case file
+    # produced keys that matched nothing and silently yielded zero trades —
+    # and a wrong file did the same, indistinguishably. Normalise every header
+    # cell to snake_case and locate the row explicitly.
+    #
+    # Read through _xlsx_rows, not csv.reader: this opened the path as UTF-8
+    # text unconditionally, so the XLSX export (a zip) died on a
+    # UnicodeDecodeError while the TS side read it fine. _xlsx_rows dispatches
+    # on extension, which is what toMatrix() does in tradebookImport.ts.
+    rows = _xlsx_rows(path)
+    hidx = header_index(
+        rows, "zerodha",
+        lambda r: "symbol" in [snake(c) for c in r] and "trade_type" in [snake(c) for c in r])
+    hdr = [snake(c) for c in rows[hidx]]
     out = []
-    with open(path, newline="") as f:
-        for row in csv.DictReader(f):
-            if not row.get("symbol"):
-                continue
-            out.append(dict(
-                broker="zerodha", raw_symbol=row["symbol"].strip(),
-                raw_name=row["symbol"].strip(), isin=(row.get("isin") or "").strip(),
-                side=row["trade_type"].strip().lower(),
-                quantity=num(row["quantity"]), price=num(row["price"]),
-                trade_date=row["trade_date"].strip(),
-                trade_time=(row.get("order_execution_time") or "").strip(),
-                trade_id=(row.get("trade_id") or "").strip(),
-                order_id=(row.get("order_id") or "").strip(),
-                source_file=os.path.basename(path)))
+    for r in rows[hidx + 1:]:
+        d = dict(zip(hdr, [("" if c is None else str(c)).strip() for c in r]))
+        if not d.get("symbol"):
+            continue
+        out.append(dict(
+            broker="zerodha", raw_symbol=d["symbol"],
+            raw_name=d["symbol"], isin=d.get("isin", ""),
+            side=d.get("trade_type", "").lower(),
+            quantity=num(d["quantity"]), price=num(d["price"]),
+            trade_date=to_iso(d.get("trade_date", "")),
+            trade_time=d.get("order_execution_time", ""),
+            trade_id=d.get("trade_id", ""),
+            order_id=d.get("order_id", ""),
+            source_file=os.path.basename(path)))
     return out
 
 def parse_fyers(path):
@@ -114,12 +174,13 @@ def parse_fyers(path):
     # "Symbol name" plus a duplicate "Symbol code" beside it. Accept both, and
     # raise a readable error instead of letting next() throw a bare
     # StopIteration when neither is present.
-    hidx = next((i for i, r in enumerate(rows)
-                 if r and r[0].strip() in ("Name", "Symbol name")), -1)
-    if hidx < 0:
-        raise ValueError(
-            f"{os.path.basename(path)}: no Fyers header row found "
-            f"(expected a line starting with 'Name' or 'Symbol name')")
+    # Testing r[0] alone is NOT enough: "Name" is also the first cell of other
+    # brokers' preambles (Groww's order history opens with `Name,<your name>`),
+    # so a Groww file parsed as Fyers matched row 0 and emitted junk trades
+    # instead of erroring. Require a real data column alongside it.
+    hidx = header_index(
+        rows, "fyers",
+        lambda r: r[0].strip() in ("Name", "Symbol name") and any(c.strip() == "Qty" for c in r))
     hdr = [c.strip() for c in rows[hidx]]
     for r in rows[hidx + 1:]:
         if not r or not r[0] or r[0] == "":
@@ -160,10 +221,27 @@ def parse_fyers(path):
     return out
 
 def _xlsx_rows(path, sheet=None):
+    # Dispatch on extension, mirroring toMatrix() in tradebookImport.ts. This
+    # used to assume a workbook unconditionally, so a broker that ships the
+    # same report as CSV (Groww does) blew up in openpyxl with an unreadable
+    # zipfile error instead of parsing — while the TS side read it fine.
+    if path.lower().endswith(".csv"):
+        with open(path, newline="") as f:
+            return [list(r) for r in csv.reader(f)]
     if path.lower().endswith(".xls"):
-        dst = "/tmp/_tb_" + os.path.basename(path) + ".xlsx"
-        shutil.copy(path, dst)
-        path = dst
+        # A genuine legacy .xls is BIFF/OLE2, not a zip — openpyxl cannot read
+        # it at all. The old code copied the file to a .xlsx name and handed it
+        # to openpyxl, which is a rename, not a conversion: every real .xls
+        # (5paisa ships one) died on BadZipFile. Some brokers do mislabel an
+        # actual xlsx as .xls, so try the real BIFF reader first and fall back.
+        try:
+            import xlrd
+            book = xlrd.open_workbook(path)
+            sh = book.sheet_by_name(sheet) if sheet else book.sheet_by_index(0)
+            return [[sh.cell_value(r, c) for c in range(sh.ncols)]
+                    for r in range(sh.nrows)]
+        except Exception:
+            pass  # not BIFF after all — fall through to the zip-based reader
     wb = openpyxl.load_workbook(path, data_only=True)
     ws = wb[sheet] if sheet else wb[wb.sheetnames[0]]
     return [list(r) for r in ws.iter_rows(values_only=True)]
@@ -209,8 +287,7 @@ def to_iso(s):
 
 def parse_groww(path):
     rows = _xlsx_rows(path)
-    hidx = next(i for i, r in enumerate(rows)
-                if r and str(r[0]).strip() == "Stock name")
+    hidx = header_index(rows, "groww", lambda r: r[0].strip() == "Stock name")
     hdr = [str(c).strip() if c else "" for c in rows[hidx]]
     out = []
     for r in rows[hidx + 1:]:
@@ -234,8 +311,7 @@ def parse_groww(path):
 
 def parse_upstox(path):
     rows = _xlsx_rows(path, "TRADE")
-    hidx = next(i for i, r in enumerate(rows)
-                if r and str(r[0]).strip() == "Date")
+    hidx = header_index(rows, "upstox", lambda r: r[0].strip() == "Date")
     hdr = [str(c).strip() if c else "" for c in rows[hidx]]
     out = []
     for r in rows[hidx + 1:]:
@@ -247,7 +323,10 @@ def parse_upstox(path):
             raw_name=str(d["Company"]).strip(), isin="",
             side=str(d["Side"]).strip().lower(),
             quantity=num(d["Quantity"]), price=num(d["Price"]),
-            trade_date=_fmt_date(d.get("Date")),
+            # to_iso, like every other parser and like the TS side. Upstox
+            # and 5paisa were the two that skipped it, so their trade_date came
+            # through as "Aug 19 2026" and failed the route's ISO date gate.
+            trade_date=to_iso(_fmt_date(d.get("Date"))),
             trade_time=str(d.get("Trade Time", "")).strip(),
             trade_id=str(d.get("Trade Num", "")).strip(), order_id="",
             source_file=os.path.basename(path)))
@@ -255,10 +334,7 @@ def parse_upstox(path):
 
 def parse_5paisa(path):
     rows = _xlsx_rows(path)
-    hidx = next((i for i, r in enumerate(rows)
-                 if r and str(r[0]).strip() == "Transaction Date"), None)
-    if hidx is None:
-        return []
+    hidx = header_index(rows, "fivepaisa", lambda r: r[0].strip() == "Transaction Date")
     hdr = [str(c).strip() if c else "" for c in rows[hidx]]
     out = []
     for r in rows[hidx + 1:]:
@@ -270,10 +346,48 @@ def parse_5paisa(path):
             raw_name=str(d["Company Name"]).strip(), isin="",
             side=str(d["Type"]).strip().lower(),
             quantity=num(d["Quantity"]), price=num(d["Price"]),
-            trade_date=_fmt_date(d.get("Transaction Date")),
+            trade_date=to_iso(_fmt_date(d.get("Transaction Date"))),
             trade_time="", trade_id="", order_id="",
             source_file=os.path.basename(path)))
     return out
+
+PARSERS = {
+    "zerodha": parse_zerodha,
+    "fyers": parse_fyers,
+    "groww": parse_groww,
+    "upstox": parse_upstox,
+    "fivepaisa": parse_5paisa,
+}
+
+
+def dump_json(broker, path):
+    """Parse one file and print the records as JSON. No DB, no side effects.
+
+    Exists so the TypeScript test suite can run BOTH implementations over the
+    same fixture and diff them (web/src/lib/__tests__/tradebookParity.test.ts).
+    That test is the only thing that actually enforces the parity this module's
+    docstring claims — without it the two sides drifted silently for months.
+
+    Exit codes are part of the contract: 0 = parsed (possibly zero rows),
+    3 = TradebookFormatError (not this broker's file). Anything else is a bug.
+    """
+    import json
+    fn = PARSERS.get(broker)
+    if fn is None:
+        print(f"unknown broker: {broker}", file=sys.stderr)
+        return 2
+    try:
+        recs = fn(path)
+    except TradebookFormatError as e:
+        print(json.dumps({"error": "format", "message": str(e)}))
+        return 3
+    # Drop source_file: it is the on-disk filename, which the TS parser has no
+    # concept of, and it would make every comparison fail for no good reason.
+    for r in recs:
+        r.pop("source_file", None)
+    print(json.dumps(recs, default=str))
+    return 0
+
 
 def collect():
     recs = []
@@ -433,6 +547,12 @@ def recompute_all(cur):
 
 
 def main():
+    # Parse-only mode — must be handled BEFORE any DB connection so the parity
+    # test can run with no database available at all.
+    if "--dump-json" in sys.argv:
+        i = sys.argv.index("--dump-json")
+        return dump_json(sys.argv[i + 1], sys.argv[i + 2])
+
     db = get_db_url()
     conn = psycopg2.connect(db)
     cur = conn.cursor()
@@ -552,4 +672,4 @@ def main():
     print(f"table now holds {cur.fetchone()[0]} rows for user {USER_ID}.")
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main() or 0)
