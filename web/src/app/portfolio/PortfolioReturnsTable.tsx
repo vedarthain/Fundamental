@@ -96,21 +96,16 @@ export function PortfolioReturnsTable() {
     let cancelled = false;
     (async () => {
       try {
-        const s = await fetch("/api/portfolio/symbols");
-        if (!s.ok) throw new Error("Could not load your holdings.");
-        const sd = (await s.json()) as { signedIn: boolean; symbols: string[] };
+        // ONE request, not two. `symbols=@portfolio` makes the route resolve
+        // holdings from the session, and `lean=1` drops the glance/verdict
+        // payload this table never reads — together ~65% of the bytes and
+        // three of the route's eight parallel query branches.
+        const w = await fetch("/api/watchlist?symbols=@portfolio&lean=1");
+        if (!w.ok) throw new Error("Could not load your holdings.");
+        const wd = (await w.json()) as { rows: ApiRow[]; signedIn: boolean };
         if (cancelled) return;
-        setSignedIn(sd.signedIn);
-        if (!sd.signedIn) return;
-        const syms = sd.symbols ?? [];
-        if (syms.length === 0) {
-          setRows([]);
-          return;
-        }
-        const w = await fetch(`/api/watchlist?symbols=${encodeURIComponent(syms.join(","))}`);
-        if (!w.ok) throw new Error("Could not load price performance.");
-        const wd = (await w.json()) as { rows: ApiRow[] };
-        if (cancelled) return;
+        setSignedIn(wd.signedIn);
+        if (!wd.signedIn) return;
         setRows(
           (wd.rows ?? []).map((r) => ({
             symbol: r.symbol,
@@ -321,8 +316,15 @@ export function PortfolioReturnsTable() {
             {sorted.map((r) => (
               <tr key={r.symbol} className="border-b hairline hover:bg-[var(--color-paper)]">
                 <td className="px-3 py-2">
+                  {/* Opens in a new tab: this table is a scan-and-compare
+                      surface, and navigating away would drop the sort, the
+                      profit/loss bucket and the scroll position. rel="noopener"
+                      is mandatory with target="_blank" — without it the opened
+                      page gets a handle on window.opener. */}
                   <Link
                     href={`/stock/${r.symbol}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className="font-medium hover:underline tabular-nums"
                   >
                     {r.symbol}

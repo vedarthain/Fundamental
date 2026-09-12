@@ -337,6 +337,13 @@ async function loadSnapshotDate(): Promise<string | null> {
 
 export async function GET(req: NextRequest) {
   const param = req.nextUrl.searchParams.get("symbols");
+  // `lean=1` — skip the three loaders that exist purely for the scorecard CARD
+  // UI: glance (sector-aware peer fundamentals), verdict, and glance_keys.
+  // Measured on a 92-name portfolio they are 65% of the response body
+  // (127KB + 38KB + 6KB of 261KB) and three of the eight parallel query
+  // branches, glance being the heaviest. Table consumers (the portfolio
+  // Returns tab) read none of them.
+  const lean = req.nextUrl.searchParams.get("lean") === "1";
   const session = await getSession();
 
   // If the client passed a specific symbol list, use that (signed-out
@@ -347,7 +354,20 @@ export async function GET(req: NextRequest) {
   // Reused by the ownership block below so we don't fetch held names twice.
   let heldFromList: string[] | null = null;
   if (param !== null) {
-    symbols = cleanSymbolList(param);
+    // `symbols=@portfolio` resolves the caller's current holdings server-side.
+    // The Returns tab previously had to GET /api/portfolio/symbols, wait, then
+    // come back here with the list — a strict waterfall, because the second
+    // request cannot even be issued until the first resolves. Since this
+    // response already carries `signedIn`, one request now answers both.
+    if (param.trim() === "@portfolio") {
+      symbols = session
+        ? (await loadPortfolioSymbols(session.userId).catch(() => [] as string[]))
+            .map((s) => s.toUpperCase())
+            .slice(0, MAX_SYMBOLS)
+        : [];
+    } else {
+      symbols = cleanSymbolList(param);
+    }
   } else if (session) {
     // One-directional inclusion: every name you currently HOLD (active
     // portfolio) or have an OPEN Buy/Sell call on appears on the watchlist,
@@ -393,11 +413,11 @@ export async function GET(req: NextRequest) {
       ? loadMeta(session.userId, symbols)
       : Promise.resolve(new Map<string, WatchMeta>()),
     // Sector-aware fundamentals for the peer-glance table.
-    loadGlance(symbols),
+    lean ? Promise.resolve(new Map<string, GlanceMetrics>()) : loadGlance(symbols),
     // Per-stock verdict — the metrics each stock most stands out on.
-    loadVerdicts(symbols),
+    lean ? Promise.resolve(new Map<string, StockVerdict>()) : loadVerdicts(symbols),
     // Scorecard-driven fundamental rows — which metrics matter for this cluster.
-    loadScorecardKeys(symbols),
+    lean ? Promise.resolve(new Map<string, MetricKey[]>()) : loadScorecardKeys(symbols),
   ]);
 
   // Portfolio ownership for the "P" badge (signed-in only). heldSet = currently
@@ -579,9 +599,19 @@ export async function GET(req: NextRequest) {
     row.close_on_add_date = m?.close_on_add_date ?? null;
     row.note              = m?.note              ?? null;
 
-    row.glance = glance.get(row.symbol) ?? null;
-    row.verdict = verdicts.get(row.symbol) ?? null;
-    row.glance_keys = scorecardKeys.get(row.symbol) ?? [];
+    if (lean) {
+      // Drop the keys outright rather than emitting `null` — carrying three
+      // empty placeholders per row is pure wire cost for a consumer that never
+      // reads them.
+      const bag = row as unknown as Record<string, unknown>;
+      delete bag.glance;
+      delete bag.verdict;
+      delete bag.glance_keys;
+    } else {
+      row.glance = glance.get(row.symbol) ?? null;
+      row.verdict = verdicts.get(row.symbol) ?? null;
+      row.glance_keys = scorecardKeys.get(row.symbol) ?? [];
+    }
   }
   return NextResponse.json({
     rows,
