@@ -2105,7 +2105,13 @@ function HoldingsTable({
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [mode, setMode] = useState<GroupMode>("flat");
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Which grouped sections are OPEN. Tracked as "expanded" rather than
+  // "collapsed" so the default (empty set) means every Sector / Industry group
+  // lands collapsed — the grouped views are for reading allocation across
+  // sectors, and 40-odd rows of detail bury the group totals you came for.
+  // Storing it the other way round would also leave any group that appears
+  // later (e.g. after the search narrows the set) expanded by accident.
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
   // Flat-view column sort. Defaults to Instrument A→Z (the landing view).
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: "symbol", dir: "asc" });
@@ -2156,12 +2162,19 @@ function HoldingsTable({
       : groups;
 
   const toggleGroup = (label: string) =>
-    setCollapsed((prev) => {
+    setExpandedGroups((prev) => {
       const next = new Set(prev);
       if (next.has(label)) next.delete(label);
       else next.add(label);
       return next;
     });
+
+  // Switching Sector ↔ Industry rebuilds the labels entirely, so carrying the
+  // old set over would open unrelated groups by name collision. Start closed.
+  const changeMode = (m: GroupMode) => {
+    setMode(m);
+    setExpandedGroups(new Set());
+  };
 
   return (
     <div className={`card overflow-hidden${flush ? "" : " mt-6"}`}>
@@ -2244,7 +2257,7 @@ function HoldingsTable({
               <button
                 key={m}
                 type="button"
-                onClick={() => setMode(m)}
+                onClick={() => changeMode(m)}
                 className="px-2.5 py-1 text-[11.5px] font-medium capitalize transition-colors"
                 style={
                   mode === m
@@ -2318,7 +2331,9 @@ function HoldingsTable({
               const gWt = totalValue > 0 ? Math.round((g.value / totalValue) * 1000) / 10 : 0;
               const gPnlPct = g.invested > 0 ? (g.pnl / g.invested) * 100 : null;
               const grouped = mode !== "flat";
-              const isCollapsed = grouped && collapsed.has(g.label);
+              // Groups default closed, but an active search overrides that:
+              // collapsing the hits would make the search box look broken.
+              const isCollapsed = grouped && !q && !expandedGroups.has(g.label);
               return (
                 <Fragment key={g.label || "all"}>
                   {grouped && (
