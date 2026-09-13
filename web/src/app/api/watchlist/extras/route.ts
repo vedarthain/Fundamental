@@ -9,15 +9,20 @@
  *   quarterly  — last few quarters (period_end, sales, net_profit, opm%, npm%,
  *                PBT, and YoY growth vs the same quarter a year earlier)
  *   news       — recent headlines (title, source, url, published_at)
+ *   glance     — sector-aware peer fundamentals for the detail column
+ *   glance_keys— which metric rows this stock's cluster scorecard weights most
  *
  * All three come from app tables keyed by the BARE NSE symbol (no ".NS"),
  * matching what the watchlist stores. Missing data → empty arrays, never an
  * error, so the client can always render.
  *
- * Cost (Rule #1): three small indexed reads, each LIMIT-capped.
+ * Cost (Rule #1): a handful of small indexed reads, each LIMIT-capped, all in
+ * one Promise.all. Scoped to ONE symbol — this is the lazy per-card path, so
+ * the work is proportional to what the user actually opened, not to list size.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
+import { loadGlance, loadScorecardKeys } from "@/lib/watchlistCards";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -55,7 +60,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const [dividends, bonuses, quarterlyRaw, news, shareholding] = await Promise.all([
+    const [dividends, bonuses, quarterlyRaw, news, shareholding, glanceMap, keysMap] = await Promise.all([
       sql<Dividend[]>`
         SELECT ex_date::text AS ex_date, amount::float AS amount, purpose
           FROM app.corporate_action
@@ -108,6 +113,12 @@ export async function GET(req: NextRequest) {
          ORDER BY period_end DESC
          LIMIT 12
       `,
+      // Sector-aware peer fundamentals + the cluster scorecard's preferred metric
+      // rows. These used to ride on every row of the /api/watchlist list response
+      // (426KB of 697KB on a 234-name list) despite only ever being rendered for
+      // the ONE selected card. Served here instead, for one symbol, on open.
+      loadGlance([raw]),
+      loadScorecardKeys([raw]),
     ]);
 
     // Attach YoY growth (this quarter vs the same quarter a year earlier). Rows
@@ -137,10 +148,15 @@ export async function GET(req: NextRequest) {
       quarterly: quarterlyOut,
       news,
       shareholding,
+      glance: glanceMap.get(raw) ?? null,
+      glance_keys: keysMap.get(raw) ?? [],
     });
   } catch (err) {
     console.error("watchlist extras failed:", err);
     // Degrade gracefully — the detail panel still renders the chart + scores.
-    return NextResponse.json({ symbol: raw, dividends: [], bonuses: [], quarterly: [], news: [], shareholding: [] });
+    return NextResponse.json({
+      symbol: raw, dividends: [], bonuses: [], quarterly: [], news: [], shareholding: [],
+      glance: null, glance_keys: [],
+    });
   }
 }

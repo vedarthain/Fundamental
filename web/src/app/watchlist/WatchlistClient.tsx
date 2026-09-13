@@ -24,7 +24,6 @@ import type { TradeMark } from "@/app/tools/scanner/CandleChart";
 import CapTierBadge, { type CapCategory } from "@/components/CapTierBadge";
 import { IntradayPriceBadge } from "@/components/IntradayPriceBadge";
 import { metricsForSector, METRIC_META, fmtMetric, type GlanceMetrics, type MetricKey } from "@/lib/glance";
-import type { StockVerdict } from "@/lib/explainer";
 
 type Row = {
   symbol: string;
@@ -93,12 +92,6 @@ type Row = {
   bought_on?: string | null;
   /** Real executed trades → B/S markers on the card's price chart. */
   trades?: TradeMark[];
-  /** Sector-aware fundamentals for the peer-glance table. */
-  glance: GlanceMetrics | null;
-  /** Per-stock verdict — the metrics this stock most stands out on. */
-  verdict: StockVerdict | null;
-  /** Scorecard-driven fundamental rows for this stock's cluster. */
-  glance_keys?: MetricKey[];
 };
 
 // ── Corporate-actions / quarterly extras (lazy per-symbol) ──────────────────
@@ -128,6 +121,11 @@ type Extras = {
   quarterly: Quarter[];
   news: NewsItem[];
   shareholding: Shareholding[];
+  /** Sector-aware peer fundamentals + the metric rows this stock's cluster
+   *  scorecard weights most. Moved here off the list response — see the lean=1
+   *  note on the /api/watchlist fetch. */
+  glance: GlanceMetrics | null;
+  glance_keys: MetricKey[];
 };
 
 // In-memory caches so re-opening a stock (or re-rendering) doesn't refetch.
@@ -266,7 +264,13 @@ export function WatchlistClient({ source }: { source?: WatchSource } = {}) {
     }
     setLoading(true);
     setError(null);
-    fetch(`/api/watchlist?symbols=${encodeURIComponent(symbols.join(","))}`)
+    // lean=1 drops glance / verdict / glance_keys from every row. They were 61%
+    // of the response (426KB of 697KB on a 234-name list) but only the ONE
+    // selected card ever renders glance, and nothing rendered verdict at all.
+    // The selected card now gets its glance rows from /api/watchlist/extras,
+    // which it was already fetching on open anyway — so this costs no extra
+    // round-trip, it just moves the payload off the critical path.
+    fetch(`/api/watchlist?symbols=${encodeURIComponent(symbols.join(","))}&lean=1`)
       .then((r) => {
         if (!r.ok) throw new Error(`Server returned ${r.status}`);
         return r.json();
@@ -1087,8 +1091,6 @@ function WatchRow({
           alert "Add" button via extraStats. */}
       <DetailExtras
         symbol={row.symbol}
-        glance={row.glance}
-        glanceKeys={row.glance_keys}
         sector={row.sector_name}
         signedIn={signedIn}
         trades={row.trades}
@@ -1211,6 +1213,8 @@ function useExtras(symbol: string): { data: Extras | null; err: boolean } {
           quarterly: j.quarterly ?? [],
           news: j.news ?? [],
           shareholding: j.shareholding ?? [],
+          glance: j.glance ?? null,
+          glance_keys: j.glance_keys ?? [],
         };
         extrasCache.set(symbol, e);
         setData(e);
@@ -1249,8 +1253,6 @@ function rowRangeReturns(row: Row): Partial<Record<ChartRange, number | null>> {
 
 function DetailExtras({
   symbol,
-  glance,
-  glanceKeys,
   sector,
   signedIn,
   trades,
@@ -1260,8 +1262,6 @@ function DetailExtras({
   extraStats,
 }: {
   symbol: string;
-  glance: GlanceMetrics | null;
-  glanceKeys: MetricKey[] | undefined;
   sector: string | null;
   signedIn?: boolean;
   trades?: TradeMark[];
@@ -1281,6 +1281,11 @@ function DetailExtras({
   const dividends = data?.dividends ?? [];
   const news = data?.news ?? [];
   const shareholding = data?.shareholding ?? [];
+  // Arrives with the rest of the extras rather than on every list row. Until it
+  // lands, FundamentalsColumn already has `loading` — the same spinner the
+  // quarterly/dividend blocks beside it use — so there's no new empty state.
+  const glance = data?.glance ?? null;
+  const glanceKeys = data?.glance_keys;
   const loadingExtras = data === null && !err;
   const nothing =
     data !== null &&

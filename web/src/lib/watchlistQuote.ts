@@ -219,19 +219,43 @@ async function fetchQuotes(bareSymsSorted: string[]): Promise<Record<string, Quo
         c_5y: string | null;
         c_10y: string | null;
       }[]>`
-        WITH latest AS (
-          SELECT symbol, MAX(date) AS ld
-          FROM golden.price_history
-          WHERE interval = '1d' AND COALESCE(adj_close, close) IS NOT NULL
-            AND symbol = ANY(${cands})
-          GROUP BY symbol
+        -- latest / firstbar look like cheap one-row-per-symbol aggregates, but
+        -- MAX(date) and DISTINCT ON both made Postgres read EVERY daily bar for
+        -- every symbol (~700k rows for a 176-name list, sorting to temp) — no
+        -- btree skip-scan exists, so the GROUP BY has to see the whole range.
+        -- That dominated the query. Driving them from the symbol
+        -- list with LATERAL ... ORDER BY date LIMIT 1 turns each into one
+        -- backward/forward index seek on (symbol, interval, date): 1330ms ->
+        -- 50ms (26x), byte-identical output. Measured with a real bound
+        -- text[] parameter (PREPARE q(text[]) / EXECUTE) — a psql temp table
+        -- plus "= ANY(array(select ...))" gives the planner a bogus InitPlan
+        -- estimate and a plan production never runs, inflating the "before"
+        -- to 3.2s. CROSS JOIN (not LEFT) keeps the old
+        -- semantics — a symbol with no bars produced no row before either.
+        WITH cand AS (
+          SELECT DISTINCT unnest(${cands}::text[]) AS symbol
+        ),
+        latest AS (
+          SELECT c.symbol, l.ld
+          FROM cand c
+          CROSS JOIN LATERAL (
+            SELECT ph.date AS ld
+            FROM golden.price_history ph
+            WHERE ph.symbol = c.symbol AND ph.interval = '1d'
+              AND COALESCE(ph.adj_close, ph.close) IS NOT NULL
+            ORDER BY ph.date DESC LIMIT 1
+          ) l
         ),
         firstbar AS (
-          SELECT DISTINCT ON (symbol) symbol, COALESCE(adj_close, close) AS c
-          FROM golden.price_history
-          WHERE interval = '1d' AND COALESCE(adj_close, close) IS NOT NULL
-            AND symbol = ANY(${cands})
-          ORDER BY symbol, date ASC
+          SELECT c.symbol, f.c
+          FROM cand c
+          CROSS JOIN LATERAL (
+            SELECT COALESCE(ph.adj_close, ph.close) AS c
+            FROM golden.price_history ph
+            WHERE ph.symbol = c.symbol AND ph.interval = '1d'
+              AND COALESCE(ph.adj_close, ph.close) IS NOT NULL
+            ORDER BY ph.date ASC LIMIT 1
+          ) f
         )
         SELECT l.symbol,
                fb.c::text   AS first_c,
