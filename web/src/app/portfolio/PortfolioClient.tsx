@@ -255,7 +255,16 @@ export function PortfolioClient({
       ) : tab === "scorecard" && owner ? (
         <PortfolioScorecard />
       ) : tab === "returns" && owner ? (
-        <PortfolioReturnsTable />
+        // Totals come from the server render rather than being re-summed on the
+        // client, so the strip cannot drift from the Performance tab's cards.
+        <PortfolioReturnsTable
+          totals={{
+            invested: portfolio.totals.invested,
+            currentValue: portfolio.totals.currentValue,
+            pnl: portfolio.totals.pnl,
+            pnlPct: portfolio.totals.pnlPct,
+          }}
+        />
       ) : null}
 
       {/* Quick-add trade sheet: opened by the Transactions-tab button here, or

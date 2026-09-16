@@ -82,8 +82,20 @@ function deltaColor(v: number | null): string {
   return v > 0 ? "var(--color-delta-up, #15803D)" : "var(--color-delta-down, #DC2626)";
 }
 
-export function PortfolioReturnsTable() {
+/** Portfolio-level trailing return, from /api/portfolio/symbols. */
+type PortfolioReturns = {
+  ret1d: number | null;
+  ret1w: number | null;
+  ret1m: number | null;
+  ret6m: number | null;
+  ret1y: number | null;
+  asOf: string | null;
+  historyDays: number | null;
+};
+
+export function PortfolioReturnsTable({ totals }: { totals?: ReturnsTotals }) {
   const [rows, setRows] = useState<Display[] | null>(null);
+  const [pf, setPf] = useState<PortfolioReturns | null>(null);
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [bucket, setBucket] = useState<Bucket>("all");
@@ -122,6 +134,29 @@ export function PortfolioReturnsTable() {
         );
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Something went wrong.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Portfolio-level trailing return for the summary strip. Separate request
+  // from the table's: this one is time-weighted over the SNAPSHOT series, a
+  // fundamentally different measurement from the per-stock price windows below,
+  // and it rides on an endpoint the Scorecard tab already calls. Failure is
+  // silent on purpose — the table is the point of this tab, and a strip that
+  // can't load must not take it down.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch("/api/portfolio/symbols");
+        if (!r.ok) return;
+        const d = (await r.json()) as { returns?: PortfolioReturns | null };
+        if (!cancelled) setPf(d.returns ?? null);
+      } catch {
+        /* strip stays hidden */
       }
     })();
     return () => {
@@ -220,9 +255,11 @@ export function PortfolioReturnsTable() {
   const arrow = (key: SortKey) => (sort.key === key ? (sort.dir === "asc" ? " ▲" : " ▼") : "");
 
   return (
-    // `overflow-hidden` on the card would also trap the sticky header (any
-    // non-visible overflow creates the anchoring scrollport), so it too is
-    // dropped from md up. Below md it stays, to clip the rounded corners.
+    <>
+    <SummaryStrip totals={totals} pf={pf} />
+    {/* `overflow-hidden` on the card would also trap the sticky header (any
+        non-visible overflow creates the anchoring scrollport), so it too is
+        dropped from md up. Below md it stays, to clip the rounded corners. */}
     <div className="card overflow-hidden md:overflow-visible">
       <div className="flex items-center justify-between gap-3 flex-wrap px-4 py-3 border-b hairline">
         <div className="flex items-center gap-3 flex-wrap">
@@ -368,5 +405,118 @@ export function PortfolioReturnsTable() {
         </table>
       </div>
     </div>
+    </>
   );
 }
+
+/** Totals the strip needs, handed down from the server render so the figures are
+ *  byte-identical to the Performance tab's cards rather than re-derived here. */
+export type ReturnsTotals = {
+  invested: number;
+  currentValue: number;
+  pnl: number;
+  pnlPct: number | null;
+};
+
+/**
+ * Summary strip above the Returns table: the whole book on one line —
+ * Invested, Current value, and trailing 1D / 1W / 1M / 6M / 1Y.
+ *
+ * TWO DIFFERENT MEASUREMENTS sit side by side here and the distinction is not
+ * cosmetic. Invested / Current value are live, priced at read time. The
+ * trailing percentages are TIME-WEIGHTED over `app.portfolio_snapshot`, an
+ * end-of-day series, with trade cashflows netted out so that topping up a
+ * position doesn't book your own deposit as a gain. So the strip's 1D will not
+ * equal (current − previous close) on today's live prices, and shouldn't: one
+ * is a return, the other is a mark. The "as of" note carries the snapshot date
+ * so the gap is visible rather than confusing.
+ *
+ * 6M and 1Y render "—" until the snapshot series is long enough to span them.
+ * The footnote states the actual depth, because a bare dash reads as a bug
+ * while "62 days of history" reads as the true answer: not yet.
+ */
+function SummaryStrip({
+  totals,
+  pf,
+}: {
+  totals?: ReturnsTotals;
+  pf: PortfolioReturns | null;
+}) {
+  const windows: { label: string; value: number | null }[] = [
+    { label: "1D", value: pf?.ret1d ?? null },
+    { label: "1W", value: pf?.ret1w ?? null },
+    { label: "1M", value: pf?.ret1m ?? null },
+    { label: "6M", value: pf?.ret6m ?? null },
+    { label: "1Y", value: pf?.ret1y ?? null },
+  ];
+  // Nothing to say at all — don't render an empty shell.
+  if (!totals && windows.every((w) => w.value == null)) return null;
+
+  const short = pf?.historyDays != null && windows.some((w) => w.value == null);
+
+  return (
+    <div className="card p-3 md:p-4 mb-3">
+      <div className="flex items-center gap-x-6 gap-y-3 flex-wrap">
+        {totals && (
+          <>
+            <Metric label="Invested" value={inr(totals.invested)} />
+            <Metric label="Current value" value={inr(totals.currentValue)} />
+            <Metric
+              label="Total P&L"
+              value={`${totals.pnl >= 0 ? "+" : "−"}${inr(Math.abs(totals.pnl))}`}
+              color={deltaColor(totals.pnl)}
+              sub={totals.pnlPct == null ? undefined : fmtPct(totals.pnlPct)}
+            />
+            {/* Vertical rule marks the boundary between live marks (left) and
+                time-weighted returns (right) — the one thing a reader must not
+                conflate. Hidden below md where the row wraps anyway. */}
+            <div className="hidden md:block self-stretch w-px" style={{ background: "var(--color-hairline, rgba(0,0,0,0.10))" }} />
+          </>
+        )}
+        {windows.map((w) => (
+          <Metric
+            key={w.label}
+            label={w.label}
+            value={fmtPct(w.value)}
+            color={deltaColor(w.value)}
+          />
+        ))}
+      </div>
+      {short && (
+        <div className="muted-text text-[10.5px] mt-2">
+          Windows longer than {pf!.historyDays} days show “—”: performance is tracked
+          from your first snapshot onward, and that history is {pf!.historyDays} days deep
+          {pf?.asOf ? ` (through ${pf.asOf})` : ""}.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Metric({
+  label,
+  value,
+  color,
+  sub,
+}: {
+  label: string;
+  value: string;
+  color?: string;
+  sub?: string;
+}) {
+  return (
+    <div>
+      <div className="text-[10.5px] font-semibold uppercase tracking-wide muted-text">{label}</div>
+      <div
+        className="text-[15px] md:text-[16px] font-semibold tabular-nums"
+        style={{ color: color ?? "var(--color-fg)" }}
+      >
+        {value}
+      </div>
+      {sub && <div className="text-[10.5px] tabular-nums" style={{ color: color }}>{sub}</div>}
+    </div>
+  );
+}
+
+const inr = (n: number) =>
+  `₹${Math.round(n).toLocaleString("en-IN")}`;

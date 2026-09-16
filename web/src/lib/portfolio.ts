@@ -359,13 +359,28 @@ export async function loadPortfolioSymbols(userId: number): Promise<string[]> {
   return rows.map((r) => r.symbol);
 }
 
-/** Trailing portfolio return over 1D / 1W / 1M, as percentages. */
+/**
+ * Trailing portfolio return over 1D / 1W / 1M / 6M / 1Y, as percentages.
+ *
+ * The two long windows are declared but read null until the snapshot series is
+ * deep enough to span them — `app.portfolio_snapshot` is forward-only from
+ * onboarding, so they stay null until the history accrues or is backfilled from
+ * the transaction ledger. That is deliberate: twr() returns null rather than
+ * silently measuring whatever short window exists and labelling it "1Y", which
+ * is the one failure mode here that would actively mislead.
+ */
 export type PortfolioReturns = {
   ret1d: number | null;
   ret1w: number | null;
   ret1m: number | null;
+  ret6m: number | null;
+  ret1y: number | null;
   /** snap_date of the newest snapshot the figures are measured to. */
   asOf: string | null;
+  /** Calendar days spanned by the snapshot series — how far back any window can
+   *  reach. The UI uses this to explain an absent 6M/1Y as "not enough history
+   *  yet" rather than leaving a bare dash that reads like a bug. */
+  historyDays: number | null;
 };
 
 /**
@@ -412,7 +427,10 @@ export async function loadPortfolioReturns(userId: number): Promise<PortfolioRet
   const series = snaps
     .map((r) => ({ d: r.d, v: Number(r.v) }))
     .filter((r) => Number.isFinite(r.v));
-  const empty: PortfolioReturns = { ret1d: null, ret1w: null, ret1m: null, asOf: null };
+  const empty: PortfolioReturns = {
+    ret1d: null, ret1w: null, ret1m: null, ret6m: null, ret1y: null,
+    asOf: null, historyDays: null,
+  };
   if (series.length < 2) return empty;
 
   const flowByDate = new Map<string, number>();
@@ -456,7 +474,23 @@ export async function loadPortfolioReturns(userId: number): Promise<PortfolioRet
     return Math.round((factor - 1) * 1000) / 10;
   };
 
-  return { ret1d: twr(1), ret1w: twr(7), ret1m: twr(30), asOf: last.d };
+  // Span of the series, so the UI can say "62 days of history" instead of
+  // leaving 6M/1Y as unexplained dashes. twr() already refuses any window the
+  // series cannot cover, so these are null-by-construction until it can.
+  const first = series[0];
+  const historyDays = Math.round(
+    (Date.parse(`${last.d}T00:00:00Z`) - Date.parse(`${first.d}T00:00:00Z`)) / 86_400_000,
+  );
+
+  return {
+    ret1d: twr(1),
+    ret1w: twr(7),
+    ret1m: twr(30),
+    ret6m: twr(182),
+    ret1y: twr(365),
+    asOf: last.d,
+    historyDays: Number.isFinite(historyDays) ? historyDays : null,
+  };
 }
 
 /**
