@@ -123,26 +123,8 @@ function deltaColor(v: number | null): string {
   return v > 0 ? "var(--color-delta-up, #15803D)" : "var(--color-delta-down, #DC2626)";
 }
 
-/** Portfolio-level trailing return, from /api/portfolio/symbols. */
-type PortfolioReturns = {
-  ret1d: number | null;
-  ret1w: number | null;
-  ret1m: number | null;
-  ret6m: number | null;
-  ret1y: number | null;
-  asOf: string | null;
-  historyDays: number | null;
-};
-
-export function PortfolioReturnsTable({
-  totals,
-  others = [],
-}: {
-  totals?: ReturnsTotals;
-  others?: OtherRow[];
-}) {
+export function PortfolioReturnsTable({ others = [] }: { others?: OtherRow[] }) {
   const [rows, setRows] = useState<Display[] | null>(null);
-  const [pf, setPf] = useState<PortfolioReturns | null>(null);
   const [view, setView] = useState<View>("stocks");
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -188,29 +170,6 @@ export function PortfolioReturnsTable({
         );
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Something went wrong.");
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Portfolio-level trailing return for the summary strip. Separate request
-  // from the table's: this one is time-weighted over the SNAPSHOT series, a
-  // fundamentally different measurement from the per-stock price windows below,
-  // and it rides on an endpoint the Scorecard tab already calls. Failure is
-  // silent on purpose — the table is the point of this tab, and a strip that
-  // can't load must not take it down.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const r = await fetch("/api/portfolio/symbols");
-        if (!r.ok) return;
-        const d = (await r.json()) as { returns?: PortfolioReturns | null };
-        if (!cancelled) setPf(d.returns ?? null);
-      } catch {
-        /* strip stays hidden */
       }
     })();
     return () => {
@@ -310,6 +269,48 @@ export function PortfolioReturnsTable({
     };
   }, [sorted]);
 
+  /**
+   * Trailing windows for the ACTIVE view: each holding's own price return,
+   * weighted by what that holding is currently worth.
+   *
+   * THIS IS NOT THE SAME NUMBER the Scorecard tab shows, and the difference is
+   * worth understanding. Scorecard reports a time-weighted return chained over
+   * `app.portfolio_snapshot` with trade cashflows netted out — a true portfolio
+   * return, but whole-book only, because there is no per-segment snapshot
+   * series and never has been. Scoping to a tab therefore cannot come from
+   * there at any price.
+   *
+   * So this is computed bottom-up instead: Σ(value × return) / Σ(value) over
+   * the rows on screen. For a window in which you didn't trade, the two agree.
+   * Where you did trade, this one ignores the timing of the cashflow — it
+   * describes how the instruments you hold TODAY performed, not what your money
+   * actually earned. That is the right question for a per-segment read and the
+   * wrong one for the book as a whole, which is why Scorecard keeps the TWR.
+   *
+   * Weights use current value, and each window weights independently: a holding
+   * missing 1Y drops out of 1Y alone rather than poisoning every column.
+   */
+  const windows = useMemo(() => {
+    const keys = ["d1", "w1", "m1", "y1"] as const;
+    const out: Record<(typeof keys)[number], number | null> = {
+      d1: null, w1: null, m1: null, y1: null,
+    };
+    for (const k of keys) {
+      let acc = 0;
+      let wsum = 0;
+      for (const r of sorted ?? []) {
+        const v = r[k];
+        if (v == null || r.qty == null || r.ltp == null) continue;
+        const w = r.qty * r.ltp;
+        if (!(w > 0)) continue;
+        acc += w * v;
+        wsum += w;
+      }
+      out[k] = wsum > 0 ? acc / wsum : null;
+    }
+    return out;
+  }, [sorted]);
+
   if (signedIn === false) {
     return (
       <div className="card p-8 text-center">
@@ -370,36 +371,37 @@ export function PortfolioReturnsTable({
 
   return (
     <>
-    <SummaryStrip totals={totals} pf={pf} />
+    {/* Stocks / Others sits ABOVE the strip because it governs the strip as
+        well as the table — every figure below it is scoped to the selection.
+        Same isMapped split as the Holdings tab, so the two can't disagree about
+        what counts as a stock. Switching resets the Profit/Loss pill: those
+        counts are per-view, and leaving "Loss 12" selected while moving to a
+        view with three losers reads as data loss rather than as a filter. */}
+    <div className="flex items-center gap-1 mb-3 border-b hairline">
+      {([
+        { v: "stocks", label: "Stocks", n: rows?.length ?? 0 },
+        { v: "others", label: "Others", n: otherRows.length },
+      ] as const).map((o) => (
+        <button
+          key={o.v}
+          type="button"
+          onClick={() => { setView(o.v); setBucket("all"); }}
+          className="relative px-3 py-2 text-[13px] font-medium transition-colors"
+          style={{ color: view === o.v ? "var(--color-accent-700)" : "var(--color-muted)" }}
+        >
+          {o.label}
+          <span className="ml-1.5 text-[11px] tabular-nums muted-text">{o.n}</span>
+          {view === o.v && (
+            <span className="absolute left-0 right-0 -bottom-px h-[2px]" style={{ background: "var(--color-accent-600)" }} />
+          )}
+        </button>
+      ))}
+    </div>
+    <SummaryStrip view={view} subtotal={subtotal} windows={windows} />
     {/* `overflow-hidden` on the card would also trap the sticky header (any
         non-visible overflow creates the anchoring scrollport), so it too is
         dropped from md up. Below md it stays, to clip the rounded corners. */}
     <div className="card overflow-hidden md:overflow-visible">
-      {/* Stocks / Others — the same split as the Holdings tab, driven by the
-          same isMapped signal, so the two tabs can't disagree about what counts
-          as a stock. Switching resets the Profit/Loss pill: those counts are
-          per-view, and leaving "Loss 12" selected while moving to a view with
-          three losers reads as data loss rather than a filter. */}
-      <div className="flex items-center gap-1 px-4 pt-2 border-b hairline">
-        {([
-          { v: "stocks", label: "Stocks", n: rows?.length ?? 0 },
-          { v: "others", label: "Others", n: otherRows.length },
-        ] as const).map((o) => (
-          <button
-            key={o.v}
-            type="button"
-            onClick={() => { setView(o.v); setBucket("all"); }}
-            className="relative px-3 py-2 text-[12.5px] font-medium transition-colors"
-            style={{ color: view === o.v ? "var(--color-accent-700)" : "var(--color-muted)" }}
-          >
-            {o.label}
-            <span className="ml-1.5 text-[11px] tabular-nums muted-text">{o.n}</span>
-            {view === o.v && (
-              <span className="absolute left-0 right-0 -bottom-px h-[2px]" style={{ background: "var(--color-accent-600)" }} />
-            )}
-          </button>
-        ))}
-      </div>
       <div className="flex items-center justify-between gap-3 flex-wrap px-4 py-3 border-b hairline">
         <div className="flex items-center gap-3 flex-wrap">
           <h2 className="text-[14px] font-semibold">
@@ -444,36 +446,6 @@ export function PortfolioReturnsTable({
             ? "Live LTP · no 1D–1Y: unscored instruments have no price history"
             : "Return is yours · 1D–1Y are the stock’s"}
         </span>
-      </div>
-      {/* Subtotal for the visible rows. The strip above is whole-book; this is
-          the half you're actually looking at, which is the number the Stocks /
-          Others split exists to expose. Recomputed from the rows on screen, so
-          it also tracks the Profit/Loss filter rather than silently showing an
-          unfiltered total next to a filtered table. */}
-      <div className="flex items-center gap-x-6 gap-y-1 flex-wrap px-4 py-2 border-b hairline text-[11.5px]">
-        <span className="muted-text">
-          {bucket === "all" ? "Subtotal" : `Subtotal (${bucket})`}
-        </span>
-        <span className="tabular-nums">
-          <span className="muted-text">Invested </span>
-          <span className="font-semibold">{inr(subtotal.invested)}</span>
-        </span>
-        <span className="tabular-nums">
-          <span className="muted-text">Current </span>
-          <span className="font-semibold">{inr(subtotal.current)}</span>
-        </span>
-        <span className="tabular-nums" style={{ color: deltaColor(subtotal.pnl) }}>
-          <span className="muted-text">P&amp;L </span>
-          <span className="font-semibold">
-            {subtotal.pnl >= 0 ? "+" : "−"}{inr(Math.abs(subtotal.pnl))}
-          </span>
-          {subtotal.pnlPct != null && <span> ({fmtPct(subtotal.pnlPct)})</span>}
-        </span>
-        {subtotal.missing > 0 && (
-          <span className="muted-text">
-            {subtotal.missing} position{subtotal.missing > 1 ? "s" : ""} excluded — no cost or price
-          </span>
-        )}
       </div>
       {/* `overflow-x-auto` makes this a scroll container on BOTH axes (CSS
           forces a `visible` axis to `auto` when the other isn't visible), and a
@@ -594,86 +566,72 @@ export function PortfolioReturnsTable({
   );
 }
 
-/** Totals the strip needs, handed down from the server render so the figures are
- *  byte-identical to the Performance tab's cards rather than re-derived here. */
-export type ReturnsTotals = {
-  invested: number;
-  currentValue: number;
-  pnl: number;
-  pnlPct: number | null;
-};
-
 /**
- * Summary strip above the Returns table: the whole book on one line —
- * Invested, Current value, and trailing 1D / 1W / 1M / 6M / 1Y.
+ * Summary strip: Invested / Current value / Total P&L, then trailing
+ * 1D / 1W / 1M / 1Y — all scoped to the selected Stocks-or-Others tab, and to
+ * the Profit/Loss pill, since both are just filters on the same row set.
  *
- * TWO DIFFERENT MEASUREMENTS sit side by side here and the distinction is not
- * cosmetic. Invested / Current value are live, priced at read time. The
- * trailing percentages are TIME-WEIGHTED over `app.portfolio_snapshot`, an
- * end-of-day series, with trade cashflows netted out so that topping up a
- * position doesn't book your own deposit as a gain. So the strip's 1D will not
- * equal (current − previous close) on today's live prices, and shouldn't: one
- * is a return, the other is a mark. The "as of" note carries the snapshot date
- * so the gap is visible rather than confusing.
+ * TWO DIFFERENT MEASUREMENTS sit side by side and the rule between them marks
+ * the boundary. Left: live marks, summed from the rows on screen at read-time
+ * prices. Right: weighted-average price returns of those same rows. So the 1D
+ * here describes how the instruments moved, while the P&L beside it is a
+ * position. They answer different questions and will not reconcile to each
+ * other — that is the intended reading, not a defect.
  *
- * 6M and 1Y render "—" until the snapshot series is long enough to span them.
- * The footnote states the actual depth, because a bare dash reads as a bug
- * while "62 days of history" reads as the true answer: not yet.
+ * NO 6M COLUMN, deliberately. /api/watchlist carries 1D, 1W, 1M and 1Y and no
+ * six-month window, so a 6M here could only ever be an empty column. An
+ * always-dash column trains you to ignore the row; better to not claim it.
+ *
+ * For the Others tab every window is null by construction — ETFs have no bar
+ * series — so the whole right-hand group is replaced by a single sentence
+ * saying why, rather than four dashes that look like a loading failure.
  */
 function SummaryStrip({
-  totals,
-  pf,
+  view,
+  subtotal,
+  windows,
 }: {
-  totals?: ReturnsTotals;
-  pf: PortfolioReturns | null;
+  view: View;
+  subtotal: { invested: number; current: number; pnl: number; pnlPct: number | null; missing: number };
+  windows: { d1: number | null; w1: number | null; m1: number | null; y1: number | null };
 }) {
-  const windows: { label: string; value: number | null }[] = [
-    { label: "1D", value: pf?.ret1d ?? null },
-    { label: "1W", value: pf?.ret1w ?? null },
-    { label: "1M", value: pf?.ret1m ?? null },
-    { label: "6M", value: pf?.ret6m ?? null },
-    { label: "1Y", value: pf?.ret1y ?? null },
+  const cells: { label: string; value: number | null }[] = [
+    { label: "1D", value: windows.d1 },
+    { label: "1W", value: windows.w1 },
+    { label: "1M", value: windows.m1 },
+    { label: "1Y", value: windows.y1 },
   ];
-  // Nothing to say at all — don't render an empty shell.
-  if (!totals && windows.every((w) => w.value == null)) return null;
-
-  const short = pf?.historyDays != null && windows.some((w) => w.value == null);
+  const noWindows = cells.every((c) => c.value == null);
 
   return (
     <div className="card p-3 md:p-4 mb-3">
       <div className="flex items-center gap-x-6 gap-y-3 flex-wrap">
-        {totals && (
-          <>
-            <Metric label="Invested" value={inr(totals.invested)} />
-            <Metric label="Current value" value={inr(totals.currentValue)} />
-            <Metric
-              label="Total P&L"
-              value={`${totals.pnl >= 0 ? "+" : "−"}${inr(Math.abs(totals.pnl))}`}
-              color={deltaColor(totals.pnl)}
-              sub={totals.pnlPct == null ? undefined : fmtPct(totals.pnlPct)}
-            />
-            {/* Vertical rule marks the boundary between live marks (left) and
-                time-weighted returns (right) — the one thing a reader must not
-                conflate. Hidden below md where the row wraps anyway. */}
-            <div className="hidden md:block self-stretch w-px" style={{ background: "var(--color-hairline, rgba(0,0,0,0.10))" }} />
-          </>
+        <Metric label="Invested" value={inr(subtotal.invested)} />
+        <Metric label="Current value" value={inr(subtotal.current)} />
+        <Metric
+          label="Total P&L"
+          value={`${subtotal.pnl >= 0 ? "+" : "−"}${inr(Math.abs(subtotal.pnl))}`}
+          color={deltaColor(subtotal.pnl)}
+          sub={subtotal.pnlPct == null ? undefined : fmtPct(subtotal.pnlPct)}
+        />
+        <div className="hidden md:block self-stretch w-px" style={{ background: "var(--color-hairline, rgba(0,0,0,0.10))" }} />
+        {noWindows ? (
+          <span className="muted-text text-[11.5px] max-w-[420px]">
+            No trailing performance for unscored instruments — ETFs and index funds
+            have a live price but no history to measure a window against.
+          </span>
+        ) : (
+          cells.map((c) => (
+            <Metric key={c.label} label={c.label} value={fmtPct(c.value)} color={deltaColor(c.value)} />
+          ))
         )}
-        {windows.map((w) => (
-          <Metric
-            key={w.label}
-            label={w.label}
-            value={fmtPct(w.value)}
-            color={deltaColor(w.value)}
-          />
-        ))}
       </div>
-      {short && (
-        <div className="muted-text text-[10.5px] mt-2">
-          Windows longer than {pf!.historyDays} days show “—”: performance is tracked
-          from your first snapshot onward, and that history is {pf!.historyDays} days deep
-          {pf?.asOf ? ` (through ${pf.asOf})` : ""}.
-        </div>
-      )}
+      <div className="muted-text text-[10.5px] mt-2">
+        {view === "others" ? "ETFs & index funds" : "Scored equities"} only.
+        {!noWindows && " 1D–1Y are the value-weighted price returns of these holdings, not a cashflow-adjusted portfolio return — the Scorecard tab has that."}
+        {subtotal.missing > 0 &&
+          ` ${subtotal.missing} position${subtotal.missing > 1 ? "s" : ""} excluded from the totals: no cost or no price.`}
+      </div>
     </div>
   );
 }

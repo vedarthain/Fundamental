@@ -255,17 +255,11 @@ export function PortfolioClient({
       ) : tab === "scorecard" && owner ? (
         <PortfolioScorecard />
       ) : tab === "returns" && owner ? (
-        // Totals come from the server render rather than being re-summed on the
-        // client, so the strip cannot drift from the Performance tab's cards.
-        // `others` likewise: ETFs aren't in the scored universe, so the table's
-        // /api/watchlist fetch cannot reach them — they can only arrive as props.
+        // ETFs aren't in the scored universe, so the table's /api/watchlist
+        // fetch cannot reach them — they can only arrive as props from here.
+        // Whole-book totals are deliberately NOT passed: the strip is scoped to
+        // the selected Stocks/Others tab and sums the rows on screen instead.
         <PortfolioReturnsTable
-          totals={{
-            invested: portfolio.totals.invested,
-            currentValue: portfolio.totals.currentValue,
-            pnl: portfolio.totals.pnl,
-            pnlPct: portfolio.totals.pnlPct,
-          }}
           others={portfolio.instruments
             .filter((i) => !i.isMapped)
             .map((i) => ({
