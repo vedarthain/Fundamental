@@ -98,6 +98,21 @@ export type Portfolio = {
   // close history for the held symbols). Surfaced as the "as of" under LTP.
   priceAsOf: string | null;
   brokers: Broker[]; // which brokers the user has imported
+  // How old each broker's snapshot is. Quantity and avg cost are broker truth
+  // frozen at import time — if you traded at a broker after its last upload,
+  // the app simply cannot see it, and the position silently reads stale rather
+  // than wrong-looking. Surfaced on Holdings so the staleness is visible at a
+  // glance instead of only discoverable by reconciling against the broker app.
+  brokerSnapshots: BrokerSnapshot[];
+};
+
+export type BrokerSnapshot = {
+  broker: Broker;
+  label: string;
+  /** MAX(imported_at) for this broker, ISO. */
+  importedAt: string;
+  /** Whole days between that import and now. 0 = imported today. */
+  ageDays: number;
 };
 
 type HoldingRow = {
@@ -1226,6 +1241,7 @@ function emptyPortfolio(): Portfolio {
     snapshotDate: null,
     priceAsOf: null,
     brokers: [],
+    brokerSnapshots: [],
   };
 }
 
@@ -1622,6 +1638,29 @@ async function computePortfolio(
 
   const brokers = [...new Set(holdings.map((h) => h.broker))];
 
+  // Per-broker snapshot age. Built off `holdings` (not visibleHoldings) so a
+  // broker whose rows are suppressed because the symbol is reconciled through
+  // manual trades still reports its upload date — the snapshot exists either
+  // way, and its age is what tells you whether the quantities can be trusted.
+  // 'derived' is excluded: it is computed from the trade log, not uploaded.
+  const nowMs = Date.now();
+  const lastImport = new Map<Broker, number>();
+  for (const h of holdings) {
+    if (h.broker === "derived" || !h.imported_at) continue;
+    const t = Date.parse(h.imported_at);
+    if (Number.isNaN(t)) continue;
+    const prev = lastImport.get(h.broker);
+    if (prev == null || t > prev) lastImport.set(h.broker, t);
+  }
+  const brokerSnapshots: BrokerSnapshot[] = [...lastImport.entries()]
+    .map(([broker, t]) => ({
+      broker,
+      label: BROKER_LABEL[broker],
+      importedAt: new Date(t).toISOString(),
+      ageDays: Math.max(0, Math.floor((nowMs - t) / 86_400_000)),
+    }))
+    .sort((a, b) => b.ageDays - a.ageDays); // stalest first — that's the one to act on
+
   return {
     hasHoldings: true,
     instruments,
@@ -1646,5 +1685,6 @@ async function computePortfolio(
     snapshotDate,
     priceAsOf,
     brokers,
+    brokerSnapshots,
   };
 }

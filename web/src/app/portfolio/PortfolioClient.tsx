@@ -57,6 +57,8 @@ function up(v: number | null): boolean {
 }
 const GREEN = "var(--color-delta-up, #15803D)";
 const RED = "var(--color-delta-down, #DC2626)";
+// "Getting stale" — deliberately distinct from RED, which means money lost.
+const AMBER = "var(--color-warn, #B45309)";
 
 type ImportKind = "holdings" | "trades";
 
@@ -302,6 +304,9 @@ function PerformanceTab({ portfolio, realized, perf, timeline }: { portfolio: Po
     <div className="space-y-6">
       {/* Current value / Invested / Total P&L — moved here from the Holdings tab. */}
       <SummaryCards t={totals} snapshot={portfolio.snapshotDate} />
+      {/* Sits directly under the value/P&L cards on purpose: those numbers are
+          only as current as the snapshots behind them. */}
+      <BrokerFreshness snapshots={portfolio.brokerSnapshots} />
 
       {/* Zone 0 — headline strip */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -1200,10 +1205,16 @@ function BookedPnl({ realized, instruments }: { realized: RealizedPnl; instrumen
         />
         <Card label="Sale proceeds" value={inr(tt.proceeds)} sub="realized exits" icon={<IconWallet size={15} />} />
         <Card label="Cost of sold" value={inr(tt.costOfSold)} sub="FIFO basis" icon={<IconDeposit size={15} />} />
+        {/* winners/losers count EXIT rows — one per symbol × sell-FY (see the
+            rowMap key in portfolio.ts) — so a name exited across two financial
+            years contributes two. The old subtitle said "N stocks sold" using a
+            distinct-symbol count, which put two different units side by side:
+            61 / 104 next to "140 stocks sold" reads like an arithmetic bug. Say
+            both numbers and what each one counts. */}
         <Card
           label="Win / loss"
           value={`${tt.winners} / ${tt.losers}`}
-          sub={`${new Set(realized.rows.map((r) => r.symbol)).size} stocks sold`}
+          sub={`${tt.winners + tt.losers} exits · ${new Set(realized.rows.map((r) => r.symbol)).size} stocks`}
           icon={<IconPulse size={15} />}
         />
       </div>
@@ -1841,6 +1852,60 @@ function SummaryCards({ t, snapshot }: { t: Portfolio["totals"]; snapshot: strin
         icon={<IconPulse size={15} />}
         accent={up(t.dayChangeValue) ? GREEN : RED}
       />
+    </div>
+  );
+}
+
+/**
+ * Per-broker snapshot age.
+ *
+ * Quantity and avg cost are broker truth frozen at upload time — trade at a
+ * broker after its last import and the app cannot see it. The failure is
+ * silent: the position reads plausible, just stale, so the only way to catch
+ * it was to reconcile against the broker app by hand. This makes the age
+ * legible at a glance, stalest broker first.
+ *
+ * Thresholds are deliberately loud past a month. A week-old snapshot is
+ * normal for a buy-and-hold book; two months is long enough that a forgotten
+ * trade is likely, which is exactly when the number you're reading is wrong.
+ */
+const STALE_WARN_DAYS = 30;
+const STALE_BAD_DAYS = 60;
+
+function BrokerFreshness({ snapshots }: { snapshots: Portfolio["brokerSnapshots"] }) {
+  if (!snapshots.length) return null;
+  const stalest = snapshots[0];
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 -mt-1">
+      <span className="text-[11px] font-semibold muted-text uppercase tracking-wide">
+        Holdings as of
+      </span>
+      {snapshots.map((s) => {
+        const tone =
+          s.ageDays >= STALE_BAD_DAYS ? RED : s.ageDays >= STALE_WARN_DAYS ? AMBER : null;
+        const when =
+          s.ageDays === 0 ? "today" : s.ageDays === 1 ? "yesterday" : `${s.ageDays}d ago`;
+        return (
+          <span
+            key={s.broker}
+            title={`${s.label} snapshot imported ${new Date(s.importedAt).toLocaleString("en-IN")}`}
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11.5px] tabular-nums"
+            style={
+              tone
+                ? { background: `color-mix(in srgb, ${tone} 12%, transparent)`, color: tone }
+                : { background: "var(--color-surface-2, rgba(127,127,127,0.10))", color: "var(--color-muted)" }
+            }
+          >
+            <span className="font-medium">{s.label}</span>
+            <span>{when}</span>
+          </span>
+        );
+      })}
+      {stalest.ageDays >= STALE_WARN_DAYS && (
+        <span className="text-[11.5px]" style={{ color: "var(--color-muted)" }}>
+          — re-import {stalest.label} if you&apos;ve traded there since.
+        </span>
+      )}
     </div>
   );
 }
