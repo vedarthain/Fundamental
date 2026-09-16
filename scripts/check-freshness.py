@@ -27,6 +27,15 @@ Checks run against Neon (production):
                             Catches the case where score ran but the
                             cache refresher silently failed.
 
+  4. app.upstox_session   — is the stored Upstox token still valid?
+  5. app.screener_meta.price_fetched_at — did the intraday pinger write
+                            recently? Both are checked ONLY inside the market
+                            window (weekdays 11:00-16:00 IST) and skipped
+                            otherwise. These exist because the pinger soft-200s
+                            on a dead token by design, so an outage is
+                            completely silent without an external heartbeat
+                            check.
+
 USAGE:
   # Local dev (reads URLs from .env.local)
   scripts/check-freshness.py
@@ -248,6 +257,93 @@ def check_panel_cache_populated(conn: psycopg.Connection) -> tuple[bool, str]:
     )
 
 
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _in_market_window(now_ist: datetime) -> bool:
+    """Weekday, and late enough in the session that several pinger pulls should
+    already have landed. Pulls fire at :30 past each hour 09:30–15:30 IST, so
+    from 11:00 there have been at least two."""
+    return now_ist.weekday() < 5 and 11 <= now_ist.hour < 16
+
+
+def check_intraday_price_age(conn: psycopg.Connection, max_minutes: int) -> tuple[bool, str]:
+    """Detect a dead intraday price pinger DURING the session.
+
+    Why this check has to exist: /api/cron/intraday-equity maps a missing or
+    expired Upstox token to a SOFT 200 no-op, deliberately, so a missed morning
+    reauth can't trip the external pinger into a retry storm. The cost of that
+    choice is that a dead pinger emits no signal anywhere — cron-job.org sees
+    success, nothing throws, and every page just keeps rendering the last EOD
+    close. It ran silently dead for four trading days in Sept 2026 (a token
+    expiry bug) and the only reason it surfaced was someone noticing the price
+    badge on a stock page hadn't moved.
+
+    app.screener_meta.price_fetched_at is written ONLY by that route, so it is
+    the pinger's heartbeat. Stale during market hours = the pinger is down.
+
+    Holiday caveat: a trading holiday on a weekday has no pulls, so this fires
+    a false alarm on those few days a year. Same tradeoff withinPingerWindow()
+    already makes — excluding them needs an NSE calendar, and a handful of
+    ignorable alerts beats missing a real multi-day outage.
+    """
+    now_ist = datetime.now(IST)
+    if not _in_market_window(now_ist):
+        return True, (
+            f"✓ intraday_age: {now_ist:%a %H:%M} IST is outside the check window "
+            "(weekdays 11:00–16:00 IST) — skipped"
+        )
+    with conn.cursor() as cur:
+        cur.execute("SELECT MAX(price_fetched_at) FROM app.screener_meta")
+        row = cur.fetchone()
+    ts = row[0] if row else None
+    if ts is None:
+        return False, "✗ intraday_age: app.screener_meta.price_fetched_at is entirely NULL"
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    mins = int((datetime.now(timezone.utc) - ts).total_seconds() // 60)
+    ok = mins <= max_minutes
+    icon = "✓" if ok else "✗"
+    suffix = "" if ok else (
+        " — the intraday pinger is DOWN and failing silently (it soft-200s on a "
+        "dead token). Check app.upstox_session expiry and reauth at "
+        "/api/upstox/login, then confirm cron-job.org is still firing."
+    )
+    return ok, (
+        f"{icon} intraday_age: last pinger write {ts.astimezone(IST):%Y-%m-%d %H:%M} IST "
+        f"({mins}m ago, threshold={max_minutes}m){suffix}"
+    )
+
+
+def check_upstox_token(conn: psycopg.Connection) -> tuple[bool, str]:
+    """The root cause one level up from intraday_age: is the stored Upstox
+    token usable right now? Checked only inside the market window, because an
+    expired token overnight is normal and expected — you reauth in the morning."""
+    now_ist = datetime.now(IST)
+    if not _in_market_window(now_ist):
+        return True, "✓ upstox_token: outside market window — skipped"
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT access_token IS NOT NULL, expires_at FROM app.upstox_session WHERE id = 1"
+        )
+        row = cur.fetchone()
+    if not row:
+        return False, "✗ upstox_token: no row in app.upstox_session"
+    has_token, expires_at = row[0], row[1]
+    if not has_token:
+        return False, "✗ upstox_token: no access_token stored — reauth at /api/upstox/login"
+    if expires_at is None:
+        return True, "✓ upstox_token: present, no expiry recorded"
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    ok = expires_at > datetime.now(timezone.utc)
+    icon = "✓" if ok else "✗"
+    suffix = "" if ok else " — reauth at /api/upstox/login; intraday prices are frozen until you do."
+    return ok, (
+        f"{icon} upstox_token: expires {expires_at.astimezone(IST):%Y-%m-%d %H:%M} IST{suffix}"
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Check that production data on Neon is fresh.",
@@ -260,6 +356,8 @@ def main() -> int:
         help="Alert if the latest snapshot has fewer than this many scored rows (default 2000; full universe ~2,150)")
     parser.add_argument("--snapshot-max-gap-days", type=int, default=10,
         help="Alert if the gap between the two most recent weekly snapshots exceeds this (default 10 = 7d cadence + holiday slack; larger = a skipped week / archive hole)")
+    parser.add_argument("--intraday-max-minutes", type=int, default=150,
+        help="Alert if the intraday pinger's last write is older than this during market hours (default 150 = two missed hourly pulls of slack)")
     args = parser.parse_args()
 
     app_url = env_url("APP_DB_URL")
@@ -279,6 +377,8 @@ def main() -> int:
             results.append(check_snapshot_completeness(conn, args.snapshot_min_rows))
             results.append(check_panel_cache_populated(conn))
             results.append(check_cookie_health(conn))
+            results.append(check_upstox_token(conn))
+            results.append(check_intraday_price_age(conn, args.intraday_max_minutes))
     except psycopg.OperationalError as e:
         print(f"✗ FATAL: could not connect to app DB — {e}", file=sys.stderr)
         return 2

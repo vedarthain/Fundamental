@@ -10,7 +10,16 @@
 #     1b. app.scores rows                 — latest snapshot ~full universe
 #     2.  golden.price_history            — latest price ≤ 4 days old
 #     3.  app.cluster_stocks_panel_cache  — populated for latest snapshot
+#     4.  app.upstox_session              — intraday token still valid
+#     5.  app.screener_meta.price_fetched_at — intraday pinger wrote recently
 #     +   Screener cookie health
+#
+#   Checks 4 and 5 only evaluate inside the market window (weekdays
+#   11:00-16:00 IST) and pass-skip otherwise. The 06:30 UTC scheduled run is
+#   12:00 IST, so exactly one meaningful intraday check lands per trading day —
+#   no extra Neon wake-ups. They exist because /api/cron/intraday-equity
+#   soft-200s on a dead Upstox token by design, which makes a pinger outage
+#   completely silent; it ran dead for four trading days in Sept 2026.
 #
 # When it runs:
 #   - Every 12h (schedule) as a baseline.

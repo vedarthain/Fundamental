@@ -9,7 +9,7 @@
  *   4. Callback exchanges `code` + `api_secret` for an `access_token` via
  *      POST https://api.upstox.com/v2/login/authorization/token.
  *   5. Token + identity are written into app.upstox_session (single-row
- *      table). Tokens expire daily at ~08:30 IST.
+ *      table). Upstox tokens expire daily at 03:30 IST.
  *
  * Token-store table is single-row by design (CHECK id=1); we UPDATE in
  * place. See db/migrations/0026_upstox_session.sql for the schema.
@@ -162,13 +162,13 @@ export async function exchangeCode(code: string): Promise<{
 }
 
 /** Persist token + identity to app.upstox_session.  Expiry is set to the
- *  next 08:30 IST boundary because Upstox doesn't return an exp claim. */
+ *  next 03:30 IST boundary because Upstox doesn't return an exp claim. */
 export async function saveSession(tok: {
   access_token: string;
   user_id?: string;
   user_name?: string;
 }): Promise<void> {
-  const expiresAt = next0830Ist();
+  const expiresAt = nextTokenExpiry();
   await sql`
     UPDATE app.upstox_session
        SET access_token     = ${tok.access_token},
@@ -197,13 +197,28 @@ export async function loadSession(): Promise<UpstoxSession> {
   };
 }
 
-/** Next 08:30 IST boundary (UTC = next 03:00 UTC).  Used as the expiry
- *  hint when storing tokens — Upstox doesn't return one explicitly. */
-function next0830Ist(): Date {
+/** Next 03:30 IST boundary (UTC = next 22:00 UTC). Used as the expiry hint
+ *  when storing tokens — Upstox doesn't return one explicitly, but its daily
+ *  access tokens die at 03:30 IST, so that IS the real expiry.
+ *
+ *  This used to snap to the next 08:30 IST boundary as a "re-auth every
+ *  morning" nudge, and that silently killed the intraday pinger. Re-auth
+ *  before 08:30 — which is exactly when you'd do it, since the point is to be
+ *  ready for the open — and "next 08:30" resolves to THIS morning's, minutes
+ *  away. The token was then marked dead before the pinger's first 09:30 pull,
+ *  every pull that day no-opped (UpstoxTokenError maps to a soft 200), and
+ *  prices silently froze at the previous EOD with no error anywhere. Observed:
+ *  token refreshed 08:05 IST, expires_at 08:30 IST the same morning, zero
+ *  intraday writes for four trading days.
+ *
+ *  Anchoring to the true 03:30 IST expiry means a token minted any time during
+ *  a session covers the rest of that session, and re-auth timing can't
+ *  accidentally shorten its life to minutes. */
+function nextTokenExpiry(): Date {
   const now = new Date();
-  // 03:00 UTC = 08:30 IST.
+  // 22:00 UTC = 03:30 IST the following calendar day.
   const candidate = new Date(Date.UTC(
-    now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 3, 0, 0,
+    now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 22, 0, 0,
   ));
   if (candidate <= now) {
     candidate.setUTCDate(candidate.getUTCDate() + 1);
@@ -232,7 +247,7 @@ async function requireFreshToken(): Promise<string> {
   if (!session.access_token) {
     throw new UpstoxTokenError("Upstox access token missing — reauth at /api/upstox/login");
   }
-  // Our stored expires_at is the next 08:30 IST boundary; past it = dead.
+  // Our stored expires_at is the next 03:30 IST boundary; past it = dead.
   if (session.expires_at && new Date(session.expires_at) <= new Date()) {
     throw new UpstoxTokenError("Upstox access token expired — reauth at /api/upstox/login");
   }
