@@ -16,6 +16,11 @@
  *     purge below).
  *   - app.cluster_stocks_panel_cache.current_price (latest snapshot only)
  *     ← live read by /sectors and the watchlist panel queries.
+ *   - app.etf_price.ltp                          ← the ONLY price source for
+ *     ETFs and index funds, read by /portfolio's "Others" tab. These are not
+ *     in app.universe (nothing to score), so the universe join below cannot
+ *     reach them; before this they had no price feed at all and /portfolio
+ *     carried them at the value printed on the broker CSV, frozen at import.
  *
  * This is now the ONLY Upstox intraday pinger — the index-tick pinger and the
  * /market dashboard it fed were retired; /indices is EOD-only.
@@ -65,6 +70,32 @@ export async function POST(req: NextRequest) {
         FROM app.upstox_instrument i
         JOIN app.universe u ON u.symbol = i.symbol AND u.is_active
     `;
+    // …plus every UNSCORED instrument somebody actually holds (ETFs, index
+    // funds). These are not in app.universe by design — no fundamentals, no
+    // cluster, no score — so the join above can never reach them, and before
+    // this they had no price source at all: /portfolio carried them at the
+    // value printed on the broker CSV, frozen at import. 2.36L of my own book,
+    // drifting silently.
+    //
+    // Two resolution paths because brokers disagree about what they export.
+    // Groww gives a fund name and an ISIN ("MOTILALAMC - MOCAPITAL" /
+    // INF247L01EV3); Upstox and Zerodha give the bare NSE ticker and no ISIN.
+    // ISIN first since it is an identifier rather than a label, then the
+    // ticker. Together they resolve 26/26 of mine — which is why there is no
+    // fund-name normaliser here, and must not be one: matching ETFs by name is
+    // guesswork when the ISIN is sitting right there.
+    //
+    // Scoped to instruments somebody holds rather than every ETF on the
+    // exchange, so this stays at tens of extra LTPs, not thousands.
+    const heldEtfs = await sql<{ symbol: string; instrument_key: string }[]>`
+      SELECT DISTINCT i.symbol, i.instrument_key
+        FROM app.portfolio_holding h
+        JOIN app.upstox_instrument i
+          ON i.isin = h.isin
+          OR i.symbol = upper(trim(h.raw_symbol))
+       WHERE h.is_mapped = false
+         AND h.quantity > 0
+    `;
     if (mapping.length === 0) {
       return NextResponse.json(
         { ok: false, reason: "no-instruments", message: "run fetch-upstox-instruments first" },
@@ -73,11 +104,24 @@ export async function POST(req: NextRequest) {
     }
 
     const keyToSym = new Map(mapping.map((m) => [m.instrument_key, m.symbol]));
+    // ETF keys minus anything already in the universe set — a held instrument
+    // that IS scored belongs to the equity path and must not be written twice.
+    const etfKeyToSym = new Map(
+      heldEtfs
+        .filter((e) => !keyToSym.has(e.instrument_key))
+        .map((e) => [e.instrument_key, e.symbol] as const),
+    );
 
     // Pull LTPs (batched inside the client). Soft no-op on a stale token.
+    // One combined fetch: the batching is per-request inside the client, so
+    // folding the ETF keys in here costs at most one extra Upstox call rather
+    // than a second round of the whole batch.
     let priceByKey: Map<string, number>;
     try {
-      priceByKey = await fetchLtpsByKeys(mapping.map((m) => m.instrument_key));
+      priceByKey = await fetchLtpsByKeys([
+        ...mapping.map((m) => m.instrument_key),
+        ...etfKeyToSym.keys(),
+      ]);
     } catch (e) {
       if (e instanceof UpstoxTokenError) {
         return NextResponse.json({ ok: false, reason: "token", message: e.message });
@@ -87,11 +131,21 @@ export async function POST(req: NextRequest) {
     }
 
     // Map instrument_token → our symbol → price (parallel arrays for unnest).
+    // keyToSym only holds universe keys, so ETF ticks can't leak into the
+    // equity arrays and reach app.screener_meta — they're split out below.
     const syms: string[] = [];
     const prices: number[] = [];
+    const etfSyms: string[] = [];
+    const etfKeys: string[] = [];
+    const etfPrices: number[] = [];
     for (const [key, price] of priceByKey) {
       const sym = keyToSym.get(key);
-      if (sym) { syms.push(sym); prices.push(price); }
+      if (sym) { syms.push(sym); prices.push(price); continue; }
+      const etf = etfKeyToSym.get(key);
+      // ltp > 0 is a CHECK on app.etf_price; a zero/absent tick means "no
+      // trade", which must leave the previous price standing rather than
+      // overwrite it with a nonsense number.
+      if (etf && price > 0) { etfSyms.push(etf); etfKeys.push(key); etfPrices.push(price); }
     }
 
     if (syms.length === 0) {
@@ -114,6 +168,24 @@ export async function POST(req: NextRequest) {
        WHERE c.symbol = up.sym
          AND c.snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_stocks_panel_cache)
     `;
+
+    // ETFs / index funds held by somebody but not in the scored universe.
+    // Upsert rather than update: unlike screener_meta there is no pre-existing
+    // row to update — a newly imported ETF has to create its own.
+    let etfRes = 0;
+    if (etfSyms.length) {
+      const r = await sql`
+        INSERT INTO app.etf_price (symbol, instrument_key, ltp, fetched_at)
+        SELECT sym, key, price, NOW()
+          FROM unnest(${etfSyms}::text[], ${etfKeys}::text[], ${etfPrices}::float8[])
+               AS up(sym, key, price)
+        ON CONFLICT (symbol) DO UPDATE
+           SET ltp = EXCLUDED.ltp,
+               instrument_key = EXCLUDED.instrument_key,
+               fetched_at = EXCLUDED.fetched_at
+      `;
+      etfRes = r.count ?? 0;
+    }
 
     // APPEND one tick per symbol so the /stock 1D chart can draw a real
     // intraday curve (current_price above is overwritten each fire and keeps
@@ -141,6 +213,7 @@ export async function POST(req: NextRequest) {
       fetched: syms.length,
       rows_screener_meta: metaRes.count ?? 0,
       rows_panel_cache: panelRes.count ?? 0,
+      rows_etf_price: etfRes,
       intraday_ticks: syms.length,
     });
   } catch (e) {

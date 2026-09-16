@@ -127,6 +127,13 @@ type HoldingRow = {
   isin: string | null;
   symbol: string | null;
   is_mapped: boolean;
+  // Upstox symbol for an UNMAPPED row (ETF / index fund), resolved at load
+  // time via ISIN then raw ticker. Null for mapped equities (they use `symbol`)
+  // and for anything we genuinely can't identify. Doubles as the aggregation
+  // key for unmapped rows, which also merges the same ETF held at several
+  // brokers — Groww's INF0R8F01042 and Zerodha's bare "GOLDCASE" are one
+  // position and used to render as two.
+  etf_symbol: string | null;
   quantity: string; // numeric → string
   avg_cost: string | null;
   broker_ltp: string | null;
@@ -1312,11 +1319,21 @@ function portfolioFingerprint(holdings: HoldingRow[], manualSymbols: string[]): 
  *  portfolio cost ZERO golden queries on a warm hit. */
 export async function loadPortfolio(userId: number): Promise<Portfolio> {
   const holdings = await sql<HoldingRow[]>`
-    SELECT broker, raw_symbol, isin, symbol, is_mapped, quantity::text,
-           avg_cost::text, broker_ltp::text, broker_cur_value::text,
-           broker_day_pct::text, imported_at::text
-      FROM app.portfolio_holding
-     WHERE user_id = ${userId}
+    SELECT h.broker, h.raw_symbol, h.isin, h.symbol, h.is_mapped, h.quantity::text,
+           h.avg_cost::text, h.broker_ltp::text, h.broker_cur_value::text,
+           h.broker_day_pct::text, h.imported_at::text,
+           CASE WHEN h.is_mapped THEN NULL
+                ELSE COALESCE(byIsin.symbol, byTicker.symbol) END AS etf_symbol
+      FROM app.portfolio_holding h
+      -- Unmapped rows are ETFs and index funds. Brokers disagree about what
+      -- they export: Groww gives a fund name plus an ISIN, Upstox and Zerodha
+      -- give the bare NSE ticker and no ISIN at all. ISIN first because it is
+      -- an identifier rather than a label; the ticker only as a fallback. These
+      -- must stay LEFT joins — an unresolvable ETF has to keep rendering at its
+      -- broker value, not vanish.
+      LEFT JOIN app.upstox_instrument byIsin   ON byIsin.isin = h.isin
+      LEFT JOIN app.upstox_instrument byTicker ON byTicker.symbol = upper(trim(h.raw_symbol))
+     WHERE h.user_id = ${userId}
   `;
   if (holdings.length === 0) return emptyPortfolio();
 
@@ -1407,7 +1424,10 @@ async function computePortfolio(
   // the snapshot watermark (app) and the intraday tick (app) — fired together
   // instead of in series.
   const gsyms = mappedSyms.map((s) => s + ".NS");
-  const [cacheRows, gp, snapRow, intraRows] = await Promise.all([
+  const etfSymList = [
+    ...new Set(visibleHoldings.filter((h) => !h.is_mapped && h.etf_symbol).map((h) => h.etf_symbol!)),
+  ];
+  const [cacheRows, gp, snapRow, intraRows, etfRows] = await Promise.all([
     mappedSyms.length
       ? sql<CacheRow[]>`
           WITH ranked AS (
@@ -1461,6 +1481,18 @@ async function computePortfolio(
              AND price_fetched_at IS NOT NULL
         `
       : Promise.resolve([] as { symbol: string; px: string; at: string; ist_date: string }[]),
+    // Last traded price for the unscored instruments (ETFs, index funds) on
+    // this page. Applied unconditionally — unlike the equity tick there is
+    // nothing to compare it against, because golden carries no bar for these.
+    // A last traded price of any age beats broker_cur_value, which is not a
+    // price at all but a valuation printed on a CSV at import time.
+    etfSymList.length
+      ? sql<{ symbol: string; ltp: string; at: string }[]>`
+          SELECT symbol, ltp::text AS ltp, fetched_at::text AS at
+            FROM app.etf_price
+           WHERE symbol = ANY(${etfSymList})
+        `
+      : Promise.resolve([] as { symbol: string; ltp: string; at: string }[]),
   ]);
   const cache = new Map<string, CacheRow>();
   for (const r of cacheRows) cache.set(r.symbol, r);
@@ -1513,13 +1545,28 @@ async function computePortfolio(
     if (!priceAsOf || r.ist_date > priceAsOf) priceAsOf = r.ist_date;
   }
 
+  // ETF / index-fund last traded prices, keyed by resolved Upstox symbol.
+  const etfPx = new Map<string, number>();
+  for (const r of etfRows) {
+    const px = Number(r.ltp);
+    if (!Number.isFinite(px) || px <= 0) continue;
+    etfPx.set(r.symbol, px);
+    if (!intraAt || r.at > intraAt) intraAt = r.at;
+  }
+
   const snapshotDate = snapRow[0]?.d ?? null;
 
-  // ── Aggregate per instrument. Key: universe symbol (mapped) else isin
-  //    (unmapped-with-isin, e.g. Groww ETFs) else bare symbol. ──
+  // ── Aggregate per instrument. Key: universe symbol (mapped) else the
+  //    resolved Upstox ETF symbol, else isin, else bare symbol. ──
+  //    Preferring the resolved ETF symbol over isin also MERGES the same fund
+  //    held at several brokers: Groww exports GOLDCASE with its ISIN and
+  //    Zerodha exports the bare ticker with none, so they keyed differently and
+  //    rendered as two unrelated positions.
   type Agg = {
     key: string;
     symbol: string | null;
+    /** Resolved Upstox symbol for unmapped rows — the app.etf_price lookup key. */
+    etfSymbol: string | null;
     isMapped: boolean;
     rawName: string;
     qty: number;
@@ -1533,7 +1580,7 @@ async function computePortfolio(
   const aggs = new Map<string, Agg>();
 
   for (const h of visibleHoldings) {
-    const key = h.symbol ?? h.isin ?? bareSymbol(h.raw_symbol);
+    const key = h.symbol ?? h.etf_symbol ?? h.isin ?? bareSymbol(h.raw_symbol);
     const qty = Number(h.quantity) || 0;
     const avgCost = num(h.avg_cost);
     let a = aggs.get(key);
@@ -1541,6 +1588,7 @@ async function computePortfolio(
       a = {
         key,
         symbol: h.symbol,
+        etfSymbol: h.etf_symbol,
         isMapped: h.is_mapped,
         rawName: bareSymbol(h.raw_symbol),
         qty: 0, costSum: 0, costQty: 0,
@@ -1655,14 +1703,28 @@ async function computePortfolio(
         dayChangeValue = null;
       }
     } else {
-      // carried at broker value.
-      currentValue = a.brokerCurValueSum;
-      price = a.qty > 0 ? currentValue / a.qty : null;
-      dayChangeValue = a.brokerDayValueSum || null;
-      dayChangePct =
-        currentValue - a.brokerDayValueSum !== 0
-          ? Math.round((a.brokerDayValueSum / (currentValue - a.brokerDayValueSum)) * 1000) / 10
-          : null;
+      // ETFs and index funds. Live LTP when the pinger has one for this
+      // instrument, else the broker's CSV value — which is a valuation frozen
+      // at import, not a price, and was previously the ONLY thing here.
+      const etf = a.etfSymbol ? etfPx.get(a.etfSymbol) : undefined;
+      if (etf != null) {
+        price = etf;
+        currentValue = a.qty * etf;
+        // No EOD bar exists for these, so there is no previous close to diff
+        // against — the broker's own day-change figure is the only 1D signal
+        // available, and it ages with the snapshot. Reporting it beside a live
+        // value would mix eras, so 1D stays blank rather than wrong.
+        dayChangeValue = null;
+        dayChangePct = null;
+      } else {
+        currentValue = a.brokerCurValueSum;
+        price = a.qty > 0 ? currentValue / a.qty : null;
+        dayChangeValue = a.brokerDayValueSum || null;
+        dayChangePct =
+          currentValue - a.brokerDayValueSum !== 0
+            ? Math.round((a.brokerDayValueSum / (currentValue - a.brokerDayValueSum)) * 1000) / 10
+            : null;
+      }
     }
 
     const pnl = currentValue - invested;
