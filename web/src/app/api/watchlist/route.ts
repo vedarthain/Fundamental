@@ -104,11 +104,16 @@ type WatchRow = {
    *  these. */
   intraday_px: number | null;
   intraday_ist_date: string | null;
-  /** EFFECTIVE price and 1D move: the intraday tick when it is genuinely
-   *  newer than this symbol's own EOD bar, else the EOD close. See the
-   *  overlay block in GET for why both exist alongside ltp/ret_1d. */
+  /** Aliases of ltp / ret_1d after the intraday overlay. `ltp` already carries
+   *  the effective price — these exist so the portfolio Returns tab, which
+   *  named them first, keeps compiling. Prefer ltp / ret_1d. */
   eff_ltp: number | null;
   eff_ret_1d: number | null;
+  /** The PRE-overlay end-of-day close and its 1D move, straight off golden's
+   *  newest bar. Read these when a number has to line up with a chart bar
+   *  rather than with a live tick. */
+  eod_ltp: number | null;
+  eod_ret_1d: number | null;
   /** Portfolio ownership — mirrors the scanner graph's tri-state "P" badge.
    *  held = currently in the portfolio; traded = ever bought (held or exited). */
   held: boolean;
@@ -562,22 +567,40 @@ export async function GET(req: NextRequest) {
     // Self-healing both ways: a dead pinger degrades to EOD silently, a stalled
     // EOD loader degrades to the tick.
     //
-    // Emitted as eff_* alongside ltp/ret_1d rather than overwriting them, so
-    // existing card consumers keep their current EOD semantics until they opt
-    // in, and anything comparing against the chart still has the raw close.
+    // This OVERWRITES ltp / ret_1d / ltp_date rather than sitting beside them.
+    // It was opt-in for one commit, read only by the portfolio Returns tab, but
+    // an opt-in correctness fix is just the same bug with a longer list of
+    // places still holding it: the watchlist cards, the "since add" figure and
+    // the P-badge P&L were all still quoting yesterday. A price field on a live
+    // page should mean "the best price we have", and every consumer wants that
+    // — so the effective price IS `ltp` now. The pre-overlay close survives as
+    // eod_ltp / eod_ret_1d for anything that must line up with a chart bar,
+    // and eff_* remain as aliases.
     const tick = row.intraday_px;
     const useTick =
       tick != null && tick > 0 &&
       row.intraday_ist_date != null &&
       (row.ltp_date == null || row.intraday_ist_date > row.ltp_date);
-    row.eff_ltp = useTick ? tick : row.ltp;
-    // When the tick is live, the 1D baseline is the last close — i.e. golden's
-    // newest bar, which is `ltp` — not the bar before it. Keeping ret_1d here
-    // would print yesterday's move beside a live price.
-    row.eff_ret_1d =
-      useTick && row.ltp != null && row.ltp !== 0
-        ? Math.round((tick / row.ltp - 1) * 1000) / 10
-        : row.ret_1d;
+    row.eod_ltp = row.ltp;
+    row.eod_ret_1d = row.ret_1d;
+    if (useTick) {
+      // 1D baseline is the last close — golden's newest bar, i.e. the value of
+      // `ltp` before this block — not the bar before it. Computed from eod_ltp
+      // for that reason, and BEFORE ltp is reassigned.
+      row.ret_1d =
+        row.eod_ltp != null && row.eod_ltp !== 0
+          ? Math.round((tick / row.eod_ltp - 1) * 1000) / 10
+          : null;
+      row.ltp = tick;
+      // The "as of" date has to move with the price, or the freshness pill
+      // labels a live tick with yesterday's date. And a symbol that traded
+      // today is by definition not a stale laggard, whatever its bar history
+      // looked like.
+      row.ltp_date = row.intraday_ist_date;
+      row.stale = false;
+    }
+    row.eff_ltp = row.ltp;
+    row.eff_ret_1d = row.ret_1d;
 
     row.held          = heldSet.has(row.symbol);
     row.traded        = row.held || tradedSet.has(row.symbol);
