@@ -21,6 +21,21 @@
  * but ret_1w/ret_1m/ret_1y as FRACTIONS (it divides by 100 to match the chart's
  * contract). Rendering them uniformly silently shows 1W as "0.0%" instead of
  * "4.1%". `pctFromFrac` converts; `ret_1d` is passed through untouched.
+ *
+ * STOCKS vs OTHERS. The two sub-tabs are fed from DIFFERENT sources, and that
+ * asymmetry is structural rather than an oversight:
+ *
+ *   Stocks — /api/watchlist, i.e. the scored universe. Full trailing windows.
+ *   Others — ETFs and index funds, handed down as props from the server render.
+ *            They are not in app.universe (nothing to score), so the watchlist
+ *            endpoint cannot return them at any price.
+ *
+ * Consequence: Others has Qty / Buy / Invested / LTP / Return — every figure
+ * that depends only on your position — but NO 1D-1Y. Those windows need a price
+ * history, and app.etf_price stores exactly one number per instrument, the last
+ * traded price, overwritten on each pull. There is no ETF bar series anywhere in
+ * the database to compute them from. The columns render "—" rather than being
+ * hidden, so the gap is legible instead of looking like a different table.
  */
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -39,7 +54,27 @@ type ApiRow = {
   pos_pnl_pct?: number | null; // PERCENT — LTP vs avg cost
 };
 
-type SortKey = "symbol" | "qty" | "buy" | "ltp" | "pnl" | "d1" | "w1" | "m1" | "y1";
+type SortKey = "symbol" | "qty" | "buy" | "inv" | "ltp" | "pnl" | "d1" | "w1" | "m1" | "y1";
+
+/** Which half of the book the table is showing. Mirrors the Holdings tab's
+ *  sub-tabs, and uses the same `isMapped` signal underneath. */
+type View = "stocks" | "others";
+
+/**
+ * One unscored position (ETF, index fund), handed down from the server render.
+ * Deliberately a slim projection of `Instrument` rather than the whole thing —
+ * this table needs five numbers, and passing the full object would ship scores,
+ * drawdown anchors and broker lots into the client for nothing.
+ */
+export type OtherRow = {
+  key: string;
+  name: string;
+  qty: number;
+  buy: number | null;
+  ltp: number | null;
+  invested: number;
+  pnlPct: number | null;
+};
 
 /**
  * Profit / Loss segregation is by the position's OWN unrealised return, not by
@@ -54,6 +89,9 @@ type Display = {
   symbol: string;
   name: string | null;
   buy: number | null;
+  /** qty × buy. Null when either side is missing — never silently 0, which
+   *  would read as "cost me nothing" and drag any subtotal down with it. */
+  inv: number | null;
   ltp: number | null;
   pnl: number | null;
   d1: number | null;
@@ -61,6 +99,9 @@ type Display = {
   m1: number | null;
   y1: number | null;
   qty: number | null;
+  /** False for ETFs/index funds — they have no price history, so the trailing
+   *  columns are structurally absent rather than merely missing today. */
+  scored: boolean;
 };
 
 const pctFromFrac = (f: number | null | undefined): number | null =>
@@ -93,9 +134,16 @@ type PortfolioReturns = {
   historyDays: number | null;
 };
 
-export function PortfolioReturnsTable({ totals }: { totals?: ReturnsTotals }) {
+export function PortfolioReturnsTable({
+  totals,
+  others = [],
+}: {
+  totals?: ReturnsTotals;
+  others?: OtherRow[];
+}) {
   const [rows, setRows] = useState<Display[] | null>(null);
   const [pf, setPf] = useState<PortfolioReturns | null>(null);
+  const [view, setView] = useState<View>("stocks");
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [bucket, setBucket] = useState<Bucket>("all");
@@ -119,18 +167,24 @@ export function PortfolioReturnsTable({ totals }: { totals?: ReturnsTotals }) {
         setSignedIn(wd.signedIn);
         if (!wd.signedIn) return;
         setRows(
-          (wd.rows ?? []).map((r) => ({
-            symbol: r.symbol,
-            name: r.company_name,
-            buy: r.avg_cost ?? null,
-            ltp: r.ltp ?? r.current_price,
-            pnl: r.pos_pnl_pct ?? null, // already a percent
-            d1: r.ret_1d, // already a percent
-            w1: pctFromFrac(r.ret_1w),
-            m1: pctFromFrac(r.ret_1m),
-            y1: pctFromFrac(r.ret_1y),
-            qty: r.held_qty ?? null,
-          })),
+          (wd.rows ?? []).map((r) => {
+            const qty = r.held_qty ?? null;
+            const buy = r.avg_cost ?? null;
+            return {
+              symbol: r.symbol,
+              name: r.company_name,
+              buy,
+              inv: qty != null && buy != null ? qty * buy : null,
+              ltp: r.ltp ?? r.current_price,
+              pnl: r.pos_pnl_pct ?? null, // already a percent
+              d1: r.ret_1d, // already a percent
+              w1: pctFromFrac(r.ret_1w),
+              m1: pctFromFrac(r.ret_1m),
+              y1: pctFromFrac(r.ret_1y),
+              qty,
+              scored: true,
+            };
+          }),
         );
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Something went wrong.");
@@ -164,17 +218,44 @@ export function PortfolioReturnsTable({ totals }: { totals?: ReturnsTotals }) {
     };
   }, []);
 
+  // ETF rows, shaped like the scored ones so a single renderer handles both.
+  // `scored: false` is what blanks the trailing columns downstream.
+  const otherRows = useMemo<Display[]>(
+    () =>
+      others.map((o) => ({
+        symbol: o.key,
+        name: o.name,
+        buy: o.buy,
+        inv: o.invested,
+        ltp: o.ltp,
+        pnl: o.pnlPct,
+        d1: null,
+        w1: null,
+        m1: null,
+        y1: null,
+        qty: o.qty,
+        scored: false,
+      })),
+    [others],
+  );
+
+  // The active half. Stocks stay null while the fetch is in flight so the
+  // loading state still works; Others is server-rendered and always ready,
+  // which is why it must NOT inherit that null.
+  const viewRows: Display[] | null = view === "others" ? otherRows : rows;
+
   const counts = useMemo(() => {
-    const c = { all: rows?.length ?? 0, profit: 0, loss: 0 };
-    for (const r of rows ?? []) {
+    const c = { all: viewRows?.length ?? 0, profit: 0, loss: 0 };
+    for (const r of viewRows ?? []) {
       if (r.pnl == null) continue;
       if (r.pnl > 0) c.profit++;
       else if (r.pnl < 0) c.loss++;
     }
     return c;
-  }, [rows]);
+  }, [viewRows]);
 
   const sorted = useMemo(() => {
+    const rows = viewRows;
     if (!rows) return null;
     const inBucket = (r: Display) =>
       bucket === "all"
@@ -194,9 +275,40 @@ export function PortfolioReturnsTable({ totals }: { totals?: ReturnsTotals }) {
       if (av == null && bv == null) return 0;
       if (av == null) return 1;
       if (bv == null) return -1;
+      if (typeof av === "boolean" || typeof bv === "boolean") return 0;
       return dir * (av - bv);
     });
-  }, [rows, sort, bucket]);
+  }, [viewRows, sort, bucket]);
+
+  /**
+   * Subtotals for the ACTIVE view — the thing the strip's whole-book figures
+   * can't tell you: what the Stocks half cost and what it's worth, separately
+   * from the ETF half.
+   *
+   * Summed from the visible rows rather than from the server totals, because
+   * the server totals are whole-book and there is no split of them. Rows with
+   * an unknown cost or price are counted in `missing` and excluded from the
+   * sums, and the UI says so — a subtotal quietly short by one position is
+   * worse than one that admits it.
+   */
+  const subtotal = useMemo(() => {
+    let invested = 0;
+    let current = 0;
+    let missing = 0;
+    for (const r of sorted ?? []) {
+      if (r.inv == null || r.ltp == null || r.qty == null) { missing++; continue; }
+      invested += r.inv;
+      current += r.qty * r.ltp;
+    }
+    const pnl = current - invested;
+    return {
+      invested,
+      current,
+      pnl,
+      pnlPct: invested > 0 ? (pnl / invested) * 100 : null,
+      missing,
+    };
+  }, [sorted]);
 
   if (signedIn === false) {
     return (
@@ -219,10 +331,11 @@ export function PortfolioReturnsTable({ totals }: { totals?: ReturnsTotals }) {
   if (sorted == null) {
     return <div className="card p-8 text-center muted-text text-[13px]">Loading…</div>;
   }
-  // Only bail out when there are genuinely no holdings. An empty *bucket*
-  // ("no losers today") must still render the pills, otherwise the filter
-  // traps you on a blank card with no way back to All.
-  if (counts.all === 0) {
+  // Only bail out when there are genuinely no holdings ANYWHERE. An empty
+  // bucket ("no losers today") or an empty sub-tab ("no ETFs") must still
+  // render the pills and tabs, otherwise the filter traps you on a blank card
+  // with no way back.
+  if ((rows?.length ?? 0) === 0 && otherRows.length === 0) {
     return (
       <div className="card p-8 text-center">
         <div className="text-[14px] mb-2">No holdings yet</div>
@@ -236,6 +349,7 @@ export function PortfolioReturnsTable({ totals }: { totals?: ReturnsTotals }) {
   const cols: { key: SortKey; label: string; title: string }[] = [
     { key: "qty", label: "Qty", title: "Shares you currently hold" },
     { key: "buy", label: "Buy", title: "Your average cost per share" },
+    { key: "inv", label: "Invested", title: "What this position cost you: quantity × average cost" },
     { key: "ltp", label: "LTP", title: "Last traded price" },
     { key: "pnl", label: "Return", title: "Your unrealised return: LTP vs your average cost" },
     { key: "d1", label: "1D", title: "Price change over the last session" },
@@ -261,10 +375,35 @@ export function PortfolioReturnsTable({ totals }: { totals?: ReturnsTotals }) {
         non-visible overflow creates the anchoring scrollport), so it too is
         dropped from md up. Below md it stays, to clip the rounded corners. */}
     <div className="card overflow-hidden md:overflow-visible">
+      {/* Stocks / Others — the same split as the Holdings tab, driven by the
+          same isMapped signal, so the two tabs can't disagree about what counts
+          as a stock. Switching resets the Profit/Loss pill: those counts are
+          per-view, and leaving "Loss 12" selected while moving to a view with
+          three losers reads as data loss rather than a filter. */}
+      <div className="flex items-center gap-1 px-4 pt-2 border-b hairline">
+        {([
+          { v: "stocks", label: "Stocks", n: rows?.length ?? 0 },
+          { v: "others", label: "Others", n: otherRows.length },
+        ] as const).map((o) => (
+          <button
+            key={o.v}
+            type="button"
+            onClick={() => { setView(o.v); setBucket("all"); }}
+            className="relative px-3 py-2 text-[12.5px] font-medium transition-colors"
+            style={{ color: view === o.v ? "var(--color-accent-700)" : "var(--color-muted)" }}
+          >
+            {o.label}
+            <span className="ml-1.5 text-[11px] tabular-nums muted-text">{o.n}</span>
+            {view === o.v && (
+              <span className="absolute left-0 right-0 -bottom-px h-[2px]" style={{ background: "var(--color-accent-600)" }} />
+            )}
+          </button>
+        ))}
+      </div>
       <div className="flex items-center justify-between gap-3 flex-wrap px-4 py-3 border-b hairline">
         <div className="flex items-center gap-3 flex-wrap">
           <h2 className="text-[14px] font-semibold">
-            Returns{" "}
+            {view === "others" ? "ETFs & funds" : "Stocks"}{" "}
             <span className="muted-text font-normal">({sorted.length})</span>
           </h2>
           <div className="flex items-center gap-1">
@@ -301,8 +440,40 @@ export function PortfolioReturnsTable({ totals }: { totals?: ReturnsTotals }) {
           </div>
         </div>
         <span className="muted-text text-[11px]">
-          Return is yours · 1D–1Y are the stock&apos;s
+          {view === "others"
+            ? "Live LTP · no 1D–1Y: unscored instruments have no price history"
+            : "Return is yours · 1D–1Y are the stock’s"}
         </span>
+      </div>
+      {/* Subtotal for the visible rows. The strip above is whole-book; this is
+          the half you're actually looking at, which is the number the Stocks /
+          Others split exists to expose. Recomputed from the rows on screen, so
+          it also tracks the Profit/Loss filter rather than silently showing an
+          unfiltered total next to a filtered table. */}
+      <div className="flex items-center gap-x-6 gap-y-1 flex-wrap px-4 py-2 border-b hairline text-[11.5px]">
+        <span className="muted-text">
+          {bucket === "all" ? "Subtotal" : `Subtotal (${bucket})`}
+        </span>
+        <span className="tabular-nums">
+          <span className="muted-text">Invested </span>
+          <span className="font-semibold">{inr(subtotal.invested)}</span>
+        </span>
+        <span className="tabular-nums">
+          <span className="muted-text">Current </span>
+          <span className="font-semibold">{inr(subtotal.current)}</span>
+        </span>
+        <span className="tabular-nums" style={{ color: deltaColor(subtotal.pnl) }}>
+          <span className="muted-text">P&amp;L </span>
+          <span className="font-semibold">
+            {subtotal.pnl >= 0 ? "+" : "−"}{inr(Math.abs(subtotal.pnl))}
+          </span>
+          {subtotal.pnlPct != null && <span> ({fmtPct(subtotal.pnlPct)})</span>}
+        </span>
+        {subtotal.missing > 0 && (
+          <span className="muted-text">
+            {subtotal.missing} position{subtotal.missing > 1 ? "s" : ""} excluded — no cost or price
+          </span>
+        )}
       </div>
       {/* `overflow-x-auto` makes this a scroll container on BOTH axes (CSS
           forces a `visible` axis to `auto` when the other isn't visible), and a
@@ -346,7 +517,9 @@ export function PortfolioReturnsTable({ totals }: { totals?: ReturnsTotals }) {
                 <td colSpan={cols.length + 1} className="px-3 py-8 text-center muted-text text-[12px]">
                   {bucket === "profit"
                     ? "Nothing in profit right now."
-                    : "Nothing at a loss right now."}
+                    : bucket === "loss"
+                      ? "Nothing at a loss right now."
+                      : "No ETFs, funds or other non-equity holdings."}
                 </td>
               </tr>
             )}
@@ -358,14 +531,21 @@ export function PortfolioReturnsTable({ totals }: { totals?: ReturnsTotals }) {
                       profit/loss bucket and the scroll position. rel="noopener"
                       is mandatory with target="_blank" — without it the opened
                       page gets a handle on window.opener. */}
-                  <Link
-                    href={`/stock/${r.symbol}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="font-medium hover:underline tabular-nums"
-                  >
-                    {r.symbol}
-                  </Link>
+                  {/* Unscored instruments have no /stock page — there is no
+                      universe row behind them — so they render as plain text.
+                      Linking anyway would 404 on every ETF. */}
+                  {r.scored ? (
+                    <Link
+                      href={`/stock/${r.symbol}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-medium hover:underline tabular-nums"
+                    >
+                      {r.symbol}
+                    </Link>
+                  ) : (
+                    <span className="font-medium tabular-nums">{r.symbol}</span>
+                  )}
                   {r.name && (
                     <div className="text-[10.5px] muted-text truncate max-w-[220px]">{r.name}</div>
                   )}
@@ -378,6 +558,11 @@ export function PortfolioReturnsTable({ totals }: { totals?: ReturnsTotals }) {
                 </td>
                 <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
                   {fmtLtp(r.buy)}
+                </td>
+                {/* Invested is rounded to whole rupees: it's a position-size
+                    figure you scan, not a price you reconcile to the paisa. */}
+                <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap muted-text">
+                  {r.inv == null ? "—" : inr(r.inv)}
                 </td>
                 <td className="px-3 py-2 text-right tabular-nums font-medium whitespace-nowrap">
                   {fmtLtp(r.ltp)}

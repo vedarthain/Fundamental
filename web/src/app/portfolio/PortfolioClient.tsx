@@ -257,6 +257,8 @@ export function PortfolioClient({
       ) : tab === "returns" && owner ? (
         // Totals come from the server render rather than being re-summed on the
         // client, so the strip cannot drift from the Performance tab's cards.
+        // `others` likewise: ETFs aren't in the scored universe, so the table's
+        // /api/watchlist fetch cannot reach them — they can only arrive as props.
         <PortfolioReturnsTable
           totals={{
             invested: portfolio.totals.invested,
@@ -264,6 +266,17 @@ export function PortfolioClient({
             pnl: portfolio.totals.pnl,
             pnlPct: portfolio.totals.pnlPct,
           }}
+          others={portfolio.instruments
+            .filter((i) => !i.isMapped)
+            .map((i) => ({
+              key: i.key,
+              name: i.name,
+              qty: i.quantity,
+              buy: i.avgCost,
+              ltp: i.price,
+              invested: i.invested,
+              pnlPct: i.pnlPct,
+            }))}
         />
       ) : null}
 
