@@ -151,6 +151,39 @@ function cleanSymbolList(raw: string): string[] {
   ).slice(0, MAX_SYMBOLS);
 }
 
+/**
+ * Card rows for the requested symbols.
+ *
+ * Two branches, UNION'd.
+ *
+ * The first is the panel cache — the materialised (snapshot, cluster, symbol)
+ * table /sectors reads. It is built from `app.scores`, so it only ever contains
+ * symbols that were SCORED on the latest snapshot.
+ *
+ * The second branch exists because that is a narrower set than "symbols the
+ * user asked about", and the gap was silent. The scorer gates out any symbol
+ * whose newest filing is >15 months old (`score_status='stale_data'`), which is
+ * correct — a confident Q/V/M composite off two-year-old fundamentals is worse
+ * than no composite. But the gate propagated all the way out to *existence*:
+ * such a name dropped out of the panel cache, out of this route, and therefore
+ * out of the portfolio Returns tab, the Scorecard and the watchlist Portfolio
+ * tab entirely. DHANUKA and JYOTHYLAB — both live, liquid NSE names I actually
+ * hold — simply weren't on the page, with no row, no badge and no error; the
+ * Returns totals were quietly short by their ₹15,920 of cost. Meanwhile
+ * Performance, which reads holdings server-side, still counted them, so the two
+ * tabs disagreed and neither said why.
+ *
+ * Withholding a SCORE is a judgement about data quality. Withholding the
+ * INSTRUMENT is a lie about the book. So anything in app.universe that the
+ * caller asked for is returned either way; the score pillars just come back
+ * null and the card renders unscored. Price, returns, 52W, volume and position
+ * data all come from golden/screener_meta further down and are unaffected by
+ * the fundamentals gate, so these rows are fully populated apart from Q/V/M.
+ *
+ * Sector/industry come via app.cluster_assignment rather than the panel cache's
+ * denormalised cluster_id — the assignment survives a scoring gate, so an
+ * unscored name keeps its sector label.
+ */
 async function loadRows(symbols: string[]): Promise<WatchRow[]> {
   if (symbols.length === 0) return [];
   return sql<WatchRow[]>`
@@ -176,6 +209,36 @@ async function loadRows(symbols: string[]): Promise<WatchRow[]> {
     LEFT JOIN app.screener_meta sm ON sm.symbol = c.symbol
     WHERE c.snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_stocks_panel_cache)
       AND c.symbol = ANY(${symbols})
+
+    UNION ALL
+
+    SELECT
+      u.symbol,
+      u.company_name,
+      mc.name        AS sector_name,
+      cl.name        AS industry_name,
+      COALESCE(u.maturity_tier, 'unknown') AS maturity_tier,
+      u.market_cap_category,
+      u.listing_date::text    AS listing_date,
+      sm.market_cap_cr::float AS market_cap_cr,
+      sm.current_price::float AS current_price,
+      sm.price_fetched_at::text AS price_fetched_at,
+      NULL::float AS composite_pct,
+      NULL::float AS quality_pct,
+      NULL::float AS valuation_pct,
+      NULL::float AS momentum_pct
+    FROM app.universe u
+    LEFT JOIN app.cluster_assignment ca ON ca.symbol = u.symbol
+    LEFT JOIN app.cluster cl ON cl.id = ca.cluster_id
+    LEFT JOIN app.meta_cluster mc ON mc.id = cl.meta_cluster_id
+    LEFT JOIN app.screener_meta sm ON sm.symbol = u.symbol
+    WHERE u.symbol = ANY(${symbols})
+      AND u.is_active
+      AND NOT EXISTS (
+        SELECT 1 FROM app.cluster_stocks_panel_cache c2
+         WHERE c2.symbol = u.symbol
+           AND c2.snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_stocks_panel_cache)
+      )
   `;
 }
 
