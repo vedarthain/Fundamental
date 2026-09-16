@@ -392,13 +392,34 @@ export function resolveTradeSymbol(t: ParsedTrade, uni: TradeUniverse): string |
     // matching when there's no exact hit at all.
     const exact = new Set<string>();
     const prefix = new Set<string>();
+    // Prefix hits where the UNIVERSE name is the shorter side (nn starts with
+    // norm). These are the dangerous ones: the trade name carries qualifying
+    // tokens the universe name does not, so accepting the hit silently throws
+    // those tokens away. Real bug this caused: Fyers' "TATA MOTORS PASS VEH
+    // LTD" normalizes to "TATA MOTORS PASS VEH", which starts with TMCV's
+    // "TATA MOTORS" — so it resolved to Tata Motors Ltd, while the same trade
+    // arriving via the orderbook CSV (which carries NSE:TMPV-EQ) resolved to
+    // TMPV. One trade, two symbols, both persisted. The token-prefix rule
+    // below resolves that name to TMPV uniquely and correctly, but it was
+    // unreachable because the loose prefix hit returned first.
+    const prefixUniShorter = new Set<string>();
     for (const { norm, symbol } of uni.byName) {
       if (!norm) continue;
       if (norm === nn) exact.add(symbol);
-      else if (norm.startsWith(nn) || nn.startsWith(norm)) prefix.add(symbol);
+      else if (norm.startsWith(nn)) prefix.add(symbol);
+      else if (nn.startsWith(norm)) { prefix.add(symbol); prefixUniShorter.add(symbol); }
     }
     if (exact.size === 1) return [...exact][0];
-    if (exact.size === 0 && prefix.size === 1) return [...prefix][0];
+    if (exact.size === 0 && prefix.size === 1) {
+      const hit = [...prefix][0];
+      // Safe direction (universe name is the LONGER side — the trade name was
+      // truncated by the broker): nothing is being discarded, take it.
+      if (!prefixUniShorter.has(hit)) return hit;
+      // Dangerous direction: let the token rule arbitrate. It only overrides on
+      // a UNIQUE disagreeing match, so ambiguous cases keep the old behaviour.
+      const tok = tokenPrefixMatch(nn, uni);
+      return tok ?? hit;
+    }
 
     // Token-prefix fallback for BROKER-TRUNCATED names. Fyers abbreviates:
     // "CHOLAMANDALAM IN & FIN CO" for "Cholamandalam Investment and Finance
@@ -407,38 +428,56 @@ export function resolveTradeSymbol(t: ParsedTrade, uni: TradeUniverse): string |
     // to greedily match a distinct universe token by prefix, and accept only a
     // UNIQUE hit — so "…IN & FIN CO" resolves CHOLAFIN but stays ambiguous-safe
     // against CHOLAHLDNG (Financial Holdings), where "IN"/"CO" match nothing.
-    const tks = nn.split(" ").filter(Boolean);
-    if (tks.length >= 2) {
-      const tokenHits = new Set<string>();
-      for (const { norm, symbol } of uni.byName) {
-        if (!norm) continue;
-        const utoks = norm.split(" ").filter(Boolean);
-        const used = new Array(utoks.length).fill(false);
-        let allMatched = true;
-        for (const tk of tks) {
-          let found = -1;
-          for (let i = 0; i < utoks.length; i++) {
-            if (!used[i] && utoks[i].startsWith(tk)) { found = i; break; }
-          }
-          if (found < 0) { allMatched = false; break; }
-          used[found] = true;
-        }
-        if (allMatched) tokenHits.add(symbol);
-      }
-      if (tokenHits.size === 1) return [...tokenHits][0];
-    }
+    const tok = tokenPrefixMatch(nn, uni);
+    if (tok) return tok;
   }
   return null;
+}
+
+/** Greedy token-prefix match of a normalized trade name against the universe.
+ *  Returns a symbol only when exactly one universe name matches.
+ *  Extracted so the loose-prefix branch above can consult it as a tiebreak. */
+function tokenPrefixMatch(nn: string, uni: TradeUniverse): string | null {
+  const tks = nn.split(" ").filter(Boolean);
+  if (tks.length < 2) return null;
+  const tokenHits = new Set<string>();
+  for (const { norm, symbol } of uni.byName) {
+    if (!norm) continue;
+    const utoks = norm.split(" ").filter(Boolean);
+    const used = new Array(utoks.length).fill(false);
+    let allMatched = true;
+    for (const tk of tks) {
+      let found = -1;
+      for (let i = 0; i < utoks.length; i++) {
+        if (!used[i] && utoks[i].startsWith(tk)) { found = i; break; }
+      }
+      if (found < 0) { allMatched = false; break; }
+      used[found] = true;
+    }
+    if (allMatched) tokenHits.add(symbol);
+  }
+  return tokenHits.size === 1 ? [...tokenHits][0] : null;
 }
 
 /**
  * Trade-level dedup key: trade_id when present, else the natural composite.
  *
  * MUST be scoped to the user. A broker trade_id is only unique within one
- * account, and the composite fallback (broker|date|symbol|side|qty|price|time)
+ * account, and the composite fallback (broker|date|side|qty|price|time)
  * collides trivially across users — two people buying 10 INFY at the same price
  * on the same day produce identical tuples. Without user_id in the key, the
  * second user's real trade gets swallowed by ON CONFLICT DO NOTHING.
+ *
+ * `symbol` is deliberately NOT in the composite. It is a RESOLVED value, not
+ * broker truth: the same fill arriving from two Fyers exports (orderbook with
+ * NSE:TMPV-EQ vs tradebook with only "TATA MOTORS PASS VEH LTD") resolved to
+ * two different symbols and therefore two different keys, so dedup let both
+ * rows through and the position was double-counted. Broker + date + time +
+ * side + qty + price already pins a fill uniquely within one account; adding
+ * a derived field could only ever weaken the key. The narrow cost is that two
+ * genuinely distinct same-account fills of different symbols at the identical
+ * date, time-stamp, side, quantity AND price now collapse to one — vanishingly
+ * unlikely, and far cheaper than a silent duplicate holding.
  */
 export function tradeDedupKey(
   t: ParsedTrade & { symbol: string },
@@ -446,6 +485,24 @@ export function tradeDedupKey(
 ): string {
   const raw = t.tradeId
     ? `${userId}|${t.broker}|tid|${t.tradeId}`
-    : `${userId}|${t.broker}|${t.tradeDate}|${t.symbol}|${t.side}|${t.quantity}|${t.price}|${t.tradeTime}`;
+    : `${userId}|${t.broker}|${t.tradeDate}|${t.side}|${t.quantity}|${t.price}|${t.tradeTime}`;
+  return createHash("md5").update(raw).digest("hex");
+}
+
+/** The pre-2026-09 composite, which also keyed on the RESOLVED symbol.
+ *
+ *  Every trade already in app.portfolio_transaction that has no broker
+ *  trade_id was stored under this key. Recomputing it is the only way an
+ *  import can recognise those rows — the stored keys are md5 hashes of a
+ *  JS-formatted string we cannot reliably regenerate in SQL (quantity/price
+ *  numeric formatting, trade_time rendering), so a backfill would be a guess.
+ *  Import checks both keys and skips a trade whose legacy key is present.
+ *  Delete this once no user has a pre-cutover composite-key row left. */
+export function legacyTradeDedupKey(
+  t: ParsedTrade & { symbol: string },
+  userId: number | string,
+): string {
+  if (t.tradeId) return tradeDedupKey(t, userId); // trade_id path never changed
+  const raw = `${userId}|${t.broker}|${t.tradeDate}|${t.symbol}|${t.side}|${t.quantity}|${t.price}|${t.tradeTime}`;
   return createHash("md5").update(raw).digest("hex");
 }

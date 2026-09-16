@@ -30,6 +30,7 @@ import {
   buildTradeUniverse,
   resolveTradeSymbol,
   tradeDedupKey,
+  legacyTradeDedupKey,
   TradebookFormatError,
   type TradeUniverse,
 } from "@/lib/tradebookImport";
@@ -151,6 +152,7 @@ export async function POST(req: NextRequest) {
       ...t,
       symbol: symbol!,
       dedupKey: tradeDedupKey({ ...t, symbol: symbol! }, session.userId),
+      legacyKey: legacyTradeDedupKey({ ...t, symbol: symbol! }, session.userId),
     }));
 
   if (rows.length === 0) {
@@ -222,7 +224,52 @@ export async function POST(req: NextRequest) {
       `;
       matchedManual += upd.count;
     }
+    // Rows stored under the OLD composite key (which included the resolved
+    // symbol) are invisible to ON CONFLICT now that the key dropped symbol, so
+    // a re-import of an already-imported file would insert every one of them a
+    // second time. Look the legacy keys up once and skip those trades.
+    const legacyKeys = uniqueRows.filter((r) => !r.tradeId).map((r) => r.legacyKey);
+    const alreadyLegacy = new Set<string>();
+    if (legacyKeys.length) {
+      const hit = await tx<{ dedup_key: string }[]>`
+        SELECT dedup_key FROM app.portfolio_transaction
+         WHERE user_id = ${session.userId} AND dedup_key = ANY(${legacyKeys}::text[])
+      `;
+      for (const h of hit) alreadyLegacy.add(h.dedup_key);
+    }
+    // ORDERBOOK vs TRADEBOOK cross-file dedup.
+    //
+    // dedup_key has two disjoint key spaces: trade_id when the export carries
+    // one, the natural composite when it doesn't. Fyers publishes BOTH an
+    // orderbook export (has trade_id, time "11:35:32") and a tradebook export
+    // (no trade_id, time "11:35:32 AM", no ticker column — only a company
+    // name). The same fill in the two files therefore lands in two different
+    // key spaces AND stringifies its time differently, so ON CONFLICT could
+    // never see the collision. Importing both files double-counted 19 fills /
+    // 279 shares in my own account before this check existed.
+    //
+    // order_id is the bridge: both files carry it. It is NOT unique on its own
+    // (partial fills of one order share it), so pin the fill with
+    // order_id + side + quantity + price, which is exactly as tight as the
+    // composite key minus the fields the two formats disagree about.
+    const orderIds = uniqueRows.map((r) => r.orderId).filter((x): x is string => !!x);
+    const seenFills = new Set<string>();
+    if (orderIds.length) {
+      const hit = await tx<
+        { order_id: string; side: string; quantity: string; price: string }[]
+      >`
+        SELECT order_id, side, quantity::text, price::text
+          FROM app.portfolio_transaction
+         WHERE user_id = ${session.userId} AND broker = ${broker}
+           AND order_id = ANY(${orderIds}::text[])
+      `;
+      for (const h of hit) {
+        seenFills.add(`${h.order_id}|${h.side}|${Number(h.quantity)}|${Number(h.price)}`);
+      }
+    }
     for (const r of uniqueRows) {
+      if (!r.tradeId && alreadyLegacy.has(r.legacyKey)) continue;
+      if (r.orderId && seenFills.has(`${r.orderId}|${r.side}|${r.quantity}|${r.price}`)) continue;
       const res = await tx`
         INSERT INTO app.portfolio_transaction
           (user_id, broker, trade_date, trade_time, side, symbol, raw_symbol,

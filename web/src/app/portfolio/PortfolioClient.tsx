@@ -1873,7 +1873,10 @@ const STALE_WARN_DAYS = 30;
 const STALE_BAD_DAYS = 60;
 
 function BrokerFreshness({ snapshots }: { snapshots: Portfolio["brokerSnapshots"] }) {
-  if (!snapshots.length) return null;
+  // Defensive `?.` — brokerSnapshots is a new field and computePortfolio is
+  // wrapped in unstable_cache with no schema version in the key, so a warm
+  // entry written by the previous deploy deserializes without it.
+  if (!snapshots?.length) return null;
   const stalest = snapshots[0];
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 -mt-1">
