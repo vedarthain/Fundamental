@@ -98,6 +98,17 @@ type WatchRow = {
    *  staleness — a laggard from a delisting/merger/late backfill). */
   ltp_date: string | null;
   stale: boolean;
+  /** Live intraday tick from app.screener_meta (written by
+   *  /api/cron/intraday-equity) plus the IST trading day it was pulled on.
+   *  Raw inputs to the overlay below — consumers should read eff_ltp, not
+   *  these. */
+  intraday_px: number | null;
+  intraday_ist_date: string | null;
+  /** EFFECTIVE price and 1D move: the intraday tick when it is genuinely
+   *  newer than this symbol's own EOD bar, else the EOD close. See the
+   *  overlay block in GET for why both exist alongside ltp/ret_1d. */
+  eff_ltp: number | null;
+  eff_ret_1d: number | null;
   /** Portfolio ownership — mirrors the scanner graph's tri-state "P" badge.
    *  held = currently in the portfolio; traded = ever bought (held or exited). */
   held: boolean;
@@ -201,7 +212,9 @@ async function loadRows(symbols: string[]): Promise<WatchRow[]> {
       c.composite_pct::float  AS composite_pct,
       c.quality_pct::float    AS quality_pct,
       c.valuation_pct::float  AS valuation_pct,
-      c.momentum_pct::float   AS momentum_pct
+      c.momentum_pct::float   AS momentum_pct,
+      sm.current_price::float AS intraday_px,
+      (sm.price_fetched_at AT TIME ZONE 'Asia/Kolkata')::date::text AS intraday_ist_date
     FROM app.cluster_stocks_panel_cache c
     JOIN app.cluster cl ON cl.id = c.cluster_id
     JOIN app.meta_cluster mc ON mc.id = cl.meta_cluster_id
@@ -226,7 +239,9 @@ async function loadRows(symbols: string[]): Promise<WatchRow[]> {
       NULL::float AS composite_pct,
       NULL::float AS quality_pct,
       NULL::float AS valuation_pct,
-      NULL::float AS momentum_pct
+      NULL::float AS momentum_pct,
+      sm.current_price::float AS intraday_px,
+      (sm.price_fetched_at AT TIME ZONE 'Asia/Kolkata')::date::text AS intraday_ist_date
     FROM app.universe u
     LEFT JOIN app.cluster_assignment ca ON ca.symbol = u.symbol
     LEFT JOIN app.cluster cl ON cl.id = ca.cluster_id
@@ -527,6 +542,43 @@ export async function GET(req: NextRequest) {
     row.delivery_pct  = q?.delivery_pct  ?? null;
     row.ltp_date      = q?.ltp_date      ?? null;
     row.stale         = q?.stale         ?? false;
+
+    // ── Intraday overlay ────────────────────────────────────────────────────
+    // `ltp` above is golden's END-OF-DAY close. app.screener_meta.current_price
+    // is a LIVE tick written by /api/cron/intraday-equity during market hours.
+    // Consumers that read `ltp ?? current_price` never reach the tick — golden
+    // has a bar for every mapped symbol, so the `??` can't fire — and therefore
+    // show yesterday's close all session. That is exactly how the portfolio
+    // Returns tab came to disagree with the Performance tab by the whole of
+    // today's move: 9,52,652 vs 9,50,323, a gap equal to the -2,330 day change,
+    // with its "1D" column reporting YESTERDAY's session next to it.
+    // loadPortfolio already solved this server-side; this puts the same rule on
+    // the watchlist path so the two cannot drift again.
+    //
+    // The tick wins only when it is strictly newer than THIS symbol's own bar,
+    // compared by IST trading day rather than a wall-clock age. Per-symbol
+    // because a name that stopped trading has an older bar, and judging its
+    // tick against some other symbol's fresher bar would wrongly reject it.
+    // Self-healing both ways: a dead pinger degrades to EOD silently, a stalled
+    // EOD loader degrades to the tick.
+    //
+    // Emitted as eff_* alongside ltp/ret_1d rather than overwriting them, so
+    // existing card consumers keep their current EOD semantics until they opt
+    // in, and anything comparing against the chart still has the raw close.
+    const tick = row.intraday_px;
+    const useTick =
+      tick != null && tick > 0 &&
+      row.intraday_ist_date != null &&
+      (row.ltp_date == null || row.intraday_ist_date > row.ltp_date);
+    row.eff_ltp = useTick ? tick : row.ltp;
+    // When the tick is live, the 1D baseline is the last close — i.e. golden's
+    // newest bar, which is `ltp` — not the bar before it. Keeping ret_1d here
+    // would print yesterday's move beside a live price.
+    row.eff_ret_1d =
+      useTick && row.ltp != null && row.ltp !== 0
+        ? Math.round((tick / row.ltp - 1) * 1000) / 10
+        : row.ret_1d;
+
     row.held          = heldSet.has(row.symbol);
     row.traded        = row.held || tradedSet.has(row.symbol);
     row.bought_on     = boughtOn.get(row.symbol) ?? null;
@@ -534,7 +586,7 @@ export async function GET(req: NextRequest) {
     const posn        = positions[row.symbol];
     row.held_qty      = posn?.qty ?? null;
     row.avg_cost      = posn?.avgCost ?? null;
-    const effLtp      = q?.ltp ?? row.current_price;
+    const effLtp      = row.eff_ltp ?? row.current_price;
     row.pos_pnl_pct   =
       posn?.avgCost != null && posn.avgCost !== 0 && effLtp != null
         ? Math.round((effLtp / posn.avgCost - 1) * 1000) / 10

@@ -43,9 +43,17 @@ import Link from "next/link";
 type ApiRow = {
   symbol: string;
   company_name: string | null;
+  /** Golden's EOD close. Kept for reference only — read eff_ltp instead, or
+   *  this table shows yesterday's price all session (see eff_ltp). */
   ltp: number | null;
   current_price: number | null;
-  ret_1d: number | null; // PERCENT
+  /** EFFECTIVE price / 1D move from /api/watchlist: the live intraday tick when
+   *  it is newer than the symbol's own EOD bar, else the close. Using `ltp`
+   *  here is what made this tab read 9,52,652 against Performance's live
+   *  9,50,323 — a full day's move — and print yesterday's session as "1D". */
+  eff_ltp: number | null;
+  eff_ret_1d: number | null; // PERCENT
+  ret_1d: number | null; // PERCENT — EOD-only, superseded by eff_ret_1d
   ret_1w: number | null; // fraction
   ret_1m: number | null; // fraction
   ret_1y: number | null; // fraction
@@ -157,9 +165,9 @@ export function PortfolioReturnsTable({ others = [] }: { others?: OtherRow[] }) 
               name: r.company_name,
               buy,
               inv: qty != null && buy != null ? qty * buy : null,
-              ltp: r.ltp ?? r.current_price,
+              ltp: r.eff_ltp ?? r.ltp ?? r.current_price,
               pnl: r.pos_pnl_pct ?? null, // already a percent
-              d1: r.ret_1d, // already a percent
+              d1: r.eff_ret_1d ?? r.ret_1d, // already a percent
               w1: pctFromFrac(r.ret_1w),
               m1: pctFromFrac(r.ret_1m),
               y1: pctFromFrac(r.ret_1y),
