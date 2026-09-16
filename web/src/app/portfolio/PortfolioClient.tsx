@@ -293,6 +293,66 @@ export function PortfolioClient({
 function PerformanceTab({ portfolio, realized, perf, timeline }: { portfolio: Portfolio; realized: RealizedPnl; perf?: PerformanceStats | null; timeline?: RealizedTimeline | null }) {
   const { instruments, totals } = portfolio;
 
+  // Segment selector for the top money cards + trailing strip ONLY. Everything
+  // below (lifetime P&L, book quality, coverage, attribution, quality, TWR)
+  // stays whole-book on purpose: those numbers are decompositions *of the whole
+  // book* and become meaningless or misleading when sliced — "scored coverage"
+  // of the Others segment is 0% by definition, "book quality" of it is null.
+  const [seg, setSeg] = useState<"all" | "stocks" | "others">("all");
+  const segRows = useMemo(
+    () => (seg === "all" ? instruments : instruments.filter((i) => (seg === "stocks" ? i.isMapped : !i.isMapped))),
+    [instruments, seg],
+  );
+
+  // Per-segment money totals recomputed from the rows rather than read off
+  // portfolio.totals, which is whole-book. Day change is summed in rupees and
+  // the percentage derived from it, so a segment where some rows have no tick
+  // (ETFs priced from a bare LTP) degrades gracefully instead of lying.
+  const segTotals = useMemo<Portfolio["totals"]>(() => {
+    let invested = 0, currentValue = 0, pnl = 0, dayChangeValue = 0, dayBase = 0, mappedCount = 0;
+    for (const i of segRows) {
+      invested += i.invested;
+      currentValue += i.currentValue;
+      pnl += i.pnl;
+      if (i.isMapped) mappedCount++;
+      if (i.dayChangeValue != null) {
+        dayChangeValue += i.dayChangeValue;
+        dayBase += i.currentValue - i.dayChangeValue;
+      }
+    }
+    return {
+      invested, currentValue, pnl,
+      pnlPct: invested > 0 ? (pnl / invested) * 100 : 0,
+      dayChangeValue,
+      dayChangePct: dayBase > 0 ? (dayChangeValue / dayBase) * 100 : 0,
+      mappedValue: totals.mappedValue,
+      unmappedValue: totals.unmappedValue,
+      holdingCount: segRows.length,
+      mappedCount,
+    };
+  }, [segRows, totals.mappedValue, totals.unmappedValue]);
+
+  // Value-weighted trailing returns over the selected rows — Σ(value × r)/Σ(value).
+  // Same measure as the Returns tab's strip, and deliberately NOT the TWR in
+  // ReturnModel below: TWR needs a snapshot series and only exists whole-book.
+  const segWindows = useMemo(() => {
+    const keys = ["d1", "w1", "m1", "y1"] as const;
+    const pick = (i: Instrument, k: (typeof keys)[number]) =>
+      k === "d1" ? i.dayChangePct : k === "w1" ? i.ret1w : k === "m1" ? i.ret1m : i.ret1y;
+    const out: Record<(typeof keys)[number], number | null> = { d1: null, w1: null, m1: null, y1: null };
+    for (const k of keys) {
+      let acc = 0, wsum = 0;
+      for (const i of segRows) {
+        const v = pick(i, k);
+        if (v == null || !(i.currentValue > 0)) continue;
+        acc += i.currentValue * v;
+        wsum += i.currentValue;
+      }
+      out[k] = wsum > 0 ? acc / wsum : null;
+    }
+    return out;
+  }, [segRows]);
+
   // Split once: scored equities carry Q/V/M; unmapped (ETFs/funds) are excluded
   // from every quality calc and surfaced only as an honest coverage caveat.
   const mapped = instruments.filter((i) => i.isMapped && i.composite != null);
@@ -318,8 +378,30 @@ function PerformanceTab({ portfolio, realized, perf, timeline }: { portfolio: Po
 
   return (
     <div className="space-y-6">
-      {/* Current value / Invested / Total P&L — moved here from the Holdings tab. */}
-      <SummaryCards t={totals} snapshot={portfolio.snapshotDate} />
+      {/* Current value / Invested / Total P&L — moved here from the Holdings tab.
+          Scoped by the segment tabs; everything further down stays whole-book. */}
+      <div>
+        <div className="flex items-center gap-1 border-b hairline">
+          {([
+            { v: "all", label: "All", n: instruments.length },
+            { v: "stocks", label: "Stocks", n: instruments.filter((i) => i.isMapped).length },
+            { v: "others", label: "Others", n: instruments.filter((i) => !i.isMapped).length },
+          ] as const).map((o) => (
+            <button
+              key={o.v}
+              type="button"
+              onClick={() => setSeg(o.v)}
+              className={`px-3 py-2 text-[13px] font-medium -mb-px border-b-2 transition-colors ${
+                seg === o.v ? "border-current" : "border-transparent muted-text hover:opacity-80"
+              }`}
+            >
+              {o.label} <span className="muted-text tabular-nums">({o.n})</span>
+            </button>
+          ))}
+        </div>
+        <SummaryCards t={segTotals} snapshot={portfolio.snapshotDate} />
+        <SegmentWindows seg={seg} windows={segWindows} />
+      </div>
       {/* Sits directly under the value/P&L cards on purpose: those numbers are
           only as current as the snapshots behind them. */}
       <BrokerFreshness snapshots={portfolio.brokerSnapshots} />
@@ -1868,6 +1950,61 @@ function SummaryCards({ t, snapshot }: { t: Portfolio["totals"]; snapshot: strin
         icon={<IconPulse size={15} />}
         accent={up(t.dayChangeValue) ? GREEN : RED}
       />
+    </div>
+  );
+}
+
+/**
+ * Trailing 1D/1W/1M/1Y for the selected Performance segment.
+ *
+ * Value-weighted price returns of the holdings on screen — Σ(value × r)/Σ(value)
+ * — NOT the time-weighted return in ReturnModel below. TWR needs a daily
+ * snapshot series and app.portfolio_snapshot only carries one for the whole
+ * book, so a per-segment TWR does not exist to show. The two agree in a window
+ * with no trades and diverge when cashflow timing matters; the note says so
+ * rather than leaving the reader to assume they're the same number.
+ *
+ * Others renders no windows at all: app.etf_price stores a single overwritten
+ * LTP with no bar history, so there is nothing to measure a window against.
+ */
+function SegmentWindows({ seg, windows }: {
+  seg: "all" | "stocks" | "others";
+  windows: { d1: number | null; w1: number | null; m1: number | null; y1: number | null };
+}) {
+  const cells = [
+    { k: "1D", v: windows.d1 }, { k: "1W", v: windows.w1 },
+    { k: "1M", v: windows.m1 }, { k: "1Y", v: windows.y1 },
+  ];
+  const any = cells.some((c) => c.v != null);
+  return (
+    <div className="mt-3 rounded-xl border hairline px-4 py-3">
+      {any ? (
+        <div className="flex flex-wrap items-center gap-x-8 gap-y-2">
+          {cells.map((c) => (
+            <div key={c.k}>
+              <div className="text-[10px] uppercase tracking-wide muted-text">{c.k}</div>
+              <div
+                className="text-[15px] font-semibold tabular-nums"
+                style={{ color: c.v == null ? undefined : up(c.v) ? GREEN : RED }}
+              >
+                {c.v == null ? "—" : pct(c.v)}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="text-[12px] muted-text">
+          No trailing performance for unscored instruments — ETFs and index funds have a live
+          price but no history to measure a window against.
+        </div>
+      )}
+      {any && (
+        <div className="text-[11px] muted-text mt-2">
+          Value-weighted price return of the {seg === "all" ? "whole book" : seg === "stocks" ? "scored equities" : "unscored instruments"} currently
+          held. Ignores the timing of buys and sells, so it will differ from the time-weighted
+          return below when you traded inside the window.
+        </div>
+      )}
     </div>
   );
 }
