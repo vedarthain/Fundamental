@@ -910,10 +910,21 @@ export default function GraphClient({
 
   // Keyboard paging: ←/PageUp = prev, →/PageDown = next. Refs keep the latest
   // closures so the listener registers once instead of re-subscribing per render.
+  //
+  // The assignment lives in a deps-less effect rather than in the render body.
+  // Mutating a ref during render is a React rule violation (react-hooks/refs):
+  // under concurrent rendering a render can be started and thrown away, so a
+  // discarded render would still have overwritten .current with closures that
+  // never committed — the keydown handler would then page using state that was
+  // never shown. Post-commit assignment can only ever publish closures from the
+  // render that actually landed. The listener still subscribes once: it reads
+  // .current at event time, and events only fire after effects have flushed.
   const gotoNextRef = useRef(gotoNextPage);
   const gotoPrevRef = useRef(gotoPrevPage);
-  gotoNextRef.current = gotoNextPage;
-  gotoPrevRef.current = gotoPrevPage;
+  useEffect(() => {
+    gotoNextRef.current = gotoNextPage;
+    gotoPrevRef.current = gotoPrevPage;
+  });
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // Don't hijack while typing in a field, using a browser shortcut, or with
