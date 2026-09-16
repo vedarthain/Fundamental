@@ -204,7 +204,7 @@ export function PortfolioClient({
             </p>
           </div>
         ) : (
-          <HoldingsSheets instruments={portfolio.instruments} totalValue={t.currentValue} priceAsOf={portfolio.priceAsOf} />
+          <HoldingsSheets instruments={portfolio.instruments} totalValue={t.currentValue} priceAsOf={portfolio.priceAsOf} priceAsOfTs={portfolio.priceAsOfTs} />
         )
       ) : tab === "performance" && owner ? (
         !portfolio.hasHoldings && realized.rows.length === 0 ? (
@@ -2116,7 +2116,7 @@ function makeCmp(key: SortKey, dir: SortDir) {
  *  and Others (ETFs, funds, bonds — anything we don't score) under two
  *  sub-tabs. `isMapped` is the same signal the sector allocation uses to
  *  bucket "ETFs & funds (unscored)". */
-function HoldingsSheets({ instruments, totalValue, priceAsOf }: { instruments: Instrument[]; totalValue: number; priceAsOf: string | null }) {
+function HoldingsSheets({ instruments, totalValue, priceAsOf, priceAsOfTs }: { instruments: Instrument[]; totalValue: number; priceAsOf: string | null; priceAsOfTs: string | null }) {
   const stocks = instruments.filter((i) => i.isMapped);
   const others = instruments.filter((i) => !i.isMapped);
   const [sub, setSub] = useState<"stocks" | "others">("stocks");
@@ -2153,7 +2153,7 @@ function HoldingsSheets({ instruments, totalValue, priceAsOf }: { instruments: I
         </div>
       ) : (
         <div className="mt-3">
-          <HoldingsTable instruments={active} totalValue={totalValue} priceAsOf={priceAsOf} flush />
+          <HoldingsTable instruments={active} totalValue={totalValue} priceAsOf={priceAsOf} priceAsOfTs={priceAsOfTs} flush />
         </div>
       )}
     </div>
@@ -2164,11 +2164,13 @@ function HoldingsTable({
   instruments,
   totalValue,
   priceAsOf,
+  priceAsOfTs,
   flush = false,
 }: {
   instruments: Instrument[];
   totalValue: number;
   priceAsOf: string | null;
+  priceAsOfTs: string | null;
   flush?: boolean;
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -2188,8 +2190,16 @@ function HoldingsTable({
   const [pnlFilter, setPnlFilter] = useState<"all" | "profit" | "loss">("all");
 
   // Trading date behind the LTP column, shown as a highlighted "as of" tag
-  // under the header so the price is never mistaken for a live tick.
-  const asOfLabel = priceAsOf
+  // under the header. When an intraday tick is driving the price we have a real
+  // timestamp, so show HH:mm IST instead — a bare date reads as "previous
+  // close" and would undersell a live number exactly as much as it used to
+  // oversell a stale one. priceAsOfTs is the only thing that distinguishes the
+  // two cases: a same-day EOD bar and a same-day tick share a date.
+  const asOfLabel = priceAsOfTs
+    ? new Date(priceAsOfTs).toLocaleTimeString("en-IN", {
+        hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kolkata",
+      })
+    : priceAsOf
     ? new Date(priceAsOf + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short" })
     : null;
 

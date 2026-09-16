@@ -94,9 +94,15 @@ export type Portfolio = {
   brokerAlloc: AllocSlice[];
   sectorAlloc: AllocSlice[];
   snapshotDate: string | null;
-  // Latest trading date behind the LTP column (max date in golden's daily
-  // close history for the held symbols). Surfaced as the "as of" under LTP.
+  // Latest trading date behind the LTP column — the max of golden's daily close
+  // history and the intraday tick, whichever is driving the price. Surfaced as
+  // the "as of" under LTP.
   priceAsOf: string | null;
+  // Timestamp of the intraday tick when one is actually in use, else null.
+  // Non-null is the ONLY signal that the LTP column is live rather than a
+  // previous close — priceAsOf alone can't say, since a same-day EOD bar and a
+  // same-day tick share a date. The UI must not print "live" without this.
+  priceAsOfTs: string | null;
   brokers: Broker[]; // which brokers the user has imported
   // How old each broker's snapshot is. Quantity and avg cost are broker truth
   // frozen at import time — if you traded at a broker after its last upload,
@@ -1269,6 +1275,7 @@ function emptyPortfolio(): Portfolio {
     sectorAlloc: [],
     snapshotDate: null,
     priceAsOf: null,
+    priceAsOfTs: null,
     brokers: [],
     brokerSnapshots: [],
   };
@@ -1396,10 +1403,11 @@ async function computePortfolio(
   const mappedSyms = [...new Set(visibleHoldings.filter((h) => h.symbol).map((h) => h.symbol!))];
 
   // Scores + sector/industry from the latest cache snapshot.
-  // Three independent reads — cluster scores (app), latest-two closes (golden),
-  // and the snapshot watermark (app) — fired together instead of in series.
+  // Four independent reads — cluster scores (app), latest-two closes (golden),
+  // the snapshot watermark (app) and the intraday tick (app) — fired together
+  // instead of in series.
   const gsyms = mappedSyms.map((s) => s + ".NS");
-  const [cacheRows, gp, snapRow] = await Promise.all([
+  const [cacheRows, gp, snapRow, intraRows] = await Promise.all([
     mappedSyms.length
       ? sql<CacheRow[]>`
           WITH ranked AS (
@@ -1437,6 +1445,22 @@ async function computePortfolio(
     sql<{ d: string | null }[]>`
       SELECT max(snapshot_date)::text AS d FROM app.cluster_stocks_panel_cache
     `,
+    // Intraday tick, written by /api/cron/intraday-equity. `fetched_ist_date`
+    // is the IST trading day the tick belongs to, so it can be compared
+    // directly against golden's `date` (also an IST trading day) to decide
+    // which of the two is actually newer. See the priceOf() note below.
+    mappedSyms.length
+      ? sql<{ symbol: string; px: string; at: string; ist_date: string }[]>`
+          SELECT symbol,
+                 current_price::text                                  AS px,
+                 price_fetched_at::text                               AS at,
+                 (price_fetched_at AT TIME ZONE 'Asia/Kolkata')::date::text AS ist_date
+            FROM app.screener_meta
+           WHERE symbol = ANY(${mappedSyms})
+             AND current_price IS NOT NULL
+             AND price_fetched_at IS NOT NULL
+        `
+      : Promise.resolve([] as { symbol: string; px: string; at: string; ist_date: string }[]),
   ]);
   const cache = new Map<string, CacheRow>();
   for (const r of cacheRows) cache.set(r.symbol, r);
@@ -1444,16 +1468,49 @@ async function computePortfolio(
   // Live price + 1D from golden: latest two closes per mapped symbol.
   const gLast = new Map<string, number>();
   const gPrev = new Map<string, number>();
+  // Per-symbol date of that latest close. Needed per-symbol, not globally: a
+  // symbol that stopped trading has an older bar, and comparing its tick
+  // against some other symbol's fresher bar would wrongly reject the tick.
+  const gDate = new Map<string, string>();
   // Newest close date across all held symbols → the LTP "as of" date.
   let priceAsOf: string | null = null;
   for (const g of gp) {
     const bare = g.symbol.endsWith(".NS") ? g.symbol.slice(0, -3) : g.symbol;
     if (Number(g.rn) === 1) {
       gLast.set(bare, Number(g.close));
+      gDate.set(bare, g.date);
       if (!priceAsOf || g.date > priceAsOf) priceAsOf = g.date;
     } else {
       gPrev.set(bare, Number(g.close));
     }
+  }
+
+  // ── Intraday overlay ──────────────────────────────────────────────────────
+  // golden.price_history_1d is an END-OF-DAY bar. app.screener_meta.current_price
+  // is a LIVE tick written hourly by /api/cron/intraday-equity. This page used to
+  // read `gLast.get(sym) ?? cache.current_price`, and since golden has a row for
+  // every mapped symbol the `??` never fired — so the intraday pinger was dead
+  // code here and Current Value showed yesterday's close all session. Observed:
+  // book valued at 9,52,652 against a live 9,43,893, an 8.8k overstatement at
+  // 10:30 IST on a -0.9% day.
+  //
+  // The tick only wins when it is genuinely newer, decided by IST trading day
+  // rather than a wall-clock age threshold. A same-day tick is by definition
+  // more current than a bar that closed yesterday; a tick from an earlier day
+  // means the pinger is dead and the EOD bar is the better number. This is
+  // self-healing in both directions: the pinger dying degrades to EOD silently,
+  // and a stalled EOD loader degrades to the tick.
+  const intraPx = new Map<string, number>();
+  let intraAt: string | null = null; // newest tick timestamp actually used
+  for (const r of intraRows) {
+    const px = Number(r.px);
+    if (!Number.isFinite(px) || px <= 0) continue;
+    // Strictly newer than the EOD bar we would otherwise use for THIS symbol.
+    const barDate = gDate.get(r.symbol);
+    if (barDate && r.ist_date <= barDate) continue;
+    intraPx.set(r.symbol, px);
+    if (!intraAt || r.at > intraAt) intraAt = r.at;
+    if (!priceAsOf || r.ist_date > priceAsOf) priceAsOf = r.ist_date;
   }
 
   const snapshotDate = snapRow[0]?.d ?? null;
@@ -1575,11 +1632,21 @@ async function computePortfolio(
     let dayChangeValue: number | null;
 
     if (a.isMapped) {
-      // golden close first (freshest), then cache price.
-      price = a.symbol ? gLast.get(a.symbol) ?? c?.current_price ?? null : null;
+      // Same-day intraday tick first, then the EOD close, then the panel-cache
+      // price. intraPx is pre-filtered to ticks strictly newer than that
+      // symbol's own EOD bar, so this ordering can only ever move forward in
+      // time — see the intraday overlay block above.
+      const tick = a.symbol ? intraPx.get(a.symbol) : undefined;
+      const eod = a.symbol ? gLast.get(a.symbol) : undefined;
+      price = tick ?? eod ?? c?.current_price ?? null;
       currentValue = price != null ? a.qty * price : a.brokerCurValueSum;
-      const last = a.symbol ? gLast.get(a.symbol) : undefined;
-      const prev = a.symbol ? gPrev.get(a.symbol) : undefined;
+      // 1D move is always "current price vs the close before it". When the tick
+      // is live that baseline is today's opening reference — i.e. YESTERDAY's
+      // close, which is gLast — not gPrev. Leaving this on gLast/gPrev while
+      // pricing off the tick would have reported yesterday's move next to a
+      // live value, which is worse than reporting nothing.
+      const last = tick ?? eod;
+      const prev = tick != null ? eod : a.symbol ? gPrev.get(a.symbol) : undefined;
       if (last != null && prev != null && prev !== 0) {
         dayChangePct = Math.round((last / prev - 1) * 1000) / 10;
         dayChangeValue = a.qty * (last - prev);
@@ -1742,6 +1809,7 @@ async function computePortfolio(
       .sort((a, b) => b.value - a.value),
     snapshotDate,
     priceAsOf,
+    priceAsOfTs: intraAt,
     brokers,
     brokerSnapshots,
   };
