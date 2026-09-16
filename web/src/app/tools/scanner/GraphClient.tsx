@@ -1069,23 +1069,27 @@ export default function GraphClient({
 
   return (
     <div className="flex flex-col">
-      <header className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-2">
-          {/* basis-[340px] is what makes the flex-wrap actually fire: the button
-              group is shrink-0, so without a real basis the title block just
-              collapsed to its 200px min and the subtitle truncated away the
-              "showing 65-68 : 17/24" counters. Now the buttons drop to their own
-              row first, and the subtitle wraps rather than hiding text. */}
-          <div className="min-w-[260px] flex-1 basis-[340px]">
-            <h1 className="font-display text-[20px] tracking-tight leading-tight truncate">Charts by industry</h1>
-            <p className="text-[12px] muted-text">
+      <header className="mb-1.5 flex flex-wrap items-center gap-x-4 gap-y-2">
+          {/* Title and context on ONE line — the two-line stack cost ~24px of
+              vertical space above the grid, which was enough to push the 4th
+              chart below the fold. basis-[340px] is what makes the flex-wrap
+              actually fire: the button group is shrink-0, so without a real
+              basis the title block just collapsed to its 200px min and the
+              context truncated away the "showing 65-68 : 17/24" counters. Now
+              the buttons drop to their own row first, and the line wraps rather
+              than hiding text. */}
+          <div className="min-w-[260px] flex-1 basis-[340px] flex flex-wrap items-baseline gap-x-2">
+            <h1 className="font-display text-[17px] tracking-tight leading-tight shrink-0">Charts by industry</h1>
+            <p className="text-[12px] muted-text leading-tight">
               {curPage ? (
                 <>
+                  <span className="muted-text">· </span>
                   <span className="ink-text font-medium">{activeSectorName}</span> ·{" "}
                   <span className="ink-text font-medium">{curPage.indName}</span> ·{" "}
                   {curPage.indTotal} names · showing {rangeStart}–{rangeEnd} : {indPageIdx}/{indPageCount}
                 </>
               ) : (
-                <>Pick an industry from the tree{snapDate ? <> · panel {snapDate}</> : null}</>
+                <>· Pick an industry from the tree{snapDate ? <> · panel {snapDate}</> : null}</>
               )}
             </p>
           </div>
@@ -1285,7 +1289,12 @@ export default function GraphClient({
           </div>
       </header>
 
-      <div className="flex gap-3 h-[calc(100vh-158px)] min-h-[560px]">
+      {/* 158px → 120px: 24px came off the page's top padding (pt-10 → pt-4 in
+          ScannerTabs for this tab) and ~14px off the header when the title and
+          its context collapsed onto one line. The subtraction has to shrink in
+          step or the reclaimed space just becomes empty page instead of taller
+          charts. */}
+      <div className="flex gap-3 h-[calc(100vh-120px)] min-h-[560px]">
         {/* ── Left: collapsible sector → industry → stock tree ── */}
         {!treeOpen && (
           <button

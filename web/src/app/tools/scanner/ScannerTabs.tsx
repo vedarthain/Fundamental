@@ -244,8 +244,12 @@ export default function ScannerTabs({
     tab === "themes" ||
     tab === "fallen";
 
+  // The Graph tab sizes its chart grid off the viewport (100vh − chrome), so
+  // every pixel of page padding above it comes straight out of chart height —
+  // py-10 was enough to push the 4th chart below the fold. Tightened to pt-4 for
+  // that tab only; the list-style tabs keep the roomier default.
   return (
-    <div className={`theme-indigo mx-auto px-6 py-10 ${wide ? "max-w-[1560px]" : "max-w-[1180px]"}`}>
+    <div className={`theme-indigo mx-auto px-6 pb-10 ${tab === "graph" ? "pt-4" : "pt-10"} ${wide ? "max-w-[1560px]" : "max-w-[1180px]"}`}>
       <div className="flex flex-col gap-8 md:flex-row md:items-start md:gap-8">
         {/* Collapsed rail: a slim button to reveal the scanner nav again. */}
         {!railOpen && (
