@@ -288,6 +288,47 @@ function pctx(x: unknown): number | null {
 }
 
 /**
+ * The manual-entry reconciliation rule, as a composable SQL predicate.
+ *
+ * A symbol the user hand-entered trades for is represented by a single
+ * synthetic 'derived' row (snapshot opening lot + manual trades); its raw
+ * broker snapshot rows step aside so the position isn't counted twice. Assumes
+ * the caller aliases app.portfolio_holding as `h`.
+ *
+ * Two guards that the inline copies of this predicate were missing, both of
+ * which erased live positions:
+ *
+ *   matched_at IS NULL — once an import finds the same trade, the manual row is
+ *   stamped matched and every valuation walk skips it in favour of the imported
+ *   copy. A row that no longer feeds the derivation must not suppress the
+ *   snapshot either.
+ *
+ *   NOT EXISTS(derived) — suppression is a SWAP, not a delete. If no derived
+ *   row was written there is nothing standing in, and dropping the snapshot
+ *   erases the position outright. recomputeDerivedHolding only writes a row
+ *   when net trade-log quantity is > 0, and an incomplete tradebook (a sell
+ *   whose opening lot predates the export) nets negative — so "the derived row
+ *   always exists" is simply not true.
+ *
+ * Both fired on KARURVYSYA: broker said 45 @ 346, trade log netted -45, no
+ * derived row, snapshot suppressed anyway, ₹15,570 gone from Invested with no
+ * row and no warning anywhere in the UI.
+ */
+function reconciledHolding(userId: number) {
+  return sql`
+    (h.broker = 'derived'
+     OR NOT EXISTS (
+          SELECT 1 FROM app.portfolio_transaction t
+           WHERE t.user_id = ${userId} AND t.source_file = 'manual-entry'
+             AND t.symbol = h.symbol AND t.matched_at IS NULL)
+     OR NOT EXISTS (
+          SELECT 1 FROM app.portfolio_holding d
+           WHERE d.user_id = ${userId} AND d.broker = 'derived'
+             AND d.symbol = h.symbol))
+  `;
+}
+
+/**
  * Just the mapped universe symbols a user holds — a cheap membership lookup for
  * "is this stock in my portfolio?" badges. Skips all valuation work.
  */
@@ -300,11 +341,7 @@ export async function loadPortfolioSymbols(userId: number): Promise<string[]> {
     SELECT DISTINCT h.symbol
       FROM app.portfolio_holding h
      WHERE h.user_id = ${userId} AND h.symbol IS NOT NULL
-       AND (h.broker = 'derived'
-            OR h.symbol NOT IN (
-              SELECT symbol FROM app.portfolio_transaction
-               WHERE user_id = ${userId} AND source_file = 'manual-entry'
-                 AND symbol IS NOT NULL))
+       AND ${reconciledHolding(userId)}
   `;
   return rows.map((r) => r.symbol);
 }
@@ -422,11 +459,7 @@ export async function loadPortfolioHeldQty(userId: number): Promise<Record<strin
     SELECT h.symbol, SUM(h.quantity)::float8 AS qty
       FROM app.portfolio_holding h
      WHERE h.user_id = ${userId} AND h.symbol IS NOT NULL AND h.quantity > 0
-       AND (h.broker = 'derived'
-            OR h.symbol NOT IN (
-              SELECT symbol FROM app.portfolio_transaction
-               WHERE user_id = ${userId} AND source_file = 'manual-entry'
-                 AND symbol IS NOT NULL))
+       AND ${reconciledHolding(userId)}
      GROUP BY h.symbol
   `;
   const out: Record<string, number> = {};
@@ -448,11 +481,7 @@ export async function loadHeldPositions(
            (SUM(h.avg_cost * h.quantity) / NULLIF(SUM(h.quantity), 0))::float8 AS avg
       FROM app.portfolio_holding h
      WHERE h.user_id = ${userId} AND h.symbol IS NOT NULL AND h.quantity > 0
-       AND (h.broker = 'derived'
-            OR h.symbol NOT IN (
-              SELECT symbol FROM app.portfolio_transaction
-               WHERE user_id = ${userId} AND source_file = 'manual-entry'
-                 AND symbol IS NOT NULL))
+       AND ${reconciledHolding(userId)}
      GROUP BY h.symbol
   `;
   const out: Record<string, { qty: number; avgCost: number | null }> = {};
@@ -1287,11 +1316,18 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
   // Symbols the user has hand-entered trades for. Each such symbol is reconciled
   // into a single synthetic 'derived' row (snapshot opening lot + manual trades,
   // see derivedHoldings.ts); we suppress its raw broker snapshot rows below so
-  // the position isn't double-counted. A fully-exited symbol has no derived row
-  // and its snapshot stays suppressed → it drops off Holdings, as expected.
+  // the position isn't double-counted.
+  //
+  // matched_at IS NULL matters: once an import finds the same trade, the manual
+  // row is stamped matched and every valuation walk (computeRealized,
+  // recomputeDerivedHolding) skips it in favour of the imported copy. A row that
+  // no longer participates in the derivation has no business suppressing the
+  // snapshot either — keeping it here is how a matched hand-entry kept erasing
+  // a live position.
   const manualRows = await sql<{ symbol: string }[]>`
     SELECT DISTINCT symbol FROM app.portfolio_transaction
      WHERE user_id = ${userId} AND source_file = 'manual-entry' AND symbol IS NOT NULL
+       AND matched_at IS NULL
   `;
   const manualSymbols = manualRows.map((r) => r.symbol).sort();
 
@@ -1331,8 +1367,30 @@ async function computePortfolio(
   firstBuyBySym: Record<string, string> = {},
 ): Promise<Portfolio> {
   const manualSymbols = new Set(manualSymbolList);
+  // Suppression is a SWAP, not a delete: the broker snapshot steps aside only
+  // because a 'derived' row is standing in for it. Gate on that row actually
+  // existing, otherwise the position is erased outright — no row, no warning,
+  // and its cost basis silently missing from Invested.
+  //
+  // That is not hypothetical. recomputeDerivedHolding only writes a row when
+  // net quantity across the trade log is > 0, and an incomplete tradebook (a
+  // sell whose opening lot predates the export) nets negative. KARURVYSYA did
+  // exactly that: broker said 45 shares @ 346, trade log said -45, so no
+  // derived row was written, the snapshot was suppressed anyway, and ₹15,570
+  // vanished from the portfolio total.
+  //
+  // Unconditional suppression was only ever safe under the assumption that a
+  // derived row always materialises. It doesn't, so don't assume it — when the
+  // stand-in is missing, keep broker truth.
+  const derivedSymbols = new Set(
+    holdings.filter((h) => h.broker === "derived" && h.symbol).map((h) => h.symbol!),
+  );
   const visibleHoldings = holdings.filter(
-    (h) => h.broker === "derived" || !h.symbol || !manualSymbols.has(h.symbol),
+    (h) =>
+      h.broker === "derived" ||
+      !h.symbol ||
+      !manualSymbols.has(h.symbol) ||
+      !derivedSymbols.has(h.symbol),
   );
 
   const mappedSyms = [...new Set(visibleHoldings.filter((h) => h.symbol).map((h) => h.symbol!))];
