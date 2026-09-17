@@ -6,12 +6,15 @@
  * equityroots.in exactly. The 1D % is the one genuinely-daily figure, computed
  * from golden's last two closes.
  *
- * Data ceiling to keep in mind: the cache snapshot (Q/V/M, rank, price, 1W/1M/1Y)
- * refreshes ~weekly. Only price freshness beyond that lives in golden (1D).
+ * Data ceiling to keep in mind: the cache snapshot (Q/V/M, rank) refreshes
+ * ~weekly. Price, 1D and 1W/1M/1Y are all daily — the return columns are
+ * recomputed off golden's newest close (lib/trailingReturns) rather than read
+ * from the panel, which used to make 1D and 1W describe different weeks.
  */
 import "server-only";
 import ExcelJS from "exceljs";
 import { sql, golden } from "@/lib/db";
+import { loadTrailingReturns } from "@/lib/trailingReturns";
 
 const TIER_MAP: Record<string, string> = {
   veteran: "Long established",
@@ -142,8 +145,18 @@ async function loadRows(): Promise<{ rows: Row[]; snapshot: string | null }> {
     }
   }
 
+  // 1W / 1M / 1Y off golden's newest close rather than the panel's ret_* columns.
+  // The panel is weekly; 1D above is daily; shipping both in one spreadsheet
+  // meant the 1D and the 1W could describe different weeks. (2026-09-17: 37% of
+  // panel 1W values had the wrong sign vs. the live anchor.) See
+  // lib/trailingReturns. Fractions there, percent in this report.
+  const trailing = await loadTrailingReturns(raw.map((r) => r.symbol));
+  const tpct = (v: number | null | undefined) =>
+    v == null ? null : Math.round(v * 1000) / 10;
+
   const snapshot = raw.find((r) => r.snapshot_date)?.snapshot_date ?? null;
   const rows: Row[] = raw.map((r) => {
+    const tr = trailing.get(r.symbol);
     const l = last.get(r.symbol);
     const p = prev.get(r.symbol);
     const d1 =
@@ -166,9 +179,9 @@ async function loadRows(): Promise<{ rows: Row[]; snapshot: string | null }> {
       price: num(r.current_price),
       vol: vol.get(r.symbol) ?? null,
       d1,
-      r1w: pctx(r.ret_1w),
-      r1m: pctx(r.ret_1m),
-      r1y: pctx(r.ret_1y),
+      r1w: tpct(tr?.ret_1w) ?? pctx(r.ret_1w),
+      r1m: tpct(tr?.ret_1m) ?? pctx(r.ret_1m),
+      r1y: tpct(tr?.ret_1y) ?? pctx(r.ret_1y),
     };
   });
   return { rows, snapshot };

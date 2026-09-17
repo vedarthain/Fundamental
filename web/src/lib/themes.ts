@@ -28,6 +28,7 @@
  */
 
 import { sql } from "@/lib/db";
+import { loadTrailingReturns } from "@/lib/trailingReturns";
 
 // The themes. `code` is our internal index_code (matches both tables);
 // `label` is the short chip label; the long name comes from the history row.
@@ -202,8 +203,17 @@ export async function loadThemes(): Promise<ThemesData> {
     if (!indexLastDate || r.date > indexLastDate) indexLastDate = r.date;
   }
 
+  // Returns off golden's newest close, not the panel's ret_* columns: the panel
+  // is rebuilt weekly, so its returns lag the price beside them by up to 7 days
+  // and — here — by up to 7 days against the INDEX return these chips are read
+  // against. Measured 2026-09-17: 37% of 1W values had the wrong sign. See
+  // lib/trailingReturns (fractions there, percent here).
+  const trailing = await loadTrailingReturns(panelRows.map((r) => r.symbol));
+  const tpct = (v: number | null | undefined) => (v == null ? null : v * 100);
+
   const consByCode = new Map<string, ThemeConstituent[]>();
   for (const r of panelRows) {
+    const tr = trailing.get(r.symbol);
     if (!consByCode.has(r.index_code)) consByCode.set(r.index_code, []);
     consByCode.get(r.index_code)!.push({
       symbol: r.symbol,
@@ -212,9 +222,9 @@ export async function loadThemes(): Promise<ThemesData> {
       qualityPct: num(r.quality_pct),
       valuationPct: num(r.valuation_pct),
       momentumPct: num(r.momentum_pct),
-      ret1w: num(r.ret_1w),
-      ret1m: num(r.ret_1m),
-      ret1y: num(r.ret_1y),
+      ret1w: tpct(tr?.ret_1w) ?? num(r.ret_1w),
+      ret1m: tpct(tr?.ret_1m) ?? num(r.ret_1m),
+      ret1y: tpct(tr?.ret_1y) ?? num(r.ret_1y),
       marketCapCr: num(r.market_cap_cr),
       price: num(r.current_price),
     });

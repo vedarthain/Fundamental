@@ -29,12 +29,12 @@ const HOUR = 3600;
 const cachedMomentum = unstable_cache(loadLatestMomentum, ["scanner:momentum:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
 const cachedTrend = unstable_cache(loadLatestTrendLeaders, ["scanner:trend:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
 const cachedFloor = unstable_cache(loadLatestSupportFloor, ["scanner:floor:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
-const cachedRotation = unstable_cache(loadRotation, ["scanner:rotation:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
+const cachedRotation = unstable_cache(loadRotation, ["scanner:rotation:v2-live-returns"], { revalidate: HOUR, tags: CACHE_TAGS });
 // "All stocks" + "Graph" are the two heaviest payloads (~1 MB serialized combined).
 // They're lazy-loaded on first tab open via /api/scanner/panel, NOT shipped with
 // the page — so they're intentionally absent from the eager wave below.
 const cachedDividendUniverse = unstable_cache(loadDividendUniverse, ["scanner:dividends:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
-const cachedThemes = unstable_cache(loadThemes, ["scanner:themes:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
+const cachedThemes = unstable_cache(loadThemes, ["scanner:themes:v2-live-returns"], { revalidate: HOUR, tags: CACHE_TAGS });
 const cachedSparklines = unstable_cache(loadSparklines, ["scanner:sparklines:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
 const cachedN500 = unstable_cache(
   async () => sql<{ symbol: string }[]>`SELECT symbol FROM app.index_constituent WHERE index_code = 'NIFTY500'`,

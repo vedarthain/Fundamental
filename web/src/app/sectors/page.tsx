@@ -1,5 +1,6 @@
 import { unstable_cache } from "next/cache";
 import { sql } from "@/lib/db";
+import { loadTrailingReturns, capWeightedReturn } from "@/lib/trailingReturns";
 import {
   SectorsClient,
   type IndustryTile,
@@ -34,7 +35,7 @@ async function loadAll(): Promise<SectorsData> {
   }
 
   // Cluster tiles + cluster-level returns from the materialised cache.
-  const tiles = await sql<IndustryTile[]>`
+  const tiles = await sql<Omit<IndustryTile, "ret_1w" | "ret_1m" | "ret_1y">[]>`
     SELECT
       cc.cluster_id      AS industry_id,
       cc.industry_name,
@@ -45,10 +46,7 @@ async function loadAll(): Promise<SectorsData> {
       cc.composite_aggr_pct::float AS avg_composite,
       cc.quality_aggr_pct::float   AS avg_quality,
       cc.valuation_aggr_pct::float AS avg_valuation,
-      cc.momentum_aggr_pct::float  AS avg_momentum,
-      cc.ret_1w::float   AS ret_1w,
-      cc.ret_1m::float   AS ret_1m,
-      cc.ret_1y::float   AS ret_1y
+      cc.momentum_aggr_pct::float  AS avg_momentum
     FROM app.cluster_composite_cache cc
     JOIN app.meta_cluster mc ON mc.id = cc.meta_cluster_id
     WHERE cc.snapshot_date = ${snapshotDate}
@@ -60,7 +58,7 @@ async function loadAll(): Promise<SectorsData> {
   // join.  Volume on the wire after gzip ≈ 50-80 KB; well within payload
   // budget for a one-time SPA hydration.
   const panelRows = await sql<
-    (StockRow & { cluster_id: string })[]
+    (Omit<StockRow, "ret_1w" | "ret_1m" | "ret_1y"> & { cluster_id: string })[]
   >`
     SELECT
       cluster_id,
@@ -71,14 +69,21 @@ async function loadAll(): Promise<SectorsData> {
       quality_pct::float      AS quality_pct,
       valuation_pct::float    AS valuation_pct,
       momentum_pct::float     AS momentum_pct,
-      maturity_tier,
-      ret_1w::float           AS ret_1w,
-      ret_1m::float           AS ret_1m,
-      ret_1y::float           AS ret_1y
+      maturity_tier
     FROM app.cluster_stocks_panel_cache
     WHERE snapshot_date = ${snapshotDate}
     ORDER BY cluster_id, composite_pct DESC NULLS LAST
   `;
+
+  // Returns are NOT read from the two caches above. Both are rebuilt weekly, so
+  // their ret_* columns are anchored up to 7 days behind `current_price`, which
+  // the EOD job refreshes in place daily — the row shows today's price beside
+  // last Saturday's return. Measured 2026-09-17 across 1,909 names: 37% of 1W
+  // values had the WRONG SIGN, and 1M/1Y were off by the same ~5pp in absolute
+  // terms (the error is "days the panel hasn't seen", which doesn't shrink as
+  // the window lengthens). lib/trailingReturns recomputes them off golden's
+  // latest close using the watchlist's anchor, in fractions.
+  const trailing = await loadTrailingReturns(panelRows.map((r) => r.symbol));
 
   // Bucket by cluster_id for direct lookup in the client component. Drop
   // cluster_id from each row since it's now implicit in the bucket key.
@@ -89,8 +94,28 @@ async function loadAll(): Promise<SectorsData> {
       (stocksByIndustry[r.cluster_id] = []);
     const { cluster_id: _drop, ...stock } = r;
     void _drop;
-    bucket.push(stock);
+    const t = trailing.get(r.symbol);
+    bucket.push({
+      ...stock,
+      ret_1w: t?.ret_1w ?? null,
+      ret_1m: t?.ret_1m ?? null,
+      ret_1y: t?.ret_1y ?? null,
+    });
   }
+
+  // Cluster-level returns, re-aggregated from the fresh per-stock numbers with
+  // the SAME market-cap weighting the ETL uses (cli.py, "Aggregate per
+  // cluster"). Recomputing here rather than reading cc.ret_* keeps a tile and
+  // the rows inside it from telling two different stories.
+  const tilesWithReturns: IndustryTile[] = tiles.map((t) => {
+    const rows = stocksByIndustry[t.industry_id] ?? [];
+    return {
+      ...t,
+      ret_1w: capWeightedReturn(rows.map((s) => ({ mcap: s.market_cap_cr, ret: s.ret_1w }))),
+      ret_1m: capWeightedReturn(rows.map((s) => ({ mcap: s.market_cap_cr, ret: s.ret_1m }))),
+      ret_1y: capWeightedReturn(rows.map((s) => ({ mcap: s.market_cap_cr, ret: s.ret_1y }))),
+    };
+  });
 
   // Sector heatmap: weekly average scores per cluster over the last ~90 days.
   // Aggregated from app.scores (not the materialized cache — cache only stores
@@ -119,7 +144,7 @@ async function loadAll(): Promise<SectorsData> {
     ORDER BY s.cluster_id, s.snapshot_date ASC
   `;
 
-  return { tiles, stocksByIndustry, clusterHistory, snapshotDate };
+  return { tiles: tilesWithReturns, stocksByIndustry, clusterHistory, snapshotDate };
 }
 
 // Cache the entire data layer for 24h regardless of searchParams. Without
@@ -132,7 +157,7 @@ async function loadAll(): Promise<SectorsData> {
 // /sectors can serve up to a full day of yesterday's prices even though
 // the DB already has today's. With the tag, the GH Action posts to
 // /api/revalidate after the upsert and the next page render rebuilds.
-const getCachedAll = unstable_cache(() => loadAll(), ["sectors-all"], {
+const getCachedAll = unstable_cache(() => loadAll(), ["sectors-all", "v2-live-returns"], {
   revalidate: 86400,
   tags: ["sectors", "panel-cache"],
 });

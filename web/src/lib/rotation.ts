@@ -21,6 +21,7 @@
  */
 
 import { sql } from "@/lib/db";
+import { loadTrailingReturns } from "@/lib/trailingReturns";
 
 export type RotationRow = {
   name: string;
@@ -153,6 +154,24 @@ export async function loadRotation(targetDate?: string | null): Promise<Rotation
     `;
   } catch {
     return { ...empty, dates };
+  }
+
+  // On the LATEST snapshot only, overwrite the panel's ret_1w / ret_1m with
+  // returns measured off golden's newest close. The panel is rebuilt weekly, so
+  // its returns trail the price by up to 7 days; here that isn't just a display
+  // defect — these numbers drive the rotation RANKING, so a stale week silently
+  // reorders the leaderboard. (Measured 2026-09-17: 37% of 1W values carried the
+  // wrong sign.) Historical snapshots are left exactly as stored: a past
+  // rotation view must show what was true then, not today's returns pasted onto
+  // an old date.
+  if (snapDate === dates[0]) {
+    const trailing = await loadTrailingReturns(rows.map((r) => r.symbol));
+    for (const r of rows) {
+      const t = trailing.get(r.symbol);
+      if (!t) continue;
+      if (t.ret_1w != null) r.ret_1w = t.ret_1w * 100;
+      if (t.ret_1m != null) r.ret_1m = t.ret_1m * 100;
+    }
   }
 
   const n500 = rows.filter((r) => r.is_n500);

@@ -7,7 +7,9 @@
  * off it (it rendered blank). Instead we reuse the SAME sources the rest of
  * the app already trusts:
  *
- *   • 1W ← app.cluster_stocks_panel_cache.ret_1w  (weekly-refreshed snapshot)
+ *   • 1W ← golden.price_history: latest close vs nearest close on-or-before
+ *          (latest − 7 days), via lib/trailingReturns — the SAME anchor the
+ *          watchlist and the price chart use, so the three cannot disagree.
  *   • 1D ← golden.price_history latest close vs the previous trading day
  *
  * Both are returned as fractions (0.012 = +1.2%); the client multiplies by 100.
@@ -16,6 +18,7 @@
  */
 import { NextResponse } from "next/server";
 import { sql, golden } from "@/lib/db";
+import { loadTrailingReturns } from "@/lib/trailingReturns";
 
 export const dynamic = "force-dynamic";
 
@@ -39,18 +42,14 @@ export async function GET(req: Request) {
 
   // Independent lookups: a failure in one plane (e.g. golden unreachable in a
   // local dev DB) must not blank out the other. Each defaults to an empty map.
-  const ret1wBySym = new Map<string, number | null>();
-  try {
-    const weekly = await sql<{ symbol: string; ret_1w: number | null }[]>`
-      SELECT c.symbol, c.ret_1w::float AS ret_1w
-        FROM app.cluster_stocks_panel_cache c
-       WHERE c.snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_stocks_panel_cache)
-         AND c.symbol = ANY(${symbols})
-    `;
-    for (const r of weekly) ret1wBySym.set(r.symbol, r.ret_1w);
-  } catch {
-    /* leave 1W empty */
-  }
+  //
+  // 1W comes from golden's LATEST close, NOT from the panel cache. It used to
+  // read app.cluster_stocks_panel_cache.ret_1w, which is anchored to that
+  // table's weekly snapshot — so this badge sat next to a live 1D from golden
+  // and disagreed with it by up to a week. 37% of the universe had the WRONG
+  // SIGN on 2026-09-17 (SREEL: chart falling 370 → 294, badge reading +25.5%).
+  // See lib/trailingReturns for the measurement.
+  const trailing = await loadTrailingReturns(symbols);
 
   // Live intraday price + freshness from the pinger table (app.screener_meta).
   const priceBySym = new Map<string, { price: number | null; at: string | null }>();
@@ -102,7 +101,7 @@ export async function GET(req: Request) {
     const live = priceBySym.get(sym);
     data[sym] = {
       ret_1d: ret1dBySym.get(sym) ?? null,
-      ret_1w: ret1wBySym.get(sym) ?? null,
+      ret_1w: trailing.get(sym)?.ret_1w ?? null,
       current_price: live?.price ?? null,
       price_fetched_at: live?.at ?? null,
     };

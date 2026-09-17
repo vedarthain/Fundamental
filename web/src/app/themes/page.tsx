@@ -1,5 +1,6 @@
 import { unstable_cache } from "next/cache";
 import { sql } from "@/lib/db";
+import { loadTrailingReturns } from "@/lib/trailingReturns";
 import { ThemesClient, type ThemeTile, type ThemeStock, type ThemesData } from "./ThemesClient";
 
 // Themes are an ORTHOGONAL grouping to /sectors, not a prettier version of it.
@@ -43,13 +44,9 @@ async function loadAll(): Promise<ThemesData> {
 
   // Every member of every theme, pre-joined with the same panel cache that
   // feeds /sectors and the scanner. Nothing here comes from the import source:
-  // prices, returns and percentiles are ours, so a theme page cannot disagree
-  // with the rest of the site about what a stock did today.
-  //
-  // Returns are stored as FRACTIONS in this table (-0.0487 = -4.9%) while every
-  // other surface renders percent — multiplied here so the client never has to
-  // know, and so this page cannot become the fourth place that gets it wrong.
-  const rows = await sql<(ThemeStock & { theme_id: number })[]>`
+  // prices and percentiles are ours, so a theme page cannot disagree with the
+  // rest of the site about what a stock did today.
+  const rows = await sql<(Omit<ThemeStock, "ret_1w" | "ret_1m" | "ret_1y"> & { theme_id: number })[]>`
     SELECT m.theme_id,
            p.symbol,
            p.company_name,
@@ -58,20 +55,31 @@ async function loadAll(): Promise<ThemesData> {
            p.composite_pct::float        AS composite_pct,
            p.quality_pct::float          AS quality_pct,
            p.valuation_pct::float        AS valuation_pct,
-           p.momentum_pct::float         AS momentum_pct,
-           (p.ret_1w::float * 100)       AS ret_1w,
-           (p.ret_1m::float * 100)       AS ret_1m,
-           (p.ret_1y::float * 100)       AS ret_1y
+           p.momentum_pct::float         AS momentum_pct
       FROM app.theme_member m
       JOIN app.cluster_stocks_panel_cache p
         ON p.symbol = m.symbol AND p.snapshot_date = ${snapshotDate}
      ORDER BY p.market_cap_cr DESC NULLS LAST
   `;
 
+  // Returns come from golden's LATEST close, not from the panel's ret_* columns.
+  // The panel is rebuilt weekly, so its returns are anchored up to 7 days behind
+  // the price rendered beside them — 37% of 1W values carried the wrong sign on
+  // 2026-09-17, and 1M/1Y were off by the same ~5pp in absolute terms. See
+  // lib/trailingReturns. Fractions there; this page renders percent.
+  const trailing = await loadTrailingReturns(rows.map((r) => r.symbol));
+  const pct = (v: number | null | undefined) => (v == null ? null : v * 100);
+
   const stocksByTheme: Record<string, ThemeStock[]> = {};
   for (const r of rows) {
-    const { theme_id, ...stock } = r;
-    (stocksByTheme[theme_id] ??= []).push(stock);
+    const { theme_id, ...base } = r;
+    const t = trailing.get(base.symbol);
+    (stocksByTheme[theme_id] ??= []).push({
+      ...base,
+      ret_1w: pct(t?.ret_1w),
+      ret_1m: pct(t?.ret_1m),
+      ret_1y: pct(t?.ret_1y),
+    });
   }
 
   return { themes, stocksByTheme, snapshotDate };
@@ -81,7 +89,7 @@ async function loadAll(): Promise<ThemesData> {
 // panel cache, so this page must go stale at exactly the moment /sectors does.
 // Membership itself changes far more slowly than the 24h revalidate and is
 // refreshed out-of-band by the ETL importer.
-const getCachedAll = unstable_cache(() => loadAll(), ["themes-all"], {
+const getCachedAll = unstable_cache(() => loadAll(), ["themes-all", "v2-live-returns"], {
   revalidate: 86400,
   tags: ["sectors", "panel-cache"],
 });
