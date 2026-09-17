@@ -19,6 +19,7 @@ import { createHash } from "crypto";
 import { unstable_cache } from "next/cache";
 import { sql, golden } from "@/lib/db";
 import { BROKER_LABEL, bareSymbol, type Broker } from "@/lib/portfolioImport";
+import { loadQuotes, type Quote } from "@/lib/watchlistQuote";
 
 export type BrokerLot = {
   broker: Broker;
@@ -306,6 +307,12 @@ function num(x: unknown): number | null {
 function pctx(x: unknown): number | null {
   const n = num(x);
   return n == null ? null : Math.round(n * 1000) / 10;
+}
+
+/** Same one-decimal rounding as pctx, for values that are ALREADY percentages
+ *  (loadQuotes hands back percent; the panel cache stores fractions). */
+function qpct(x: number | null | undefined): number | null {
+  return x == null ? null : Math.round(x * 10) / 10;
 }
 
 /**
@@ -1418,7 +1425,13 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
   const dateKey = istDateKey();
   const cached = unstable_cache(
     () => computePortfolio(holdings, manualSymbols, firstBuyBySym),
-    ["portfolio", String(userId), dateKey, fp, buyFp],
+    // SHAPE is bumped whenever the cached payload gains or changes a field.
+    // Next's data cache survives deployments, and the key is built only from
+    // user data — so `heldDays` shipped and then did nothing, because every
+    // read was served an older Portfolio blob that had no such field and
+    // `undefined != null` is false. The exclusion silently never fired. A code
+    // change that alters the payload has to be part of the key.
+    ["portfolio", "v2-quotes-heldDays", String(userId), dateKey, fp, buyFp],
     { revalidate: 900, tags: ["portfolio", "panel-cache"] },
   );
   return cached();
@@ -1469,7 +1482,7 @@ async function computePortfolio(
   const etfSymList = [
     ...new Set(visibleHoldings.filter((h) => !h.is_mapped && h.etf_symbol).map((h) => h.etf_symbol!)),
   ];
-  const [cacheRows, gp, snapRow, intraRows, etfRows] = await Promise.all([
+  const [cacheRows, gp, snapRow, intraRows, etfRows, quotes] = await Promise.all([
     mappedSyms.length
       ? sql<CacheRow[]>`
           WITH ranked AS (
@@ -1535,6 +1548,19 @@ async function computePortfolio(
            WHERE symbol = ANY(${etfSymList})
         `
       : Promise.resolve([] as { symbol: string; ltp: string; at: string }[]),
+    // Trailing 1W/1M/1Y computed LIVE off golden's daily closes — the same
+    // source, and the same anchor method, the Returns tab and the stock chart
+    // use.
+    //
+    // These used to be read off app.cluster_stocks_panel_cache, which is a
+    // WEEKLY snapshot: on 2026-09-17 it was still serving the 2026-09-12 cut,
+    // so Performance reported 1Y +34.1% against Returns' +18.2% on the same
+    // book and neither number was labelled stale. A trailing window that lags
+    // by up to a week is not a trailing window. The panel cache stays as the
+    // fallback for anything loadQuotes can't price.
+    mappedSyms.length
+      ? loadQuotes(mappedSyms)
+      : Promise.resolve(new Map<string, Quote>()),
   ]);
   const cache = new Map<string, CacheRow>();
   for (const r of cacheRows) cache.set(r.symbol, r);
@@ -1712,6 +1738,7 @@ async function computePortfolio(
   const instruments: Instrument[] = [];
   for (const a of aggs.values()) {
     const c = a.symbol ? cache.get(a.symbol) : undefined;
+    const qt = a.symbol ? quotes.get(a.symbol) : undefined;
     const derived = a.lots.every((l) => l.broker === "derived");
     const blendedAvg = a.costQty > 0 ? a.costSum / a.costQty : null;
     const invested = a.costSum; // Σ qty*avgCost across brokers
@@ -1838,9 +1865,13 @@ async function computePortfolio(
       composite: num(c?.composite_pct),
       peerRank: c?.peer_rank == null ? null : Math.round(Number(c.peer_rank)),
       peerCount: c?.peer_count == null ? null : Math.round(Number(c.peer_count)),
-      ret1w: pctx(c?.ret_1w),
-      ret1m: pctx(c?.ret_1m),
-      ret1y: pctx(c?.ret_1y),
+      // Live golden windows first, weekly panel-cache snapshot only as a
+      // fallback. loadQuotes already returns PERCENT; the panel cache stores
+      // fractions, which is what pctx is converting — mixing the two without
+      // that distinction is a silent 100× error.
+      ret1w: qpct(qt?.ret_1w) ?? pctx(c?.ret_1w),
+      ret1m: qpct(qt?.ret_1m) ?? pctx(c?.ret_1m),
+      ret1y: qpct(qt?.ret_1y) ?? pctx(c?.ret_1y),
       brokers: a.lots.sort((x, y) => y.quantity - x.quantity),
     });
   }
