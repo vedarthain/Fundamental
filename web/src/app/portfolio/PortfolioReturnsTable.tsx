@@ -54,6 +54,14 @@ type ApiRow = {
   eff_ltp: number | null;
   eff_ret_1d: number | null; // PERCENT
   ret_1d: number | null; // PERCENT — EOD-only, superseded by eff_ret_1d
+  /** The exact close eff_ret_1d is measured against (post-overlay). Needed for
+   *  the rupee day-change: reconstructing it as ltp/(1+d1/100) inherits the
+   *  one-decimal rounding on d1, which is ±₹475 of noise on a ₹9.5L book. */
+  prev_close: number | null;
+  /** Earliest recorded buy. Drives the "you didn't hold this for that window"
+   *  fade on the trailing columns — a name bought last week still has a real
+   *  1Y price return, but it is the stock's, not yours. */
+  bought_on?: string | null;
   ret_1w: number | null; // fraction
   ret_1m: number | null; // fraction
   ret_1y: number | null; // fraction
@@ -107,9 +115,24 @@ type Display = {
   m1: number | null;
   y1: number | null;
   qty: number | null;
+  /** The close the 1D move is measured from. Null for ETFs (no bar series), so
+   *  they contribute nothing to the rupee day change rather than zero. */
+  prev: number | null;
+  /** Days since the earliest recorded buy, or null when unknown (broker
+   *  snapshots carry no trade date). Null is treated as "held long enough" —
+   *  fading a column on a guess is worse than not fading it. */
+  heldDays: number | null;
   /** False for ETFs/index funds — they have no price history, so the trailing
    *  columns are structurally absent rather than merely missing today. */
   scored: boolean;
+};
+
+/** Calendar span each trailing column measures, for the held-through test. */
+const WINDOW_DAYS: Record<"d1" | "w1" | "m1" | "y1", number> = {
+  d1: 1, w1: 7, m1: 30, y1: 365,
+};
+const WINDOW_LABEL: Record<"d1" | "w1" | "m1" | "y1", string> = {
+  d1: "1D", w1: "1W", m1: "1M", y1: "1Y",
 };
 
 const pctFromFrac = (f: number | null | undefined): number | null =>
@@ -160,6 +183,7 @@ export function PortfolioReturnsTable({ others = [] }: { others?: OtherRow[] }) 
           (wd.rows ?? []).map((r) => {
             const qty = r.held_qty ?? null;
             const buy = r.avg_cost ?? null;
+            const bought = r.bought_on ? Date.parse(r.bought_on) : NaN;
             return {
               symbol: r.symbol,
               name: r.company_name,
@@ -172,6 +196,10 @@ export function PortfolioReturnsTable({ others = [] }: { others?: OtherRow[] }) 
               m1: pctFromFrac(r.ret_1m),
               y1: pctFromFrac(r.ret_1y),
               qty,
+              prev: r.prev_close ?? null,
+              heldDays: Number.isFinite(bought)
+                ? Math.floor((Date.now() - bought) / 86_400_000)
+                : null,
               scored: true,
             };
           }),
@@ -201,6 +229,8 @@ export function PortfolioReturnsTable({ others = [] }: { others?: OtherRow[] }) 
         m1: null,
         y1: null,
         qty: o.qty,
+        prev: null,
+        heldDays: null,
         scored: false,
       })),
     [others],
@@ -262,10 +292,22 @@ export function PortfolioReturnsTable({ others = [] }: { others?: OtherRow[] }) 
     let invested = 0;
     let current = 0;
     let missing = 0;
+    // Day change in RUPEES — the figure the Performance tab has always shown
+    // and this one didn't, so the same book read "−0.9%" here and "−₹8,518 ·
+    // −0.9%" there. Built from the exact prior close rather than from the
+    // rounded 1D percent, and summed over its OWN denominator (Σ qty × prev)
+    // so the percentage is the real move of the priced subset, not a weighted
+    // average of per-row percentages.
+    let dayChange = 0;
+    let dayBase = 0;
     for (const r of sorted ?? []) {
       if (r.inv == null || r.ltp == null || r.qty == null) { missing++; continue; }
       invested += r.inv;
       current += r.qty * r.ltp;
+      if (r.prev != null && r.prev > 0) {
+        dayChange += r.qty * (r.ltp - r.prev);
+        dayBase += r.qty * r.prev;
+      }
     }
     const pnl = current - invested;
     return {
@@ -273,6 +315,10 @@ export function PortfolioReturnsTable({ others = [] }: { others?: OtherRow[] }) 
       current,
       pnl,
       pnlPct: invested > 0 ? (pnl / invested) * 100 : null,
+      // Null, not zero, when nothing in view has a prior close (the Others
+      // tab): "no day change" and "flat on the day" are different statements.
+      dayChange: dayBase > 0 ? dayChange : null,
+      dayChangePct: dayBase > 0 ? (dayChange / dayBase) * 100 : null,
       missing,
     };
   }, [sorted]);
@@ -315,6 +361,31 @@ export function PortfolioReturnsTable({ others = [] }: { others?: OtherRow[] }) 
         wsum += w;
       }
       out[k] = wsum > 0 ? acc / wsum : null;
+    }
+    return out;
+  }, [sorted]);
+
+  /**
+   * How many rows in view did NOT exist in the portfolio for the whole of each
+   * window. A name bought last week still has a real 1Y price return — it is
+   * the STOCK's — but weighting it into a portfolio-level 1Y implies you earned
+   * it, and you didn't.
+   *
+   * The number itself is deliberately left alone: the strip and the table have
+   * to agree, and the footnote already says these are instrument returns, not a
+   * cashflow-adjusted portfolio return. So the honesty goes into the label
+   * rather than into the arithmetic — the count here, and a fade on the
+   * individual cells below. Rows with no recorded buy date (broker snapshots)
+   * count as held: fading on a guess is worse than not fading.
+   */
+  const unheld = useMemo(() => {
+    const keys = ["w1", "m1", "y1"] as const;
+    const out: Record<(typeof keys)[number], number> = { w1: 0, m1: 0, y1: 0 };
+    for (const k of keys) {
+      for (const r of sorted ?? []) {
+        if (r[k] == null || r.heldDays == null) continue;
+        if (r.heldDays < WINDOW_DAYS[k]) out[k]++;
+      }
     }
     return out;
   }, [sorted]);
@@ -362,9 +433,9 @@ export function PortfolioReturnsTable({ others = [] }: { others?: OtherRow[] }) 
     { key: "ltp", label: "LTP", title: "Last traded price" },
     { key: "pnl", label: "Return", title: "Your unrealised return: LTP vs your average cost" },
     { key: "d1", label: "1D", title: "Price change over the last session" },
-    { key: "w1", label: "1W", title: "Price change over the last week" },
-    { key: "m1", label: "1M", title: "Price change over the last month" },
-    { key: "y1", label: "1Y", title: "Price change over the last year" },
+    { key: "w1", label: "1W", title: "The stock's price change over the last week — faded if you bought part-way through it" },
+    { key: "m1", label: "1M", title: "The stock's price change over the last month — faded if you bought part-way through it" },
+    { key: "y1", label: "1Y", title: "The stock's price change over the last year — faded if you bought part-way through it" },
   ];
 
   const toggle = (key: SortKey) =>
@@ -405,7 +476,7 @@ export function PortfolioReturnsTable({ others = [] }: { others?: OtherRow[] }) 
         </button>
       ))}
     </div>
-    <SummaryStrip view={view} subtotal={subtotal} windows={windows} />
+    <SummaryStrip view={view} subtotal={subtotal} windows={windows} unheld={unheld} />
     {/* `overflow-hidden` on the card would also trap the sticky header (any
         non-visible overflow creates the anchoring scrollport), so it too is
         dropped from md up. Below md it stays, to clip the rounded corners. */}
@@ -452,7 +523,7 @@ export function PortfolioReturnsTable({ others = [] }: { others?: OtherRow[] }) 
         <span className="muted-text text-[11px]">
           {view === "others"
             ? "Live LTP · no 1D–1Y: unscored instruments have no price history"
-            : "Return is yours · 1D–1Y are the stock’s"}
+            : "Return is yours · 1D–1Y are the stock’s · faded = bought part-way through that window"}
         </span>
       </div>
       {/* `overflow-x-auto` makes this a scroll container on BOTH axes (CSS
@@ -555,15 +626,29 @@ export function PortfolioReturnsTable({ others = [] }: { others?: OtherRow[] }) 
                 >
                   {fmtPct(r.pnl)}
                 </td>
-                {(["d1", "w1", "m1", "y1"] as const).map((k) => (
-                  <td
-                    key={k}
-                    className="px-3 py-2 text-right tabular-nums whitespace-nowrap"
-                    style={{ color: deltaColor(r[k]) }}
-                  >
-                    {fmtPct(r[k])}
-                  </td>
-                ))}
+                {(["d1", "w1", "m1", "y1"] as const).map((k) => {
+                  // You did not own this for the whole window. The number is
+                  // still correct — it is the STOCK's move — so it stays on
+                  // screen; it is faded and captioned so it can't be read as
+                  // "what I made". Unknown buy date (broker snapshot) counts as
+                  // held: a fade on a guess is worse than no fade.
+                  const partial =
+                    r[k] != null && r.heldDays != null && r.heldDays < WINDOW_DAYS[k];
+                  return (
+                    <td
+                      key={k}
+                      className="px-3 py-2 text-right tabular-nums whitespace-nowrap"
+                      style={{ color: deltaColor(r[k]), opacity: partial ? 0.42 : undefined }}
+                      title={
+                        partial
+                          ? `Held ${r.heldDays} day${r.heldDays === 1 ? "" : "s"} — this is the stock's ${WINDOW_LABEL[k]} move over the full window, not your return.`
+                          : undefined
+                      }
+                    >
+                      {fmtPct(r[k])}
+                    </td>
+                  );
+                })}
               </tr>
             ))}
           </tbody>
@@ -598,10 +683,20 @@ function SummaryStrip({
   view,
   subtotal,
   windows,
+  unheld,
 }: {
   view: View;
-  subtotal: { invested: number; current: number; pnl: number; pnlPct: number | null; missing: number };
+  subtotal: {
+    invested: number;
+    current: number;
+    pnl: number;
+    pnlPct: number | null;
+    dayChange: number | null;
+    dayChangePct: number | null;
+    missing: number;
+  };
   windows: { d1: number | null; w1: number | null; m1: number | null; y1: number | null };
+  unheld: { w1: number; m1: number; y1: number };
 }) {
   const cells: { label: string; value: number | null }[] = [
     { label: "1D", value: windows.d1 },
@@ -622,6 +717,20 @@ function SummaryStrip({
           color={deltaColor(subtotal.pnl)}
           sub={subtotal.pnlPct == null ? undefined : fmtPct(subtotal.pnlPct)}
         />
+        {/* Day change in rupees — the Performance tab's headline figure, now
+            on this tab too, off the same effective price and the same prior
+            close. If these two ever disagree by more than rounding, one of the
+            price paths has drifted. */}
+        <Metric
+          label="Day change"
+          value={
+            subtotal.dayChange == null
+              ? "—"
+              : `${subtotal.dayChange >= 0 ? "+" : "−"}${inr(Math.abs(subtotal.dayChange))}`
+          }
+          color={deltaColor(subtotal.dayChange)}
+          sub={subtotal.dayChangePct == null ? undefined : fmtPct(subtotal.dayChangePct)}
+        />
         <div className="hidden md:block self-stretch w-px" style={{ background: "var(--color-hairline, rgba(0,0,0,0.10))" }} />
         {noWindows ? (
           <span className="muted-text text-[11.5px] max-w-[420px]">
@@ -640,6 +749,21 @@ function SummaryStrip({
         {subtotal.missing > 0 &&
           ` ${subtotal.missing} position${subtotal.missing > 1 ? "s" : ""} excluded from the totals: no cost or no price.`}
       </div>
+      {/* The 1W/1M/1Y windows above include names you bought part-way through
+          them. Saying so beats silently dropping them: the number is the
+          basket's price return either way, and the count is what tells you how
+          much of it you were actually present for. */}
+      {(unheld.w1 > 0 || unheld.m1 > 0 || unheld.y1 > 0) && (
+        <div className="muted-text text-[10.5px] mt-1">
+          Bought part-way through the window:{" "}
+          {([["1W", unheld.w1], ["1M", unheld.m1], ["1Y", unheld.y1]] as const)
+            .filter(([, n]) => n > 0)
+            .map(([k, n]) => `${n} in ${k}`)
+            .join(", ")}
+          . Those columns are the stock&apos;s move over the full window, not yours —
+          faded in the table below.
+        </div>
+      )}
     </div>
   );
 }

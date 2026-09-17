@@ -84,6 +84,12 @@ type WatchRow = {
   /** Fresh daily quote from golden (split-adjusted). */
   ltp: number | null;
   ret_1d: number | null;
+  /** The exact close `ret_1d` is measured against, AFTER the intraday overlay:
+   *  the prior session's close normally, or yesterday's close when a live tick
+   *  has taken over `ltp`. Exposed because a rupee day-change (qty × (ltp −
+   *  prev_close)) cannot be reconstructed from ret_1d — that is rounded to one
+   *  decimal, which on a ₹9.5L book is ±₹475 of slop on an ₹8.5k number. */
+  prev_close: number | null;
   high_52w: number | null;
   low_52w: number | null;
   from_high_pct: number | null;
@@ -524,6 +530,7 @@ export async function GET(req: NextRequest) {
     const q = quotes.get(row.symbol);
     row.ltp           = q?.ltp           ?? null;
     row.ret_1d        = q?.ret_1d        ?? null;
+    row.prev_close    = q?.prev_close    ?? null;
     // Period returns arrive as PERCENT from the quote; ReturnPill (and the row
     // contract) expect FRACTIONS, so divide by 100 here — same convention the
     // panel cache used to store.
@@ -591,6 +598,10 @@ export async function GET(req: NextRequest) {
         row.eod_ltp != null && row.eod_ltp !== 0
           ? Math.round((tick / row.eod_ltp - 1) * 1000) / 10
           : null;
+      // …and the baseline itself moves with it, so a consumer computing a
+      // rupee day-change off (ltp − prev_close) gets today's move rather than
+      // silently measuring a live tick against the close before last.
+      row.prev_close = row.eod_ltp;
       row.ltp = tick;
       // The "as of" date has to move with the price, or the freshness pill
       // labels a live tick with yesterday's date. And a symbol that traded
