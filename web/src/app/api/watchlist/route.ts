@@ -24,7 +24,7 @@ import { sql } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { loadPersistenceForSymbols } from "@/lib/persistence";
 import { loadPortfolioSymbols, loadHeldPositions, loadSnapshotDerivedBuys, type TradeMark } from "@/lib/portfolio";
-import { loadQuotes, loadCloseOnAdd, loadCloseAsOf } from "@/lib/watchlistQuote";
+import { loadQuotes, loadCloseOnAdd, loadCloseAsOf, rescaleWindow } from "@/lib/watchlistQuote";
 import { type GlanceMetrics, type MetricKey } from "@/lib/glance";
 import { type StockVerdict } from "@/lib/explainer";
 // Shared with /api/watchlist/extras, which serves these three for the ONE
@@ -602,6 +602,14 @@ export async function GET(req: NextRequest) {
       // rupee day-change off (ltp − prev_close) gets today's move rather than
       // silently measuring a live tick against the close before last.
       row.prev_close = row.eod_ltp;
+      // Trailing windows are close-to-close, so their ENDPOINT is still
+      // yesterday's bar even though ltp is now live — 1W/1M/1Y would sit frozen
+      // all session and disagree with 1D about which way the stock moved.
+      // Re-end them on the tick; the anchor is history and stays put. These are
+      // FRACTIONS on the row (asFrac above), hence scale=1.
+      row.ret_1w = rescaleWindow(row.ret_1w, row.eod_ltp, tick, 1);
+      row.ret_1m = rescaleWindow(row.ret_1m, row.eod_ltp, tick, 1);
+      row.ret_1y = rescaleWindow(row.ret_1y, row.eod_ltp, tick, 1);
       row.ltp = tick;
       // The "as of" date has to move with the price, or the freshness pill
       // labels a live tick with yesterday's date. And a symbol that traded

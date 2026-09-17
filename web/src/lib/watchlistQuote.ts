@@ -433,3 +433,28 @@ async function fetchQuotes(bareSymsSorted: string[]): Promise<Record<string, Quo
   }
   return Object.fromEntries(out);
 }
+
+/**
+ * Re-end a trailing window on the live intraday tick.
+ *
+ * Trailing windows (1W/1M/1Y) are computed close-to-close off golden's daily
+ * bars, so BOTH the anchor and the endpoint are EOD closes — the live tick
+ * never enters them, and the number freezes between EOD loads. This moves the
+ * endpoint only (the anchor is history and must not move):
+ *     ret_live = (1 + ret_eod) * (live / eod_close) - 1
+ *
+ * Unit-preserving as long as `scale` matches the input: 100 for percent
+ * (lib/watchlistQuote, lib/portfolio), 1 for fractions (api/watchlist rows).
+ */
+export function rescaleWindow(
+  ret: number | null | undefined,
+  eodClose: number | null | undefined,
+  live: number | null | undefined,
+  scale: 1 | 100 = 100,
+): number | null {
+  if (ret == null) return null;
+  if (eodClose == null || !(eodClose > 0)) return ret;
+  if (live == null || !(live > 0)) return ret;
+  if (live === eodClose) return ret;
+  return ((1 + ret / scale) * (live / eodClose) - 1) * scale;
+}

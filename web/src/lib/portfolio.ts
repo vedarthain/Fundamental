@@ -19,7 +19,7 @@ import { createHash } from "crypto";
 import { unstable_cache } from "next/cache";
 import { sql, golden } from "@/lib/db";
 import { BROKER_LABEL, bareSymbol, type Broker } from "@/lib/portfolioImport";
-import { loadQuotes, type Quote } from "@/lib/watchlistQuote";
+import { loadQuotes, rescaleWindow, type Quote } from "@/lib/watchlistQuote";
 
 export type BrokerLot = {
   broker: Broker;
@@ -1431,7 +1431,7 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
     // read was served an older Portfolio blob that had no such field and
     // `undefined != null` is false. The exclusion silently never fired. A code
     // change that alters the payload has to be part of the key.
-    ["portfolio", "v2-quotes-heldDays", String(userId), dateKey, fp, buyFp],
+    ["portfolio", "v3-live-windows", String(userId), dateKey, fp, buyFp],
     { revalidate: 900, tags: ["portfolio", "panel-cache"] },
   );
   return cached();
@@ -1739,6 +1739,11 @@ async function computePortfolio(
   for (const a of aggs.values()) {
     const c = a.symbol ? cache.get(a.symbol) : undefined;
     const qt = a.symbol ? quotes.get(a.symbol) : undefined;
+    // Hoisted out of the isMapped block below: the trailing-window rescale at
+    // the bottom of this loop needs the same (tick, eod) pair the price
+    // selection uses.
+    const tick = a.symbol ? intraPx.get(a.symbol) : undefined;
+    const eod = a.symbol ? gLast.get(a.symbol) : undefined;
     const derived = a.lots.every((l) => l.broker === "derived");
     const blendedAvg = a.costQty > 0 ? a.costSum / a.costQty : null;
     const invested = a.costSum; // Σ qty*avgCost across brokers
@@ -1753,8 +1758,6 @@ async function computePortfolio(
       // price. intraPx is pre-filtered to ticks strictly newer than that
       // symbol's own EOD bar, so this ordering can only ever move forward in
       // time — see the intraday overlay block above.
-      const tick = a.symbol ? intraPx.get(a.symbol) : undefined;
-      const eod = a.symbol ? gLast.get(a.symbol) : undefined;
       price = tick ?? eod ?? c?.current_price ?? null;
       currentValue = price != null ? a.qty * price : a.brokerCurValueSum;
       // 1D move is always "current price vs the close before it". When the tick
@@ -1869,9 +1872,13 @@ async function computePortfolio(
       // fallback. loadQuotes already returns PERCENT; the panel cache stores
       // fractions, which is what pctx is converting — mixing the two without
       // that distinction is a silent 100× error.
-      ret1w: qpct(qt?.ret_1w) ?? pctx(c?.ret_1w),
-      ret1m: qpct(qt?.ret_1m) ?? pctx(c?.ret_1m),
-      ret1y: qpct(qt?.ret_1y) ?? pctx(c?.ret_1y),
+      // loadQuotes ends these on golden's newest CLOSE, so without the rescale
+      // they'd sit frozen while 1D moves on the live tick — the same endpoint
+      // correction /api/watchlist applies, so the two tabs stay in lockstep.
+      // Quote returns are PERCENT (scale 100); qpct only rounds.
+      ret1w: qpct(rescaleWindow(qt?.ret_1w, eod, tick)) ?? pctx(c?.ret_1w),
+      ret1m: qpct(rescaleWindow(qt?.ret_1m, eod, tick)) ?? pctx(c?.ret_1m),
+      ret1y: qpct(rescaleWindow(qt?.ret_1y, eod, tick)) ?? pctx(c?.ret_1y),
       brokers: a.lots.sort((x, y) => y.quantity - x.quantity),
     });
   }
