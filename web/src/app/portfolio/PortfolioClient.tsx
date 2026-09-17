@@ -57,6 +57,12 @@ function up(v: number | null): boolean {
 }
 const GREEN = "var(--color-delta-up, #15803D)";
 const RED = "var(--color-delta-down, #DC2626)";
+/** Calendar span each trailing window covers — the held-through test for the
+ *  segment strip. Must stay in step with the copy in PortfolioReturnsTable,
+ *  which applies the identical rule so the two tabs can't disagree. */
+const WINDOW_DAYS: Record<"d1" | "w1" | "m1" | "y1", number> = {
+  d1: 1, w1: 7, m1: 30, y1: 365,
+};
 // "Getting stale" — deliberately distinct from RED, which means money lost.
 const AMBER = "var(--color-warn, #B45309)";
 
@@ -340,17 +346,28 @@ function PerformanceTab({ portfolio, realized, perf, timeline }: { portfolio: Po
     const pick = (i: Instrument, k: (typeof keys)[number]) =>
       k === "d1" ? i.dayChangePct : k === "w1" ? i.ret1w : k === "m1" ? i.ret1m : i.ret1y;
     const out: Record<(typeof keys)[number], number | null> = { d1: null, w1: null, m1: null, y1: null };
+    const skipped: Record<(typeof keys)[number], number> = { d1: 0, w1: 0, m1: 0, y1: 0 };
     for (const k of keys) {
       let acc = 0, wsum = 0;
       for (const i of segRows) {
         const v = pick(i, k);
         if (v == null || !(i.currentValue > 0)) continue;
+        // A position opened part-way through the window carries the STOCK's
+        // full-window return, which you did not earn — that is how a book
+        // bought last month ends up showing a 1Y number belonging to whoever
+        // held it before you. Excluded here rather than flagged, because this
+        // strip is one portfolio-level figure with no cell to annotate.
+        //
+        // heldDays is null when no real buy date was recorded (broker-snapshot
+        // lots carry none). Those count as held: dropping a long-standing
+        // position from 1Y because a CSV lacked a trade date is the worse error.
+        if (i.heldDays != null && i.heldDays < WINDOW_DAYS[k]) { skipped[k]++; continue; }
         acc += i.currentValue * v;
         wsum += i.currentValue;
       }
       out[k] = wsum > 0 ? acc / wsum : null;
     }
-    return out;
+    return { windows: out, skipped };
   }, [segRows]);
 
   // Split once: scored equities carry Q/V/M; unmapped (ETFs/funds) are excluded
@@ -400,7 +417,7 @@ function PerformanceTab({ portfolio, realized, perf, timeline }: { portfolio: Po
           ))}
         </div>
         <SummaryCards t={segTotals} snapshot={portfolio.snapshotDate} />
-        <SegmentWindows seg={seg} windows={segWindows} />
+        <SegmentWindows seg={seg} windows={segWindows.windows} skipped={segWindows.skipped} />
       </div>
       {/* Sits directly under the value/P&L cards on purpose: those numbers are
           only as current as the snapshots behind them. */}
@@ -1967,14 +1984,17 @@ function SummaryCards({ t, snapshot }: { t: Portfolio["totals"]; snapshot: strin
  * Others renders no windows at all: app.etf_price stores a single overwritten
  * LTP with no bar history, so there is nothing to measure a window against.
  */
-function SegmentWindows({ seg, windows }: {
+function SegmentWindows({ seg, windows, skipped }: {
   seg: "all" | "stocks" | "others";
   windows: { d1: number | null; w1: number | null; m1: number | null; y1: number | null };
+  /** Positions dropped from each window because they were bought inside it. */
+  skipped: { d1: number; w1: number; m1: number; y1: number };
 }) {
   const cells = [
-    { k: "1D", v: windows.d1 }, { k: "1W", v: windows.w1 },
-    { k: "1M", v: windows.m1 }, { k: "1Y", v: windows.y1 },
+    { k: "1D", v: windows.d1, n: skipped.d1 }, { k: "1W", v: windows.w1, n: skipped.w1 },
+    { k: "1M", v: windows.m1, n: skipped.m1 }, { k: "1Y", v: windows.y1, n: skipped.y1 },
   ];
+  const anySkipped = cells.some((c) => c.n > 0);
   const any = cells.some((c) => c.v != null);
   return (
     <div className="mt-3 rounded-xl border hairline px-4 py-3">
@@ -1989,6 +2009,17 @@ function SegmentWindows({ seg, windows }: {
               >
                 {c.v == null ? "—" : pct(c.v)}
               </div>
+              {/* Per-window, because the excluded set differs by window: a name
+                  bought 3 weeks ago is out of 1M and 1Y but counted in 1W. A
+                  single footnote would hide that. */}
+              {c.n > 0 && (
+                <div
+                  className="text-[10px] muted-text tabular-nums"
+                  title={`${c.n} position${c.n > 1 ? "s" : ""} bought inside the ${c.k} window, so ${c.n > 1 ? "they are" : "it is"} not counted here.`}
+                >
+                  −{c.n} new
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -2001,8 +2032,10 @@ function SegmentWindows({ seg, windows }: {
       {any && (
         <div className="text-[11px] muted-text mt-2">
           Value-weighted price return of the {seg === "all" ? "whole book" : seg === "stocks" ? "scored equities" : "unscored instruments"} currently
-          held. Ignores the timing of buys and sells, so it will differ from the time-weighted
-          return below when you traded inside the window.
+          held, counting only positions you owned for the whole window. Ignores the timing of
+          buys and sells within it, so it will still differ from the time-weighted return below
+          when you traded inside the window.
+          {anySkipped && " “−n new” marks positions opened inside a window and therefore left out of it."}
         </div>
       )}
     </div>

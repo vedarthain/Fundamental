@@ -56,6 +56,14 @@ export type Instrument = {
   drawdownAnchor: "buy" | "import" | null;
   firstImported: string | null; // MIN(imported_at) across broker lots (ISO)
   monthsHeld: number | null; // months since firstImported (import-date proxy)
+  // Days since the earliest REAL recorded buy (app.portfolio_transaction), and
+  // deliberately NOT falling back to the import-date proxy the way monthsHeld
+  // does. This drives which trailing windows a position is allowed into: a name
+  // held for years but imported last month must not be excluded from 1Y because
+  // of when a CSV happened to land. Null = no recorded buy date, which is read
+  // downstream as "held long enough" — dropping a position from a window on a
+  // guess is worse than leaving it in.
+  heldDays: number | null;
   overHoldLimit: boolean; // monthsHeld ≥ 4
   dayChangePct: number | null;
   dayChangeValue: number | null;
@@ -1782,6 +1790,9 @@ async function computePortfolio(
       ? null
       : Math.round(((Date.now() - anchorMs) / (1000 * 60 * 60 * 24 * 30.44)) * 10) / 10;
     const overHoldLimit = monthsHeld != null && monthsHeld >= 4;
+    const heldDays = Number.isNaN(buyMs)
+      ? null
+      : Math.floor((Date.now() - buyMs) / 86_400_000);
 
     // Fall-from-top / rise-from-bottom vs the peak/trough since the anchor date.
     let fallFromTopPct: number | null = null;
@@ -1814,6 +1825,7 @@ async function computePortfolio(
       drawdownAnchor,
       firstImported,
       monthsHeld,
+      heldDays,
       overHoldLimit,
       dayChangePct,
       dayChangeValue: dayChangeValue == null ? null : Math.round(dayChangeValue * 100) / 100,

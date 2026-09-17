@@ -343,12 +343,22 @@ export function PortfolioReturnsTable({ others = [] }: { others?: OtherRow[] }) 
    *
    * Weights use current value, and each window weights independently: a holding
    * missing 1Y drops out of 1Y alone rather than poisoning every column.
+   *
+   * POSITIONS OPENED INSIDE A WINDOW ARE EXCLUDED FROM IT. A name bought last
+   * week carries the stock's full 1Y return, which belongs to whoever held it
+   * before you; weighting it in is how a young book reports a year of someone
+   * else's performance as its own. The exclusion is per-window — a 3-week-old
+   * position still counts in 1W — and the count of what was dropped is surfaced
+   * beside each figure rather than hidden. Rows with no recorded buy date
+   * (broker snapshots) count as held: dropping a long-standing position because
+   * a CSV carried no trade date is the worse error.
    */
   const windows = useMemo(() => {
     const keys = ["d1", "w1", "m1", "y1"] as const;
     const out: Record<(typeof keys)[number], number | null> = {
       d1: null, w1: null, m1: null, y1: null,
     };
+    const skipped: Record<(typeof keys)[number], number> = { d1: 0, w1: 0, m1: 0, y1: 0 };
     for (const k of keys) {
       let acc = 0;
       let wsum = 0;
@@ -357,37 +367,13 @@ export function PortfolioReturnsTable({ others = [] }: { others?: OtherRow[] }) 
         if (v == null || r.qty == null || r.ltp == null) continue;
         const w = r.qty * r.ltp;
         if (!(w > 0)) continue;
+        if (r.heldDays != null && r.heldDays < WINDOW_DAYS[k]) { skipped[k]++; continue; }
         acc += w * v;
         wsum += w;
       }
       out[k] = wsum > 0 ? acc / wsum : null;
     }
-    return out;
-  }, [sorted]);
-
-  /**
-   * How many rows in view did NOT exist in the portfolio for the whole of each
-   * window. A name bought last week still has a real 1Y price return — it is
-   * the STOCK's — but weighting it into a portfolio-level 1Y implies you earned
-   * it, and you didn't.
-   *
-   * The number itself is deliberately left alone: the strip and the table have
-   * to agree, and the footnote already says these are instrument returns, not a
-   * cashflow-adjusted portfolio return. So the honesty goes into the label
-   * rather than into the arithmetic — the count here, and a fade on the
-   * individual cells below. Rows with no recorded buy date (broker snapshots)
-   * count as held: fading on a guess is worse than not fading.
-   */
-  const unheld = useMemo(() => {
-    const keys = ["w1", "m1", "y1"] as const;
-    const out: Record<(typeof keys)[number], number> = { w1: 0, m1: 0, y1: 0 };
-    for (const k of keys) {
-      for (const r of sorted ?? []) {
-        if (r[k] == null || r.heldDays == null) continue;
-        if (r.heldDays < WINDOW_DAYS[k]) out[k]++;
-      }
-    }
-    return out;
+    return { windows: out, skipped };
   }, [sorted]);
 
   if (signedIn === false) {
@@ -476,7 +462,12 @@ export function PortfolioReturnsTable({ others = [] }: { others?: OtherRow[] }) 
         </button>
       ))}
     </div>
-    <SummaryStrip view={view} subtotal={subtotal} windows={windows} unheld={unheld} />
+    <SummaryStrip
+      view={view}
+      subtotal={subtotal}
+      windows={windows.windows}
+      skipped={windows.skipped}
+    />
     {/* `overflow-hidden` on the card would also trap the sticky header (any
         non-visible overflow creates the anchoring scrollport), so it too is
         dropped from md up. Below md it stays, to clip the rounded corners. */}
@@ -683,7 +674,7 @@ function SummaryStrip({
   view,
   subtotal,
   windows,
-  unheld,
+  skipped,
 }: {
   view: View;
   subtotal: {
@@ -696,13 +687,14 @@ function SummaryStrip({
     missing: number;
   };
   windows: { d1: number | null; w1: number | null; m1: number | null; y1: number | null };
-  unheld: { w1: number; m1: number; y1: number };
+  /** Positions dropped from each window because they were bought inside it. */
+  skipped: { d1: number; w1: number; m1: number; y1: number };
 }) {
-  const cells: { label: string; value: number | null }[] = [
-    { label: "1D", value: windows.d1 },
-    { label: "1W", value: windows.w1 },
-    { label: "1M", value: windows.m1 },
-    { label: "1Y", value: windows.y1 },
+  const cells: { label: string; value: number | null; n: number }[] = [
+    { label: "1D", value: windows.d1, n: skipped.d1 },
+    { label: "1W", value: windows.w1, n: skipped.w1 },
+    { label: "1M", value: windows.m1, n: skipped.m1 },
+    { label: "1Y", value: windows.y1, n: skipped.y1 },
   ];
   const noWindows = cells.every((c) => c.value == null);
 
@@ -739,29 +731,35 @@ function SummaryStrip({
           </span>
         ) : (
           cells.map((c) => (
-            <Metric key={c.label} label={c.label} value={fmtPct(c.value)} color={deltaColor(c.value)} />
+            <Metric
+              key={c.label}
+              label={c.label}
+              value={fmtPct(c.value)}
+              color={deltaColor(c.value)}
+              // Per-window because the excluded set differs by window: a name
+              // bought 3 weeks ago is out of 1M and 1Y but counted in 1W. One
+              // shared footnote would hide exactly that.
+              note={c.n > 0 ? `−${c.n} new` : undefined}
+              noteTitle={
+                c.n > 0
+                  ? `${c.n} position${c.n > 1 ? "s" : ""} bought inside the ${c.label} window, so ${c.n > 1 ? "they are" : "it is"} not counted here.`
+                  : undefined
+              }
+            />
           ))
         )}
       </div>
       <div className="muted-text text-[10.5px] mt-2">
         {view === "others" ? "ETFs & index funds" : "Scored equities"} only.
-        {!noWindows && " 1D–1Y are the value-weighted price returns of these holdings, not a cashflow-adjusted portfolio return — the Scorecard tab has that."}
+        {!noWindows && " 1D–1Y are the value-weighted price returns of the holdings you owned for the whole of each window, not a cashflow-adjusted portfolio return — the Scorecard tab has that."}
         {subtotal.missing > 0 &&
           ` ${subtotal.missing} position${subtotal.missing > 1 ? "s" : ""} excluded from the totals: no cost or no price.`}
       </div>
-      {/* The 1W/1M/1Y windows above include names you bought part-way through
-          them. Saying so beats silently dropping them: the number is the
-          basket's price return either way, and the count is what tells you how
-          much of it you were actually present for. */}
-      {(unheld.w1 > 0 || unheld.m1 > 0 || unheld.y1 > 0) && (
+      {cells.some((c) => c.n > 0) && (
         <div className="muted-text text-[10.5px] mt-1">
-          Bought part-way through the window:{" "}
-          {([["1W", unheld.w1], ["1M", unheld.m1], ["1Y", unheld.y1]] as const)
-            .filter(([, n]) => n > 0)
-            .map(([k, n]) => `${n} in ${k}`)
-            .join(", ")}
-          . Those columns are the stock&apos;s move over the full window, not yours —
-          faded in the table below.
+          “−n new” = positions opened inside that window and therefore left out of it. They
+          still appear in the table below, faded, showing the stock&apos;s full-window move
+          rather than yours.
         </div>
       )}
     </div>
@@ -773,11 +771,18 @@ function Metric({
   value,
   color,
   sub,
+  note,
+  noteTitle,
 }: {
   label: string;
   value: string;
   color?: string;
   sub?: string;
+  /** Muted caption under the value — carries the excluded-position count, so it
+   *  is deliberately NOT tinted with `color` the way `sub` is: it qualifies the
+   *  figure rather than restating it. */
+  note?: string;
+  noteTitle?: string;
 }) {
   return (
     <div>
@@ -789,6 +794,11 @@ function Metric({
         {value}
       </div>
       {sub && <div className="text-[10.5px] tabular-nums" style={{ color: color }}>{sub}</div>}
+      {note && (
+        <div className="text-[10px] tabular-nums muted-text" title={noteTitle}>
+          {note}
+        </div>
+      )}
     </div>
   );
 }
