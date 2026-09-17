@@ -1514,5 +1514,30 @@ def score_cmd(snapshot: str = typer.Option(None, help="YYYY-MM-DD; defaults to t
     log.info("score_done", **counts)
 
 
+@app.command("import-themes")
+def import_themes_cmd(
+    throttle: float = typer.Option(
+        0.4, help="Seconds to pause between theme pages (110 pages ≈ 1 min)"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Fetch and resolve, then roll back"),
+) -> None:
+    """Import the external theme taxonomy into app.theme / app.theme_member.
+
+    Membership only — every price, return and score on a theme page comes from
+    our own panel cache. Names that do not resolve to exactly one NSE symbol are
+    parked in app.theme_alias for review rather than fuzzy-matched; see
+    themes/resolve.py for why that line is drawn hard.
+
+    Safe to re-run: themes upsert, membership is replaced per theme, and human
+    decisions in theme_alias are never overwritten.
+    """
+    configure_logging()
+    from .themes.importer import run as run_theme_import
+
+    st = run_theme_import(throttle=throttle, dry_run=dry_run)
+    if st.queued:
+        log.warning("theme_names_awaiting_review", count=st.queued)
+
+
 if __name__ == "__main__":
     app()

@@ -32,12 +32,15 @@ type NavLink = { href: string; label: string; submenu?: Submenu[] };
 
 const LINKS: NavLink[] = [
   {
-    // Two complementary market-structure views under one tab.
+    // Three complementary market-structure views under one tab: the official
+    // index membership, our own scoring taxonomy, and an editorial thematic
+    // grouping that deliberately cuts across both.
     href: "/indices",
     label: "Segments",
     submenu: [
       { href: "/indices", label: "Indices", description: "Official NSE benchmarks + their constituents" },
       { href: "/sectors", label: "Sectors", description: "Our full-universe scoring view — every stock" },
+      { href: "/themes",  label: "Themes",  description: "Defence, Drone, Data Center, Green Hydrogen — groupings no industry tree can express" },
     ],
   },
   { href: "/news",    label: "News"    },
