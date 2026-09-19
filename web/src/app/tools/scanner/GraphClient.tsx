@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Star } from "lucide-react";
 import { displayCompanyName } from "@/lib/score";
+import { sectorColor } from "@/lib/sectorColor";
 import type { GraphUniverse, GraphSector, GraphIndustry, GraphStock } from "@/lib/graphUniverse";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { IntradayPriceBadge } from "@/components/IntradayPriceBadge";
@@ -1081,26 +1082,38 @@ export default function GraphClient({
   return (
     <div className="flex flex-col">
       <header className="mb-1.5 flex flex-wrap items-center gap-x-4 gap-y-2">
-          {/* Title and context on ONE line — the two-line stack cost ~24px of
-              vertical space above the grid, which was enough to push the 4th
-              chart below the fold. basis-[340px] is what makes the flex-wrap
-              actually fire: the button group is shrink-0, so without a real
-              basis the title block just collapsed to its 200px min and the
-              context truncated away the "showing 65-68 : 17/24" counters. Now
-              the buttons drop to their own row first, and the line wraps rather
-              than hiding text. */}
+          {/* No "Charts by industry" title: the tab you are on already says
+              Graph, the tree to the left is visibly an industry tree, and the
+              breadcrumb below names the exact industry — the h1 restated all
+              three and cost a line of the space the charts want.
+
+              basis-[340px] is what makes the flex-wrap actually fire: the button
+              group is shrink-0, so without a real basis this block collapses to
+              its min and truncates away the "showing 65-68 : 17/24" counters.
+              The buttons drop to their own row first, and the line wraps rather
+              than hiding text.
+
+              Sector and industry carry the sector's hue (lib/sectorColor) so the
+              family you're paging through is legible without reading the word. */}
           <div className="min-w-[260px] flex-1 basis-[340px] flex flex-wrap items-baseline gap-x-2">
-            <h1 className="font-display text-[17px] tracking-tight leading-tight shrink-0">Charts by industry</h1>
-            <p className="text-[12px] muted-text leading-tight">
+            {/* Kept as sr-only rather than deleted: every other scanner tab has
+                a visible h1, so dropping this one outright would leave Graph as
+                the only tab with no document heading at all. Costs no pixels. */}
+            <h1 className="sr-only">Charts by industry</h1>
+            <p className="text-[12.5px] muted-text leading-tight">
               {curPage ? (
                 <>
-                  <span className="muted-text">· </span>
-                  <span className="ink-text font-medium">{activeSectorName}</span> ·{" "}
-                  <span className="ink-text font-medium">{curPage.indName}</span> ·{" "}
-                  {curPage.indTotal} names · showing {rangeStart}–{rangeEnd} : {indPageIdx}/{indPageCount}
+                  <span className="font-semibold" style={{ color: sectorColor(activeSectorName) }}>
+                    {activeSectorName}
+                  </span>{" "}
+                  ·{" "}
+                  <span className="font-semibold" style={{ color: sectorColor(activeSectorName) }}>
+                    {curPage.indName}
+                  </span>{" "}
+                  · {curPage.indTotal} names · showing {rangeStart}–{rangeEnd} : {indPageIdx}/{indPageCount}
                 </>
               ) : (
-                <>· Pick an industry from the tree{snapDate ? <> · panel {snapDate}</> : null}</>
+                <>Pick an industry from the tree{snapDate ? <> · panel {snapDate}</> : null}</>
               )}
             </p>
           </div>
@@ -1495,9 +1508,13 @@ export default function GraphClient({
               className="text-[11.5px] leading-none whitespace-nowrap muted-text select-none"
               style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}
             >
-              <span className="ink-text font-medium">{activeSectorName}</span>
+              <span className="font-semibold" style={{ color: sectorColor(activeSectorName) }}>
+                {activeSectorName}
+              </span>
               {" · "}
-              <span className="ink-text font-medium">{curPage.indName}</span>
+              <span className="font-semibold" style={{ color: sectorColor(activeSectorName) }}>
+                {curPage.indName}
+              </span>
               {` · ${curPage.indTotal} names · showing ${rangeStart}–${rangeEnd} : `}
               <span className="tabular-nums">{indPageIdx}/{indPageCount}</span>
             </span>

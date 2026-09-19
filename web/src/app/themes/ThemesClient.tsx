@@ -52,6 +52,7 @@ export type ThemesData = {
 };
 
 type SortKey =
+  | "symbol"
   | "price"
   | "market_cap_cr"
   | "composite_pct"
@@ -142,11 +143,16 @@ export function ThemesClient({
     [],
   );
 
-  /** Same key → flip direction. New key → start descending, since every column
-   *  here is a "biggest first" question (largest cap, best score, top gainer)
-   *  except when you deliberately ask for the other end. */
+  /** Same key → flip direction. New key → start descending for the numeric
+   *  columns, since each is a "biggest first" question (largest cap, best
+   *  score, top gainer); Stock starts ASCENDING because nobody wants Z→A as
+   *  the opening view of an alphabetical list. */
   const toggleSort = useCallback((key: SortKey) => {
-    setSort((s) => (s.key === key ? { key, dir: s.dir === "desc" ? "asc" : "desc" } : { key, dir: "desc" }));
+    setSort((s) =>
+      s.key === key
+        ? { key, dir: s.dir === "desc" ? "asc" : "desc" }
+        : { key, dir: key === "symbol" ? "asc" : "desc" },
+    );
     // Re-sorting reshuffles which rows are on which page, so page 3 of the old
     // order means nothing in the new one.
     setPage(0);
@@ -157,6 +163,10 @@ export function ThemesClient({
     const list = activeId == null ? [] : (stocksByTheme[activeId] ?? []);
     const mul = sort.dir === "desc" ? 1 : -1;
     return [...list].sort((a, b) => {
+      // Stock sorts on the ticker, not the company name: the ticker is what the
+      // column leads with and what you scan, and localeCompare keeps "3MINDIA"
+      // and "AARTIIND" in the order the eye expects.
+      if (sort.key === "symbol") return -mul * a.symbol.localeCompare(b.symbol);
       const av = a[sort.key], bv = b[sort.key];
       // Nulls sink in BOTH directions. Letting them float to the top of an
       // ascending sort would answer "worst 1D" with a list of names that have
@@ -217,7 +227,13 @@ export function ThemesClient({
 
       <div className="flex flex-col md:flex-row gap-5">
         {/* ── Rail ── */}
-        <aside className="md:w-[248px] shrink-0">
+        {/* The rail is its own bordered box, and the constituents table is
+            another. Previously both floated on the page background with only a
+            gap between them, so the theme list read as a heading for the table
+            rather than as a separate control — clicking a theme looked like it
+            should scroll the table, not replace it. Two boxes make the
+            picker/result split obvious without a word of explanation. */}
+        <aside className="md:w-[248px] shrink-0 rounded-xl border hairline p-3 self-start">
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -251,7 +267,7 @@ export function ThemesClient({
         </aside>
 
         {/* ── Constituents ── */}
-        <section className="flex-1 min-w-0">
+        <section className="flex-1 min-w-0 rounded-xl border hairline p-3 md:p-4 self-start w-full">
           {active == null ? (
             <p className="muted-text text-[13px]">No themes available.</p>
           ) : (
@@ -271,7 +287,21 @@ export function ThemesClient({
                 <table className="w-full text-[13px] border-collapse">
                   <thead>
                     <tr className="text-[11px] uppercase tracking-wide muted-text border-b hairline">
-                      <th className="text-left py-2 pr-3 font-medium">Stock</th>
+                      <th className="text-left py-2 pl-3 pr-3 font-medium">
+                        <button
+                          type="button"
+                          onClick={() => toggleSort("symbol")}
+                          title="Sort by ticker — click again to reverse"
+                          className={sort.key === "symbol" ? "ink-text font-semibold" : "hover:underline"}
+                        >
+                          Stock
+                          {sort.key === "symbol" && (
+                            <span aria-hidden className="ml-0.5 text-[9px]">
+                              {sort.dir === "desc" ? "▼" : "▲"}
+                            </span>
+                          )}
+                        </button>
+                      </th>
                       {([
                         ["price", "Price"],
                         ["market_cap_cr", "Mkt cap"],
