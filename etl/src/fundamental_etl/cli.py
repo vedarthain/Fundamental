@@ -23,6 +23,7 @@ from .screener.scraper import (
 )
 from .screener.parser import parse_export, merge_parsed, ParseError
 from .screener.persist import (
+    backfill_company_name,
     save_raw_export, save_parsed, update_meta_success, update_meta_failure,
     save_dividend_only_meta, save_dividend_only_annual,
 )
@@ -440,6 +441,11 @@ def fetch_many(
                 fetched_at = save_raw_export(conn, symbol, data)
                 ann, qtr = save_parsed(conn, symbol, parsed, fetched_at)
                 update_meta_success(conn, symbol, info.export_id, len(data))
+                # Repair universe.company_name if it is still the symbol
+                # fallback. No-op once the name is real. See persist.py.
+                if backfill_company_name(conn, symbol, parsed.company_name):
+                    log.info("company_name_filled", symbol=symbol,
+                             company_name=parsed.company_name)
                 conn.commit()
             with counter_lock:
                 counter["ok"] += 1

@@ -223,3 +223,49 @@ def update_meta_failure(conn: psycopg.Connection, symbol: str, status: str, erro
             (symbol, status, error[:500]),
         )
         _assert_wrote(cur, symbol, "failure")
+
+
+def backfill_company_name(conn: psycopg.Connection, symbol: str, company_name: str | None) -> bool:
+    """Fill app.universe.company_name from the Screener export, if it is missing.
+
+    sync-universe inserts new NSE listings with
+        (live[s]["company_name"] or s)
+    — the symbol itself as a fallback when golden has no name for the instrument.
+    Nothing ever revisited that fallback, so on 2026-09-19 all 472 symbols in the
+    'never_attempted' coverage bucket had company_name = symbol. The overlap was
+    exact, because both facts have the same cause: these are the listings
+    onboarded after the original seed, and neither their name nor their scrape
+    result was ever written.
+
+    The name is not cosmetic. Theme membership resolves by matching an editorial
+    catalogue against universe.company_name (see migration 0067), so a row whose
+    name is 'A2ZINFRA' can never match 'A2Z Infra Engineering' and is parked in
+    the review queue forever — 0067's header calls this out explicitly as a
+    defect it could not fix from its side.
+
+    Every Screener export already carries the real name; parse_export has been
+    returning it as ParsedExport.company_name the whole time, and the fetch path
+    simply discarded it. This writes it back.
+
+    NARROWED ON PURPOSE: the WHERE clause only matches rows still holding the
+    fallback. A name a human curated, or one golden supplied, is never
+    overwritten by a scrape — Screener's naming is not authoritative over ours,
+    it is only better than nothing. That makes this safe to run on every fetch
+    of every symbol forever, and it self-terminates: once a name is real, the
+    UPDATE stops matching.
+
+    Returns True if a row was filled, so the caller can count repairs.
+    """
+    if not company_name or not company_name.strip():
+        return False
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE app.universe
+               SET company_name = %s
+             WHERE symbol = %s
+               AND company_name = symbol
+            """,
+            (company_name.strip(), symbol),
+        )
+        return cur.rowcount == 1
