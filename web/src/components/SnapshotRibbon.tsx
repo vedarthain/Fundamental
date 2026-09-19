@@ -42,11 +42,23 @@ async function fetchSnapshot(): Promise<SnapshotStats> {
       WITH latest AS (SELECT MAX(snapshot_date) AS d FROM app.scores)
       SELECT
         (SELECT d FROM latest) AS latest,
-        -- "Coverage" = how many NSE stocks we track = the active universe
-        -- (matches the home hero + screener breadcrumb). Counting scores at the
-        -- latest snapshot instead drifts a few low (e.g. 2,157 vs 2,163) when a
-        -- handful of active names miss a weekly score.
-        (SELECT COUNT(*) FROM app.universe WHERE is_active) AS coverage,
+        -- CANONICAL COVERAGE DEFINITION. Duplicated verbatim in app/page.tsx and
+        -- app/tools/screener/page.tsx; change all three together.
+        --
+        -- "Coverage" = stocks we have actually SCORED at the latest snapshot, not
+        -- rows in app.universe. This used to count app.universe WHERE is_active
+        -- on the reasoning that the two "drift a few low (e.g. 2,157 vs 2,163)".
+        -- That premise expired: measured 2026-09-19 it was 2,122 scored against
+        -- 2,622 active, a gap of 500.
+        --
+        -- 472 of that 500 are rows the weekly NSE listing-master reconciliation
+        -- added to app.universe and nothing downstream ever picked up — no cluster
+        -- assignment, no metrics_snapshot, no score, and company_name still equal
+        -- to the symbol. Counting them as coverage advertised 18% more than the
+        -- product could show: /tools/scanner "All stocks" reads FROM the panel
+        -- cache, so a name with no score is not merely unranked there, it is
+        -- absent. The headline number promised rows that do not exist.
+        (SELECT COUNT(*) FROM app.scores WHERE snapshot_date = (SELECT d FROM latest)) AS coverage,
         -- Populated peer groups at the latest snapshot (same definition the
         -- /sectors page uses → consistent "46"). A raw COUNT(*) on app.cluster
         -- over-counts: it includes 2 deprecated clusters + the empty

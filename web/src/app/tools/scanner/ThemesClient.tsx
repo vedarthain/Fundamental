@@ -17,6 +17,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import IpoBadge from "@/components/IpoBadge";
 import { Star } from "lucide-react";
 import type { Theme, ThemeConstituent } from "@/lib/themes";
 import type { Candle } from "@/lib/candles";
@@ -583,6 +584,7 @@ export default function ThemesClient({
                       >
                         {st.symbol}
                       </Link>
+                      <IpoBadge show={st.isIpo} className="ml-1 align-middle" />
                       {st.compositePct != null && (
                         <span
                           className="text-[10.5px] tabular-nums font-medium shrink-0"

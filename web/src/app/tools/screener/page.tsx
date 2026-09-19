@@ -1,4 +1,5 @@
 import Link from "next/link";
+import IpoBadge, { isIpo } from "@/components/IpoBadge";
 import { sql } from "@/lib/db";
 import { band, bandColor, fmtPct, tierLabel, tierLabelPlural, displayCompanyName } from "@/lib/score";
 import CapTierBadge, { hasCapTierBadge } from "@/components/CapTierBadge";
@@ -29,6 +30,8 @@ type Row = {
   maturity_tier: string;
   market_cap_category: string | null;
   listing_date: string | null;
+  /** Second signal the IPO chip needs — see components/IpoBadge.tsx. */
+  years_of_data: number | null;
   market_cap_cr: number | null;
   current_price: number | null;
   price_fetched_at: string | null;
@@ -77,11 +80,16 @@ const SORT_SQL: Record<SortParam, string> = {
 };
 
 async function loadCoverage(): Promise<{ stocks: number }> {
-  // Count of stocks visible to the screener — i.e. anything actively tracked
-  // in app.universe. This is what users want to see surfaced as the scope of
-  // coverage ("we track N stocks") rather than the filtered match count.
+  // Count of stocks actually visible to the screener. This counted
+  // app.universe WHERE is_active and was wrong for this surface specifically:
+  // the screener filters on score percentiles, so an unscored name can never
+  // match any query. 472 active universe rows have no score at all (see the
+  // canonical note in components/SnapshotRibbon.tsx), so the old number told
+  // users the screener searched 2,622 stocks when it could only ever reach
+  // 2,122 of them.
   const rows = await sql<{ stocks: number }[]>`
-    SELECT COUNT(*)::int AS stocks FROM app.universe WHERE is_active
+    SELECT COUNT(*)::int AS stocks FROM app.scores
+     WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
   `;
   return rows[0] ?? { stocks: 0 };
 }
@@ -344,6 +352,7 @@ async function loadRows(
              r.maturity_tier,
              u.market_cap_category,
              u.listing_date::text AS listing_date,
+             u.years_of_data::float AS years_of_data,
              sm.market_cap_cr,
              sm.current_price::float AS current_price,
              sm.last_scraped_at::text AS price_fetched_at,
@@ -440,7 +449,7 @@ async function loadRows(
         ${rangeFilters}
     )
     SELECT symbol, company_name, industry_id, industry_name, sector_name,
-           maturity_tier, market_cap_category, listing_date, market_cap_cr, current_price, price_fetched_at,
+           maturity_tier, market_cap_category, listing_date, years_of_data, market_cap_cr, current_price, price_fetched_at,
            quality_pct, valuation_pct, momentum_pct, composite_pct,
            peer_rank, peer_count, leading_pillar, score_status,
            pe_ttm, pb, roe_3y, ret_12m_rel, div_yield, op_margin_3y,
@@ -1199,6 +1208,7 @@ function IndustryBlock({
                       <Link href={`/stock/${r.symbol}`} className="font-medium hover:text-[var(--color-accent-600)]">
                         {r.symbol}
                       </Link>
+                      <IpoBadge show={isIpo(r.listing_date, r.years_of_data)} />
                       {r.score_status && r.score_status !== "full" && (
                         <span
                           className="text-[9.5px] px-1 py-px rounded border"

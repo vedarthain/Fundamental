@@ -16,6 +16,7 @@
 
 import { Fragment, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import IpoBadge, { isIpo } from "@/components/IpoBadge";
 import { tierLabel, displayCompanyName } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { Pager, usePager } from "./Pager";
@@ -28,6 +29,9 @@ const RED = "var(--color-delta-down, #b00)";
 type Opportunity = {
   symbol: string;
   company_name: string;
+  /** Both signals the IPO chip needs — see components/IpoBadge.tsx. */
+  listing_date: string | null;
+  years_of_data: number | null;
   industry_id: string;
   industry_name: string;
   sector_name: string;
@@ -289,6 +293,7 @@ export default function FallenLeadersClient({ n500Only }: { n500Only: boolean })
                         <Link href={`/stock/${r.symbol}`} target="_blank" rel="noopener noreferrer" className="font-semibold hover:underline">
                           {r.symbol}
                         </Link>
+                        <IpoBadge show={isIpo(r.listing_date, r.years_of_data)} className="ml-1 align-middle" />
                         <div className="text-[10.5px] muted-text truncate max-w-[200px]">
                           {displayCompanyName(r.company_name, r.symbol)}
                         </div>

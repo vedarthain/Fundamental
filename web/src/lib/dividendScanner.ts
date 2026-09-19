@@ -17,10 +17,13 @@
  * ships with the page — no lazy per-row fetching.
  */
 import { sql, golden } from "@/lib/db";
+import { isIpo } from "@/components/IpoBadge";
 
 export type DivStock = {
   symbol: string;
   name: string | null;
+  /** Listed on NSE <12mo AND short financial record — see components/IpoBadge. */
+  is_ipo: boolean;
   sector: string;
   industry: string;
   ltp: number | null;
@@ -79,6 +82,8 @@ export async function loadDividendUniverse(): Promise<DividendUniverse> {
     industry: string | null;
     symbol: string;
     name: string | null;
+    listing_date: string | null;
+    years_of_data: number | null;
     composite_pct: number | null;
   };
   let rows: TreeRow[];
@@ -89,6 +94,8 @@ export async function loadDividendUniverse(): Promise<DividendUniverse> {
              c.name  AS industry,
              p.symbol,
              u.company_name AS name,
+             u.listing_date::text AS listing_date,
+             u.years_of_data::float8 AS years_of_data,
              p.composite_pct::float8 AS composite_pct
         FROM app.cluster_stocks_panel_cache p
         JOIN app.cluster c        ON c.id = p.cluster_id
@@ -254,6 +261,7 @@ export async function loadDividendUniverse(): Promise<DividendUniverse> {
     industry.stocks.push({
       symbol: r.symbol,
       name: r.name,
+      is_ipo: isIpo(r.listing_date, r.years_of_data),
       sector: sName,
       industry: iName,
       ltp,
@@ -360,6 +368,11 @@ export async function loadDividendUniverse(): Promise<DividendUniverse> {
       industry.stocks.push({
         symbol,
         name: agg.name,
+        // Dividend-only pool (InvITs/REITs and other payers absent from the
+        // scoring panel). They have no app.universe row, so neither signal the
+        // IPO test needs is available. False, not a guess: these are almost all
+        // long-established trusts, and a wrong chip is worse than no chip.
+        is_ipo: false,
         sector: agg.sector,
         industry: agg.industry,
         ltp: agg.ltp,

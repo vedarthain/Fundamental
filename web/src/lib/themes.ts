@@ -28,6 +28,7 @@
  */
 
 import { sql } from "@/lib/db";
+import { isIpo } from "@/components/IpoBadge";
 import { loadTrailingReturns } from "@/lib/trailingReturns";
 
 // The themes. `code` is our internal index_code (matches both tables);
@@ -60,6 +61,8 @@ export type ThemeWindow = "1w" | "1m" | "1y";
 export type ThemeConstituent = {
   symbol: string;
   name: string | null;
+  /** Listed on NSE <12mo AND short financial record — see components/IpoBadge. */
+  isIpo: boolean;
   compositePct: number | null;
   qualityPct: number | null;
   valuationPct: number | null;
@@ -108,6 +111,8 @@ type PanelJoinRow = {
   ret_1y: number | null;
   market_cap_cr: number | null;
   current_price: number | null;
+  listing_date: string | null;
+  years_of_data: number | null;
 };
 
 type HistRow = {
@@ -168,10 +173,14 @@ export async function loadThemes(): Promise<ThemesData> {
                (p.ret_1m::float8 * 100) AS ret_1m,
                (p.ret_1y::float8 * 100) AS ret_1y,
                p.market_cap_cr,
-               p.current_price
+               p.current_price,
+               -- For the IPO chip; both fields required (see components/IpoBadge).
+               u.listing_date::text AS listing_date,
+               u.years_of_data::float8 AS years_of_data
         FROM app.index_constituent ic
         LEFT JOIN app.cluster_stocks_panel_cache p
           ON p.symbol = ic.symbol AND p.snapshot_date = ${snapDate}
+        LEFT JOIN app.universe u ON u.symbol = ic.symbol
         WHERE ic.index_code = ANY(${THEME_CODES})
         ORDER BY ic.index_code, p.composite_pct DESC NULLS LAST
       `
@@ -218,6 +227,7 @@ export async function loadThemes(): Promise<ThemesData> {
     consByCode.get(r.index_code)!.push({
       symbol: r.symbol,
       name: r.company_name,
+      isIpo: isIpo(r.listing_date, r.years_of_data),
       compositePct: num(r.composite_pct),
       qualityPct: num(r.quality_pct),
       valuationPct: num(r.valuation_pct),

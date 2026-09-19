@@ -723,13 +723,34 @@ export default async function StockPage({
             <span>
               {classificationLabel(stock.sector_name, stock.industry_name)} · {tierLabel(stock.maturity_tier)}
             </span>
-            {isRecentListing(stock.listing_date) && stock.maturity_tier !== "new" && (
+            {/* Two different claims, deliberately worded differently.
+                 • !scoreable → the strict two-signal test (listed <12mo AND a
+                   short financial record). This is the same predicate the IPO
+                   chip uses everywhere else on the site and the same one that
+                   suppresses the percentile below, so the page cannot say "IPO"
+                   next to a score it refuses to show.
+                 • Listed within 2 years but scoreable → we say "Listed YYYY" and
+                   nothing more. Measured on prod, 44 of 102 names with an NSE
+                   listing_date inside a year are BSE→NSE migrations or veterans
+                   with a polluted date; calling those an IPO is simply false.
+                   The year is still worth surfacing because maturity_tier is
+                   computed from financial history, not from listing age. */}
+            {!scoreable && stock.maturity_tier !== "new" && (
               <span
                 className="inline-flex items-center rounded px-1.5 py-[1px] text-[10px] font-semibold normal-case"
                 style={{ background: "color-mix(in srgb, var(--color-accent-600) 14%, transparent)", color: "var(--color-accent-700)" }}
-                title={`Recent IPO — listed ${listingYear(stock.listing_date)}. The maturity tier reflects years of financial history, not how long it has been listed.`}
+                title={`Recent IPO — listed ${listingYear(stock.listing_date)} with a short financial record. Percentile scores are suppressed: momentum and market-relative valuation are noise on under a year of price history.`}
               >
                 Recent IPO · {listingYear(stock.listing_date)}
+              </span>
+            )}
+            {scoreable && isRecentListing(stock.listing_date) && stock.maturity_tier !== "new" && (
+              <span
+                className="inline-flex items-center rounded px-1.5 py-[1px] text-[10px] font-semibold normal-case"
+                style={{ background: "color-mix(in srgb, var(--color-ink) 7%, transparent)", color: "var(--color-ink)", opacity: 0.75 }}
+                title={`Listed on NSE in ${listingYear(stock.listing_date)}, but with a full financial record — an established business that changed venue or re-listed, not a new company. The maturity tier reflects years of financial history, not listing age.`}
+              >
+                Listed {listingYear(stock.listing_date)}
               </span>
             )}
           </div>

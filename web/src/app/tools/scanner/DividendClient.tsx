@@ -15,6 +15,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import IpoBadge from "@/components/IpoBadge";
 import { displayCompanyName } from "@/lib/score";
 import type { DividendUniverse, DivSector, DivStock } from "@/lib/dividendScanner";
 
@@ -358,6 +359,7 @@ export default function DividendClient({
                     >
                       {s.symbol}
                     </Link>
+                    <IpoBadge show={s.is_ipo} className="ml-1 align-middle" />
                     <div className="text-[10.5px] muted-text truncate max-w-[280px]">
                       {displayCompanyName(s.name, s.symbol)}
                       <span className="opacity-70"> · {s.sector} · {s.industry}</span>

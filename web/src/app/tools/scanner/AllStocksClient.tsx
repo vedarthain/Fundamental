@@ -16,6 +16,7 @@ import Link from "next/link";
 import { displayCompanyName, tierLabel } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { IntradayPriceBadge } from "@/components/IntradayPriceBadge";
+import IpoBadge from "@/components/IpoBadge";
 import type { AllStockRow } from "@/lib/allStocks";
 import { RowSparkline } from "./RowSparkline";
 import { WindowPicker } from "./WindowPicker";
@@ -502,14 +503,7 @@ export default function AllStocksClient({
                             >
                               {r.symbol}
                             </Link>
-                            {r.is_ipo && (
-                              <span
-                                title="Recent IPO — listed within the last 12 months"
-                                className="rounded-sm px-1 py-px text-[9px] font-bold uppercase tracking-wide leading-none text-[var(--color-paper)] bg-[var(--color-accent,#b45309)]"
-                              >
-                                IPO
-                              </span>
-                            )}
+                            <IpoBadge show={r.is_ipo} />
                           </div>
                           <div className="text-[10.5px] muted-text truncate max-w-[150px]">
                             {displayCompanyName(r.company_name ?? "", r.symbol)}

@@ -12,6 +12,7 @@
 
 import { Fragment, useState } from "react";
 import Link from "next/link";
+import IpoBadge from "@/components/IpoBadge";
 import type { MomentumSignal } from "@/lib/momentum";
 import type { SparkPoint } from "@/components/Sparkline";
 import { WatchlistButton } from "@/components/WatchlistButton";
@@ -169,6 +170,7 @@ export default function MomentumClient({
                             <Link href={`/stock/${s.symbol}`} target="_blank" rel="noopener noreferrer" className="font-semibold hover:underline">
                               {s.symbol}
                             </Link>
+                            <IpoBadge show={s.isIpo} className="ml-1 align-middle" />
                             <div className="text-[10.5px] muted-text">
                               {s.isScored ? capLabel(s.marketCapCr) : "unscored"}
                               {s.newHigh && (

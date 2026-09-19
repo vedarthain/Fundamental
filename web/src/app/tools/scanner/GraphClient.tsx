@@ -14,6 +14,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import IpoBadge from "@/components/IpoBadge";
 import { Star } from "lucide-react";
 import { displayCompanyName } from "@/lib/score";
 import { sectorColor, industryColor } from "@/lib/sectorColor";
@@ -1081,33 +1082,33 @@ export default function GraphClient({
 
   return (
     <div className="flex flex-col">
-      {/* items-start, not items-center: the breadcrumb block is two lines now, and
-          centring the button group against it parks Watch / Portfolio in the gutter
-          between the two lines. Top-aligned they sit level with the sector·industry
-          line, which is the line they belong to. */}
-      <header className="mb-1.5 flex flex-wrap items-start gap-x-4 gap-y-2">
+      {/* flex-nowrap at THIS level, with the wrapping moved inside the control
+          group below. The whole control strip — Watch, Portfolio, Score, 4/6,
+          nine window buttons, bookmarks, pager — is close to the container's own
+          width, so as one shrink-0 block it could never share a line with the
+          breadcrumb no matter how small the breadcrumb's basis got. Two rounds of
+          tuning that basis moved nothing. Letting the strip break between its own
+          controls is what actually frees the first line.
+
+          items-start, not items-center: the breadcrumb is two lines, and centring
+          against it parks Watch / Portfolio in the gutter between them. */}
+      <header className="mb-1.5 flex flex-nowrap items-start gap-x-4">
           {/* No "Charts by industry" title: the tab you are on already says
               Graph, the tree to the left is visibly an industry tree, and the
               breadcrumb below names the exact industry — the h1 restated all
               three and cost a line of the space the charts want.
 
-              basis-[240px], down from 340: the control group to the right is
-              shrink-0 and ~1090px wide, so a 340px reservation put the row ~100px
-              over its container and the controls wrapped to a line of their own.
-              240 buys that back and they sit beside the breadcrumb again.
-
-              The 340 floor existed to stop the "showing 65-68 : 17/24" counters
-              being truncated off the end of a long industry name. That reason
-              died when the breadcrumb went two-line — the counters have their
-              own row now and are short; it is the industry name that wraps under
-              pressure, and wrapping it is fine.
-
-              The wrap still fires, just later: below ~1330px the controls take
-              their own row rather than squeezing the name to nothing.
+              min-w-0 flex-1: this block is now the ONLY thing in the header that
+              can give width, because the control strip beside it is flex-nowrap
+              shrink-0 and every control in it is fixed-width. So a long industry
+              name truncates rather than pushing a control onto a second line —
+              which is the tradeoff being made here on purpose. The full name is
+              always one hover away via the title attribute, and the tree on the
+              left shows it untruncated.
 
               Sector and industry carry the sector's hue (lib/sectorColor) so the
               family you're paging through is legible without reading the word. */}
-          <div className="min-w-[180px] flex-1 basis-[240px] flex flex-wrap items-baseline gap-x-2">
+          <div className="min-w-0 flex-1 flex items-baseline gap-x-2">
             {/* Kept as sr-only rather than deleted: every other scanner tab has
                 a visible h1, so dropping this one outright would leave Graph as
                 the only tab with no document heading at all. Costs no pixels. */}
@@ -1121,10 +1122,10 @@ export default function GraphClient({
                 This costs no vertical space: the block sits beside the Watch /
                 Portfolio buttons, which are taller than a single line was, so
                 the second line lands in room the header row already had. */}
-            <div className="leading-tight">
+            <div className="min-w-0 leading-tight">
               {curPage ? (
                 <>
-                  <div className="text-[13px]">
+                  <div className="text-[13px] truncate" title={`${activeSectorName} · ${curPage.indName}`}>
                     <span className="font-semibold" style={{ color: sectorColor(activeSectorName) }}>
                       {activeSectorName}
                     </span>
@@ -1133,7 +1134,7 @@ export default function GraphClient({
                       {curPage.indName}
                     </span>
                   </div>
-                  <div className="text-[11.5px] muted-text tabular-nums">
+                  <div className="text-[11.5px] muted-text tabular-nums truncate">
                     {curPage.indTotal} names · showing {rangeStart}–{rangeEnd} : {indPageIdx}/{indPageCount}
                   </div>
                 </>
@@ -1144,12 +1145,21 @@ export default function GraphClient({
               )}
             </div>
           </div>
-          <div className="flex shrink-0 items-center gap-3 ml-auto">
+          {/* ONE row, and it cannot wrap: flex-nowrap + shrink-0. Everything that
+              could give width has given it — gap-x-2 instead of 3, px-2/py-1 on
+              the Graph-only buttons, the Score spinners hidden, the page readout
+              down to min-w-[44px]. What is left is fixed-width, so the breadcrumb
+              to the left is the only thing that yields, and it truncates.
+
+              WindowPicker is deliberately untouched: it is shared with Momentum,
+              Trend Leaders, At Support and the rest, and shrinking it here would
+              silently restyle all of them. */}
+          <div className="flex shrink-0 flex-nowrap items-center gap-x-2">
             <button
               type="button"
               onClick={() => { setWatchOnly((v) => !v); setPage(0); }}
               disabled={!watchOnly && watchSet.size === 0}
-              className="inline-flex items-center gap-1.5 rounded-md border hairline px-2.5 py-1.5 text-[12px] font-medium transition-colors disabled:opacity-40 hover:bg-[var(--color-paper)]"
+              className="inline-flex items-center gap-1 rounded-md border hairline px-2 py-1 text-[11px] font-medium transition-colors disabled:opacity-40 hover:bg-[var(--color-paper)]"
               style={
                 watchOnly
                   ? {
@@ -1160,6 +1170,7 @@ export default function GraphClient({
                   : undefined
               }
               aria-pressed={watchOnly}
+              aria-label="Show watched only"
               title={
                 watchSet.size === 0
                   ? "Star some stocks first"
@@ -1168,9 +1179,14 @@ export default function GraphClient({
                     : "Show watched only"
               }
             >
+              {/* "W", not "Watch". The star already says what this is, and the
+                  control strip is wide enough that the two spelled-out words were
+                  pushing the window picker onto a second line. aria-label above
+                  keeps the full name for screen readers, and the title attribute
+                  keeps it for anyone who hovers. */}
               <Star size={13} fill={watchOnly ? "#e8a838" : "none"} strokeWidth={2} />
               <span>
-                Watch
+                W
                 {watchHydrated && watchSet.size > 0 ? (
                   <span className="tabular-nums" style={watchOnly || scoreActive ? { fontSize: "0.9em" } : undefined}>
                     {` · ${watchCount}`}
@@ -1182,7 +1198,7 @@ export default function GraphClient({
               type="button"
               onClick={() => { setPOnly((v) => !v); setPage(0); }}
               disabled={!pOnly && portfolioSet.size === 0}
-              className="inline-flex items-center gap-1.5 rounded-md border hairline px-2.5 py-1.5 text-[12px] font-medium transition-colors disabled:opacity-40 hover:bg-[var(--color-paper)]"
+              className="inline-flex items-center gap-1 rounded-md border hairline px-2 py-1 text-[11px] font-medium transition-colors disabled:opacity-40 hover:bg-[var(--color-paper)]"
               style={
                 pOnly
                   ? {
@@ -1193,6 +1209,7 @@ export default function GraphClient({
                   : undefined
               }
               aria-pressed={pOnly}
+              aria-label="Show portfolio holdings only"
               title={
                 portfolioSet.size === 0
                   ? "No portfolio holdings yet — add them on the Portfolio tab"
@@ -1215,8 +1232,11 @@ export default function GraphClient({
               >
                 P
               </span>
+              {/* "P" beside the circled P is deliberate symmetry with the star +
+                  "W" next door, not a duplicate: the circle is the icon, the
+                  letter is the label. Full name lives in aria-label and title. */}
               <span>
-                Portfolio
+                P
                 {portfolioSet.size > 0 ? (
                   <span className="tabular-nums" style={pOnly || scoreActive ? { fontSize: "0.9em" } : undefined}>
                     {` · ${portCount}`}
@@ -1224,8 +1244,22 @@ export default function GraphClient({
                 ) : ""}
               </span>
             </button>
+            <BookmarkMenu<GraphBookmark>
+              items={bookmarks.items}
+              suggestLabel={() => bookmarkSuggest}
+              onSave={addGraphBookmark}
+              onJump={jumpGraphBookmark}
+              onRemove={bookmarks.remove}
+              onRename={bookmarks.rename}
+              describe={(b) => {
+                const ind = industryById.get(b.ind)?.ind.name ?? "(hidden industry)";
+                const w = GRAPH_WINDOWS.find((o) => o.days === b.days)?.label ?? `${b.days}d`;
+                return `${ind} · ${w}`;
+              }}
+              title="Graph bookmark"
+            />
             <div
-              className="inline-flex items-center gap-1 rounded-md border hairline px-2 py-1 text-[12px] font-medium transition-colors"
+              className="inline-flex items-center gap-1 rounded-md border hairline px-2 py-1 text-[11px] font-medium transition-colors"
               style={
                 minComposite != null || maxComposite != null
                   ? { borderColor: "var(--color-accent-600)", color: "var(--color-accent-700)", background: "color-mix(in srgb, var(--color-accent-600) 10%, transparent)" }
@@ -1248,7 +1282,7 @@ export default function GraphClient({
                   setMinComposite(Number.isFinite(n) ? n : null);
                   setPage(0);
                 }}
-                className="w-11 bg-transparent text-right tabular-nums outline-none placeholder:text-[var(--color-muted)] placeholder:font-normal"
+                className="w-8 bg-transparent text-right tabular-nums outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none placeholder:text-[var(--color-muted)] placeholder:font-normal"
                 aria-label="Minimum Industry Score"
               />
               <span className="muted-text">–</span>
@@ -1266,7 +1300,7 @@ export default function GraphClient({
                   setMaxComposite(Number.isFinite(n) ? n : null);
                   setPage(0);
                 }}
-                className="w-11 bg-transparent text-left tabular-nums outline-none placeholder:text-[var(--color-muted)] placeholder:font-normal"
+                className="w-8 bg-transparent text-left tabular-nums outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none placeholder:text-[var(--color-muted)] placeholder:font-normal"
                 aria-label="Maximum Industry Score"
               />
               {(minComposite != null || maxComposite != null) && (
@@ -1298,45 +1332,16 @@ export default function GraphClient({
               ))}
             </div>
             <WindowPicker options={GRAPH_WINDOWS} days={days} onSelect={setDays} loading={candles.loading} />
-            <BookmarkMenu<GraphBookmark>
-              items={bookmarks.items}
-              suggestLabel={() => bookmarkSuggest}
-              onSave={addGraphBookmark}
-              onJump={jumpGraphBookmark}
-              onRemove={bookmarks.remove}
-              onRename={bookmarks.rename}
-              describe={(b) => {
-                const ind = industryById.get(b.ind)?.ind.name ?? "(hidden industry)";
-                const w = GRAPH_WINDOWS.find((o) => o.days === b.days)?.label ?? `${b.days}d`;
-                return `${ind} · ${w}`;
-              }}
-              title="Graph bookmark"
-            />
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={gotoPrevPage}
-                disabled={atFirstPage}
-                className="rounded-md border hairline px-2.5 py-1.5 text-[12px] font-medium disabled:opacity-40 hover:bg-[var(--color-paper)] transition-colors"
-                aria-label="Previous page"
-                title={safePage <= 0 ? "Previous sector" : "Previous page"}
-              >
-                ‹
-              </button>
-              <span className="text-[12px] tabular-nums muted-text px-1 min-w-[64px] text-center">
-                {safePage + 1} / {pageCount}
-              </span>
-              <button
-                type="button"
-                onClick={gotoNextPage}
-                disabled={atLastPage}
-                className="rounded-md border hairline px-2.5 py-1.5 text-[12px] font-medium disabled:opacity-40 hover:bg-[var(--color-paper)] transition-colors"
-                aria-label="Next page"
-                title={safePage >= pageCount - 1 ? "Next sector" : "Next page"}
-              >
-                ›
-              </button>
-            </div>
+            {/* Last item on the row, past the window picker. Readout only — the
+                ‹ › live on the bottom pager. min-w-[44px] is what stops the right
+                edge jumping when the number goes 9/97 → 10/97; tabular-nums lines
+                the digits up but does not reserve the extra one. */}
+            <span
+              className="text-[11px] tabular-nums muted-text min-w-[44px] text-center"
+              title="Page within this sector — use ← → or the pager below the charts"
+            >
+              {safePage + 1} / {pageCount}
+            </span>
           </div>
       </header>
 
@@ -1509,6 +1514,7 @@ export default function GraphClient({
                                       style={onPage ? { color: "var(--color-accent-700)", fontWeight: 600 } : undefined}
                                     >
                                       <span className="text-[11.5px] tabular-nums truncate">{st.symbol}</span>
+                                      <IpoBadge show={st.is_ipo} textClass="text-[8px]" />
                                     </button>
                                   </li>
                                 );
@@ -1556,6 +1562,7 @@ export default function GraphClient({
                       >
                         {st.symbol}
                       </Link>
+                      <IpoBadge show={st.is_ipo} />
                       {st.composite_pct != null && (
                         <span
                           className="text-[10.5px] tabular-nums font-medium shrink-0"
@@ -1697,8 +1704,9 @@ export default function GraphClient({
         </div>
       </div>
 
-      {/* ── Bottom pager: mirrors the header nav so you can roll to the next
-          page without scrolling back up. ── */}
+      {/* ── Bottom pager: the only clickable paging control on the tab. The header
+          carries the same 1/97 readout but no arrows — one set of buttons, one
+          place to look for them. ── */}
       <div className="mt-3 flex items-center justify-end gap-1">
         <button
           type="button"

@@ -1,109 +1,55 @@
 /**
- * sectorColor — one stable hue per meta-cluster (sector).
+ * sectorColor — the two hues the scanner breadcrumb is written in.
  *
- * WHY SECTOR AND NOT INDUSTRY. The thing being colour-coded on screen is an
- * industry name ("Agrochemicals & Fertilizers"), but the colour is keyed to its
- * SECTOR ("Materials"). There are ~49 industries and nine sectors; 49 hues are
- * not distinguishable from one another, so a per-industry palette would encode
- * no information — it would just be decoration that changes every time you page.
- * Nine are learnable, and the useful question while paging the scanner is "am I
- * still in Materials", which is exactly what a sector tint answers.
+ * ONE HUE FOR EVERY SECTOR, by choice. This file used to hold nine hues, one
+ * per meta-cluster, so that the tint answered "am I still inside Materials"
+ * while paging. That was dropped deliberately: nine hues cycling as you page
+ * read as noise rather than as a code, and the sector name is right there in
+ * words. The colour's remaining job is smaller and it does it better — separate
+ * the two halves of "Sector · Industry" so the line doesn't read as one run of
+ * text, and mark both halves as the breadcrumb rather than as body copy.
  *
- * PALETTE CONSTRAINTS. No greens and no reds: every surface that renders these
- * names also renders returns in --color-delta-up / --color-delta-down, and a
- * green sector label sitting beside a red price move reads as a signal it isn't.
- * Hues are mid-dark (600-weight range) so they clear 4.5:1 on the light paper
- * background without going muddy.
+ * The consequence, stated plainly so nobody re-derives it as a bug: the hue no
+ * longer carries information. Every sector is teal and every industry is purple.
+ * If you ever want the sector family legible at a glance again, this is the file
+ * to put the nine-hue palette back into, and `git log` has it.
  *
- * Unknown names fall through to a hash over the same palette rather than to a
- * default grey: a sector renamed in app.meta_cluster should still be tinted
- * consistently from the first render, not silently lose its colour.
+ * WHY THESE TWO. Teal is Healthcare's old hue, picked by eye out of the nine.
+ * Purple sits far from it on the wheel, so the two halves separate at 12px.
+ * Neither is green or red: every surface that renders these names also renders
+ * returns in --color-delta-up / --color-delta-down, and a green sector label
+ * beside a red price move reads as a signal it isn't. Both are mid-dark, so they
+ * clear 4.5:1 on the light paper background without going muddy.
  *
- * ONE NEUTRAL, NOT TWO. Slate (Industrials) is the only desaturated entry left;
- * Diversified was grey and is now indigo. Two neutrals side by side were the
- * hues a reader could not separate, and a grey "colour code" reads as absence of
- * a code — it looks like the label simply failed to get tinted.
+ * The functions still take a sector name. They ignore it, but the call sites
+ * read correctly and putting a palette back is a one-file change.
  */
 
-/** Nine hues, deliberately non-adjacent so neighbours in display_order don't
- *  land on neighbouring hues. Order here is display_order from app.meta_cluster. */
-const PALETTE = [
-  "#2563EB", // blue
-  "#7C3AED", // violet
-  "#0891B2", // cyan
-  "#DB2777", // pink
-  "#475569", // slate
-  "#B45309", // amber
-  "#C026D3", // fuchsia
-  "#CA8A04", // gold
-  "#4F46E5", // indigo
-] as const;
+/* The name parameters below are intentionally unused: the signatures are kept so
+   call sites still read `sectorColor(activeSectorName)` and so restoring a real
+   per-sector palette stays a one-file change. Dropping the parameters would make
+   every call site a type error and turn that restoration into a refactor. */
+/* eslint-disable @typescript-eslint/no-unused-vars */
 
-/**
- * Partner hue for the INDUSTRY name, one per sector index. Hand-picked rather
- * than derived as "palette[i + k]": every fixed offset eventually pairs slate
- * with grey (indices 4 and 8), which are the two hues a reader cannot tell
- * apart. Each pair below is visibly distinct at 12px.
- */
-const CONTRAST_FOR = [
-  PALETTE[5], // Financials blue      → amber
-  PALETTE[7], // Tech violet          → gold
-  PALETTE[6], // Healthcare cyan      → fuchsia
-  PALETTE[4], // Consumer pink        → slate
-  PALETTE[7], // Industrials slate    → gold
-  PALETTE[2], // Materials amber      → cyan
-  PALETTE[4], // Real Estate fuchsia  → slate
-  PALETTE[1], // Energy gold          → violet
-  PALETTE[5], // Diversified indigo   → amber
-] as const;
+/** Teal — was Healthcare's slot in the old nine-hue palette. */
+const SECTOR_HUE = "#0891B2";
 
-const BY_SECTOR: Record<string, number> = {
-  "Financials": 0,
-  "Tech & Communication": 1,
-  "Healthcare": 2,
-  "Consumer": 3,
-  "Industrials": 4,
-  "Materials": 5,
-  "Real Estate & Infra": 6,
-  "Energy & Utilities": 7,
-  "Diversified": 8,
-};
+/** Purple. Far enough from teal that "Healthcare · Pharmaceuticals" reads as two
+ *  things rather than one long phrase. */
+const INDUSTRY_HUE = "#7C3AED";
 
-/** Palette slot for a sector name. Unknown names hash onto the same ring rather
- *  than collapsing to a default, so a renamed sector keeps a stable colour. */
-function slot(name: string | null | undefined): number {
-  const key = (name ?? "").trim();
-  if (!key) return 8;
-  const hit = BY_SECTOR[key];
-  if (hit != null) return hit;
-  // FNV-1a — same string always lands on the same hue, across reloads and
-  // across machines.
-  let h = 0x811c9dc5;
-  for (let i = 0; i < key.length; i++) {
-    h ^= key.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return (h >>> 0) % PALETTE.length;
+/** Hue for a sector name. Constant — see the header. */
+export function sectorColor(_name?: string | null): string {
+  return SECTOR_HUE;
 }
 
-/** Stable hue for a sector name. */
-export function sectorColor(name: string | null | undefined): string {
-  return PALETTE[slot(name)];
+/** Hue for an industry name, given its sector. Constant — see the header. */
+export function industryColor(_sectorName?: string | null): string {
+  return INDUSTRY_HUE;
 }
 
-/**
- * Hue for the industry name, given its SECTOR. Deliberately not the sector's own
- * colour: "Materials · Agrochemicals & Fertilizers" in one hue reads as a single
- * run of text, and the industry — the thing that changes as you page — is the
- * part worth spotting first. Still keyed to the sector, so the pairing stays
- * constant for every industry inside it.
- */
-export function industryColor(sectorName: string | null | undefined): string {
-  return CONTRAST_FOR[slot(sectorName)];
-}
-
-/** The same hue at low opacity, for chips and backgrounds. `pct` is a
+/** The sector hue at low opacity, for chips and backgrounds. `pct` is a
  *  percentage of the hue mixed into transparent. */
-export function sectorTint(name: string | null | undefined, pct = 12): string {
-  return `color-mix(in srgb, ${sectorColor(name)} ${pct}%, transparent)`;
+export function sectorTint(_name?: string | null, pct = 12): string {
+  return `color-mix(in srgb, ${SECTOR_HUE} ${pct}%, transparent)`;
 }

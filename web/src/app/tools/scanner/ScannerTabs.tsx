@@ -68,7 +68,10 @@ export default function ScannerTabs({
   tradedSymbols = [],
   tradesBySymbol = {},
   portfolioQty = {},
-  initialTab = "igniting",
+  // Kept in step with the fallback in page.tsx, which is the one that actually
+  // fires — page.tsx always passes this prop. Two defaults disagreeing is how a
+  // "why does it open on a different tab in Storybook" bug starts.
+  initialTab = "graph",
 }: {
   momentumSnapDate: string | null;
   momentumSignals: MomentumSignal[];
@@ -217,13 +220,24 @@ export default function ScannerTabs({
   const rotCount = rotView === "peers" ? peers.length : sectors.length;
 
   const tabs: { id: Tab; label: string; sub: string; count: number | null }[] = [
+    // Graph leads. It is the only tab that is a place to LOOK rather than a list
+    // of names some screen already picked, and the charts are usually what you
+    // want either before trusting one of those lists or instead of it. Igniting
+    // today stays second because it is the most perishable of the screens — its
+    // edge decays within the session, where At Support and Fallen Leaders keep
+    // for weeks.
+    //
+    // This array drives the rendered strip only — it does NOT decide what opens.
+    // The landing tab is "graph", set in two places that must stay in step: the
+    // fallback in page.tsx (the one that fires, since page.tsx always passes the
+    // prop) and the initialTab default above. Reordering here changes neither.
+    { id: "graph", label: "Graph", sub: "Candles by industry", count: null },
     { id: "igniting", label: "Igniting today", sub: "Volume breakouts", count: momentum.length },
     { id: "trend", label: "Trend Leaders", sub: "Fresh golden crosses", count: trend.length },
     { id: "floor", label: "At Support", sub: "Multi-year tested floors", count: floor.length },
     { id: "fallen", label: "Fallen Leaders", sub: "Beaten-down quality", count: null },
     { id: "sectors", label: "Sectors & Peers", sub: "Rotation map", count: rotCount },
     { id: "themes", label: "Themes", sub: "Index vs. constituents", count: themes.themes.length },
-    { id: "graph", label: "Graph", sub: "Candles by industry", count: null },
     { id: "dividends", label: "Dividend Scanner", sub: "Income by sector · yield", count: null },
     { id: "all", label: "All stocks", sub: "Full universe · sortable", count: allCount },
   ];

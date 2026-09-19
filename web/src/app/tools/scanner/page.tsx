@@ -79,7 +79,16 @@ export default async function MomentumPage({
   // Sectors ⇄ Peer groups). Redirect the old deep-link so a bookmarked
   // ?tab=peers still lands somewhere real instead of a blank panel.
   const normalizedTab = tabParam === "peers" ? "sectors" : tabParam;
-  const initialTab: Tab = SCANNER_TABS.includes(normalizedTab as Tab) ? (normalizedTab as Tab) : "igniting";
+  // Graph is the landing tab, matching its position first in the strip. This is
+  // the fallback for a bare /tools/scanner only — an explicit ?tab= still wins,
+  // so every existing deep link keeps landing where it always did, and the
+  // client restores a returning visitor's last tab over this on mount.
+  //
+  // The cost is real and worth naming: a cold /tools/scanner now pays Graph's
+  // candle fetch instead of serving the already-loaded momentum list. If that
+  // shows up in TTFB, the answer is to defer the candle load until the Graph
+  // panel mounts, not to move the default back.
+  const initialTab: Tab = SCANNER_TABS.includes(normalizedTab as Tab) ? (normalizedTab as Tab) : "graph";
   // Per-user real holdings — kept OUT of the shared unstable_cache above (which
   // is keyed only by date and shared across all visitors). Drives the auto-lit
   // "P" marker + Portfolio filter on the Graph tab. Cheap symbol-only query.

@@ -11,12 +11,17 @@
  * surface on the first page of charts (browsing 4 at a time).
  */
 import { sql } from "@/lib/db";
+import { isIpo } from "@/components/IpoBadge";
 
 export type GraphStock = {
   symbol: string;
   name: string | null;
   market_cap_category: string | null;
   listing_date: string | null;
+  /** Listed on NSE <12mo AND short financial record — see components/IpoBadge.
+   *  Precomputed here rather than derived in the client, because the second
+   *  signal (years_of_data) is not otherwise shipped to the browser. */
+  is_ipo: boolean;
   composite_pct: number | null;
   quality_pct: number | null;
   value_pct: number | null;
@@ -44,6 +49,7 @@ type Row = {
   name: string | null;
   market_cap_category: string | null;
   listing_date: string | null;
+  years_of_data: number | null;
   composite_pct: number | null;
   quality_pct: number | null;
   value_pct: number | null;
@@ -73,6 +79,7 @@ export async function loadGraphUniverse(): Promise<GraphUniverse> {
              u.company_name AS name,
              u.market_cap_category,
              u.listing_date::text AS listing_date,
+             u.years_of_data::float8 AS years_of_data,
              p.composite_pct::float8 AS composite_pct,
              p.quality_pct::float8 AS quality_pct,
              p.valuation_pct::float8 AS value_pct
@@ -113,6 +120,7 @@ export async function loadGraphUniverse(): Promise<GraphUniverse> {
       name: r.name,
       market_cap_category: r.market_cap_category,
       listing_date: r.listing_date,
+      is_ipo: isIpo(r.listing_date, r.years_of_data),
       composite_pct: r.composite_pct,
       quality_pct: r.quality_pct,
       value_pct: r.value_pct,

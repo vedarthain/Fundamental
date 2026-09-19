@@ -31,13 +31,23 @@ type TrendingRow = {
 async function loadHero() {
   const snapPromise = sql<Snapshot[]>`
     SELECT
-      (SELECT COUNT(*)::int FROM app.universe WHERE is_active) AS stocks,
+      -- Scored at the latest snapshot, NOT rows in app.universe. See the
+      -- canonical note in components/SnapshotRibbon.tsx: 472 active universe
+      -- rows have never been enriched or scored, so counting the universe here
+      -- claimed ~500 more stocks than any page can actually show.
+      (SELECT COUNT(*)::int FROM app.scores
+        WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)) AS stocks,
       -- Populated peer groups at the latest snapshot (same definition as
       -- /sectors + the ribbon → consistent "46"). COUNT on app.cluster
       -- over-counts (deprecated + unclassified buckets hold no stocks).
       (SELECT COUNT(*)::int FROM app.cluster_composite_cache
         WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)) AS clusters,
-      (SELECT COUNT(*)::int FROM app.universe WHERE is_active AND maturity_tier='veteran') AS veterans,
+      -- Veterans counted the same way, off app.scores. Taking this from the
+      -- universe while the stocks count came from app.scores would let the subset drift
+      -- above its parent on a week when veterans miss a score.
+      (SELECT COUNT(*)::int FROM app.scores
+        WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
+          AND maturity_tier = 'veteran') AS veterans,
       (SELECT COUNT(DISTINCT snapshot_date)::int FROM app.scores) AS weeks,
       (SELECT MAX(snapshot_date)::text FROM app.scores) AS snapshot_date
   `;

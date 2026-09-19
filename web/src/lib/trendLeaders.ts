@@ -14,6 +14,8 @@
  * carries the "is it worth it" signal here.
  */
 import { sql, golden } from "@/lib/db";
+import { isIpo } from "@/components/IpoBadge";
+import type { PanelMetaRow } from "@/lib/panelMeta";
 
 export type TrendLeaderSignal = {
   symbol: string;
@@ -33,6 +35,8 @@ export type TrendLeaderSignal = {
   sector: string | null;
   /** Peer group (cluster.name) — the scoring cluster the stock sits in. */
   industry: string | null;
+  /** Listed on NSE <12mo AND short financial record — see components/IpoBadge. */
+  isIpo: boolean;
 };
 
 // Ruleset knobs.
@@ -128,6 +132,8 @@ async function enrich(rows: GoldenRow[]): Promise<TrendLeaderSignal[]> {
       momentum_pct: number | null;
       sector: string | null;
       industry: string | null;
+      listing_date: string | null;
+      years_of_data: number | null;
     }[]
   >`
     SELECT p.symbol,
@@ -136,10 +142,16 @@ async function enrich(rows: GoldenRow[]): Promise<TrendLeaderSignal[]> {
            p.quality_pct::float8   AS quality_pct,
            p.momentum_pct::float8  AS momentum_pct,
            mc.name                 AS sector,
-           c.name                  AS industry
+           c.name                  AS industry,
+           -- For the IPO chip. Both fields are needed, not just the date: a
+           -- recent listing_date with a full financial record is a BSE->NSE
+           -- migration, not an IPO. See components/IpoBadge.tsx.
+           u.listing_date::text    AS listing_date,
+           u.years_of_data::float8 AS years_of_data
     FROM app.cluster_stocks_panel_cache p
     LEFT JOIN app.cluster c       ON c.id = p.cluster_id
     LEFT JOIN app.meta_cluster mc ON mc.id = c.meta_cluster_id
+    LEFT JOIN app.universe u      ON u.symbol = p.symbol
     WHERE p.snapshot_date = (SELECT max(snapshot_date) FROM app.cluster_stocks_panel_cache)
       AND p.symbol = ANY(${symbols})
   `;
@@ -162,6 +174,7 @@ async function enrich(rows: GoldenRow[]): Promise<TrendLeaderSignal[]> {
       isScored: !!c,
       sector: c?.sector ?? null,
       industry: c?.industry ?? null,
+      isIpo: isIpo(c?.listing_date, c?.years_of_data),
     };
   });
 }
@@ -238,14 +251,18 @@ export async function loadLatestTrendLeaders(
     ORDER BY cross_date DESC, pct_below_high ASC
   `;
 
-  // Sector / peer-group joined from the scoring panel at read time.
+  // Sector / peer-group / listing joined from the scoring panel + universe at
+  // read time. Shape lives in lib/panelMeta.ts (three scanners share it).
   const clsSymbols = rows.map((r) => r.symbol);
   const cls = clsSymbols.length
-    ? await sql<{ symbol: string; sector: string | null; industry: string | null }[]>`
-        SELECT p.symbol, mc.name AS sector, c.name AS industry
+    ? await sql<PanelMetaRow[]>`
+        SELECT p.symbol, mc.name AS sector, c.name AS industry,
+               u.listing_date::text AS listing_date,
+               u.years_of_data::float8 AS years_of_data
         FROM app.cluster_stocks_panel_cache p
         LEFT JOIN app.cluster c       ON c.id = p.cluster_id
         LEFT JOIN app.meta_cluster mc ON mc.id = c.meta_cluster_id
+        LEFT JOIN app.universe u      ON u.symbol = p.symbol
         WHERE p.snapshot_date = (SELECT max(snapshot_date) FROM app.cluster_stocks_panel_cache)
           AND p.symbol = ANY(${clsSymbols})
       `
@@ -268,6 +285,7 @@ export async function loadLatestTrendLeaders(
     isScored: r.is_scored,
     sector: clsBy.get(r.symbol)?.sector ?? null,
     industry: clsBy.get(r.symbol)?.industry ?? null,
+    isIpo: isIpo(clsBy.get(r.symbol)?.listing_date, clsBy.get(r.symbol)?.years_of_data),
   }));
   return { snapDate, signals, dates };
 }
