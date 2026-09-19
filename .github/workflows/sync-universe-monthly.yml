@@ -54,6 +54,8 @@ jobs:
       - name: Sync universe (onboard new + retire 60d-dark)
         env:
           APP_DB_URL:       ${{ secrets.NEON_APP_URL }}
+          # The ETL refuses a remote APP_DB_URL by default (etl/src/fundamental_etl/db.py) so a local run cannot drift onto prod. CI writes to prod on purpose, so it says so out loud.
+          FUNDAMENTAL_ALLOW_REMOTE_DB: "1"
           GOLDEN_DB_URL:    ${{ secrets.NEON_GOLDEN_URL }}
           PYTHONUNBUFFERED: "1"
         run: python -m fundamental_etl.cli sync-universe --deactivate --deactivate-days 60

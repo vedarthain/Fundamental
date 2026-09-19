@@ -86,6 +86,8 @@ jobs:
       - name: Compute metrics + score
         env:
           APP_DB_URL:           ${{ secrets.NEON_APP_URL }}
+          # The ETL refuses a remote APP_DB_URL by default (etl/src/fundamental_etl/db.py) so a local run cannot drift onto prod. CI writes to prod on purpose, so it says so out loud.
+          FUNDAMENTAL_ALLOW_REMOTE_DB: "1"
           GOLDEN_DB_URL:        ${{ secrets.NEON_GOLDEN_URL }}
           PYTHONUNBUFFERED:     "1"
         run: |
@@ -99,6 +101,8 @@ jobs:
       - name: Rebuild /market snapshot cache
         env:
           APP_DB_URL:    ${{ secrets.NEON_APP_URL }}
+          # The ETL refuses a remote APP_DB_URL by default (etl/src/fundamental_etl/db.py) so a local run cannot drift onto prod. CI writes to prod on purpose, so it says so out loud.
+          FUNDAMENTAL_ALLOW_REMOTE_DB: "1"
           GOLDEN_DB_URL: ${{ secrets.NEON_GOLDEN_URL }}
           PYTHONUNBUFFERED: "1"
         run: python scripts/build-market-snapshot.py

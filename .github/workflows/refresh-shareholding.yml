@@ -73,6 +73,8 @@ jobs:
       - name: Refresh shareholding pattern
         env:
           APP_DB_URL:         ${{ secrets.NEON_APP_URL }}
+          # The ETL refuses a remote APP_DB_URL by default (etl/src/fundamental_etl/db.py) so a local run cannot drift onto prod. CI writes to prod on purpose, so it says so out loud.
+          FUNDAMENTAL_ALLOW_REMOTE_DB: "1"
           GOLDEN_DB_URL:      ${{ secrets.NEON_GOLDEN_URL }}
           SCREENER_SESSIONID: ${{ secrets.SCREENER_SESSIONID }}
           SCREENER_CSRFTOKEN: ${{ secrets.SCREENER_CSRFTOKEN }}

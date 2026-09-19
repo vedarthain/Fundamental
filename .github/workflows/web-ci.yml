@@ -47,6 +47,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Runs first, and needs no npm install, so a broken pipeline is reported
+      # in ~10 seconds instead of after the Node toolchain warms up.
+      #
+      # This guards a cross-language coupling that nothing else can see: db.py
+      # refuses a remote APP_DB_URL, and the scheduled workflows opt out of that
+      # refusal with FUNDAMENTAL_ALLOW_REMOTE_DB. Those two facts live in
+      # different files and get edited weeks apart. When the guard was added,
+      # four already-existing workflows silently became broken and would have
+      # failed on their next cron — Weekly Fetch and Weekly Compute among them —
+      # with nothing to surface it until Saturday evening.
+      #
+      # It sits in web-ci because this is the only workflow that runs on every
+      # push. The check is about .github/, not about web/, so it overrides the
+      # job's working-directory.
+      - name: Workflow DB-guard consistency
+        working-directory: .
+        run: |
+          pip install --quiet pyyaml
+          python scripts/check-workflow-db-guard.py
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
