@@ -104,9 +104,23 @@ _PCT_ASSERTIONS = [
         "snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)", "momentum_pct",   90.0),
 
     # Screener meta — required for the LTP + market cap on cards.
-    ("screener_meta.market_cap_cr (active)", "app.screener_meta sm JOIN app.universe u USING (symbol)",
+    #
+    # THE JOIN DIRECTION HERE IS THE WHOLE POINT. These two were
+    #     app.screener_meta sm JOIN app.universe u USING (symbol)
+    # an INNER JOIN, which silently made them unable to fail. 472 active symbols
+    # had no screener_meta row at all, so the inner join dropped them BEFORE the
+    # percentage was computed: the denominator was 2,150 instead of 2,622 and
+    # these assertions reported 99.8% every week while true coverage was 81.8%.
+    #
+    # A coverage check must start at the source of truth (app.universe) and LEFT
+    # JOIN outward, so a missing row counts as missing instead of vanishing from
+    # the population. If you add an assertion here, start its FROM at
+    # app.universe or it is not measuring coverage — it is measuring survivors.
+    ("screener_meta.market_cap_cr (active)",
+        "app.universe u LEFT JOIN app.screener_meta sm USING (symbol)",
         "u.is_active",                                       "market_cap_cr",   90.0),
-    ("screener_meta.current_price (active)", "app.screener_meta sm JOIN app.universe u USING (symbol)",
+    ("screener_meta.current_price (active)",
+        "app.universe u LEFT JOIN app.screener_meta sm USING (symbol)",
         "u.is_active",                                       "current_price",   90.0),
 ]
 
@@ -127,39 +141,37 @@ _COUNT_ASSERTIONS = [
 # Upper-bound count assertions — fail when a count EXCEEDS a ceiling (the
 # OPPOSITE direction of _COUNT_ASSERTIONS above, which fails when a count falls
 # below a floor). For failure modes that should stay small.
-_MAX_COUNT_ASSERTIONS = [
-    # (name, sql_returning_single_int_column_n, maximum)
-    #
-    # Screener-export warehouse lag: names Screener returns with a CURRENT price
-    # (freshly fetched, last_status='ok') but STALE financials — its downloadable
-    # xlsx export lags its own live company page. The scorer's 15-month freshness
-    # gate (see scoring/metrics.py: (snapshot - freshest_period_end).days > 458)
-    # then correctly drops these from the scored universe, silently shrinking
-    # "All stocks". This watches the size of that cohort so a systemic Screener
-    # regression (or a fetch bug reintroducing stale content) is caught loudly
-    # instead of surfacing months later as an unexplained coverage gap.
-    #
-    # Baseline was 25 on 2026-08-19 (JYOTHYLAB, MANYAVAR, HDBFS, SBFC, CAMPUS,
-    # KENNAMET, …). Ceiling 40 catches a ~1.6x jump without flaking on the normal
-    # churn of a few names sliding in/out around FY-result season.
-    ("screener_export_stale_financials (price-fresh)",
-        """
-        SELECT COUNT(*)::int AS n
-          FROM app.universe u
-          JOIN app.screener_meta sm USING (symbol)
-         WHERE u.is_active
-           AND sm.current_price IS NOT NULL
-           AND sm.last_status = 'ok'
-           AND sm.last_scraped_at >= NOW() - INTERVAL '10 days'
-           AND GREATEST(
-                 COALESCE((SELECT MAX(period_end) FROM app.fundamentals_annual a
-                            WHERE a.symbol = u.symbol), DATE '1900-01-01'),
-                 COALESCE((SELECT MAX(period_end) FROM app.fundamentals_quarterly q
-                            WHERE q.symbol = u.symbol), DATE '1900-01-01')
-               ) < CURRENT_DATE - INTERVAL '15 months'
-        """,
-        40),
-]
+#
+# DELIBERATELY EMPTY. Read this before adding an entry.
+#
+# This list held exactly one assertion, "screener_export_stale_financials
+# (price-fresh)": symbols Screener returns with a CURRENT price but STALE
+# financials, which the scorer's 15-month gate then drops from the scored
+# universe. It was written with baseline 25 / ceiling 40 so a "~1.6x jump"
+# would fire.
+#
+# It never fired, and it could not have. A ceiling drawn around a known defect
+# cohort is a thermostat, not an alarm: it encodes "25 broken symbols is the
+# normal operating temperature" and then reports green for as long as the
+# breakage stays the size it was on the day someone measured it. The 23 stale
+# names sat under that ceiling for months while the weekly report said PASS.
+#
+# The same cohort is now a named bucket in app.coverage_ledger
+# ('gated_stale_financials', see coverage.py). That replacement is strictly
+# better in three ways and involves no tuned number:
+#   • the bucket is part of an exhaustive partition, so the symbols are counted
+#     whether or not anyone anticipated their failure mode;
+#   • check_no_regression fails on week-over-week GROWTH, so a systemic Screener
+#     regression is caught at +1, not at +15;
+#   • the per-symbol rows are retained, so "which names and since when" is a
+#     query instead of an investigation.
+#
+# If you are about to add a ceiling here, first check whether the thing you want
+# to bound is a coverage bucket. If it is, put it in coverage.py where zero is
+# the assertion and the delta is the alarm. A ceiling is only defensible for a
+# quantity with no healthy value of zero — and there is no such quantity in this
+# module today, which is why the list is empty.
+_MAX_COUNT_ASSERTIONS: list[tuple[str, str, int]] = []
 
 
 def _run_pct(conn, name, table_clause, where_clause, column, threshold) -> AssertionResult:

@@ -1,13 +1,27 @@
 # Weekly data-quality report.
 #
 # What this does:
-#   Runs scripts/check-dq.py against Neon — the same assertions the `score`
-#   command runs at the end of every weekly compute, but as a standalone,
-#   fully-printed report (all 17 checks, pass AND fail). This is the VISIBLE
-#   surface: the score run only logs a line when a check FAILS, so on a normal
-#   pass you never see e.g. the Screener export-warehouse-lag cohort size. Here
-#   every check prints its number every week, so you can watch trends (is the
-#   stale-financials cohort growing or self-healing?) not just breaches.
+#   Runs TWO standalone reports against Neon — the same assertions the `score`
+#   command runs at the end of every weekly compute, but fully printed (every
+#   check, pass AND fail). This is the VISIBLE surface: the score run only logs
+#   a line when a check FAILS, so on a normal pass you never see the numbers.
+#   Here every check prints its value every week, so you can watch trends, not
+#   just breaches.
+#
+#   1. scripts/check-coverage.py — is every active symbol ACCOUNTED FOR?
+#      Reads app.coverage_ledger, which assigns each active symbol to exactly
+#      one bucket per snapshot. Asserts the partition is exhaustive, the problem
+#      buckets are empty, and nothing regressed week-over-week.
+#   2. scripts/check-dq.py — are the rows we DO have POPULATED?
+#      Per-column NULL-rate assertions.
+#
+#   These answer different questions and the distinction is the whole reason
+#   this file changed. For five months (2) was green at 99.8% while (1) would
+#   have been red at 81.8%: the dq assertions INNER JOINed onto screener_meta,
+#   so the 472 symbols with no row there were removed from the denominator
+#   before the percentage was computed. A check that drops the broken rows and
+#   then measures the survivors will always report health. Coverage has to be
+#   measured from app.universe outward, which is what (1) does.
 #
 # When it runs:
 #   - Every Saturday 18:00 UTC (23:30 IST) — 5h AFTER the Sat 13:00 UTC
@@ -60,11 +74,47 @@ jobs:
       - name: Install psycopg
         run: pip install 'psycopg[binary]==3.2.*'
 
+      # Coverage FIRST, and as its own step, because it is the check the other
+      # one structurally could not perform. check-dq.py measures how populated
+      # the rows we have are; check-coverage.py measures whether the rows exist
+      # at all. For five months every dq assertion was green while 500 of 2,622
+      # active symbols were missing entirely — they were INNER JOINed out of the
+      # denominator before the percentage was computed.
+      #
+      # continue-on-error is deliberate: coverage is currently RED (472 symbols
+      # never attempted + 5 with no metrics, the backlog the screener_meta UPSERT
+      # fix is working through). Blocking here would hide the dq report behind a
+      # known failure. The `if: failure()` alert step below still fires, because
+      # the explicit exit at the end of the job propagates both statuses — a red
+      # coverage result is reported loudly, it just is not allowed to mask the
+      # rest of the report. Remove continue-on-error once coverage reaches zero;
+      # from that point on any regression should stop the job outright.
+      - name: Run coverage-ledger checks
+        id: coverage
+        continue-on-error: true
+        env:
+          APP_DB_URL:       ${{ secrets.NEON_APP_URL }}
+          PYTHONUNBUFFERED: "1"
+        run: python scripts/check-coverage.py
+
       - name: Run data-quality checks
+        id: dq
+        continue-on-error: true
         env:
           APP_DB_URL:       ${{ secrets.NEON_APP_URL }}
           PYTHONUNBUFFERED: "1"
         run: python scripts/check-dq.py
+
+      # Both reports have now printed in full. Fail the job if either one did,
+      # so a coverage regression cannot be swallowed by the continue-on-error
+      # above — that flag exists to keep the second report visible, not to
+      # downgrade the first one to a warning.
+      - name: Fail the job if either report failed
+        if: steps.coverage.outcome == 'failure' || steps.dq.outcome == 'failure'
+        run: |
+          echo "coverage: ${{ steps.coverage.outcome }}"
+          echo "dq:       ${{ steps.dq.outcome }}"
+          exit 1
 
       # Loud alert: a failed check opens (or appends to) a GitHub Issue, so a
       # DQ regression is trackable + notifies watchers, not just a CI email that
@@ -83,7 +133,12 @@ jobs:
             "Which assertion tripped (and its number vs threshold) is in the run log:" \
             "$RUN_URL" \
             "" \
-            "Common causes: a parser change silently NULLing a column, or the Screener export-warehouse-lag cohort (price-fresh / financials-stale) exceeding its ceiling. Investigate the latest \`Weekly Fetch\` / \`Weekly Compute + Score\` runs.")
+            "Two reports run in this job. Check which one is red:" \
+            "" \
+            "- **check-coverage.py** — are all active symbols ACCOUNTED FOR? A failure names the symbols and the bucket (\`never_attempted\`, \`fetch_failing\`, \`no_metrics\`, \`unclassified\`). \`unclassified > 0\` is the serious one: it means a symbol reached a state the classifier does not model, so the partition is no longer exhaustive and every other bucket count is suspect. Fix the CASE in etl/src/fundamental_etl/coverage.py before trusting anything else here." \
+            "- **check-dq.py** — are the rows we DO have populated? A failure usually means a parser change silently NULLed a column." \
+            "" \
+            "Investigate the latest \`Weekly Fetch\` / \`Weekly Compute + Score\` runs.")
           EXISTING=$(gh issue list --state open --search "$TITLE in:title" --json number --jq '.[0].number // empty')
           if [ -n "$EXISTING" ]; then
             gh issue comment "$EXISTING" --body "$BODY"

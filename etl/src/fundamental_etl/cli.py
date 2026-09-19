@@ -152,6 +152,23 @@ def fetch_nse(
     MUST run from a residential/desktop IP — NSE's Akamai edge 403s datacenter
     and CI hosts. This is a manual, occasional command, not part of the weekly
     automated pipeline.
+
+    STALENESS GUARD (added 2026-09-19). On 2026-09-19 a dry run of this command
+    returned a newest quarter of 2024-12-31 for EVERY symbol tried, including
+    live large caps (RELIANCE, TCS, INFY, HINDUNILVR, TITAN). The endpoint
+    `/api/results-comparision` takes no date window and is, as far as we can
+    tell, frozen ~21 months in the past. Had this been run with --save it would
+    have overwritten current quarters with 2024 figures across the board, and
+    nothing downstream would have objected: save_parsed upserts on
+    (symbol, period_end), so old rows land silently alongside new ones and the
+    scorer's freshness gate reads the max, not the origin.
+
+    The guard below is therefore not optional politeness — it is the only thing
+    standing between a frozen upstream and the warehouse. It refuses to write
+    any symbol whose newest fetched quarter is not strictly newer than what we
+    already hold. That test is self-referential: it compares the source against
+    our own state rather than against a hardcoded cutoff date, so it cannot rot
+    as time passes and needs no maintenance when NSE unfreezes.
     """
     from datetime import datetime, timezone
     from .nse.results import fetch_nse_results, make_nse_client, NSEFetchError
@@ -174,19 +191,50 @@ def fetch_nse(
             symbols = [r["symbol"] for r in cur.fetchall()]
 
     log.info("fetch_nse_start", n=len(symbols))
-    ok = fail = 0
+    ok = fail = stale = 0
     client = make_nse_client()
     try:
         for i, sym in enumerate(symbols, 1):
             try:
                 parsed = fetch_nse_results(sym, client=client)
+
+                # parsed.quarterly is a dict keyed by period_end (a date), not a
+                # list of row objects — see nse/results.py.
+                fetched_newest = max(parsed.quarterly.keys(), default=None)
+                with app_conn() as conn, conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT MAX(period_end) AS held FROM app.fundamentals_quarterly "
+                        "WHERE symbol = %s",
+                        (sym,),
+                    )
+                    row = cur.fetchone()
+                    held_newest = row["held"] if row else None
+
+                # Nothing came back, or what came back is not newer than what we
+                # already have. Either way there is no gap being filled, only a
+                # chance to overwrite good data with old data. Refuse.
+                if fetched_newest is None or (
+                    held_newest is not None and fetched_newest <= held_newest
+                ):
+                    stale += 1
+                    log.warning(
+                        "nse_stale_refused", symbol=sym,
+                        fetched_newest=str(fetched_newest),
+                        held_newest=str(held_newest),
+                        reason="fetched data is not newer than what we already hold",
+                    )
+                    time.sleep(throttle)
+                    continue
+
                 if save:
                     with app_conn() as conn:
                         _, qtr = save_parsed(conn, sym, parsed, datetime.now(timezone.utc))
                         conn.commit()
-                    log.info("nse_saved", symbol=sym, quarters=qtr)
+                    log.info("nse_saved", symbol=sym, quarters=qtr,
+                             newest=str(fetched_newest))
                 else:
-                    log.info("nse_dry_run", symbol=sym, quarters=len(parsed.quarterly))
+                    log.info("nse_dry_run", symbol=sym, quarters=len(parsed.quarterly),
+                             newest=str(fetched_newest))
                 ok += 1
             except NSEFetchError as e:
                 fail += 1
@@ -197,7 +245,14 @@ def fetch_nse(
             time.sleep(throttle)
     finally:
         client.close()
-    log.info("fetch_nse_done", ok=ok, failed=fail, total=len(symbols))
+    log.info("fetch_nse_done", ok=ok, failed=fail, stale_refused=stale,
+             total=len(symbols))
+    if stale and ok == 0:
+        # Every single symbol came back stale. That is not a per-symbol data
+        # quirk, it is the frozen-endpoint signature described in the docstring.
+        # Exit non-zero so a human notices instead of reading "done" and assuming
+        # the gap-fill worked.
+        raise typer.Exit(code=1)
 
 
 @app.command()
@@ -309,6 +364,15 @@ def fetch_many(
         # Always called inside counter_lock by the caller.
         counter["by_status"][name] = counter["by_status"].get(name, 0) + 1
 
+    # Reference point for "is this export stale?", computed ONCE per run: the
+    # newest quarter anyone in the warehouse has reported. See the staleness
+    # comment in process() for why this is a live query and not a constant.
+    with app_conn() as _conn, _conn.cursor() as _cur:
+        _cur.execute("SELECT MAX(period_end) AS d FROM app.fundamentals_quarterly")
+        _row = _cur.fetchone()
+        market_newest_quarter = _row["d"] if _row else None
+    log.info("market_newest_quarter", period_end=str(market_newest_quarter))
+
     def process(symbol: str, n_total: int) -> None:
         """Fetch + parse + save one symbol. Each worker sleeps the per-call
         throttle AFTER each fetch so its next pickup is naturally spaced.
@@ -323,18 +387,50 @@ def fetch_many(
             # consolidated Data Sheet with the Quarters section missing/empty
             # (recent IPOs, companies whose consolidated view lags standalone),
             # which downstream reads as "no latest result" and — worse — lets a
-            # stock be scored off stale annuals alone. If the primary
-            # (consolidated) parse has no quarterly rows, pull the standalone
-            # export and backfill the missing quarters. Consolidated annuals
-            # still win on any overlap; standalone is pure fill.
-            if not parsed.quarterly and info.variant == "consolidated":
+            # stock be scored off stale annuals alone. Pull the standalone export
+            # and backfill the missing quarters. Consolidated annuals still win
+            # on any overlap; standalone is pure fill.
+            #
+            # THE TRIGGER USED TO BE `not parsed.quarterly` — presence, not
+            # freshness. That tested the wrong thing. An export with five
+            # quarters ending 2024-12-31 has quarterly rows, so it never fired,
+            # and the symbol was saved with financials ~21 months old. The
+            # scorer's freshness gate then dropped it from the scored universe,
+            # which is how 23 names ended up in 'gated_stale_financials' —
+            # invisible, because the one mechanism that could have repaired them
+            # declined to run on the grounds that the data existed.
+            #
+            # Presence is a degenerate case of staleness, so test staleness and
+            # get both. The reference is market_newest_quarter — the newest
+            # quarter ANY company in the warehouse has reported — not a literal
+            # date. A literal would need editing every quarter and would silently
+            # start passing everything the moment someone forgot. Comparing
+            # against the market means the bar rises by itself as results come
+            # in, and it self-disables correctly: on an empty warehouse the
+            # reference is None and only the no-quarters case fires.
+            #
+            # Two quarters of slack, not one: a company that has genuinely not
+            # filed yet is normally one quarter behind the fastest filers during
+            # results season, and firing on that would double the scrape for a
+            # large slice of the universe every quarter for nothing. Two behind
+            # is not a reporting calendar, it is a broken export.
+            newest_q = max(parsed.quarterly.keys(), default=None)
+            export_is_stale = (
+                newest_q is None
+                or (market_newest_quarter is not None
+                    and (market_newest_quarter - newest_q).days > 185)
+            )
+            if export_is_stale and info.variant == "consolidated":
                 try:
                     s_info, s_data = fetch_company_export(
                         symbol, client=client, prefer="standalone"
                     )
                     parsed = merge_parsed(parsed, parse_export(s_data))
                     log.info("standalone_quarterly_merge", symbol=symbol,
-                             quarters=len(parsed.quarterly))
+                             quarters=len(parsed.quarterly),
+                             was_newest=str(newest_q),
+                             now_newest=str(max(parsed.quarterly.keys(), default=None)),
+                             market_newest=str(market_newest_quarter))
                 except (NotFound, ScrapeError, ParseError) as e:
                     # Fallback is best-effort — a missing standalone view just
                     # means we save what we have (consolidated annuals).
@@ -1511,7 +1607,101 @@ def score_cmd(snapshot: str = typer.Option(None, help="YYYY-MM-DD; defaults to t
         except Exception as e:
             # DQ checks failing to RUN is itself a warning, not a hard error.
             log.warning("dq_checks_errored", error=str(e)[:200])
+
+        # Coverage ledger — the accounting pass. Every active symbol is filed
+        # into exactly one bucket and the partition is asserted, so a symbol
+        # cannot fall out of the pipeline unnoticed the way 472 never-scraped
+        # names did for months. See coverage.py for why this replaces the
+        # hand-tuned row-count thresholds rather than adding to them.
+        #
+        # This runs LAST, after scores and metrics have landed, because it
+        # classifies the end state of this snapshot. It is best-effort in the
+        # same sense as the DQ block — an accounting failure must not roll back
+        # a good scoring run — but unlike DQ it prints the full table every
+        # time, pass or fail, because the bucket movement IS the report.
+        try:
+            from .coverage import (
+                write_ledger, check_partition, check_no_problems,
+                check_no_regression, delta_report, format_report,
+            )
+            bucket_counts = write_ledger(conn, snap)
+            conn.commit()
+            rows, prev = delta_report(conn, snap)
+            for line in format_report(rows, prev, snap).splitlines():
+                log.info("coverage", line=line)
+            cov = (check_partition(conn, snap)
+                   + check_no_problems(conn, snap)
+                   + check_no_regression(conn, snap))
+            for r in cov:
+                (log.info if r.passed else log.warning)(
+                    "coverage_check", name=r.name, passed=r.passed, detail=r.message)
+            log.info("coverage_done",
+                     failed=sum(1 for r in cov if not r.passed),
+                     total=len(cov), **bucket_counts)
+        except Exception as e:
+            log.warning("coverage_ledger_errored", error=str(e)[:200])
+            conn.rollback()
     log.info("score_done", **counts)
+
+
+@app.command("coverage")
+def coverage_cmd(
+    snapshot: Optional[str] = typer.Option(
+        None, help="Snapshot date (YYYY-MM-DD). Defaults to the latest scored snapshot."),
+    write: bool = typer.Option(
+        False, "--write",
+        help="Recompute and persist the ledger for this snapshot before reporting. "
+             "Off by default so the report is a pure read."),
+    fail_on_problem: bool = typer.Option(
+        True,
+        help="Exit non-zero if any problem bucket is non-empty or the partition "
+             "does not reconcile. Keep this on in CI — a coverage hole that exits "
+             "0 is how the last one stayed invisible for five months."),
+):
+    """Report where every active symbol ended up, and assert the partition.
+
+    The replacement for --snapshot-min-rows and friends. Contains no tunable
+    thresholds: the assertions are 'the buckets sum to the universe', 'nothing
+    is unclassified', and 'the problem buckets are empty'. None of those rot as
+    the universe grows, which is the specific way every previous check failed.
+    """
+    from .coverage import (
+        write_ledger, check_partition, check_no_problems,
+        check_no_regression, delta_report, format_report,
+    )
+    configure_logging()
+
+    with app_conn() as conn:
+        if snapshot:
+            snap = _date.fromisoformat(snapshot)
+        else:
+            with conn.cursor() as cur:
+                cur.execute("SELECT MAX(snapshot_date) AS d FROM app.scores")
+                row = cur.fetchone()
+                snap = row["d"] if row else None
+        if snap is None:
+            log.error("no_snapshot_found")
+            raise typer.Exit(code=1)
+
+        if write:
+            write_ledger(conn, snap)
+            conn.commit()
+
+        rows, prev = delta_report(conn, snap)
+        print(format_report(rows, prev, snap))
+        print()
+
+        results = (check_partition(conn, snap)
+                   + check_no_problems(conn, snap)
+                   + check_no_regression(conn, snap))
+        for r in results:
+            print(r.short())
+
+        failed = [r for r in results if not r.passed]
+        print()
+        print(f"{len(results) - len(failed)} passed, {len(failed)} failed")
+        if failed and fail_on_problem:
+            raise typer.Exit(code=1)
 
 
 @app.command("import-themes")

@@ -140,33 +140,86 @@ def save_dividend_only_meta(
         )
 
 
+# ── screener_meta writers ────────────────────────────────────────────────────
+#
+# BOTH OF THESE MUST UPSERT. They were plain UPDATEs until 2026-09-19, and that
+# single omission is the root cause of the largest data gap this project has had.
+#
+# There is no INSERT into app.screener_meta anywhere in the codebase — not in the
+# ETL, not in a migration. The rows that exist were created by a one-off seed when
+# the universe was ~2,150. `sync-universe` has onboarded 472 new NSE listings
+# since. For every one of them:
+#
+#   1. fetch-many queues them FIRST (ORDER BY ... last_scraped_at NULLS FIRST),
+#      correctly treating a missing row as "never scraped".
+#   2. The scrape runs. Success or failure, the result is written with
+#      `UPDATE ... WHERE symbol = %s`, which matches ZERO rows.
+#   3. psycopg raises nothing. cur.rowcount is 0 and nobody looked. The result
+#      evaporates.
+#   4. last_scraped_at stays NULL, so next week they are queued first again.
+#
+# So 472 symbols were re-scraped at the head of the queue every single week,
+# burning the 180-minute budget, and could never record that it had happened.
+# They also stayed invisible to every coverage check, because those all did
+# `screener_meta JOIN universe` — an INNER JOIN onto the table whose absence was
+# the bug, so the missing rows were filtered out before the percentage was
+# computed. The weekly report said 99.8% coverage while it was 81.8%.
+#
+# The rowcount assertion below is not defensive padding; it is the specific thing
+# whose absence made this silent for five months. A write that affects no rows is
+# a failed write and must say so.
+
+def _assert_wrote(cur, symbol: str, op: str) -> None:
+    """A meta write that touched no rows is a failure, not a no-op.
+
+    This is the tripwire that was missing. Raising here is deliberate: the caller
+    in cli.py already wraps each symbol in try/except and routes the exception to
+    the failure counter, so one bad symbol is contained — but it can no longer
+    pass as success.
+    """
+    if cur.rowcount != 1:
+        raise RuntimeError(
+            f"screener_meta {op} for {symbol} affected {cur.rowcount} rows, expected 1"
+        )
+
+
 def update_meta_success(conn: psycopg.Connection, symbol: str, export_id: str, size: int) -> None:
     with conn.cursor() as cur:
         cur.execute(
             """
-            UPDATE app.screener_meta
-            SET export_id = %s,
-                last_scraped_at = NOW(),
-                last_export_size_bytes = %s,
-                last_status = 'ok',
-                last_error = NULL,
-                consecutive_failures = 0
-            WHERE symbol = %s
+            INSERT INTO app.screener_meta
+                (symbol, export_id, last_scraped_at, last_export_size_bytes,
+                 last_status, last_error, consecutive_failures)
+            VALUES (%s, %s, NOW(), %s, 'ok', NULL, 0)
+            ON CONFLICT (symbol) DO UPDATE
+            SET export_id              = EXCLUDED.export_id,
+                last_scraped_at        = EXCLUDED.last_scraped_at,
+                last_export_size_bytes = EXCLUDED.last_export_size_bytes,
+                last_status            = 'ok',
+                last_error             = NULL,
+                consecutive_failures   = 0
             """,
-            (export_id, size, symbol),
+            (symbol, export_id, size),
         )
+        _assert_wrote(cur, symbol, "success")
 
 
 def update_meta_failure(conn: psycopg.Connection, symbol: str, status: str, error: str) -> None:
     with conn.cursor() as cur:
         cur.execute(
             """
-            UPDATE app.screener_meta
-            SET last_scraped_at = NOW(),
-                last_status = %s,
-                last_error = %s,
-                consecutive_failures = consecutive_failures + 1
-            WHERE symbol = %s
+            INSERT INTO app.screener_meta
+                (symbol, last_scraped_at, last_status, last_error, consecutive_failures)
+            VALUES (%s, NOW(), %s, %s, 1)
+            ON CONFLICT (symbol) DO UPDATE
+            SET last_scraped_at      = EXCLUDED.last_scraped_at,
+                last_status          = EXCLUDED.last_status,
+                last_error           = EXCLUDED.last_error,
+                -- Increment the EXISTING counter, not EXCLUDED's literal 1 —
+                -- consecutive_failures is what drives the retry ordering and the
+                -- cookie-health alarm, so it has to keep climbing across runs.
+                consecutive_failures = app.screener_meta.consecutive_failures + 1
             """,
-            (status, error[:500], symbol),
+            (symbol, status, error[:500]),
         )
+        _assert_wrote(cur, symbol, "failure")

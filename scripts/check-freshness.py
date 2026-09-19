@@ -13,9 +13,20 @@ Checks run against Neon (production):
                             score archive (the moat). Self-clears once cadence
                             resumes, so it's loud when a hole forms, not forever.
 
-  1b. app.scores rows     — latest snapshot has the full universe (~2,150)?
-                            Catches a PARTIAL snapshot (date recent but the
-                            score step was cut short, e.g. a job timeout).
+  1b. app.scores coverage — scored/active-universe ≥ 97%?
+                            A RATIO, never a row count. This was `>= 2000 rows`
+                            with a comment saying "full universe ~2,150"; the
+                            universe grew to 2,622, the constant did not, and a
+                            472-symbol hole cleared the floor every week without
+                            ever going red. Both sides are now read at run time
+                            so the check cannot rot as the universe grows.
+
+  1c. app.coverage_ledger — does every active symbol reconcile into exactly one
+                            bucket, with the problem buckets empty? The check
+                            with no tunable numbers at all: it asserts a
+                            partition rather than a level, so there is nothing to
+                            re-audit when the universe changes size. See
+                            etl/src/fundamental_etl/coverage.py.
 
   2. golden.price_history — MAX(date) within 4 days?
                             refresh-ltp.py runs weekdays after close.
@@ -152,27 +163,85 @@ def check_snapshot_cadence(conn: psycopg.Connection, max_gap_days: int) -> tuple
     )
 
 
-def check_snapshot_completeness(conn: psycopg.Connection, min_rows: int) -> tuple[bool, str]:
-    """Verify the latest snapshot isn't a partial/truncated run.
+def check_snapshot_completeness(conn: psycopg.Connection, min_ratio: float) -> tuple[bool, str]:
+    """Verify the latest snapshot covers the universe as it is TODAY.
 
-    Scoring covers the whole active universe (~2,150), so a latest snapshot
-    with far fewer rows means the score step was cut short (e.g. the job timed
-    out mid-run). snapshot_age alone can't catch this — the date is recent, the
-    data is just incomplete."""
+    THIS USED TO BE A CONSTANT, AND THE CONSTANT IS WHY WE MISSED 472 STOCKS.
+
+    The previous version asserted `scored >= 2000`, with a docstring reading
+    "full universe ~2,150". Both were accurate the day they were written.
+    sync-universe-monthly then grew the universe to 2,622 while scored stayed at
+    2,122 — so 472 symbols went missing and this check cleared its floor by 122
+    rows every single week without ever going red.
+
+    That is the general failure mode: an absolute threshold encodes a fact about
+    the past, and it rots toward SILENCE. A stale floor does not error, it just
+    keeps passing. So the threshold is now a RATIO against the live universe
+    count. It cannot go stale, because both sides of the comparison are read at
+    run time.
+
+    Note the denominator is app.universe, not `scores JOIN universe` — joining
+    through scores would exclude the unscored rows that are the entire thing
+    being measured."""
     with conn.cursor() as cur:
         cur.execute("""
             WITH latest AS (SELECT MAX(snapshot_date) AS d FROM app.scores)
-            SELECT COUNT(*)::int
-              FROM app.scores s JOIN latest ON s.snapshot_date = latest.d
+            SELECT (SELECT COUNT(*)::int FROM app.scores s JOIN latest ON s.snapshot_date = latest.d),
+                   (SELECT COUNT(*)::int FROM app.universe WHERE is_active)
         """)
         row = cur.fetchone()
     n = int(row[0]) if row else 0
-    ok = n >= min_rows
+    universe = int(row[1]) if row else 0
+    ratio = (n / universe) if universe else 0.0
+    ok = ratio >= min_ratio
     icon = "✓" if ok else "✗"
     return ok, (
-        f"{icon} snapshot_rows: {n} scored in latest snapshot "
-        f"(expected ≥ {min_rows})"
+        f"{icon} snapshot_coverage: {n}/{universe} active symbols scored "
+        f"({ratio:.1%}, expected ≥ {min_ratio:.0%})"
     )
+
+
+def check_coverage_ledger(conn: psycopg.Connection) -> tuple[bool, str]:
+    """Assert the per-symbol ledger reconciles — the check with no constants.
+
+    Three things, none of which contains a tunable number:
+      * the ledger has a row for every active symbol (nothing vanished),
+      * nothing landed in the 'unclassified' residual bucket (nothing is
+        unexplained), and
+      * the problem buckets are EMPTY — not small, empty.
+
+    Zero is the only threshold here because zero is the only value that cannot
+    rot. Every number we have ever picked for "acceptable" ended up normalising a
+    permanent hole: the stale-financials assertion was given a ceiling of 40
+    against a baseline of 25, which turned an alert into a thermostat and made a
+    23-stock gap officially fine for two months.
+
+    See etl/src/fundamental_etl/coverage.py for the full reasoning."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT MAX(snapshot_date) FROM app.coverage_ledger")
+        row = cur.fetchone()
+        snap = row[0] if row else None
+        if snap is None:
+            return False, "✗ coverage_ledger: no rows — the score run never wrote a ledger"
+        cur.execute("""
+            SELECT (SELECT COUNT(*)::int FROM app.coverage_ledger WHERE snapshot_date = %s),
+                   (SELECT COUNT(*)::int FROM app.universe WHERE is_active),
+                   (SELECT COUNT(*)::int FROM app.coverage_ledger
+                     WHERE snapshot_date = %s AND status = 'unclassified'),
+                   (SELECT COUNT(*)::int FROM app.coverage_ledger
+                     WHERE snapshot_date = %s
+                       AND status IN ('never_attempted','fetch_failing','no_metrics'))
+        """, (snap, snap, snap))
+        ledger_n, universe_n, unclassified_n, problem_n = cur.fetchone()
+
+    ok = (ledger_n == universe_n) and unclassified_n == 0 and problem_n == 0
+    icon = "✓" if ok else "✗"
+    bits = [f"{ledger_n}/{universe_n} accounted for"]
+    if unclassified_n:
+        bits.append(f"{unclassified_n} UNCLASSIFIED")
+    if problem_n:
+        bits.append(f"{problem_n} in problem buckets")
+    return ok, f"{icon} coverage_ledger ({snap}): " + ", ".join(bits)
 
 
 def check_price_age(conn: psycopg.Connection, max_days: int) -> tuple[bool, str]:
@@ -241,19 +310,25 @@ def check_panel_cache_populated(conn: psycopg.Connection) -> tuple[bool, str]:
     with conn.cursor() as cur:
         cur.execute("""
             WITH latest AS (SELECT MAX(snapshot_date) AS d FROM app.scores)
-            SELECT COUNT(*)::int
-              FROM app.cluster_stocks_panel_cache c
-              JOIN latest ON c.snapshot_date = latest.d
+            SELECT (SELECT COUNT(*)::int FROM app.cluster_stocks_panel_cache c
+                      JOIN latest ON c.snapshot_date = latest.d),
+                   (SELECT COUNT(*)::int FROM app.scores s
+                      JOIN latest ON s.snapshot_date = latest.d)
         """)
         row = cur.fetchone()
     n = int(row[0]) if row else 0
-    # Threshold: at least 500 rows (we usually have ~2,150).  A small
-    # number could indicate a partial refresh.  Zero = definitely broken.
-    ok = n >= 500
+    scored = int(row[1]) if row else 0
+    # The panel cache should mirror the scored set one-for-one — it IS the scored
+    # set, denormalised for the client. So compare it to the scored count rather
+    # than to a constant. The old threshold was `>= 500` with a comment reading
+    # "we usually have ~2,150": it would have passed a refresh that dropped three
+    # quarters of the panel, and like every other constant in this file it was
+    # already describing a universe size that no longer exists.
+    ok = scored > 0 and n >= scored
     icon = "✓" if ok else "✗"
     return ok, (
-        f"{icon} panel_cache: {n} rows for latest snapshot "
-        f"(expected ≥ 500)"
+        f"{icon} panel_cache: {n} rows vs {scored} scored in latest snapshot"
+        + ("" if ok else f" — {scored - n} missing from the panel")
     )
 
 
@@ -352,8 +427,13 @@ def main() -> int:
         help="Alert if latest snapshot is older than this (default 8)")
     parser.add_argument("--price-max-days", type=int, default=4,
         help="Alert if latest price is older than this (default 4 — covers a long weekend + holiday)")
-    parser.add_argument("--snapshot-min-rows", type=int, default=2000,
-        help="Alert if the latest snapshot has fewer than this many scored rows (default 2000; full universe ~2,150)")
+    # A RATIO, not a row count. The old `--snapshot-min-rows 2000` was frozen
+    # when the universe was ~2,150; the universe grew to 2,622 and the floor did
+    # not, so a 472-symbol hole cleared it every week. A ratio re-reads both
+    # sides at run time and cannot go stale. 0.97 allows the handful of symbols
+    # legitimately gated for short history without tolerating a real gap.
+    parser.add_argument("--snapshot-min-coverage", type=float, default=0.97,
+        help="Alert if scored/active-universe falls below this ratio (default 0.97)")
     parser.add_argument("--snapshot-max-gap-days", type=int, default=10,
         help="Alert if the gap between the two most recent weekly snapshots exceeds this (default 10 = 7d cadence + holiday slack; larger = a skipped week / archive hole)")
     parser.add_argument("--intraday-max-minutes", type=int, default=150,
@@ -374,7 +454,8 @@ def main() -> int:
         with psycopg.connect(app_url) as conn:
             results.append(check_snapshot_age(conn, args.snapshot_max_days))
             results.append(check_snapshot_cadence(conn, args.snapshot_max_gap_days))
-            results.append(check_snapshot_completeness(conn, args.snapshot_min_rows))
+            results.append(check_snapshot_completeness(conn, args.snapshot_min_coverage))
+            results.append(check_coverage_ledger(conn))
             results.append(check_panel_cache_populated(conn))
             results.append(check_cookie_health(conn))
             results.append(check_upstox_token(conn))
