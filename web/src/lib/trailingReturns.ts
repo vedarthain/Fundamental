@@ -1,6 +1,12 @@
 /**
- * trailingReturns — 1W / 1M / 1Y price returns computed off golden's LATEST
+ * trailingReturns — 1D / 1W / 1M / 1Y price returns computed off golden's LATEST
  * close, for any set of symbols.
+ *
+ * NOTE ON 1D: this is a close-to-close move between the two newest daily bars.
+ * It is NOT the live intraday figure — surfaces with an intraday pinger (the
+ * watchlist, the portfolio tables, /api/scanner/returns) overlay `eff_ret_1d`
+ * on top and should keep doing so. Pages rendered from a server cache have no
+ * intraday tick to overlay, and for those this is the correct 1D.
  *
  * WHY THIS EXISTS
  *
@@ -52,6 +58,12 @@ import { golden } from "@/lib/db";
 import { guardedPctChange } from "@/lib/returnGuards";
 
 export type TrailingReturns = {
+  /** Latest close vs the PREVIOUS TRADING BAR — not "latest − 1 calendar day".
+   *  Over a weekend or a market holiday the calendar anchor would land on a
+   *  non-trading date and the on-or-before seek would return the same bar as
+   *  `latest`, printing a flat 0.0% for every name on a Monday. The other three
+   *  windows are long enough that a day of slack is immaterial; 1D is not. */
+  ret_1d: number | null;
   ret_1w: number | null;
   ret_1m: number | null;
   ret_1y: number | null;
@@ -125,6 +137,7 @@ async function fetchTrailingReturns(
     const rows = await golden<{
       symbol: string;
       last_c: string | null;
+      c_1d: string | null;
       c_1w: string | null;
       c_1m: string | null;
       c_1y: string | null;
@@ -145,10 +158,14 @@ async function fetchTrailingReturns(
       )
       SELECT l.symbol,
              l.c::text    AS last_c,
+             a1d.c::text  AS c_1d,
              a1w.c::text  AS c_1w,
              a1m.c::text  AS c_1m,
              a1y.c::text  AS c_1y
       FROM latest l
+      LEFT JOIN LATERAL (SELECT COALESCE(adj_close, close) AS c FROM golden.price_history ph
+        WHERE ph.symbol = l.symbol AND ph.interval = '1d' AND COALESCE(ph.adj_close, ph.close) IS NOT NULL
+          AND ph.date <  l.ld       ORDER BY ph.date DESC LIMIT 1) a1d ON true
       LEFT JOIN LATERAL (SELECT COALESCE(adj_close, close) AS c FROM golden.price_history ph
         WHERE ph.symbol = l.symbol AND ph.interval = '1d' AND COALESCE(ph.adj_close, ph.close) IS NOT NULL
           AND ph.date <= l.ld - 7   ORDER BY ph.date DESC LIMIT 1) a1w ON true
@@ -170,6 +187,7 @@ async function fetchTrailingReturns(
       if (last == null) continue;
       const k = bare(r.symbol);
       const v: TrailingReturns = {
+        ret_1d: frac(guardedPctChange(last, num(r.c_1d), "1d")),
         ret_1w: frac(guardedPctChange(last, num(r.c_1w), "1w")),
         ret_1m: frac(guardedPctChange(last, num(r.c_1m), "1m")),
         ret_1y: frac(guardedPctChange(last, num(r.c_1y), "1y")),

@@ -64,7 +64,12 @@ function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(href + "/");
 }
 
+// Mobile popups render straight off these, never off a hand-copied list: a
+// literal duplicate of the Segments submenu is exactly how /themes shipped to
+// desktop and stayed invisible on phones.
 const TOOLS_LINK = LINKS.find((l) => l.href === "/tools")!;
+const SEGMENTS_LINK = LINKS.find((l) => l.label === "Segments")!;
+const SEGMENTS_ITEMS = SEGMENTS_LINK.submenu ?? [];
 
 export function TopNavLinks() {
   const pathname = usePathname() ?? "";
@@ -265,7 +270,7 @@ function MobileTabBar({ pathname, user, isAdmin, showWatchlist, showSignIn }: Mo
   // Close on route change.
   useEffect(() => { setPopup(null); }, [pathname]);
 
-  const segmentsActive = ["/indices", "/sectors"].some((p) => isActive(pathname, p));
+  const segmentsActive = SEGMENTS_ITEMS.some((s) => isActive(pathname, s.href));
   const toolsActive = isActive(pathname, "/tools") || isActive(pathname, "/ideas") || (TOOLS_LINK.submenu ?? []).some((s) => isActive(pathname, s.href));
   const accountActive = isActive(pathname, "/watchlist") || isActive(pathname, "/portfolio") ||
                         isActive(pathname, "/login") || isActive(pathname, "/admin") ||
@@ -398,8 +403,16 @@ function PopupSheet({
     >
       {which === "segments" && (
         <>
-          <PopupLink href="/indices" label="Indices" sublabel="Official NSE benchmarks + constituents" active={isActive(pathname, "/indices")} onClose={onClose} />
-          <PopupLink href="/sectors" label="Sectors" sublabel="Our full-universe scoring view — every stock" active={isActive(pathname, "/sectors")} onClose={onClose} />
+          {SEGMENTS_ITEMS.map((item) => (
+            <PopupLink
+              key={item.href}
+              href={item.href}
+              label={item.label}
+              sublabel={item.description}
+              active={isActive(pathname, item.href)}
+              onClose={onClose}
+            />
+          ))}
         </>
       )}
 

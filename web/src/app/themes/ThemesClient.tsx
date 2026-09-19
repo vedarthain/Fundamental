@@ -14,7 +14,7 @@
  * entries (Drone, Data Center, Green Hydrogen, Nuclear Power) are the ones we
  * cannot derive from an industry classification at all.
  */
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import Link from "next/link";
 import { band, bandColor, displayCompanyName } from "@/lib/score";
 
@@ -37,6 +37,9 @@ export type ThemeStock = {
   quality_pct: number | null;
   valuation_pct: number | null;
   momentum_pct: number | null;
+  /** Close-to-close between the two newest daily bars. No intraday overlay on
+   *  this page — it renders from a server cache, not a pinger. */
+  ret_1d: number | null;
   ret_1w: number | null;
   ret_1m: number | null;
   ret_1y: number | null;
@@ -48,7 +51,20 @@ export type ThemesData = {
   snapshotDate: string | null;
 };
 
-type SortKey = "market_cap_cr" | "composite_pct" | "ret_1w" | "ret_1m" | "ret_1y";
+type SortKey =
+  | "price"
+  | "market_cap_cr"
+  | "composite_pct"
+  | "ret_1d"
+  | "ret_1w"
+  | "ret_1m"
+  | "ret_1y";
+type SortDir = "asc" | "desc";
+
+/** Rows shown at once. A theme can carry 200+ constituents; the page's job is
+ *  "what's in this theme and what moved", which a 12-row window answers without
+ *  a scroll that loses the header. */
+const PAGE_SIZE = 12;
 
 // ── Formatting ──────────────────────────────────────────────────────────────
 
@@ -60,6 +76,27 @@ const fmtNum = (v: number | null) =>
 // readable at a glance, so fold to ₹ lakh crore there.
 const fmtMcap = (v: number | null) =>
   v == null ? "—" : v >= 100_000 ? `${(v / 100_000).toFixed(2)}L Cr` : `${Math.round(v).toLocaleString("en-IN")} Cr`;
+
+function PagerButton({
+  label,
+  disabled,
+  onClick,
+}: {
+  label: string;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="px-2.5 py-1 rounded border hairline text-[12px] disabled:opacity-40 disabled:cursor-default hover:bg-[var(--color-paper)] transition-colors"
+    >
+      {label}
+    </button>
+  );
+}
 
 const deltaColor = (v: number | null) =>
   v == null ? undefined : v > 0 ? "var(--color-delta-up, #087443)" : v < 0 ? "var(--color-delta-down, #b00)" : undefined;
@@ -87,28 +124,76 @@ export function ThemesClient({
     () => themes.find((t) => t.slug === initialSlug)?.id ?? grouped.theme[0]?.id ?? themes[0]?.id ?? null,
   );
   const [query, setQuery] = useState("");
-  const [sortKey, setSortKey] = useState<SortKey>("market_cap_cr");
+  const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({
+    key: "market_cap_cr",
+    dir: "desc",
+  });
+  const [page, setPage] = useState(0);
 
   const select = useCallback(
     (t: ThemeTile) => {
       setActiveId(t.id);
+      // Page is per-theme: landing on "page 4 of Drone" after paging through
+      // Defence would look like an empty theme.
+      setPage(0);
       // Shareable URL without a server round-trip, matching /sectors.
       window.history.replaceState(null, "", `/themes?theme=${t.slug}`);
     },
     [],
   );
 
+  /** Same key → flip direction. New key → start descending, since every column
+   *  here is a "biggest first" question (largest cap, best score, top gainer)
+   *  except when you deliberately ask for the other end. */
+  const toggleSort = useCallback((key: SortKey) => {
+    setSort((s) => (s.key === key ? { key, dir: s.dir === "desc" ? "asc" : "desc" } : { key, dir: "desc" }));
+    // Re-sorting reshuffles which rows are on which page, so page 3 of the old
+    // order means nothing in the new one.
+    setPage(0);
+  }, []);
+
   const active = themes.find((t) => t.id === activeId) ?? null;
   const rows = useMemo(() => {
     const list = activeId == null ? [] : (stocksByTheme[activeId] ?? []);
-    const sorted = [...list].sort((a, b) => {
-      const av = a[sortKey], bv = b[sortKey];
+    const mul = sort.dir === "desc" ? 1 : -1;
+    return [...list].sort((a, b) => {
+      const av = a[sort.key], bv = b[sort.key];
+      // Nulls sink in BOTH directions. Letting them float to the top of an
+      // ascending sort would answer "worst 1D" with a list of names that have
+      // no 1D at all.
+      if (av == null && bv == null) return 0;
       if (av == null) return 1;
       if (bv == null) return -1;
-      return bv - av;
+      return mul * (bv - av);
     });
-    return sorted;
-  }, [activeId, stocksByTheme, sortKey]);
+  }, [activeId, stocksByTheme, sort]);
+
+  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  // Clamped rather than stored-clamped: a theme switch can shrink the list
+  // before the setPage(0) above is applied in the same render.
+  const pageSafe = Math.min(page, pageCount - 1);
+  const pageRows = useMemo(
+    () => rows.slice(pageSafe * PAGE_SIZE, pageSafe * PAGE_SIZE + PAGE_SIZE),
+    [rows, pageSafe],
+  );
+
+  // ← / → page the table. Ignored while typing in the theme filter, and when a
+  // modifier is held (⌘←/⌥← are browser-back and word-jump — stealing those
+  // would break navigation on a page that has a text input).
+  useEffect(() => {
+    if (pageCount <= 1) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      e.preventDefault();
+      const step = e.key === "ArrowRight" ? 1 : -1;
+      setPage((p) => Math.min(pageCount - 1, Math.max(0, Math.min(p, pageCount - 1) + step)));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pageCount]);
 
   // Theme-list filter, not a stock filter: with 110 entries the rail is the
   // thing that needs finding, and the constituent tables are short.
@@ -173,7 +258,13 @@ export function ThemesClient({
             <>
               <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-2.5">
                 <h2 className="font-display text-[17px] tracking-tight">{active.label}</h2>
-                <span className="muted-text text-[12px]">{rows.length} names</span>
+                <span className="muted-text text-[12px]">
+                  {rows.length === 0
+                    ? "0 names"
+                    : pageCount === 1
+                      ? `${rows.length} names`
+                      : `${pageSafe * PAGE_SIZE + 1}–${pageSafe * PAGE_SIZE + pageRows.length} of ${rows.length}`}
+                </span>
               </div>
 
               <div className="overflow-x-auto">
@@ -181,10 +272,11 @@ export function ThemesClient({
                   <thead>
                     <tr className="text-[11px] uppercase tracking-wide muted-text border-b hairline">
                       <th className="text-left py-2 pr-3 font-medium">Stock</th>
-                      <th className="text-right py-2 px-2 font-medium">Price</th>
                       {([
+                        ["price", "Price"],
                         ["market_cap_cr", "Mkt cap"],
                         ["composite_pct", "Score"],
+                        ["ret_1d", "1D"],
                         ["ret_1w", "1W"],
                         ["ret_1m", "1M"],
                         ["ret_1y", "1Y"],
@@ -192,17 +284,30 @@ export function ThemesClient({
                         <th key={k} className="text-right py-2 px-2 font-medium">
                           <button
                             type="button"
-                            onClick={() => setSortKey(k)}
-                            className={sortKey === k ? "ink-text font-semibold" : "hover:underline"}
+                            onClick={() => toggleSort(k)}
+                            title={`Sort by ${label} — click again to reverse`}
+                            className={
+                              sort.key === k
+                                ? "ink-text font-semibold"
+                                : "hover:underline"
+                            }
                           >
                             {label}
+                            {/* Arrow only on the active column: showing a
+                                neutral glyph on all seven turns the header into
+                                noise and hides which one is live. */}
+                            {sort.key === k && (
+                              <span aria-hidden className="ml-0.5 text-[9px]">
+                                {sort.dir === "desc" ? "▼" : "▲"}
+                              </span>
+                            )}
                           </button>
                         </th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map((s) => (
+                    {pageRows.map((s) => (
                       <tr key={s.symbol} className="border-b hairline last:border-0">
                         <td className="py-2 pr-3">
                           <Link href={`/stock/${s.symbol}`} className="hover:underline">
@@ -223,7 +328,7 @@ export function ThemesClient({
                             </span>
                           )}
                         </td>
-                        {(["ret_1w", "ret_1m", "ret_1y"] as const).map((k) => (
+                        {(["ret_1d", "ret_1w", "ret_1m", "ret_1y"] as const).map((k) => (
                           <td key={k} className="text-right py-2 px-2 tabular-nums" style={{ color: deltaColor(s[k]) }}>
                             {fmtPct(s[k])}
                           </td>
@@ -233,6 +338,29 @@ export function ThemesClient({
                   </tbody>
                 </table>
               </div>
+
+              {pageCount > 1 && (
+                <div className="flex items-center justify-between gap-3 mt-3">
+                  <span className="muted-text text-[11px]">
+                    Use ← → to page
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <PagerButton
+                      label="‹ Prev"
+                      disabled={pageSafe === 0}
+                      onClick={() => setPage(pageSafe - 1)}
+                    />
+                    <span className="text-[12px] tabular-nums muted-text">
+                      {pageSafe + 1} / {pageCount}
+                    </span>
+                    <PagerButton
+                      label="Next ›"
+                      disabled={pageSafe >= pageCount - 1}
+                      onClick={() => setPage(pageSafe + 1)}
+                    />
+                  </div>
+                </div>
+              )}
             </>
           )}
         </section>

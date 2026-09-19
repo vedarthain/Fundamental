@@ -1469,6 +1469,41 @@ export default function GraphClient({
         </aside>
         )}
 
+        {/* ── Spine: the page's context, set vertically against the grid ──
+            Same string as the header, rotated to read bottom-to-top, so the
+            "where am I" stays on screen even when the header has scrolled or
+            the tree is collapsed. 22px is the whole cost; the grid keeps the
+            rest.
+
+            `aria-hidden` because it is a verbatim duplicate of the header —
+            a screen reader announcing the same breadcrumb twice is worse than
+            not announcing this one at all. `writing-mode: vertical-rl` plus a
+            180° rotation is what produces bottom-up text; vertical-rl alone
+            reads top-down, which collides with the convention every chart
+            y-axis label on this page already uses.
+
+            Hidden below lg: on a narrow viewport 22px is real chart width and
+            the header copy is still there. */}
+        {curPage && (
+          <div
+            className="hidden lg:flex shrink-0 items-center justify-center overflow-hidden"
+            style={{ width: 22 }}
+            aria-hidden
+            title={`${activeSectorName} · ${curPage.indName} · ${curPage.indTotal} names · showing ${rangeStart}–${rangeEnd} : ${indPageIdx}/${indPageCount}`}
+          >
+            <span
+              className="text-[11.5px] leading-none whitespace-nowrap muted-text select-none"
+              style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}
+            >
+              <span className="ink-text font-medium">{activeSectorName}</span>
+              {" · "}
+              <span className="ink-text font-medium">{curPage.indName}</span>
+              {` · ${curPage.indTotal} names · showing ${rangeStart}–${rangeEnd} : `}
+              <span className="tabular-nums">{indPageIdx}/{indPageCount}</span>
+            </span>
+          </div>
+        )}
+
         {/* ── Right: candlestick grid — 3×2 (6) or 2×2 (4) per the toggle ── */}
         <div className={`min-w-0 flex-1 grid grid-rows-2 gap-3 ${perPage === 4 ? "grid-cols-2" : "grid-cols-3"}`}>
           {pageStocks.map((st) => {

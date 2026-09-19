@@ -46,7 +46,9 @@ async function loadAll(): Promise<ThemesData> {
   // feeds /sectors and the scanner. Nothing here comes from the import source:
   // prices and percentiles are ours, so a theme page cannot disagree with the
   // rest of the site about what a stock did today.
-  const rows = await sql<(Omit<ThemeStock, "ret_1w" | "ret_1m" | "ret_1y"> & { theme_id: number })[]>`
+  const rows = await sql<
+    (Omit<ThemeStock, "ret_1d" | "ret_1w" | "ret_1m" | "ret_1y"> & { theme_id: number })[]
+  >`
     SELECT m.theme_id,
            p.symbol,
            p.company_name,
@@ -76,6 +78,10 @@ async function loadAll(): Promise<ThemesData> {
     const t = trailing.get(base.symbol);
     (stocksByTheme[theme_id] ??= []).push({
       ...base,
+      // Close-to-close, not the intraday tick: this page is a 24h server cache
+      // with no pinger overlay, so the newest daily bar is the freshest 1D it
+      // can honestly show.
+      ret_1d: pct(t?.ret_1d),
       ret_1w: pct(t?.ret_1w),
       ret_1m: pct(t?.ret_1m),
       ret_1y: pct(t?.ret_1y),
@@ -89,7 +95,7 @@ async function loadAll(): Promise<ThemesData> {
 // panel cache, so this page must go stale at exactly the moment /sectors does.
 // Membership itself changes far more slowly than the 24h revalidate and is
 // refreshed out-of-band by the ETL importer.
-const getCachedAll = unstable_cache(() => loadAll(), ["themes-all", "v2-live-returns"], {
+const getCachedAll = unstable_cache(() => loadAll(), ["themes-all", "v3-with-1d"], {
   revalidate: 86400,
   tags: ["sectors", "panel-cache"],
 });

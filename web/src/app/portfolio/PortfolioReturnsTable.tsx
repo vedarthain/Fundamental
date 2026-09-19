@@ -8,9 +8,12 @@
  *
  * Those two groups answer different questions and the header says so. "Return"
  * is measured from YOUR average cost, so it depends on when you bought. The
- * 1D–1Y columns describe the INSTRUMENT over a calendar window — a name you
- * bought last week still shows a full 1Y number. Reading the 1Y column as
- * "what I made" is the easy mistake; that's what the Return column is for.
+ * 1D–1Y columns describe the INSTRUMENT over a calendar window. Reading the 1Y
+ * column as "what I made" is the easy mistake; that's what the Return column is
+ * for. Where you did NOT hold a name for the whole window the cell shows "—"
+ * rather than the stock's move: the summary strip already excludes those
+ * positions from its weighted 1D–1Y, so printing the number in the row made the
+ * row disagree with the total above it.
  * (Portfolio-level time-weighted return lives on the Scorecard tab.)
  *
  * Data path mirrors PortfolioScorecard: /api/portfolio/symbols for membership,
@@ -59,8 +62,9 @@ type ApiRow = {
    *  one-decimal rounding on d1, which is ±₹475 of noise on a ₹9.5L book. */
   prev_close: number | null;
   /** Earliest recorded buy. Drives the "you didn't hold this for that window"
-   *  fade on the trailing columns — a name bought last week still has a real
-   *  1Y price return, but it is the stock's, not yours. */
+   *  dash on the trailing columns — a name bought last week still has a real
+   *  1Y price return, but it is the stock's, not yours, so this table declines
+   *  to print it beside your cost. */
   bought_on?: string | null;
   ret_1w: number | null; // fraction
   ret_1m: number | null; // fraction
@@ -134,6 +138,15 @@ const WINDOW_DAYS: Record<"d1" | "w1" | "m1" | "y1", number> = {
 const WINDOW_LABEL: Record<"d1" | "w1" | "m1" | "y1", string> = {
   d1: "1D", w1: "1W", m1: "1M", y1: "1Y",
 };
+
+/**
+ * "You have not held this through the whole window." Drives BOTH the dash in the
+ * cell and the sort, so a row rendering "—" can't win a sort on that column with
+ * a value it isn't showing. A null `heldDays` (broker snapshot, no trade date)
+ * counts as held — suppressing a real figure on a guess is the worse error.
+ */
+const isPartial = (r: Display, k: "d1" | "w1" | "m1" | "y1"): boolean =>
+  r[k] != null && r.heldDays != null && r.heldDays < WINDOW_DAYS[k];
 
 const pctFromFrac = (f: number | null | undefined): number | null =>
   f == null ? null : f * 100;
@@ -265,8 +278,13 @@ export function PortfolioReturnsTable({ others = [] }: { others?: OtherRow[] }) 
     const dir = sort.dir === "asc" ? 1 : -1;
     return rows.filter(inBucket).sort((a, b) => {
       if (sort.key === "symbol") return dir * a.symbol.localeCompare(b.symbol);
-      const av = a[sort.key];
-      const bv = b[sort.key];
+      const k = sort.key;
+      // A trailing column the position wasn't held through renders "—", so it
+      // must sort as absent too — otherwise "sort by 1Y" puts a dashed row on
+      // top, ranked by a number the user can't see.
+      const win = k === "d1" || k === "w1" || k === "m1" || k === "y1" ? k : null;
+      const av = win && isPartial(a, win) ? null : a[k];
+      const bv = win && isPartial(b, win) ? null : b[k];
       // Nulls always sink, regardless of direction — a missing 1Y shouldn't
       // win the "best performer" sort.
       if (av == null && bv == null) return 0;
@@ -419,9 +437,9 @@ export function PortfolioReturnsTable({ others = [] }: { others?: OtherRow[] }) 
     { key: "ltp", label: "LTP", title: "Last traded price" },
     { key: "pnl", label: "Return", title: "Your unrealised return: LTP vs your average cost" },
     { key: "d1", label: "1D", title: "Price change over the last session" },
-    { key: "w1", label: "1W", title: "The stock's price change over the last week — faded if you bought part-way through it" },
-    { key: "m1", label: "1M", title: "The stock's price change over the last month — faded if you bought part-way through it" },
-    { key: "y1", label: "1Y", title: "The stock's price change over the last year — faded if you bought part-way through it" },
+    { key: "w1", label: "1W", title: "The stock's price change over the last week — “—” if you haven't held it a full week" },
+    { key: "m1", label: "1M", title: "The stock's price change over the last month — “—” if you haven't held it a full month" },
+    { key: "y1", label: "1Y", title: "The stock's price change over the last year — “—” if you haven't held it a full year" },
   ];
 
   const toggle = (key: SortKey) =>
@@ -514,7 +532,7 @@ export function PortfolioReturnsTable({ others = [] }: { others?: OtherRow[] }) 
         <span className="muted-text text-[11px]">
           {view === "others"
             ? "Live LTP · no 1D–1Y: unscored instruments have no price history"
-            : "Return is yours · 1D–1Y are the stock’s · faded = bought part-way through that window"}
+            : "Return is yours · 1D–1Y are the stock’s · “—” = not held for that full window"}
         </span>
       </div>
       {/* `overflow-x-auto` makes this a scroll container on BOTH axes (CSS
@@ -618,25 +636,29 @@ export function PortfolioReturnsTable({ others = [] }: { others?: OtherRow[] }) 
                   {fmtPct(r.pnl)}
                 </td>
                 {(["d1", "w1", "m1", "y1"] as const).map((k) => {
-                  // You did not own this for the whole window. The number is
-                  // still correct — it is the STOCK's move — so it stays on
-                  // screen; it is faded and captioned so it can't be read as
-                  // "what I made". Unknown buy date (broker snapshot) counts as
-                  // held: a fade on a guess is worse than no fade.
-                  const partial =
-                    r[k] != null && r.heldDays != null && r.heldDays < WINDOW_DAYS[k];
+                  // You did not own this for the whole window, so the cell shows
+                  // a dash rather than the stock's move. A faded number was the
+                  // earlier treatment and it failed in practice: a dimmed
+                  // "+44.1%" still reads as "+44.1% mine" at a glance, and the
+                  // summary strip already EXCLUDES these positions from the
+                  // weighted 1D-1Y — so the row was contradicting the total
+                  // above it. The reason survives in the tooltip; the number
+                  // itself lives on the stock page, where it isn't next to your
+                  // cost. Unknown buy date (broker snapshot) counts as held: a
+                  // dash on a guess would destroy a real figure.
+                  const partial = isPartial(r, k);
                   return (
                     <td
                       key={k}
                       className="px-3 py-2 text-right tabular-nums whitespace-nowrap"
-                      style={{ color: deltaColor(r[k]), opacity: partial ? 0.42 : undefined }}
+                      style={{ color: partial ? "var(--color-muted)" : deltaColor(r[k]) }}
                       title={
                         partial
-                          ? `Held ${r.heldDays} day${r.heldDays === 1 ? "" : "s"} — this is the stock's ${WINDOW_LABEL[k]} move over the full window, not your return.`
+                          ? `Held ${r.heldDays} day${r.heldDays === 1 ? "" : "s"} — not held for the full ${WINDOW_LABEL[k]} window, so there is no ${WINDOW_LABEL[k]} return for you yet.`
                           : undefined
                       }
                     >
-                      {fmtPct(r[k])}
+                      {partial ? "—" : fmtPct(r[k])}
                     </td>
                   );
                 })}
@@ -758,8 +780,8 @@ function SummaryStrip({
       {cells.some((c) => c.n > 0) && (
         <div className="muted-text text-[10.5px] mt-1">
           “−n new” = positions opened inside that window and therefore left out of it. They
-          still appear in the table below, faded, showing the stock&apos;s full-window move
-          rather than yours.
+          still appear in the table below, with “—” in that column: you haven&apos;t held them
+          long enough for the figure to be yours.
         </div>
       )}
     </div>
