@@ -28,9 +28,19 @@
 # table reuse), so each heredoc starts with DROP TABLE IF EXISTS.
 # Tmpfiles cleaned by the EXIT trap.
 #
-# Required env (export before running OR source from etl/.env.local):
+# Required env — both live in the repo-root .env.local (gitignored):
 #   NEON_APP_URL    = postgres URL for fundamental_app on Neon
 #   NEON_GOLDEN_URL = postgres URL for golden_db on Neon
+#
+#   set -a && source .env.local && set +a && scripts/sync-neon.sh
+#
+# The `set -a` matters: plain `source` defines the variables but does not export
+# them, and this script reads them from the environment.
+#
+# These used to be duplicated in etl/.env.local, which this comment pointed at.
+# That file is gone — it was never read by any code (config.py pins
+# REPO_ROOT/.env.local regardless of cwd), so it was a second copy of a
+# production password kept in sync by hand. Root .env.local is the only home.
 
 set -eo pipefail
 
