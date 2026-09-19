@@ -27,6 +27,8 @@ import { useWatchlist } from "@/lib/watchlist";
 import { WindowPicker } from "./WindowPicker";
 import { BookmarkMenu } from "./BookmarkMenu";
 import { useBookmarks, THEME_BOOKMARKS_KEY, newBookmarkId, type ThemeBookmark } from "@/lib/scannerBookmarks";
+import { useReviews, THEME_REVIEWS_KEY } from "@/lib/sectorReviews";
+import { ReviewMark, ReviewCounter, reviewedRowStyle } from "./ReviewMark";
 import type { WindowOpt } from "./sparkWindows";
 import { CandleChart } from "./CandleChart";
 import { useGraphCandles } from "./useGraphCandles";
@@ -217,6 +219,12 @@ export default function ThemesClient({
   // ── Bookmarks: multi-slot saved theme positions (location + window only;
   // filters are intentionally excluded — same rationale as the Graph tab).
   const bookmarks = useBookmarks<ThemeBookmark>(THEME_BOOKMARKS_KEY);
+
+  // "Reviewed this week" markers, one per theme, keyed on the theme CODE (the
+  // same stable key bookmarks use — display names can be re-worded, codes are
+  // not).
+  const reviews = useReviews(THEME_REVIEWS_KEY);
+
   function addThemeBookmark(label: string) {
     bookmarks.add({ id: newBookmarkId(), label, code: selectedCode, page: safePage, days, created: Date.now() });
   }
@@ -351,6 +359,12 @@ export default function ThemesClient({
             }}
             title="Theme bookmarks"
           />
+          <ReviewCounter
+            reviewed={reviews.reviewedCount}
+            total={themes.length}
+            onClear={reviews.clearAll}
+            noun="themes"
+          />
           <div className="flex items-center gap-1">
             <button
               type="button"
@@ -411,11 +425,20 @@ export default function ThemesClient({
               const open = openThemes.has(t.code);
               const list = scopedConstituents(t);
               const held = list.filter((c) => portfolioSet.has(c.symbol)).length;
+              const themeName = t.displayName ?? t.label;
+              const reviewedAt = reviews.marks.get(t.code);
+              const isReviewed = reviewedAt != null;
               return (
                 <div key={t.code} className="mb-0.5">
                   <div
                     className="flex items-center gap-0.5 rounded-md pr-1"
-                    style={active ? { background: "color-mix(in srgb, #7c3aed 12%, transparent)" } : undefined}
+                    style={
+                      // The selected theme keeps its highlight even when
+                      // reviewed — don't dim what's currently on screen.
+                      active
+                        ? { background: "color-mix(in srgb, #7c3aed 12%, transparent)" }
+                        : reviewedRowStyle(isReviewed)
+                    }
                   >
                     <button
                       type="button"
@@ -425,6 +448,13 @@ export default function ThemesClient({
                     >
                       <Chevron open={open} />
                     </button>
+                    <ReviewMark
+                      reviewed={isReviewed}
+                      ts={reviewedAt}
+                      now={reviews.now}
+                      label={themeName}
+                      onToggle={() => reviews.toggle(t.code, themeName)}
+                    />
                     <button
                       type="button"
                       onClick={() => selectTheme(t.code)}

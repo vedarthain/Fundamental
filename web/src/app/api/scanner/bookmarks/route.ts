@@ -18,21 +18,44 @@ import { sql } from "@/lib/db";
 
 export const runtime = "nodejs";
 
-// Only the two surface keys the client hook uses — the endpoint can't be
-// probed to stash arbitrary blobs under junk keys.
-const ALLOWED_KEYS = new Set(["er:graphBookmarks:v1", "er:themeBookmarks:v1"]);
+// Only the surface keys the client hooks use — the endpoint can't be probed to
+// stash arbitrary blobs under junk keys.
+//
+// Two families share this route because they share a storage shape ({id,label}
+// plus opaque extras) and the same dual-mode contract:
+//   • *Bookmarks — saved positions (lib/scannerBookmarks.ts), one per surface.
+//   • *Reviews   — "I reviewed this" markers (lib/sectorReviews.ts), one per
+//     sector/theme, so the list is as long as the rail itself.
+//
+// The caps are PER KEY because those two are orders of magnitude apart. A
+// single shared cap sized for bookmarks (20) would silently truncate the theme
+// review list — there are 110 themes — and the user would see markers vanish
+// with no error anywhere. Truncation that looks like success is the failure
+// mode worth designing against.
+const MAX_ITEMS_DEFAULT = 20;
+const MAX_BYTES_DEFAULT = 8 * 1024;
 
-// A bookmark list is tiny (the client caps it to one spot). Hard-cap both the
-// entry count and the serialized size so a hostile client can't bloat a row.
-const MAX_ITEMS = 20;
-const MAX_BYTES = 8 * 1024;
+const KEY_LIMITS: Record<string, { maxItems: number; maxBytes: number }> = {
+  "er:graphBookmarks:v1": { maxItems: MAX_ITEMS_DEFAULT, maxBytes: MAX_BYTES_DEFAULT },
+  "er:themeBookmarks:v1": { maxItems: MAX_ITEMS_DEFAULT, maxBytes: MAX_BYTES_DEFAULT },
+  // 9 sectors today; headroom for reclassification.
+  "er:graphSectorReviews:v1": { maxItems: 64, maxBytes: 16 * 1024 },
+  // 110 themes today. 300 leaves room to grow without another migration.
+  "er:themeReviews:v1": { maxItems: 300, maxBytes: 48 * 1024 },
+};
+
+const ALLOWED_KEYS = new Set(Object.keys(KEY_LIMITS));
+
+function limitsFor(key: string) {
+  return KEY_LIMITS[key] ?? { maxItems: MAX_ITEMS_DEFAULT, maxBytes: MAX_BYTES_DEFAULT };
+}
 
 type BookmarkItem = { id: string; label: string; [k: string]: unknown };
 
 /** Keep only well-formed entries: object with string id + label. Opaque
  *  beyond that — the Graph and Themes shapes differ and the server doesn't
  *  care which view fields ride along. */
-function sanitize(items: unknown): BookmarkItem[] {
+function sanitize(items: unknown, maxItems: number): BookmarkItem[] {
   if (!Array.isArray(items)) return [];
   const out: BookmarkItem[] = [];
   for (const raw of items) {
@@ -42,7 +65,7 @@ function sanitize(items: unknown): BookmarkItem[] {
         out.push(o as BookmarkItem);
       }
     }
-    if (out.length >= MAX_ITEMS) break;
+    if (out.length >= maxItems) break;
   }
   return out;
 }
@@ -67,7 +90,7 @@ export async function GET(req: NextRequest) {
        WHERE user_id = ${session.userId} AND bookmark_key = ${key}
        LIMIT 1
     `;
-    items = sanitize(rows[0]?.payload ?? []);
+    items = sanitize(rows[0]?.payload ?? [], limitsFor(key).maxItems);
   } catch {
     items = []; // fail-soft: client keeps whatever it has
   }
@@ -92,9 +115,10 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "unknown bookmark key" }, { status: 400 });
   }
 
-  const items = sanitize(body.items);
+  const { maxItems, maxBytes } = limitsFor(key);
+  const items = sanitize(body.items, maxItems);
   const json = JSON.stringify(items);
-  if (json.length > MAX_BYTES) {
+  if (json.length > maxBytes) {
     return NextResponse.json({ error: "payload too large" }, { status: 413 });
   }
 

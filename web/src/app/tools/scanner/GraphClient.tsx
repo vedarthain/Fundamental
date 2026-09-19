@@ -27,6 +27,8 @@ import { useWatchlist } from "@/lib/watchlist";
 import { WindowPicker } from "./WindowPicker";
 import { BookmarkMenu } from "./BookmarkMenu";
 import { useBookmarks, GRAPH_BOOKMARKS_KEY, newBookmarkId, type GraphBookmark } from "@/lib/scannerBookmarks";
+import { useReviews, GRAPH_REVIEWS_KEY } from "@/lib/sectorReviews";
+import { ReviewMark, ReviewCounter, reviewedRowStyle } from "./ReviewMark";
 import type { WindowOpt } from "./sparkWindows";
 import { CandleChart, type ChartTool, type Drawing, type AlertLine } from "./CandleChart";
 import type { PriceAlert } from "@/lib/price-alerts";
@@ -1010,6 +1012,14 @@ export default function GraphClient({
   // Filters (portfolio/watch/score) are intentionally NOT captured — restoring
   // one shouldn't silently change what the grid shows.
   const bookmarks = useBookmarks<GraphBookmark>(GRAPH_BOOKMARKS_KEY);
+
+  // "Reviewed this week" markers, one per SECTOR. Counted against the full
+  // sector list (universe.sectors), not the filtered `treeSectors` — otherwise
+  // turning on a filter would shrink the denominator and the counter would
+  // claim you'd finished a pass you hadn't.
+  const reviews = useReviews(GRAPH_REVIEWS_KEY);
+  const totalSectors = universe.sectors.length;
+
   function addGraphBookmark(label: string) {
     bookmarks.add({
       id: newBookmarkId(),
@@ -1258,6 +1268,12 @@ export default function GraphClient({
               }}
               title="Graph bookmark"
             />
+            <ReviewCounter
+              reviewed={reviews.reviewedCount}
+              total={totalSectors}
+              onClear={reviews.clearAll}
+              noun="sectors"
+            />
             <div
               className="inline-flex items-center gap-1 rounded-md border hairline px-2 py-1 text-[11px] font-medium transition-colors"
               style={
@@ -1435,11 +1451,19 @@ export default function GraphClient({
           {treeSectors.map((s) => {
             const open = searching ? !closedSectors.has(s.name) : openSectors.has(s.name);
             const isActiveSector = s.name === activeSectorName;
+            const reviewedAt = reviews.marks.get(s.name);
+            const isReviewed = reviewedAt != null;
             return (
               <div key={s.name} className="mb-0.5">
                 <div
                   className="flex items-center gap-1 rounded-md pr-2 transition-colors hover:bg-[var(--color-paper)]"
-                  style={isActiveSector ? { background: "color-mix(in srgb, var(--color-accent-600) 10%, transparent)" } : undefined}
+                  style={{
+                    // The active sector keeps its highlight even when reviewed —
+                    // dimming what you're currently looking at would be absurd.
+                    ...(isActiveSector
+                      ? { background: "color-mix(in srgb, var(--color-accent-600) 10%, transparent)" }
+                      : reviewedRowStyle(isReviewed)),
+                  }}
                 >
                   <button
                     type="button"
@@ -1449,6 +1473,13 @@ export default function GraphClient({
                   >
                     <Chevron open={open} />
                   </button>
+                  <ReviewMark
+                    reviewed={isReviewed}
+                    ts={reviewedAt}
+                    now={reviews.now}
+                    label={s.name}
+                    onToggle={() => reviews.toggle(s.name, s.name)}
+                  />
                   <button
                     type="button"
                     onClick={() => selectSector(s.name)}
