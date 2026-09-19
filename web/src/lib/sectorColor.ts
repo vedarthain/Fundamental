@@ -18,6 +18,11 @@
  * Unknown names fall through to a hash over the same palette rather than to a
  * default grey: a sector renamed in app.meta_cluster should still be tinted
  * consistently from the first render, not silently lose its colour.
+ *
+ * ONE NEUTRAL, NOT TWO. Slate (Industrials) is the only desaturated entry left;
+ * Diversified was grey and is now indigo. Two neutrals side by side were the
+ * hues a reader could not separate, and a grey "colour code" reads as absence of
+ * a code — it looks like the label simply failed to get tinted.
  */
 
 /** Nine hues, deliberately non-adjacent so neighbours in display_order don't
@@ -31,7 +36,7 @@ const PALETTE = [
   "#B45309", // amber
   "#C026D3", // fuchsia
   "#CA8A04", // gold
-  "#64748B", // grey
+  "#4F46E5", // indigo
 ] as const;
 
 /**
@@ -49,7 +54,7 @@ const CONTRAST_FOR = [
   PALETTE[2], // Materials amber      → cyan
   PALETTE[4], // Real Estate fuchsia  → slate
   PALETTE[1], // Energy gold          → violet
-  PALETTE[6], // Diversified grey     → fuchsia
+  PALETTE[5], // Diversified indigo   → amber
 ] as const;
 
 const BY_SECTOR: Record<string, number> = {

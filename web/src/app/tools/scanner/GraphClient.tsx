@@ -1081,7 +1081,11 @@ export default function GraphClient({
 
   return (
     <div className="flex flex-col">
-      <header className="mb-1.5 flex flex-wrap items-center gap-x-4 gap-y-2">
+      {/* items-start, not items-center: the breadcrumb block is two lines now, and
+          centring the button group against it parks Watch / Portfolio in the gutter
+          between the two lines. Top-aligned they sit level with the sector·industry
+          line, which is the line they belong to. */}
+      <header className="mb-1.5 flex flex-wrap items-start gap-x-4 gap-y-2">
           {/* No "Charts by industry" title: the tab you are on already says
               Graph, the tree to the left is visibly an industry tree, and the
               breadcrumb below names the exact industry — the h1 restated all
@@ -1100,22 +1104,37 @@ export default function GraphClient({
                 a visible h1, so dropping this one outright would leave Graph as
                 the only tab with no document heading at all. Costs no pixels. */}
             <h1 className="sr-only">Charts by industry</h1>
-            <p className="text-[12.5px] muted-text leading-tight">
+            {/* Two lines, split on the seam between WHERE you are and HOW FAR
+                through it you are. On one line the counters trailed off the end
+                of a long industry name and were the first thing to truncate;
+                stacked, the coloured names own the top line and the counters sit
+                under them at a size that says "secondary".
+
+                This costs no vertical space: the block sits beside the Watch /
+                Portfolio buttons, which are taller than a single line was, so
+                the second line lands in room the header row already had. */}
+            <div className="leading-tight">
               {curPage ? (
                 <>
-                  <span className="font-semibold" style={{ color: sectorColor(activeSectorName) }}>
-                    {activeSectorName}
-                  </span>{" "}
-                  ·{" "}
-                  <span className="font-semibold" style={{ color: industryColor(activeSectorName) }}>
-                    {curPage.indName}
-                  </span>{" "}
-                  · {curPage.indTotal} names · showing {rangeStart}–{rangeEnd} : {indPageIdx}/{indPageCount}
+                  <div className="text-[13px]">
+                    <span className="font-semibold" style={{ color: sectorColor(activeSectorName) }}>
+                      {activeSectorName}
+                    </span>
+                    <span className="muted-text"> · </span>
+                    <span className="font-semibold" style={{ color: industryColor(activeSectorName) }}>
+                      {curPage.indName}
+                    </span>
+                  </div>
+                  <div className="text-[11.5px] muted-text tabular-nums">
+                    {curPage.indTotal} names · showing {rangeStart}–{rangeEnd} : {indPageIdx}/{indPageCount}
+                  </div>
                 </>
               ) : (
-                <>Pick an industry from the tree{snapDate ? <> · panel {snapDate}</> : null}</>
+                <p className="text-[12.5px] muted-text">
+                  Pick an industry from the tree{snapDate ? <> · panel {snapDate}</> : null}
+                </p>
               )}
-            </p>
+            </div>
           </div>
           <div className="flex shrink-0 items-center gap-3 ml-auto">
             <button
@@ -1323,6 +1342,8 @@ export default function GraphClient({
             16  ScannerTabs pb-4
             ──
            152  → 156 for a 4px margin against sub-pixel rounding
+                → 166: a further 10px of headroom, requested because 156 left the
+                  fourth chart flush against the fold on shorter viewports.
 
           120 was the old value and it was short by ~36px, which is exactly the
           scroll that appeared. The bottom padding was the part being missed:
@@ -1333,7 +1354,7 @@ export default function GraphClient({
           viewport under ~712px tall, which is the laptop case this is meant to
           fix. Below 420 the charts stop being readable and scrolling is the
           right answer. */}
-      <div className="flex gap-3 h-[calc(100vh-156px)] min-h-[420px]">
+      <div className="flex gap-3 h-[calc(100vh-166px)] min-h-[420px]">
         {/* ── Left: collapsible sector → industry → stock tree ── */}
         {!treeOpen && (
           <button
