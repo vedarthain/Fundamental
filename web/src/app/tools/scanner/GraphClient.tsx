@@ -1268,12 +1268,6 @@ export default function GraphClient({
               }}
               title="Graph bookmark"
             />
-            <ReviewCounter
-              reviewed={reviews.reviewedCount}
-              total={totalSectors}
-              onClear={reviews.clearAll}
-              noun="sectors"
-            />
             <div
               className="inline-flex items-center gap-1 rounded-md border hairline px-2 py-1 text-[11px] font-medium transition-colors"
               style={
@@ -1738,7 +1732,17 @@ export default function GraphClient({
       {/* ── Bottom pager: the only clickable paging control on the tab. The header
           carries the same 1/97 readout but no arrows — one set of buttons, one
           place to look for them. ── */}
-      <div className="mt-3 flex items-center justify-end gap-1">
+      <div className="mt-3 flex items-center justify-between gap-2">
+        {/* Coverage lives here, not in the header: it is a "where am I in the
+            pass" readout, and this is the row you are already looking at when
+            you finish a sector and reach for ›. */}
+        <ReviewCounter
+          reviewed={reviews.reviewedCount}
+          total={totalSectors}
+          onClear={reviews.clearAll}
+          noun="sectors"
+        />
+        <div className="flex items-center gap-1">
         <button
           type="button"
           onClick={gotoPrevPage}
@@ -1762,6 +1766,7 @@ export default function GraphClient({
         >
           ›
         </button>
+        </div>
       </div>
 
       {/* ── Focus overlay: one expanded, interactive chart ── */}
