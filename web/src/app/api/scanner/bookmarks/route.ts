@@ -15,6 +15,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { sql } from "@/lib/db";
+// BookmarkItem carries `[k: string]: unknown` so the Graph and Themes shapes can
+// ride along opaquely; that index signature is wider than postgres.js's
+// JSONValue, hence the cast at the call site. The runtime values are plain JSON
+// — sanitize() has already rejected anything that isn't.
+import type { JSONValue } from "postgres";
 
 export const runtime = "nodejs";
 
@@ -55,6 +60,26 @@ type BookmarkItem = { id: string; label: string; [k: string]: unknown };
 /** Keep only well-formed entries: object with string id + label. Opaque
  *  beyond that — the Graph and Themes shapes differ and the server doesn't
  *  care which view fields ride along. */
+/** Undo the double-encoding described at the INSERT below.
+ *
+ *  Every row written before that fix is a jsonb *string* holding the array's
+ *  JSON text. Rather than migrate them, read through it: a string payload gets
+ *  parsed once, and the next save rewrites it in the correct shape. That heals
+ *  existing rows on first load with no downtime and no migration to sequence
+ *  against a deploy.
+ *
+ *  Deliberately only ONE level of unwrapping — if a payload were somehow
+ *  encoded three times, that is a new bug and should surface as an empty list,
+ *  not be silently absorbed by a while-loop. */
+function decodePayload(raw: unknown): unknown {
+  if (typeof raw !== "string") return raw;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+}
+
 function sanitize(items: unknown, maxItems: number): BookmarkItem[] {
   if (!Array.isArray(items)) return [];
   const out: BookmarkItem[] = [];
@@ -90,7 +115,7 @@ export async function GET(req: NextRequest) {
        WHERE user_id = ${session.userId} AND bookmark_key = ${key}
        LIMIT 1
     `;
-    items = sanitize(rows[0]?.payload ?? [], limitsFor(key).maxItems);
+    items = sanitize(decodePayload(rows[0]?.payload ?? []), limitsFor(key).maxItems);
   } catch {
     items = []; // fail-soft: client keeps whatever it has
   }
@@ -123,9 +148,25 @@ export async function PUT(req: NextRequest) {
   }
 
   try {
+    // sql.json(items), NOT `${JSON.stringify(items)}::jsonb`.
+    //
+    // postgres.js infers the parameter type from the `::jsonb` cast and then
+    // JSON-encodes whatever it was handed. Handing it an ALREADY-stringified
+    // array therefore encodes it a second time, and the row lands as a jsonb
+    // *string* holding the array's text rather than a jsonb *array*:
+    //
+    //   "[{\"id\":\"Energy & Utilities\",...}]"     ← what shipped
+    //   [{"id": "Energy & Utilities", ...}]         ← what was meant
+    //
+    // The write still returns 200, so nothing anywhere reports a problem. It
+    // only surfaces on read, where sanitize()'s Array.isArray() sees a string,
+    // returns [], and every saved mark silently disappears on reload.
+    //
+    // `json` above is kept — it is the byte-size check's input, which must
+    // measure the encoded payload.
     await sql`
       INSERT INTO app.user_scanner_bookmark (user_id, bookmark_key, payload, updated_at)
-      VALUES (${session.userId}, ${key}, ${json}::jsonb, now())
+      VALUES (${session.userId}, ${key}, ${sql.json(items as unknown as JSONValue)}, now())
       ON CONFLICT (user_id, bookmark_key) DO UPDATE SET
         payload = EXCLUDED.payload, updated_at = now()
     `;
