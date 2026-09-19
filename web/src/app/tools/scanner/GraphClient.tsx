@@ -1091,15 +1091,23 @@ export default function GraphClient({
               breadcrumb below names the exact industry — the h1 restated all
               three and cost a line of the space the charts want.
 
-              basis-[340px] is what makes the flex-wrap actually fire: the button
-              group is shrink-0, so without a real basis this block collapses to
-              its min and truncates away the "showing 65-68 : 17/24" counters.
-              The buttons drop to their own row first, and the line wraps rather
-              than hiding text.
+              basis-[240px], down from 340: the control group to the right is
+              shrink-0 and ~1090px wide, so a 340px reservation put the row ~100px
+              over its container and the controls wrapped to a line of their own.
+              240 buys that back and they sit beside the breadcrumb again.
+
+              The 340 floor existed to stop the "showing 65-68 : 17/24" counters
+              being truncated off the end of a long industry name. That reason
+              died when the breadcrumb went two-line — the counters have their
+              own row now and are short; it is the industry name that wraps under
+              pressure, and wrapping it is fine.
+
+              The wrap still fires, just later: below ~1330px the controls take
+              their own row rather than squeezing the name to nothing.
 
               Sector and industry carry the sector's hue (lib/sectorColor) so the
               family you're paging through is legible without reading the word. */}
-          <div className="min-w-[260px] flex-1 basis-[340px] flex flex-wrap items-baseline gap-x-2">
+          <div className="min-w-[180px] flex-1 basis-[240px] flex flex-wrap items-baseline gap-x-2">
             {/* Kept as sr-only rather than deleted: every other scanner tab has
                 a visible h1, so dropping this one outright would leave Graph as
                 the only tab with no document heading at all. Costs no pixels. */}
