@@ -86,6 +86,30 @@ jobs:
           PYTHONUNBUFFERED: "1"
         run: python -m fundamental_etl.cli sync-universe
 
+      # Classify whatever sync-universe just onboarded. This is the step that
+      # was missing for five months: sync-universe can only enrich a new listing
+      # by LEFT JOINing golden.stocks, and golden.stocks has not been enriched
+      # since its original seed (refresh-ltp.py inserts skeleton rows to satisfy
+      # the price_history FK and leaves sector/industry NULL). So every symbol
+      # onboarded after the seed arrived unclassified, never got a cluster, and
+      # silently dropped out of scoring — 484 of them by the time we found it.
+      #
+      # Paired with sync-universe rather than placed later because the two are
+      # one logical operation: onboard the name, then say what it is. Default
+      # scope is only the rows where sector OR industry IS NULL, so on a normal
+      # week it selects nothing and exits in seconds — it does work only when a
+      # genuinely new listing appears.
+      - name: Classify new listings (sector/industry)
+        env:
+          APP_DB_URL:           ${{ secrets.NEON_APP_URL }}
+          # The ETL refuses a remote APP_DB_URL by default (etl/src/fundamental_etl/db.py) so a local run cannot drift onto prod. CI writes to prod on purpose, so it says so out loud.
+          FUNDAMENTAL_ALLOW_REMOTE_DB: "1"
+          GOLDEN_DB_URL:        ${{ secrets.NEON_GOLDEN_URL }}
+          SCREENER_SESSIONID:   ${{ secrets.SCREENER_SESSIONID }}
+          SCREENER_CSRFTOKEN:   ${{ secrets.SCREENER_CSRFTOKEN }}
+          PYTHONUNBUFFERED:     "1"
+        run: python -m fundamental_etl.cli fetch-classification
+
       # Scrape Screener → fundamentals + raw blobs on Neon. Expiry HALTS the
       # run (rotate cue → freshness-check alerts). --max-runtime-min caps a
       # throttled week so it stops gracefully; unscraped symbols resume next

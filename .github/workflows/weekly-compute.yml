@@ -7,12 +7,20 @@
 # path, now its own workflow).
 #
 # Pipeline (each step depends on the previous):
-#   1. compute-metrics       metrics_snapshot from fundamentals + golden prices
+#   1. assign-clusters       app.cluster_assignment from universe.sector/industry
+#                            + listing_date + fundamentals year-count. Pure SQL,
+#                            no network, ~0.5s. It had never been wired into any
+#                            recurring job, so a newly-onboarded symbol kept the
+#                            cluster it was given at seed time — i.e. none — and
+#                            scoring skipped it forever. weekly-fetch classifies
+#                            the new names the day before; this turns that into
+#                            an actual cluster.
+#   2. compute-metrics       metrics_snapshot from fundamentals + golden prices
 #                            + the raw blobs (market cap for the valuation pillar)
-#   2. score                 percentile + composite → app.scores +
+#   3. score                 percentile + composite → app.scores +
 #                            cluster_stocks_panel_cache for the snapshot_date
-#   3. build-market-snapshot rebuild app.market_snapshot_cache for /market
-#   4. /api/revalidate       purge Vercel's Data Cache for the changed tags
+#   4. build-market-snapshot rebuild app.market_snapshot_cache for /market
+#   5. /api/revalidate       purge Vercel's Data Cache for the changed tags
 #
 # Trigger: CHAINED to weekly-fetch.yml via `workflow_run` — this runs the moment
 # the fetch workflow COMPLETES SUCCESSFULLY (Sat, once the ≤180-min scrape ends),
@@ -95,6 +103,7 @@ jobs:
           if [ -n "${{ github.event.inputs.snapshot_date }}" ]; then
             SNAP_ARG="--snapshot ${{ github.event.inputs.snapshot_date }}"
           fi
+          python -m fundamental_etl.cli assign-clusters
           python -m fundamental_etl.cli compute-metrics $SNAP_ARG
           python -m fundamental_etl.cli score $SNAP_ARG
 

@@ -1101,6 +1101,28 @@ def fetch_officers_cmd(
     log.info("done", **counts)
 
 
+@app.command("fetch-classification")
+def fetch_classification_cmd(
+    only: str = typer.Option(None, help="Comma-separated symbols to limit to"),
+    refresh: bool = typer.Option(False, help="Re-fetch even if already populated"),
+    throttle: float = typer.Option(1.5, help="Seconds between Screener page GETs"),
+):
+    """Fill universe.sector/industry from Screener's NSE classification breadcrumb.
+
+    sync-universe can only enrich a new listing by LEFT JOINing golden.stocks,
+    and golden.stocks has not been enriched since its original seed — so every
+    symbol onboarded since arrives with NULL sector/industry and never gets a
+    cluster.  This is the recurring job that fills them.  Default scope is the
+    rows that are actually missing, so it is a no-op once caught up and safe to
+    run on every weekly cycle.
+    """
+    from .classification import fetch_many
+    configure_logging()
+    syms = [s.strip().upper() for s in only.split(",")] if only else None
+    counts = fetch_many(only=syms, skip_existing=not refresh, throttle_s=throttle)
+    log.info("done", **counts)
+
+
 @app.command("fetch-shareholding")
 def fetch_shareholding_cmd(
     only: str = typer.Option(None, help="Comma-separated symbols to limit to"),
