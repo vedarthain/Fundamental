@@ -246,10 +246,15 @@ export default function ScannerTabs({
 
   // The Graph tab sizes its chart grid off the viewport (100vh − chrome), so
   // every pixel of page padding above it comes straight out of chart height —
-  // py-10 was enough to push the 4th chart below the fold. Tightened to pt-4 for
-  // that tab only; the list-style tabs keep the roomier default.
+  // py-10 was enough to push the 4th chart below the fold. Tightened for that
+  // tab only; the list-style tabs keep the roomier default.
+  //
+  // pb matters as much as pt here, and was the bug: 40px of bottom padding sat
+  // UNDER a grid already sized to fill the viewport, so the page was guaranteed
+  // to scroll by 40px no matter how the grid was tuned. The subtraction in
+  // GraphClient's `h-[calc(100vh-…)]` must be kept in step with both.
   return (
-    <div className={`theme-indigo mx-auto px-6 pb-10 ${tab === "graph" ? "pt-4" : "pt-10"} ${wide ? "max-w-[1560px]" : "max-w-[1180px]"}`}>
+    <div className={`theme-indigo mx-auto px-6 ${tab === "graph" ? "pt-4 pb-4" : "pt-10 pb-10"} ${wide ? "max-w-[1560px]" : "max-w-[1180px]"}`}>
       <div className="flex flex-col gap-8 md:flex-row md:items-start md:gap-8">
         {/* Collapsed rail: a slim button to reveal the scanner nav again. */}
         {!railOpen && (
