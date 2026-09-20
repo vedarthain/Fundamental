@@ -18,6 +18,7 @@ from datetime import date as _date
 
 from .clusters.assigner import assign_all
 from .db import golden_conn
+from . import nse_equity_master
 from .screener.scraper import (
     AuthFailed, NotFound, ScrapeError, fetch_company_export, make_client,
 )
@@ -761,6 +762,16 @@ def sync_universe_cmd(
         False, "--retire-funds", help="One-off cleanup: flip is_active=false for EXISTING "
                "active universe members whose ISIN is a fund/ETF (INF prefix). Use to "
                "purge ETFs that were onboarded before the INF filter existed."),
+    retire_non_equity: bool = typer.Option(
+        False, "--retire-non-equity", help="Retire EXISTING active members that are absent "
+               "from NSE's EQUITY_L master AND have zero rows in app.fundamentals_annual "
+               "(ETFs and rights entitlements that carry no ISIN, so the INF filter can't "
+               "see them). The zero-fundamentals half of the test is what keeps delisted "
+               "real companies — which are also absent from EQUITY_L — out of the retire "
+               "set; those are only ever REPORTED."),
+    skip_equity_master: bool = typer.Option(
+        False, "--skip-equity-master", help="Don't consult NSE's EQUITY_L.csv at all. "
+               "Onboards on the ISIN filter alone, as before this check existed."),
 ):
     """Reconcile app.universe against golden's live NSE listing master.
 
@@ -806,6 +817,22 @@ def sync_universe_cmd(
              ORDER BY l.sym, (s.exchange = 'NSE') DESC NULLS LAST, s.created_at DESC NULLS LAST
         """, (window,))
         live = {r["sym"]: r for r in cur.fetchall()}
+
+        # ── 1b. Earliest bar per symbol — UNWINDOWED on purpose ──────────────
+        # The query above is date-filtered, so its MIN would only ever report
+        # "the first bar in the last 30 days", which is not a measure of
+        # anything. This is a separate full scan (measured ~7s on Neon over
+        # 2,964 symbols) because the whole point of the column is depth of
+        # history: an NSE Emerge → mainboard migration resets listing_date but
+        # leaves years of bars behind, and that difference is only visible
+        # against the entire table.
+        cur.execute("""
+            SELECT REPLACE(symbol, '.NS', '') AS sym, MIN(date) AS first_bar
+              FROM golden.price_history
+             WHERE symbol LIKE '%%.NS' AND interval = '1d'
+             GROUP BY 1
+        """)
+        first_bar = {r["sym"]: r["first_bar"] for r in cur.fetchall()}
 
     if not live:
         log.warning("sync_universe_no_live_symbols")
@@ -865,10 +892,66 @@ def sync_universe_cmd(
                 drop = set(excluded_funds)
                 new_syms = [s for s in new_syms if s not in drop]
 
+        # ── 2c. NSE EQUITY_L master — the second, ISIN-independent signal ────
+        # The INF-ISIN filter above deliberately admits a candidate with NO ISIN
+        # anywhere, so a day-1 IPO is never dropped. ETFs and rights
+        # entitlements with no ISIN slip through that same door (40 of them had,
+        # by the time we looked). Membership in NSE's own listed-equity master
+        # is the independent test: ETFs and -RE lines are absent from that file
+        # entirely, while a genuine day-1 IPO is in it.
+        #
+        # Failure is NOT fatal and NOT silent. If the file can't be fetched we
+        # log loudly and fall back to ISIN-only onboarding: delaying the
+        # exclusion of a stray ETF by a week costs nothing, whereas aborting
+        # weekly-fetch would block the scrape for every real name.
+        master: dict[str, dict] = {}
+        master_ok = False
+        if not skip_equity_master:
+            try:
+                master = nse_equity_master.fetch()
+                master_ok = True
+            except nse_equity_master.EquityMasterError as e:
+                log.error("equity_master_unavailable", error=str(e))
+                print(f"!! EQUITY_L.csv unavailable ({e})")
+                print("!! Falling back to ISIN-only filtering for this run.")
+
+        def _fundamental_counts(symbols: list[str]) -> dict[str, int]:
+            """symbol → annual-fundamental row count, ZERO-FILLED.
+
+            Zero-filling is load-bearing: non_equity() reads a missing key as 0,
+            so handing it a sparse map would widen the retire set to every
+            symbol the query happened not to return.
+            """
+            if not symbols:
+                return {}
+            with conn.cursor() as c3:
+                c3.execute(
+                    "SELECT symbol, count(*) AS n FROM app.fundamentals_annual "
+                    "WHERE symbol = ANY(%s) GROUP BY symbol", (symbols,))
+                have = {r["symbol"]: r["n"] for r in c3.fetchall()}
+            return {s: have.get(s, 0) for s in symbols}
+
+        excluded_non_equity: list[str] = []
+        if master_ok and not include_funds and new_syms:
+            # The SAME conjunction used for retirement, not bare absence. A
+            # candidate absent from EQUITY_L that already carries scraped
+            # fundamentals is a delisted real company returning to the tape
+            # (RAJVIR did exactly this), and bare absence would silently refuse
+            # to onboard it. A genuine ETF or -RE line has no fundamentals, so
+            # the conjunction still catches it; a day-1 IPO also has none but is
+            # present in EQUITY_L, so it passes on the first clause.
+            excluded_non_equity = nse_equity_master.non_equity(
+                master, new_syms, _fundamental_counts(new_syms))
+            if excluded_non_equity:
+                drop = set(excluded_non_equity)
+                new_syms = [s for s in new_syms if s not in drop]
+
         print(f"golden live NSE symbols (≤{min_price_days}d): {len(live_onboard)}")
         print(f"app.universe rows:       {len(existing)}")
         print(f"ETF/fund excluded (INF): {len(excluded_funds)}"
               f"{'  (use --include-funds to keep)' if excluded_funds else ''}")
+        print(f"not in NSE EQUITY_L:     {len(excluded_non_equity)}"
+              f"{'  ' + ', '.join(excluded_non_equity[:10]) if excluded_non_equity else ''}")
         print(f"NEW to onboard:          {len(new_syms)}")
         print(f"gone-dark (>{deactivate_days}d, active): {len(gone)}"
               f"{'  (use --deactivate to retire)' if gone and not deactivate else ''}")
@@ -878,9 +961,36 @@ def sync_universe_cmd(
         if len(new_syms) > 40:
             print(f"  … and {len(new_syms) - 40} more")
 
+        # ── 2d. Existing active members measured against the same master ─────
+        # Two disjoint populations, and the whole point of this block is that
+        # they must never be conflated:
+        #   non_equity        absent + zero fundamentals → safe to retire
+        #   delisted_but_real absent + HAS fundamentals  → report only, ever
+        non_equity_syms: list[str] = []
+        delisted: list[str] = []
+        if master_ok:
+            active_syms = sorted(s for s, act in existing.items() if act)
+            counts = _fundamental_counts(active_syms)
+            non_equity_syms = nse_equity_master.non_equity(master, active_syms, counts)
+            delisted = nse_equity_master.delisted_but_real(master, active_syms, counts)
+
+            print(f"\nActive members absent from EQUITY_L: "
+                  f"{len(non_equity_syms) + len(delisted)}")
+            print(f"  non-equity (0 fundamentals)  : {len(non_equity_syms)}"
+                  f"{'  (use --retire-non-equity)' if non_equity_syms and not retire_non_equity else ''}")
+            for s in non_equity_syms[:60]:
+                print(f"    - {s}")
+            if len(non_equity_syms) > 60:
+                print(f"    … and {len(non_equity_syms) - 60} more")
+            print(f"  DELISTED but real (has fundamentals): {len(delisted)}"
+                  f"   — reported only, never retired here")
+            for s in delisted:
+                print(f"    ~ {s:16} {counts[s]} yrs of fundamentals")
+
         if dry_run:
             print("\n--dry-run: no rows written.")
-            log.info("sync_universe_dry_run", new=len(new_syms), gone=len(gone))
+            log.info("sync_universe_dry_run", new=len(new_syms), gone=len(gone),
+                     non_equity=len(non_equity_syms), delisted=len(delisted))
             return
 
         # ── 3. INSERT new rows (identity from golden; name falls back to symbol) ──
@@ -891,13 +1001,14 @@ def sync_universe_cmd(
                 (live[s]["company_name"] or s),
                 live[s]["sector"], live[s]["industry"],
                 live[s]["isin"], live[s]["listing_date"],
+                first_bar.get(s),
             ) for s in new_syms]
             with conn.cursor() as cur:
                 cur.executemany("""
                     INSERT INTO app.universe
                         (symbol, company_name, sector, industry, isin, listing_date,
-                         is_active, synced_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, true, now())
+                         first_bar_date, is_active, synced_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, true, now())
                     ON CONFLICT (symbol) DO NOTHING
                 """, payload)
                 inserted = cur.rowcount
@@ -912,6 +1023,32 @@ def sync_universe_cmd(
                     [(s, (live[s]["company_name"] or s)) for s in new_syms],
                 )
             conn.commit()
+
+        # ── 3b. Refresh first_bar_date for EVERY row, not just new ones ───────
+        # Not an insert-time-only field. golden backfills history for existing
+        # symbols (the 2026-04-20 batch of ~105 veterans did exactly that), so a
+        # symbol's earliest bar can move BACKWARD long after onboarding. Writing
+        # it once at insert would freeze the wrong answer permanently, which is
+        # the same "seeded once, never maintained" failure that left
+        # golden.stocks with NULL sectors for five months.
+        #
+        # Guarded with IS DISTINCT FROM so an unchanged run writes zero rows and
+        # the count below is a real signal rather than always equal to 2,600.
+        bar_updated = 0
+        if first_bar:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE app.universe u
+                       SET first_bar_date = v.first_bar
+                      FROM (SELECT * FROM unnest(%s::text[], %s::date[])
+                              AS t(sym, first_bar)) v
+                     WHERE u.symbol = v.sym
+                       AND u.first_bar_date IS DISTINCT FROM v.first_bar
+                """, (list(first_bar.keys()), list(first_bar.values())))
+                bar_updated = cur.rowcount
+            conn.commit()
+        if bar_updated:
+            print(f"first_bar_date refreshed on {bar_updated} row(s).")
 
         # ── 4. Optionally retire names that have gone dark on NSE ─────────────
         retired = 0
@@ -965,8 +1102,38 @@ def sync_universe_cmd(
                 conn.commit()
             print(f"Fund cleanup: retired {fund_retired} existing ETF/fund member(s).")
 
+        # ── 6. Optional: retire existing members that aren't listed equities ──
+        # Source 'non_equity' (not 'fund') in the event log so the two cleanups
+        # stay distinguishable in app.universe_event afterwards — they were
+        # decided by different evidence.
+        non_equity_retired = 0
+        if retire_non_equity and non_equity_syms:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE app.universe SET is_active = false, synced_at = now() "
+                    "WHERE symbol = ANY(%s) AND is_active "
+                    "RETURNING symbol, company_name",
+                    (non_equity_syms,),
+                )
+                ner = cur.fetchall()
+                non_equity_retired = len(ner)
+                if ner:
+                    cur.executemany(
+                        "INSERT INTO app.universe_event (symbol, event, company_name, source) "
+                        "VALUES (%s, 'removed', %s, 'non_equity')",
+                        [(r["symbol"], r["company_name"]) for r in ner],
+                    )
+            conn.commit()
+            print(f"Non-equity cleanup: retired {non_equity_retired} member(s) "
+                  f"absent from EQUITY_L with zero fundamentals.")
+        elif retire_non_equity and not master_ok:
+            print("--retire-non-equity skipped: EQUITY_L.csv was unavailable.")
+
     log.info("sync_universe_done", inserted=inserted, retired=retired,
              excluded_funds=len(excluded_funds), fund_retired=fund_retired,
+             excluded_non_equity=len(excluded_non_equity),
+             non_equity_retired=non_equity_retired, delisted_reported=len(delisted),
+             first_bar_updated=bar_updated,
              new_detected=len(new_syms), gone_detected=len(gone))
     print(f"\nInserted {inserted} new symbol(s); retired {retired}.")
     if inserted:
