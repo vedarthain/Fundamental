@@ -33,3 +33,13 @@ factsheet/
 
 # Local-only docs folder — never pushed.
 docs/
+
+# Local working dirs. None of these was ever tracked, but none was ignored
+# either — one `git add -A` would have swept them into a PUBLIC repo.
+# Listed explicitly so that stays impossible.
+build/
+logs/
+.claude/
+!.claude/launch.json
+web/.claude/
+web/scripts/
