@@ -160,6 +160,34 @@ def write_ledger(conn: psycopg.Connection, snapshot_date: date) -> dict[str, int
     reconciles rather than duplicating. Returns the bucket counts.
     """
     with conn.cursor(row_factory=dict_row) as cur:
+        # Evict symbols that are no longer active BEFORE reclassifying.
+        #
+        # _CLASSIFY_SQL is an INSERT ... ON CONFLICT DO UPDATE scoped to
+        # `WHERE u.is_active`, which makes it incapable of removing anything: a
+        # symbol retired after the ledger was first written is simply no longer
+        # SELECTed, so its stale row survives every subsequent rewrite. The
+        # ledger then permanently exceeds the active universe and
+        # check_partition reports "N UNACCOUNTED FOR" forever — an assertion
+        # that can never be satisfied again, which trains you to ignore it.
+        #
+        # Observed live: retiring 40 ETFs on 2026-09-20 left 2,634 ledger rows
+        # against 2,594 active symbols, and re-running --write did not clear it.
+        # An upsert is not a reconciliation; a partition has to be able to lose
+        # members as well as gain them.
+        cur.execute(
+            """
+            DELETE FROM app.coverage_ledger cl
+             WHERE cl.snapshot_date = %(snap)s
+               AND NOT EXISTS (SELECT 1 FROM app.universe u
+                                WHERE u.symbol = cl.symbol AND u.is_active)
+            """,
+            {"snap": snapshot_date},
+        )
+        evicted = cur.rowcount
+        if evicted:
+            log.info("coverage_ledger_evicted", n=evicted,
+                     snapshot=snapshot_date.isoformat(),
+                     reason="symbols no longer active")
         cur.execute(_CLASSIFY_SQL, {"snap": snapshot_date})
         cur.execute(
             """
@@ -181,9 +209,16 @@ class CoverageResult:
     name: str
     passed: bool
     message: str
+    # A check that could not RUN is not a check that PASSED. Without this the
+    # two render identically as a green tick, and "I compared nothing" reads
+    # exactly like "I compared everything and it was fine". `passed` stays True
+    # so a skip never fails the job — the distinction is for the human reading
+    # the log, which is the only place it was ever going to matter.
+    skipped: bool = False
 
     def short(self) -> str:
-        return f"{'✓' if self.passed else '✗'} {self.name:<40} {self.message}"
+        icon = "⊘" if self.skipped else ("✓" if self.passed else "✗")
+        return f"{icon} {self.name:<40} {self.message}"
 
 
 def check_partition(conn: psycopg.Connection, snapshot_date: date) -> list[CoverageResult]:
@@ -293,11 +328,33 @@ def check_no_regression(
     """
     rows, prev = delta_report(conn, snapshot_date)
     if prev is None:
-        return [CoverageResult(
-            name="coverage.no_regression",
-            passed=True,
-            message="no prior snapshot to compare against (first run)",
-        )]
+        # No history, so the movement checks genuinely cannot run — but the old
+        # behaviour returned a single green tick, which is a lie of omission:
+        # a first run was the one case where NOTHING was verified and the log
+        # said everything was fine.
+        #
+        # Two changes. The skip is MARKED as a skip (⊘, not ✓), and it is
+        # replaced by the strongest assertion that needs no history: something
+        # got scored. A first snapshot where the scored bucket is empty is a
+        # total failure of the run, and it is detectable without a baseline.
+        # That is a weaker check than the delta pair, and deliberately so —
+        # the point is that it is not ZERO checks.
+        scored_now = next((r["n_now"] for r in rows if r["status"] == "scored"), 0)
+        return [
+            CoverageResult(
+                name="coverage.no_regression",
+                passed=True,
+                skipped=True,
+                message="SKIPPED — no prior snapshot to compare against (first run); "
+                        "movement checks will arm on the next run",
+            ),
+            CoverageResult(
+                name="coverage.scored_non_empty",
+                passed=scored_now > 0,
+                message=f"scored={scored_now} on the first snapshot"
+                        + ("" if scored_now > 0 else " — nothing scored at all"),
+            ),
+        ]
 
     grew = [r for r in rows if r["is_problem"] and r["delta"] > 0]
     scored = next((r for r in rows if r["status"] == "scored"), None)

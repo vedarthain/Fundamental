@@ -168,7 +168,14 @@ def fetch_many(
     `skip_existing=False` (--refresh) re-fetches everything, for when NSE
     reclassifies and the stored labels need to catch up.
     """
-    counts = {"ok": 0, "skipped": 0, "partial": 0, "no_data": 0, "error": 0}
+    # auth_failed is counted SEPARATELY from error, not folded into it. The
+    # caller exits non-zero on it, and that decision needs to distinguish "this
+    # symbol has no Screener page" (routine, 40 of them every week) from "our
+    # cookies are dead and nothing will work" (an outage). A single `error`
+    # bucket cannot tell those apart, which is how this step stayed green while
+    # doing nothing.
+    counts = {"ok": 0, "skipped": 0, "partial": 0, "no_data": 0,
+              "error": 0, "auth_failed": 0}
 
     with app_conn() as conn:
         with conn.cursor() as cur:
@@ -197,7 +204,15 @@ def fetch_many(
         for i, sym in enumerate(targets, 1):
             try:
                 found = fetch_one(sym, scrape)
-            except (NotFound, AuthFailed, ScrapeError) as e:
+            except AuthFailed as e:
+                # HALT, don't continue. Once the session cookie is rejected it
+                # will be rejected for every remaining symbol, so carrying on
+                # just burns throttle_s x N seconds producing identical errors
+                # and buries the one line that matters. Mirrors fetch-many.
+                counts["auth_failed"] += 1
+                log.error("auth_failed_halt", symbol=sym, error=str(e)[:120])
+                break
+            except (NotFound, ScrapeError) as e:
                 counts["error"] += 1
                 log.error("scrape_error", symbol=sym, error=str(e)[:120])
                 continue

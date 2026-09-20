@@ -34,6 +34,17 @@ from .scoring.scorer import score_snapshot
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 
+# (dvr_symbol, ordinary_symbol) — DVR share classes that duplicate a company
+# already in the universe under its ordinary symbol. Retired by sync-universe
+# §7 only while the parent is still active. See the long note there for why
+# this is a list rather than a pattern, and why the duplicate biases valuation
+# upward rather than merely wasting a row.
+DVR_DUPLICATES: list[tuple[str, str]] = [
+    ("FELDVR", "FEL"),
+    ("GATECHDVR", "GATECH"),
+    ("JISLDVREQS", "JISLJALEQS"),
+]
+
 
 @app.command()
 def fetch(
@@ -1196,7 +1207,99 @@ def sync_universe_cmd(
         elif retire_non_equity and not master_ok:
             print("--retire-non-equity skipped: EQUITY_L.csv was unavailable.")
 
+        # ── 7. Always: retire DVR share classes whose ordinary share is active ─
+        #
+        # A DVR (differential voting rights) listing is not a company. It is a
+        # SECOND SHARE CLASS of a company that is already in the universe under
+        # its ordinary symbol, and it carries the parent's financials because
+        # that is the only set of financials that exists. Scoring it puts one
+        # business into a cluster twice.
+        #
+        # This is not hypothetical and it is not cosmetic. GATECHDVR scored
+        # composite 100 / valuation 100 in bfsi_nbfc (180 members) while its
+        # own ordinary share GATECH scored 64 / 56 — same company, same
+        # earnings, top of the cluster on the duplicate row. The mechanism is
+        # structural rather than a data error: a DVR trades at a standing
+        # discount to the ordinary share (that is the entire point of the
+        # instrument — less voting power, cheaper entry), so the parent's
+        # earnings divided by the discounted price always look cheap. Every DVR
+        # that carries its parent's fundamentals will bias valuation-rich, so
+        # this would have kept recurring for as long as the row existed.
+        #
+        # WHY A LIST AND NOT A PATTERN. The three live names do not share a
+        # derivable relationship to their parents:
+        #     FELDVR     → FEL           (symbol prefix works)
+        #     GATECHDVR  → GATECH        (symbol prefix works)
+        #     JISLDVREQS → JISLJALEQS    (prefix gives JISLEQS — wrong)
+        # and company_name matches for JISL/GATECH but not FEL ("FUTURE
+        # ENTERPRISES-DVR" vs "FUTURE ENTERPRISES LTD"). Any heuristic broad
+        # enough to catch all three is broad enough to retire a real company
+        # whose symbol happens to contain DVR. SEBI barred fresh DVR issuance by
+        # listed companies in 2019, so this population is closed and shrinking —
+        # a list is the honest encoding of a finite set.
+        #
+        # WHY THE PARENT MUST BE ACTIVE. Retiring is only correct because the
+        # business stays in the universe under the ordinary symbol. If a parent
+        # were ever retired, the DVR would become the only row for that company
+        # and dropping it would lose coverage rather than de-duplicate it. So
+        # the guard is a join, not a bare symbol list — if the parent is gone,
+        # the DVR is left alone and the ledger will say so.
+        dvr_retired = 0
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE app.universe d
+                   SET is_active = false, synced_at = now()
+                  FROM (SELECT * FROM unnest(%s::text[], %s::text[])
+                          AS t(dvr, parent)) v
+                  JOIN app.universe p ON p.symbol = v.parent AND p.is_active
+                 WHERE d.symbol = v.dvr AND d.is_active
+             RETURNING d.symbol, d.company_name
+                """,
+                ([d for d, _ in DVR_DUPLICATES], [p for _, p in DVR_DUPLICATES]),
+            )
+            dr = cur.fetchall()
+            dvr_retired = len(dr)
+            if dr:
+                cur.executemany(
+                    "INSERT INTO app.universe_event (symbol, event, company_name, source) "
+                    "VALUES (%s, 'removed', %s, 'dvr_duplicate')",
+                    [(r["symbol"], r["company_name"]) for r in dr],
+                )
+                # PURGE THE SCORES, don't just deactivate.
+                #
+                # is_active=false is NOT sufficient to remove a name from the
+                # site. app.scores_latest is DISTINCT ON (symbol) over all of
+                # app.scores with no is_active predicate, so a retired symbol
+                # keeps returning its final score forever — GATECHDVR was still
+                # served at composite 100 after this UPDATE committed.
+                #
+                # The obvious fix — add `is_active` to the view — is WRONG here.
+                # Delisted-but-real companies (EDUCOMP, ORTEL, QUINTEGRA …) are
+                # deliberately kept visible; filtering the view would silently
+                # take all 17 of them off the site too. The distinction is not
+                # "active" but WHY the name was retired, and a view over
+                # app.scores cannot see that.
+                #
+                # So the purge is scoped to the DVR rows only. Deleting them
+                # loses no information by construction: a DVR's fundamentals ARE
+                # the parent's, and the parent keeps its full score history under
+                # the ordinary symbol. This is the one retirement reason where
+                # the scored row is a duplicate rather than a record.
+                syms = [r["symbol"] for r in dr]
+                cur.execute("DELETE FROM app.scores WHERE symbol = ANY(%s)", (syms,))
+                scores_purged = cur.rowcount
+                cur.execute("DELETE FROM app.cluster_assignment WHERE symbol = ANY(%s)",
+                            (syms,))
+                log.info("dvr_scores_purged", symbols=syms,
+                         score_rows=scores_purged, cluster_rows=cur.rowcount)
+        conn.commit()
+        if dvr_retired:
+            print(f"DVR cleanup: retired {dvr_retired} duplicate share class(es) "
+                  f"whose ordinary share is already in the universe.")
+
     log.info("sync_universe_done", inserted=inserted, retired=retired,
+             dvr_retired=dvr_retired,
              excluded_funds=len(excluded_funds), fund_retired=fund_retired,
              excluded_non_equity=len(excluded_non_equity),
              non_equity_retired=non_equity_retired, delisted_reported=len(delisted),
@@ -1255,7 +1358,34 @@ def compute_metrics_cmd(
                     ORDER BY u.symbol
                 """)
             stocks = cur.fetchall()
-        log.info("plan", n=len(stocks))
+
+            # Report what the plan LEFT OUT, not just what it took on.
+            # `n=2145` is indistinguishable from `n=2145` whether the universe
+            # holds 2,150 names or 2,634 — and for five months it held 2,634,
+            # with 484 silently dropped for having no cluster. A count of
+            # survivors cannot surface that; a count of the excluded can. Both
+            # exclusions are computed against the SAME predicate pair the
+            # SELECT above uses, so the three numbers always reconcile.
+            excl: dict[str, int] = {}
+            if not only:
+                cur.execute("""
+                    SELECT
+                      count(*) FILTER (WHERE ca.symbol IS NULL)       AS no_cluster,
+                      count(*) FILTER (WHERE ca.symbol IS NOT NULL
+                                         AND (u.maturity_tier IS NULL
+                                              OR u.maturity_tier NOT IN
+                                                 ('veteran','mature','mid','new'))) AS bad_tier,
+                      count(*)                                        AS active_total
+                    FROM app.universe u
+                    LEFT JOIN app.cluster_assignment ca USING (symbol)
+                    WHERE u.is_active
+                """)
+                r = cur.fetchone()
+                excl = {"excluded": r["active_total"] - len(stocks),
+                        "no_cluster": r["no_cluster"],
+                        "bad_tier": r["bad_tier"],
+                        "active_total": r["active_total"]}
+        log.info("plan", n=len(stocks), **excl)
 
         overrides = load_db_overrides(ac)
         log.info("scorecard_overrides_loaded", count=len(overrides))
@@ -1355,6 +1485,28 @@ def fetch_classification_cmd(
     syms = [s.strip().upper() for s in only.split(",")] if only else None
     counts = fetch_many(only=syms, skip_existing=not refresh, throttle_s=throttle)
     log.info("done", **counts)
+
+    # Fail LOUD, for the same reason fetch-many does (see the note at its exit).
+    # This step's whole job is to keep new listings from falling out of scoring.
+    # When it silently does nothing, nothing looks wrong for weeks: the workflow
+    # is green, the site is up, and symbols quietly accumulate with no sector, no
+    # cluster, and no score. That is not hypothetical — it is exactly how 484
+    # symbols went unscored for five months.
+    #
+    # Two distinct alarms, because they need different responses:
+    #   auth_failed  cookies are dead → rotate SCREENER_* secrets.
+    #   all errored  Screener changed its markup, or is blocking us → read the
+    #                scrape_error lines. Guarded on attempted>0 so a caught-up
+    #                no-op run (the normal weekly case, 0 targets) still exits 0.
+    attempted = counts["ok"] + counts["partial"] + counts["no_data"] + counts["error"]
+    if counts.get("auth_failed", 0) > 0:
+        log.error("exit_nonzero",
+                  reason="screener cookies expired — classification halted, rotate SCREENER_* secrets")
+        raise typer.Exit(code=1)
+    if attempted > 0 and counts["error"] == attempted:
+        log.error("exit_nonzero",
+                  reason=f"all {attempted} classification target(s) errored — nothing was written")
+        raise typer.Exit(code=1)
 
 
 @app.command("fetch-shareholding")
@@ -1754,7 +1906,15 @@ def _refresh_stocks_panel_cache(app_c, golden_c, snap: "_date") -> int:
 
 
 @app.command("score")
-def score_cmd(snapshot: str = typer.Option(None, help="YYYY-MM-DD; defaults to today")):
+def score_cmd(
+    snapshot: str = typer.Option(None, help="YYYY-MM-DD; defaults to today"),
+    fail_on_dq: bool = typer.Option(
+        True,
+        help="Exit non-zero if a DQ or coverage assertion fails. The scores are "
+             "still written and committed either way — this only controls the "
+             "exit code. Keep it on in CI; a failed assertion that exits 0 is "
+             "how the last coverage hole stayed invisible."),
+):
     """Run the percentile + composite scorer for a snapshot date.
 
     Also refreshes app.cluster_composite_cache so the /sectors page serves
@@ -1764,6 +1924,13 @@ def score_cmd(snapshot: str = typer.Option(None, help="YYYY-MM-DD; defaults to t
     configure_logging()
     snap = _date.fromisoformat(snapshot) if snapshot else _date.today()
     log.info("score_start", snapshot=snap.isoformat())
+
+    # Initialised here, not inside the try blocks below. Both check blocks are
+    # best-effort and swallow their exceptions, so if one dies before assigning
+    # these the exit gate must still find a defined (and empty) list rather than
+    # raise NameError and turn a survivable DQ hiccup into a crash.
+    dq_failed_names: list[str] = []
+    cov_failed_names: list[str] = []
 
     # Freshness gate — refuse to score off a stale price feed. A bhav-copy
     # import that silently no-op'd leaves golden's newest bar stuck; scoring
@@ -1866,6 +2033,7 @@ def score_cmd(snapshot: str = typer.Option(None, help="YYYY-MM-DD; defaults to t
                                 actual=r.actual_pct, threshold=r.threshold_pct,
                                 populated=r.populated, total=r.total)
             log.info("dq_checks_done", passed=passed, failed=failed, total=len(results))
+            dq_failed_names = [r.name for r in results if not r.passed]
         except Exception as e:
             # DQ checks failing to RUN is itself a warning, not a hard error.
             log.warning("dq_checks_errored", error=str(e)[:200])
@@ -1900,10 +2068,30 @@ def score_cmd(snapshot: str = typer.Option(None, help="YYYY-MM-DD; defaults to t
             log.info("coverage_done",
                      failed=sum(1 for r in cov if not r.passed),
                      total=len(cov), **bucket_counts)
+            cov_failed_names = [r.name for r in cov if not r.passed]
         except Exception as e:
             log.warning("coverage_ledger_errored", error=str(e)[:200])
             conn.rollback()
     log.info("score_done", **counts)
+
+    # Exit non-zero when an assertion failed — but only HERE, after every write
+    # has committed.
+    #
+    # The old behaviour logged each failure as a warning and exited 0. The
+    # reasoning was sound and is preserved: a DQ failure must never roll back a
+    # good scoring run. But "don't roll back" got conflated with "don't report",
+    # and the result was a workflow that went green while telling us 81.4%
+    # coverage against a 90% threshold. Nobody reads a green job's logs. That is
+    # the whole mechanism by which a measured, correctly-reported failure stayed
+    # invisible.
+    #
+    # Splitting the two concerns costs nothing: the data is already saved and
+    # committed by this point, so the exit code is pure signal. The run keeps
+    # its results AND the badge turns red.
+    if fail_on_dq and (dq_failed_names or cov_failed_names):
+        log.error("exit_nonzero", reason="data-quality assertions failed after a completed run",
+                  dq_failed=dq_failed_names, coverage_failed=cov_failed_names)
+        raise typer.Exit(code=1)
 
 
 @app.command("coverage")
@@ -1960,8 +2148,14 @@ def coverage_cmd(
             print(r.short())
 
         failed = [r for r in results if not r.passed]
+        skipped = [r for r in results if r.skipped]
         print()
-        print(f"{len(results) - len(failed)} passed, {len(failed)} failed")
+        # Skips are counted OUT of "passed" rather than silently into it. A
+        # summary line reading "17 passed, 0 failed" when one of the 17 did not
+        # run is the same class of comfortable untruth this whole command exists
+        # to remove.
+        print(f"{len(results) - len(failed) - len(skipped)} passed, "
+              f"{len(failed)} failed, {len(skipped)} skipped")
         if failed and fail_on_problem:
             raise typer.Exit(code=1)
 

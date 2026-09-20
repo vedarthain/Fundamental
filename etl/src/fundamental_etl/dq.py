@@ -94,14 +94,33 @@ _PCT_ASSERTIONS = [
         "period_end >= CURRENT_DATE - INTERVAL '2 years'",  "net_profit",       70.0),
 
     # Scores at the latest snapshot — should be essentially complete.
-    ("scores.composite_pct",  "app.scores",
-        "snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)", "composite_pct",  90.0),
-    ("scores.quality_pct",    "app.scores",
-        "snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)", "quality_pct",    90.0),
-    ("scores.valuation_pct",  "app.scores",
-        "snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)", "valuation_pct",  90.0),
-    ("scores.momentum_pct",   "app.scores",
-        "snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)", "momentum_pct",   90.0),
+    #
+    # THESE FOUR HAD THE SURVIVOR BUG, in the same shape the screener_meta note
+    # below describes. `FROM app.scores WHERE snapshot_date = MAX(...)` counts
+    # only symbols that GOT a score row. A symbol the scorer never reached has
+    # no row at all, so it never enters the denominator — the check asked "of
+    # the stocks we scored, how many did we score?" and the answer is always
+    # ~100%. Scoring could have silently dropped a third of the universe and
+    # every one of these would still have reported green.
+    #
+    # Anchored on app.universe with a LEFT JOIN, a missing score row now counts
+    # as a missing value, which is what it is.
+    ("scores.composite_pct (active)",
+        "app.universe u LEFT JOIN app.scores s ON s.symbol = u.symbol "
+        "AND s.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)",
+        "u.is_active",                                       "composite_pct",  90.0),
+    ("scores.quality_pct (active)",
+        "app.universe u LEFT JOIN app.scores s ON s.symbol = u.symbol "
+        "AND s.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)",
+        "u.is_active",                                       "quality_pct",    90.0),
+    ("scores.valuation_pct (active)",
+        "app.universe u LEFT JOIN app.scores s ON s.symbol = u.symbol "
+        "AND s.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)",
+        "u.is_active",                                       "valuation_pct",  90.0),
+    ("scores.momentum_pct (active)",
+        "app.universe u LEFT JOIN app.scores s ON s.symbol = u.symbol "
+        "AND s.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)",
+        "u.is_active",                                       "momentum_pct",   90.0),
 
     # Screener meta — required for the LTP + market cap on cards.
     #
