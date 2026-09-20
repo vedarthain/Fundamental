@@ -57,15 +57,10 @@ export default async function WatchlistPage() {
   }
 
   return (
-    <div className="mx-auto max-w-[1600px] px-4 md:px-6 py-4 md:py-5">
-      <header className="mb-3">
-        <h1 className="font-display text-[22px] md:text-[26px] leading-[1.1] tracking-tight">
-          Your watchlist
-        </h1>
-        <p className="muted-text text-[12.5px] mt-0.5">
-          Stocks you&apos;re tracking — refreshed with each weekly snapshot. Saved to your account when you&apos;re signed in, otherwise on this device.
-        </p>
-      </header>
+    <div className="mx-auto max-w-[1600px] px-4 md:px-6 py-3 md:py-4">
+      {/* No page header. The nav already says where you are, and the tab strip
+          below repeats it — the title plus its description cost ~64px of the
+          first screen to tell you something you already knew. */}
       <WatchlistTabs />
     </div>
   );

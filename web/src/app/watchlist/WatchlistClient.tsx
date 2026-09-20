@@ -359,9 +359,22 @@ export function WatchlistClient({ source }: { source?: WatchSource } = {}) {
 
   // Group rows into a sector → industry tree for the left rail, then narrow it
   // to the search query (matches sector, industry, symbol, or company name).
-  const { tree: fullTree, industryCount } = buildSectorTree(rows || []);
+  // industryCount is still returned by buildSectorTree but no longer read here —
+  // the summary row that displayed it is gone, and the left rail names the
+  // industries outright.
+  const { tree: fullTree } = buildSectorTree(rows || []);
   const tree = filterTree(fullTree, query);
   const searching = query.trim().length > 0;
+
+  // Which sector/industry the selected stock belongs to, so the rail can mark
+  // where you are. Read off the row itself rather than searching the tree: the
+  // tree is filtered by the search box, so a query that hides the selected
+  // stock would otherwise clear the highlight while the selection is still
+  // live. Same "—" fallback buildSectorTree uses, or the two would not match
+  // for a stock with no sector.
+  const activeRow = (rows || []).find((r) => r.symbol === selected) ?? null;
+  const activeSector = activeRow ? activeRow.sector_name || "—" : null;
+  const activeIndustry = activeRow ? activeRow.industry_name || "—" : null;
 
   const toggleNode = (key: string) =>
     setExpanded((prev) => {
@@ -423,31 +436,12 @@ export function WatchlistClient({ source }: { source?: WatchSource } = {}) {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-3 flex-wrap text-[12px] muted-text tabular-nums">
-        <span>
-          {count} {count === 1 ? "stock" : "stocks"} {source ? source.ownerLabel : "on your watchlist"}
-        </span>
-        <span className="opacity-70">
-          Sectors ({tree.length}) · Industries ({industryCount})
-        </span>
-        {snapshotDate && (
-          <span
-            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border"
-            style={{
-              borderColor: "var(--color-border-default)",
-              backgroundColor: "var(--color-paper)",
-            }}
-            title="Scoring snapshot date (Q/V/M percentiles). Refreshed weekly; LTP price refreshes daily — see the top ribbon."
-          >
-            <span className="opacity-70">Scores snapshot</span>
-            <span className="font-medium" style={{ color: "var(--color-ink)" }}>
-              {formatSnapshotDate(snapshotDate)}
-            </span>
-          </span>
-        )}
-        {loading && <span>· refreshing…</span>}
-      </div>
-
+      {/* The summary row that used to sit here is gone. The sector/industry
+          counts duplicated the left rail, which lists both by name, and the
+          stock count now lives in the rotate bar where you are actually
+          looking. The snapshot chip moved there with it rather than being
+          dropped — it is the only thing on this page that tells you how old
+          the scores are. */}
       <div
         className={`grid grid-cols-1 gap-4 items-start ${
           railOpen ? "lg:grid-cols-[300px_1fr]" : "lg:grid-cols-[36px_1fr]"
@@ -531,16 +525,34 @@ export function WatchlistClient({ source }: { source?: WatchSource } = {}) {
             ) : (
               tree.map((sec) => {
                 const secOpen = searching || expanded.has(sec.name);
+                const secActive = activeSector === sec.name;
                 return (
                   <div key={sec.name}>
                     <button
                       type="button"
                       onClick={() => onSectorClick(sec)}
-                      className="w-full flex items-center gap-2 px-3 py-2 border-b hairline text-left transition-colors hover:bg-[var(--color-paper)]"
+                      className={`w-full flex items-center gap-2 px-3 py-2 border-b hairline text-left transition-colors ${
+                        secActive ? "" : "hover:bg-[var(--color-paper)]"
+                      }`}
+                      // Inset shadow rather than a real left border: a border
+                      // would shift the row's text 3px when it activates, and
+                      // the whole rail would twitch as you arrow through stocks.
+                      style={
+                        secActive
+                          ? {
+                              background: "color-mix(in srgb, var(--color-accent-600) 12%, transparent)",
+                              boxShadow: "inset 3px 0 0 var(--color-accent-600)",
+                            }
+                          : undefined
+                      }
+                      aria-current={secActive ? "true" : undefined}
                       aria-expanded={secOpen}
                     >
                       <Chevron open={secOpen} />
-                      <span className="text-[12.5px] font-semibold truncate flex-1">
+                      <span
+                        className="text-[12.5px] font-semibold truncate flex-1"
+                        style={secActive ? { color: "var(--color-accent-700)" } : undefined}
+                      >
                         {sec.name}
                       </span>
                       <span className="text-[11px] muted-text tabular-nums">{sec.count}</span>
@@ -549,16 +561,36 @@ export function WatchlistClient({ source }: { source?: WatchSource } = {}) {
                       sec.industries.map((ind) => {
                         const key = `${sec.name}//${ind.name}`;
                         const indOpen = searching || expanded.has(key);
+                        // Only inside the active sector — two sectors can carry
+                        // an industry of the same name, and lighting both up
+                        // would point at a stock that is not there.
+                        const indActive = secActive && activeIndustry === ind.name;
                         return (
                           <div key={ind.name}>
                             <button
                               type="button"
                               onClick={() => toggleNode(key)}
-                              className="w-full flex items-center gap-2 pl-6 pr-3 py-1.5 border-b hairline text-left transition-colors hover:bg-[var(--color-paper)]"
+                              className={`w-full flex items-center gap-2 pl-6 pr-3 py-1.5 border-b hairline text-left transition-colors ${
+                                indActive ? "" : "hover:bg-[var(--color-paper)]"
+                              }`}
+                              style={
+                                indActive
+                                  ? {
+                                      background: "color-mix(in srgb, var(--color-accent-600) 7%, transparent)",
+                                      boxShadow: "inset 3px 0 0 var(--color-accent-600)",
+                                    }
+                                  : undefined
+                              }
+                              aria-current={indActive ? "true" : undefined}
                               aria-expanded={indOpen}
                             >
                               <Chevron open={indOpen} small />
-                              <span className="text-[12px] truncate flex-1">{ind.name}</span>
+                              <span
+                                className="text-[12px] truncate flex-1"
+                                style={indActive ? { color: "var(--color-accent-700)", fontWeight: 600 } : undefined}
+                              >
+                                {ind.name}
+                              </span>
                               <span className="text-[10.5px] muted-text tabular-nums">
                                 {ind.stocks.length}
                               </span>
@@ -633,8 +665,42 @@ export function WatchlistClient({ source }: { source?: WatchSource } = {}) {
                       </span>
                     )}
                     <span className="hidden sm:inline opacity-70">· use ← → keys</span>
+                    {snapshotDate && (
+                      <span
+                        className="hidden md:inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border"
+                        style={{
+                          borderColor: "var(--color-border-default)",
+                          backgroundColor: "var(--color-paper)",
+                        }}
+                        title="Scoring snapshot date (Q/V/M percentiles). Refreshed weekly; LTP price refreshes daily — see the top ribbon."
+                      >
+                        <span className="opacity-70">Scores</span>
+                        <span className="font-medium" style={{ color: "var(--color-ink)" }}>
+                          {formatSnapshotDate(snapshotDate)}
+                        </span>
+                      </span>
+                    )}
+                    {loading && <span className="opacity-70">· refreshing…</span>}
                   </span>
-                  <div className="inline-flex rounded-md border hairline overflow-hidden">
+                  <div className="flex items-center gap-2.5">
+                    {/* Count sits immediately left of Prev/Next — the number is
+                        the thing you scan for, so it carries the accent colour
+                        and the weight; the words stay muted. */}
+                    <span className="text-[11.5px] tabular-nums whitespace-nowrap">
+                      <span
+                        className="font-semibold text-[13px]"
+                        style={{ color: "var(--color-accent-600)" }}
+                      >
+                        {count}
+                      </span>{" "}
+                      <span className="muted-text">
+                        {count === 1 ? "stock" : "stocks"}{" "}
+                        <span className="hidden sm:inline">
+                          {source ? source.ownerLabel : "on your watchlist"}
+                        </span>
+                      </span>
+                    </span>
+                    <div className="inline-flex rounded-md border hairline overflow-hidden">
                     <button
                       type="button"
                       onClick={() => rotate(-1)}
@@ -655,6 +721,7 @@ export function WatchlistClient({ source }: { source?: WatchSource } = {}) {
                     >
                       Next ›
                     </button>
+                    </div>
                   </div>
                 </div>
                 <WatchRow
