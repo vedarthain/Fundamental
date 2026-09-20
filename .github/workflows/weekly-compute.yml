@@ -72,11 +72,22 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
-    # compute ~45 + score ~15 + rebuild ~3 on a warm Neon. But a cold/throttled
-    # Sunday run has pushed compute-metrics to ~75-80 min, which blew the old
-    # 90-min cap and got the build/revalidate steps canceled mid-run (scores had
-    # already saved). 150 absorbs a cold-Neon worst case with margin to spare.
-    timeout-minutes: 150
+    # compute ~45 + score ~15 + rebuild ~3 on a warm Neon. A cold/throttled run
+    # has pushed compute-metrics to ~75-80 min, which blew the old 90-min cap
+    # and got the build/revalidate steps canceled mid-run (scores had already
+    # saved) — so the cap went to 150.
+    #
+    # 150 then turned out to be tighter than it reads. Run 35487049470
+    # (2026-09-20) took 2h07m end to end: compute-metrics alone ran 1h57m over
+    # 2,592 symbols, and the whole chain finished with ~22 min to spare. That is
+    # not comfortable margin for a job whose slow step is a network-bound loop
+    # over a remote Postgres.
+    #
+    # 240 because the asymmetry is extreme: a too-high cap costs nothing (the
+    # job exits when it exits, and `concurrency` already prevents overlap),
+    # while a too-low cap costs a full ~2.5h re-run AND leaves prod in the
+    # half-state where app.scores is current but /market and the CDN are stale.
+    timeout-minutes: 240
     steps:
       - name: Checkout
         uses: actions/checkout@v4
