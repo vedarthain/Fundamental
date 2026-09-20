@@ -112,6 +112,7 @@ type PanelJoinRow = {
   market_cap_cr: number | null;
   current_price: number | null;
   listing_date: string | null;
+  first_bar_date: string | null;
   years_of_data: number | null;
 };
 
@@ -176,6 +177,7 @@ export async function loadThemes(): Promise<ThemesData> {
                p.current_price,
                -- For the IPO chip; both fields required (see components/IpoBadge).
                u.listing_date::text AS listing_date,
+               u.first_bar_date::text AS first_bar_date,
                u.years_of_data::float8 AS years_of_data
         FROM app.index_constituent ic
         LEFT JOIN app.cluster_stocks_panel_cache p
@@ -227,7 +229,7 @@ export async function loadThemes(): Promise<ThemesData> {
     consByCode.get(r.index_code)!.push({
       symbol: r.symbol,
       name: r.company_name,
-      isIpo: isIpo(r.listing_date, r.years_of_data),
+      isIpo: isIpo(r.listing_date, r.first_bar_date, r.years_of_data),
       compositePct: num(r.composite_pct),
       qualityPct: num(r.quality_pct),
       valuationPct: num(r.valuation_pct),

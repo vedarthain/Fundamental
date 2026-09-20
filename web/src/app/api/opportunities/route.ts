@@ -181,7 +181,8 @@ type Row = {
   rev_cagr_5y: number | null;
   roe_3y: number | null;
   np_yoy_q: number | null;            // latest-quarter net profit YoY growth
-  listing_date: string | null;        // NSE listing date (IPO chip, signal 1 of 2)
+  listing_date: string | null;        // NSE listing date — display copy only
+  first_bar_date: string | null;      // earliest bar held (IPO chip, signal 1 of 2)
   years_of_data: number | null;       // years of annual financials (signal 2 of 2)
   // Actual historical prices from golden.price_history (not back-calculated)
   price_1m_ago: number | null;
@@ -304,10 +305,11 @@ export async function GET() {
         (m.cluster_metrics->>'roce_3y')::float
       )                                                   AS roe_3y,
       (m.cluster_metrics->>'np_yoy_q')::float             AS np_yoy_q,
-      -- For the IPO chip. Both fields, not just the date: a recent NSE
-      -- listing_date with a full financial record is a BSE->NSE migration.
-      -- See components/IpoBadge.tsx.
+      -- For the IPO chip. listing_date is display copy; the chip and the score
+      -- gate read first_bar_date — NSE resets listing_date on an SME->mainboard
+      -- migration while the bars remain. See components/IpoBadge.tsx.
       u.listing_date::text                                AS listing_date,
+      u.first_bar_date::text                              AS first_bar_date,
       u.years_of_data::float                              AS years_of_data
     FROM ranked r
     JOIN app.universe u ON u.symbol = r.symbol

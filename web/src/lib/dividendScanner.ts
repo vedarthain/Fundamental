@@ -83,6 +83,7 @@ export async function loadDividendUniverse(): Promise<DividendUniverse> {
     symbol: string;
     name: string | null;
     listing_date: string | null;
+    first_bar_date: string | null;
     years_of_data: number | null;
     composite_pct: number | null;
   };
@@ -95,6 +96,7 @@ export async function loadDividendUniverse(): Promise<DividendUniverse> {
              p.symbol,
              u.company_name AS name,
              u.listing_date::text AS listing_date,
+             u.first_bar_date::text AS first_bar_date,
              u.years_of_data::float8 AS years_of_data,
              p.composite_pct::float8 AS composite_pct
         FROM app.cluster_stocks_panel_cache p
@@ -261,7 +263,7 @@ export async function loadDividendUniverse(): Promise<DividendUniverse> {
     industry.stocks.push({
       symbol: r.symbol,
       name: r.name,
-      is_ipo: isIpo(r.listing_date, r.years_of_data),
+      is_ipo: isIpo(r.listing_date, r.first_bar_date, r.years_of_data),
       sector: sName,
       industry: iName,
       ltp,

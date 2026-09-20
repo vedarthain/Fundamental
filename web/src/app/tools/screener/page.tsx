@@ -30,6 +30,8 @@ type Row = {
   maturity_tier: string;
   market_cap_category: string | null;
   listing_date: string | null;
+  /** First signal the IPO chip needs — see components/IpoBadge.tsx. */
+  first_bar_date: string | null;
   /** Second signal the IPO chip needs — see components/IpoBadge.tsx. */
   years_of_data: number | null;
   market_cap_cr: number | null;
@@ -352,6 +354,7 @@ async function loadRows(
              r.maturity_tier,
              u.market_cap_category,
              u.listing_date::text AS listing_date,
+             u.first_bar_date::text AS first_bar_date,
              u.years_of_data::float AS years_of_data,
              sm.market_cap_cr,
              sm.current_price::float AS current_price,
@@ -449,7 +452,7 @@ async function loadRows(
         ${rangeFilters}
     )
     SELECT symbol, company_name, industry_id, industry_name, sector_name,
-           maturity_tier, market_cap_category, listing_date, years_of_data, market_cap_cr, current_price, price_fetched_at,
+           maturity_tier, market_cap_category, listing_date, first_bar_date, years_of_data, market_cap_cr, current_price, price_fetched_at,
            quality_pct, valuation_pct, momentum_pct, composite_pct,
            peer_rank, peer_count, leading_pillar, score_status,
            pe_ttm, pb, roe_3y, ret_12m_rel, div_yield, op_margin_3y,
@@ -1208,7 +1211,7 @@ function IndustryBlock({
                       <Link href={`/stock/${r.symbol}`} className="font-medium hover:text-[var(--color-accent-600)]">
                         {r.symbol}
                       </Link>
-                      <IpoBadge show={isIpo(r.listing_date, r.years_of_data)} />
+                      <IpoBadge show={isIpo(r.listing_date, r.first_bar_date, r.years_of_data)} />
                       {r.score_status && r.score_status !== "full" && (
                         <span
                           className="text-[9.5px] px-1 py-px rounded border"

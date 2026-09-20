@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { sql, golden } from "@/lib/db";
-import { band, bandColor, fmtPct, fmtRupeesCr, tierLabel, displayCompanyName, isRecentListing, listingYear, hasScoreableHistory, monthsSinceListing, ordinal } from "@/lib/score";
+import { band, bandColor, fmtPct, fmtRupeesCr, tierLabel, displayCompanyName, isRecentListing, listingYear, hasScoreableHistory, monthsSinceListing, observedFrom, ordinal } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import CapTierBadge from "@/components/CapTierBadge";
 import PromoterTrendChart from "@/components/PromoterTrendChart";
@@ -82,6 +82,7 @@ type Stock = {
   industry: string | null;
   market_cap_category: string | null;
   listing_date: string | null;
+  first_bar_date: string | null;
   years_of_data: number | null;
   business_summary: string | null;
   website: string | null;
@@ -165,12 +166,13 @@ export async function generateMetadata(
   const upper = decodeSymbolParam(symbol).toUpperCase();
   const rows = await sql<{
     company_name: string; industry_name: string | null; sector_name: string | null;
-    listing_date: string | null; years_of_data: number | null;
+    listing_date: string | null; first_bar_date: string | null; years_of_data: number | null;
     composite_pct: number | null; quality_pct: number | null;
     valuation_pct: number | null; momentum_pct: number | null;
   }[]>`
     SELECT u.company_name, c.name AS industry_name, mc.name AS sector_name,
-           u.listing_date::text AS listing_date, u.years_of_data,
+           u.listing_date::text AS listing_date,
+           u.first_bar_date::text AS first_bar_date, u.years_of_data,
            s.composite_pct, s.quality_pct, s.valuation_pct, s.momentum_pct
     FROM app.universe u
     -- LEFT, not INNER: an unclustered symbol still has a real page (see
@@ -191,7 +193,7 @@ export async function generateMetadata(
   }
   const r = rows[0];
   const name = displayCompanyName(r.company_name, upper);
-  const scoreable = hasScoreableHistory(r.listing_date, r.years_of_data);
+  const scoreable = hasScoreableHistory(r.listing_date, r.first_bar_date, r.years_of_data);
 
   const title = scoreable && r.composite_pct != null
     ? `${name} (${upper}) — Score ${r.composite_pct}, Quality · Valuation · Momentum · EquityRoots`
@@ -247,7 +249,8 @@ async function loadStock(symbol: string) {
   // each is already .catch()-guarded and null-checked at the render site.
   const rows = await sql<Stock[]>`
     SELECT
-      u.symbol, u.company_name, u.sector, u.industry, u.market_cap_category, u.listing_date::text, u.years_of_data,
+      u.symbol, u.company_name, u.sector, u.industry, u.market_cap_category, u.listing_date::text,
+      u.first_bar_date::text, u.years_of_data,
       u.business_summary, u.website, u.employees,
       u.ceo_name, u.ceo_title,
       ca.cluster_id AS industry_id, c.name AS industry_name, mc.id AS sector_id, mc.name AS sector_name,
@@ -642,8 +645,10 @@ export default async function StockPage({
   // score in the top decile on ~3 months of price history. Suppress the
   // percentile/rank display when trading history is under a year — the score
   // math is untouched; we just don't present a misleading number.
-  const scoreable = hasScoreableHistory(stock.listing_date, stock.years_of_data);
-  const listedMonths = monthsSinceListing(stock.listing_date);
+  const scoreable = hasScoreableHistory(stock.listing_date, stock.first_bar_date, stock.years_of_data);
+  // Measures the SAME field the gate does, so the explanation below cannot
+  // contradict the suppression that triggered it.
+  const tradedMonths = monthsSinceListing(observedFrom(stock.listing_date, stock.first_bar_date));
 
   // Pillar data for the Strengths & gaps tab (graphs-first StrengthsPanel).
   const pillarTabs: PillarTabContent[] = [
@@ -922,7 +927,7 @@ export default async function StockPage({
       {!scoreable && (
         <p className="text-[11px] muted-text italic mt-2 leading-snug">
           * Unscored — insufficient trading history
-          {listedMonths != null ? ` (listed ~${Math.round(listedMonths)} months ago)` : ""}.
+          {tradedMonths != null ? ` (trading ~${Math.round(tradedMonths)} months)` : ""}.
           A percentile needs at least a year of price history to be meaningful; a
           fresh listing can rank near the top on a fluke, so we withhold the number
           until the record is long enough to trust.

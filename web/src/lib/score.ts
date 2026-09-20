@@ -68,7 +68,8 @@ export function isRecentListing(listingDate: string | null | undefined): boolean
   return (Date.now() - d.getTime()) / (365.25 * 24 * 3600 * 1000) <= 2;
 }
 
-/** Months of trading history since listing, or null if the date is unknown. */
+/** Months elapsed since a date, or null if it is missing/unparseable. Used for
+ *  both listing_date (display copy) and first_bar_date (the history gate). */
 export function monthsSinceListing(listingDate: string | null | undefined): number | null {
   if (!listingDate) return null;
   const d = new Date(listingDate);
@@ -90,31 +91,60 @@ export const MIN_YEARS_FOR_SCORE = 6;
  *  the momentum leg and market-relative valuation are statistical noise on that
  *  little data, which destroys score credibility.
  *
- *  Why two signals, not one:
- *   - `listing_date` alone is unreliable. A batch of ~105 veteran companies
- *     (HAWKINCOOK, TIMEX, GOODYEAR…) were added to the price DB on 2026-04-20
- *     and inherited that as their listing_date — identical signature to a real
- *     IPO (same date, ~50 price bars). Gating on listing_date alone would hide
- *     these established names.
- *   - `years_of_data` alone is too blunt — it would hide legitimate younger
- *     mid-caps that have traded for years.
+ *  Why first_bar_date joined listing_date as an input. NSE resets listing_date
+ *  when a company graduates from the Emerge SME board to the mainboard, so
+ *  KOTYARK read as listed 2026-03-12 while holding 1,203 daily bars back to
+ *  2021-11-17, and SOLEX read as listed 2025-10-08 with 1,480 bars back to
+ *  2018-02-05. Both were shown an IPO chip with the percentile suppressed, on
+ *  4.8 and 8.6 years of price history. The old two-signal test rescued BSE→NSE
+ *  migrations of OLD companies through the years_of_data clause; it could not
+ *  rescue SME migrations of YOUNG ones, which have neither a long record nor an
+ *  old listing_date.
  *
- *  So: suppress only when the stock looks recently listed (<1yr trading) AND has
- *  a short fundamental record (below the scrape cap). The mis-dated veterans
- *  survive because they carry years_of_data≈10; genuine IPOs (INNOVISION=4,
- *  SURYALA=3) are caught. Unknown listing date → treated as scoreable (legacy
- *  names often have a null date; don't suppress the board). */
+ *  Why it did NOT simply REPLACE listing_date — this was measured, not assumed.
+ *  A straight swap fixes those 4 names and breaks 91: `first_bar_date` is
+ *  bounded by when golden started ingesting a symbol, not by when it began
+ *  trading, and 91 active names carry a NULL listing_date (so the old rule's
+ *  "unknown date → scoreable" escape hatch was covering them) alongside a
+ *  first bar from the last few weeks. Swapping would badge all of them.
+ *
+ *  So the rule takes the EARLIER of the two dates, and only when listing_date
+ *  is known. That makes the change a strict NARROWING of the old predicate —
+ *  it can remove a badge, never add one. Measured on the full active universe:
+ *  41 badged → 37, the 4 SME migrations removed, 0 added.
+ *
+ *  Unknown listing_date → still scoreable, unchanged. That is a real gap (a
+ *  fresh IPO with a null listing_date goes un-badged) but it is the PRE-EXISTING
+ *  behaviour, and closing it is a separate decision affecting ~91 names. Don't
+ *  fold it in here by accident. */
 export function hasScoreableHistory(
   listingDate: string | null | undefined,
+  firstBarDate: string | null | undefined,
   yearsOfData: number | null | undefined,
 ): boolean {
-  const m = monthsSinceListing(listingDate);
+  const m = monthsSinceListing(observedFrom(listingDate, firstBarDate));
   if (m == null) return true;               // unknown listing date → scoreable
-  if (m >= MIN_TRADING_MONTHS) return true; // ≥1yr of trading → scoreable
-  // Listed <1yr per our data. Only a short fundamental record confirms a true
-  // fresh listing; a full record means the date is a mis-dated veteran.
+  if (m >= MIN_TRADING_MONTHS) return true; // ≥1yr of observed trading
+  // Observed <1yr. Only a short fundamental record confirms a true fresh
+  // listing; a full record means we started collecting prices late.
   if (yearsOfData != null && yearsOfData >= MIN_YEARS_FOR_SCORE) return true;
   return false;
+}
+
+/** The earliest date we could have observed this stock trading: the listing
+ *  date, pulled back to the first daily bar when that bar predates it.
+ *
+ *  Returns null when listingDate is null — deliberately NOT falling through to
+ *  firstBarDate. See the note above: doing so would convert 91 names whose
+ *  listing date is simply unknown into "IPOs" on the strength of a shallow
+ *  ingest history. */
+export function observedFrom(
+  listingDate: string | null | undefined,
+  firstBarDate: string | null | undefined,
+): string | null {
+  if (!listingDate) return null;
+  if (!firstBarDate) return listingDate;
+  return firstBarDate < listingDate ? firstBarDate : listingDate;
 }
 
 /** Listing year, e.g. 2024 — for the "Recent IPO · 2024" badge. */

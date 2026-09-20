@@ -18,11 +18,19 @@
  *
  * So the test is two-signal, and it is deliberately the SAME predicate the score
  * display gate uses — `hasScoreableHistory` in lib/score.ts. A stock earns the
- * chip exactly when we also suppress its percentile: <12 months of trading AND a
- * short fundamental record. Sharing one predicate is the point. If the chip and
- * the score gate could disagree, you would get a stock showing a full percentile
- * next to a badge saying it is too new to have one, and the obvious reading is
- * that one of the two is broken.
+ * chip exactly when we also suppress its percentile: <12 months of observed
+ * trading AND a short fundamental record. Sharing one predicate is the point. If
+ * the chip and the score gate could disagree, you would get a stock showing a
+ * full percentile next to a badge saying it is too new to have one, and the
+ * obvious reading is that one of the two is broken.
+ *
+ * PASS `first_bar_date`, NOT `listing_date`. The first bucket above was only
+ * half-handled by the old listing_date test: it rescued migrations of OLD
+ * companies via the fundamentals clause, but SME→mainboard migrations of YOUNG
+ * companies have neither a long record nor an old listing_date, so both clauses
+ * fired. KOTYARK (4.8 years of bars, 4 years of annuals) and SOLEX (8.6 years of
+ * bars) were badged as IPOs. Measuring from the earliest bar we hold closes that
+ * hole — see the note on hasScoreableHistory.
  *
  * The consequence to state plainly: a genuine IPO that happens to carry 6+ years
  * of pre-listing financials in its DRHP will NOT get the chip. That is the side
@@ -36,13 +44,14 @@ import { hasScoreableHistory } from "@/lib/score";
  *  two raw fields) and so list views can filter on "IPOs only". */
 export function isIpo(
   listingDate: string | null | undefined,
+  firstBarDate: string | null | undefined,
   yearsOfData: number | null | undefined,
 ): boolean {
-  return !hasScoreableHistory(listingDate, yearsOfData);
+  return !hasScoreableHistory(listingDate, firstBarDate, yearsOfData);
 }
 
 const TITLE =
-  "Listed on NSE within the last 12 months, and with a short financial record — a genuine recent listing rather than a BSE→NSE migration. Percentile scores are suppressed for these names: momentum and market-relative valuation are noise on under a year of price history.";
+  "Trading on NSE for under 12 months, and with a short financial record — a genuine recent listing rather than a BSE→NSE or SME→mainboard migration. Percentile scores are suppressed for these names: momentum and market-relative valuation are noise on under a year of price history.";
 
 /**
  * Renders nothing when `show` is false, so call sites can write

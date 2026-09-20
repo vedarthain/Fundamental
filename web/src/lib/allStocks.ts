@@ -54,6 +54,7 @@ type PanelRow = {
   peer_group: string | null;
   maturity_tier: string | null;
   listing_date: string | null;
+  first_bar_date: string | null;
   years_of_data: number | null;
   cache_price: number | null;
   intraday_price: number | null; // app.screener_meta.current_price — the ~7×/day pinger value
@@ -96,6 +97,7 @@ export async function loadAllStocks(): Promise<AllStocksData> {
              c.name  AS peer_group,
              u.maturity_tier,
              u.listing_date::text AS listing_date,
+             u.first_bar_date::text AS first_bar_date,
              u.years_of_data::float8 AS years_of_data,
              p.current_price::float8 AS cache_price,
              sm.current_price::float8 AS intraday_price,
@@ -224,7 +226,7 @@ export async function loadAllStocks(): Promise<AllStocksData> {
       industry_rank: rankOf.get(p.symbol) ?? null,
       industry_count: countOf.get(p.symbol) ?? null,
       is_n500: p.is_n500,
-      is_ipo: !hasScoreableHistory(p.listing_date, p.years_of_data),
+      is_ipo: !hasScoreableHistory(p.listing_date, p.first_bar_date, p.years_of_data),
     };
   });
 

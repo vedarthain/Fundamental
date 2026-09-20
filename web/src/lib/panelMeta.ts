@@ -16,8 +16,13 @@ export type PanelMetaRow = {
   symbol: string;
   sector: string | null;
   industry: string | null;
-  /** NSE listing date. Alone it does NOT mean "IPO" — see components/IpoBadge. */
+  /** NSE listing date. Alone it does NOT mean "IPO" — see components/IpoBadge.
+   *  Kept for display copy only; the IPO/score gate reads first_bar_date. */
   listing_date: string | null;
+  /** Earliest daily bar we hold. This — not listing_date — is the first signal
+   *  the IPO test needs: an SME→mainboard migration resets listing_date while
+   *  leaving years of bars behind. */
+  first_bar_date: string | null;
   /** Years of annual financials scraped; the second signal the IPO test needs. */
   years_of_data: number | null;
 };

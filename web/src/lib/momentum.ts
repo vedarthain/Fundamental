@@ -160,6 +160,7 @@ async function enrich(snapDate: string, rows: GoldenRow[]): Promise<MomentumSign
       sector: string | null;
       industry: string | null;
       listing_date: string | null;
+      first_bar_date: string | null;
       years_of_data: number | null;
     }[]
   >`
@@ -170,10 +171,12 @@ async function enrich(snapDate: string, rows: GoldenRow[]): Promise<MomentumSign
            p.momentum_pct::float8  AS momentum_pct,
            mc.name                 AS sector,
            c.name                  AS industry,
-           -- For the IPO chip. Both fields are needed, not just the date: a
-           -- recent listing_date with a full financial record is a BSE→NSE
-           -- migration, not an IPO. See components/IpoBadge.tsx.
+           -- For the IPO chip. listing_date is display copy only; the chip and
+           -- the score gate both read first_bar_date, because NSE resets
+           -- listing_date on an SME->mainboard migration while the bars remain.
+           -- Still two signals: see components/IpoBadge.tsx.
            u.listing_date::text    AS listing_date,
+           u.first_bar_date::text  AS first_bar_date,
            u.years_of_data::float8 AS years_of_data
     FROM app.cluster_stocks_panel_cache p
     LEFT JOIN app.cluster c       ON c.id = p.cluster_id
@@ -226,7 +229,7 @@ async function enrich(snapDate: string, rows: GoldenRow[]): Promise<MomentumSign
       isScored: !!c,
       sector: c?.sector ?? null,
       industry: c?.industry ?? null,
-      isIpo: isIpo(c?.listing_date, c?.years_of_data),
+      isIpo: isIpo(c?.listing_date, c?.first_bar_date, c?.years_of_data),
       catalystTitle: nw?.title ?? null,
       catalystUrl: nw?.url ?? null,
       catalystSource: nw?.source ?? null,
@@ -325,6 +328,7 @@ export async function loadLatestMomentum(
     ? await sql<PanelMetaRow[]>`
         SELECT p.symbol, mc.name AS sector, c.name AS industry,
                u.listing_date::text AS listing_date,
+               u.first_bar_date::text AS first_bar_date,
                u.years_of_data::float8 AS years_of_data
         FROM app.cluster_stocks_panel_cache p
         LEFT JOIN app.cluster c       ON c.id = p.cluster_id
@@ -349,7 +353,7 @@ export async function loadLatestMomentum(
     isScored: r.is_scored,
     sector: clsBy.get(r.symbol)?.sector ?? null,
     industry: clsBy.get(r.symbol)?.industry ?? null,
-    isIpo: isIpo(clsBy.get(r.symbol)?.listing_date, clsBy.get(r.symbol)?.years_of_data),
+    isIpo: isIpo(clsBy.get(r.symbol)?.listing_date, clsBy.get(r.symbol)?.first_bar_date, clsBy.get(r.symbol)?.years_of_data),
     catalystTitle: r.catalystTitle,
     catalystUrl: r.catalystUrl,
     catalystSource: r.catalystSource,

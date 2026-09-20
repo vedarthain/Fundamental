@@ -45,6 +45,7 @@ type RawScoreRow = {
   company_name: string;
   industry_name: string;
   listing_date: string | null;
+  first_bar_date: string | null;
   years_of_data: number | null;
 };
 
@@ -168,6 +169,7 @@ async function loadIdeas(tier: IdxTier) {
       r.maturity_tier, r.cluster_id AS industry_id,
       u.company_name,
       u.listing_date::text AS listing_date,
+      u.first_bar_date::text AS first_bar_date,
       u.years_of_data,
       c.name AS industry_name
     FROM recent r
@@ -266,7 +268,7 @@ async function loadIdeas(tier: IdxTier) {
     // Minimum-history gate: keep fresh IPOs (< ~1yr of trading) out of every
     // Ideas bucket. A 3-month listing can score top-decile on price noise; it
     // has no business being surfaced as an idea until its record is trustable.
-    if (!hasScoreableHistory(curr.listing_date, curr.years_of_data)) continue;
+    if (!hasScoreableHistory(curr.listing_date, curr.first_bar_date, curr.years_of_data)) continue;
     if (
       curr.composite_pct == null ||
       then.composite_pct == null ||
