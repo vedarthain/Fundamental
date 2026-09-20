@@ -753,9 +753,12 @@ def sync_universe_cmd(
         False, "--dry-run", help="Report the diff and write nothing."),
     deactivate: bool = typer.Option(
         False, "--deactivate", help="Also flip is_active=false for universe names that "
-               "have gone dark on NSE (no .NS bar within --deactivate-days). Off by "
-               "default — a trading halt or a stale bhavcopy day shouldn't silently "
-               "retire a name; run this deliberately (e.g. the monthly cron)."),
+               "have gone dark on NSE (no .NS bar within --deactivate-days) AND are "
+               "absent from NSE's EQUITY_L master. Both clauses are required: silence "
+               "in our price lake cannot distinguish a delisting from an ingest gap, "
+               "and retirement is a one-way door (there is no reactivation path). If "
+               "EQUITY_L can't be fetched, nothing is retired. Off by default — run "
+               "this deliberately (e.g. the monthly cron)."),
     deactivate_days: int = typer.Option(
         60, help="Retire a universe name only after it's had NO .NS daily bar for this "
                  "many days. Deliberately longer than --min-price-days so onboarding is "
@@ -926,6 +929,62 @@ def sync_universe_cmd(
                 print(f"!! EQUITY_L.csv unavailable ({e})")
                 print("!! Falling back to ISIN-only filtering for this run.")
 
+        # ── 2c. Narrow the retire set to a CONJUNCTION ────────────────────────
+        #
+        # Retirement now requires BOTH:
+        #   (a) no .NS daily bar for --deactivate-days (60), AND
+        #   (b) absence from NSE's EQUITY_L.csv master.
+        #
+        # WHY. Silence in golden is ambiguous. "The company stopped trading" and
+        # "our ingest stopped receiving it" produce an identical signal — no
+        # bars — and clause (a) alone cannot tell them apart. It guesses, and
+        # the guess is a ONE-WAY DOOR: sync-universe onboards with
+        # ON CONFLICT (symbol) DO NOTHING and has no reactivation path anywhere,
+        # so a row flipped inactive stays inactive no matter how much fresh
+        # price history arrives afterwards. A single bad ingest week would
+        # permanently delete live companies from the scored universe, silently.
+        #
+        # EQUITY_L is the independent second opinion, and it is decisive rather
+        # than corroborating: it is NSE's own register of what is listed, so a
+        # symbol present in it is listed by definition, whatever our price lake
+        # does or doesn't hold. Requiring both means a feed outage on its own
+        # can no longer retire anything.
+        #
+        # This was verified against the 13 names clause (a) had already retired
+        # (JBCHEPHARM, GSPL, CIGNITITEC, GUJGASLTD, WIMPLAST …). Every one is
+        # absent from EQUITY_L — all 13 genuinely delisted, zero feed gaps. So
+        # the conjunction is not a correction of past behaviour; it removes a
+        # latent failure mode without changing a single decision made so far.
+        #
+        # WHEN EQUITY_L IS UNAVAILABLE, RETIRE NOTHING. The fetch is a network
+        # call to nsearchives and can fail. On failure we cannot evaluate (b),
+        # and an unevaluated clause in a conjunction is not a pass — treating it
+        # as one would collapse this straight back to the single-signal rule on
+        # exactly the days the network is already misbehaving. Deferring costs a
+        # week; retiring a live company costs it permanently.
+        #
+        # Mirrors --retire-non-equity, which has always been a conjunction
+        # (absent from EQUITY_L AND zero fundamentals). The delisted-but-real
+        # names are unaffected: they still trade, so clause (a) never fires for
+        # them, and they remain reported-only as before.
+        if gone:
+            if not master_ok:
+                print(f"\n!! Retirement SKIPPED for {len(gone)} dark name(s): "
+                      f"EQUITY_L.csv unavailable, so 'still listed on NSE' could "
+                      f"not be checked. Nothing retired this run.")
+                log.warning("retire_deferred_no_master", n=len(gone),
+                            symbols=gone[:20])
+                gone = []
+            else:
+                still_listed = sorted(s for s in gone if s in master)
+                if still_listed:
+                    print(f"\n!! {len(still_listed)} name(s) dark >{deactivate_days}d "
+                          f"but STILL LISTED in EQUITY_L — not retired, ingest gap "
+                          f"suspected: {', '.join(still_listed[:20])}")
+                    log.warning("dark_but_listed", n=len(still_listed),
+                                symbols=still_listed[:20])
+                gone = sorted(s for s in gone if s not in master)
+
         def _fundamental_counts(symbols: list[str]) -> dict[str, int]:
             """symbol → annual-fundamental row count, ZERO-FILLED.
 
@@ -964,7 +1023,10 @@ def sync_universe_cmd(
         print(f"not in NSE EQUITY_L:     {len(excluded_non_equity)}"
               f"{'  ' + ', '.join(excluded_non_equity[:10]) if excluded_non_equity else ''}")
         print(f"NEW to onboard:          {len(new_syms)}")
-        print(f"gone-dark (>{deactivate_days}d, active): {len(gone)}"
+        # len(gone) is post-conjunction (see §2c): dark AND absent from
+        # EQUITY_L. The label says both so this line can't be read as the raw
+        # dark count, which is what it used to be.
+        print(f"gone-dark (>{deactivate_days}d) AND delisted per EQUITY_L: {len(gone)}"
               f"{'  (use --deactivate to retire)' if gone and not deactivate else ''}")
         for s in new_syms[:40]:
             nm = (live[s]["company_name"] or s)
