@@ -744,9 +744,9 @@ export default async function StockPage({
               <span
                 className="inline-flex items-center rounded px-1.5 py-[1px] text-[10px] font-semibold normal-case"
                 style={{ background: "color-mix(in srgb, var(--color-accent-600) 14%, transparent)", color: "var(--color-accent-700)" }}
-                title={`Recent IPO — listed ${listingYear(stock.listing_date)} with a short financial record. Percentile scores are suppressed: momentum and market-relative valuation are noise on under a year of price history.`}
+                title={`Under a year of price history on record — NSE lists it from ${listingYear(stock.listing_date)} and the financial record is short. Percentile scores are suppressed: momentum and market-relative valuation are noise on this little data. This describes our coverage, not the company.`}
               >
-                Recent IPO · {listingYear(stock.listing_date)}
+                &lt;1Y history · NSE {listingYear(stock.listing_date)}
               </span>
             )}
             {scoreable && isRecentListing(stock.listing_date) && stock.maturity_tier !== "new" && (
@@ -845,10 +845,10 @@ export default async function StockPage({
           {stock.maturity_tier === "new" && stock.listing_date && (
             <div className="mt-3 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[var(--color-accent-50)] border border-[var(--color-accent-200)]">
               <span className="text-[11px] uppercase tracking-wide" style={{ color: "var(--color-accent-700)" }}>
-                Recent IPO
+                Recent listing
               </span>
               <span className="text-[12px] muted-text">
-                Listed {(((Date.now() - new Date(stock.listing_date).getTime()) / (365.25 * 24 * 3600 * 1000))).toFixed(1)} years ago
+                On NSE {(((Date.now() - new Date(stock.listing_date).getTime()) / (365.25 * 24 * 3600 * 1000))).toFixed(1)} years
               </span>
             </div>
           )}

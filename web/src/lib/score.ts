@@ -147,7 +147,7 @@ export function observedFrom(
   return firstBarDate < listingDate ? firstBarDate : listingDate;
 }
 
-/** Listing year, e.g. 2024 — for the "Recent IPO · 2024" badge. */
+/** Listing year, e.g. 2024 — for the "<1Y history · NSE 2024" badge. */
 export function listingYear(listingDate: string | null | undefined): number | null {
   if (!listingDate) return null;
   const y = new Date(listingDate).getFullYear();

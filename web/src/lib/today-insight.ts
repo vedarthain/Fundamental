@@ -92,7 +92,7 @@ const TITLES: Record<InsightType, { title: string; subtitle: string; methodology
   },
   new_to_watch: {
     title: "Newly listed worth watching",
-    subtitle: "Recent IPOs that are already scoring well on our peer-relative quality measure.",
+    subtitle: "Companies with a short financial record that are already scoring well on our peer-relative quality measure.",
     methodology: "New Listing maturity tier, Quality ≥ 65 within their peer cluster. Sorted by composite score.",
   },
   all_pillars: {
