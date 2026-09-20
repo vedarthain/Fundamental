@@ -39,9 +39,60 @@ case "$cmd" in
 esac
 
 # --- rm: recursive force deletes -------------------------------------------
+#
+# Blocked everywhere EXCEPT scratch space (/tmp, /var/folders). The first
+# version of this rule blocked every `rm -rf` regardless of path, and within a
+# day it fired on a 608 MB corrupted .next build parked in /tmp — a delete that
+# was deliberate, approved, and outside the repo entirely. The workaround
+# (`find -delete`) took ten seconds to find.
+#
+# That is how a guard dies. Not by being wrong about the dangerous case, but by
+# being wrong often enough about the safe one that you learn the bypass and stop
+# reading its output. So the rule is narrowed to where the damage actually is:
+# anything under the repo, the home directory, or a relative path.
+#
+# A target qualifies as scratch only if it is an absolute path under /tmp,
+# /private/tmp or /var/folders, has something after that prefix, and contains no
+# `..` — otherwise `/tmp/../Users/debasissahoo` would walk straight back out.
+# Every target in every rm segment must qualify; one that does not denies the
+# whole command.
+is_scratch_rm() {
+  local seg="$1" tok seen_rm=0 found=0
+  set -- $seg              # word-split; globbing disabled by the caller's `set -f`
+  for tok in "$@"; do
+    if [ "$seen_rm" -eq 0 ]; then
+      case "$tok" in rm|/bin/rm|*/rm) seen_rm=1 ;; esac
+      continue
+    fi
+    case "$tok" in -*) continue ;; esac
+    found=1
+    case "$tok" in
+      *..*) return 1 ;;
+      /tmp/?*|/private/tmp/?*|/var/folders/?*) ;;
+      *) return 1 ;;
+    esac
+  done
+  [ "$found" -eq 1 ]       # an rm with no parsable target is not provably safe
+}
+
 case "$cmd" in
   *"rm -rf "*|*"rm -fr "*|*"rm -r -f "*|*"rm -f -r "*)
-    deny "BLOCKED: recursive force delete. Nothing in this repo needs it. docs/ and .env.local are gitignored and unrecoverable. Delete specific files by name, or ask Deb." ;;
+    rm_ok=1
+    set -f
+    # Split on shell separators so each rm is judged with its own arguments.
+    # A separator inside a quoted string over-splits, which orphans the rm from
+    # its target and denies — the safe direction to be wrong in.
+    while IFS= read -r seg; do
+      case "$seg" in
+        *"rm -rf "*|*"rm -fr "*|*"rm -r -f "*|*"rm -f -r "*)
+          is_scratch_rm "$seg" || rm_ok=0 ;;
+      esac
+    done <<EOF
+$(printf '%s' "$cmd" | tr ';|&\n' '\n\n\n\n')
+EOF
+    set +f
+    [ "$rm_ok" -eq 1 ] || deny "BLOCKED: recursive force delete outside scratch space. docs/ and .env.local are gitignored and unrecoverable, and node_modules/.next rebuild — neither is worth the risk. Delete specific files by name, or ask Deb. (rm -rf IS allowed under /tmp and /var/folders.)"
+    ;;
 esac
 
 # --- SQL: unscoped writes against production -------------------------------
