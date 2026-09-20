@@ -77,6 +77,25 @@ jobs:
       # from the daily bhavcopy; this only diffs golden's live-NSE master into
       # app.universe. --deactivate is intentionally omitted: retiring a name is
       # a human decision (merger vs. trading halt vs. stale bhavcopy day).
+      #
+      # --retire-non-equity IS passed, and is a different kind of retirement
+      # from --deactivate. It does not guess from silence on the tape; it asks
+      # NSE's own listed-equity master and requires a CONJUNCTION — absent from
+      # EQUITY_L.csv AND zero rows in app.fundamentals_annual. That selects
+      # ETFs and -RE rights entitlements, which have no fundamentals and never
+      # will, and cannot select a real company: the 17 delisted-but-real names
+      # (EDUCOMP, ORTEL, SELMC …) all carry 10-19 years of annuals and fail the
+      # second clause. They are reported on every run and never retired.
+      #
+      # Weekly rather than monthly because the inflow is weekly: these arrive
+      # through the same door as new listings. The ISIN filter admits a
+      # candidate with no ISIN anywhere so a day-1 IPO is never dropped, and
+      # ETFs with no ISIN walk in behind it — 40 had accumulated by the time we
+      # looked, all sitting permanently in the 'insufficient' tier. Running this
+      # only monthly would let them sit on the site for up to four weeks.
+      #
+      # Safe when the CSV fetch fails: sync-universe logs loudly, sets
+      # master_ok=False, prints a skip notice and retires NOTHING that run.
       - name: Sync universe (onboard new NSE listings)
         env:
           APP_DB_URL:     ${{ secrets.NEON_APP_URL }}
@@ -84,7 +103,7 @@ jobs:
           FUNDAMENTAL_ALLOW_REMOTE_DB: "1"
           GOLDEN_DB_URL:  ${{ secrets.NEON_GOLDEN_URL }}
           PYTHONUNBUFFERED: "1"
-        run: python -m fundamental_etl.cli sync-universe
+        run: python -m fundamental_etl.cli sync-universe --retire-non-equity
 
       # Classify whatever sync-universe just onboarded. This is the step that
       # was missing for five months: sync-universe can only enrich a new listing

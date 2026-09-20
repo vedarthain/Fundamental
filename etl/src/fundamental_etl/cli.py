@@ -987,10 +987,25 @@ def sync_universe_cmd(
             for s in delisted:
                 print(f"    ~ {s:16} {counts[s]} yrs of fundamentals")
 
+        # ── 2e. How many listing_date holes EQUITY_L can fill (see §3c) ──────
+        # Counted here rather than inferred from the UPDATE's rowcount so that
+        # --dry-run can report it too. Only rows where ours is NULL and NSE has
+        # a date — §3c never overwrites, so this is the exact write set.
+        listing_gap = 0
+        if master_ok and master:
+            datedet = [s for s, m in master.items() if m.get("listing_date")]
+            with conn.cursor() as c4:
+                c4.execute(
+                    "SELECT count(*) AS n FROM app.universe "
+                    "WHERE listing_date IS NULL AND symbol = ANY(%s)", (datedet,))
+                listing_gap = c4.fetchone()["n"]
+            print(f"\nlisting_date holes EQUITY_L can fill: {listing_gap}")
+
         if dry_run:
             print("\n--dry-run: no rows written.")
             log.info("sync_universe_dry_run", new=len(new_syms), gone=len(gone),
-                     non_equity=len(non_equity_syms), delisted=len(delisted))
+                     non_equity=len(non_equity_syms), delisted=len(delisted),
+                     listing_gap=listing_gap)
             return
 
         # ── 3. INSERT new rows (identity from golden; name falls back to symbol) ──
@@ -1049,6 +1064,58 @@ def sync_universe_cmd(
             conn.commit()
         if bar_updated:
             print(f"first_bar_date refreshed on {bar_updated} row(s).")
+
+        # ── 3c. Backfill listing_date from EQUITY_L where golden has none ─────
+        # sync-universe takes listing_date from golden.stocks, and golden.stocks
+        # is the "seeded once, never maintained" table: it carries a listing_date
+        # for the ~2,158 symbols present at the original seed and NULL for every
+        # one added since (refresh-ltp.py inserts skeleton rows to satisfy the
+        # price_history FK and fills nothing else). Measured 2026-09-20: of the
+        # 444 symbols onboarded that month, listing_date was populated for
+        # exactly ZERO.
+        #
+        # That is not cosmetic. hasScoreableHistory (web/src/lib/score.ts) treats
+        # a NULL listing_date as SCOREABLE — a deliberate escape hatch, because
+        # first_bar_date is bounded by when golden began ingesting a symbol
+        # rather than when it began trading, and trusting it alone would badge
+        # hundreds of long-established names as IPOs. The cost of that escape
+        # hatch is that a genuine day-1 IPO onboards with no listing_date and is
+        # therefore shown a full percentile on three months of price history,
+        # with no IPO chip — precisely the INNOVISION failure the gate exists to
+        # prevent. Up to 71 active names were in that state when this was added.
+        #
+        # We already hold the answer: EQUITY_L.csv carries DATE OF LISTING and is
+        # downloaded and parsed on every run (§2c) purely for its membership.
+        # This writes the field we were already throwing away.
+        #
+        # WHY `IS NULL` AND NOT AN UNCONDITIONAL UPDATE. EQUITY_L records the
+        # MAINBOARD listing date. For a company that graduated from NSE Emerge,
+        # that date is the migration, not the listing: KOTYARK reads 2026-03-12
+        # in EQUITY_L while holding daily bars back to 2021-11-17. 339 active
+        # names have first_bar_date < listing_date. Overwriting a good golden
+        # date with EQUITY_L's would re-introduce exactly the error the
+        # first_bar_date work just removed. So this only ever FILLS A HOLE; it
+        # cannot change an answer that already exists. Combined with the
+        # earlier-of-the-two rule in observedFrom(), an SME migration that gets
+        # its date from here is still rescued by its first bar.
+        listing_filled = 0
+        if master_ok and master:
+            pairs = [(s, m["listing_date"]) for s, m in master.items()
+                     if m.get("listing_date")]
+            if pairs:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        UPDATE app.universe u
+                           SET listing_date = v.listing_date
+                          FROM (SELECT * FROM unnest(%s::text[], %s::date[])
+                                  AS t(sym, listing_date)) v
+                         WHERE u.symbol = v.sym
+                           AND u.listing_date IS NULL
+                    """, ([p[0] for p in pairs], [p[1] for p in pairs]))
+                    listing_filled = cur.rowcount
+                conn.commit()
+        if listing_filled:
+            print(f"listing_date backfilled from EQUITY_L on {listing_filled} row(s).")
 
         # ── 4. Optionally retire names that have gone dark on NSE ─────────────
         retired = 0
@@ -1133,7 +1200,7 @@ def sync_universe_cmd(
              excluded_funds=len(excluded_funds), fund_retired=fund_retired,
              excluded_non_equity=len(excluded_non_equity),
              non_equity_retired=non_equity_retired, delisted_reported=len(delisted),
-             first_bar_updated=bar_updated,
+             first_bar_updated=bar_updated, listing_date_filled=listing_filled,
              new_detected=len(new_syms), gone_detected=len(gone))
     print(f"\nInserted {inserted} new symbol(s); retired {retired}.")
     if inserted:
