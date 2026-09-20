@@ -212,11 +212,26 @@ export type PerformanceStats = {
   bestDayPct: number;
   worstDayPct: number;
   index: { date: string; twrIdx: number; niftyIdx: number | null }[];
+  // Raw rupee series for the two Performance charts.
+  //
+  //   dayPnl   — that day's market move (day_change_value). This is the ONLY
+  //              honest "daily profit": it is Σ qty × (ltp − prev_close), so a
+  //              day you deposited ₹60k shows the market move, not ₹60k of
+  //              "profit". Deriving it as diff(total_value) instead would be
+  //              wrong — on 2026-08-12 total_value jumped with a ₹66,398 buy
+  //              and on 2026-08-24 it fell with a ₹39,573 sell, neither of
+  //              which was a gain or a loss.
+  //   invested — total_cost, i.e. money at work. Steps on buys and sells.
+  //   value    — total_value, carried so the chart can show cost vs market.
+  //
+  // Series starts at the first snapshot, not the first trade: portfolio_snapshot
+  // is forward-only from onboarding. Same HARD LIMIT as the TWR above.
+  series: { date: string; dayPnl: number; invested: number; value: number }[];
 };
 
 export async function loadPerformanceStats(userId: number): Promise<PerformanceStats | null> {
-  const snaps = await sql<{ snap_date: string; total_value: string | null; day_change_value: string | null }[]>`
-    SELECT snap_date::text, total_value::text, day_change_value::text
+  const snaps = await sql<{ snap_date: string; total_value: string | null; total_cost: string | null; day_change_value: string | null }[]>`
+    SELECT snap_date::text, total_value::text, total_cost::text, day_change_value::text
       FROM app.portfolio_snapshot
      WHERE user_id = ${userId} AND total_value IS NOT NULL
      ORDER BY snap_date ASC
@@ -295,6 +310,16 @@ export async function loadPerformanceStats(userId: number): Promise<PerformanceS
     bestDayPct: dailyReturns.length ? r1(Math.max(...dailyReturns) * 100) : 0,
     worstDayPct: dailyReturns.length ? r1(Math.min(...dailyReturns) * 100) : 0,
     index,
+    // Every snapshot carries its own day_change_value, including the first —
+    // it is measured against that day's previous close, not against the
+    // previous snapshot — so the series starts at index 0, unlike `index`
+    // above which needs a prior row to chain a return off.
+    series: snaps.map((s) => ({
+      date: s.snap_date,
+      dayPnl: Math.round(Number(s.day_change_value ?? 0)),
+      invested: Math.round(Number(s.total_cost ?? 0)),
+      value: Math.round(Number(s.total_value ?? 0)),
+    })),
   };
 }
 

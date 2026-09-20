@@ -136,6 +136,14 @@ cd web && npx tsc --noEmit && npm run build
 `npx next lint` does **not** work in this repo — it misreads the argument as a
 directory. Use `tsc --noEmit`.
 
+**Never run `npm run build` while `npm run dev` is running.** Both write
+`web/.next` and they corrupt each other's Turbopack persistence, which then
+surfaces as a 500 on every page with a `Failed to deserialize AMQF ...`
+traceback that looks nothing like a build error. Stop the dev server first, or
+just run `tsc --noEmit`. To recover: stop dev, **move** `web/.next` aside
+(`mv`, not `rm`), restart. The code is almost certainly fine — check by
+building with dev stopped before you go hunting for a bug that isn't there.
+
 **You cannot verify the GUI.** There is no browser access to the rendered app.
 Do not claim a visual result. Report what you changed and ask Deb to look.
 

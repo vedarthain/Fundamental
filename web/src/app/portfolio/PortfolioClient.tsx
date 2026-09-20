@@ -13,7 +13,7 @@
  */
 
 import { useRouter } from "next/navigation";
-import { Fragment, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -456,6 +456,14 @@ function PerformanceTab({ portfolio, realized, perf, timeline }: { portfolio: Po
       {/* Time-weighted return model + benchmark (owner-only) */}
       {perf && <ReturnModel perf={perf} />}
 
+      {/* Daily profit + invested value, straight off the snapshot series */}
+      {perf && perf.series.length >= 2 && (
+        <div className="grid lg:grid-cols-2 gap-4">
+          <DailyProfitChart series={perf.series} />
+          <InvestedValueChart series={perf.series} />
+        </div>
+      )}
+
       {/* Realized performance over time — the honest long-run trader view */}
       {timeline && <RealizedTimelinePanel timeline={timeline} />}
 
@@ -476,6 +484,356 @@ function PerformanceTab({ portfolio, realized, perf, timeline }: { portfolio: Po
         <Donut title="By broker" data={portfolio.brokerAlloc} total={totals.currentValue} />
         <Donut title="By sector" data={portfolio.sectorAlloc} total={totals.currentValue} />
       </div>
+    </div>
+  );
+}
+
+// ── Shared chart axis plumbing ──────────────────────────────────────────────
+
+/** Compact rupees for axis ticks: 1129045 → "11.3L", -7615 → "-7.6k". */
+function axisInr(v: number): string {
+  const a = Math.abs(v);
+  const sign = v < 0 ? "-" : "";
+  if (a >= 1e7) return `${sign}${(a / 1e7).toFixed(a / 1e7 >= 10 ? 0 : 1)}Cr`;
+  if (a >= 1e5) return `${sign}${(a / 1e5).toFixed(a / 1e5 >= 10 ? 0 : 1)}L`;
+  if (a >= 1000) return `${sign}${(a / 1000).toFixed(a / 1000 >= 10 ? 0 : 1)}k`;
+  return `${sign}${Math.round(a)}`;
+}
+
+/**
+ * Tick values on round numbers inside [lo, hi].
+ *
+ * Evenly dividing the range instead would put ticks on 13,847 / 27,694 — the
+ * axis then needs reading rather than glancing at. Snapping the step to 1/2/5
+ * × a power of ten is what makes 0 / 20k / 40k fall out.
+ */
+function niceTicks(lo: number, hi: number, count = 4): number[] {
+  if (!(hi > lo)) return [lo];
+  const raw = (hi - lo) / count;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const norm = raw / mag;
+  const step = (norm >= 5 ? 10 : norm >= 2 ? 5 : norm >= 1 ? 2 : 1) * mag;
+  const out: number[] = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) out.push(Math.round(v));
+  return out;
+}
+
+/**
+ * The Y axis, rendered OUTSIDE the scroll container.
+ *
+ * Drawing it inside the scrolling SVG is the obvious thing and it is wrong —
+ * the axis slides off the left edge the moment you scroll, so the numbers you
+ * are reading against stop being on screen. A fixed gutter beside the scroller
+ * keeps the scale pinned while the plot moves under it. The gridlines still
+ * live inside the plot and scroll with the data; only the labels are frozen.
+ */
+function YAxisGutter({ ticks, y, height, width = 44 }: {
+  ticks: number[]; y: (v: number) => number; height: number; width?: number;
+}) {
+  return (
+    <svg width={width} height={height} style={{ display: "block", flex: "0 0 auto" }}>
+      {ticks.map((t) => (
+        <text
+          key={t}
+          x={width - 5}
+          y={y(t) + 3}
+          textAnchor="end"
+          className="tabular-nums"
+          style={{ fontSize: 9, fill: "var(--color-muted)" }}
+        >
+          {axisInr(t)}
+        </text>
+      ))}
+    </svg>
+  );
+}
+
+// Daily profit — one bar per snapshot of that day's MARKET move, not the change
+// in portfolio value.
+//
+// This distinction is the whole point of the chart. total_value moves when you
+// buy, when you sell, and when a broker re-import restates a cost basis — none
+// of which is profit. day_change_value is Σ qty × (ltp − prev_close), so a day
+// you deposited ₹66k reads as whatever the market actually did. Plotting
+// diff(total_value) here would have shown a ₹66,398 "profit" on 2026-08-12 and
+// a ₹39,573 "loss" on 2026-08-24, both of which were cashflows.
+function DailyProfitChart({ series }: { series: PerformanceStats["series"] }) {
+  // Plotted as a CUMULATIVE curve, not one mark per day.
+  //
+  // Daily P&L is noise around zero — 23 up days and 23 down days here, which as
+  // a line is a hairball and as bars is a picket fence. Neither answers the
+  // question you actually open this for: am I ahead, and when did that change?
+  // Running the total answers it, and no information is lost — each day's own
+  // figure is still on the point's hover, and the best/worst/up-down cards
+  // below are computed from the daily values.
+  // H is the full SVG box; the plot is inset so the X-axis dates have room
+  // below it and the topmost Y tick is not clipped at y=0.
+  const SLOT = 11, H = 158, PAD_X = 6, PLOT_TOP = 10, PLOT_BOT = H - 26;
+  const n = series.length;
+  const W = Math.max(n * SLOT + PAD_X * 2, 320);
+
+  const cum: { date: string; day: number; total: number }[] = [];
+  let run = 0;
+  for (const s of series) { run += s.dayPnl; cum.push({ date: s.date, day: s.dayPnl, total: run }); }
+
+  // Zero must be inside the range or the baseline sits off-canvas and the fill
+  // reads as if the whole window were profitable.
+  const lo = Math.min(0, ...cum.map((c) => c.total));
+  const hi = Math.max(0, ...cum.map((c) => c.total));
+  const span = hi - lo || 1;
+  const x = (i: number) => PAD_X + (n === 1 ? (W - PAD_X * 2) / 2 : i * SLOT);
+  const y = (v: number) => PLOT_TOP + (1 - (v - lo) / span) * (PLOT_BOT - PLOT_TOP);
+  const zeroY = y(0);
+  const yTicks = niceTicks(lo, hi, 4);
+
+  // One date label per ~5 days keeps ~55px between them at SLOT=11, which is
+  // about the width of "17 Jul '26". Denser and they overlap into mush.
+  const xStep = Math.max(1, Math.ceil(48 / SLOT));
+  const linePts = cum.map((c, i) => `${x(i).toFixed(1)},${y(c.total).toFixed(1)}`).join(" ");
+  const endsUp = cum[n - 1].total >= 0;
+  const lineColor = endsUp ? GREEN : RED;
+
+  // Open pinned to the most recent day — the right edge is the one you came to
+  // see, and a chart that opens showing July while today sits off-screen reads
+  // as broken. Scrolling left is the deliberate act.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollLeft = el.scrollWidth;
+  }, [n]);
+
+  const upDays = series.filter((s) => s.dayPnl > 0).length;
+  const downDays = series.filter((s) => s.dayPnl < 0).length;
+  const best = series.reduce((a, b) => (b.dayPnl > a.dayPnl ? b : a));
+  const worst = series.reduce((a, b) => (b.dayPnl < a.dayPnl ? b : a));
+  const net = series.reduce((s, x2) => s + x2.dayPnl, 0);
+
+  return (
+    <div className="card p-4 md:p-5">
+      <SectionHead
+        icon={<IconChart size={15} />}
+        title="Daily profit"
+        right={<span className="text-[11px] muted-text">cumulative · {series.length} trading days</span>}
+      />
+      <div className="flex items-start">
+        <YAxisGutter ticks={yTicks} y={y} height={H} />
+        <div ref={scrollRef} className="overflow-x-auto overflow-y-hidden flex-1">
+          <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ display: "block" }}>
+            <defs>
+              <linearGradient id="dpFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={lineColor} stopOpacity={0.28} />
+                <stop offset="100%" stopColor={lineColor} stopOpacity={0.02} />
+              </linearGradient>
+            </defs>
+            {/* Y gridlines — inside the plot, so they scroll with the data.
+                Only their labels are frozen in the gutter. */}
+            {yTicks.map((t) => (
+              <line key={t} x1={0} y1={y(t)} x2={W} y2={y(t)}
+                    stroke="var(--color-border)" strokeWidth={1} opacity={t === 0 ? 0 : 0.45} />
+            ))}
+            <polygon
+              points={`${x(0).toFixed(1)},${zeroY.toFixed(1)} ${linePts} ${x(n - 1).toFixed(1)},${zeroY.toFixed(1)}`}
+              fill="url(#dpFill)"
+            />
+            {/* Zero drawn last of the guides and dashed — it is the line that
+                separates "ahead" from "behind", not just another gridline. */}
+            <line x1={0} y1={zeroY} x2={W} y2={zeroY} stroke="var(--color-muted)" strokeWidth={1} strokeDasharray="3 3" opacity={0.7} />
+            <polyline
+              points={linePts}
+              fill="none"
+              stroke={lineColor}
+              strokeWidth={2}
+              strokeLinejoin="round"
+              strokeLinecap="round"
+              vectorEffect="non-scaling-stroke"
+            />
+            <circle cx={x(n - 1)} cy={y(cum[n - 1].total)} r={3} fill={lineColor} />
+            {/* X axis */}
+            <line x1={0} y1={PLOT_BOT + 6} x2={W} y2={PLOT_BOT + 6} stroke="var(--color-border)" strokeWidth={1} />
+            {cum.map((c, i) =>
+              i % xStep === 0 || i === n - 1 ? (
+                <g key={`xt-${c.date}`}>
+                  <line x1={x(i)} y1={PLOT_BOT + 6} x2={x(i)} y2={PLOT_BOT + 9} stroke="var(--color-border)" strokeWidth={1} />
+                  <text x={x(i)} y={PLOT_BOT + 19} textAnchor="middle" style={{ fontSize: 9, fill: "var(--color-muted)" }}>
+                    {shortDate(c.date).slice(0, -4)}
+                  </text>
+                </g>
+              ) : null,
+            )}
+            {/* Invisible hit strips — one per day, full plot height, so the
+                hover target is the column and not the 2px line itself. */}
+            {cum.map((c, i) => (
+              <rect key={c.date} x={x(i) - SLOT / 2} y={0} width={SLOT} height={PLOT_BOT} fill="transparent">
+                <title>{`${shortDate(c.date)}\nthat day  ${signed(c.day)}\nrunning   ${signed(c.total)}`}</title>
+              </rect>
+            ))}
+          </svg>
+        </div>
+      </div>
+      <div className="flex justify-end text-[10px] muted-text mt-1">
+        <span>← scroll for earlier days</span>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-2 mt-3 pt-3" style={{ borderTop: "1px solid var(--color-border)" }}>
+        <div>
+          <div className="text-[10.5px] font-semibold muted-text uppercase tracking-wide">Up / down</div>
+          <div className="tabular-nums font-semibold text-[15px] mt-0.5">
+            <span style={{ color: GREEN }}>{upDays}</span>
+            <span className="muted-text"> / </span>
+            <span style={{ color: RED }}>{downDays}</span>
+          </div>
+        </div>
+        <div>
+          <div className="text-[10.5px] font-semibold muted-text uppercase tracking-wide">Best day</div>
+          <div className="tabular-nums font-semibold text-[15px] mt-0.5" style={{ color: GREEN }}>{signed(best.dayPnl)}</div>
+          <div className="text-[10px] muted-text">{shortDate(best.date)}</div>
+        </div>
+        <div>
+          <div className="text-[10.5px] font-semibold muted-text uppercase tracking-wide">Worst day</div>
+          <div className="tabular-nums font-semibold text-[15px] mt-0.5" style={{ color: RED }}>{signed(worst.dayPnl)}</div>
+          <div className="text-[10px] muted-text">{shortDate(worst.date)}</div>
+        </div>
+        <div>
+          <div className="text-[10.5px] font-semibold muted-text uppercase tracking-wide">Net over window</div>
+          <div className="tabular-nums font-semibold text-[15px] mt-0.5" style={{ color: net >= 0 ? GREEN : RED }}>{signed(net)}</div>
+        </div>
+      </div>
+      <p className="text-[10.5px] muted-text mt-2 leading-snug">
+        Running total of each day&apos;s market move — hover any point for that day on its own.
+        Buys, sells and broker re-imports move your portfolio value but are not profit, so they
+        are excluded.
+      </p>
+    </div>
+  );
+}
+
+// Invested value — cost basis (money at work) with market value overlaid.
+//
+// Invested alone is a staircase and says nothing about how it is doing; the gap
+// between the two lines IS the open P&L, which is the reason to look at this at
+// all. Cost is the solid/filled line because that is what was asked for; market
+// value is the thinner line above or below it.
+function InvestedValueChart({ series }: { series: PerformanceStats["series"] }) {
+  // Same fixed-slot + scroll geometry as the daily chart. It previously
+  // stretched to fit via preserveAspectRatio="none", which is fine for bare
+  // lines but distorts text — axis labels on a stretched viewBox come out
+  // horizontally squashed. Fixed width also keeps the two charts scrolling in
+  // step instead of one panning while the other rescales.
+  const SLOT = 11, H = 158, PAD_X = 6, PLOT_TOP = 10, PLOT_BOT = H - 26;
+  const n = series.length;
+  const W = Math.max(n * SLOT + PAD_X * 2, 320);
+
+  // Y range spans BOTH lines, so cost and market stay on one comparable scale —
+  // separate scales would draw the gap between them at an arbitrary size and
+  // the whole point of the chart is that the gap is the P&L.
+  const rawLo = Math.min(...series.map((s) => Math.min(s.invested, s.value)));
+  const rawHi = Math.max(...series.map((s) => Math.max(s.invested, s.value)));
+  const padding = (rawHi - rawLo || 1) * 0.08;
+  const lo = rawLo - padding;
+  const hi = rawHi + padding;
+  const span = hi - lo || 1;
+  const x = (i: number) => PAD_X + (n === 1 ? (W - PAD_X * 2) / 2 : i * SLOT);
+  const y = (v: number) => PLOT_TOP + (1 - (v - lo) / span) * (PLOT_BOT - PLOT_TOP);
+  const yTicks = niceTicks(lo, hi, 4);
+  const xStep = Math.max(1, Math.ceil(48 / SLOT));
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollLeft = el.scrollWidth;
+  }, [n]);
+
+  const pts = (pick: (s: PerformanceStats["series"][number]) => number) =>
+    series.map((s, i) => `${x(i).toFixed(1)},${y(pick(s)).toFixed(1)}`).join(" ");
+  const investedPts = pts((s) => s.invested);
+  const last = series[n - 1];
+  const first = series[0];
+  const addedNet = last.invested - first.invested;
+  const openPnl = last.value - last.invested;
+
+  return (
+    <div className="card p-4 md:p-5">
+      <SectionHead
+        icon={<IconLayers size={15} />}
+        title="Invested value"
+        right={<span className="text-[11px] muted-text">cost basis vs market</span>}
+      />
+      <div className="flex items-start">
+        <YAxisGutter ticks={yTicks} y={y} height={H} />
+        <div ref={scrollRef} className="overflow-x-auto overflow-y-hidden flex-1">
+          <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ display: "block" }}>
+            {/* Gridlines scroll with the data; only their labels are frozen. */}
+            {yTicks.map((t) => (
+              <line key={t} x1={0} y1={y(t)} x2={W} y2={y(t)}
+                    stroke="var(--color-border)" strokeWidth={1} opacity={0.45} />
+            ))}
+            {/* Baseline is PLOT_BOT, not H — below PLOT_BOT is the X-axis strip. */}
+            <polygon
+              points={`${x(0).toFixed(1)},${PLOT_BOT} ${investedPts} ${x(n - 1).toFixed(1)},${PLOT_BOT}`}
+              fill="var(--color-accent-700)"
+              opacity={0.1}
+            />
+            <polyline
+              points={pts((s) => s.value)}
+              fill="none"
+              stroke="var(--color-muted)"
+              strokeWidth={1.2}
+              strokeDasharray="3 2"
+              vectorEffect="non-scaling-stroke"
+            />
+            <polyline
+              points={investedPts}
+              fill="none"
+              stroke="var(--color-accent-700)"
+              strokeWidth={2}
+              strokeLinejoin="round"
+              vectorEffect="non-scaling-stroke"
+            />
+            {/* X axis */}
+            <line x1={0} y1={PLOT_BOT + 6} x2={W} y2={PLOT_BOT + 6} stroke="var(--color-border)" strokeWidth={1} />
+            {series.map((s, i) =>
+              i % xStep === 0 || i === n - 1 ? (
+                <g key={`xt-${s.date}`}>
+                  <line x1={x(i)} y1={PLOT_BOT + 6} x2={x(i)} y2={PLOT_BOT + 9} stroke="var(--color-border)" strokeWidth={1} />
+                  <text x={x(i)} y={PLOT_BOT + 19} textAnchor="middle" style={{ fontSize: 9, fill: "var(--color-muted)" }}>
+                    {shortDate(s.date).slice(0, -4)}
+                  </text>
+                </g>
+              ) : null,
+            )}
+            {series.map((s, i) => (
+              <rect key={s.date} x={x(i) - SLOT / 2} y={0} width={SLOT} height={PLOT_BOT} fill="transparent">
+                <title>{`${shortDate(s.date)}\ninvested ${inr(s.invested)}\nmarket ${inr(s.value)}`}</title>
+              </rect>
+            ))}
+          </svg>
+        </div>
+      </div>
+      <div className="flex justify-end text-[10px] muted-text mt-1">
+        <span>← scroll for earlier days</span>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-2 mt-3 pt-3" style={{ borderTop: "1px solid var(--color-border)" }}>
+        <div>
+          <div className="text-[10.5px] font-semibold muted-text uppercase tracking-wide">Invested now</div>
+          <div className="tabular-nums font-semibold text-[15px] mt-0.5">{inr(last.invested)}</div>
+        </div>
+        <div>
+          <div className="text-[10.5px] font-semibold muted-text uppercase tracking-wide">Market value</div>
+          <div className="tabular-nums font-semibold text-[15px] mt-0.5">{inr(last.value)}</div>
+        </div>
+        <div>
+          <div className="text-[10.5px] font-semibold muted-text uppercase tracking-wide">Open P&amp;L</div>
+          <div className="tabular-nums font-semibold text-[15px] mt-0.5" style={{ color: openPnl >= 0 ? GREEN : RED }}>{signed(openPnl)}</div>
+        </div>
+        <div>
+          <div className="text-[10.5px] font-semibold muted-text uppercase tracking-wide">Net added</div>
+          <div className="tabular-nums font-semibold text-[15px] mt-0.5">{signed(addedNet)}</div>
+          <div className="text-[10px] muted-text">since {shortDate(first.date)}</div>
+        </div>
+      </div>
+      <p className="text-[10.5px] muted-text mt-2 leading-snug">
+        Solid line is cost basis, dashed is market value — the gap between them is your open
+        P&amp;L. Steps are buys and sells, not gains.
+      </p>
     </div>
   );
 }
@@ -2242,8 +2600,8 @@ const COLUMNS: {
   // Two-line headers: spelled out, but stacked so the column stays narrow.
   // A single "FALL FROM TOP" line (whitespace-nowrap) blew the table past its
   // container and pushed Held/Wt off the right edge.
-  { key: "fallTop", label: (<span className="flex flex-col items-end leading-[1.1]"><span>Fall from</span><span>top</span></span>), align: "right", cls: "px-1.5", numeric: true, title: "Fall from top — % below the highest daily close since your purchase date where a trade date is known, otherwise since import date (broker snapshots carry no buy date). 0 at a fresh high. Split-adjusted." },
-  { key: "riseBottom", label: (<span className="flex flex-col items-end leading-[1.1]"><span>Rise from</span><span>bottom</span></span>), align: "right", cls: "px-1.5", numeric: true, title: "Rise from bottom — % above the lowest daily close since your purchase date where a trade date is known, otherwise since import date (broker snapshots carry no buy date). 0 at a fresh low. Split-adjusted." },
+  { key: "fallTop", label: (<span className="flex flex-col items-end leading-[1.1]"><span>Fall from</span><span>top</span></span>), align: "right", cls: "px-1.5", numeric: true, title: "Fall from top — % below the highest daily close since your purchase date. 0 at a fresh high. Split-adjusted. Rows marked † have no trade date (broker exports carry none) and are measured from the import date instead." },
+  { key: "riseBottom", label: (<span className="flex flex-col items-end leading-[1.1]"><span>Rise from</span><span>bottom</span></span>), align: "right", cls: "px-1.5", numeric: true, title: "Rise from bottom — % above the lowest daily close since your purchase date. 0 at a fresh low. Split-adjusted. Rows marked † have no trade date (broker exports carry none) and are measured from the import date instead." },
   { key: "qvm", label: "Q/V/M", align: "center", cls: "px-1.5", numeric: true },
   { key: "comp", label: "Comp", align: "center", cls: "px-1.5", numeric: true, title: "Composite percentile (Q/V/M roll-up) — higher is better" },
   { key: "rank", label: "Rank", align: "center", cls: "px-1.5", numeric: true },
@@ -2418,6 +2776,14 @@ function HoldingsTable({
     : COLUMNS.filter((c) => c.key !== "fallTop" && c.key !== "riseBottom");
 
   const groups = buildGroups(pnlFiltered, mode);
+
+  // How many visible rows can only anchor their drawdown window on the import
+  // date. Drives the footnote below the table — a dagger with no key is just
+  // noise, so the count and the legend appear together or not at all.
+  const proxyCount = showDrawdown
+    ? pnlFiltered.filter((i) => i.drawdownAnchor === "import"
+        && (i.fallFromTopPct != null || i.riseFromBottomPct != null)).length
+    : 0;
   // Only the Flat view is sortable — grouped modes keep their value-desc order
   // (per-column sort would collide with the collapsible group rows).
   const displayGroups =
@@ -2653,6 +3019,15 @@ function HoldingsTable({
           </tbody>
         </table>
       </div>
+      {proxyCount > 0 && (
+        <div className="px-3 py-2 text-[11px] muted-text">
+          <span className="font-semibold">†</span> {proxyCount} position{proxyCount === 1 ? "" : "s"}{" "}
+          measured from the date you imported it, not the date you bought it — a broker
+          holdings export carries quantity and average cost but no trade date. If you
+          held it before importing, the window misses that earlier history. Add a buy
+          date to the position to correct it.
+        </div>
+      )}
     </div>
   );
 }
@@ -2750,24 +3125,39 @@ function FragmentRow({
         <td className="px-1.5 py-2 text-right tabular-nums" style={{ color: ins.pnlPct == null ? undefined : up(ins.pnlPct) ? GREEN : RED }}>
           {pct(ins.pnlPct)}
         </td>
-        {showDrawdown && (
-          <>
-            <td
-              className="px-1.5 py-2 text-right tabular-nums font-semibold"
-              style={{ color: ins.fallFromTopPct == null ? undefined : ins.fallFromTopPct > 0 ? (inProfit ? RED : "var(--color-fg)") : "var(--color-muted)" }}
-              title={ins.fallFromTopPct == null ? undefined : (() => { const anc = ins.drawdownAnchor === "buy" ? "your purchase date" : "import date"; return ins.fallFromTopPct === 0 ? `At its high since ${anc}` : `${ins.fallFromTopPct}% below its high since ${anc}`; })()}
-            >
-              {ins.fallFromTopPct == null ? "—" : ins.fallFromTopPct === 0 ? "0%" : `−${ins.fallFromTopPct}%`}
-            </td>
-            <td
-              className="px-1.5 py-2 text-right tabular-nums"
-              style={{ color: ins.riseFromBottomPct == null ? undefined : ins.riseFromBottomPct > 0 ? (inProfit ? "var(--color-fg)" : GREEN) : "var(--color-muted)" }}
-              title={ins.riseFromBottomPct == null ? undefined : (() => { const anc = ins.drawdownAnchor === "buy" ? "your purchase date" : "import date"; return ins.riseFromBottomPct === 0 ? `At its low since ${anc}` : `${ins.riseFromBottomPct}% above its low since ${anc}`; })()}
-            >
-              {ins.riseFromBottomPct == null ? "—" : ins.riseFromBottomPct === 0 ? "0%" : `+${ins.riseFromBottomPct}%`}
-            </td>
-          </>
-        )}
+        {showDrawdown && (() => {
+          // A broker holdings export carries quantity and average cost but no
+          // trade date, so for those positions the window can only start at the
+          // import date — "since I started tracking this", not "since I bought
+          // it". That was true before and was disclosed in a hover title only,
+          // which meant ~28% of the column read differently from its own header
+          // with nothing on screen to say so. The dagger puts it in the table.
+          const proxy = ins.drawdownAnchor === "import";
+          const anc = proxy ? "import date (broker export carries no trade date)" : "your purchase date";
+          const mark = proxy ? (
+            <sup className="ml-0.5 font-normal" style={{ color: "var(--color-muted)" }}>†</sup>
+          ) : null;
+          return (
+            <>
+              <td
+                className="px-1.5 py-2 text-right tabular-nums font-semibold"
+                style={{ color: ins.fallFromTopPct == null ? undefined : ins.fallFromTopPct > 0 ? (inProfit ? RED : "var(--color-fg)") : "var(--color-muted)" }}
+                title={ins.fallFromTopPct == null ? undefined : (ins.fallFromTopPct === 0 ? `At its high since ${anc}` : `${ins.fallFromTopPct}% below its high since ${anc}`)}
+              >
+                {ins.fallFromTopPct == null ? "—" : ins.fallFromTopPct === 0 ? "0%" : `−${ins.fallFromTopPct}%`}
+                {ins.fallFromTopPct != null && mark}
+              </td>
+              <td
+                className="px-1.5 py-2 text-right tabular-nums"
+                style={{ color: ins.riseFromBottomPct == null ? undefined : ins.riseFromBottomPct > 0 ? (inProfit ? "var(--color-fg)" : GREEN) : "var(--color-muted)" }}
+                title={ins.riseFromBottomPct == null ? undefined : (ins.riseFromBottomPct === 0 ? `At its low since ${anc}` : `${ins.riseFromBottomPct}% above its low since ${anc}`)}
+              >
+                {ins.riseFromBottomPct == null ? "—" : ins.riseFromBottomPct === 0 ? "0%" : `+${ins.riseFromBottomPct}%`}
+                {ins.riseFromBottomPct != null && mark}
+              </td>
+            </>
+          );
+        })()}
         <td className="px-1.5 py-2 text-center tabular-nums">
           {ins.isMapped ? (
             <span className="text-[11px]">
