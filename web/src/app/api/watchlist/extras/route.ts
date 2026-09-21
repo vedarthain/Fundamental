@@ -101,7 +101,27 @@ export async function GET(req: NextRequest) {
           JOIN app.news n ON n.id = ns.news_id
          WHERE ns.symbol = ${raw}
            AND n.title IS NOT NULL
-         ORDER BY n.published_at DESC
+           -- "Titan Company Share Price Live Updates: …" is a daily autopost
+           -- that restates the ticker; 2,262 of 31,048 rows are this one
+           -- template, and for an actively-covered name they crowd out every
+           -- real headline in a LIMIT 8. Filtered at the query, not in React,
+           -- so the limit spends its slots on news.
+           AND n.title !~* '(share|stock) price live update'
+           -- Market-wide live blogs ("Sensex Today | Nifty 50 | Stock Market
+           -- Live Updates: …"). They get tagged to a symbol because the
+           -- running commentary name-checks it once. Anchored to the
+           -- live-update form on purpose: a bare sensex|nifty match would
+           -- also kill real single-stock headlines like "Tata Steel falls
+           -- 3%, among top Nifty 50 laggards".
+           AND n.title !~* '(sensex|nifty|stock market|market crash).*live update'
+           -- Tagger misfires — weather, sport, politics carrying a stock tag.
+           -- Not an editorial call; these are not financial news at all.
+           AND n.title !~* '(mumbai|delhi|chennai|bengaluru) rain|monsoon|weather (live|update)|cricket|ipl 20|world cup'
+         -- NULLS LAST, not the default. Postgres sorts NULLs FIRST under
+         -- DESC, so an undated row took the top slot of the panel and
+         -- rendered as "1 Jan '70" (new Date(null) is the epoch). Undated
+         -- headlines still show, just after the ones we can date.
+         ORDER BY n.published_at DESC NULLS LAST
          LIMIT 8
       `,
       // ~12 quarters of promoter holding, newest-first — drives the promoter

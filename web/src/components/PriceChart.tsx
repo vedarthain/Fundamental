@@ -454,41 +454,21 @@ export function PriceChart({
 
   return (
     <div className="w-full">
-      {/* Identity + headline period return — both track the selected range. */}
-      <div className="flex items-start justify-between gap-3 mb-2">
-        <div>
-          <div className="text-[11px] uppercase tracking-wide muted-text">Price history</div>
-        </div>
-        <div className="flex items-start gap-3 shrink-0">
-          {changePct != null && (
-            <div className="text-right">
-              <div
-                className="font-display text-[20px] tabular-nums leading-none"
-                style={{ color: changePct >= 0 ? "var(--color-delta-up)" : "var(--color-delta-down)" }}
-              >
-                {fmtPct(changePct)}
-              </div>
-              <div className="text-[10px] muted-text mt-1">{cagrLabel}</div>
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={() => setExpanded(true)}
-            className="inline-flex items-center gap-1.5 rounded-md border hairline px-2 py-1 text-[12px] font-medium text-[var(--color-muted)] hover:text-[var(--color-ink)] hover:bg-[var(--color-paper)] transition-colors"
-            title="Enlarge — draw trend lines, measure moves, set alerts"
-            aria-label="Enlarge chart"
-          >
-            <ExpandIcon />
-            Enlarge
-          </button>
-        </div>
-      </div>
-
-      {/* Headline price, then range tabs — each tab shows its own % change.
-          When a 1-day move is supplied, the price is color-coded by its sign and
-          the "1D · EOD" line sits directly beneath it. */}
-      <div className="flex flex-wrap items-end justify-between gap-3 mb-3">
-        <div>
+      {/* ONE header row, where there used to be two.
+          What was removed: a 20px period-return that printed rangePctMap[range]
+          — the exact value the active range tab already shows — above a sublabel
+          that fell back to RANGE_LABEL[range], the tab's own label. Two lines
+          restating the tab you were already looking at, on every watchlist row
+          and every stock page.
+          What was NOT removed: the CAGR. For ranges over a year that sublabel
+          read "24.3% CAGR · 5y", which no tab shows and which is the only place
+          this figure appears. It is now a chip on this line. Deleting the whole
+          block as "duplicate" would have taken it with it. */}
+      <div className="flex flex-wrap items-end justify-between gap-x-3 gap-y-2 mb-2">
+        <div className="min-w-0 flex items-baseline gap-2 flex-wrap">
+          <span className="text-[10px] uppercase tracking-wide muted-text shrink-0">
+            Price history
+          </span>
           {headline != null && (
             <span
               className="text-[18px] font-medium tabular-nums"
@@ -501,21 +481,33 @@ export function PriceChart({
               {prefix}{headline.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
             </span>
           )}
-          {(dayChangePct != null || asOfLabel) && (
-            <div className="flex items-baseline gap-2 text-[10.5px] tabular-nums mt-1">
-              {dayChangePct != null && (
-                <span
-                  className="font-medium"
-                  style={{ color: dayChangePct >= 0 ? "var(--color-delta-up)" : "var(--color-delta-down)" }}
-                >
-                  1D: {fmt1d(dayChangePct)}
-                </span>
-              )}
-              {asOfLabel && <span className="muted-text opacity-70 whitespace-nowrap">EOD · {asOfLabel}</span>}
-            </div>
+          {dayChangePct != null && (
+            <span
+              className="font-medium text-[10.5px] tabular-nums"
+              style={{ color: dayChangePct >= 0 ? "var(--color-delta-up)" : "var(--color-delta-down)" }}
+            >
+              1D: {fmt1d(dayChangePct)}
+            </span>
+          )}
+          {asOfLabel && (
+            <span className="muted-text opacity-70 whitespace-nowrap text-[10.5px] tabular-nums">
+              EOD · {asOfLabel}
+            </span>
+          )}
+          {periodCagr != null && (
+            <span
+              className="text-[10px] tabular-nums rounded px-1.5 py-[1px] whitespace-nowrap"
+              style={{
+                background: "color-mix(in srgb, var(--color-muted) 10%, transparent)",
+                color: "var(--color-muted)",
+              }}
+              title={`Compound annual growth over the selected ${spanYears.toFixed(0)}-year range`}
+            >
+              {cagrLabel}
+            </span>
           )}
         </div>
-        <div className="flex flex-wrap gap-1">
+        <div className="flex flex-wrap items-center gap-1 justify-end">
           {RANGES.map((r) => {
             const active = r === range;
             const p = rangePctMap[r];
@@ -555,12 +547,25 @@ export function PriceChart({
               </button>
             );
           })}
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            className="inline-flex items-center gap-1.5 rounded-md border hairline px-2 py-1 text-[12px] font-medium text-[var(--color-muted)] hover:text-[var(--color-ink)] hover:bg-[var(--color-paper)] transition-colors"
+            title="Enlarge — draw trend lines, measure moves, set alerts"
+            aria-label="Enlarge chart"
+          >
+            <ExpandIcon />
+            Enlarge
+          </button>
         </div>
       </div>
 
       {/* Candlestick + volume — split-safe OHLC, hover readout, alert + drawing
           lines (drawings are read-only inline; edit them in the enlarged view). */}
-      <div className="w-full h-[300px]">
+      {/* 360px, was 300px. The header above it collapsed from two rows to one
+          and news moved out from underneath, so the chart can spend what they
+          gave back on the thing you actually read. */}
+      <div className="w-full h-[360px]">
         <CandleChart candles={visible} interactive weekly={weekly} alerts={alertLines} drawings={drawings} trades={trades} />
       </div>
 

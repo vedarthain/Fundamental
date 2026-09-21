@@ -23,7 +23,7 @@ export function WatchlistTabs() {
       type="button"
       onClick={() => setView(v)}
       aria-pressed={view === v}
-      className="px-3 py-1.5 text-[13px] font-medium rounded-md transition-colors"
+      className="px-2.5 py-0.5 text-[12px] font-medium rounded transition-colors"
       style={
         view === v
           ? { background: "var(--color-accent-600)", color: "#fff" }
@@ -37,7 +37,10 @@ export function WatchlistTabs() {
 
   return (
     <div>
-      <div className="mb-3 inline-flex items-center gap-1 rounded-lg border hairline p-1">
+      {/* Tab strip shrunk: it is a two-item switch, not a page header. Smaller
+          text, tighter padding and a 1.5 margin instead of 3 pull everything
+          below it up by roughly 16px. */}
+      <div className="mb-1.5 inline-flex items-center gap-0.5 rounded-md border hairline p-0.5">
         {tab("watchlist", "Watchlist")}
         {tab("calls", "Calls", activeCount)}
       </div>

@@ -384,18 +384,13 @@ export function WatchlistClient({ source }: { source?: WatchSource } = {}) {
       return next;
     });
 
-  // Clicking a sector header jumps the detail panel to that sector's first
-  // stock (reading order: first industry → top-scored stock), so selecting a
-  // sector lands you at the START of its stocks — and expands the node so the
-  // list is visible. Collapsing (clicking an already-open sector) still just
-  // toggles without hijacking the current selection.
+  // Clicking a sector reveals its INDUSTRIES and nothing else. It used to also
+  // jump the detail panel to the sector's first stock, which meant opening a
+  // sector to see what was in it threw away whatever you were looking at. One
+  // click, one level: sector → industries, then you pick the industry, then the
+  // stock. Nothing here touches the selection.
   const onSectorClick = (sec: SectorNode) => {
-    const isOpen = searching || expanded.has(sec.name);
     toggleNode(sec.name);
-    if (!isOpen) {
-      const first = sec.industries[0]?.stocks[0]?.symbol;
-      if (first) setSelected(first);
-    }
   };
 
   // Expand-all / collapse-all for the rail tree. Keys are every sector node
@@ -444,7 +439,11 @@ export function WatchlistClient({ source }: { source?: WatchSource } = {}) {
           the scores are. */}
       <div
         className={`grid grid-cols-1 gap-4 items-start ${
-          railOpen ? "lg:grid-cols-[300px_1fr]" : "lg:grid-cols-[36px_1fr]"
+          // 240px, not 300px. The rail's width is set here, not by its
+          // contents — so inlining the counts as "Consumer (55)" frees space
+          // inside the column but gains the chart nothing until the column
+          // itself shrinks. The 60px goes straight into the detail panel.
+          railOpen ? "lg:grid-cols-[240px_1fr]" : "lg:grid-cols-[36px_1fr]"
         }`}
       >
         {/* LEFT rail — sector → industry tree with search, matching the
@@ -549,13 +548,22 @@ export function WatchlistClient({ source }: { source?: WatchSource } = {}) {
                       aria-expanded={secOpen}
                     >
                       <Chevron open={secOpen} />
-                      <span
-                        className="text-[12.5px] font-semibold truncate flex-1"
-                        style={secActive ? { color: "var(--color-accent-700)" } : undefined}
-                      >
-                        {sec.name}
+                      {/* Count sits inline — "Consumer (55)" — rather than
+                          right-aligned. A right-aligned number reserves a
+                          column of its own plus the gap to it across every
+                          row; inline it costs only the digits it needs.
+                          shrink-0 keeps it visible when the name truncates. */}
+                      <span className="flex items-baseline gap-1 min-w-0 flex-1">
+                        <span
+                          className="text-[12.5px] font-semibold truncate"
+                          style={secActive ? { color: "var(--color-accent-700)" } : undefined}
+                        >
+                          {sec.name}
+                        </span>
+                        <span className="text-[11px] muted-text tabular-nums shrink-0">
+                          ({sec.count})
+                        </span>
                       </span>
-                      <span className="text-[11px] muted-text tabular-nums">{sec.count}</span>
                     </button>
                     {secOpen &&
                       sec.industries.map((ind) => {
@@ -585,14 +593,16 @@ export function WatchlistClient({ source }: { source?: WatchSource } = {}) {
                               aria-expanded={indOpen}
                             >
                               <Chevron open={indOpen} small />
-                              <span
-                                className="text-[12px] truncate flex-1"
-                                style={indActive ? { color: "var(--color-accent-700)", fontWeight: 600 } : undefined}
-                              >
-                                {ind.name}
-                              </span>
-                              <span className="text-[10.5px] muted-text tabular-nums">
-                                {ind.stocks.length}
+                              <span className="flex items-baseline gap-1 min-w-0 flex-1">
+                                <span
+                                  className="text-[12px] truncate"
+                                  style={indActive ? { color: "var(--color-accent-700)", fontWeight: 600 } : undefined}
+                                >
+                                  {ind.name}
+                                </span>
+                                <span className="text-[10.5px] muted-text tabular-nums shrink-0">
+                                  ({ind.stocks.length})
+                                </span>
                               </span>
                             </button>
                             {indOpen && (
@@ -667,8 +677,15 @@ export function WatchlistClient({ source }: { source?: WatchSource } = {}) {
                         style={{
                           background: "color-mix(in srgb, var(--color-muted) 10%, transparent)",
                         }}
-                        title={`Stock ${indPos + 1} of ${indTotal} in ${sel.industry_name ?? "this industry"}`}
+                        title={`Stock ${indPos + 1} of ${indTotal} in ${sel.industry_name ?? "this industry"} — ${sel.sector_name ?? "no sector"}`}
                       >
+                        {/* Sector leads. "1/5 in Beverages" tells you where you
+                            are inside the industry but not which sector that
+                            industry belongs to — and the rail groups by sector
+                            first, so without it the chip and the rail read in
+                            different orders. */}
+                        <span className="font-semibold">{sel.sector_name ?? "—"}</span>
+                        {" · "}
                         {indPos + 1}/{indTotal} in {sel.industry_name ?? "industry"}
                       </span>
                     )}
@@ -1032,36 +1049,39 @@ function WatchRow({
       <div className="flex items-start gap-3">
         {/* Identity + sector/tier chips below. The live price moved onto the
             chart header (color-coded by the 1D move), so it's no longer here. */}
-        <div className="min-w-0 shrink-0">
-          <div className="flex items-center gap-2">
-            <Link href={`/stock/${row.symbol}`} className="flex items-center gap-2 min-w-0 hover:opacity-80">
-              <span className="font-medium text-[14px] tabular-nums">{row.symbol}</span>
+        {/* Was four stacked lines — name, sector·industry, live price, tier
+            chips — costing ~60px before the chart started. They are one
+            wrapping row now. Nothing was dropped: every item is still here,
+            reading left to right in the order you'd ask for it. On a narrow
+            column it wraps back to two lines on its own, which is the width
+            where the stacking was actually earning its height. */}
+        <div className="min-w-0 max-w-[46%]">
+          <div className="flex items-center gap-x-2 gap-y-1 flex-wrap">
+            <Link
+              href={`/stock/${row.symbol}`}
+              className="flex items-baseline gap-2 min-w-0 hover:opacity-80"
+            >
+              <span className="font-medium text-[14px] tabular-nums shrink-0">{row.symbol}</span>
               <span className="muted-text text-[12px] truncate">{row.company_name}</span>
             </Link>
             {row.stale && row.ltp_date ? <StaleChip date={row.ltp_date} /> : null}
-          </div>
-          <div className="text-[10.5px] muted-text mt-0.5">
-            {row.sector_name ?? "—"} · {row.industry_name ?? "—"}
-          </div>
-          {row.current_price != null && (
-            <div className="mt-0.5">
+            {row.current_price != null && (
               <IntradayPriceBadge
                 price={row.current_price}
                 fetchedAt={row.price_fetched_at ?? null}
                 className="text-[11px] muted-text font-medium"
               />
-            </div>
-          )}
-          {(row.maturity_tier || row.market_cap_category || row.listing_date) && (
-            <div className="mt-1 flex items-center gap-1.5 flex-wrap">
-              {row.maturity_tier && <TierBadge tier={row.maturity_tier} />}
-              <CapTierBadge
-                category={row.market_cap_category as CapCategory}
-                listingDate={row.listing_date}
-                textClass="text-[9px]"
-              />
-            </div>
-          )}
+            )}
+            {row.maturity_tier && <TierBadge tier={row.maturity_tier} />}
+            <CapTierBadge
+              category={row.market_cap_category as CapCategory}
+              listingDate={row.listing_date}
+              textClass="text-[9px]"
+            />
+          </div>
+          <div className="text-[10.5px] muted-text mt-0.5 truncate">
+            {row.sector_name ?? "—"} · {row.industry_name ?? "—"}
+          </div>
         </div>
 
         {/* Entry context (Added / Since add) on the left, Q/V/M pushed to the
@@ -1092,34 +1112,38 @@ function WatchRow({
                     : "Set when you add the stock"
                 }
               />
+              {/* 52W extremes moved up from their own row into this wrap group.
+                  They were going to become dashed lines on the chart, until the
+                  chart turned out to clip any level outside the visible price
+                  range — on 1W/1M/3M the 52-week high is off-canvas, so five of
+                  the eight range tabs would have shown nothing at all. Same
+                  height saved, no number lost. */}
+              <InlineStat
+                label="52W High"
+                title="52-week high (split-adjusted) and how far LTP sits below it"
+                value={
+                  row.high_52w != null
+                    ? `${fmtPrice(row.high_52w)}${row.from_high_pct != null ? ` (${fmtSignedPct(row.from_high_pct)})` : ""}`
+                    : "—"
+                }
+                color={deltaColor(row.from_high_pct)}
+              />
+              <InlineStat
+                label="52W Low"
+                title="52-week low (split-adjusted) and how far LTP sits above it"
+                value={
+                  row.low_52w != null
+                    ? `${fmtPrice(row.low_52w)}${row.from_low_pct != null ? ` (${fmtSignedPct(row.from_low_pct)})` : ""}`
+                    : "—"
+                }
+                color={deltaColor(row.from_low_pct)}
+              />
             </div>
             <div className="flex items-baseline gap-x-3 shrink-0">
               <ReturnPill label="Q" value={row.quality_pct}   pct />
               <ReturnPill label="V" value={row.valuation_pct} pct />
               <ReturnPill label="M" value={row.momentum_pct}  pct />
             </div>
-          </div>
-          <div className="flex items-baseline justify-end gap-x-3 gap-y-1 text-[10.5px] tabular-nums">
-            <InlineStat
-              label="52W High"
-              title="52-week high (split-adjusted) and how far LTP sits below it"
-              value={
-                row.high_52w != null
-                  ? `${fmtPrice(row.high_52w)}${row.from_high_pct != null ? ` (${fmtSignedPct(row.from_high_pct)})` : ""}`
-                  : "—"
-              }
-              color={deltaColor(row.from_high_pct)}
-            />
-            <InlineStat
-              label="52W Low"
-              title="52-week low (split-adjusted) and how far LTP sits above it"
-              value={
-                row.low_52w != null
-                  ? `${fmtPrice(row.low_52w)}${row.from_low_pct != null ? ` (${fmtSignedPct(row.from_low_pct)})` : ""}`
-                  : "—"
-              }
-              color={deltaColor(row.from_low_pct)}
-            />
           </div>
         </div>
 
@@ -1370,8 +1394,13 @@ function DetailExtras({
 
   return (
     <div className="mt-3 space-y-4">
-      {/* Row A: price chart squeezed to fit; fundamentals stacked on the right. */}
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_220px] gap-4 items-start">
+      {/* Row A: price chart, fundamentals, and — from xl up — news, all on the
+          same row. News used to sit below this grid, so its top was pushed
+          down by the taller of the two columns (the chart body alone is
+          300px). Trimming header chrome could never fix that; only moving
+          news *beside* the chart puts it on the first screen. Below xl there
+          isn't width for a third column, so it spans back underneath. */}
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_220px] xl:grid-cols-[minmax(0,1fr)_220px_minmax(240px,300px)] gap-4 items-start">
         {/* Shared chart module — same expand / draw / price-alert features as
             the stock page. Self-fetches candles by symbol; alert controls show
             when signed in. The held-position summary now lives in the card
@@ -1396,10 +1425,28 @@ function DetailExtras({
           glanceKeys={glanceKeys}
           sector={sector}
         />
-      </div>
 
-      {/* Row B: recent news, two columns. */}
-      {news.length > 0 && <NewsGrid news={news} />}
+        {/* Third column at xl; full-width row beneath the other two below it.
+            Rendered even when empty — an absent column used to read as "the
+            news failed to load", and the answer "there is none" is itself
+            information. Suppressed only while the fetch is still in flight. */}
+        {!loadingExtras && (
+          <div className="min-w-0 lg:col-span-2 xl:col-span-1">
+            {news.length > 0 ? (
+              <NewsGrid news={news} />
+            ) : (
+              <>
+                <div className="text-[9.5px] uppercase tracking-wide muted-text mb-1">
+                  Recent news
+                </div>
+                <div className="text-[11px] muted-text italic">
+                  No recent news for {symbol}.
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
 
       {nothing && (
         <div className="text-[11px] muted-text italic">
@@ -1770,7 +1817,11 @@ function NewsGrid({ news }: { news: NewsItem[] }) {
   return (
     <div>
       <div className="text-[9.5px] uppercase tracking-wide muted-text mb-1">Recent news</div>
-      <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5">
+      {/* Two columns while this is a full-width row; one narrow column once it
+          moves beside the chart at xl, where it is capped to roughly the
+          chart's height and scrolls internally rather than stretching the row
+          (which would push everything below it back down the page). */}
+      <ul className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-1 gap-x-4 gap-y-1 xl:max-h-[400px] xl:overflow-y-auto xl:pr-1">
         {news.map((n, i) => (
           <li key={`${n.published_at}-${i}`}>
             <a
@@ -1778,12 +1829,28 @@ function NewsGrid({ news }: { news: NewsItem[] }) {
               target="_blank"
               rel="noopener noreferrer nofollow"
               className="block group"
-              title={n.title}
+              title={isFreshNews(n.published_at) ? `${n.title}\n\nPublished in the last 7 days` : n.title}
             >
-              <div className="text-[11.5px] leading-snug group-hover:underline line-clamp-2">
+              {/* Freshness is a filled chip, not a text colour. accent-700 is
+                  #1d324b against ink #15171c — at 11px those are the same
+                  colour to the eye, so recolouring the headline changed
+                  nothing you could see. */}
+              <div className="text-[11px] leading-tight group-hover:underline line-clamp-2">
+                {isFreshNews(n.published_at) && (
+                  <span
+                    className="inline-block align-[1px] mr-1.5 px-1 rounded text-[8.5px] font-bold uppercase tracking-wide leading-[1.5]"
+                    style={{ background: "var(--color-accent-600)", color: "#fff" }}
+                    title="Published in the last 7 days"
+                  >
+                    New
+                  </span>
+                )}
                 {n.title}
               </div>
-              <div className="text-[9.5px] muted-text tabular-nums mt-0.5 flex items-center gap-1.5">
+              <div
+                className="text-[9px] muted-text tabular-nums flex items-center gap-1.5"
+                style={isFreshNews(n.published_at) ? { color: "var(--color-accent-600)" } : undefined}
+              >
                 {n.source && <span>{n.source}</span>}
                 {n.source && <span aria-hidden>·</span>}
                 <span>{fmtNewsDate(n.published_at)}</span>
@@ -1796,10 +1863,25 @@ function NewsGrid({ news }: { news: NewsItem[] }) {
   );
 }
 
+/** Published within the last 7 days — drives the accent colouring in NewsGrid.
+ *  Unparseable timestamps are NOT fresh: a bad date should read as old rather
+ *  than light up every headline on the page. Future-dated items (feeds do ship
+ *  them, timezone-skewed) count as fresh, which is the honest reading. */
+function isFreshNews(iso: string | null): boolean {
+  if (!iso) return false;
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return false;
+  return Date.now() - t <= 7 * 24 * 60 * 60 * 1000;
+}
+
 /** ISO timestamp → "20 Jul '26" for the news byline. */
-function fmtNewsDate(iso: string): string {
+function fmtNewsDate(iso: string | null): string {
+  // `app.news.published_at` is nullable and some rows are NULL. `new Date(null)`
+  // is the epoch, not an error — which is how a headline came to be dated
+  // "1 Jan '70" and sort to the top of the list. Bail before that.
+  if (!iso) return "";
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
+  if (Number.isNaN(d.getTime()) || d.getUTCFullYear() < 1990) return "";
   const day = d.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
   const yr = d.toLocaleDateString("en-IN", { year: "2-digit" });
   return `${day} '${yr}`;
