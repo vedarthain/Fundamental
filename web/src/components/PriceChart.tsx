@@ -471,7 +471,7 @@ export function PriceChart({
           </span>
           {headline != null && (
             <span
-              className="text-[18px] font-medium tabular-nums"
+              className="text-[14px] font-semibold tabular-nums"
               style={
                 dayChangePct != null
                   ? { color: dayChangePct >= 0 ? "var(--color-delta-up)" : "var(--color-delta-down)" }
@@ -507,7 +507,13 @@ export function PriceChart({
             </span>
           )}
         </div>
-        <div className="flex flex-wrap items-center gap-1 justify-end">
+        {/* All eight horizons on ONE line. flex-nowrap is what guarantees it;
+            min-w-0 + overflow-x-auto is the seatbelt — if the card is ever
+            narrower than the strip, the strip scrolls inside itself instead
+            of forcing the card (and then the page) wider. The parent still
+            wraps, so the strip drops below the headline before it ever has
+            to scroll. */}
+        <div className="flex flex-nowrap items-center gap-0.5 justify-end min-w-0 overflow-x-auto">
           {RANGES.map((r) => {
             const active = r === range;
             const p = rangePctMap[r];
@@ -522,7 +528,7 @@ export function PriceChart({
                 key={r}
                 type="button"
                 onClick={() => setRange(r)}
-                className="flex flex-col items-center gap-0.5 px-2 py-0.5 rounded-md transition-colors"
+                className="flex flex-col items-center gap-px px-2.5 py-0.5 rounded shrink-0 transition-colors"
                 style={
                   active
                     ? {
@@ -537,9 +543,9 @@ export function PriceChart({
                       }
                 }
               >
-                <span className="text-[11px] font-medium leading-none">{r}</span>
+                <span className="text-[10px] font-medium leading-none">{r}</span>
                 <span
-                  className="text-[9.5px] tabular-nums leading-none font-semibold"
+                  className="text-[9px] tabular-nums leading-none font-semibold"
                   style={{ color: pColor }}
                 >
                   {p == null ? "—" : fmtPct(p)}
@@ -550,12 +556,14 @@ export function PriceChart({
           <button
             type="button"
             onClick={() => setExpanded(true)}
-            className="inline-flex items-center gap-1.5 rounded-md border hairline px-2 py-1 text-[12px] font-medium text-[var(--color-muted)] hover:text-[var(--color-ink)] hover:bg-[var(--color-paper)] transition-colors"
+            className="inline-flex items-center justify-center shrink-0 ml-1 rounded border hairline w-6 h-6 text-[var(--color-muted)] hover:text-[var(--color-ink)] hover:bg-[var(--color-paper)] transition-colors"
             title="Enlarge — draw trend lines, measure moves, set alerts"
             aria-label="Enlarge chart"
           >
+            {/* Icon only. The word "Enlarge" cost ~50px on the one row that
+                has to hold all eight horizons; the tooltip and aria-label
+                still carry it, so nothing is lost to a screen reader. */}
             <ExpandIcon />
-            Enlarge
           </button>
         </div>
       </div>
