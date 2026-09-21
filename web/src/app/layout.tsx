@@ -72,8 +72,23 @@ function SiteHeader() {
       className="border-b hairline sticky top-7 z-30 backdrop-blur-md"
       style={{ backgroundColor: "color-mix(in srgb, var(--color-paper) 90%, transparent)" }}
     >
-      {/* ─────────────────── Desktop (md+) — single row ───────────────── */}
-      <div className="hidden md:flex mx-auto max-w-[1300px] px-6 h-14 items-center gap-6">
+      {/* ─────────────────── Desktop (lg+) — single row ───────────────── */}
+      {/*
+        This row used to start at md (768px) and it did not fit there. Both
+        ends are shrink-0 by necessity — you cannot squash nav links or a logo
+        — so the row's intrinsic width is roughly 310px of logo + 320px of
+        search + 430px of nav + 96px of padding and gaps ≈ 1156px. Rendering
+        that in a 768px viewport pushed the right end (the user chip) off the
+        page and gave the whole site a horizontal scrollbar; the fixed-width
+        ribbon above then painted only to the viewport edge, which is what the
+        gap at the right of the screen was.
+
+        Two changes: the switch happens at lg (1024px), where the stacked
+        layout below covers the tablet band it was already designed for, and
+        the tagline — pure decoration — is held back to xl, which is the first
+        width with room to spare for it.
+      */}
+      <div className="hidden lg:flex mx-auto max-w-[1300px] px-6 h-14 items-center gap-6">
         <Link href="/" className="flex items-center gap-2.5 shrink-0">
           <BanyanLogo />
           <div className="flex flex-col leading-none gap-0.5">
@@ -81,19 +96,21 @@ function SiteHeader() {
               <span className="font-display text-[19px] tracking-tight">EquityRoots</span>
               <span className="muted-text text-[11px] tracking-[0.1em] uppercase">NSE India</span>
             </div>
-            <span className="muted-text text-[10.5px] tracking-tight italic">
+            <span className="muted-text text-[10.5px] tracking-tight italic hidden xl:inline">
               Indian fundamentals, made easy — with a sharper view.
             </span>
           </div>
         </Link>
-        <div className="flex-1 justify-center flex">
+        {/* min-w-0 lets the search yield width instead of forcing the row
+            wider. Without it this flex item refuses to go below its content. */}
+        <div className="flex-1 min-w-0 justify-center flex">
           <StockSearch />
         </div>
         <TopNavLinks />
       </div>
 
-      {/* ─────────────────── Mobile (<md) — three stacked rows ────────── */}
-      <div className="md:hidden mx-auto max-w-[1300px] px-4">
+      {/* ─────────────────── Mobile + tablet (<lg) — stacked rows ─────── */}
+      <div className="lg:hidden mx-auto max-w-[1300px] px-4">
         {/* Row 1: logo on the left, optional user chip on the right.
             UserMenu lives inside TopNavLinks; we render it via a small
             mobile-only slot rather than duplicating the auth logic here. */}

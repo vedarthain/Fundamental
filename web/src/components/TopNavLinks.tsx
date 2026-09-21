@@ -79,8 +79,13 @@ export function TopNavLinks() {
 
   return (
     <>
-      {/* ───── Desktop / tablet (md+) — unchanged ─────────────────── */}
-      <nav className="hidden md:flex items-center gap-3 md:gap-6 text-[13px] md:text-[14px] shrink-0 ml-auto">
+      {/* ───── Desktop (lg+) ──────────────────────────────────────── */}
+      {/* lg, not md — this must switch in lockstep with the header row in
+          layout.tsx. While they disagreed, the tablet band rendered this
+          shrink-0 nav inside a row too narrow to hold it, which pushed the
+          user chip past the right edge and gave the site a horizontal
+          scrollbar. If you move one breakpoint, move the other. */}
+      <nav className="hidden lg:flex items-center gap-3 lg:gap-6 text-[13px] lg:text-[14px] shrink-0 ml-auto">
         {LINKS.map((l) => {
           const active = l.submenu
             ? isActive(pathname, l.href) || l.submenu.some((s) => isActive(pathname, s.href))
@@ -277,7 +282,7 @@ function MobileTabBar({ pathname, user, isAdmin, showWatchlist, showSignIn }: Mo
                         isActive(pathname, "/account");
 
   return (
-    <div ref={ref} className="md:hidden relative">
+    <div ref={ref} className="lg:hidden relative">
       {/* The tab bar. Horizontally scrolls on very narrow phones; on
           most viewports (>360px) all five tabs fit comfortably. */}
       <div

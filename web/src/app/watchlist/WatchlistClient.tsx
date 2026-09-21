@@ -651,11 +651,19 @@ export function WatchlistClient({ source }: { source?: WatchSource } = {}) {
                 {/* Rotate bar — step through the watchlist without leaving the
                     detail panel. Position readout confirms where you are. */}
                 <div className="flex items-center justify-between gap-2 px-4 md:px-5 py-2 border-b hairline bg-[var(--color-paper)]/50">
-                  <span className="text-[11px] muted-text tabular-nums flex items-center gap-2">
-                    {pos >= 0 ? `${pos + 1} / ${flatOrder.length}` : `${flatOrder.length}`}
+                  {/* min-w-0 is load-bearing. A flex item defaults to
+                      min-width:auto, so it refuses to shrink below its content
+                      — a long industry name ("Pharmaceuticals & Biotechnology")
+                      pushed this bar wider than the card, the card wider than
+                      the page, and the whole site gained a horizontal scrollbar.
+                      min-w-0 lets it shrink; truncate does the rest. */}
+                  <span className="text-[11px] muted-text tabular-nums flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
+                    <span className="shrink-0">
+                      {pos >= 0 ? `${pos + 1} / ${flatOrder.length}` : `${flatOrder.length}`}
+                    </span>
                     {indPos >= 0 && (
                       <span
-                        className="rounded px-1.5 py-[1px] font-medium tabular-nums"
+                        className="rounded px-1.5 py-[1px] font-medium tabular-nums truncate min-w-0"
                         style={{
                           background: "color-mix(in srgb, var(--color-muted) 10%, transparent)",
                         }}
@@ -682,7 +690,7 @@ export function WatchlistClient({ source }: { source?: WatchSource } = {}) {
                     )}
                     {loading && <span className="opacity-70">· refreshing…</span>}
                   </span>
-                  <div className="flex items-center gap-2.5">
+                  <div className="flex items-center gap-2.5 shrink-0">
                     {/* Count sits immediately left of Prev/Next — the number is
                         the thing you scan for, so it carries the accent colour
                         and the weight; the words stay muted. */}

@@ -138,7 +138,12 @@ export function UserMenu({ email, displayName, isAdmin = false }: Props) {
         >
           {initial}
         </span>
-        <span className="hidden md:inline text-[12.5px] font-medium max-w-[140px] truncate">
+        {/* xl, not lg. The nav's six items already need ~583px; adding up to
+            140px of name on top of that overflowed the row again between 1024
+            and ~1120px — the same bug one breakpoint further along. Below xl
+            the chip is the avatar alone, and the full email is still in the
+            button's title and the first line of the open menu. */}
+        <span className="hidden xl:inline text-[12.5px] font-medium max-w-[140px] truncate">
           {shortLabel}
         </span>
         <span aria-hidden className="text-[10px] mt-px opacity-70">▾</span>
