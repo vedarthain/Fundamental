@@ -24,6 +24,10 @@ import {
   UserRound, History, Tag, PieChart, Target, Lock, ArrowUpRight, ArrowDownRight,
 } from "lucide-react";
 import { RevealOnScroll } from "./RevealOnScroll";
+// One parser, two surfaces. This used to live in this file, which meant the
+// watchlist panel could not reach it without pulling in every lucide icon
+// above. See src/lib/businessSummary.ts for why it moved.
+import { parseSummary, type Parsed } from "@/lib/businessSummary";
 
 export type ShareholdingRow = {
   period_end: string;
@@ -75,135 +79,6 @@ function pickIcon(sector: string | null, industry: string | null): { Icon: IconC
   const txt = `${sector ?? ""} ${industry ?? ""}`;
   for (const rule of ICON_RULES) if (rule.match.test(txt)) return { Icon: rule.icon, tint: rule.tint };
   return { Icon: Briefcase, tint: "var(--color-accent-500)" };
-}
-
-// ---------------------------------------------------------------------------
-// Heuristic summary parser. yfinance summaries follow predictable templates
-// from regulatory disclosures, so simple regex extraction works well.
-// ---------------------------------------------------------------------------
-
-const GEO_TOKENS: { label: string; pattern: RegExp }[] = [
-  { label: "India",          pattern: /\bIndia\b/i },
-  { label: "International",  pattern: /\binternationally\b/i },
-  { label: "United States",  pattern: /\bUnited States\b|\bU\.S\.A?\.?\b|\bAmerica\b/i },
-  { label: "Europe",         pattern: /\bEurope(?:an)?\b/i },
-  { label: "United Kingdom", pattern: /\bUnited Kingdom\b|\bU\.K\.?\b/i },
-  { label: "Middle East",    pattern: /\bMiddle East\b/i },
-  { label: "Africa",         pattern: /\bAfrica\b/i },
-  { label: "Asia",           pattern: /\bAsia\b/i },
-  { label: "Australia",      pattern: /\bAustralia\b/i },
-  { label: "China",          pattern: /\bChina\b/i },
-  { label: "Japan",          pattern: /\bJapan\b/i },
-  { label: "Canada",         pattern: /\bCanada\b/i },
-  { label: "Singapore",      pattern: /\bSingapore\b/i },
-  { label: "Germany",        pattern: /\bGermany\b/i },
-];
-
-type Parsed = {
-  tagline: string;
-  /** Either real "operates through ... segments" splits OR a fallback
-   *  list of products/activities mined from "offers", "engages in",
-   *  "involved in", "manufactures". Always rendered as chips. */
-  segments: string[];
-  /** Where the segments came from — drives the chip-row label. */
-  segmentsSource: "segments" | "products" | "activities" | null;
-  /** Brand names mentioned in "sells under the X and Y brand names". */
-  brands: string[];
-  geo: string[];
-  founded: string | null;
-  hq: string | null;
-  /** "formerly known as X" / name-change sentences. */
-  milestone: string | null;
-  /** "exports its products to ..." → renderable region string. */
-  exports: string | null;
-};
-
-function parseSummary(s: string): Parsed {
-  // Tagline = first sentence. Cap at ~220 chars.
-  const firstSentence = s.split(/(?<=\.)\s+/)[0] || s;
-  const tagline =
-    firstSentence.length > 220 ? firstSentence.slice(0, 217).trimEnd() + "…" : firstSentence;
-
-  // What they do — try several patterns in order, stop at the first match.
-  // Each pattern carries a label so we can show "Segments" vs "Products"
-  // vs "Activities" honestly in the UI.
-  let segments: string[] = [];
-  let segmentsSource: Parsed["segmentsSource"] = null;
-  const splitList = (raw: string): string[] =>
-    raw
-      .split(/\s*;\s*|\s*,\s*(?:and\s+)?|\s+and\s+/i)
-      .map((x) =>
-        x
-          .replace(/^\s*(?:the\s+|various\s+|a\s+range\s+of\s+|other\s+)/i, "")
-          .replace(/\s+(?:segments?|products?|services?|brands?|etc\.?)\s*$/i, "")
-          .replace(/\s+/g, " ")
-          .trim(),
-      )
-      .filter((x) => x.length > 2 && x.length < 80);
-
-  // 1. Real segments: "operates through X, Y, and Z segments."
-  const segMatch = s.match(/operates?\s+(?:through|in|as)\s+([^.]+?)\s*(?:segments?\.|\.)/i);
-  if (segMatch) {
-    segments = splitList(segMatch[1]);
-    if (segments.length > 0) segmentsSource = "segments";
-  }
-  // 2. Products: "offers a range of X, Y, Z."  /  "The company offers X, Y."
-  if (segments.length === 0) {
-    const offersMatch = s.match(/(?:offers|provides|manufactures(?:\s+and\s+sells)?|produces)\s+(?:a\s+range\s+of\s+|various\s+)?([^.]+?)\./i);
-    if (offersMatch) {
-      segments = splitList(offersMatch[1]);
-      if (segments.length > 0) segmentsSource = "products";
-    }
-  }
-  // 3. Activities: "engages in the manufacture and sale of X."  /
-  //    "is involved in the trading of X, Y, Z."
-  if (segments.length === 0) {
-    const engagesMatch = s.match(/(?:engages?\s+in|is\s+(?:also\s+)?involved\s+in)\s+(?:the\s+)?[a-z\s]+?\s+of\s+([^.]+?)\./i);
-    if (engagesMatch) {
-      segments = splitList(engagesMatch[1]);
-      if (segments.length > 0) segmentsSource = "activities";
-    }
-  }
-  segments = segments.slice(0, 6);
-
-  // Brand names: "sells its products under the X and Y brand names."
-  let brands: string[] = [];
-  const brandMatch = s.match(/(?:sells?|markets?)\s+(?:its\s+products\s+)?under\s+the\s+([^.]+?)\s+brand\s+names?\./i);
-  if (brandMatch) {
-    brands = splitList(brandMatch[1]).slice(0, 4);
-  }
-
-  // Geography in document order.
-  const geo = GEO_TOKENS.filter((g) => g.pattern.test(s)).map((g) => g.label);
-
-  // Founded / incorporated year.
-  const foundedMatch = s.match(/(?:founded|incorporated|established|formed)\s+in\s+(\d{4})/i);
-  const founded = foundedMatch ? foundedMatch[1] : null;
-
-  // HQ — "based in <city>" / "headquartered in <city>".
-  const hqMatch = s.match(/(?:based|headquartered|located)\s+in\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)?(?:,\s*[A-Z][A-Za-z]+)?)/);
-  const hq = hqMatch ? hqMatch[1].trim() : null;
-
-  // Major milestone — capture the sentence containing "formerly known as" or
-  // "spun off" / "merged with" / "demerged".
-  let milestone: string | null = null;
-  const mileMatch = s.match(
-    /([^.]*?(?:formerly known as|spun off|demerged|merged with|acquired by)[^.]+\.)/i,
-  );
-  if (mileMatch) {
-    const m = mileMatch[1].trim();
-    if (m.length < 260) milestone = m;
-  }
-
-  // Exports — "exports its products to <region>." / "exports to <region>."
-  let exportsStr: string | null = null;
-  const expMatch = s.match(/exports?\s+(?:its\s+products\s+)?to\s+([^.]+?)(?:\s+markets?)?\./i);
-  if (expMatch) {
-    const cleaned = expMatch[1].replace(/\s*markets?\s*$/i, "").trim();
-    if (cleaned.length < 120) exportsStr = cleaned;
-  }
-
-  return { tagline, segments, segmentsSource, brands, geo, founded, hq, milestone, exports: exportsStr };
 }
 
 // ---------------------------------------------------------------------------

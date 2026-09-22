@@ -23,6 +23,7 @@ import {
   type WatchBookmark,
 } from "@/lib/scannerBookmarks";
 import type { BusinessHealth } from "@/lib/businessHealth";
+import { parseSummary, splitLede } from "@/lib/businessSummary";
 import { useWatchlist, saveWatchlistNote } from "@/lib/watchlist";
 import { band, bandColor, tierLabel } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
@@ -1528,32 +1529,13 @@ function cleanPerson(raw: string): string {
   return parts.join(" ");
 }
 
-/** Split a business summary into its first sentence and the rest.
- *  The lookbehind is doing real work: "D. B. Corp Limited engages in…" would
- *  otherwise split after "D", because a naive /\.\s+/ cannot tell an initial
- *  from a full stop. Skipping periods that follow a single capital letter
- *  handles the initials that start a third of Indian company names. */
-function splitLede(summary: string): { lede: string; rest: string } {
-  const s = summary.replace(/\s+/g, " ").trim();
-  const m = s.match(/(?<![A-Z])\.\s+(?=[A-Z])/);
-  if (!m || m.index == null) return { lede: s, rest: "" };
-  return { lede: s.slice(0, m.index + 1), rest: s.slice(m.index + m[0].length) };
-}
-
-/** Founded year and head-office city, pulled out of the prose so they can sit
- *  in the facts row instead of being buried in the last line of a paragraph.
- *  [Certain] coverage: 2,142 of 2,155 summaries state a founding/incorporation
- *  year and 2,154 state "based in" or "headquartered in" — this is a stable
- *  yfinance sentence template, not a hopeful guess. Both return null when the
- *  template is absent; nothing is inferred. */
-function extractFounded(summary: string): string | null {
-  const m = summary.match(/\b(?:founded|incorporated|established)\s+in\s+(\d{4})\b/i);
-  return m ? m[1] : null;
-}
-function extractHq(summary: string): string | null {
-  const m = summary.match(/\b(?:is\s+)?(?:headquartered|based)\s+in\s+([A-Z][A-Za-z.\- ]{1,28}?)\s*[,.]/);
-  return m ? m[1].trim() : null;
-}
+/** splitLede / founded / hq used to be three private functions right here — a
+ *  weaker second copy of the parser on the stock page, which is why this panel
+ *  could only ever show the first sentence of a 350-word summary while
+ *  /stock/[symbol] showed a full card off the same text. They now live in
+ *  src/lib/businessSummary.ts, imported above, so a fix to either surface
+ *  reaches both. The lookbehind lede split and the comma-stopped HQ regex in
+ *  that file ARE this panel's versions — they were the better ones and won. */
 
 /** The pros/cons block. Two columns on a wide panel, stacked on a narrow one.
  *
@@ -1692,6 +1674,11 @@ function CompanyProfile({ symbol, onClose }: { symbol: string; onClose: () => vo
           {(() => {
             const summary = data.business_summary ?? "";
             const { lede, rest } = summary ? splitLede(summary) : { lede: "", rest: "" };
+            // The rest of the prose is not just "more text" — it carries the
+            // segment or product list, which is the part that says what the
+            // company actually sells. Parsed into chips rather than left
+            // folded inside the disclosure, where nobody opens it.
+            const parsed = summary ? parseSummary(summary) : null;
             const facts: { k: string; v: ReactNode }[] = [];
             if (data.ceo_name) {
               // The raw title can be "Chief Executive Officer of DB Digital",
@@ -1699,8 +1686,8 @@ function CompanyProfile({ symbol, onClose }: { symbol: string; onClose: () => vo
               // the label column; the full title is on hover.
               facts.push({ k: "CEO", v: <span title={data.ceo_title ?? undefined}>{cleanPerson(data.ceo_name)}</span> });
             }
-            const founded = summary ? extractFounded(summary) : null;
-            const hq = summary ? extractHq(summary) : null;
+            const founded = parsed?.founded ?? null;
+            const hq = parsed?.hq ?? null;
             if (founded) facts.push({ k: "Founded", v: founded });
             if (hq) facts.push({ k: "Head office", v: hq });
             if (data.employees != null) {
@@ -1712,12 +1699,60 @@ function CompanyProfile({ symbol, onClose }: { symbol: string; onClose: () => vo
             if (data.industry || data.sector) {
               facts.push({ k: "Industry", v: data.industry ?? data.sector });
             }
+            // Markets and Former name were already being parsed out of this
+            // same string and thrown away. Both clear the bar on coverage
+            // (≥2 geographies in 50.2% of summaries, a former name in 33.1%)
+            // and neither costs a query.
+            //
+            // Only shown at TWO or more geographies. At one it is almost
+            // always just "India", which is not a fact about the company —
+            // every name in this universe is listed on the NSE.
+            if (parsed && parsed.geo.length >= 2) {
+              const g = parsed.geo.join(", ");
+              facts.push({ k: "Markets", v: <span title={g}>{g}</span> });
+            }
+            // A renamed company is the reason its own chart and news archive
+            // look discontinuous, so this earns a row rather than a footnote.
+            if (parsed?.formerName) {
+              const fn = parsed.formerName;
+              const txt = fn.changed ? `${fn.name} (to ${fn.changed})` : fn.name;
+              facts.push({ k: "Formerly", v: <span title={txt}>{txt}</span> });
+            }
             return (
               <>
                 {/* The lede sentence alone answers "what is this company".
                     Given its own line at a readable size because it is the one
                     part of the prose most people will ever read. */}
                 {lede && <p className="text-[12px] leading-snug mb-2">{lede}</p>}
+
+                {/* What they sell. The label is the honest one: "Segments"
+                    only when the prose actually said "operates through X and Y
+                    segments" (38% of summaries), "Products" when we fell back
+                    to mining an "offers …" sentence (55%), "Activities" for
+                    the "engages in the manufacture of …" template (3%). Never
+                    claim a reported segment breakdown we did not read. */}
+                {parsed && parsed.segments.length > 0 && (
+                  <div className="mb-2">
+                    <div className="muted-text text-[10px] uppercase tracking-wide mb-1">
+                      {parsed.segmentsSource === "segments"
+                        ? "Segments"
+                        : parsed.segmentsSource === "activities"
+                          ? "Activities"
+                          : "Products"}
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {parsed.segments.map((sg) => (
+                        <span
+                          key={sg}
+                          className="inline-block px-1.5 py-0.5 rounded text-[10.5px] leading-tight"
+                          style={{ backgroundColor: "var(--color-paper)", color: "var(--color-muted)" }}
+                        >
+                          {sg}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Health ABOVE the facts grid, not below it. The order on this
                     card is the order of the questions: what does it do (lede),
