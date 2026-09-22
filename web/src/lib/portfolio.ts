@@ -1434,9 +1434,32 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
   `;
   const manualSymbols = manualRows.map((r) => r.symbol).sort();
 
-  // Start of the CURRENT holding period per symbol — the anchor for the
-  // fall-from-top / rise-from-bottom window.
-  //
+  const firstBuyBySym: Record<string, string> = {};
+  for (const r of await currentLegBuyDateRows(userId)) {
+    if (r.d) firstBuyBySym[r.symbol] = r.d;
+  }
+
+  const fp = portfolioFingerprint(holdings, manualSymbols);
+  // Fold the buy-date map into the cache key so adding an earlier trade for an
+  // already-tracked symbol (which need not change the holdings fingerprint)
+  // still busts the cache and re-anchors the window.
+  const buyFp = Object.entries(firstBuyBySym).sort().map(([s, d]) => `${s}:${d}`).join(",");
+  return finishPortfolio(holdings, manualSymbols, firstBuyBySym, fp, buyFp, userId);
+}
+
+/** Start of the CURRENT holding period per symbol — the anchor for the
+ *  fall-from-top / rise-from-bottom window, the portfolio's buy-date column,
+ *  and the watchlist's "Bought N @ ₹x · date" caption.
+ *
+ *  EXTRACTED so those callers cannot drift apart. They already had: the
+ *  watchlist route carried its own `MIN(trade_date) over every buy` and so put
+ *  a Sep-2026 quantity and price on a Jun-2025 date for KARURVYSYA — a position
+ *  that was fully sold in Feb 2026 and re-entered seven months later. The
+ *  reasoning below was written once, for the portfolio, and the second caller
+ *  never received it. One function is the only thing that fixes that class of
+ *  bug rather than this instance of it.
+ */
+async function currentLegBuyDateRows(userId: number) {
   // This was MIN(trade_date) over every buy ever, which is wrong the moment a
   // position is exited and re-entered: it measured the peak and trough of a
   // position you no longer own. 22 of 66 held symbols were affected. COALINDIA
@@ -1472,7 +1495,7 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
   // A symbol still held but whose current leg contains no buy (fully sold on
   // the record, held only via pre-history shares) yields no row here and falls
   // back to the import-date proxy — which the UI already labels as a proxy.
-  const buyDateRows = await sql<{ symbol: string; d: string }[]>`
+  return sql<{ symbol: string; d: string }[]>`
     WITH daily AS (
       SELECT symbol, trade_date,
              SUM(CASE WHEN side = 'buy' THEN quantity ELSE -quantity END) AS net
@@ -1511,14 +1534,27 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
      WHERE t.user_id = ${userId} AND t.symbol IS NOT NULL AND t.side = 'buy'
      GROUP BY t.symbol
   `;
-  const firstBuyBySym: Record<string, string> = {};
-  for (const r of buyDateRows) if (r.d) firstBuyBySym[r.symbol] = r.d;
+}
 
-  const fp = portfolioFingerprint(holdings, manualSymbols);
-  // Fold the buy-date map into the cache key so adding an earlier trade for an
-  // already-tracked symbol (which need not change the holdings fingerprint)
-  // still busts the cache and re-anchors the window.
-  const buyFp = Object.entries(firstBuyBySym).sort().map(([s, d]) => `${s}:${d}`).join(",");
+/** The map form of the above, for callers that just want symbol → date. */
+export async function loadCurrentLegBuyDates(userId: number): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  for (const r of await currentLegBuyDateRows(userId)) {
+    if (r.d) out[r.symbol.toUpperCase()] = r.d;
+  }
+  return out;
+}
+
+/** The cached tail of loadPortfolio, split out only so the buy-date query
+ *  above could become a shared function. Behaviour is unchanged. */
+async function finishPortfolio(
+  holdings: HoldingRow[],
+  manualSymbols: string[],
+  firstBuyBySym: Record<string, string>,
+  fp: string,
+  buyFp: string,
+  userId: number,
+): Promise<Portfolio> {
   const dateKey = istDateKey();
   const cached = unstable_cache(
     () => computePortfolio(holdings, manualSymbols, firstBuyBySym),

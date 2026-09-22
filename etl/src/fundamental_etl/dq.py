@@ -371,6 +371,176 @@ def run_assertions(conn: psycopg.Connection) -> list[AssertionResult]:
     return out
 
 
+# ── Portfolio anchor assertions ──────────────────────────────────────────────
+#
+# THE BUG THIS EXISTS FOR
+#
+# The watchlist chart draws a green "B" marker for every held name and captions
+# it "Bought <qty> @ ₹<avg cost> · <date>". The quantity and cost come from
+# app.portfolio_holding (what you hold today); the DATE came from the trade log.
+# For KARURVYSYA the caption read "Bought 45 @ ₹346 · 02 Jun 2025" — a lot that
+# was bought in SEPTEMBER 2026, stamped with the date of a position that had
+# been sold out entirely in February 2026. The marker landed on the chart at
+# ₹168, fifteen months before the purchase it described.
+#
+# It was found by a human looking at a chart and saying "that doesn't match".
+# 36 held symbols were affected. Nothing in the codebase could have told him.
+#
+# WHY NO EXISTING CHECK CAUGHT IT
+#
+# Every check in this file asks "is this column populated?". The column WAS
+# populated. It held a real date, of a real trade, for the right symbol — just
+# not the trade the rest of the sentence was about. Null-rate assertions are
+# structurally blind to a value that is present and wrong, and that is the
+# larger share of the bugs this platform has actually shipped.
+#
+# THE CHECK
+#
+# A date and a price that claim to describe the same purchase must agree with
+# the market. Take each held position's average cost and the anchor date shown
+# beside it, look up what the stock actually traded at on that date, and assert
+# they are within a factor. They cannot drift far apart for any innocent reason:
+#
+#   • wrong leg (the bug above)        → cost and price are years apart
+#   • unadjusted split/bonus           → off by exactly the ratio
+#   • wrong symbol after a rename      → off by anything
+#   • stale or unadjusted avg_cost     → off in one direction
+#
+# Note what it does NOT do: it never recomputes the anchor with the same leg
+# logic the app uses. A check that re-implements the thing it is testing agrees
+# with the bug. This one asks the market instead, which has no opinion about
+# our code.
+#
+# THE TOLERANCE
+#
+# 1.5× — and the number matters more than it looks, because the first attempt
+# at this check got it wrong in exactly the way §5 of CLAUDE.md warns about.
+#
+# 2.0× was picked by intuition and felt safely loose. Then the ratios were
+# measured. KARURVYSYA — the bug this whole check exists for — is ₹346 average
+# cost against a ₹197.7 close on the date it wrongly displayed: **1.75×**. The
+# tripwire would have sat underneath the very thing it was written to catch and
+# reported a green tick. A check that cannot fail on its own originating bug is
+# decoration.
+#
+# The distribution over the live portfolio decides it. Old (buggy) anchors:
+#   >1.25× 12   >1.4× 6   >1.5× 5   >1.75× 2   >2.0× 2
+# Fixed anchors:
+#   >1.25×  5   >1.4× 2   >1.5× 1   >1.75× 1   >2.0× 1
+# 1.5× is where the two distributions separate: it catches all five pre-fix
+# outliers (NATIONALUM 2.66, GODFRYPHLP 2.50, KARURVYSYA 1.75, BSOFT 1.64,
+# LLOYDSME 1.62) and leaves exactly one survivor after the fix. Going tighter
+# (1.4×) pulls in MUTHOOTFIN and MCX, which are merely mediocre entries — and a
+# check that cries wolf gets ignored, which is the only way a check truly dies.
+#
+# The single survivor is GODFRYPHLP, and it is real rather than noise: it is
+# held via shares that predate the tradebook, so its anchor genuinely belongs to
+# a leg that does not contain the shares on the screen. The ceiling below is set
+# to today's count so any NEW one fails immediately; lowering it to 0 once that
+# position is reconciled is the intended maintenance, not a TODO to forget.
+_PORTFOLIO_ANCHOR_MAX_RATIO = 1.5
+_PORTFOLIO_ANCHOR_MAX_BAD = 1
+
+
+def run_portfolio_assertions(
+    app: psycopg.Connection, golden: psycopg.Connection
+) -> list[AssertionResult]:
+    """Assert that every displayed buy anchor agrees with the market price on
+    the date it claims. Needs BOTH connections — the anchors live in app, the
+    prices in golden — so this cannot be one SQL statement and does not try."""
+    # Anchor per held symbol, computed EXACTLY as the app displays it (first
+    # buy of the current leg). The point is to test the number on the screen,
+    # not an idealised one.
+    with app.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            """
+            WITH daily AS (
+              SELECT user_id, symbol, trade_date,
+                     SUM(CASE WHEN side='buy' THEN quantity ELSE -quantity END) AS net
+                FROM app.portfolio_transaction
+               WHERE symbol IS NOT NULL
+               GROUP BY 1,2,3
+            ),
+            running AS (
+              SELECT user_id, symbol, trade_date,
+                     SUM(net) OVER (PARTITION BY user_id, symbol ORDER BY trade_date) AS bal
+                FROM daily
+            ),
+            base AS (
+              SELECT user_id, symbol, GREATEST(0, -MIN(bal)) AS qty0
+                FROM running GROUP BY 1,2
+            ),
+            adj AS (
+              SELECT r.user_id, r.symbol, r.trade_date, r.bal + b.qty0 AS bal
+                FROM running r JOIN base b USING (user_id, symbol)
+            ),
+            legs AS (
+              SELECT user_id, symbol, trade_date,
+                     COALESCE(SUM(CASE WHEN bal <= 0.000001 THEN 1 ELSE 0 END) OVER (
+                       PARTITION BY user_id, symbol ORDER BY trade_date
+                       ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0) AS leg
+                FROM adj
+            ),
+            cur_leg AS (SELECT user_id, symbol, MAX(leg) AS leg FROM legs GROUP BY 1,2),
+            anchor AS (
+              SELECT t.user_id, t.symbol, MIN(t.trade_date) AS d
+                FROM app.portfolio_transaction t
+                JOIN legs l     ON l.user_id=t.user_id AND l.symbol=t.symbol
+                                AND l.trade_date=t.trade_date
+                JOIN cur_leg c  ON c.user_id=t.user_id AND c.symbol=t.symbol AND c.leg=l.leg
+               WHERE t.symbol IS NOT NULL AND t.side='buy'
+               GROUP BY 1,2
+            ),
+            held AS (
+              SELECT user_id, symbol, SUM(quantity) AS q,
+                     SUM(quantity*avg_cost)/NULLIF(SUM(quantity),0) AS avg_cost
+                FROM app.portfolio_holding
+               WHERE symbol IS NOT NULL
+               GROUP BY 1,2
+            )
+            SELECT h.symbol, h.avg_cost::float8 AS avg_cost, a.d::text AS d
+              FROM held h JOIN anchor a USING (user_id, symbol)
+             WHERE h.q > 0 AND h.avg_cost > 0
+            """
+        )
+        anchors = cur.fetchall()
+
+    bad = 0
+    with golden.cursor(row_factory=dict_row) as gcur:
+        for row in anchors:
+            gcur.execute(
+                """
+                SELECT close::float8 AS c
+                  FROM golden.price_history_1d
+                 WHERE symbol = %s AND date <= %s AND close > 0
+                 ORDER BY date DESC LIMIT 1
+                """,
+                (f"{row['symbol']}.NS", row["d"]),
+            )
+            p = gcur.fetchone()
+            # No bar on or before the anchor is NOT a pass and NOT a failure of
+            # this check — it is a price-coverage gap, which the golden
+            # freshness/coverage assertions above are responsible for. Counting
+            # it here would let a missing price silently satisfy a price check.
+            if not p or not p["c"]:
+                continue
+            ratio = max(p["c"] / row["avg_cost"], row["avg_cost"] / p["c"])
+            if ratio > _PORTFOLIO_ANCHOR_MAX_RATIO:
+                bad += 1
+
+    return [
+        AssertionResult(
+            name="portfolio.buy_anchor_matches_market_price",
+            passed=(bad <= _PORTFOLIO_ANCHOR_MAX_BAD),
+            actual_pct=float(bad),
+            threshold_pct=float(_PORTFOLIO_ANCHOR_MAX_BAD),
+            populated=bad,
+            total=bad,
+            shape="count_max",
+        )
+    ]
+
+
 def summarize(results: list[AssertionResult]) -> tuple[int, int]:
     """Return (passed_count, failed_count)."""
     passed = sum(1 for r in results if r.passed)

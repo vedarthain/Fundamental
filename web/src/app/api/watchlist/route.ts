@@ -23,7 +23,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { loadPersistenceForSymbols } from "@/lib/persistence";
-import { loadPortfolioSymbols, loadHeldPositions, loadSnapshotDerivedBuys, type TradeMark } from "@/lib/portfolio";
+import { loadPortfolioSymbols, loadHeldPositions, loadSnapshotDerivedBuys, loadCurrentLegBuyDates, type TradeMark } from "@/lib/portfolio";
 import { loadQuotes, loadCloseOnAdd, loadCloseAsOf, rescaleWindow } from "@/lib/watchlistQuote";
 import { type GlanceMetrics, type MetricKey } from "@/lib/glance";
 import { type StockVerdict } from "@/lib/explainer";
@@ -405,7 +405,7 @@ export async function GET(req: NextRequest) {
   const tradesBySym: Record<string, TradeMark[]> = {};
   const boughtOn = new Map<string, string>();
   if (session) {
-    const [held, trades, pos] = await Promise.all([
+    const [held, trades, pos, legBuys] = await Promise.all([
       // Reuse the list already fetched during symbol resolution when available
       // (the no-args signed-in path); the ?symbols= path fetches it fresh.
       heldFromList != null
@@ -428,6 +428,9 @@ export async function GET(req: NextRequest) {
          ORDER BY symbol, trade_date
       `.catch(() => [] as { symbol: string; d: string; side: string; price: number; qty: number }[]),
       loadHeldPositions(session.userId).catch(() => ({}) as Record<string, { qty: number; avgCost: number | null }>),
+      // First buy of the CURRENT leg — shared with the portfolio rather than
+      // re-derived here. See the bug note on currentLegBuyDateRows.
+      loadCurrentLegBuyDates(session.userId).catch(() => ({}) as Record<string, string>),
     ]);
     heldSet = new Set(held.map((s) => s.toUpperCase()));
     positions = pos;
@@ -438,11 +441,20 @@ export async function GET(req: NextRequest) {
     // GODFRYPHLP's 1:3 on 2025-09-16), which would show a phantom "Sell" for a
     // position that was never exited, and raw prices sit ~Nx off the split-
     // adjusted candles. Markers are synthesized from holdings below instead.
-    for (const r of trades) {
-      const key = r.symbol.toUpperCase();
-      tradedSet.add(key);
-      if (r.side !== "sell" && !boughtOn.has(key)) boughtOn.set(key, r.d);
-    }
+    for (const r of trades) tradedSet.add(r.symbol.toUpperCase());
+    // The "Bought <date>" anchor. This USED to be the earliest buy in the whole
+    // trade log, taken from the loop above. That is the wrong date for any name
+    // that was exited and re-entered, and it is wrong in the most confusing
+    // possible way: the caption pairs it with the quantity and average cost of
+    // the position you hold TODAY.
+    //
+    // KARURVYSYA is the case that surfaced it — bought 16 on 2025-06-02, sold
+    // the lot out entirely on 2026-02-05, re-bought 45 @ ₹346 on 2026-09-02.
+    // The caption read "Bought 45 @ ₹346 · 02 Jun 2025": a September-2026 lot
+    // stamped with a June-2025 date, and the chart's B marker planted at ₹168
+    // fifteen months before that purchase existed. Nothing about it looks like
+    // a bug — it looks like the chart disagreeing with your tradebook.
+    for (const [key, d] of Object.entries(legBuys)) boughtOn.set(key, d);
     // One "B" per HELD name, sourced from app.portfolio_holding: outstanding qty
     // + effective (already split-adjusted) avg cost, anchored to the earliest real
     // buy date. Answers "when did I buy this and what do I hold?" — never a sell,

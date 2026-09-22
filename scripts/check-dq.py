@@ -39,7 +39,9 @@ ROOT = Path(__file__).resolve().parent.parent
 # Make the ETL package importable when running this script standalone.
 sys.path.insert(0, str(ROOT / "etl" / "src"))
 
-from fundamental_etl.dq import run_assertions, run_golden_assertions, summarize  # noqa: E402
+from fundamental_etl.dq import (  # noqa: E402
+    run_assertions, run_golden_assertions, run_portfolio_assertions, summarize,
+)
 
 
 def env_url(name: str, required: bool = True) -> str | None:
@@ -70,6 +72,7 @@ def main() -> int:
     except psycopg.OperationalError as e:
         print(f"✗ FATAL: could not connect — {e}", file=sys.stderr)
         return 2
+    app_url = url
 
     # Golden EOD price-feed checks (freshness/coverage/sentinels) — the "bhav
     # copy imported but 0 stocks updated" guard. golden is a separate DB; run
@@ -80,11 +83,17 @@ def main() -> int:
         try:
             with psycopg.connect(golden_url) as gconn:
                 results = results + run_golden_assertions(gconn)
+                # Cross-DB: the buy anchors the UI shows, checked against what
+                # the stock actually traded at on the date shown beside them.
+                # Needs both connections open at once, hence its home here.
+                with psycopg.connect(app_url) as aconn:
+                    results = results + run_portfolio_assertions(aconn, gconn)
         except psycopg.OperationalError as e:
             print(f"✗ FATAL: could not connect to golden — {e}", file=sys.stderr)
             return 2
     else:
-        print("⚠ GOLDEN_DB_URL not set — SKIPPING golden price-feed freshness checks")
+        print("⚠ GOLDEN_DB_URL not set — SKIPPING golden price-feed freshness")
+        print("  checks AND the portfolio buy-anchor check (it needs prices).")
         print()
 
     for r in results:
