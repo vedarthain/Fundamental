@@ -1429,15 +1429,82 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
   `;
   const manualSymbols = manualRows.map((r) => r.symbol).sort();
 
-  // Earliest real purchase date per symbol (from hand-entered / imported trade
-  // rows). Used to anchor the fall-from-top / rise-from-bottom window on the
-  // actual buy date wherever we have one, instead of the import-date proxy.
-  // MIN is dupe-safe: a manual entry matched by an import shares the same date.
+  // Start of the CURRENT holding period per symbol — the anchor for the
+  // fall-from-top / rise-from-bottom window.
+  //
+  // This was MIN(trade_date) over every buy ever, which is wrong the moment a
+  // position is exited and re-entered: it measured the peak and trough of a
+  // position you no longer own. 22 of 66 held symbols were affected. COALINDIA
+  // anchored on 2024-02-19 instead of 2026-01-16 and reported rise-from-bottom
+  // of 23.9% against a true 2.5% — a recovery from a trough you were not
+  // holding through.
+  //
+  // The rule:
+  //   • sell PART of a position  → anchor unchanged. You still hold the shares
+  //     you bought on day one, so day one is still the right window start.
+  //   • sell ALL of it, buy back → anchor resets to the re-entry buy. It is a
+  //     new position; the old one's price history is not yours.
+  //
+  // Mechanically: net the ledger per day, run a cumulative balance, and count
+  // how many times it has touched zero BEFORE each day — that count is the
+  // "leg". The current leg is the last one; its first buy is the anchor.
+  //
+  // Two details that are load-bearing:
+  //
+  //   1. Netting per DAY, not per row. A same-day sell-then-buy ordered
+  //      sell-first shows a transient zero and would falsely reset the anchor.
+  //      Day-end balance has no such artifact.
+  //
+  //   2. The `base` offset. 8 held symbols drive the running balance NEGATIVE
+  //      (NATIONALUM to -96, KARURVYSYA to -90) — impossible unless shares were
+  //      bought before the transaction history begins, which for this data is
+  //      2024-02-01. Without the offset those phantom crossings read as exits:
+  //      JYOTHYLAB lost its anchor entirely and MCX reset to a date it never
+  //      exited on. Seeding the balance with the smallest pre-history quantity
+  //      that keeps it non-negative is the minimum assumption that makes the
+  //      ledger self-consistent.
+  //
+  // A symbol still held but whose current leg contains no buy (fully sold on
+  // the record, held only via pre-history shares) yields no row here and falls
+  // back to the import-date proxy — which the UI already labels as a proxy.
   const buyDateRows = await sql<{ symbol: string; d: string }[]>`
-    SELECT symbol, MIN(trade_date)::text AS d
-      FROM app.portfolio_transaction
-     WHERE user_id = ${userId} AND symbol IS NOT NULL AND side = 'buy'
-     GROUP BY symbol
+    WITH daily AS (
+      SELECT symbol, trade_date,
+             SUM(CASE WHEN side = 'buy' THEN quantity ELSE -quantity END) AS net
+        FROM app.portfolio_transaction
+       WHERE user_id = ${userId} AND symbol IS NOT NULL
+       GROUP BY symbol, trade_date
+    ),
+    running AS (
+      SELECT symbol, trade_date,
+             SUM(net) OVER (PARTITION BY symbol ORDER BY trade_date) AS bal
+        FROM daily
+    ),
+    base AS (
+      SELECT symbol, GREATEST(0, -MIN(bal)) AS qty0 FROM running GROUP BY symbol
+    ),
+    adjusted AS (
+      SELECT r.symbol, r.trade_date, r.bal + b.qty0 AS bal
+        FROM running r JOIN base b USING (symbol)
+    ),
+    legs AS (
+      SELECT symbol, trade_date,
+             COALESCE(
+               SUM(CASE WHEN bal <= 0.000001 THEN 1 ELSE 0 END) OVER (
+                 PARTITION BY symbol ORDER BY trade_date
+                 ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+               ), 0) AS leg
+        FROM adjusted
+    ),
+    current_leg AS (
+      SELECT symbol, MAX(leg) AS leg FROM legs GROUP BY symbol
+    )
+    SELECT t.symbol, MIN(t.trade_date)::text AS d
+      FROM app.portfolio_transaction t
+      JOIN legs l        ON l.symbol = t.symbol AND l.trade_date = t.trade_date
+      JOIN current_leg c ON c.symbol = t.symbol AND c.leg = l.leg
+     WHERE t.user_id = ${userId} AND t.symbol IS NOT NULL AND t.side = 'buy'
+     GROUP BY t.symbol
   `;
   const firstBuyBySym: Record<string, string> = {};
   for (const r of buyDateRows) if (r.d) firstBuyBySym[r.symbol] = r.d;
@@ -1456,7 +1523,11 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
     // read was served an older Portfolio blob that had no such field and
     // `undefined != null` is false. The exclusion silently never fired. A code
     // change that alters the payload has to be part of the key.
-    ["portfolio", "v3-live-windows", String(userId), dateKey, fp, buyFp],
+    // v4: the anchor semantics changed (first buy of the CURRENT leg, not the
+    // first buy ever). buyFp busts on its own for the 22 symbols whose date
+    // moved, but the SHAPE tag moves too — a cached blob computed under the
+    // old rule is wrong even where the date happens to match.
+    ["portfolio", "v4-leg-anchored-windows", String(userId), dateKey, fp, buyFp],
     { revalidate: 900, tags: ["portfolio", "panel-cache"] },
   );
   return cached();
