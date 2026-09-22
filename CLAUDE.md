@@ -98,6 +98,40 @@ ago. Do not trust it and do not cite it.
   Cache must be purged.** It survives deploys, and the loaders precompute
   values server-side. A DB fix that is not followed by a purge is invisible.
 
+### Regression impact — state it before the edit, prove it after
+
+A fix that creates a bug is worse than the bug it fixed, because the new one
+arrives wearing the trust of a fix. So every change names its blast radius
+**up front**, in the message that proposes it — not afterwards as reassurance.
+
+Three questions, answered with commands, not confidence:
+
+1. **Who else calls this?** `grep -rn` the symbol across `web/src` and
+   `etl/src` before changing its behaviour or its signature, and list what came
+   back. If the rule being fixed lives in a *comment* rather than a function,
+   every caller is a copy that will never receive the fix — say so, and extract
+   it. That is exactly how the watchlist buy marker drifted from the portfolio's.
+2. **What does this widen or narrow?** A changed threshold, filter, `LIMIT`,
+   or `WHERE` clause changes a row count. Measure both sides — run it before and
+   after and report the two numbers. "Should be unaffected" is not a measurement.
+3. **What proves it still works?** §6's commands. Run them, don't cite them. A
+   refactor that merely *looks* clean has already shipped a scope bug here.
+   Question 3 is the only one with teeth: `scripts/guards/verify-before-commit.sh`
+   blocks any `git commit` whose staged TypeScript does not typecheck or whose
+   staged Python does not parse. It is a floor, not a substitute — it cannot
+   tell you whether the change is *right*, only that it compiles. Questions 1
+   and 2 are still yours.
+
+And the trap specific to fixing bugs: **a fix must fail on the bug it fixes.**
+Before trusting a new guard, threshold or check, feed it the original broken
+input and confirm it rejects it. The buy-anchor tripwire was first set at 2.0×
+while the bug that motivated it measured 1.75× — it would have passed, green,
+forever. Tuning by intuition and never testing the actual case is how §5's
+"checks that cannot fail" gets rewritten from scratch each time.
+
+Where a change genuinely cannot be verified here — anything visual — say so
+plainly and say what Deb should look at. Never substitute a claim for a check.
+
 ---
 
 ## 5. The recurring failure in this codebase
