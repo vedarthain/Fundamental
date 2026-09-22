@@ -17,8 +17,8 @@ These are not preferences. Breaking one loses work or breaks production.
 |---|---|
 | `git push --force` to `main` | Solo repo with no backups but the remote. A force-push is unrecoverable. |
 | `git reset --hard`, `git checkout .`, `git clean -f` | Discards uncommitted work with no undo. Use `git stash` instead. |
-| Deploy without being asked **in the current message** | Deploys go out **Saturday/Sunday only**. Past approval does not carry forward. |
-| Commit or push without being asked | Ask. `z` = commit. `zz` = commit **and** push. Nothing else pushes. |
+| `git push` to `main` without being asked **in the current message** | **A push IS a deploy.** Vercel builds `main` straight to Production — there is no second step to withhold. Deploys go out **Saturday/Sunday only**, so that rule binds on `zz`. Past approval does not carry forward. |
+| Commit or push without being asked | Ask. `z` = commit, and commits are free. `zz` = commit **and** push, which ships to equityroots.in. Nothing else pushes. |
 | `DELETE`/`DROP`/`TRUNCATE` on prod without showing the row count first | Run the `SELECT count(*)` first, show it, wait for a yes. |
 | Write to a remote DB without `FUNDAMENTAL_ALLOW_REMOTE_DB=1` | The guard in `etl/src/fundamental_etl/db.py` exists because local and prod URLs look alike. Setting the flag is the deliberate act. |
 | `git add -A` or `git add .` | Sweeps in `build/`, `logs/`, `.claude/`, archives. Stage files by name. |
@@ -97,6 +97,32 @@ ago. Do not trust it and do not cite it.
 - **After changing anything that affects what the site shows, the Vercel Data
   Cache must be purged.** It survives deploys, and the loaders precompute
   values server-side. A DB fix that is not followed by a purge is invisible.
+
+### `git push` is the deploy. There is no other one.
+
+The Vercel project is connected to this GitHub repo and builds every push to
+`main` straight to **Production**. No approval gate, no promote step, no
+staging. Between `git push` and strangers reading it on equityroots.in there is
+only a build.
+
+This is written out rather than left to the stop-rule table because the table
+listed "deploy" and "push" as two rows, and reading it that way produced a
+whole session of saying "nothing is deployed yet, this is safe until the
+weekend" about three changes that were already live. **False reassurance is
+worse than no reassurance**: it removes the caution that would otherwise have
+been there. Deb had no reason to doubt it — the operating manual implied it.
+
+So:
+
+- Never say a change is "not deployed", "parked", "safe until the weekend", or
+  anything of that shape after a push. **Check it**:
+  `gh api "repos/vedarthain/Fundamental/deployments?per_page=3" --jq '.[] | {env:.environment, sha:.sha[0:7], at:.created_at}'`
+  and the build result:
+  `gh api repos/vedarthain/Fundamental/commits/<sha>/status --jq '.state'`
+- Before executing `zz`, say plainly that it ships to production, and say what
+  day it is. The Saturday/Sunday rule has nothing else to bind to.
+- A push that changes what the site shows is not finished until the Data Cache
+  is purged. The deploy and the purge are one act, not a task and a follow-up.
 
 ### Regression impact — state it before the edit, prove it after
 
