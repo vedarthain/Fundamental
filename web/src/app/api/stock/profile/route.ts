@@ -86,7 +86,8 @@ export async function GET(req: NextRequest) {
       sql<AnnualRow[]>`
         SELECT period_end::text AS period_end, sales, operating_profit, other_income, interest,
                profit_before_tax, net_profit, dividend_amount, equity_share_capital,
-               reserves, borrowings, no_of_equity_shares, cash_from_operating
+               reserves, borrowings, no_of_equity_shares, cash_from_operating,
+               total_assets, expenses
           FROM app.fundamentals_annual
          WHERE symbol = ${raw}
          ORDER BY period_end DESC
@@ -103,7 +104,9 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       ...rows[0],
-      health: assessBusiness(annual, shares, rows[0].sector),
+      // Sector decides what to skip, industry decides what to measure — see
+      // the threshold note in businessHealth.ts.
+      health: assessBusiness(annual, shares, rows[0].sector, rows[0].industry),
     });
   } catch (err) {
     console.error("stock profile failed:", err);

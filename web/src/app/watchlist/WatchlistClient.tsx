@@ -1611,10 +1611,12 @@ function HealthBullets({ health, symbol }: { health: BusinessHealth; symbol: str
         {col(cons, "Working against it", "var(--color-down, #b91c1c)", "!")}
       </div>
       {health.leverageSkipped && (
-        // Said out loud rather than silently omitted. A financial with no debt
-        // line looks like a gap in the data; it is a deliberate abstention.
+        // Said out loud rather than silently omitted. A lender with no debt or
+        // margin line looks like a gap in the data; it is a deliberate
+        // abstention, and naming the substitutes is what makes it read as one.
         <p className="mt-1.5 text-[9.5px] muted-text italic">
-          Debt and interest-cover checks are skipped for financials — leverage is the business model there.
+          Read as a lender: debt, margin and cash-conversion checks are skipped — those are the business
+          model here, not a signal. Return on assets and cost-to-income are used in their place.
         </p>
       )}
     </div>

@@ -73,6 +73,12 @@ export type AnnualRow = {
   borrowings: Num;
   no_of_equity_shares: Num;
   cash_from_operating: Num;
+  /** Lenders only, but selected for everyone. ROA is the return measure that
+   *  works on a balance sheet made of other people's money, and cost-to-income
+   *  is the efficiency measure that replaces operating margin. Both are
+   *  populated for all 293 financials (expenses for 288). */
+  total_assets: Num;
+  expenses: Num;
 };
 
 /** One shareholding-pattern quarter, newest first. */
@@ -100,8 +106,10 @@ export type BusinessHealth = {
   /** Years of annual history actually used. Below 5 most growth checks cannot
    *  run, and the card says so instead of showing a thin, silent list. */
   years: number;
-  /** True when leverage checks were skipped (see rule 3). Surfaced so the
-   *  absence of a debt line is explained rather than looking like an oversight. */
+  /** True when this was read as a lender, so the four checks that assume a
+   *  manufacturer — leverage, operating margin, cash conversion, the one-off
+   *  detector — were skipped and the two bank measures run instead. Surfaced so
+   *  the absent debt line is explained rather than looking like an oversight. */
   leverageSkipped: boolean;
 };
 
@@ -160,12 +168,29 @@ export function assessBusiness(
   annual: AnnualRow[],
   shares: ShareRow[],
   sector: string | null,
+  industry: string | null = null,
 ): BusinessHealth {
   const pros: HealthCheck[] = [];
   const cons: HealthCheck[] = [];
   const rows = annual.filter((r) => !!r.period_end);
   const latest = rows[0] ?? null;
   const isFinancial = (sector ?? "").trim().toLowerCase() === "financial services";
+
+  // SECTOR IS TOO COARSE TO SET A THRESHOLD ON, and finding that out cost a
+  // round of wrong bullets. "Financial Services" is 293 active symbols and five
+  // unlike businesses: Finance/NBFC 177, Capital Markets 52, Banks 41,
+  // Insurance 13, Fintech 10. Their median return on assets runs 1.00% for
+  // banks, 2.29% for NBFCs and 6.53% for capital markets — a broker is
+  // asset-light, so the ratio is not large because it is good. The first cut of
+  // the ROA check used a single 1.5% bar across the sector and fired on 169 of
+  // 293 (58%), which is the growth-threshold mistake repeated one file later.
+  //
+  // So the sector still decides what to SKIP — that judgement holds for anyone
+  // whose balance sheet is other people's money — but only the industry decides
+  // what to MEASURE, and it is measured against that industry's own quartiles.
+  const ind = (industry ?? "").trim().toLowerCase();
+  const isBank = isFinancial && ind === "banks";
+  const isNbfc = isFinancial && ind === "finance";
 
   const out: BusinessHealth = {
     pros,
@@ -193,9 +218,18 @@ export function assessBusiness(
   // change. Other income exceeding operating profit is the direct, unambiguous
   // tell, so it is checked FIRST and used to gate the two bullets that would
   // otherwise be read off the flattered number.
+  //
+  // NOT for lenders. For a bank "other income" is fees, treasury and forex —
+  // core banking revenue that simply sits below the interest line. HDFC Bank
+  // and ICICI Bank both tripped this and were told most of their FY26 profit
+  // came from outside the core business, which is the opposite of true. The
+  // signal is real for a manufacturer and meaningless for a bank, so the test
+  // does not run rather than running at a re-tuned threshold: there is no
+  // threshold that makes fee income a one-off.
   const opLatestRaw = num(latest.operating_profit);
   const oiLatest = num(latest.other_income);
   const flattered =
+    !isFinancial &&
     opLatestRaw !== null &&
     opLatestRaw > 0 &&
     oiLatest !== null &&
@@ -266,8 +300,15 @@ export function assessBusiness(
     if (op < 0 && np !== null && np > 0) return null; // incoherent — see above
     return (op / s) * 100;
   };
-  const opmLatest = opmOf(latest);
-  const opmHist = rows.slice(1, 6).map(opmOf).filter((v): v is number => v !== null);
+  //
+  // Lenders are excluded outright. A bank's "sales" is interest income and its
+  // operating profit is that minus operating expense, so the ratio is a
+  // cost-to-income figure wearing a margin's name — 68% for Karur Vysya, which
+  // reads as a spectacular manufacturer and means nothing of the kind. It also
+  // tracks the rate cycle rather than the business. Cost-to-income, computed
+  // below, is the same arithmetic reported honestly.
+  const opmLatest = isFinancial ? null : opmOf(latest);
+  const opmHist = isFinancial ? [] : rows.slice(1, 6).map(opmOf).filter((v): v is number => v !== null);
   if (opmLatest !== null && opmHist.length >= 3) {
     const med = median(opmHist)!;
     const d = opmLatest - med;
@@ -297,6 +338,72 @@ export function assessBusiness(
     cons.push({ id: "loss", kind: "con", text: `Loss-making in ${out.latestPeriod ?? "the latest year"}` });
   }
 
+  // ── Lenders: the two measures that survive a borrowed balance sheet ─────
+  // Everything a bank looks bad or brilliant at under the checks above is an
+  // artefact of the business model — it borrows for a living, its revenue IS
+  // interest, and its cash flow IS the loan book moving. Rather than abstain
+  // on all four and leave a near-empty card, two measures run instead. They
+  // are chosen for being computable from what we already store: total_assets
+  // is populated for all 293 financials, expenses for 288.
+  //
+  // ROA, not ROE. Leverage is what makes a bank's ROE look like a great
+  // company's, so ROE flatters every lender equally and discriminates between
+  // none of them. Return on ASSETS is the measure the RBI, the rating agencies
+  // and any bank analyst actually use.
+  //
+  // Two different bands, because banks and NBFCs are not the same trade. Bank
+  // ROA across the 41 listed: p25 0.74%, median 1.00%, p75 1.25% — so 1.5% is
+  // genuinely top-decile (Karur Vysya 1.84%, ICICI 1.86%, HDFC 1.55%). NBFC ROA
+  // across 177: p25 0.68%, median 2.29%, p75 4.00% — they lend at higher
+  // spreads on less leverage, so the same 1.5% bar would be a participation
+  // trophy and the top-quartile line is 4%.
+  //
+  // Capital Markets, Insurance and Fintech get NEITHER check. A broker or an
+  // AMC holds almost no assets against its earnings, so its ROA is arithmetic
+  // rather than performance; an insurer's expense line is claims. Their cards
+  // fall back to growth, returns, dividend and ownership, which is thinner but
+  // not wrong — and thin beats confident and wrong.
+  //
+  // What is still missing, and worth saying plainly: NIM, GNPA/NNPA, provision
+  // coverage, CASA and capital adequacy are the measures that would actually
+  // tell you whether a bank is healthy, and this table holds none of them.
+  // These two are the honest subset, not a complete picture.
+  if (isBank || isNbfc) {
+    const ta = num(latest.total_assets);
+    if (npLatest !== null && ta !== null && ta > 0) {
+      const roa = (npLatest / ta) * 100;
+      const strong = isBank ? 1.5 : 4.0;
+      const weak = isBank ? 0.5 : 0.7;
+      const what = isBank ? "a bank" : "a lender";
+      if (roa >= strong) pros.push({ id: "roa-high", kind: "pro", text: `Return on assets ${roa.toFixed(2)}% — strong for ${what}` });
+      else if (roa > 0 && roa < weak) cons.push({ id: "roa-low", kind: "con", text: `Return on assets only ${roa.toFixed(2)}%` });
+    }
+  }
+  // Cost-to-income: operating expense over total income (interest + other).
+  // The denominator has to include other income, because fee and treasury
+  // revenue pays for the same branch network — omitting it would overstate the
+  // ratio for exactly the banks that earn most of their fees.
+  //
+  // BANKS ONLY. NBFC cost-to-income runs p25 21.8% to p75 74.6%, a spread that
+  // wide is a sign the inputs are not comparable across the group rather than a
+  // sign the group varies that much — interest expense lands in different lines
+  // for different filers. A ratio you cannot compare is not a ratio worth
+  // printing. Bank quartiles are tight by comparison (p25 26.9%, p75 47.2%) and
+  // the thresholds below are exactly those, so this fires on a quarter of banks
+  // in each direction by construction.
+  if (isBank) {
+    const exp = num(latest.expenses);
+    const salesLatest = num(latest.sales);
+    if (exp !== null && salesLatest !== null && oiLatest !== null) {
+      const income = salesLatest + oiLatest;
+      if (income > 0 && exp >= 0) {
+        const cti = (exp / income) * 100;
+        if (cti <= 27) pros.push({ id: "cost-income-low", kind: "pro", text: `Spends ${cti.toFixed(0)}% of income running the bank — lean` });
+        else if (cti >= 47) cons.push({ id: "cost-income-high", kind: "con", text: `Spends ${cti.toFixed(0)}% of income just running the bank` });
+      }
+    }
+  }
+
   // ── Leverage (skipped for financials, rule 3) ───────────────────────────
   if (!isFinancial) {
     const borr = num(latest.borrowings);
@@ -322,7 +429,15 @@ export function assessBusiness(
   // Summed over the window rather than taken year by year: a single year's
   // working-capital swing is normal and would fire this constantly. Five years
   // of profit that never arrives as cash is the actual signal.
-  if (base && span >= 3) {
+  //
+  // Skipped for lenders, and this was the most misleading of the four. A bank's
+  // operating cash flow is deposits and loan-book movement, not earnings
+  // quality: Bajaj Finance scored −416% and was told its profit never arrived
+  // as cash, when what the number describes is a loan book growing. Karur Vysya
+  // scored 107% and was awarded a green tick for the same non-fact. A check
+  // that hands out both a reward and a punishment for the same neutral
+  // behaviour is worse than no check.
+  if (!isFinancial && base && span >= 3) {
     const win = rows.slice(0, span);
     const cfos = win.map((r) => num(r.cash_from_operating));
     const nps = win.map((r) => num(r.net_profit));
