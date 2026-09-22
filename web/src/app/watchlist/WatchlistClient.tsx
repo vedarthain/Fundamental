@@ -13,7 +13,7 @@
  *   - error: friendly retry button
  */
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Home, Bookmark, BookmarkCheck } from "lucide-react";
 import {
@@ -22,6 +22,7 @@ import {
   WATCH_BOOKMARKS_KEY,
   type WatchBookmark,
 } from "@/lib/scannerBookmarks";
+import type { BusinessHealth } from "@/lib/businessHealth";
 import { useWatchlist, saveWatchlistNote } from "@/lib/watchlist";
 import { band, bandColor, tierLabel } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
@@ -1484,11 +1485,141 @@ type Profile = {
   ceo_name: string | null;
   ceo_title: string | null;
   fetched_at: string | null;
+  health: BusinessHealth | null;
 };
 
 // Module-level, same pattern as extrasCache: re-opening the ⓘ on a symbol you
 // already looked at must not re-hit the API.
 const profileCache = new Map<string, Profile>();
+
+// Academic qualifications yfinance appends to officer names — "Mr. Pathik
+// Paresh Shah B.E.", "Ms. Vishakha Vivek Mulye B.Com, CA". Nobody reads a CEO
+// line to learn they have a B.Com, and the suffix is what made the facts row
+// run together as "…Shah B.E.Employees: 4,162". Matched as an explicit SET,
+// not a pattern: a heuristic like "trailing short token" would eat real
+// surnames (Shah, Rao, Jain).
+const DEGREE_TOKENS = new Set([
+  "BE", "BSC", "BCOM", "BTECH", "BA", "BBA", "BPHARM", "BARCH", "BED",
+  "MSC", "MCOM", "MTECH", "MBA", "MA", "MS", "MPHIL",
+  "PHD", "LLB", "LLM", "CA", "CS", "CFA", "CPA", "ACA", "FCA", "ACS", "FCS",
+  "ICWA", "CWA", "PGDM", "PGDBM", "IAS", "IPS", "IRS", "CAIIB", "DISA",
+]);
+
+/** "Mr. Pathik Paresh Shah B.E." → "Pathik Paresh Shah". Drops the honorific
+ *  and any trailing qualifications, and collapses the double spaces yfinance
+ *  leaves between initials ("Mr. B.  Sairam"). */
+function cleanPerson(raw: string): string {
+  let s = raw.replace(/\s+/g, " ").trim();
+  s = s.replace(/^(Mr|Mrs|Ms|Dr|Prof|Shri|Smt)\.?\s+/i, "");
+  const parts = s.split(/[\s,]+/).filter(Boolean);
+  while (parts.length > 1) {
+    const tok = parts[parts.length - 1];
+    // Two rules, both anchored at the END of the name only:
+    //  1. a known qualification ("CA", "MBA", "B.Com")
+    //  2. a dotted abbreviation with letters AFTER a dot ("B.Tech.", "M.M.S.",
+    //     "B.E.(Mach.)"). The "letters after a dot" test is what protects
+    //     initials: "B." and "S." have none, so "Mr. B. Sairam" survives, and
+    //     a real name never contains an internal period.
+    const isDegree =
+      DEGREE_TOKENS.has(tok.replace(/\./g, "").toUpperCase()) || /\.[A-Za-z]/.test(tok);
+    if (!isDegree) break;
+    parts.pop();
+  }
+  return parts.join(" ");
+}
+
+/** Split a business summary into its first sentence and the rest.
+ *  The lookbehind is doing real work: "D. B. Corp Limited engages in…" would
+ *  otherwise split after "D", because a naive /\.\s+/ cannot tell an initial
+ *  from a full stop. Skipping periods that follow a single capital letter
+ *  handles the initials that start a third of Indian company names. */
+function splitLede(summary: string): { lede: string; rest: string } {
+  const s = summary.replace(/\s+/g, " ").trim();
+  const m = s.match(/(?<![A-Z])\.\s+(?=[A-Z])/);
+  if (!m || m.index == null) return { lede: s, rest: "" };
+  return { lede: s.slice(0, m.index + 1), rest: s.slice(m.index + m[0].length) };
+}
+
+/** Founded year and head-office city, pulled out of the prose so they can sit
+ *  in the facts row instead of being buried in the last line of a paragraph.
+ *  [Certain] coverage: 2,142 of 2,155 summaries state a founding/incorporation
+ *  year and 2,154 state "based in" or "headquartered in" — this is a stable
+ *  yfinance sentence template, not a hopeful guess. Both return null when the
+ *  template is absent; nothing is inferred. */
+function extractFounded(summary: string): string | null {
+  const m = summary.match(/\b(?:founded|incorporated|established)\s+in\s+(\d{4})\b/i);
+  return m ? m[1] : null;
+}
+function extractHq(summary: string): string | null {
+  const m = summary.match(/\b(?:is\s+)?(?:headquartered|based)\s+in\s+([A-Z][A-Za-z.\- ]{1,28}?)\s*[,.]/);
+  return m ? m[1].trim() : null;
+}
+
+/** The pros/cons block. Two columns on a wide panel, stacked on a narrow one.
+ *
+ *  Deliberately NOT a score. Every attempt to roll these into a single number
+ *  throws away the only thing that makes them useful — which specific fact
+ *  fired — and the platform already has a composite score for the "one number"
+ *  job. This block exists to answer a different question: what would someone
+ *  arguing for this stock say, and what would someone arguing against it say.
+ *
+ *  Green and red carry the sign, but the ✓ / ! prefixes carry it too, because
+ *  ~8% of men cannot separate those two hues and a colour-only signal is not a
+ *  signal for them. */
+function HealthBullets({ health, symbol }: { health: BusinessHealth; symbol: string }) {
+  const { pros, cons } = health;
+
+  if (pros.length === 0 && cons.length === 0) {
+    // Two different reasons for an empty block, and they deserve different
+    // sentences. Thin history is a fact about the company; nothing firing on a
+    // full history means the company is unremarkable on every rule — which is
+    // itself an answer, not a failure.
+    return (
+      <p className="text-[11px] muted-text italic mb-2">
+        {health.years === 0
+          ? `No annual financials on file for ${symbol}.`
+          : health.years < 4
+            ? `Only ${health.years} year${health.years === 1 ? "" : "s"} of financials — too short to judge trends.`
+            : `Nothing stands out either way on ${health.years} years of financials.`}
+      </p>
+    );
+  }
+
+  const col = (items: typeof pros, title: string, colour: string, glyph: string) =>
+    items.length > 0 && (
+      <div className="min-w-0">
+        <div className="text-[9.5px] uppercase tracking-wide font-semibold mb-1" style={{ color: colour }}>
+          {title}
+        </div>
+        <ul className="space-y-0.5">
+          {items.map((c) => (
+            <li key={c.id} className="flex gap-1.5 text-[11px] leading-snug">
+              <span aria-hidden className="shrink-0 font-bold" style={{ color: colour }}>
+                {glyph}
+              </span>
+              <span className="min-w-0">{c.text}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+
+  return (
+    <div className="mb-2">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2">
+        {col(pros, "Working for it", "var(--color-up, #15803d)", "✓")}
+        {col(cons, "Working against it", "var(--color-down, #b91c1c)", "!")}
+      </div>
+      {health.leverageSkipped && (
+        // Said out loud rather than silently omitted. A financial with no debt
+        // line looks like a gap in the data; it is a deliberate abstention.
+        <p className="mt-1.5 text-[9.5px] muted-text italic">
+          Debt and interest-cover checks are skipped for financials — leverage is the business model there.
+        </p>
+      )}
+    </div>
+  );
+}
 
 function CompanyProfile({ symbol, onClose }: { symbol: string; onClose: () => void }) {
   const [data, setData] = useState<Profile | null>(profileCache.get(symbol) ?? null);
@@ -1556,64 +1687,118 @@ function CompanyProfile({ symbol, onClose }: { symbol: string; onClose: () => vo
         <div className="text-[11.5px] muted-text italic">Loading…</div>
       ) : (
         <>
-          {/* Facts first, prose second. The one-liners are what you came for;
-              the summary is a paragraph you may or may not read. */}
-          <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[11px] mb-1.5">
-            {data.ceo_name && (
-              <span>
-                <span className="muted-text">{data.ceo_title || "CEO"}: </span>
-                <span className="font-medium">{data.ceo_name.replace(/\s+/g, " ").trim()}</span>
-              </span>
-            )}
-            {data.employees != null && (
-              <span>
-                <span className="muted-text">Employees: </span>
-                <span className="font-medium tabular-nums">
-                  {data.employees.toLocaleString("en-IN")}
-                </span>
-              </span>
-            )}
-            {data.listing_date && (
-              <span>
-                <span className="muted-text">Listed: </span>
-                <span className="font-medium tabular-nums">
-                  {formatShortDate(data.listing_date)}
-                </span>
-              </span>
-            )}
-            {data.website && (
-              <a
-                href={data.website.startsWith("http") ? data.website : `https://${data.website}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-medium hover:underline"
-                style={{ color: "var(--color-accent-600)" }}
-              >
-                {data.website.replace(/^https?:\/\//, "").replace(/\/$/, "")} ↗
-              </a>
-            )}
-          </div>
+          {(() => {
+            const summary = data.business_summary ?? "";
+            const { lede, rest } = summary ? splitLede(summary) : { lede: "", rest: "" };
+            const facts: { k: string; v: ReactNode }[] = [];
+            if (data.ceo_name) {
+              // The raw title can be "Chief Executive Officer of DB Digital",
+              // which is longer than the name it labels. Collapsed to "CEO" in
+              // the label column; the full title is on hover.
+              facts.push({ k: "CEO", v: <span title={data.ceo_title ?? undefined}>{cleanPerson(data.ceo_name)}</span> });
+            }
+            const founded = summary ? extractFounded(summary) : null;
+            const hq = summary ? extractHq(summary) : null;
+            if (founded) facts.push({ k: "Founded", v: founded });
+            if (hq) facts.push({ k: "Head office", v: hq });
+            if (data.employees != null) {
+              facts.push({ k: "Employees", v: data.employees.toLocaleString("en-IN") });
+            }
+            if (data.listing_date) {
+              facts.push({ k: "Listed", v: formatShortDate(data.listing_date) });
+            }
+            if (data.industry || data.sector) {
+              facts.push({ k: "Industry", v: data.industry ?? data.sector });
+            }
+            return (
+              <>
+                {/* The lede sentence alone answers "what is this company".
+                    Given its own line at a readable size because it is the one
+                    part of the prose most people will ever read. */}
+                {lede && <p className="text-[12px] leading-snug mb-2">{lede}</p>}
 
-          {data.business_summary ? (
-            <p className="text-[11.5px] leading-relaxed max-h-[9.5rem] overflow-y-auto pr-1">
-              {data.business_summary}
-            </p>
-          ) : (
-            // 451 of 2,593 active symbols have no summary — say so rather than
-            // rendering an empty box that reads as a loading failure.
-            <p className="text-[11.5px] muted-text italic">
-              No business description on file for {symbol}.
-            </p>
-          )}
+                {/* Health ABOVE the facts grid, not below it. The order on this
+                    card is the order of the questions: what does it do (lede),
+                    is it any good (here), and only then the trivia. The facts
+                    are reference; this is the part with a view. */}
+                {data.health && <HealthBullets health={data.health} symbol={symbol} />}
+
+                {/* Facts as a LABELLED GRID, not a wrapping inline row. The
+                    inline version ran together — "…Shah B.E.Employees: 4,162
+                    Listed: 06 Jan '10" — because flex gaps vanish at a wrap
+                    boundary and there was no separator carrying the structure.
+                    A grid puts every label in the same column, so the eye can
+                    scan down it. */}
+                {facts.length > 0 && (
+                  <dl className="grid grid-cols-[auto_1fr] sm:grid-cols-[auto_1fr_auto_1fr] gap-x-3 gap-y-1 text-[11px] mb-2">
+                    {facts.map((f) => (
+                      <Fragment key={f.k}>
+                        <dt className="muted-text whitespace-nowrap">{f.k}</dt>
+                        <dd className="font-medium tabular-nums min-w-0 truncate">{f.v}</dd>
+                      </Fragment>
+                    ))}
+                  </dl>
+                )}
+
+                {data.website && (
+                  <a
+                    href={data.website.startsWith("http") ? data.website : `https://${data.website}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-block text-[11px] font-medium hover:underline mb-1.5"
+                    style={{ color: "var(--color-accent-600)" }}
+                  >
+                    {data.website.replace(/^https?:\/\//, "").replace(/\/$/, "")} ↗
+                  </a>
+                )}
+
+                {/* The remaining prose — the brand lists, the segment
+                    breakdowns, the former-name history — behind a disclosure.
+                    It is reference material, not something you read every time
+                    you open a stock. <details> rather than useState: it is
+                    native, keyboard-accessible, and needs no re-render. */}
+                {rest && (
+                  <details className="group">
+                    <summary className="cursor-pointer list-none text-[10.5px] font-medium select-none" style={{ color: "var(--color-accent-600)" }}>
+                      <span className="group-open:hidden">More about the business ▾</span>
+                      <span className="hidden group-open:inline">Less ▴</span>
+                    </summary>
+                    <p className="mt-1.5 text-[11.5px] leading-relaxed max-h-[11rem] overflow-y-auto pr-1">
+                      {rest}
+                    </p>
+                  </details>
+                )}
+
+                {!summary && (
+                  // 451 of 2,593 active symbols have no summary — say so rather
+                  // than rendering an empty box that reads as a failed load.
+                  <p className="text-[11.5px] muted-text italic">
+                    No business description on file for {symbol}.
+                  </p>
+                )}
+              </>
+            );
+          })()}
 
           <div className="mt-2 flex items-center justify-between gap-2 text-[9.5px] muted-text">
             {/* Dated on purpose. Every row in the table was written by one
                 backfill and nothing refreshes it, so an undated card would
                 imply a currency it does not have. */}
+            {/* Two dates, because the two halves of this card have genuinely
+                different vintages and merging them into one would misdate one
+                of them. The description is a frozen 2026-05-04 backfill; the
+                bullets are computed from annual statements that ARE refreshed.
+                The bullets are the fresher half and the footer should not let
+                the stale half speak for them. */}
             <span>
-              {data.fetched_at
-                ? `Company info as of ${formatShortDate(data.fetched_at.slice(0, 10))}`
-                : "Company info date unknown"}
+              {[
+                data.fetched_at
+                  ? `Description as of ${formatShortDate(data.fetched_at.slice(0, 10))}`
+                  : "Description date unknown",
+                data.health?.latestPeriod ? `financials to ${data.health.latestPeriod}` : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
             </span>
             <Link href={`/stock/${symbol}`} className="hover:underline shrink-0">
               Full profile →

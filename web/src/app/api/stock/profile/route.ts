@@ -7,7 +7,19 @@
  * nobody asked for, and most rows are never opened at all. One symbol, one
  * indexed primary-key read, on demand.
  *
- * Cost (Rule #1): single row from app.universe by PK. No joins.
+ * Also returns `health` — the derived pros/cons bullets. Three reads, not one,
+ * but still three INDEX reads for one symbol on click: the universe row, 11
+ * annual statements, 8 shareholding quarters. Folded into THIS route rather
+ * than a second endpoint because they are triggered by the same click and
+ * consumed by the same card; two routes would mean two loading states and two
+ * failure modes for one panel.
+ *
+ * Why derived rather than scraped: screener.in's own Pros/Cons are HTML-only,
+ * and what this repo stores (app.screener_export_raw) is the XLSX export. See
+ * lib/businessHealth.ts for the rules the derivation holds itself to.
+ *
+ * Cost (Rule #1): PK read from app.universe, plus two index-prefix scans on
+ * (symbol, period_end DESC) with LIMITs. No joins.
  *
  * Freshness caveat, stated because the UI has to say it: every
  * business_info_fetched_at in the table is 2026-05-04 — one backfill, nothing
@@ -17,6 +29,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
+import { assessBusiness, type AnnualRow, type ShareRow } from "@/lib/businessHealth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -65,7 +78,33 @@ export async function GET(req: NextRequest) {
     if (!rows.length) {
       return NextResponse.json({ error: "not found" }, { status: 404 });
     }
-    return NextResponse.json(rows[0]);
+
+    // 11 rows so a 10-year span has both ends; the assessor uses 5 and falls
+    // back to 3. 8 quarters of ownership is two years — long enough that a
+    // promoter stake change is a decision rather than a rounding artefact.
+    const [annual, shares] = await Promise.all([
+      sql<AnnualRow[]>`
+        SELECT period_end::text AS period_end, sales, operating_profit, other_income, interest,
+               profit_before_tax, net_profit, dividend_amount, equity_share_capital,
+               reserves, borrowings, no_of_equity_shares, cash_from_operating
+          FROM app.fundamentals_annual
+         WHERE symbol = ${raw}
+         ORDER BY period_end DESC
+         LIMIT 11
+      `,
+      sql<ShareRow[]>`
+        SELECT period_end::text AS period_end, promoter_pct, pledge_pct
+          FROM app.shareholding_pattern
+         WHERE symbol = ${raw}
+         ORDER BY period_end DESC
+         LIMIT 8
+      `,
+    ]);
+
+    return NextResponse.json({
+      ...rows[0],
+      health: assessBusiness(annual, shares, rows[0].sector),
+    });
   } catch (err) {
     console.error("stock profile failed:", err);
     return NextResponse.json({ error: "failed" }, { status: 500 });
