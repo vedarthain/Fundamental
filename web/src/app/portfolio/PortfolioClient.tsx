@@ -2616,6 +2616,28 @@ function brokerText(ins: Instrument): string {
   return ins.brokers.length === 1 ? ins.brokers[0].brokerLabel : `${ins.brokers.length} brokers`;
 }
 
+/** Which tradebook would supply the missing buy date — named, because
+ *  "no purchase record" without a broker is a dead end. 'derived' lots are
+ *  excluded: they ARE the trade log, so they can't be the thing to import. */
+function missingTradebookFor(ins: Instrument): string {
+  const names = (ins.brokers ?? [])
+    .filter((b) => b.broker !== "derived")
+    .map((b) => b.brokerLabel);
+  return names.length ? [...new Set(names)].join(" / ") : "broker";
+}
+
+/** "2026-01-16" → "16 Jan '26". Parsed with an explicit T00:00:00 so the
+ *  date-only string is read in local time; bare `new Date("2026-01-16")` is
+ *  UTC midnight and renders as the previous day east of Greenwich — which is
+ *  every user of this app. Empty string when there is no date, so the caller
+ *  can render nothing rather than a dash. */
+function fmtBuyDate(d: string | null): string {
+  if (!d) return "";
+  const t = new Date(`${d.slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(t.getTime())) return "";
+  return t.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "2-digit" });
+}
+
 // Value under a sort key: number for numeric cols, lowercased string for the
 // instrument name, or null (always sorted last, either direction).
 function sortVal(ins: Instrument, key: SortKey): number | string | null {
@@ -3078,11 +3100,38 @@ function FragmentRow({
           </div>
         </td>
         <td className="px-1.5 py-2">
-          {ins.brokers.length > 1 ? (
-            <span className="muted-text">{ins.brokers.length} brokers</span>
-          ) : (
-            <span>{ins.brokers[0]?.brokerLabel ?? "—"}</span>
-          )}
+          {/* Broker name, with the BUY date underneath — the first buy of the
+              position currently held, which is the same anchor FALL FROM TOP
+              and RISE FROM BOTTOM measure from. Blank, never the import date,
+              when there is no recorded buy: 26 of 92 holdings predate the
+              transaction file, and showing an upload date where a purchase
+              date belongs is the bug this column exists to avoid. */}
+          <div className="leading-tight">
+            {ins.brokers.length > 1 ? (
+              <span className="muted-text">{ins.brokers.length} brokers</span>
+            ) : (
+              <span>{ins.brokers[0]?.brokerLabel ?? "—"}</span>
+            )}
+            {fmtBuyDate(ins.buyDate) ? (
+              <div
+                className="text-[10px] muted-text tabular-nums"
+                title="First buy of the position you currently hold — a full exit and re-entry moves this. Drawdown windows measure from here."
+              >
+                {fmtBuyDate(ins.buyDate)}
+              </div>
+            ) : (
+              // An em dash rather than nothing. Empty reads as "this row is
+              // still loading"; a dash reads as "there is no value here", and
+              // the tooltip says which tradebook would fill it. It also flags
+              // that Fall/Rise/Held on this row are import-date proxies.
+              <div
+                className="text-[10px] muted-text"
+                title={`No purchase record — import your ${missingTradebookFor(ins)} tradebook. Until then Fall from top, Rise from bottom and Held on this row measure from the upload date, not from when you bought.`}
+              >
+                —
+              </div>
+            )}
+          </div>
         </td>
         <td className="px-1.5 py-2 text-right tabular-nums">{ins.quantity}</td>
         <td

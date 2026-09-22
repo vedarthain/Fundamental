@@ -55,6 +55,11 @@ export type Instrument = {
   // trade_date (a real purchase date), "import" = MIN(imported_at) proxy for
   // broker-snapshot lots that carry no buy date, null when neither is known.
   drawdownAnchor: "buy" | "import" | null;
+  /** The real buy date the drawdown window is anchored on (YYYY-MM-DD): the
+   *  first buy of the CURRENT position leg, so a full exit and re-entry moves
+   *  it. Null when there is no recorded buy — deliberately NOT filled with the
+   *  import date, which is a proxy and would read as a purchase. */
+  buyDate: string | null;
   firstImported: string | null; // MIN(imported_at) across broker lots (ISO)
   monthsHeld: number | null; // months since firstImported (import-date proxy)
   // Days since the earliest REAL recorded buy (app.portfolio_transaction), and
@@ -1527,7 +1532,11 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
     // first buy ever). buyFp busts on its own for the 22 symbols whose date
     // moved, but the SHAPE tag moves too — a cached blob computed under the
     // old rule is wrong even where the date happens to match.
-    ["portfolio", "v4-leg-anchored-windows", String(userId), dateKey, fp, buyFp],
+    // v5: Instrument gained `buyDate`. Nothing in `fp` changes when a field is
+    // ADDED to the shape, so a warm v4 blob would deserialize without it and
+    // the column would render blank until the entry expired on its own. The
+    // tag is the only thing that evicts it.
+    ["portfolio", "v5-instrument-buy-date", String(userId), dateKey, fp, buyFp],
     { revalidate: 900, tags: ["portfolio", "panel-cache"] },
   );
   return cached();
@@ -1949,6 +1958,7 @@ async function computePortfolio(
       fallFromTopPct,
       riseFromBottomPct,
       drawdownAnchor,
+      buyDate: Number.isNaN(buyMs) ? null : (a.symbol ? firstBuyBySym[a.symbol] : null),
       firstImported,
       monthsHeld,
       heldDays,
