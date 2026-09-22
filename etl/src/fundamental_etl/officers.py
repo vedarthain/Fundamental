@@ -4,11 +4,17 @@ yfinance's `Ticker.info` includes a `companyOfficers` field — a list of dicts
 with name + title + (sometimes) age, yearBorn, totalPay. We store the full list
 as JSONB and pick the most senior officer (CEO > MD > Chairman > Director) to
 populate ceo_name / ceo_title for fast access on the stock page.
+
+Same history and same three fixes as business_info.py — read that module's
+docstring first. In short: this ran once on 2026-05-05 and never again, and
+the old write path turned a transient yfinance failure into "this company has
+no CEO", stamped fresh. A stale CEO is a wrong fact on the stock page, not a
+missing one, so the no-write-on-failure rule matters more here than there.
 """
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import yfinance as yf
 
@@ -80,16 +86,21 @@ def _pick_main(officers: list[dict]) -> tuple[str | None, str | None]:
 
 def fetch_one(symbol: str) -> dict:
     """Fetch officers for one symbol. Symbol expected without .NS suffix."""
-    t = yf.Ticker(symbol + ".NS")
     info: dict = {}
+    ok = True
     try:
-        info = t.info or {}
+        # Construction inside the try — see business_info.fetch_one.
+        info = yf.Ticker(symbol + ".NS").info or {}
     except Exception as e:
+        ok = False
         log.warning("yfinance_error", symbol=symbol, error=str(e)[:120])
+    if not info:
+        ok = False
 
     officers = _normalize_officers(info.get("companyOfficers"))
     ceo_name, ceo_title = _pick_main(officers)
     return {
+        "ok": ok,
         "symbol": symbol,
         "ceo_name": ceo_name,
         "ceo_title": ceo_title,
@@ -97,32 +108,79 @@ def fetch_one(symbol: str) -> dict:
     }
 
 
+def _is_stale(fetched_at, max_age_days: int | None) -> bool:
+    if max_age_days is None:
+        return False
+    if fetched_at is None:
+        return True
+    return fetched_at < datetime.now(timezone.utc) - timedelta(days=max_age_days)
+
+
+def _still_behind(max_age_days: int | None) -> int:
+    """Rows STILL blank or stale after the run. Re-queried, not counted."""
+    with app_conn() as conn:
+        with conn.cursor() as cur:
+            if max_age_days is None:
+                cur.execute(
+                    "SELECT count(*) AS n FROM app.universe "
+                    "WHERE is_active AND ceo_name IS NULL"
+                )
+            else:
+                cur.execute(
+                    "SELECT count(*) AS n FROM app.universe WHERE is_active AND "
+                    "(ceo_name IS NULL OR officers_fetched_at IS NULL "
+                    " OR officers_fetched_at < now() - (%s || ' days')::interval)",
+                    (str(max_age_days),),
+                )
+            return cur.fetchone()["n"]
+
+
 def fetch_many(
     only: list[str] | None = None,
     skip_existing: bool = True,
     throttle_s: float = 1.5,
+    max_age_days: int | None = None,
+    limit: int | None = None,
 ) -> dict:
-    """Fetch officers for many symbols. Idempotent — by default skips already-populated."""
+    """Fetch officers for many symbols. Selection policy mirrors business_info —
+    including `limit`, which drains oldest-first so the run is time-bounded and
+    the timestamps stay spread instead of re-clumping. See that module."""
     import json
-    counts = {"ok": 0, "skipped": 0, "no_officers": 0, "error": 0}
+    counts = {"ok": 0, "skipped": 0, "no_officers": 0, "error": 0, "stale_selected": 0}
+    counts["behind_before"] = _still_behind(max_age_days)
 
     with app_conn() as conn:
         with conn.cursor() as cur:
             if only:
                 cur.execute(
-                    "SELECT symbol, ceo_name FROM app.universe WHERE symbol = ANY(%s)",
+                    "SELECT symbol, ceo_name, officers_fetched_at FROM app.universe "
+                    "WHERE symbol = ANY(%s)",
                     (only,),
                 )
             else:
                 cur.execute(
-                    "SELECT symbol, ceo_name FROM app.universe WHERE is_active ORDER BY symbol"
+                    "SELECT symbol, ceo_name, officers_fetched_at FROM app.universe "
+                    "WHERE is_active "
+                    "ORDER BY officers_fetched_at ASC NULLS FIRST, symbol"
                 )
             rows = cur.fetchall()
 
-    targets = [
-        r["symbol"] for r in rows if not skip_existing or not r["ceo_name"]
-    ]
-    log.info("plan", total=len(targets))
+    targets: list[str] = []
+    for r in rows:
+        if only or not skip_existing:
+            targets.append(r["symbol"])
+        elif not r["ceo_name"]:
+            targets.append(r["symbol"])
+        elif _is_stale(r["officers_fetched_at"], max_age_days):
+            targets.append(r["symbol"])
+            counts["stale_selected"] += 1
+        else:
+            counts["skipped"] += 1
+    counts["eligible"] = len(targets)
+    if limit is not None and len(targets) > limit:
+        targets = targets[:limit]
+    counts["selected"] = len(targets)
+    log.info("plan", total=len(targets), of=len(rows), **counts)
 
     for i, sym in enumerate(targets, 1):
         try:
@@ -132,14 +190,23 @@ def fetch_many(
             log.error("fetch_error", symbol=sym, error=str(e)[:120])
             continue
 
+        # No write on a failed fetch. An overwritten CEO is a wrong fact on
+        # the stock page, which is worse than a blank one.
+        if not data["ok"]:
+            counts["error"] += 1
+            log.warning("fetch_failed_no_write", symbol=sym)
+            if i < len(targets):
+                time.sleep(throttle_s)
+            continue
+
         with app_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     UPDATE app.universe
-                    SET ceo_name = %s,
-                        ceo_title = %s,
-                        key_officers = %s::jsonb,
+                    SET ceo_name = COALESCE(%s, ceo_name),
+                        ceo_title = COALESCE(%s, ceo_title),
+                        key_officers = COALESCE(%s::jsonb, key_officers),
                         officers_fetched_at = %s
                     WHERE symbol = %s
                     """,
@@ -164,4 +231,5 @@ def fetch_many(
         if i < len(targets):
             time.sleep(throttle_s)
 
+    counts["still_behind"] = _still_behind(max_age_days)
     return counts

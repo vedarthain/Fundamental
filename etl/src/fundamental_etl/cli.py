@@ -1504,13 +1504,30 @@ def fetch_business_info_cmd(
     only: str = typer.Option(None, help="Comma-separated symbols to limit to"),
     refresh: bool = typer.Option(False, help="Re-fetch even if already populated"),
     throttle: float = typer.Option(1.5, help="Seconds between yfinance calls"),
+    max_age_days: int = typer.Option(
+        None, help="Also re-fetch rows last fetched more than N days ago"
+    ),
+    limit: int = typer.Option(
+        None, help="Process at most N symbols, oldest-fetched first"
+    ),
+    require_progress: bool = typer.Option(
+        False, help="Exit 1 if the run processed symbols but left no fewer blank/stale"
+    ),
+    screener_fallback: bool = typer.Option(
+        False, help="Where yfinance has no summary, fall back to Screener's blurb"
+    ),
 ):
     """Pull company business summary + website from public disclosures via yfinance."""
     from .business_info import fetch_many
     configure_logging()
     syms = [s.strip().upper() for s in only.split(",")] if only else None
-    counts = fetch_many(only=syms, skip_existing=not refresh, throttle_s=throttle)
+    counts = fetch_many(
+        only=syms, skip_existing=not refresh, throttle_s=throttle,
+        max_age_days=max_age_days, limit=limit,
+        screener_fallback=screener_fallback,
+    )
     log.info("done", **counts)
+    _assert_progress("business_info", counts, require_progress)
 
 
 @app.command("fetch-officers")
@@ -1518,13 +1535,64 @@ def fetch_officers_cmd(
     only: str = typer.Option(None, help="Comma-separated symbols to limit to"),
     refresh: bool = typer.Option(False, help="Re-fetch even if already populated"),
     throttle: float = typer.Option(1.5, help="Seconds between yfinance calls"),
+    max_age_days: int = typer.Option(
+        None, help="Also re-fetch rows last fetched more than N days ago"
+    ),
+    limit: int = typer.Option(
+        None, help="Process at most N symbols, oldest-fetched first"
+    ),
+    require_progress: bool = typer.Option(
+        False, help="Exit 1 if the run processed symbols but left no fewer blank/stale"
+    ),
 ):
     """Pull CEO / MD + key officers list from yfinance companyOfficers."""
     from .officers import fetch_many
     configure_logging()
     syms = [s.strip().upper() for s in only.split(",")] if only else None
-    counts = fetch_many(only=syms, skip_existing=not refresh, throttle_s=throttle)
+    counts = fetch_many(
+        only=syms, skip_existing=not refresh, throttle_s=throttle,
+        max_age_days=max_age_days, limit=limit,
+    )
     log.info("done", **counts)
+    _assert_progress("officers", counts, require_progress)
+
+
+def _assert_progress(what: str, counts: dict, enabled: bool) -> None:
+    """Fail the job when it processed symbols and nothing got less stale.
+
+    This is the piece that stops the 2026-05-04 freeze recurring quietly.
+
+    The assertion is deliberately NOT "is everything fresh" — with a batch
+    limit the honest answer is no for months, so a job failing on it would be
+    red every run and get ignored. It is also deliberately not read off the
+    loop counters: the old code's tally reported a clean run while it was
+    writing NULLs over good data. Both numbers are re-queried from the
+    database, before and after.
+
+    What makes it fail: a run that selects symbols and comes back with the
+    blank/stale count unchanged. That is the signature of every way this can
+    break silently — yfinance returning {} for everything, the write path
+    no-oping, the wrong database. Against production today, with the write
+    path as it stood this morning, it fails.
+
+    It correctly does NOT fire when there was nothing eligible to do, which is
+    the steady state once the backlog is drained.
+    """
+    if not enabled:
+        return
+    before, after = counts.get("behind_before"), counts.get("still_behind")
+    if before is None or after is None:
+        return
+    if counts.get("selected", 0) == 0:
+        log.info("nothing_eligible", what=what, behind=after)
+        return
+    if after >= before:
+        log.error(
+            "no_progress", what=what, behind_before=before, behind_after=after,
+            selected=counts.get("selected"), errors=counts.get("error"),
+        )
+        raise typer.Exit(code=1)
+    log.info("progress_ok", what=what, behind_before=before, behind_after=after)
 
 
 @app.command("fetch-classification")
