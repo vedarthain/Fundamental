@@ -15,6 +15,13 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
+import { Home, Bookmark, BookmarkCheck } from "lucide-react";
+import {
+  useBookmarks,
+  newBookmarkId,
+  WATCH_BOOKMARKS_KEY,
+  type WatchBookmark,
+} from "@/lib/scannerBookmarks";
 import { useWatchlist, saveWatchlistNote } from "@/lib/watchlist";
 import { band, bandColor, tierLabel } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
@@ -241,6 +248,37 @@ export function WatchlistClient({ source }: { source?: WatchSource } = {}) {
   // deep-dive is the single unified view — chart + scorecard-driven
   // fundamentals — so there's no separate mode toggle any more.
   const [selected, setSelected] = useState<string | null>(null);
+  // "Back to start" — the rail scrolls INSIDE itself (it is a sticky column
+  // with its own overflow-y), so window.scrollTo alone leaves the tree exactly
+  // where it was. Both have to be reset for the page to actually look like the
+  // top of the watchlist.
+  const railScrollRef = useRef<HTMLDivElement | null>(null);
+  const [showTop, setShowTop] = useState(false);
+  // Parked stock — the same dual-mode store the scanner's saved spots use
+  // (server when signed in, localStorage when not), so it follows you across
+  // devices rather than living in one browser. One slot: a bookmark you have to
+  // manage is a bookmark you stop using.
+  //
+  // Declared HERE, with the other hooks, and not next to the goMark/toggleMark
+  // helpers that use it. This component has four early returns below
+  // (unhydrated / empty / loading / error); a hook called after them runs on
+  // some renders and not others, which is the "change in the order of Hooks"
+  // React throws on. Hooks first, derived logic wherever it reads best.
+  const { items: marks, add: addMark, remove: removeMark } = useBookmarks<WatchBookmark>(
+    WATCH_BOOKMARKS_KEY,
+  );
+  useEffect(() => {
+    // passive: this fires on every frame of a scroll and does nothing but read
+    // scrollY, so it must never be allowed to block the scroll itself.
+    const onScroll = () => setShowTop(window.scrollY > 400);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+  const backToStart = () => {
+    railScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
   // Left-rail tree: node keys present here are expanded (default: all
   // collapsed — the user opens a sector by clicking its arrow). Sector key =
   // sector name; industry key = `${sector}//${industry}`.
@@ -413,6 +451,43 @@ export function WatchlistClient({ source }: { source?: WatchSource } = {}) {
     setSelected(flatOrder[next]);
   };
   rotateRef.current = rotate;
+  // Jump to the FIRST stock in the list — the same order Prev/Next walk, which
+  // is tree order (sector → industry → composite desc), not the order you
+  // added things. Scrolls both the page and the rail back to the top, because
+  // selecting the first stock while the rail is scrolled to the Z's shows you a
+  // panel with no visible row highlighted.
+  const mark = marks[0] ?? null;
+  const markedHere = !!mark && !!selected && mark.sym === selected;
+  const toggleMark = () => {
+    if (markedHere) {
+      removeMark(mark!.id);
+      return;
+    }
+    if (!selected) return;
+    // add() caps the list at 1, so saving a new stock replaces the old one —
+    // no "you already have a bookmark" dialog to dismiss.
+    addMark({ id: newBookmarkId(), label: selected, sym: selected, created: Date.now() });
+  };
+  const goMark = () => {
+    if (!mark) return;
+    // The bookmarked stock can have been removed from the watchlist since it
+    // was saved. Jumping to a symbol that is no longer in flatOrder would blank
+    // the panel, so check first and drop the dead bookmark instead.
+    if (!flatOrder.includes(mark.sym)) {
+      removeMark(mark.id);
+      return;
+    }
+    setSelected(mark.sym);
+    railScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const goFirst = () => {
+    if (flatOrder.length === 0) return;
+    setSelected(flatOrder[0]);
+    railScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
   // Removing the stock you're currently viewing used to blank the selection,
   // which let the "restore-or-fall-back" effect above snap the panel to the
@@ -518,7 +593,7 @@ export function WatchlistClient({ source }: { source?: WatchSource } = {}) {
             </button>
           </div>
 
-          <div className="overflow-y-auto flex-1 min-h-0">
+          <div ref={railScrollRef} className="overflow-y-auto flex-1 min-h-0">
             {tree.length === 0 ? (
               <div className="p-4 text-center muted-text text-[12px]">No matches.</div>
             ) : (
@@ -726,11 +801,77 @@ export function WatchlistClient({ source }: { source?: WatchSource } = {}) {
                       </span>
                     </span>
                     <div className="inline-flex rounded-md border hairline overflow-hidden">
+                    {/* Home — first stock in list order. Sits with Prev/Next
+                        because it is the same kind of move: it changes which
+                        stock is open. The floating ↑ Top button only scrolls;
+                        these two do different things and are deliberately not
+                        merged. Disabled when you are already on the first. */}
+                    <button
+                      type="button"
+                      onClick={goFirst}
+                      disabled={flatOrder.length === 0 || selected === flatOrder[0]}
+                      className="px-2.5 py-1 text-[12px] hover:bg-[var(--color-paper)] transition-colors disabled:opacity-40"
+                      aria-label="First stock in the watchlist"
+                      title={
+                        flatOrder.length
+                          ? `Go to the first stock (${flatOrder[0]})`
+                          : "No stocks in the list"
+                      }
+                    >
+                      {/* An SVG, not "⌂" (U+2302). That glyph is missing from
+                          most UI font stacks and renders as nothing or as a
+                          tofu box — the button was there and invisible. Same
+                          class of mistake as colouring text with a token
+                          without checking what it resolves to: never signal
+                          with something you have not confirmed renders. */}
+                      <Home size={13} className="inline-block align-[-2px]" />
+                    </button>
+                    {/* Bookmark — park the stock you are on, jump back to it
+                        later. Filled icon + accent colour when the stock in
+                        front of you IS the parked one, so the button's state is
+                        readable without hovering for a tooltip. */}
+                    <button
+                      type="button"
+                      onClick={toggleMark}
+                      disabled={!selected}
+                      className="px-2.5 py-1 text-[12px] border-l hairline hover:bg-[var(--color-paper)] transition-colors disabled:opacity-40"
+                      style={markedHere ? { color: "var(--color-accent-600)" } : undefined}
+                      aria-pressed={markedHere}
+                      aria-label={markedHere ? "Remove bookmark" : "Bookmark this stock"}
+                      title={
+                        markedHere
+                          ? `${selected} is bookmarked — click to clear`
+                          : mark
+                            ? `Bookmark ${selected ?? "this stock"} (replaces ${mark.label})`
+                            : `Bookmark ${selected ?? "this stock"}`
+                      }
+                    >
+                      {markedHere ? (
+                        <BookmarkCheck size={13} className="inline-block align-[-2px]" />
+                      ) : (
+                        <Bookmark size={13} className="inline-block align-[-2px]" />
+                      )}
+                    </button>
+                    {/* The jump target. Only rendered when a bookmark exists
+                        AND you are not already looking at it — a button that
+                        takes you where you already are is noise. */}
+                    {mark && !markedHere && (
+                      <button
+                        type="button"
+                        onClick={goMark}
+                        className="px-2.5 py-1 text-[12px] border-l hairline hover:bg-[var(--color-paper)] transition-colors tabular-nums"
+                        style={{ color: "var(--color-accent-600)" }}
+                        title={`Go to your bookmarked stock (${mark.label})`}
+                        aria-label={`Go to bookmarked stock ${mark.label}`}
+                      >
+                        {mark.label}
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => rotate(-1)}
                       disabled={flatOrder.length < 2}
-                      className="px-2.5 py-1 text-[12px] hover:bg-[var(--color-paper)] transition-colors disabled:opacity-40"
+                      className="px-2.5 py-1 text-[12px] border-l hairline hover:bg-[var(--color-paper)] transition-colors disabled:opacity-40"
                       aria-label="Previous stock"
                       title="Previous stock"
                     >
@@ -789,6 +930,24 @@ export function WatchlistClient({ source }: { source?: WatchSource } = {}) {
             ))}
           </div>
         </section>
+      )}
+
+      {/* Back to the start of the watchlist. Fixed, not sticky — a sticky
+          element inside the grid would be trapped by the column that contains
+          it. Only appears past 400px so it is not covering content on a page
+          you have not scrolled. */}
+      {showTop && (
+        <button
+          type="button"
+          onClick={backToStart}
+          className="fixed bottom-5 right-5 z-40 inline-flex items-center gap-1.5 px-3 py-2 rounded-full border hairline shadow-md text-[12px] font-medium transition-colors hover:bg-[var(--color-paper)]"
+          style={{ background: "var(--color-bg, #fff)" }}
+          title="Back to the start of the watchlist"
+          aria-label="Back to the start of the watchlist"
+        >
+          <span aria-hidden className="text-[13px] leading-none">↑</span>
+          Top
+        </button>
       )}
     </div>
   );
@@ -1029,6 +1188,10 @@ function WatchRow({
   const compositeBand = band(row.composite_pct);
   const compositeColor = bandColor(compositeBand);
   const ltp = row.ltp ?? row.current_price;
+  // ⓘ company profile. Closed by default and fetched only on the first open —
+  // business_summary is ~1.5KB of prose per symbol, so shipping it with the
+  // list would be ~350KB for 234 names that mostly never get read.
+  const [profileOpen, setProfileOpen] = useState(false);
   // Performance since you added the stock: LTP vs the close captured on add-day.
   // 0% on the day you add (LTP == close_on_add), then moves with the stock.
   const sinceAdd =
@@ -1064,6 +1227,19 @@ function WatchRow({
               <span className="font-medium text-[14px] tabular-nums shrink-0">{row.symbol}</span>
               <span className="muted-text text-[12px] truncate">{row.company_name}</span>
             </Link>
+            {/* Outside the <Link>: nesting a button inside an anchor is invalid
+                HTML and the click would navigate to /stock/… instead. */}
+            <button
+              type="button"
+              onClick={() => setProfileOpen((v) => !v)}
+              aria-expanded={profileOpen}
+              className="inline-flex items-center justify-center shrink-0 w-4 h-4 rounded-full border hairline text-[9px] font-serif italic leading-none muted-text hover:text-[var(--color-ink)] hover:bg-[var(--color-paper)] transition-colors"
+              style={profileOpen ? { borderColor: "var(--color-accent-600)", color: "var(--color-accent-600)" } : undefined}
+              title={`What does ${row.symbol} do?`}
+              aria-label={`Company information for ${row.symbol}`}
+            >
+              i
+            </button>
             {row.stale && row.ltp_date ? <StaleChip date={row.ltp_date} /> : null}
             {row.current_price != null && (
               <IntradayPriceBadge
@@ -1184,6 +1360,12 @@ function WatchRow({
         </div>
       </div>
 
+      {/* Company profile — full width under the header, above the chart, so it
+          pushes content down rather than covering it. A floating popover would
+          sit on top of the chart, which is the thing you are reading it
+          alongside. */}
+      {profileOpen && <CompanyProfile symbol={row.symbol} onClose={() => setProfileOpen(false)} />}
+
       {/* Price chart + latest results side by side, then quarterly-trend
           graph beside dividends, then two-column news. The session-liquidity
           stats (Rel Vol / Turnover / Delivery) ride next to the chart's price-
@@ -1285,6 +1467,164 @@ function WatchRow({
 
 /** Lazily loads dividends / bonuses / quarterly results / news for a stock,
  *  deduped via the module-level cache. */
+// ---------------------------------------------------------------------------
+// Company profile (the ⓘ button)
+// ---------------------------------------------------------------------------
+
+type Profile = {
+  symbol: string;
+  company_name: string;
+  sector: string | null;
+  industry: string | null;
+  market_cap_category: string | null;
+  listing_date: string | null;
+  business_summary: string | null;
+  website: string | null;
+  employees: number | null;
+  ceo_name: string | null;
+  ceo_title: string | null;
+  fetched_at: string | null;
+};
+
+// Module-level, same pattern as extrasCache: re-opening the ⓘ on a symbol you
+// already looked at must not re-hit the API.
+const profileCache = new Map<string, Profile>();
+
+function CompanyProfile({ symbol, onClose }: { symbol: string; onClose: () => void }) {
+  const [data, setData] = useState<Profile | null>(profileCache.get(symbol) ?? null);
+  const [err, setErr] = useState(false);
+
+  useEffect(() => {
+    const cached = profileCache.get(symbol);
+    if (cached) {
+      setData(cached);
+      setErr(false);
+      return;
+    }
+    let alive = true;
+    setData(null);
+    setErr(false);
+    fetch(`/api/stock/profile?symbol=${encodeURIComponent(symbol)}`)
+      .then((r) => {
+        if (!r.ok) throw new Error(String(r.status));
+        return r.json();
+      })
+      .then((j: Profile) => {
+        if (!alive) return;
+        profileCache.set(symbol, j);
+        setData(j);
+      })
+      .catch(() => alive && setErr(true));
+    return () => {
+      alive = false;
+    };
+  }, [symbol]);
+
+  // Close on Escape — the panel is dismissible chrome, and reaching back for
+  // the ⓘ to close it is the thing that makes an expander annoying.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="mt-2 rounded-md border hairline p-3"
+      style={{ background: "var(--color-paper)" }}
+    >
+      <div className="flex items-start justify-between gap-2 mb-1.5">
+        <span className="text-[10px] uppercase tracking-wide muted-text font-semibold">
+          About {symbol}
+        </span>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-[13px] leading-none muted-text hover:text-[var(--color-ink)] shrink-0"
+          title="Close"
+          aria-label="Close company information"
+        >
+          ×
+        </button>
+      </div>
+
+      {err ? (
+        <div className="text-[11.5px] muted-text italic">Could not load company information.</div>
+      ) : data === null ? (
+        <div className="text-[11.5px] muted-text italic">Loading…</div>
+      ) : (
+        <>
+          {/* Facts first, prose second. The one-liners are what you came for;
+              the summary is a paragraph you may or may not read. */}
+          <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[11px] mb-1.5">
+            {data.ceo_name && (
+              <span>
+                <span className="muted-text">{data.ceo_title || "CEO"}: </span>
+                <span className="font-medium">{data.ceo_name.replace(/\s+/g, " ").trim()}</span>
+              </span>
+            )}
+            {data.employees != null && (
+              <span>
+                <span className="muted-text">Employees: </span>
+                <span className="font-medium tabular-nums">
+                  {data.employees.toLocaleString("en-IN")}
+                </span>
+              </span>
+            )}
+            {data.listing_date && (
+              <span>
+                <span className="muted-text">Listed: </span>
+                <span className="font-medium tabular-nums">
+                  {formatShortDate(data.listing_date)}
+                </span>
+              </span>
+            )}
+            {data.website && (
+              <a
+                href={data.website.startsWith("http") ? data.website : `https://${data.website}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium hover:underline"
+                style={{ color: "var(--color-accent-600)" }}
+              >
+                {data.website.replace(/^https?:\/\//, "").replace(/\/$/, "")} ↗
+              </a>
+            )}
+          </div>
+
+          {data.business_summary ? (
+            <p className="text-[11.5px] leading-relaxed max-h-[9.5rem] overflow-y-auto pr-1">
+              {data.business_summary}
+            </p>
+          ) : (
+            // 451 of 2,593 active symbols have no summary — say so rather than
+            // rendering an empty box that reads as a loading failure.
+            <p className="text-[11.5px] muted-text italic">
+              No business description on file for {symbol}.
+            </p>
+          )}
+
+          <div className="mt-2 flex items-center justify-between gap-2 text-[9.5px] muted-text">
+            {/* Dated on purpose. Every row in the table was written by one
+                backfill and nothing refreshes it, so an undated card would
+                imply a currency it does not have. */}
+            <span>
+              {data.fetched_at
+                ? `Company info as of ${formatShortDate(data.fetched_at.slice(0, 10))}`
+                : "Company info date unknown"}
+            </span>
+            <Link href={`/stock/${symbol}`} className="hover:underline shrink-0">
+              Full profile →
+            </Link>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function useExtras(symbol: string): { data: Extras | null; err: boolean } {
   const [data, setData] = useState<Extras | null>(null);
   const [err, setErr] = useState(false);

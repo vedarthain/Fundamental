@@ -7,7 +7,7 @@
  * coordinates, so axis text stays crisp. (The old fixed 1000×1000 viewBox with
  * preserveAspectRatio="none" stretched the space non-uniformly and would have
  * squished any label.) Layout: a left gutter for price (Y) ticks, a bottom
- * gutter for date (X) ticks, price panel on top (~70%) and a short volume panel
+ * gutter for date (X) ticks, price panel on top (PRICE_PANEL_FRAC) and a short volume panel
  * beneath sharing the same x-grid. Prices are the split-safe adjusted OHLC.
  */
 import { useEffect, useRef, useState } from "react";
@@ -30,6 +30,16 @@ const mL = 46; // y-axis price gutter
 const mR = 8;
 const mT = 8;
 const mB = 20; // x-axis date gutter
+
+/** Share of the plot given to the PRICE panel; the rest is volume.
+ *  0.80, not 0.70. Volume is a confirming signal — you read it to check that a
+ *  price move had participation behind it — so it needs enough height to show
+ *  relative bar size and nothing more. At 0.70 of a 360px chart it was ~100px
+ *  tall and read as a second chart competing with the price.
+ *  MUST stay a single constant: computeGeom() inverts pixels back to prices for
+ *  the click/drag handlers while renderChart() draws them. If the two ever hold
+ *  different fractions, drawings land where you did not click. */
+const PRICE_PANEL_FRAC = 0.8;
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -105,7 +115,7 @@ function computeGeom(data: Candle[], W: number, H: number, hideVolume = false) {
   const plotR = W - mR;
   const plotW = plotR - plotL;
   const priceTop = mT;
-  const priceBot = hideVolume ? H - mB : mT + (H - mT - mB) * 0.7;
+  const priceBot = hideVolume ? H - mB : mT + (H - mT - mB) * PRICE_PANEL_FRAC;
   const volTop = priceBot + 12;
   const volBot = H - mB;
   const n = data.length;
@@ -404,7 +414,7 @@ function renderChart(
   const plotR = W - mR;
   const plotW = plotR - plotL;
   const priceTop = mT;
-  const priceBot = hideVolume ? H - mB : mT + (H - mT - mB) * 0.7;
+  const priceBot = hideVolume ? H - mB : mT + (H - mT - mB) * PRICE_PANEL_FRAC;
   const volTop = priceBot + 12;
   const volBot = H - mB;
 

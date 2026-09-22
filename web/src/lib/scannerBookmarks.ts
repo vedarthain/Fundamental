@@ -42,8 +42,20 @@ export type ThemeBookmark = {
   created: number;
 };
 
+/** A parked stock on the watchlist. `sym` is the universe symbol; `label` is
+ *  what the chip shows, which is the same string — kept separate because
+ *  useBookmarks is generic over {id, label} and the server route validates on
+ *  `label`, not on our field. */
+export type WatchBookmark = {
+  id: string;
+  label: string;
+  sym: string;
+  created: number;
+};
+
 export const GRAPH_BOOKMARKS_KEY = "er:graphBookmarks:v1";
 export const THEME_BOOKMARKS_KEY = "er:themeBookmarks:v1";
+export const WATCH_BOOKMARKS_KEY = "er:watchBookmarks:v1";
 
 // One saved spot per surface — a new save overwrites the previous one.
 const MAX = 1;

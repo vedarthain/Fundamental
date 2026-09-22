@@ -43,6 +43,11 @@ const MAX_BYTES_DEFAULT = 8 * 1024;
 const KEY_LIMITS: Record<string, { maxItems: number; maxBytes: number }> = {
   "er:graphBookmarks:v1": { maxItems: MAX_ITEMS_DEFAULT, maxBytes: MAX_BYTES_DEFAULT },
   "er:themeBookmarks:v1": { maxItems: MAX_ITEMS_DEFAULT, maxBytes: MAX_BYTES_DEFAULT },
+  // Watchlist "parked stock". The client keeps one; the cap stays at the
+  // default 20 so allowing more later is a client-only change. An unlisted key
+  // is REJECTED by this route, so adding it here is what makes the watchlist
+  // bookmark cross-device instead of silently falling back to localStorage.
+  "er:watchBookmarks:v1": { maxItems: MAX_ITEMS_DEFAULT, maxBytes: MAX_BYTES_DEFAULT },
   // 9 sectors today; headroom for reclassification.
   "er:graphSectorReviews:v1": { maxItems: 64, maxBytes: 16 * 1024 },
   // 110 themes today. 300 leaves room to grow without another migration.
