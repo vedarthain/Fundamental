@@ -144,6 +144,53 @@ def col(header: list, *keywords: str) -> int:
     return -1
 
 
+def ex_date_col(header: list) -> int:
+    """Index of the ex-date column, tolerating indianapi's inconsistent headers.
+
+    THIS EXISTS BECAUSE OF A SILENT, TOTAL DATA LOSS.
+
+    The three ratio sections do not agree on what the ex-date column is called:
+
+        bonus   ['Record Date', 'Ex-Date', 'Ratio']
+        rights  ['Record Date', 'Ex-Date', 'Ratio']
+        splits  ['Record Date', 'Date',    'Ratio']   ← no "Ex-Date" at all
+
+    All three were read with col(h, "ex-date", "ex date"). For splits that
+    returns -1, so `ex` came out None and add() dropped the row on its
+    `if ex is None: return` guard. Every split ever returned by this API was
+    discarded — 880 bonus and 384 rights rows landed while `split` sat at
+    exactly 0, and golden.corporate_actions held ONE split event for the whole
+    universe. Nothing failed, nothing logged, nothing counted. It is the
+    CLAUDE.md §5 shape: a check that cannot fail, here wearing the costume of
+    a parser that cannot notice it parsed nothing.
+
+    It is not cosmetic. apply-corp-adjustments.py builds split_factor from
+    these rows to back-adjust golden's price history; with no split rows the
+    only thing catching a 1:10 was the price_detect gap heuristic — a guess
+    from price movement standing in for a disclosed fact.
+
+    The bare "Date" column IS the ex-date, confirmed against live payloads
+    where it differs from Record Date in the right direction:
+
+        IRCTC       record 29-10-2021  date 28-10-2021  2:10
+        BAJFINANCE  record 10-09-2016  date 08-09-2016  2:10
+
+    So: prefer an explicit ex-date header; otherwise take a cell that is
+    exactly "date". The equality test is deliberate — a substring match on
+    "date" would return "Record Date" at index 0 and quietly book every split
+    a day or two late, which is worse than dropping it, because a wrong
+    ex_date produces a wrong adjustment on the wrong side of the gap.
+    """
+    hdr = header or []
+    i = col(hdr, "ex-date", "ex date", "ex_date")
+    if i >= 0:
+        return i
+    for j, h in enumerate(hdr):
+        if str(h).strip().lower() == "date":
+            return j
+    return -1
+
+
 def section_rows(payload: dict, key: str):
     sec = payload.get(key)
     if not isinstance(sec, dict):
@@ -151,18 +198,28 @@ def section_rows(payload: dict, key: str):
     return sec.get("header") or [], sec.get("data") or []
 
 
-def build_actions(sym: str, payload: dict, face_value=None) -> list[tuple]:
-    """→ list of (symbol, action_type, ex_date, purpose, amount, details_json)."""
+def build_actions(sym: str, payload: dict, face_value=None,
+                  dropped: dict | None = None) -> list[tuple]:
+    """→ list of (symbol, action_type, ex_date, purpose, amount, details_json).
+
+    `dropped` is an optional counter dict the caller owns; every row the parser
+    refuses is tallied under its section. That tally is the whole point — the
+    split bug survived because dropping a row and parsing zero rows looked
+    identical from outside this function. A section that hands us data and
+    yields nothing is now a number the run has to print, not a silence.
+    """
     out: list[tuple] = []
 
     def add(atype, ex, purpose, amount, raw):
         if ex is None or not purpose:
+            if dropped is not None:
+                dropped[atype] = dropped.get(atype, 0) + 1
             return
         out.append((sym, atype, ex, purpose[:300], amount, json.dumps(raw)))
 
     # Dividends — header: Record Date, Ex-Date, Dividend Percentage, Details
     h, rows = section_rows(payload, "dividends")
-    ex_i, det_i, pct_i = col(h, "ex-date", "ex date"), col(h, "detail"), col(h, "percent")
+    ex_i, det_i, pct_i = ex_date_col(h), col(h, "detail"), col(h, "percent")
     for row in rows[:MAX_DIVIDENDS]:
         ex = parse_date(row[ex_i]) if ex_i >= 0 and ex_i < len(row) else None
         details = str(row[det_i]) if det_i >= 0 and det_i < len(row) else ""
@@ -177,7 +234,7 @@ def build_actions(sym: str, payload: dict, face_value=None) -> list[tuple]:
                               ("bonus", "bonus", "Bonus"),
                               ("rights", "rights", "Rights")):
         h, rows = section_rows(payload, key)
-        ex_i, ratio_i = col(h, "ex-date", "ex date"), col(h, "ratio")
+        ex_i, ratio_i = ex_date_col(h), col(h, "ratio")
         for row in rows:
             ex = parse_date(row[ex_i]) if ex_i >= 0 and ex_i < len(row) else None
             ratio = str(row[ratio_i]) if ratio_i >= 0 and ratio_i < len(row) else ""
@@ -250,6 +307,8 @@ def main() -> None:
 
         start = time.monotonic()
         total, ok, calls = 0, 0, 0
+        landed: dict[str, int] = {}
+        dropped: dict[str, int] = {}
         for i, sym in enumerate(symbols, 1):
             if args.max_minutes and (time.monotonic() - start) / 60 >= args.max_minutes:
                 print(f"  ⏱ {args.max_minutes:.0f}m budget reached at {i-1}/{len(symbols)} "
@@ -279,7 +338,7 @@ def main() -> None:
                 space()
                 continue
 
-            actions = build_actions(sym, payload, face_values.get(sym)) if isinstance(payload, dict) else []
+            actions = build_actions(sym, payload, face_values.get(sym), dropped) if isinstance(payload, dict) else []
             with conn.cursor() as cur:
                 # Source-scoped delete: only clear OUR rows so the BSE fetcher's
                 # rows (source='bse', recent dividends) survive an indianapi run.
@@ -318,10 +377,25 @@ def main() -> None:
             if actions:
                 total += len(actions)
                 ok += 1
+                for a in actions:
+                    landed[a[1]] = landed.get(a[1], 0) + 1
             if i % 100 == 0:
                 print(f"  …{i}/{len(symbols)}, {total} actions, {calls} calls", file=sys.stderr)
             space()
 
+    # The two lines that would have caught the split bug on day one. A type
+    # that lands ZERO rows across a whole run is not "rare", it is a parser
+    # that is not reading it — splits sat at 0 for the entire universe while
+    # bonus and rights, parsed by the same loop, landed 880 and 384.
+    print("Landed by type : "
+          + (", ".join(f"{k}={v}" for k, v in sorted(landed.items())) or "(nothing)"))
+    print("Refused by type: "
+          + (", ".join(f"{k}={v}" for k, v in sorted(dropped.items())) or "(none)"))
+    for kind in ("dividend", "split", "bonus", "rights", "board_meeting"):
+        if landed.get(kind, 0) == 0 and calls > 50:
+            print(f"  ⚠ {kind}: ZERO rows across {calls} symbols — suspect the parser, "
+                  f"not the market. Compare the section header against ex_date_col().",
+                  file=sys.stderr)
     print(f"Done — {total} actions across {ok} symbols; {calls} API calls used.")
 
 

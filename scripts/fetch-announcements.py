@@ -110,7 +110,14 @@ def build_isin_to_code() -> dict[str, str]:
 
 
 def build_rows(sym: str, code: str, table: list) -> list[tuple]:
-    """→ list of (id, symbol, title, category, headline, published_at, pdf_url, bse_code)."""
+    """→ list of (id, symbol, title, category, subcategory, headline,
+                  published_at, pdf_url, bse_code).
+
+    The tuple order here is load-bearing: it must match the column list in the
+    INSERT in main() exactly, position for position. They are edited together
+    or not at all — psycopg binds by position and will happily write a
+    subcategory into `headline` if these two drift.
+    """
     out: list[tuple] = []
     for r in table[:MAX_PER_SYMBOL]:
         nid = str(r.get("NEWSID") or "").strip()
@@ -122,7 +129,13 @@ def build_rows(sym: str, code: str, table: list) -> list[tuple]:
         pdf = PDF_BASE.format(name=attach) if attach else None
         headline = (r.get("HEADLINE") or "").strip() or None
         category = (r.get("CATEGORYNAME") or "").strip() or None
-        out.append((nid, sym, title[:400], category, headline, dt, pdf, code))
+        # SUBCATNAME is the field that makes this feed usable. CATEGORYNAME
+        # puts 51k of 80k rows in one "Company Update" bucket; SUBCATNAME is
+        # what separates "Award of Order / Receipt of Order" from "Newspaper
+        # Publication" inside it. BSE sends both on every row; we used to keep
+        # only the coarse one. See db/migrations/0072.
+        subcat = (r.get("SUBCATNAME") or "").strip() or None
+        out.append((nid, sym, title[:400], category, subcat, headline, dt, pdf, code))
     return out
 
 
@@ -191,12 +204,19 @@ def main() -> None:
                     cur.executemany(
                         """
                         INSERT INTO app.announcement
-                          (id, symbol, title, category, headline, published_at,
-                           pdf_url, bse_code, source, fetched_at)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'bse', now())
+                          (id, symbol, title, category, subcategory, headline,
+                           published_at, pdf_url, bse_code, source, fetched_at)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'bse', now())
+                        -- subcategory is in the UPDATE list, not just the
+                        -- INSERT: rows already in the table from before
+                        -- migration 0072 are re-fetched by the rolling
+                        -- 30-day window and must pick the field up. Leaving
+                        -- it out would have backfilled nothing while looking
+                        -- like it worked.
                         ON CONFLICT (id) DO UPDATE SET
                           title        = EXCLUDED.title,
                           category     = EXCLUDED.category,
+                          subcategory  = EXCLUDED.subcategory,
                           headline     = EXCLUDED.headline,
                           published_at = EXCLUDED.published_at,
                           pdf_url      = EXCLUDED.pdf_url,
