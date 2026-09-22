@@ -1797,7 +1797,11 @@ function CompanyProfile({ symbol, onClose }: { symbol: string; onClose: () => vo
                 data.fetched_at
                   ? `Description as of ${formatShortDate(data.fetched_at.slice(0, 10))}`
                   : "Description date unknown",
-                data.health?.latestPeriod ? `financials to ${data.health.latestPeriod}` : null,
+                // asOf, not latestPeriod — where a trailing year was built the
+                // profit bullets describe it, and those two can be six months
+                // apart. Dating the card with the fiscal year would make the
+                // freshest number on it look like the stalest.
+                data.health?.asOf ? `financials to ${data.health.asOf}` : null,
               ]
                 .filter(Boolean)
                 .join(" · ")}

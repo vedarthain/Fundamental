@@ -7,9 +7,12 @@
  * nobody asked for, and most rows are never opened at all. One symbol, one
  * indexed primary-key read, on demand.
  *
- * Also returns `health` — the derived pros/cons bullets. Three reads, not one,
- * but still three INDEX reads for one symbol on click: the universe row, 11
- * annual statements, 8 shareholding quarters. Folded into THIS route rather
+ * Also returns `health` — the derived pros/cons bullets. Four reads, not one,
+ * but still four INDEX reads for one symbol on click: the universe row, 11
+ * annual statements, 8 shareholding quarters, 5 quarterly results. The last of
+ * those is not optional: the annual view runs up to 456 days behind the
+ * quarters we already store, which is the difference between reporting a
+ * company as loss-making and as profitable. Folded into THIS route rather
  * than a second endpoint because they are triggered by the same click and
  * consumed by the same card; two routes would mean two loading states and two
  * failure modes for one panel.
@@ -29,7 +32,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
-import { assessBusiness, type AnnualRow, type ShareRow } from "@/lib/businessHealth";
+import { assessBusiness, type AnnualRow, type ShareRow, type QuarterRow } from "@/lib/businessHealth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -82,7 +85,7 @@ export async function GET(req: NextRequest) {
     // 11 rows so a 10-year span has both ends; the assessor uses 5 and falls
     // back to 3. 8 quarters of ownership is two years — long enough that a
     // promoter stake change is a decision rather than a rounding artefact.
-    const [annual, shares] = await Promise.all([
+    const [annual, shares, quarterly] = await Promise.all([
       sql<AnnualRow[]>`
         SELECT period_end::text AS period_end, sales, operating_profit, other_income, interest,
                profit_before_tax, net_profit, dividend_amount, equity_share_capital,
@@ -100,13 +103,24 @@ export async function GET(req: NextRequest) {
          ORDER BY period_end DESC
          LIMIT 8
       `,
+      // Four quarters is exactly a trailing year; five so a stale newest row
+      // cannot silently shorten the window. The annual view alone is up to
+      // 456 days behind these — see the QuarterRow doc comment.
+      sql<QuarterRow[]>`
+        SELECT period_end::text AS period_end, sales, operating_profit,
+               other_income, interest, profit_before_tax, net_profit
+          FROM app.fundamentals_quarterly
+         WHERE symbol = ${raw}
+         ORDER BY period_end DESC
+         LIMIT 5
+      `,
     ]);
 
     return NextResponse.json({
       ...rows[0],
       // Sector decides what to skip, industry decides what to measure — see
       // the threshold note in businessHealth.ts.
-      health: assessBusiness(annual, shares, rows[0].sector, rows[0].industry),
+      health: assessBusiness(annual, shares, rows[0].sector, rows[0].industry, quarterly),
     });
   } catch (err) {
     console.error("stock profile failed:", err);

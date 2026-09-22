@@ -81,6 +81,30 @@ export type AnnualRow = {
   expenses: Num;
 };
 
+/** One quarterly result, newest first as handed in.
+ *
+ *  THE REASON THIS TYPE EXISTS. The first version of this file read annual
+ *  statements and nothing else, and that is a permanent half-year blind spot:
+ *  2,508 of 2,573 active symbols have quarterly data NEWER than their latest
+ *  annual, by 93 days on average and up to 456. For a March year-end read in
+ *  September the card is describing a fiscal year that ended six months ago
+ *  while the market prices the quarters since.
+ *
+ *  Centum Electronics is what that costs. FY26 annual: sales 952.75, operating
+ *  profit 79.21, net −46.65 — so the card said "loss-making", twice, out of
+ *  five bullets. The four quarters to Jun-26, already in this database: sales
+ *  1,058.62, operating profit 124.52, net +49.32. The stock was up 54% on the
+ *  year and every word on the card was negative. */
+export type QuarterRow = {
+  period_end: string;
+  sales: Num;
+  operating_profit: Num;
+  other_income: Num;
+  interest: Num;
+  profit_before_tax: Num;
+  net_profit: Num;
+};
+
 /** One shareholding-pattern quarter, newest first. */
 export type ShareRow = {
   period_end: string;
@@ -106,6 +130,11 @@ export type BusinessHealth = {
   /** Years of annual history actually used. Below 5 most growth checks cannot
    *  run, and the card says so instead of showing a thin, silent list. */
   years: number;
+  /** What the profit-sign bullets actually describe — the TTM label when a
+   *  trailing year could be built, otherwise the annual period. These can be
+   *  six months apart, so the card states it rather than letting the reader
+   *  assume the fiscal year. */
+  asOf: string | null;
   /** True when this was read as a lender, so the four checks that assume a
    *  manufacturer — leverage, operating margin, cash conversion, the one-off
    *  detector — were skipped and the two bank measures run instead. Surfaced so
@@ -159,6 +188,78 @@ function median(xs: number[]): number | null {
   return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
 }
 
+/** A trailing-twelve-month figure, or null when one could not be built safely. */
+export type Ttm = {
+  /** e.g. "the 12 months to Jun-26" — used verbatim in bullet text so the
+   *  reader is never left guessing which period a number describes. */
+  label: string;
+  sales: number | null;
+  operating_profit: number | null;
+  interest: number | null;
+  profit_before_tax: number | null;
+  net_profit: number | null;
+};
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function quarterLabel(iso: string): string {
+  const m = Number(iso.slice(5, 7));
+  return `${MONTHS[m - 1] ?? iso.slice(5, 7)}-${iso.slice(2, 4)}`;
+}
+
+/** Sum the last four quarters — but only when that sum is trustworthy.
+ *
+ *  Every condition below is a way the naive version produces a confidently
+ *  wrong number, which is worse than the stale-but-correct annual figure it
+ *  would be replacing:
+ *
+ *  • FEWER THAN FOUR quarters is not a year. 2,533 of 2,573 active symbols
+ *    have four; the other 40 keep the annual view rather than getting a
+ *    nine-month "year".
+ *  • A GAP between quarters is the dangerous case. If Q2 is missing, the four
+ *    newest rows silently span fifteen months and the sum looks perfectly
+ *    plausible. Consecutive period ends must be 80–110 days apart; anything
+ *    else and we decline rather than guess which quarter is missing.
+ *  • NOT NEWER than the annual means there is nothing to gain. If the latest
+ *    quarter ends on the fiscal year end, TTM is the fiscal year, and using it
+ *    only adds rounding differences and a confusing label.
+ *  • A NULL in any of the four kills only the field it appears in, not the
+ *    whole TTM. Sales can be complete while interest is not, and the checks
+ *    that need interest simply fall back on their own.
+ */
+function trailingTwelve(quarters: QuarterRow[], latestAnnualPeriod: string): Ttm | null {
+  const qs = quarters.filter((q) => !!q.period_end).slice(0, 4);
+  if (qs.length < 4) return null;
+  if (!(qs[0].period_end > latestAnnualPeriod)) return null;
+
+  const DAY = 86_400_000;
+  for (let i = 0; i < 3; i++) {
+    const a = Date.parse(qs[i].period_end);
+    const b = Date.parse(qs[i + 1].period_end);
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+    const gap = (a - b) / DAY;
+    if (gap < 80 || gap > 110) return null;
+  }
+
+  const sum = (pick: (q: QuarterRow) => Num): number | null => {
+    let t = 0;
+    for (const q of qs) {
+      const v = num(pick(q));
+      if (v === null) return null;
+      t += v;
+    }
+    return t;
+  };
+
+  return {
+    label: `the 12 months to ${quarterLabel(qs[0].period_end)}`,
+    sales: sum((q) => q.sales),
+    operating_profit: sum((q) => q.operating_profit),
+    interest: sum((q) => q.interest),
+    profit_before_tax: sum((q) => q.profit_before_tax),
+    net_profit: sum((q) => q.net_profit),
+  };
+}
+
 /**
  * @param annual  newest-first annual rows (pass 11 to get a clean 10-year span)
  * @param shares  newest-first shareholding quarters
@@ -169,6 +270,7 @@ export function assessBusiness(
   shares: ShareRow[],
   sector: string | null,
   industry: string | null = null,
+  quarterly: QuarterRow[] = [],
 ): BusinessHealth {
   const pros: HealthCheck[] = [];
   const cons: HealthCheck[] = [];
@@ -196,6 +298,7 @@ export function assessBusiness(
     pros,
     cons,
     latestPeriod: latest ? periodLabel(latest.period_end) : null,
+    asOf: latest ? periodLabel(latest.period_end) : null,
     years: rows.length,
     leverageSkipped: isFinancial,
   };
@@ -208,6 +311,15 @@ export function assessBusiness(
   const idx = rows.length > 5 ? 5 : rows.length > 3 ? 3 : -1;
   const base = idx > 0 ? rows[idx] : null;
   const span = idx;
+
+  // The trailing year, when one can be built safely. Where this exists it is
+  // the CURRENT state of the business and the annual row is history, so the
+  // profit-sign and interest-cover checks below read from it in preference.
+  // `out.asOf` carries the label to the card so the two can never be confused.
+  const ttm = trailingTwelve(quarterly, latest.period_end);
+  const npNow = ttm?.net_profit ?? num(latest.net_profit);
+  const periodNow = ttm?.label ?? out.latestPeriod ?? "the latest year";
+  out.asOf = ttm ? ttm.label : out.latestPeriod;
 
   // ── Is the latest profit even the business's own? ───────────────────────
   // Vodafone Idea's FY26: operating profit 18,859 cr, OTHER income 59,292 cr,
@@ -243,6 +355,37 @@ export function assessBusiness(
     });
   }
 
+  // ── And the same thing pointing the other way ───────────────────────────
+  // `flattered` was built to stop a one-off GAIN being read as performance,
+  // and for months that was the only half that existed. The mirror case is
+  // just as misleading and reads far worse on the card: a business whose
+  // operations are fine, carrying a large one-off CHARGE that drags the
+  // headline below zero. Centum's FY26 operating profit nearly doubled —
+  // 40.04 to 79.21 on sales up 29% — and a −136.69 charge turned that into a
+  // −46.65 headline, which the card reported as "Now loss-making" and
+  // "Loss-making in FY26" with nothing to explain either.
+  //
+  // 24 active symbols are in this shape. The bullet is deliberately filed as
+  // a PRO: the fact being reported is that the operating business earned
+  // money, and the loss beside it is the thing that needs the asterisk.
+  const npAnnual = num(latest.net_profit);
+  const depressed =
+    !isFinancial &&
+    opLatestRaw !== null &&
+    opLatestRaw > 0 &&
+    oiLatest !== null &&
+    oiLatest < 0 &&
+    Math.abs(oiLatest) > opLatestRaw &&
+    npAnnual !== null &&
+    npAnnual < 0;
+  if (depressed) {
+    pros.push({
+      id: "charge-not-operations",
+      kind: "pro",
+      text: `${periodLabel(latest.period_end)} loss came from a one-off charge — operations earned ₹${opLatestRaw.toFixed(0)} cr`,
+    });
+  }
+
   // ── Growth ──────────────────────────────────────────────────────────────
   if (base) {
     // Thresholds set from the UNIVERSE's own distribution, not from a
@@ -269,12 +412,17 @@ export function assessBusiness(
     } else {
       // cagr() refused the pair. Say which end broke it rather than going
       // silent — "was loss-making N years ago" is itself information.
-      const np = num(latest.net_profit);
+      // Reads npNow — the trailing year where we have one — because "now" in
+      // "Now loss-making" has to mean now. On the annual row alone Centum was
+      // told it had gone loss-making, when the four quarters since say it
+      // earned 49.32. A `depressed` company is also excluded from into-loss:
+      // the charge bullet above has already said the useful thing, and saying
+      // both is saying the same fact twice with opposite signs.
       const bp = num(base.net_profit);
-      if (np !== null && bp !== null && bp <= 0 && np > 0 && !flattered) {
-        pros.push({ id: "turnaround", kind: "pro", text: `Back in profit — was loss-making ${span} years ago` });
-      } else if (np !== null && bp !== null && bp > 0 && np <= 0) {
-        cons.push({ id: "into-loss", kind: "con", text: `Now loss-making — was profitable ${span} years ago` });
+      if (npNow !== null && bp !== null && bp <= 0 && npNow > 0 && !flattered) {
+        pros.push({ id: "turnaround", kind: "pro", text: `Back in profit over ${periodNow} — was loss-making ${span} years ago` });
+      } else if (npNow !== null && bp !== null && bp > 0 && npNow <= 0 && !depressed) {
+        cons.push({ id: "into-loss", kind: "con", text: `Loss-making over ${periodNow} — was profitable ${span} years ago` });
       }
     }
   }
@@ -334,8 +482,11 @@ export function assessBusiness(
       else if (roe < 5 && roe >= 0) cons.push({ id: "roe-low", kind: "con", text: `Return on equity only ${roe.toFixed(0)}%` });
     }
   }
-  if (npLatest !== null && npLatest < 0) {
-    cons.push({ id: "loss", kind: "con", text: `Loss-making in ${out.latestPeriod ?? "the latest year"}` });
+  // Reads the trailing year, and stays silent when the loss has already been
+  // explained as a one-off charge — a card that says "operations earned ₹79 cr"
+  // and "Loss-making" in the same breath has told the reader nothing.
+  if (npNow !== null && npNow < 0 && !depressed) {
+    cons.push({ id: "loss", kind: "con", text: `Loss-making over ${periodNow}` });
   }
 
   // ── Lenders: the two measures that survive a borrowed balance sheet ─────
@@ -415,11 +566,27 @@ export function assessBusiness(
     // Interest cover only makes sense when there IS interest to cover; at
     // interest = 0 the ratio is infinite and the debt-free bullet above has
     // already said the useful thing.
-    const intr = num(latest.interest);
-    const pbt = num(latest.profit_before_tax);
-    if (intr !== null && intr > 0 && pbt !== null) {
+    //
+    // Trailing year in preference to the annual, and BOTH ends have to come
+    // from the same period — mixing TTM profit with annual interest would
+    // manufacture a ratio that describes no real twelve months. And skipped
+    // entirely when `depressed`: a one-off write-down crushes PBT, so Centum
+    // was reported at −1.2× cover, a number produced by the charge rather than
+    // by any difficulty paying interest. On its operating profit it is ~4.7×.
+    const useTtm = ttm !== null && ttm.interest !== null && ttm.profit_before_tax !== null;
+    const intr = useTtm ? ttm!.interest : num(latest.interest);
+    const pbt = useTtm ? ttm!.profit_before_tax : num(latest.profit_before_tax);
+    if (!depressed && intr !== null && intr > 0 && pbt !== null) {
       const cover = (pbt + intr) / intr;
-      if (cover < 2.5) {
+      if (cover <= 1) {
+        // A cover below 1 is not a thin cushion, it is no cushion, and once it
+        // goes negative the multiple stops meaning anything at all — 63MOONS
+        // read "covers interest only −54.6× — thin cushion", which is not a
+        // sentence about the world. Say the fact instead: earnings before
+        // interest were smaller than the interest bill, by this much.
+        const short = intr - (pbt + intr);
+        cons.push({ id: "interest-cover", kind: "con", text: `Earnings do not cover the interest bill — short by ₹${short.toFixed(0)} cr over ${periodNow}` });
+      } else if (cover < 2.5) {
         cons.push({ id: "interest-cover", kind: "con", text: `Profit covers interest only ${cover.toFixed(1)}× — thin cushion` });
       }
     }
