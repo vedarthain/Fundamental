@@ -929,6 +929,80 @@ def sync_universe_cmd(
                 print(f"!! EQUITY_L.csv unavailable ({e})")
                 print("!! Falling back to ISIN-only filtering for this run.")
 
+        # ── 2c-isin. Backfill the ISIN we are already holding ────────────────
+        #
+        # A NULL isin is not a cosmetic gap. Both BSE fetchers map NSE symbol →
+        # BSE scrip code THROUGH the ISIN, and both select
+        # `WHERE is_active AND isin IS NOT NULL`
+        # (scripts/fetch-announcements.py, scripts/fetch-news.py), so a
+        # NULL-ISIN symbol is not "missing a field" — it is invisible to those
+        # jobs forever. Measured on prod 2026-09-23: 544 active symbols had no
+        # announcement row at all, and 443 of them were exactly the NULL-ISIN
+        # set. The overlap with the never-fetched business_summary cohort was
+        # 443 of 443, and 0 rows had a summary but no ISIN. One cohort, two
+        # symptoms: rows onboarded after the initial seed that nothing enriched.
+        #
+        # WHY HERE, AND NOT AS A SCRIPT. scripts/backfill-universe-isin.py
+        # already exists, already documents this exact failure in its own
+        # docstring, and is called by none of the workflow files. Running it by
+        # hand is what produced this state — the fix has to live somewhere that
+        # runs on its own. `master` is in memory at this point with an ISIN for
+        # all 2,583 listed symbols, sync-universe runs monthly, and onboarding
+        # is the moment the gap is created. That is CLAUDE.md §5's question
+        # ("what keeps this current?") answered with a schedule rather than
+        # with an intention.
+        #
+        # Deliberately narrow: NULL/blank isin only, matched by symbol, never
+        # overwriting a value already present. EQUITY_L is NSE's own register,
+        # but so is golden.stocks, and where the two disagree that is a
+        # reconciliation question — not something to settle silently inside a
+        # gap-filler. Skipped entirely when the fetch failed, because an empty
+        # master must not be read as "NSE has no ISIN for anyone".
+        #
+        # Expected ceiling, measured before writing this: of the 443, 428 are
+        # in EQUITY_L and 396 of those map to a live BSE scrip code. The
+        # remaining 15 (EDUCOMP, ORTEL, QUINTEGRA, NAGAFERT, CEREBRAINT …) are
+        # the delisted-but-real cohort nse_equity_master.py already names, and
+        # 32 are NSE-only listings with no BSE scrip. This closes ~396 of the
+        # 544, not all of them, and it is not supposed to reach zero.
+        # `not dry_run` matters: the dry-run guard lives at the onboarding write
+        # much further down (see "if dry_run:" below), so a block placed here
+        # would otherwise be the one write in this command that --dry-run does
+        # not suppress.
+        if master_ok and not dry_run:
+            isin_rows = [
+                (sym, (info.get("isin") or "").strip().upper())
+                for sym, info in master.items()
+                if (info.get("isin") or "").strip()
+            ]
+            if isin_rows:
+                with conn.cursor() as c2:
+                    c2.execute(
+                        """
+                        UPDATE app.universe u
+                           SET isin = v.isin
+                          FROM (SELECT unnest(%s::text[]) AS symbol,
+                                       unnest(%s::text[]) AS isin) v
+                         WHERE u.symbol = v.symbol
+                           AND coalesce(u.isin, '') = ''
+                        """,
+                        ([r[0] for r in isin_rows], [r[1] for r in isin_rows]),
+                    )
+                    filled = c2.rowcount
+                conn.commit()
+                # Still-NULL is re-queried rather than derived, so the number
+                # reported is what the table holds, not what the loop believed.
+                with conn.cursor() as c2:
+                    c2.execute(
+                        "SELECT count(*) AS n FROM app.universe "
+                        "WHERE is_active AND coalesce(isin, '') = ''"
+                    )
+                    still = c2.fetchone()["n"]
+                log.info("isin_backfill", filled=filled, still_null=still)
+                if filled:
+                    print(f"   ISIN backfilled: {filled} "
+                          f"(still NULL: {still} — delisted / NSE-only)")
+
         # ── 2c. Narrow the retire set to a CONJUNCTION ────────────────────────
         #
         # Retirement now requires BOTH:

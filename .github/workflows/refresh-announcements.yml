@@ -24,12 +24,28 @@ env:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    # ~2,100 BSE calls at ~0.4s throttle + latency ≈ 30–40 min, but slow-BSE
-    # days run longer. Give the job 75 min and tell the script to self-stop at
-    # 68 (--max-minutes) so it exits cleanly with progress saved instead of
-    # being hard-cancelled. The sweep is resumable (least-recently-fetched
-    # first), so any leftover symbols are picked up on the next daily run.
-    timeout-minutes: 75
+    # Budget sized from MEASURED runs, not from the throttle. The comment here
+    # used to read "~2,100 calls at ~0.4s throttle + latency ≈ 30–40 min"; the
+    # last five real runs took 51, 59, 51 and 59 minutes — ~1.7s per symbol
+    # once BSE's own latency is counted. The throttle is the floor, not the cost.
+    #
+    # The mapped universe then grew. sync-universe now backfills
+    # app.universe.isin from EQUITY_L (cli.py, section 2c-isin), which took 443
+    # active symbols from invisible-to-this-job to fetchable and lifted the
+    # mapped set by ~396. At the measured rate that is ~72 min of work, over the
+    # old 68-minute self-stop, so every run would have abandoned a rotating
+    # ~150 symbols.
+    #
+    # Nothing would have looked broken. The sweep is resumable and exits 0, so
+    # the only symptom would have been announcements quietly running a day or
+    # two behind for a slice of the universe that changed every night — a job
+    # that cannot fail while not doing its job, which is CLAUDE.md section 5.
+    #
+    # 100/92 restores a complete daily sweep with real headroom. The script
+    # still self-stops at --max-minutes so it exits cleanly with progress saved
+    # rather than being hard-cancelled, and is still resumable
+    # (least-recently-fetched first) if BSE has a slow night.
+    timeout-minutes: 100
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -46,4 +62,4 @@ jobs:
         env:
           APP_DB_URL:       ${{ secrets.NEON_APP_URL }}
           PYTHONUNBUFFERED: "1"
-        run: python scripts/fetch-announcements.py --max-minutes 68
+        run: python scripts/fetch-announcements.py --max-minutes 92
