@@ -16,6 +16,7 @@
  *
  * Server component — no useState, no event handlers (collapse is native HTML).
  */
+import { Fragment } from "react";
 import {
   Shirt, Landmark, Code2, HeartPulse, Car, Layers, ShoppingBag, Flame,
   Building, Hammer, Tv2, Store, Briefcase, Globe2,
@@ -81,6 +82,21 @@ function pickIcon(sector: string | null, industry: string | null): { Icon: IconC
   return { Icon: Briefcase, tint: "var(--color-accent-500)" };
 }
 
+/**
+ * One row of app.company_overview.rows — a pre-extracted {label, value} pair.
+ *
+ * WHY THIS EXISTS ALONGSIDE parseSummary(). parseSummary mines yfinance prose
+ * with regexes at render time. On AASTHA that produces the chips
+ * "and trades in cotton yarns" / "bales for knitting" — one sentence
+ * comma-split — and renders "India only" for a company whose summary says it
+ * exports (the exports regex needs "exports ... TO <region>" and that sentence
+ * has no destination). When a stored overview exists it is strictly better
+ * input, so it wins; parseSummary stays as the fallback for the ~2,580 symbols
+ * that have no stored row yet. Deleting parseSummary is a separate change that
+ * cannot happen until coverage is universal.
+ */
+export type OverviewRow = { label: string; value: string };
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -94,6 +110,8 @@ export function BusinessVisual({
   ceoName,
   ceoTitle,
   shareholding,
+  overview,
+  overviewLatestFy,
 }: {
   companyName: string;
   symbol: string;
@@ -105,9 +123,16 @@ export function BusinessVisual({
   ceoName?: string | null;
   ceoTitle?: string | null;
   shareholding?: ShareholdingRow[];
+  /** Pre-extracted rows from app.company_overview; null when not generated. */
+  overview?: OverviewRow[] | null;
+  /** app.company_overview.latest_fy — newest FY named in those rows, or null. */
+  overviewLatestFy?: number | null;
 }) {
   const parsed = parseSummary(summary);
   const { Icon, tint } = pickIcon(sector, industry);
+  // An empty array is a real state ("extracted, found nothing") and must not be
+  // treated as "not generated" — hence the length check rather than a null test.
+  const hasOverview = Array.isArray(overview) && overview.length > 0;
 
   return (
     <RevealOnScroll threshold={0.05}>
@@ -186,6 +211,15 @@ export function BusinessVisual({
               )}
             </div>
           </div>
+
+          {/* ---------------- Structured overview ---------------- */}
+          {/* Spans the full width above the grid: these rows are the extracted
+              facts, and the chips below them are the regex fallback. Shown
+              together ON PURPOSE while coverage is partial — seeing both side
+              by side is how the regex defects were found. */}
+          {hasOverview && (
+            <OverviewTable rows={overview!} latestFy={overviewLatestFy ?? null} delay={150} />
+          )}
 
           {/* ---------------- 4-card grid ---------------- */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
@@ -338,6 +372,76 @@ function CardDescription({
         />
       </div>
     </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Structured overview — rows from app.company_overview
+// ---------------------------------------------------------------------------
+
+/** Indian FY ends 31 March; in Sept 2026 the last completed FY is 26. */
+function lastCompletedFy(): number {
+  const n = new Date();
+  return n.getUTCMonth() >= 3 ? n.getUTCFullYear() : n.getUTCFullYear() - 1;
+}
+
+function OverviewTable({
+  rows,
+  latestFy,
+  delay,
+}: {
+  rows: OverviewRow[];
+  latestFy: number | null;
+  delay: number;
+}) {
+  // Screener's Key Points are human-curated and go stale silently — 20MICRONS
+  // still reads "Paints 51% in FY24" because nobody edited the page after FY24.
+  // The percentages carry their own FY label (generator rule 10), so the figure
+  // is not a lie; what would be a lie is presenting an abandoned page with the
+  // same confidence as a current one. Hence the banner rather than hiding or
+  // stripping the numbers. Same cutoff as the --audit sweep in
+  // scripts/build-company-overview.mjs: one full FY of grace.
+  const stale = latestFy != null && latestFy <= lastCompletedFy() - 2;
+
+  return (
+    <div className="mb-3.5">
+      <Card title="Business overview" icon={<Tag size={13} strokeWidth={1.8} />} delay={delay}>
+        {stale && (
+          <p
+            className="text-[11px] leading-snug mb-2.5 px-2.5 py-1.5 rounded"
+            style={{
+              color: "var(--color-muted)",
+              background: "var(--color-paper)",
+              border: "1px solid var(--color-border-subtle)",
+            }}
+          >
+            Newest figure below is from FY{String(latestFy).slice(2)} — the source
+            page has not been updated since.
+          </p>
+        )}
+        <dl className="grid grid-cols-1 sm:grid-cols-[minmax(120px,170px)_1fr] gap-x-5 gap-y-0">
+          {rows.map((r, i) => (
+            <Fragment key={r.label + i}>
+              <dt
+                className="text-[11px] uppercase tracking-wide muted-text py-2 sm:border-t"
+                style={{ borderColor: i === 0 ? "transparent" : "var(--color-border-subtle)" }}
+              >
+                {r.label}
+              </dt>
+              <dd
+                className="text-[12.5px] leading-relaxed pb-2 sm:pt-2 sm:border-t"
+                style={{
+                  color: "var(--color-ink)",
+                  borderColor: i === 0 ? "transparent" : "var(--color-border-subtle)",
+                }}
+              >
+                {r.value}
+              </dd>
+            </Fragment>
+          ))}
+        </dl>
+      </Card>
+    </div>
   );
 }
 

@@ -18,7 +18,7 @@ import { buildPillarStory } from "@/lib/explainer";
 import {
   qualityNarration, valuationNarration, momentumNarration,
 } from "@/lib/companyNarration";
-import { BusinessVisual } from "@/components/BusinessVisual";
+import { BusinessVisual, type OverviewRow } from "@/components/BusinessVisual";
 import { AboutTabs } from "@/components/AboutTabs";
 import { StockPageTabs } from "@/components/StockPageTabs";
 import { StockActionsTabs } from "@/components/StockActionsTabs";
@@ -463,6 +463,19 @@ async function loadStock(symbol: string) {
   `.catch(() => [] as Scorecard[]);
   const scorecard = scRow[0] ?? null;
 
+  // Structured business overview, pre-extracted into app.company_overview.
+  // Present for a subset of symbols only; BusinessVisual falls back to the
+  // regex parse of business_summary when this is empty, so an absent row is a
+  // normal state and not an error. `.catch(() => [])` because the table is
+  // newer than some deployed DBs — a missing relation must not 500 the page.
+  const overviewRows = await sql<{ rows: OverviewRow[]; source: string; latest_fy: number | null }[]>`
+    SELECT rows, source, latest_fy FROM app.company_overview WHERE symbol = ${upper}
+  `.catch(() => [] as { rows: OverviewRow[]; source: string; latest_fy: number | null }[]);
+  const overview = overviewRows[0]?.rows ?? null;
+  // Newest fiscal year named in those rows. Drives the "source not updated
+  // since FYnn" banner — see OverviewTable in BusinessVisual.tsx.
+  const overviewLatestFy = overviewRows[0]?.latest_fy ?? null;
+
   // Up to 40 quarters (~10y) of shareholding pattern. The breakdown table shows
   // only the most recent few; the fuller history feeds the promoter trend graph
   // (app.shareholding_pattern accumulates permanently, so this window lengthens
@@ -571,6 +584,8 @@ async function loadStock(symbol: string) {
 
   return {
     stock, scorecard, annual, quarterly, priceHistory, dayChangePct, shareholding,
+    overview,
+    overviewLatestFy,
     corporateActions, stockNews, announcements, scoreHistory, oiAlert, nextEvent,
     isThinlyTraded, medTurnover, liqSessions,
     peerMedianComposite: peerStats[0]?.median ?? 50,
@@ -592,7 +607,7 @@ export default async function StockPage({
     getSession(),
   ]);
   if (!data) return notFound();
-  const { stock, scorecard, annual, quarterly, priceHistory, dayChangePct, shareholding, corporateActions, stockNews, announcements, scoreHistory, oiAlert, nextEvent, rankInIndustry, industryPeerCount, isThinlyTraded, medTurnover, liqSessions } = data;
+  const { stock, scorecard, annual, quarterly, priceHistory, dayChangePct, shareholding, overview, overviewLatestFy, corporateActions, stockNews, announcements, scoreHistory, oiAlert, nextEvent, rankInIndustry, industryPeerCount, isThinlyTraded, medTurnover, liqSessions } = data;
 
   // Signed-in users can set price alerts on the chart; load their live lines.
   const priceAlerts: PriceAlert[] = session
@@ -1032,6 +1047,8 @@ export default async function StockPage({
                         ceoName={stock.ceo_name}
                         ceoTitle={stock.ceo_title}
                         shareholding={shareholding}
+                        overview={overview}
+                        overviewLatestFy={overviewLatestFy}
                       />
                     }
                     details={<AboutCard stock={stock} priceHistoryStart={priceHistory[0]?.d ?? null} />}
@@ -1040,7 +1057,31 @@ export default async function StockPage({
                   <AboutCard stock={stock} priceHistoryStart={priceHistory[0]?.d ?? null} />
                 )}
               </div>
-              <PriceChartCard symbol={stock.symbol} history={priceHistory} currentPrice={stock.current_price} priceAlerts={priceAlerts} canSetAlerts={session != null} trades={entryMarks} />
+              {/* The left column runs long (Business overview is a 8-11 row
+                  table), so this column bottoms out well above it and leaves a
+                  dead band. Pinning the chart turns that band into the reason
+                  it exists: the price stays on screen for the whole read.
+                  `self-stretch` is required — the grid sets `items-start`, which
+                  sizes this item to its content and leaves position:sticky with
+                  no room to travel inside it. Desktop only; on one column the
+                  chart is simply the next block.
+
+                  top-[148px] clears the sticky tab bar, which pins at 84px and
+                  is ~57px tall (py-3 + a py-1.5 pill + a 1px rule). The tab bar
+                  is z-20 and this is not, so any overlap would hide the chart
+                  under it rather than the other way round.
+
+                  The max-height is not decoration: a sticky element taller than
+                  its viewport slot pins at the top and drags its own bottom off
+                  screen, where no amount of scrolling reaches it — which would
+                  put the "Add price alert" button permanently out of reach on a
+                  short window. Capping with overflow keeps it reachable, and on
+                  a normal laptop the cap is never hit so no scrollbar appears. */}
+              <div className="lg:self-stretch">
+                <div className="lg:sticky lg:top-[148px] lg:max-h-[calc(100dvh-164px)] lg:overflow-y-auto">
+                  <PriceChartCard symbol={stock.symbol} history={priceHistory} currentPrice={stock.current_price} priceAlerts={priceAlerts} canSetAlerts={session != null} trades={entryMarks} />
+                </div>
+              </div>
             </div>
             {stockNews.length > 0 && (
               <div className="mt-6">
