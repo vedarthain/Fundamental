@@ -40,6 +40,14 @@ const LINKS: NavLink[] = [
     submenu: [
       { href: "/indices", label: "Indices", description: "Official NSE benchmarks + their constituents" },
       { href: "/sectors", label: "Sectors", description: "Our full-universe scoring view — every stock" },
+      // Lives at /tools/scanner?tab=all and is surfaced here rather than moved:
+      // it is a market-structure browse (the whole scored universe, sortable),
+      // not a daily catch like the scanners it sits beside. Note the query
+      // string — isActive() below matches on pathname only, so opening this
+      // lights up Tools, not Segments. Fixing that means either giving the
+      // table its own route or teaching isActive about search params; neither
+      // is worth doing until we decide whether the Scanner tab goes away.
+      { href: "/tools/scanner?tab=all", label: "All Stocks", description: "The full scored universe in one sortable table — price, returns, composite, peer rank" },
       { href: "/themes",  label: "Themes",  description: "Defence, Drone, Data Center, Green Hydrogen — groupings no industry tree can express" },
     ],
   },
