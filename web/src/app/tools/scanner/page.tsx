@@ -12,6 +12,7 @@ import { IGNITING_DEFAULT_DAYS, TREND_DEFAULT_DAYS, FLOOR_DEFAULT_DAYS } from ".
 import { sql } from "@/lib/db";
 import { unstable_cache } from "next/cache";
 import ScannerTabs, { type Tab } from "./ScannerTabs";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
@@ -30,9 +31,10 @@ const cachedMomentum = unstable_cache(loadLatestMomentum, ["scanner:momentum:v1"
 const cachedTrend = unstable_cache(loadLatestTrendLeaders, ["scanner:trend:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
 const cachedFloor = unstable_cache(loadLatestSupportFloor, ["scanner:floor:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
 const cachedRotation = unstable_cache(loadRotation, ["scanner:rotation:v2-live-returns"], { revalidate: HOUR, tags: CACHE_TAGS });
-// "All stocks" + "Graph" are the two heaviest payloads (~1 MB serialized combined).
-// They're lazy-loaded on first tab open via /api/scanner/panel, NOT shipped with
-// the page — so they're intentionally absent from the eager wave below.
+// "Graph" is the heaviest payload on this page. It's lazy-loaded on first tab
+// open via /api/scanner/panel, NOT shipped with the page — so it's intentionally
+// absent from the eager wave below. ("All stocks" was the other half of that
+// pair; it now lives at /stocks and loads server-side there.)
 const cachedDividendUniverse = unstable_cache(loadDividendUniverse, ["scanner:dividends:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
 const cachedThemes = unstable_cache(loadThemes, ["scanner:themes:v2-live-returns"], { revalidate: HOUR, tags: CACHE_TAGS });
 const cachedSparklines = unstable_cache(loadSparklines, ["scanner:sparklines:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
@@ -45,7 +47,7 @@ const cachedN500 = unstable_cache(
 // Defined server-side, NOT imported from the "use client" ScannerTabs module:
 // value exports from a client module become client-reference proxies in a
 // Server Component, so `.includes` would be undefined at runtime.
-const SCANNER_TABS: readonly Tab[] = ["igniting", "trend", "floor", "fallen", "sectors", "all", "graph", "themes", "dividends"];
+const SCANNER_TABS: readonly Tab[] = ["igniting", "trend", "floor", "fallen", "sectors", "graph", "themes", "dividends"];
 
 export const metadata: Metadata = {
   title: "Scanner — EquityRoots",
@@ -79,6 +81,11 @@ export default async function MomentumPage({
   // Sectors ⇄ Peer groups). Redirect the old deep-link so a bookmarked
   // ?tab=peers still lands somewhere real instead of a blank panel.
   const normalizedTab = tabParam === "peers" ? "sectors" : tabParam;
+  // "all" moved out of the Scanner to its own Segments route. Redirect rather
+  // than silently falling through to the Graph tab: ?tab=all was linked from the
+  // nav in production, so a bookmark or a back-button must still land on the
+  // table it asked for, not on a different page that looks like it worked.
+  if (normalizedTab === "all") redirect("/stocks");
   // Graph is the landing tab, matching its position first in the strip. This is
   // the fallback for a bare /tools/scanner only — an explicit ?tab= still wins,
   // so every existing deep link keeps landing where it always did, and the

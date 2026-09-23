@@ -16,7 +16,6 @@ import type { MomentumSignal } from "@/lib/momentum";
 import type { TrendLeaderSignal } from "@/lib/trendLeaders";
 import type { SupportFloorSignal } from "@/lib/supportFloor";
 import type { RotationData } from "@/lib/rotation";
-import type { AllStockRow } from "@/lib/allStocks";
 import type { GraphUniverse } from "@/lib/graphUniverse";
 import type { DividendUniverse } from "@/lib/dividendScanner";
 import type { ThemesData } from "@/lib/themes";
@@ -28,13 +27,12 @@ import TrendLeadersClient from "./TrendLeadersClient";
 import SupportFloorClient from "./SupportFloorClient";
 import RotationClient from "./RotationClient";
 import FallenLeadersClient from "./FallenLeadersClient";
-import AllStocksClient from "./AllStocksClient";
 import ThemesClient from "./ThemesClient";
 import ScannerDatePicker from "./ScannerDatePicker";
 import type { TradeMark } from "@/lib/portfolio";
 
 // "peers" is no longer a top-level tab — it folded into "sectors" as a toggle.
-export type Tab = "igniting" | "trend" | "floor" | "fallen" | "sectors" | "all" | "graph" | "themes" | "dividends";
+export type Tab = "igniting" | "trend" | "floor" | "fallen" | "sectors" | "graph" | "themes" | "dividends";
 // Which cut the merged Sectors/Peers ("rotation") tab is showing.
 type RotView = "sectors" | "peers";
 
@@ -99,17 +97,16 @@ export default function ScannerTabs({
   const [n500Only, setN500Only] = useState(false);
   const [railOpen, setRailOpen] = useState(true);
 
-  // "All stocks" + "Graph" are the two heaviest datasets, so they're NOT shipped
-  // with the page. Fetch each the first time its tab is opened (see
-  // /api/scanner/panel), then keep it cached in state for the session.
-  const [allStocksData, setAllStocksData] = useState<{ snapDate: string | null; rows: AllStockRow[] } | null>(null);
+  // Graph is the heaviest dataset on this page, so it is NOT shipped with the
+  // page. Fetch it the first time its tab is opened (see /api/scanner/panel),
+  // then keep it cached in state for the session. ("All stocks" used to share
+  // this path; it now has its own route at /stocks and renders server-side.)
   const [graphUniverse, setGraphUniverse] = useState<GraphUniverse | null>(null);
 
   // In-flight guards so a prefetch + a tab-open (or two rapid hovers) can't fire
   // the same panel fetch twice. The state var tells us it's *arrived*; these
   // tell us it's *on the way*.
   const graphLoading = useRef(false);
-  const allLoading = useRef(false);
 
   const loadGraph = useCallback(() => {
     if (graphUniverse !== null || graphLoading.current) return;
@@ -123,26 +120,12 @@ export default function ScannerTabs({
       });
   }, [graphUniverse]);
 
-  const loadAll = useCallback(() => {
-    if (allStocksData !== null || allLoading.current) return;
-    allLoading.current = true;
-    fetch("/api/scanner/panel?panel=all")
-      .then((r) => r.json())
-      .then((d) => setAllStocksData({ snapDate: d.snapDate ?? null, rows: d.rows ?? [] }))
-      .catch(() => {
-        allLoading.current = false;
-        setAllStocksData({ snapDate: null, rows: [] });
-      });
-  }, [allStocksData]);
-
   // Graph is the primary read on this page, and it's a click away from a cold
   // panel fetch — so PREFETCH it in the background as soon as the scanner mounts
   // (once, on idle), NOT only when the tab is opened. By the time the user clicks
   // "Graph" the candle universe is already in state → instant, no spinner. This
   // adds one background fetch (~365 KB, hourly-cached server-side) without
-  // bloating the initial RSC payload. "All stocks" stays strictly on-open (it's
-  // the heavier 700 KB payload and a less common destination) but is prefetched
-  // on hover below.
+  // bloating the initial RSC payload.
   useEffect(() => {
     const w = window as Window & { requestIdleCallback?: (cb: () => void) => number };
     if (typeof w.requestIdleCallback === "function") {
@@ -153,21 +136,19 @@ export default function ScannerTabs({
     }
   }, [loadGraph]);
 
-  // Open-tab fetches: covers the case where the mount prefetch hasn't landed yet
-  // (or "all", which isn't prefetched on mount). Idempotent via the guards above.
+  // Open-tab fetch: covers the case where the mount prefetch hasn't landed yet.
+  // Idempotent via the guard above.
   useEffect(() => {
-    if (tab === "all") loadAll();
     if (tab === "graph") loadGraph();
-  }, [tab, loadAll, loadGraph]);
+  }, [tab, loadGraph]);
 
   // Hover/focus prefetch: start the fetch the instant the pointer reaches the
-  // tab button, so even the first "All stocks" open feels warm.
+  // tab button.
   const prefetchTab = useCallback(
     (id: Tab) => {
       if (id === "graph") loadGraph();
-      if (id === "all") loadAll();
     },
-    [loadGraph, loadAll],
+    [loadGraph],
   );
   // Sectors ⇄ Peer groups toggle inside the merged "sectors" tab. Seed from
   // ?rot= so a deep-link (or the redirected ?tab=peers) opens the right cut.
@@ -213,9 +194,6 @@ export default function ScannerTabs({
   const sectors = n500Only ? rotation.sectorsN500 : rotation.sectorsAll;
   const peers = n500Only ? rotation.peersN500 : rotation.peersAll;
 
-  const allRows = allStocksData?.rows ?? null;
-  const allCount = allRows === null ? null : n500Only ? allRows.filter((r) => r.is_n500).length : allRows.length;
-
   // Merged Sectors/Peers tab: the count reflects whichever cut is active.
   const rotCount = rotView === "peers" ? peers.length : sectors.length;
 
@@ -239,17 +217,13 @@ export default function ScannerTabs({
     { id: "sectors", label: "Sectors & Peers", sub: "Rotation map", count: rotCount },
     { id: "themes", label: "Themes", sub: "Index vs. constituents", count: themes.themes.length },
     { id: "dividends", label: "Dividend Scanner", sub: "Income by sector · yield", count: null },
-    { id: "all", label: "All stocks", sub: "Full universe · sortable", count: allCount },
   ];
 
-  // All-stocks is a 10-column browse table; give it the full width so it uses
-  // the side gutters instead of scrolling. The per-stock scanners now carry a
-  // sector→industry tree on the left, so they need the wide layout too — the
-  // tree eats ~230px and the table would otherwise be squeezed. Only the
-  // rotation tabs (Sectors / Peers), which have no tree, stay in the tighter
-  // reading column.
+  // The per-stock scanners carry a sector→industry tree on the left, so they
+  // need the wide layout — the tree eats ~230px and the table would otherwise
+  // be squeezed. Only the rotation tabs (Sectors / Peers), which have no tree,
+  // stay in the tighter reading column.
   const wide =
-    tab === "all" ||
     tab === "graph" ||
     tab === "dividends" ||
     tab === "igniting" ||
@@ -306,11 +280,8 @@ export default function ScannerTabs({
           <nav className="flex flex-col gap-1" role="tablist" aria-orientation="vertical">
             {tabs.map((t) => {
               const active = tab === t.id;
-              // "All stocks" is the full-universe browse surface, not a caught
-              // signal — set it off below a partition from the scanners above.
-              const partitionBefore = t.id === "all";
               return (
-                <div key={t.id} className={partitionBefore ? "mt-2 pt-2 border-t hairline" : undefined}>
+                <div key={t.id}>
                 <button
                   role="tab"
                   aria-selected={active}
@@ -421,13 +392,6 @@ export default function ScannerTabs({
             />
           )}
           {tab === "fallen" && <FallenLeadersClient n500Only={n500Only} />}
-          {tab === "all" && (
-            allStocksData === null ? (
-              <PanelLoading label="Loading full universe…" />
-            ) : (
-              <AllStocksClient snapDate={allStocksData.snapDate} rows={allStocksData.rows} n500Only={n500Only} />
-            )
-          )}
           {tab === "graph" && (
             graphUniverse === null ? (
               <PanelLoading label="Loading candle universe…" />
