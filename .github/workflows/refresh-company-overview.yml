@@ -1,5 +1,7 @@
-# Daily company-overview worker — fills app.company_overview from Screener's
-# Key Points, 80 symbols a night.
+# Company-overview worker — fills app.company_overview from Screener's Key
+# Points, 80 symbols a run.
+#
+# MANUAL ONLY. Actions tab -> "Run workflow". There is deliberately no cron.
 #
 # WHY IT EXISTS
 #
@@ -8,14 +10,33 @@
 # this repo is on a cron; this one had been run by hand, twice, alphabetically
 # — which is why the stored rows are almost all symbols starting A, B or C.
 #
-# WHY 80, AND WHY DAILY
+# WHY 80
 #
 # 80 is not a throttle we chose. Screener's Key Points endpoint enforces a HARD
 # DAILY QUOTA of 80 and past it returns HTTP 200 with a 381-byte stub reading
 # "We allow 80 key-insights per day." Sleeping does not clear it; it resets
-# daily. So 80/day is the ceiling the source imposes, and daily is the only
-# cadence that uses it. The backfill drains in roughly 31 days and the job then
-# settles into near-zero work, governed by app.company_overview_attempt.retry_after.
+# daily. So 80 is the ceiling the source imposes on any single day, and running
+# twice in one day gains nothing — the second run exits 3 immediately.
+#
+# WHY MANUAL, AND WHAT IT COSTS
+#
+# Each symbol costs one Haiku call, so an unattended nightly job spends money
+# unattended. Deb runs it in his presence to keep that spend visible. The
+# tradeoff is real and is recorded here rather than left to be rediscovered:
+# app.company_overview sat at 178 of 2,591 rows precisely BECAUSE this was the
+# one ingest with no schedule — run by hand, twice, alphabetically. At 80 a run
+# the backfill needs ~31 runs to drain. If they stop happening it stalls part
+# way through the alphabet again, which is the CLAUDE.md section 5 failure in
+# its purest form.
+#
+# The queue itself does not care about cadence: app.company_overview_attempt
+# .retry_after means a run picks up wherever the last one stopped, whether that
+# was yesterday or a month ago. Nothing is lost by running irregularly except
+# time. Once drained, a run settles into near-zero work.
+#
+# If this is ever put back on a cron, do it with an API key issued inside a
+# spend-capped Anthropic workspace, so the cap enforces the budget instead of
+# Deb watching the run.
 #
 # EXIT CODES — READ THIS BEFORE "FIXING" A RED RUN
 #
@@ -26,18 +47,17 @@
 #   1  a real failure: session cookie dead or expired mid-run, or a crash.
 #      Raises the GitHub issue below.
 #
-# Conflating 3 with 1 would mean a red run every single night of the backfill,
-# and an alert nobody reads is the only kind that truly stops working.
+# Conflating 3 with 1 would mean a red run on every run of the backfill that
+# hits the wall, and an alert nobody reads is the only kind that truly stops
+# working.
 #
-# 19:00 UTC = 00:30 IST. Chosen so the run starts just after Indian midnight,
-# when Screener's daily counter is most likely to have reset, and clear of the
-# 18:00 Saturday DQ check and the 22:00 announcements sweep.
+# BEST TIME TO RUN: after 00:00 IST, when Screener's daily counter has most
+# likely reset. Running earlier in the Indian day risks colliding with a
+# counter already partly spent by a previous run.
 
 name: Refresh Company Overviews
 
 on:
-  schedule:
-    - cron: '0 19 * * *'
   workflow_dispatch:
     inputs:
       limit:
@@ -108,7 +128,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TITLE="🚨 Daily company-overview refresh FAILED"
+          TITLE="🚨 Company-overview refresh FAILED"
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           BODY=$(printf '%s\n' \
             "The company-overview worker did not complete cleanly at $(date -u '+%Y-%m-%d %H:%M UTC')." \
