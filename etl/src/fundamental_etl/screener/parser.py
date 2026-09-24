@@ -41,21 +41,49 @@ PNL_LABELS = {
 }
 
 # Annual expense components — Screener decomposes "Expenses" into these in the
-# PROFIT & LOSS section. We sum them per period to derive:
-#   expenses          = sum of these components (None-safe; missing == skip)
+# PROFIT & LOSS section. We combine them per period to derive:
+#   expenses          = sum(components x their sign; None-safe, missing == skip)
 #   operating_profit  = sales - expenses
 # This is Screener's own definition of OP (Interest, Depreciation, and Other
 # Income are NOT subtracted here — they're separate rows). The derivation
 # happens at the end of parse_export(), see below.
-PNL_EXPENSE_COMPONENTS = {
-    "Raw Material Cost",
-    "Change in Inventory",
-    "Power and Fuel",
-    "Other Mfr. Exp",
-    "Employee Cost",
-    "Selling and admin",
-    "Other Expenses",
+#
+# THE SIGN IS NOT DECORATION — "Change in Inventory" is -1 and everything else
+# is +1, because an inventory BUILD is not a cost of the period. Screener
+# reports it as a positive number meaning "inventory rose by this much", and
+# cost of goods sold is Raw Material Cost MINUS that build. Summing it like an
+# ordinary expense double-counts stock the company still owns.
+#
+# Measured cost of getting this wrong, on TITAN FY26 (verified against the
+# company's own filing to BSE dated 2026-08-07, year ended 31-Mar-2026):
+#
+#   Change in Inventory        9,936
+#   expenses  added / correct  99,099 / 79,227   (filing: 81,235 incl. dep+interest)
+#   operating_profit           -11,515 / 8,357   (filing-derived: 8,355)
+#
+# Titan was shown on the live site as making a ~11,500 crore OPERATING LOSS on
+# 87,584 crore of sales while reporting a 6,801 crore profit before tax. 302
+# companies were in that impossible state; 1,408 of 2,602 had their latest-year
+# operating profit off by more than 1% of sales.
+#
+# What makes the fix checkable rather than plausible: every term of
+#   operating_profit = profit_before_tax - other_income + depreciation + interest
+# is sourced independently from this sheet, so it is a SECOND route to the same
+# number that shares no inputs with the component sum. The two agree exactly on
+# TITAN for FY17, FY25 and FY26. dq.py asserts this identity across the whole
+# table — that assertion is what would have caught this on day one, and it is
+# the only reason to prefer this derivation over "sales - sum(components)",
+# which can never disagree with itself and so passed on the broken data.
+PNL_EXPENSE_COMPONENT_SIGNS = {
+    "Raw Material Cost": 1.0,
+    "Change in Inventory": -1.0,
+    "Power and Fuel": 1.0,
+    "Other Mfr. Exp": 1.0,
+    "Employee Cost": 1.0,
+    "Selling and admin": 1.0,
+    "Other Expenses": 1.0,
 }
+PNL_EXPENSE_COMPONENTS = frozenset(PNL_EXPENSE_COMPONENT_SIGNS)
 
 QUARTER_LABELS = {
     "Sales": "sales",
@@ -256,15 +284,18 @@ def parse_export(xlsx_bytes: bytes) -> ParsedExport:
                 out.annual.setdefault(period_dates[i], {})[col] = v
 
         elif section == "pnl" and label in PNL_EXPENSE_COMPONENTS:
-            # Accumulate expense components for later aggregation. Sum of
-            # these per period → "expenses"; sales − expenses → "operating_profit".
+            # Accumulate expense components for later aggregation, each carrying
+            # its own sign (see PNL_EXPENSE_COMPONENT_SIGNS — "Change in
+            # Inventory" is negative). Signed sum per period → "expenses";
+            # sales − expenses → "operating_profit".
+            sign = PNL_EXPENSE_COMPONENT_SIGNS[label]
             for i, val in enumerate(row[1:], start=0):
                 if i >= len(period_dates) or period_dates[i] is None:
                     continue
                 v = _to_float(val)
                 if v is None:
                     continue
-                pnl_expense_acc.setdefault(period_dates[i], []).append(v)
+                pnl_expense_acc.setdefault(period_dates[i], []).append(sign * v)
 
         elif section == "quarters" and label in QUARTER_LABELS:
             col = QUARTER_LABELS[label]
