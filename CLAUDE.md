@@ -119,6 +119,14 @@ So:
   `gh api "repos/vedarthain/Fundamental/deployments?per_page=3" --jq '.[] | {env:.environment, sha:.sha[0:7], at:.created_at}'`
   and the build result:
   `gh api repos/vedarthain/Fundamental/commits/<sha>/status --jq '.state'`
+- **Run each of those once. Never poll, loop, or sleep-and-retry waiting for a
+  build to go green.** If the state comes back `pending`, that IS the answer:
+  report "deployment created, build in progress" and stop. Waiting adds no
+  information — the deployment record already proves the push shipped, which is
+  the only thing the check above exists to establish. A green tick two minutes
+  later changes nothing about what Deb needs to do next, and burning a turn on
+  `for i in $(seq ...)` is time he is paying for. If a build actually failed,
+  it surfaces on its own.
 - Before executing `zz`, say plainly that it ships to production, and say what
   day it is. The Saturday/Sunday rule has nothing else to bind to.
 - A push that changes what the site shows is not finished until the Data Cache
