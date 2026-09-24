@@ -34,6 +34,13 @@ factsheet/
 # Local-only docs folder — never pushed.
 docs/
 
+# Local-only, same rule as docs/ above: no backup anywhere, exists on one
+# machine, never `rm`. A fresh clone will not carry these — absent, not
+# deleted. Both were tracked until this commit; untracking stops future
+# commits and does not rewrite past ones.
+CLAUDE.md
+backlog_ideas/
+
 # Local working dirs. None of these was ever tracked, but none was ignored
 # either — one `git add -A` would have swept them into a PUBLIC repo.
 # Listed explicitly so that stays impossible.
