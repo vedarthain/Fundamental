@@ -18,6 +18,10 @@ on:
     - cron: '0 22 * * *'   # 22:00 UTC = 03:30 IST
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+  issues: write
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
@@ -63,3 +67,49 @@ jobs:
           APP_DB_URL:       ${{ secrets.NEON_APP_URL }}
           PYTHONUNBUFFERED: "1"
         run: python scripts/fetch-announcements.py --max-minutes 92
+
+      # This job failed on 2026-09-19 and again on 2026-09-24 — both times with
+      # a 403 from api.bseindia.com, both times telling nobody. It was noticed
+      # five days later, by hand, while looking at something else.
+      #
+      # app.announcement is no longer just a feed on the stock page: it is the
+      # input to scripts/build-overview-from-filing.mjs, which builds company
+      # overviews from the BSE annual report PDFs listed in it. This cron went
+      # load-bearing without gaining any supervision, so a silent stall now
+      # means overviews silently stop being refreshable too.
+      #
+      # cancelled() is included because the 100-minute job timeout is a real
+      # outcome here, not a hypothetical — the sweep already takes ~55 min and
+      # the mapped universe grows.
+      - name: Raise a loud alert on failure
+        if: failure() || cancelled()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TITLE="🚨 Daily BSE announcements refresh FAILED"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          BODY=$(printf '%s\n' \
+            "The daily announcements sweep did not complete cleanly at $(date -u '+%Y-%m-%d %H:%M UTC')." \
+            "" \
+            "Status: ${{ job.status }}. A 'cancelled' status means the 100-min job timeout fired." \
+            "" \
+            "Run log: $RUN_URL" \
+            "" \
+            "**Most likely cause:** api.bseindia.com answering 403. It did exactly this on 2026-09-19 and 2026-09-24. Note that www.bseindia.com (the PDF and XBRL host) is a DIFFERENT host and is usually unaffected — only filing DISCOVERY breaks." \
+            "" \
+            "The script now fails deliberately in three cases, all of which used to exit 0:" \
+            "- more than 5% of per-symbol fetches errored (healthy baseline is 0%)" \
+            "- fewer than 50% of active symbols mapped to a BSE scrip code (a truncated scrip master)" \
+            "- zero symbols attempted" \
+            "" \
+            "**Impact:** app.announcement is stale. That feeds the stock-page filings list AND scripts/build-overview-from-filing.mjs, so company overviews cannot be rebuilt from primary filings until this is fixed." \
+            "" \
+            "The sweep is idempotent and resumable (least-recently-fetched first) — once BSE is reachable, just re-run the workflow.")
+          EXISTING=$(gh issue list --state open --search "$TITLE in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+            echo "Appended to existing alert issue #$EXISTING"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+            echo "Opened a new alert issue"
+          fi

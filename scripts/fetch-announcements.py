@@ -46,6 +46,11 @@ FETCH_DAYS = 30
 KEEP_DAYS = 180
 # Cap rows per symbol per run so a chatty filer can't bloat the table.
 MAX_PER_SYMBOL = 40
+# Failure ceilings — see the exit guard at the end of main() for why these
+# numbers and not others. Both are measured against the healthy run of
+# 2026-09-22: 0/2,041 fetch errors, 2,041/2,148 symbols mapped.
+MAX_ERROR_FRACTION = 0.05
+MIN_MAPPED_FRACTION = 0.50
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
@@ -181,19 +186,36 @@ def main() -> None:
         print(f"Mapped {len(mapped)}/{len(universe)} symbols to BSE codes "
               f"· window {frm}–{to}", file=sys.stderr)
 
+        # A degraded scrip master is a 200 with too few rows, not an exception.
+        # Measured healthy: 2,041 of 2,148 mapped (95%) on 2026-09-22. The floor
+        # is deliberately far below that — it is here to catch a truncated or
+        # empty master, not to police normal ISIN churn.
+        if universe and len(mapped) < MIN_MAPPED_FRACTION * len(universe):
+            raise SystemExit(
+                f"ABORT: only {len(mapped)}/{len(universe)} symbols mapped to BSE codes "
+                f"(floor {MIN_MAPPED_FRACTION:.0%}). The scrip master returned 200 but is "
+                f"truncated or empty — continuing would sweep a fraction of the universe "
+                f"and exit 0, which looks identical to a healthy run."
+            )
+
         start = time.monotonic()
-        total, ok = 0, 0
+        total, ok, errors, attempted = 0, 0, 0, 0
         for i, (sym, code) in enumerate(mapped, 1):
             if args.max_minutes and (time.monotonic() - start) / 60 >= args.max_minutes:
                 print(f"  ⏱ {args.max_minutes:.0f}m budget reached at {i-1}/{len(mapped)} "
                       f"— stopping cleanly (resumes next run).", file=sys.stderr)
                 break
+            attempted += 1
             try:
                 # Short per-call timeout: a slow/hanging BSE response otherwise
                 # burns 15s each and balloons the run past the job timeout.
                 data = get_json(ANN_URL.format(code=code, frm=frm, to=to), timeout=8)
             except (HTTPError, URLError, TimeoutError, ValueError) as e:
                 # Don't mark fetched — leave it high-priority for next run.
+                # Counted, not just printed: see the exit guard at the end of
+                # main(). Swallowing these one at a time is how a total BSE
+                # blackout used to finish green.
+                errors += 1
                 print(f"  ! {sym} ({code}): {type(e).__name__}", file=sys.stderr)
                 time.sleep(args.throttle)
                 continue
@@ -245,7 +267,38 @@ def main() -> None:
             cur.execute("DELETE FROM app.announcement WHERE published_at < %s", (cutoff,))
         conn.commit()
 
-    print(f"Done — {total} announcements across {ok} symbols (of {len(mapped)} mapped).")
+    print(f"Done — {total} announcements across {ok} symbols (of {len(mapped)} mapped) "
+          f"· {errors}/{attempted} fetches errored.")
+
+    # THE POINT OF THIS BLOCK.
+    #
+    # Every per-symbol failure above is caught and `continue`d, which is correct
+    # for one flaky scrip and catastrophic for all of them. On 2026-09-19 and
+    # 2026-09-24 api.bseindia.com began answering 403 to everything. The 24th
+    # crashed in build_isin_to_code() and went red — but only by luck: that call
+    # is the one uncaught one. Had the block started a few symbols later, the
+    # loop would have absorbed 2,041 consecutive 403s, printed "Done — 0
+    # announcements across 0 symbols", and exited 0. A green tick on a job that
+    # fetched nothing, feeding app.announcement, which is now the input to the
+    # filing-sourced overview builder. That is CLAUDE.md section 5 exactly: a
+    # check that cannot fail.
+    #
+    # The threshold is set from measurement, not intuition. The healthy run of
+    # 2026-09-22 errored on 0 of 2,041 fetches — the normal rate is literally
+    # zero, so 5% is two orders of magnitude of headroom and still rejects the
+    # blackout (100%) outright. A fix must fail on the bug it fixes; this one
+    # does, and the margin means it will not cry wolf on a slow BSE night.
+    if attempted and errors / attempted > MAX_ERROR_FRACTION:
+        raise SystemExit(
+            f"FAILED: {errors}/{attempted} fetches errored "
+            f"({errors / attempted:.0%}, ceiling {MAX_ERROR_FRACTION:.0%}). "
+            f"BSE is refusing us — check for a 403 from api.bseindia.com. "
+            f"Announcements are NOT up to date."
+        )
+    # Zero attempts is not success either. It means the budget expired before a
+    # single symbol, or the universe query returned nothing.
+    if not attempted:
+        raise SystemExit("FAILED: 0 symbols attempted — nothing was fetched.")
 
 
 if __name__ == "__main__":
