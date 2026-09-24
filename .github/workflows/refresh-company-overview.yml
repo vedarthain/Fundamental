@@ -1,0 +1,138 @@
+# Daily company-overview worker — fills app.company_overview from Screener's
+# Key Points, 80 symbols a night.
+#
+# WHY IT EXISTS
+#
+# Measured on production 2026-09-24: 178 of 2,591 active symbols had an
+# overview row. The other 2,413 render an empty panel. Every other ingest in
+# this repo is on a cron; this one had been run by hand, twice, alphabetically
+# — which is why the stored rows are almost all symbols starting A, B or C.
+#
+# WHY 80, AND WHY DAILY
+#
+# 80 is not a throttle we chose. Screener's Key Points endpoint enforces a HARD
+# DAILY QUOTA of 80 and past it returns HTTP 200 with a 381-byte stub reading
+# "We allow 80 key-insights per day." Sleeping does not clear it; it resets
+# daily. So 80/day is the ceiling the source imposes, and daily is the only
+# cadence that uses it. The backfill drains in roughly 31 days and the job then
+# settles into near-zero work, governed by app.company_overview_attempt.retry_after.
+#
+# EXIT CODES — READ THIS BEFORE "FIXING" A RED RUN
+#
+#   0  worked, or nothing was due (the steady state)
+#   3  Screener's daily allowance ran out mid-run. NOT A FAILURE. The rows
+#      built before the wall are good; the rest are still queued. Run again
+#      tomorrow. The step below translates 3 to success deliberately.
+#   1  a real failure: session cookie dead or expired mid-run, or a crash.
+#      Raises the GitHub issue below.
+#
+# Conflating 3 with 1 would mean a red run every single night of the backfill,
+# and an alert nobody reads is the only kind that truly stops working.
+#
+# 19:00 UTC = 00:30 IST. Chosen so the run starts just after Indian midnight,
+# when Screener's daily counter is most likely to have reset, and clear of the
+# 18:00 Saturday DQ check and the 22:00 announcements sweep.
+
+name: Refresh Company Overviews
+
+on:
+  schedule:
+    - cron: '0 19 * * *'
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Symbols to attempt (default 80 = Screener daily quota)'
+        required: false
+        default: '80'
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: company-overview
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      APP_DB_URL: ${{ secrets.NEON_APP_URL }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      SCREENER_SESSIONID: ${{ secrets.SCREENER_SESSIONID }}
+      SCREENER_CSRFTOKEN: ${{ secrets.SCREENER_CSRFTOKEN }}
+      FUNDAMENTAL_ALLOW_REMOTE_DB: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # The script imports `postgres` and the Anthropic SDK from
+      # web/node_modules rather than declaring its own dependencies, so the web
+      # install is a hard prerequisite, not a convenience.
+      - name: Install web deps
+        working-directory: web
+        run: npm ci --no-audit --no-fund
+
+      - name: Build overviews
+        id: build
+        run: |
+          set +e
+          node scripts/build-company-overview.mjs --queue "${{ github.event.inputs.limit || 80 }}"
+          code=$?
+          set -e
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          # 3 == Screener daily quota reached. Expected on every night of the
+          # backfill; the work done before the wall is committed and good.
+          if [ "$code" = "3" ]; then
+            echo "Screener daily allowance reached — partial run, this is normal."
+            exit 0
+          fi
+          exit $code
+
+      # The staleness sweep is a SEPARATE step so its failure is distinguishable
+      # from the build's. It exits 1 when a stored overview quotes a fiscal year
+      # more than one full year behind the last completed one, or when a newer
+      # annual report supersedes a filing-sourced row. Reported, never fatal:
+      # stale rows are a backlog to work through, not a broken pipeline.
+      - name: Staleness sweep (report only)
+        if: always() && steps.build.outputs.code != '1'
+        continue-on-error: true
+        run: node scripts/build-company-overview.mjs --audit
+
+      - name: Raise a loud alert on failure
+        if: failure() || cancelled()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TITLE="🚨 Daily company-overview refresh FAILED"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          BODY=$(printf '%s\n' \
+            "The company-overview worker did not complete cleanly at $(date -u '+%Y-%m-%d %H:%M UTC')." \
+            "" \
+            "Run: $RUN_URL" \
+            "" \
+            "**Most likely cause: the Screener session cookie has expired.**" \
+            "" \
+            "Screener does not return 401 for a dead session. It answers HTTP 200 with its" \
+            "Register/Login page — measured at 20,236 bytes against 5,779 for a real wiki" \
+            "fragment — which survives tag-stripping as valid-looking text. The script now" \
+            "detects it by the presence of <html>/csrfmiddlewaretoken in what should be an" \
+            "XHR fragment, probes the session BEFORE writing anything, and refuses to write" \
+            "a zero-row overview under any circumstance. If this issue is open, all three" \
+            "held and nothing was corrupted." \
+            "" \
+            "**Fix:** log in to screener.in, copy the sessionid and csrftoken cookies, and" \
+            "update the SCREENER_SESSIONID / SCREENER_CSRFTOKEN repository secrets." \
+            "" \
+            "Note: exit code 3 (daily quota reached) is NOT a failure and does not reach" \
+            "this step. If you are reading this, it was exit 1 or a crash.")
+          EXISTING=$(gh issue list --state open --search "$TITLE in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+          fi

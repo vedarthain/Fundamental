@@ -32,6 +32,9 @@
  *   set -a && . ./.env.local && set +a
  *   node scripts/build-company-overview.mjs SYM1 SYM2 ...
  *   node scripts/build-company-overview.mjs --file syms.txt [--force]
+ *   node scripts/build-company-overview.mjs --queue 80        # daily worker
+ *   node scripts/build-company-overview.mjs --queue 80 --dry-run
+ *   node scripts/build-company-overview.mjs --audit           # staleness sweep
  *
  * Writes to APP_DB_URL. Local by default; pointing it at Neon is the same
  * deliberate act as any other remote write.
@@ -150,6 +153,33 @@ function cleanWiki(html) {
  */
 const QUOTA_MARKER = /key-insights per day/i;
 const QUOTA = Symbol("screener-daily-quota-exhausted");
+
+/**
+ * THE FOURTH RETURN VALUE: the session is dead.
+ *
+ * MEASURED 2026-09-24, same request with two cookies:
+ *
+ *   garbage cookie -> 20,236 bytes, a FULL HTML PAGE: "Register - Screener …
+ *                     Home Screens Tools Login …"
+ *   real cookie    ->  5,779 bytes, an HTML FRAGMENT: "About [edit]
+ *                     Incorporated in 1986, Aban Offshore is in the business…"
+ *
+ * The commentary endpoint does not 401 and does not redirect visibly. It
+ * returns the registration page with HTTP 200. After cleanWiki() strips the
+ * tags that page still yields well over 600 characters of navigation text, so
+ * the length gate below passes it, Haiku is handed a login form, and the row
+ * is written as source='screener_keypoints' with ZERO extracted rows and
+ * retry_after six months out. That is not hypothetical: it happened on the
+ * first test of the queue worker and put 4 empty rows into production.
+ *
+ * WHY THIS MARKER AND NOT A LENGTH OR A TITLE. The endpoint is an XHR
+ * fragment — a correct response contains no <html> element and no Django CSRF
+ * field. Their presence means we were served a page instead of a fragment,
+ * which is true for the login page, the register page and any future
+ * interstitial, without needing to enumerate them.
+ */
+const LOGGED_OUT_MARKER = /<html|csrfmiddlewaretoken|auth-partition/i;
+const LOGGED_OUT = Symbol("screener-session-expired");
 /** Screener's stated allowance. Used only to size a run, never to trust. */
 export const SCREENER_DAILY_KEYPOINTS = 80;
 
@@ -162,15 +192,20 @@ async function fetchKeyPoints(symbol, cookie) {
     if (html.includes("Too many requests")) { await sleep(20000); continue; }
     const m = html.match(/data-url="(\/wiki\/company\/\d+\/commentary\/v2\/)"/);
     if (!m) return null;                       // no wiki page for this company
+    // Checked on the COMPANY page too, not only the wiki fragment: a dead
+    // session can still expose the data-url while refusing the fragment.
     await sleep(2500);
     const wiki = await fetch("https://www.screener.in" + m[1], {
       headers: { ...UA, cookie, "X-Requested-With": "XMLHttpRequest", Referer: pageUrl },
     });
     const wtext = await wiki.text();
     if (wtext.includes("Too many requests")) { await sleep(20000); continue; }
-    // Checked BEFORE the length test: the quota stub is 381 bytes and would
-    // otherwise fall straight through the >= 600 gate into a null return.
+    // Both checked BEFORE the length test. The quota stub is 381 bytes and
+    // would fall through the >= 600 gate into a null return; the logged-out
+    // page is 20,236 bytes and would sail OVER it into a bogus success. Length
+    // separates neither — only the markers do.
     if (QUOTA_MARKER.test(wtext)) return QUOTA;
+    if (LOGGED_OUT_MARKER.test(wtext)) return LOGGED_OUT;
     const cleaned = cleanWiki(wtext);
     // Below this it is a stub page ("About" + a one-liner), not worth preferring
     // over yfinance prose. Observed real Key Points run 2,700-5,800 chars.
@@ -233,6 +268,65 @@ async function extract(client, row, text) {
 function lastCompletedFy(now = new Date()) {
   const y = now.getUTCFullYear();
   return now.getUTCMonth() >= 3 ? y : y - 1; // month 3 == April
+}
+
+/**
+ * How long to wait before asking about a symbol again, keyed by what happened
+ * last time. Rationale for each window lives in migration 0076; the short
+ * version is that a company description changes about once a year and the
+ * Screener allowance is 80/day, so re-asking sooner buys nothing and costs the
+ * backfill.
+ */
+const RETRY_DAYS = { built: 180, unchanged: 45, no_input: 90, kept_existing: 90 };
+
+/**
+ * Pick the next `n` symbols for the daily worker.
+ *
+ * ORDER, AND WHY IT IS THIS ORDER
+ *
+ * 1. Symbols with NO overview row at all come first. Measured on prod
+ *    2026-09-24: 178 of 2,591 symbols have a row, so 2,413 have nothing and a
+ *    user visiting any of them sees an empty panel. A missing row is a visible
+ *    hole; a 45-day-old row is not.
+ * 2. Within that, least-recently-attempted first (never-attempted first of
+ *    all), so the queue sweeps rather than re-chewing the same head.
+ *
+ * `retry_after` is what stops this from being a queue that cannot drain — see
+ * migration 0076. Without it the 451 symbols with neither a Screener wiki page
+ * nor yfinance prose would consume the entire allowance every night, forever.
+ */
+async function selectQueue(db, n) {
+  return (await db`
+    SELECT u.symbol
+      FROM app.universe u
+      LEFT JOIN app.company_overview o         ON o.symbol = u.symbol
+      LEFT JOIN app.company_overview_attempt a ON a.symbol = u.symbol
+     WHERE u.is_active
+       AND (a.retry_after IS NULL OR a.retry_after <= now())
+     ORDER BY (o.symbol IS NOT NULL),
+              a.retry_after NULLS FIRST,
+              u.symbol
+     LIMIT ${n}`).map((r) => r.symbol);
+}
+
+/**
+ * Record that a symbol was attempted, whatever the outcome.
+ *
+ * Called for every symbol the loop actually fetched — including the ones that
+ * produced nothing. That is the entire point: a failure that leaves no trace
+ * is a symbol the queue will re-serve tomorrow.
+ */
+async function recordAttempt(db, symbol, outcome) {
+  const days = RETRY_DAYS[outcome];
+  await db`
+    INSERT INTO app.company_overview_attempt
+           (symbol, last_attempt_at, last_outcome, attempts, retry_after)
+    VALUES (${symbol}, now(), ${outcome}, 1, now() + (${days} || ' days')::interval)
+    ON CONFLICT (symbol) DO UPDATE
+          SET last_attempt_at = now(),
+              last_outcome    = EXCLUDED.last_outcome,
+              attempts        = app.company_overview_attempt.attempts + 1,
+              retry_after     = EXCLUDED.retry_after`;
 }
 
 /**
@@ -339,8 +433,11 @@ const IS_CLI = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(imp
 if (IS_CLI) (async () => {
   const args = process.argv.slice(2);
   const force = args.includes("--force");
+  const dryRun = args.includes("--dry-run");
+  const queueIdx = args.indexOf("--queue");
+  const queueN = queueIdx >= 0 ? Number(args[queueIdx + 1]) : 0;
   const fileIdx = args.indexOf("--file");
-  let symbols = args.filter((a) => !a.startsWith("--"));
+  let symbols = args.filter((a, i) => !a.startsWith("--") && i !== queueIdx + 1);
   if (fileIdx >= 0) {
     symbols = readFileSync(args[fileIdx + 1], "utf8").split(/\s+/).filter(Boolean);
     symbols = symbols.filter((s) => s !== args[fileIdx + 1]);
@@ -349,21 +446,102 @@ if (IS_CLI) (async () => {
     if (!process.env.APP_DB_URL) throw new Error("APP_DB_URL not set");
     return audit(postgres(process.env.APP_DB_URL, { max: 1, idle_timeout: 5 }));
   }
-  if (!symbols.length) {
+  if (queueIdx >= 0 && (!Number.isInteger(queueN) || queueN < 1)) {
+    console.error("--queue needs a positive integer, e.g. --queue 80");
+    process.exit(2);
+  }
+  if (!symbols.length && queueIdx < 0) {
     console.error("usage: node scripts/build-company-overview.mjs SYM [SYM...] [--force]\n" +
+                  "       node scripts/build-company-overview.mjs --queue 80 [--dry-run]\n" +
                   "       node scripts/build-company-overview.mjs --audit   # staleness sweep, exits 1 on stale rows");
     process.exit(2);
   }
-  if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY not set");
   if (!process.env.APP_DB_URL) throw new Error("APP_DB_URL not set");
+  if (!dryRun && !process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY not set");
 
   const cookie = cookieHeader();
-  if (!cookie) console.error("!! No Screener cookies — falling back to yfinance prose for every symbol.");
+  // A MISSING COOKIE IS FATAL IN QUEUE MODE, AND ONLY IN QUEUE MODE.
+  //
+  // By hand, falling back to yfinance prose is a choice the operator can see
+  // on their own terminal. Unattended it is the exact shape of failure this
+  // repo keeps shipping: the job runs, writes 80 rows from the worse source,
+  // exits 0, and the degradation is invisible until someone reads a stock page.
+  // The announcements cron did precisely this until 2026-09-24.
+  if (!cookie) {
+    if (queueIdx >= 0) {
+      console.error("FAILED: SCREENER_SESSIONID / SCREENER_CSRFTOKEN not set. Every symbol " +
+                    "would be written from yfinance prose, which is a silent downgrade. " +
+                    "Refusing to run unattended.");
+      process.exit(1);
+    }
+    console.error("!! No Screener cookies — falling back to yfinance prose for every symbol.");
+  }
 
   // `postgres` (porsager) rather than node-postgres — it is what web/src/lib/db.ts
   // already uses, so this script adds no dependency the app does not have.
   const db = postgres(process.env.APP_DB_URL, { max: 2, idle_timeout: 10 });
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+  if (queueIdx >= 0) {
+    symbols = await selectQueue(db, queueN);
+    const due = await db`
+      SELECT count(*)::int AS n FROM app.universe u
+        LEFT JOIN app.company_overview_attempt a ON a.symbol = u.symbol
+       WHERE u.is_active AND (a.retry_after IS NULL OR a.retry_after <= now())`;
+    const missing = await db`
+      SELECT count(*)::int AS n FROM app.universe u
+        LEFT JOIN app.company_overview o ON o.symbol = u.symbol
+       WHERE u.is_active AND o.symbol IS NULL`;
+    console.log(`queue: ${due[0].n} symbol(s) due, ${missing[0].n} with no overview at all; ` +
+                `taking ${symbols.length}`);
+    if (dryRun) { console.log(symbols.join(" ")); await db.end(); return; }
+    // Not an error. It means the backfill has drained and nothing is due yet —
+    // the steady state this job is supposed to reach.
+    if (!symbols.length) { console.log("nothing due today."); await db.end(); return; }
+
+    // PRE-FLIGHT SESSION PROBE. Costs one unit of the 80/day allowance and is
+    // the difference between catching a dead cookie and discovering it after
+    // writing 80 downgraded rows.
+    //
+    // An EXPIRED Screener session does not error. www.screener.in answers 200
+    // with a logged-out page, that page carries no data-url="/wiki/company/..."
+    // attribute, and fetchKeyPoints returns null — the SAME value it returns
+    // for "this company genuinely has no wiki page". Per symbol the two are
+    // indistinguishable. So the run would fall through to yfinance prose for
+    // every symbol, print built=80, exit 0, and stamp retry_after = +180 days
+    // so nothing revisits the damage for half a year.
+    //
+    // WHAT MAKES THIS ABLE TO FAIL (CLAUDE.md section 5): the probe symbol is
+    // not a constant. It is read from the database as a symbol that ALREADY
+    // produced Key Points on a previous run, so a null can only mean the
+    // session died — not that we guessed an obscure company. Feed it a
+    // garbage cookie and it exits 1; that is the test, and it is in the
+    // commit message.
+    const probeRow = await db`
+      SELECT symbol FROM app.company_overview
+       WHERE source = 'screener_keypoints' ORDER BY generated_at DESC LIMIT 1`;
+    if (probeRow.length) {
+      const probe = await fetchKeyPoints(probeRow[0].symbol, cookie);
+      if (probe === QUOTA) {
+        console.log(`Screener daily allowance already exhausted (probe ${probeRow[0].symbol}). ` +
+                    `Nothing attempted; run again tomorrow.`);
+        await db.end(); process.exit(3);
+      }
+      if (probe === LOGGED_OUT || !probe) {
+        console.error(
+          `FAILED: session probe on ${probeRow[0].symbol} ` +
+          (probe === LOGGED_OUT
+            ? `was served Screener's login/register page instead of the wiki fragment.`
+            : `returned no Key Points, but that symbol's stored overview WAS built from ` +
+              `Key Points, so the page has not simply disappeared.`) +
+          ` Refresh SCREENER_SESSIONID / SCREENER_CSRFTOKEN. Nothing was written.`
+        );
+        await db.end(); process.exit(1);
+      }
+      console.log(`session probe ${probeRow[0].symbol}: ${probe.length} chars — cookie is live`);
+      await sleep(3000);
+    }
+  }
 
   const universe = await db`
     SELECT symbol, company_name, sector, coalesce(business_summary,'') AS business_summary
@@ -372,6 +550,7 @@ if (IS_CLI) (async () => {
   if (missing.length) console.error(`!! not in app.universe, skipped: ${missing.join(", ")}`);
 
   let built = 0, skipped = 0, noInput = 0, protectedRows = 0, quotaHit = false;
+  let attempted = 0, gotKeyPoints = 0, loggedOut = false, empty = 0;
   for (const row of universe) {
     const kp = await fetchKeyPoints(row.symbol, cookie);
 
@@ -389,6 +568,18 @@ if (IS_CLI) (async () => {
       break;
     }
 
+    // The session died mid-run. Everything after this point would be written
+    // from yfinance prose, silently, and stamped six months fresh. Stop — the
+    // work already done is good, exactly as with the quota.
+    if (kp === LOGGED_OUT) {
+      console.error(`\n!! Screener served its login page at ${row.symbol} — session expired ` +
+                    `mid-run. Stopping after ${built} build(s); nothing downgraded.`);
+      loggedOut = true;
+      break;
+    }
+
+    attempted++;
+    if (kp) gotKeyPoints++;
     const source = kp ? "screener_keypoints" : "yfinance";
     const text = kp || row.business_summary;
 
@@ -402,13 +593,15 @@ if (IS_CLI) (async () => {
         SELECT source FROM app.company_overview WHERE symbol = ${row.symbol}`;
       if (cur[0]?.source === "screener_keypoints") {
         console.log(`${row.symbol.padEnd(12)} keeping existing screener_keypoints row — refusing yfinance downgrade`);
-        protectedRows++; await sleep(3000); continue;
+        protectedRows++; await recordAttempt(db, row.symbol, "kept_existing");
+        await sleep(3000); continue;
       }
     }
 
     if (!text) {
       console.log(`${row.symbol.padEnd(12)} no input — skipped`);
-      noInput++; await sleep(3000); continue;
+      noInput++; await recordAttempt(db, row.symbol, "no_input");
+      await sleep(3000); continue;
     }
     const fp = sha(text);
 
@@ -417,11 +610,32 @@ if (IS_CLI) (async () => {
         SELECT source_sha256 FROM app.company_overview WHERE symbol = ${row.symbol}`;
       if (cur[0]?.source_sha256 === fp) {
         console.log(`${row.symbol.padEnd(12)} unchanged — skipped`);
-        skipped++; await sleep(3000); continue;
+        skipped++; await recordAttempt(db, row.symbol, "unchanged");
+        await sleep(3000); continue;
       }
     }
 
     const parsed = await extract(client, row, text);
+
+    // NEVER WRITE AN EMPTY OVERVIEW. This is the backstop to LOGGED_OUT, and
+    // it is deliberately independent of it: it holds whatever the cause.
+    //
+    // A zero-row extraction means the model was handed text it could not turn
+    // into a single supportable fact. On 2026-09-24 that text was Screener's
+    // registration page and four such rows reached production, each rendering
+    // an empty panel and each stamped retry_after = +180 days so nothing would
+    // revisit it until March. Writing nothing leaves the panel empty too — but
+    // it leaves the symbol in the queue, which is the difference between a gap
+    // and a gap that repairs itself.
+    //
+    // Recorded as an attempt so the queue does not re-serve it tomorrow, but on
+    // the SHORT no_input window rather than the 180-day built one.
+    if (!parsed.length) {
+      console.log(`${row.symbol.padEnd(12)} ${source} gave 0 rows from ${text.length} chars — NOT written`);
+      empty++; await recordAttempt(db, row.symbol, "no_input");
+      await sleep(3000); continue;
+    }
+
     const fy = latestFy(parsed);
     await db`
       INSERT INTO app.company_overview (symbol, rows, source, model, source_sha256, latest_fy, generated_at)
@@ -441,13 +655,42 @@ if (IS_CLI) (async () => {
       `-> ${parsed.length} rows  fy=${fy ?? "-"}${drift.length ? `  [drift: ${drift.join(", ")}]` : ""}`
     );
     built++;
+    await recordAttempt(db, row.symbol, "built");
     await sleep(3000);
   }
 
   console.log(
-    `\nbuilt=${built} skipped=${skipped} no_input=${noInput} ` +
-    `kept_existing=${protectedRows}${quotaHit ? " QUOTA_EXHAUSTED" : ""}`
+    `\nbuilt=${built} skipped=${skipped} no_input=${noInput} empty=${empty} ` +
+    `kept_existing=${protectedRows}${quotaHit ? " QUOTA_EXHAUSTED" : ""}` +
+    `${loggedOut ? " SESSION_EXPIRED" : ""}  key_points=${gotKeyPoints}/${attempted}`
   );
+  if (loggedOut) { await db.end(); process.exit(1); }
+
+  // SECOND NET, BEHIND THE PRE-FLIGHT PROBE.
+  //
+  // The probe catches a session that was already dead at 19:00 UTC. It cannot
+  // catch one that EXPIRES MID-RUN — an 80-symbol pass takes ~8 minutes, and a
+  // session invalidated at minute three leaves the remaining symbols silently
+  // downgraded to yfinance with the probe long since green.
+  //
+  // WHAT MAKES THIS ABLE TO FAIL. Measured on prod 2026-09-24: 152 of 178
+  // stored overviews are source='screener_keypoints', so the observed hit rate
+  // on real runs is ~85%. A floor of 25% over at least 10 attempts cannot be
+  // tripped by an unlucky batch of obscure smallcaps, and cannot be missed by a
+  // dead session, which scores 0%. A measurement with headroom, not a round
+  // number chosen to keep the run green (CLAUDE.md section 5).
+  const KEYPOINT_FLOOR = 0.25;
+  if (queueIdx >= 0 && attempted >= 10 && gotKeyPoints / attempted < KEYPOINT_FLOOR) {
+    console.error(
+      `\nFAILED: only ${gotKeyPoints}/${attempted} symbols returned Screener Key Points ` +
+      `(${(100 * gotKeyPoints / attempted).toFixed(0)}%, floor ${KEYPOINT_FLOOR * 100}%). ` +
+      `The session cookie has almost certainly expired — Screener answers 200 with a ` +
+      `logged-out page, which is indistinguishable from "no wiki page" per symbol. ` +
+      `Refresh SCREENER_SESSIONID / SCREENER_CSRFTOKEN.`
+    );
+    await db.end();
+    process.exit(1);
+  }
   // Exit 3 == "stopped early on the Screener quota". A wrapper that re-runs
   // this daily needs to tell that apart from success (0) and from a crash,
   // because the correct response is "run again tomorrow", not "investigate".
