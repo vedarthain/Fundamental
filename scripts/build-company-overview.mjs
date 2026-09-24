@@ -38,6 +38,8 @@
  */
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import postgres from "../web/node_modules/postgres/src/index.js";
 import Anthropic from "../web/node_modules/@anthropic-ai/sdk/index.mjs";
 
@@ -56,7 +58,7 @@ const MODEL = "claude-haiku-4-5";
 // Essel Propack) were forced into "Markets served", which means industries.
 // Every fact the richer source supplies needs a slot or it gets misfiled into
 // the nearest one.
-const SPINE = [
+export const SPINE = [
   "Core business",
   "Parent / group",
   "Business segments",
@@ -82,7 +84,7 @@ const SPINE = [
 // So no single audit is the rate, and app.company_overview stores the output
 // rather than regenerating it per render: a wrong row gets corrected in place
 // instead of re-rolled into a different wrong row.
-const SYSTEM = `You convert an Indian listed company's business description into a fixed key-value table.
+export const SYSTEM = `You convert an Indian listed company's business description into a fixed key-value table.
 
 ROWS — use ONLY these labels, in this order. Never invent a label, never rename one:
 ${SPINE.map((s) => `- ${s}`).join("\n")}
@@ -178,7 +180,7 @@ async function fetchKeyPoints(symbol, cookie) {
 }
 
 /** "| **Label** | value |" lines -> [{label, value}], order preserved. */
-function parseTable(md) {
+export function parseTable(md) {
   const out = [];
   for (const line of md.split("\n")) {
     const g = /^\|\s*\*\*(.+?)\*\*\s*\|\s*(.*?)\s*\|\s*$/.exec(line);
@@ -199,7 +201,7 @@ function parseTable(md) {
  * FY25 is the year ENDING March 2025 by Indian convention, hence 2000 + nn.
  * Both "FY24" and "FY2024" appear in Screener prose, so both parse.
  */
-function latestFy(rows) {
+export function latestFy(rows) {
   let best = null;
   for (const r of rows) {
     for (const m of `${r.label} ${r.value}`.matchAll(/\bFY\s?(\d{2}|\d{4})\b/gi)) {
@@ -267,18 +269,74 @@ async function audit(db) {
   const undated = await db`
     SELECT count(*)::int AS n FROM app.company_overview WHERE latest_fy IS NULL`;
 
-  console.log(`stored=${total[0].n}  undated=${undated[0].n}  stale=${rows.length}  (cutoff: FY<=${cutoff})`);
+  // SECOND STALENESS ROUTE, FOR source='filing' ONLY.
+  //
+  // WHY IT IS NEEDED: the FY-string test above can only fail on a row whose
+  // prose names a fiscal year. Filing-sourced rows frequently name none —
+  // BHARATFORG's annual report states its revenue split as a CHART, so
+  // pdftotext hands the model detached labels and numbers and the model
+  // correctly declines to pair them (prompt rule 2). The row is excellent and
+  // its latest_fy is NULL. Under the FY test alone, every such row would be
+  // permanently exempt from staleness — a check that cannot fail, which is the
+  // precise defect CLAUDE.md section 5 exists to prevent, introduced by the
+  // very change that was supposed to fix staleness.
+  //
+  // So filing rows are aged against the thing they were built from: a stored
+  // overview is stale the moment a NEWER annual report exists for that symbol.
+  // That has no dependence on prose, no cutoff to tune, and no healthy NULL.
+  //
+  // MATCH ON title ONLY, never headline — and this is not cosmetic. On its
+  // first run this check reported AARTECH and ADOR superseded; both were
+  // newspaper/shareholder notices whose HEADLINE prose happened to say "the
+  // Annual Report". Neither is a report, so neither rebuild would ever clear
+  // the alarm and the check would have cried wolf on every run until someone
+  // stopped reading it. Must stay identical to candidates() in
+  // build-overview-from-filing.mjs: if the builder and the auditor disagree
+  // about what an annual report is, the auditor can demand a rebuild the
+  // builder will never satisfy.
+  const superseded = await db`
+    SELECT o.symbol,
+           o.source_filing_date::date AS used,
+           max(a.published_at)::date  AS newest
+      FROM app.company_overview o
+      JOIN app.announcement a ON a.symbol = o.symbol
+     WHERE o.source = 'filing'
+       AND a.pdf_url IS NOT NULL
+       AND a.title ILIKE '%annual report%'
+     GROUP BY o.symbol, o.source_filing_date
+    HAVING max(a.published_at) > o.source_filing_date + interval '1 day'`;
+
+  console.log(`stored=${total[0].n}  undated=${undated[0].n}  stale=${rows.length}  ` +
+              `superseded=${superseded.length}  (cutoff: FY<=${cutoff})`);
   for (const r of rows) {
     console.log(`  STALE  ${r.symbol.padEnd(12)} FY${String(r.latest_fy).slice(2)}  ${r.source}  built ${r.built.toISOString().slice(0, 10)}`);
+  }
+  for (const r of superseded) {
+    console.log(`  SUPERSEDED  ${r.symbol.padEnd(12)} built from ${r.used.toISOString().slice(0, 10)}  newer filing ${r.newest.toISOString().slice(0, 10)}`);
   }
   // `undated` is reported, never failed on: a company whose description names
   // no fiscal year is normal, not stale. Failing on it would make the check
   // cry wolf, which is the only way a check truly dies.
+  //
+  // The 1-day grace in the HAVING is not slack. Companies file the report and
+  // its covering letter minutes apart under the same title, and the builder
+  // deliberately picks the LARGER document — which is sometimes the earlier
+  // timestamp. Without the grace, every correctly-built row would report itself
+  // superseded by its own covering letter on the day it was built.
   await db.end();
-  process.exit(rows.length ? 1 : 0);
+  process.exit(rows.length || superseded.length ? 1 : 0);
 }
 
-(async () => {
+// SPINE / SYSTEM / parseTable / latestFy are exported so the filings-based
+// builder (build-overview-from-filing.mjs) uses the SAME table contract rather
+// than a copy of it. A copied prompt is a copy that never receives the next
+// fix — exactly how the watchlist buy marker drifted from the portfolio's.
+// That import means this module is now LOADED, not just run, so the CLI below
+// must not fire on import. Without this guard, `import` here would execute the
+// whole run — including its writes.
+const IS_CLI = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (IS_CLI) (async () => {
   const args = process.argv.slice(2);
   const force = args.includes("--force");
   const fileIdx = args.indexOf("--file");
