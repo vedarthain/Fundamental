@@ -45,8 +45,11 @@ export async function recomputeDerivedHolding(
   // Real broker snapshot rows for this symbol (everything except our synthetic
   // 'derived'). A symbol may be snapshotted at several brokers → sum them into a
   // single opening lot with a weighted-average cost.
+  // first_seen_at, not imported_at (0079): this value seeds `firstDate` below,
+  // which becomes the derived row's holding-period start. imported_at is the
+  // last upload of that broker and would restart the clock on every re-import.
   const snapRows = await db<{ qty: number; avg: number | null; imported_at: string | null }[]>`
-    SELECT quantity::float8 AS qty, avg_cost::float8 AS avg, imported_at::text AS imported_at
+    SELECT quantity::float8 AS qty, avg_cost::float8 AS avg, first_seen_at::text AS imported_at
       FROM app.portfolio_holding
      WHERE user_id = ${userId} AND broker <> 'derived' AND symbol = ${symbol}
   `;
@@ -125,19 +128,25 @@ export async function recomputeDerivedHolding(
 
   // Derived rows always reference universe symbols → is_mapped=true, so the read
   // model re-prices them live from golden (same path as real broker holdings).
+  // first_seen_at = the same first trade date (0079). For a derived row that is
+  // not a proxy at all — the walk knows the actual first trade — so it is the
+  // one place where "first seen" and "first bought" genuinely coincide. Set it
+  // explicitly rather than leaving the DEFAULT: this is an UPSERT, and a
+  // recompute triggered by any later import would otherwise stamp now().
   await db`
     INSERT INTO app.portfolio_holding
-      (user_id, broker, raw_symbol, isin, symbol, is_mapped, quantity, avg_cost, source_batch, imported_at)
+      (user_id, broker, raw_symbol, isin, symbol, is_mapped, quantity, avg_cost, source_batch, imported_at, first_seen_at)
     VALUES
       (${userId}, 'derived', ${symbol}, ${isin}, ${symbol}, true, ${qty}, ${avgCost},
-       gen_random_uuid(), ${importedAt})
+       gen_random_uuid(), ${importedAt}, ${importedAt})
     ON CONFLICT (user_id, broker, raw_symbol) DO UPDATE
       SET quantity   = EXCLUDED.quantity,
           avg_cost   = EXCLUDED.avg_cost,
           isin       = EXCLUDED.isin,
           symbol     = EXCLUDED.symbol,
           is_mapped  = true,
-          imported_at = EXCLUDED.imported_at
+          imported_at = EXCLUDED.imported_at,
+          first_seen_at = EXCLUDED.first_seen_at
   `;
 }
 

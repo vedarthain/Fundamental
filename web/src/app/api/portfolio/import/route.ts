@@ -142,19 +142,49 @@ export async function POST(req: NextRequest) {
 
   let exited: string[] = [];
   await sql.begin(async (tx) => {
+    // ── Carry first_seen_at across the replace (0079) ───────────────────────
+    //
+    // This import DELETEs and reinserts, so without this read every re-upload
+    // resets the row's clock to now(). `imported_at` SHOULD reset — the broker
+    // freshness panel is MAX(imported_at) and exists to say how stale these
+    // quantities are. `first_seen_at` must not: it answers "since when have I
+    // held this", which a re-upload does not change.
+    //
+    // Read BEFORE the DELETE, keyed by raw_symbol (the UNIQUE key alongside
+    // user+broker), so the value survives in memory across the wipe. A symbol
+    // absent from the previous snapshot has no prior value and correctly falls
+    // to the column DEFAULT now() — it is genuinely new to us.
+    //
+    // Before 0079 this went unnoticed because the only consumer, the fall/rise
+    // window anchor, degraded silently: uploading four brokers on a Saturday
+    // anchored 91 positions on a date golden had no close for, and the columns
+    // just went blank.
+    const priorRows = await tx<{ raw_symbol: string; first_seen_at: string }[]>`
+      SELECT raw_symbol, first_seen_at::text AS first_seen_at
+        FROM app.portfolio_holding
+       WHERE user_id = ${session.userId} AND broker = ${broker}
+    `;
+    const firstSeen = new Map(priorRows.map((p) => [p.raw_symbol, p.first_seen_at]));
+
     await tx`
       DELETE FROM app.portfolio_holding
        WHERE user_id = ${session.userId} AND broker = ${broker}
     `;
     for (const r of rows) {
+      // COALESCE, not a JS `?? new Date()`: null must resolve to the column's
+      // own DEFAULT now() on the server, so "new holding" and "clock skew on
+      // this process" cannot produce different answers.
+      const prior = firstSeen.get(r.raw_symbol) ?? null;
       await tx`
         INSERT INTO app.portfolio_holding
           (user_id, broker, raw_symbol, isin, symbol, is_mapped, quantity,
-           avg_cost, broker_ltp, broker_cur_value, broker_day_pct, source_batch)
+           avg_cost, broker_ltp, broker_cur_value, broker_day_pct, source_batch,
+           first_seen_at)
         VALUES
           (${session.userId}, ${broker}, ${r.raw_symbol}, ${r.isin}, ${r.symbol},
            ${r.is_mapped}, ${r.quantity}, ${r.avg_cost}, ${r.broker_ltp},
-           ${r.broker_cur_value}, ${r.broker_day_pct}, ${batch})
+           ${r.broker_cur_value}, ${r.broker_day_pct}, ${batch},
+           COALESCE(${prior}::timestamptz, now()))
       `;
     }
     await recomputeDerivedHoldings(tx, session.userId, coveredSymbols);

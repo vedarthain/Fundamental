@@ -44,24 +44,27 @@ export type Instrument = {
   // ── Portfolio discipline overlays (rules, not market data) ──
   targetPrice: number | null; // avgCost × 1.25 (+25% profit target)
   targetHit: boolean; // live price ≥ targetPrice
-  // ── Peak/trough drawdown since the position was first tracked ──
+  // ── Peak/trough drawdown since the position was BOUGHT ──
   // Split-safe: both sides are adj_close, so the ratio is basis-independent.
-  // fallFromTopPct: % below the highest adj_close since firstImported (0 at a
-  // fresh high). riseFromBottomPct: % above the lowest adj_close (0 at a fresh
-  // low). Both ≥ 0. null for unmapped names or when the import date is unknown.
+  // fallFromTopPct: % below the highest adj_close since buyDate (0 at a fresh
+  // high). riseFromBottomPct: % above the lowest adj_close (0 at a fresh low).
+  // Both ≥ 0. null for unmapped names AND for any position with no recorded
+  // trade date — the import date is not an acceptable substitute here; see the
+  // long note at the peakBySym block.
   fallFromTopPct: number | null;
   riseFromBottomPct: number | null;
-  // Where the fall/rise window is anchored: "buy" = earliest manual-trade
-  // trade_date (a real purchase date), "import" = MIN(imported_at) proxy for
-  // broker-snapshot lots that carry no buy date, null when neither is known.
+  // Which date the HOLDING PERIOD (monthsHeld) is measured from: "buy" = a real
+  // trade_date, "import" = the first_seen_at proxy, null when neither is known.
+  // No longer describes fall/rise — those are "buy" or absent.
   drawdownAnchor: "buy" | "import" | null;
   /** The real buy date the drawdown window is anchored on (YYYY-MM-DD): the
    *  first buy of the CURRENT position leg, so a full exit and re-entry moves
    *  it. Null when there is no recorded buy — deliberately NOT filled with the
-   *  import date, which is a proxy and would read as a purchase. */
+   *  import date, which is a proxy and would read as a purchase. The UI shows
+   *  `firstImported` in its place, explicitly labelled "tracked since". */
   buyDate: string | null;
-  firstImported: string | null; // MIN(imported_at) across broker lots (ISO)
-  monthsHeld: number | null; // months since firstImported (import-date proxy)
+  firstImported: string | null; // MIN(first_seen_at) across broker lots (ISO)
+  monthsHeld: number | null; // months since buyDate, else since firstImported
   // Days since the earliest REAL recorded buy (app.portfolio_transaction), and
   // deliberately NOT falling back to the import-date proxy the way monthsHeld
   // does. This drives which trailing windows a position is allowed into: a name
@@ -153,7 +156,12 @@ type HoldingRow = {
   broker_ltp: string | null;
   broker_cur_value: string | null;
   broker_day_pct: string | null;
+  /** This snapshot row's upload time. Resets on every re-import — that is what
+   *  the broker freshness panel needs. NOT a holding-period anchor. */
   imported_at: string | null;
+  /** When this position was first tracked, preserved across re-imports (0079).
+   *  Use this for anything shaped like "how long have I held it". */
+  first_seen_at: string | null;
 };
 
 type CacheRow = {
@@ -757,7 +765,13 @@ export async function loadSnapshotDerivedBuys(
     SELECT h.symbol,
            SUM(h.quantity)::float8                                   AS qty,
            (SUM(h.avg_cost * h.quantity) / NULLIF(SUM(h.quantity), 0))::float8 AS avg,
-           COALESCE(MIN(h.imported_at), CURRENT_DATE)::text          AS imp
+           -- first_seen_at, not imported_at (0079). This date is the CEILING on
+           -- where the synthesised "B" can land -- see ph.date <= t.imp below.
+           -- Read from imported_at it was the LAST upload, so re-uploading a broker
+           -- let the marker drift forward to a bar AFTER the date we already
+           -- knew the position existed — a purchase dated later than the proof
+           -- of purchase. first_seen_at is the real ceiling and never moves.
+           COALESCE(MIN(h.first_seen_at), CURRENT_DATE)::text        AS imp
       FROM app.portfolio_holding h
      WHERE h.user_id = ${userId} AND h.broker <> 'derived'
        AND h.symbol IS NOT NULL AND h.quantity > 0 AND h.avg_cost IS NOT NULL
@@ -1375,14 +1389,14 @@ function istDateKey(): string {
 }
 
 /** Content fingerprint of everything loadPortfolio's valuation depends on: the
- *  holdings rows (qty/avg-cost/broker values/imported_at) plus the manual-trade
+ *  holdings rows (qty/avg-cost/broker values/import timestamps) plus the manual-trade
  *  symbol set. Any import or manual trade rewrites portfolio_holding, so the
  *  hash changes and the cache misses cleanly — no explicit invalidation needed. */
 function portfolioFingerprint(holdings: HoldingRow[], manualSymbols: string[]): string {
   const rows = holdings
     .map((h) =>
       [h.broker, h.symbol, h.isin, h.raw_symbol, h.is_mapped, h.quantity, h.avg_cost,
-       h.broker_cur_value, h.broker_day_pct, h.imported_at].join("|"),
+       h.broker_cur_value, h.broker_day_pct, h.imported_at, h.first_seen_at].join("|"),
     )
     .sort();
   const payload = `${rows.join("\n")}##${manualSymbols.join(",")}`;
@@ -1400,7 +1414,7 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
   const holdings = await sql<HoldingRow[]>`
     SELECT h.broker, h.raw_symbol, h.isin, h.symbol, h.is_mapped, h.quantity::text,
            h.avg_cost::text, h.broker_ltp::text, h.broker_cur_value::text,
-           h.broker_day_pct::text, h.imported_at::text,
+           h.broker_day_pct::text, h.imported_at::text, h.first_seen_at::text,
            CASE WHEN h.is_mapped THEN NULL
                 ELSE COALESCE(byIsin.symbol, byTicker.symbol) END AS etf_symbol
       FROM app.portfolio_holding h
@@ -1821,8 +1835,13 @@ async function computePortfolio(
       const prevVal = bcv / (1 + bdp / 100);
       a.brokerDayValueSum += bcv - prevVal;
     }
-    if (h.imported_at) {
-      const t = Date.parse(h.imported_at);
+    // first_seen_at, NOT imported_at (0079). The old code read imported_at into
+    // a field called `firstImported`; because a holdings import DELETEs and
+    // reinserts, that was the LAST upload wearing the name `first`. Fall back
+    // to imported_at only for a row written before 0079's backfill landed.
+    const seen = h.first_seen_at ?? h.imported_at;
+    if (seen) {
+      const t = Date.parse(seen);
       if (!Number.isNaN(t)) a.firstImported = a.firstImported == null ? t : Math.min(a.firstImported, t);
     }
     a.lots.push({
@@ -1833,21 +1852,48 @@ async function computePortfolio(
     });
   }
 
-  // ── Fall-from-top / rise-from-bottom: peak & trough adj_close for each held
-  //    equity since it was first tracked (firstImported). One grouped golden
-  //    scan bounded per-symbol via unnest(syms, sinces) — keeps the heavy work
-  //    in Postgres instead of shipping full price history to the app. Split-
-  //    safe because fall/rise are ratios of adj_close values. ──
+  // ── Fall-from-top / rise-from-bottom: peak & trough adj_close since the
+  //    position's REAL first buy. One grouped golden scan bounded per-symbol
+  //    via unnest(syms, sinces) — keeps the heavy work in Postgres instead of
+  //    shipping full price history to the app. Split-safe because fall/rise are
+  //    ratios of adj_close values. ──
+  //
+  // THE IMPORT-DATE PROXY IS GONE FROM THIS WINDOW, DELIBERATELY.
+  //
+  // It used to fall back to the import date for any position with no trade
+  // history (23 of 98 mapped holdings here). That made the window length a
+  // function of when the user last clicked Upload — and because a holdings
+  // import replaces its rows, re-uploading a broker silently reset every one of
+  // its positions to a zero-length window. On 2026-09-26 four brokers were
+  // re-uploaded and 91 positions produced no window at all.
+  //
+  // But the blank column was the visible symptom, not the bug. The bug is that
+  // when the window WAS non-empty it printed "12.4% below its high" over a
+  // ten-day sample for a stock held three years, in a cell indistinguishable
+  // from a real three-year drawdown. A dagger and a hover tooltip were carrying
+  // that distinction; nobody reads a dagger. §5: a number that cannot be wrong
+  // in any way the reader can see is not a measurement.
+  //
+  // So: no trade date → no fall/rise, and the cell says so. first_seen_at still
+  // drives "held for N months", where "since we started tracking" is a claim
+  // the UI can and does state in full.
   const peakBySym = new Map<string, { peak: number; trough: number; last: number }>();
   {
     const syms: string[] = [];
     const sinces: string[] = [];
     for (const a of aggs.values()) {
       if (!a.isMapped || !a.symbol) continue;
-      // Prefer the real purchase date; fall back to the import-date proxy.
       const buy = firstBuyBySym[a.symbol];
-      const since = buy ?? (a.firstImported == null ? null : new Date(a.firstImported).toISOString().slice(0, 10));
-      if (since == null) continue;
+      if (!buy) continue;
+      // Clamp to this symbol's own newest close. A position bought today — or
+      // any Saturday, when the newest close is Friday's — otherwise asks for
+      // `date >= <a date golden has no bar for>`, gets no rows, and renders
+      // blank for no reason a reader could guess. Clamped, it measures the one
+      // bar that exists and correctly reports 0% / 0%. Per-symbol rather than a
+      // global max: a symbol that stopped trading has an older last bar, and
+      // clamping it to some other symbol's fresher date reintroduces the hole.
+      const lastBar = gDate.get(a.symbol);
+      const since = lastBar && buy > lastBar ? lastBar : buy;
       syms.push(a.symbol + ".NS");
       sinces.push(since);
     }
@@ -1948,10 +1994,12 @@ async function computePortfolio(
     const targetPrice = blendedAvg != null ? Math.round(blendedAvg * 1.25 * 100) / 100 : null;
     const targetHit = targetPrice != null && price != null && price >= targetPrice;
 
-    // Holding period + drawdown window both anchor on the real purchase date
-    // (earliest trade_date) where we have one, falling back to the import-date
-    // proxy only for broker snapshots that carry no buy date. `anchor` records
-    // which was used so the UI can label it honestly.
+    // Holding period anchors on the real purchase date (earliest trade_date)
+    // where we have one, falling back to first_seen_at for broker snapshots
+    // that carry no buy date. `anchor` records which was used so the UI can
+    // label it honestly. The DRAWDOWN window no longer shares this fallback —
+    // see the peakBySym block — so `drawdownAnchor` now describes monthsHeld
+    // alone. The name is kept because it is what the UI's tooltip switches on.
     const buyMs = a.symbol && firstBuyBySym[a.symbol] ? Date.parse(firstBuyBySym[a.symbol]) : NaN;
     const anchorMs: number | null = !Number.isNaN(buyMs) ? buyMs : a.firstImported;
     const drawdownAnchor: "buy" | "import" | null =
@@ -1965,7 +2013,10 @@ async function computePortfolio(
       ? null
       : Math.floor((Date.now() - buyMs) / 86_400_000);
 
-    // Fall-from-top / rise-from-bottom vs the peak/trough since the anchor date.
+    // Fall-from-top / rise-from-bottom vs the peak/trough since the BUY date.
+    // peakBySym only has an entry when a real trade date exists, so the
+    // import-date rows fall through to null here and render "—". That is the
+    // whole enforcement — there is no second place to keep in sync.
     let fallFromTopPct: number | null = null;
     let riseFromBottomPct: number | null = null;
     if (a.isMapped && a.symbol) {

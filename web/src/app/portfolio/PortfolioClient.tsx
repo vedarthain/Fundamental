@@ -2859,12 +2859,12 @@ const COLUMNS: {
   // Two-line headers: spelled out, but stacked so the column stays narrow.
   // A single "FALL FROM TOP" line (whitespace-nowrap) blew the table past its
   // container and pushed Held/Wt off the right edge.
-  { key: "fallTop", label: (<span className="flex flex-col items-end leading-[1.1]"><span>Fall from</span><span>top</span></span>), align: "right", cls: "px-1.5", numeric: true, title: "Fall from top — % below the highest daily close since your purchase date. 0 at a fresh high. Split-adjusted. Rows marked † have no trade date (broker exports carry none) and are measured from the import date instead." },
-  { key: "riseBottom", label: (<span className="flex flex-col items-end leading-[1.1]"><span>Rise from</span><span>bottom</span></span>), align: "right", cls: "px-1.5", numeric: true, title: "Rise from bottom — % above the lowest daily close since your purchase date. 0 at a fresh low. Split-adjusted. Rows marked † have no trade date (broker exports carry none) and are measured from the import date instead." },
+  { key: "fallTop", label: (<span className="flex flex-col items-end leading-[1.1]"><span>Fall from</span><span>top</span></span>), align: "right", cls: "px-1.5", numeric: true, title: "Fall from top — % below the highest daily close since your purchase date. 0 at a fresh high. Split-adjusted. Blank when no trade date is on record: a broker holdings export carries none, and measuring from the upload date instead produced a number that shrank every time you re-uploaded." },
+  { key: "riseBottom", label: (<span className="flex flex-col items-end leading-[1.1]"><span>Rise from</span><span>bottom</span></span>), align: "right", cls: "px-1.5", numeric: true, title: "Rise from bottom — % above the lowest daily close since your purchase date. 0 at a fresh low. Split-adjusted. Blank when no trade date is on record: a broker holdings export carries none, and measuring from the upload date instead produced a number that shrank every time you re-uploaded." },
   { key: "qvm", label: "Q/V/M", align: "center", cls: "px-1.5", numeric: true },
   { key: "comp", label: "Comp", align: "center", cls: "px-1.5", numeric: true, title: "Composite percentile (Q/V/M roll-up) — higher is better" },
   { key: "rank", label: "Rank", align: "center", cls: "px-1.5", numeric: true },
-  { key: "held", label: "Held", align: "right", cls: "px-1.5", numeric: true, title: "Time held (approx — measured from your purchase date where a trade date is known, otherwise from import date). Flags at 4 months." },
+  { key: "held", label: "Held", align: "right", cls: "px-1.5", numeric: true, title: "Time held (approx — from your purchase date where a trade date is known, otherwise from when the position was first tracked, shown as ~date under the broker name). Flags at 4 months." },
   { key: "wt", label: "Wt", align: "right", cls: "px-2", numeric: true },
 ];
 
@@ -3058,12 +3058,13 @@ function HoldingsTable({
 
   const groups = buildGroups(pnlFiltered, mode);
 
-  // How many visible rows can only anchor their drawdown window on the import
-  // date. Drives the footnote below the table — a dagger with no key is just
-  // noise, so the count and the legend appear together or not at all.
-  const proxyCount = showDrawdown
-    ? pnlFiltered.filter((i) => i.drawdownAnchor === "import"
-        && (i.fallFromTopPct != null || i.riseFromBottomPct != null)).length
+  // How many visible rows have no drawdown window at all because no purchase
+  // date is on record. Drives the footnote below the table. This used to count
+  // rows MEASURED from the import date and key a "†" on them; those rows are
+  // now blank instead (see portfolio.ts → peakBySym), so the footnote explains
+  // an absence rather than annotating a number that should not have existed.
+  const noAnchorCount = showDrawdown
+    ? pnlFiltered.filter((i) => i.isMapped && i.buyDate == null).length
     : 0;
   // Only the Flat view is sortable — grouped modes keep their value-desc order
   // (per-column sort would collide with the collapsible group rows).
@@ -3300,13 +3301,16 @@ function HoldingsTable({
           </tbody>
         </table>
       </div>
-      {proxyCount > 0 && (
+      {noAnchorCount > 0 && (
         <div className="px-3 py-2 text-[11px] muted-text">
-          <span className="font-semibold">†</span> {proxyCount} position{proxyCount === 1 ? "" : "s"}{" "}
-          measured from the date you imported it, not the date you bought it — a broker
-          holdings export carries quantity and average cost but no trade date. If you
-          held it before importing, the window misses that earlier history. Add a buy
-          date to the position to correct it.
+          Fall from top and Rise from bottom are blank on {noAnchorCount} position
+          {noAnchorCount === 1 ? "" : "s"} — a broker holdings export carries quantity and
+          average cost but no trade date, and those two columns are only meaningful measured
+          from when you actually bought. They used to measure from the upload date instead,
+          which made the window shorter every time you re-uploaded and printed a number that
+          looked like a real drawdown. Import the matching tradebook to fill them. The
+          date shown with a <span className="italic">~</span> under the broker name is when
+          the position was first tracked, not a purchase.
         </div>
       )}
     </div>
@@ -3359,12 +3363,21 @@ function FragmentRow({
           </div>
         </td>
         <td className="px-1.5 py-2">
-          {/* Broker name, with the BUY date underneath — the first buy of the
-              position currently held, which is the same anchor FALL FROM TOP
-              and RISE FROM BOTTOM measure from. Blank, never the import date,
-              when there is no recorded buy: 26 of 92 holdings predate the
-              transaction file, and showing an upload date where a purchase
-              date belongs is the bug this column exists to avoid. */}
+          {/* Broker name, with a DATE underneath. Two different dates, never
+              confusable, because they are formatted differently and say so on
+              hover:
+
+                "16 Jan '26"   a real first buy of the position currently held.
+                               Fall from top / Rise from bottom measure from it.
+                "~26 Sep '26"  no purchase on record — this is when we first saw
+                               the holding. The tilde is the tell. 23 of 98
+                               holdings predate the transaction file.
+
+              The proxy row used to render a bare em dash. That was honest but
+              left the position with no start date anywhere on screen, and the
+              Graph's synthesised "B" marker (loadSnapshotDerivedBuys) had
+              nothing in the table to correspond to. A tilde-prefixed date
+              cannot be misread as a trade: no broker contract note has one. */}
           <div className="leading-tight">
             {ins.brokers.length > 1 ? (
               <span className="muted-text">{ins.brokers.length} brokers</span>
@@ -3378,14 +3391,17 @@ function FragmentRow({
               >
                 {fmtBuyDate(ins.buyDate)}
               </div>
+            ) : fmtBuyDate(ins.firstImported) ? (
+              <div
+                className="text-[10px] muted-text tabular-nums italic"
+                title={`Tracked since ${fmtBuyDate(ins.firstImported)} — NOT a purchase date. Your ${missingTradebookFor(ins)} holdings file carries quantity and average cost but no trade dates, so this is when the position first appeared. Held is measured from here; Fall from top and Rise from bottom are left blank rather than measured over a window that starts when you uploaded. Import the ${missingTradebookFor(ins)} tradebook to fill all three.`}
+              >
+                ~{fmtBuyDate(ins.firstImported)}
+              </div>
             ) : (
-              // An em dash rather than nothing. Empty reads as "this row is
-              // still loading"; a dash reads as "there is no value here", and
-              // the tooltip says which tradebook would fill it. It also flags
-              // that Fall/Rise/Held on this row are import-date proxies.
               <div
                 className="text-[10px] muted-text"
-                title={`No purchase record — import your ${missingTradebookFor(ins)} tradebook. Until then Fall from top, Rise from bottom and Held on this row measure from the upload date, not from when you bought.`}
+                title={`No purchase record — import your ${missingTradebookFor(ins)} tradebook.`}
               >
                 —
               </div>
@@ -3434,34 +3450,30 @@ function FragmentRow({
           {pct(ins.pnlPct)}
         </td>
         {showDrawdown && (() => {
-          // A broker holdings export carries quantity and average cost but no
-          // trade date, so for those positions the window can only start at the
-          // import date — "since I started tracking this", not "since I bought
-          // it". That was true before and was disclosed in a hover title only,
-          // which meant ~28% of the column read differently from its own header
-          // with nothing on screen to say so. The dagger puts it in the table.
-          const proxy = ins.drawdownAnchor === "import";
-          const anc = proxy ? "import date (broker export carries no trade date)" : "your purchase date";
-          const mark = proxy ? (
-            <sup className="ml-0.5 font-normal" style={{ color: "var(--color-muted)" }}>†</sup>
-          ) : null;
+          // Both cells are non-null ONLY when a real purchase date exists —
+          // portfolio.ts drops the import-date fallback from this window
+          // entirely. So the anchor phrasing no longer branches, and the "†"
+          // that used to mark import-anchored values is gone with the values it
+          // marked. A blank here means "no trade date on record"; the tooltip
+          // on the dash says which file fills it, and the footnote under the
+          // table counts them.
+          const anc = "your purchase date";
+          const why = `No purchase date on record for this position, so there is no window to measure. Import your ${missingTradebookFor(ins)} tradebook.`;
           return (
             <>
               <td
                 className="px-1.5 py-2 text-right tabular-nums font-semibold"
                 style={{ color: ins.fallFromTopPct == null ? undefined : ins.fallFromTopPct > 0 ? (inProfit ? RED : "var(--color-fg)") : "var(--color-muted)" }}
-                title={ins.fallFromTopPct == null ? undefined : (ins.fallFromTopPct === 0 ? `At its high since ${anc}` : `${ins.fallFromTopPct}% below its high since ${anc}`)}
+                title={ins.fallFromTopPct == null ? why : (ins.fallFromTopPct === 0 ? `At its high since ${anc}` : `${ins.fallFromTopPct}% below its high since ${anc}`)}
               >
                 {ins.fallFromTopPct == null ? "—" : ins.fallFromTopPct === 0 ? "0%" : `−${ins.fallFromTopPct}%`}
-                {ins.fallFromTopPct != null && mark}
               </td>
               <td
                 className="px-1.5 py-2 text-right tabular-nums"
                 style={{ color: ins.riseFromBottomPct == null ? undefined : ins.riseFromBottomPct > 0 ? (inProfit ? "var(--color-fg)" : GREEN) : "var(--color-muted)" }}
-                title={ins.riseFromBottomPct == null ? undefined : (ins.riseFromBottomPct === 0 ? `At its low since ${anc}` : `${ins.riseFromBottomPct}% above its low since ${anc}`)}
+                title={ins.riseFromBottomPct == null ? why : (ins.riseFromBottomPct === 0 ? `At its low since ${anc}` : `${ins.riseFromBottomPct}% above its low since ${anc}`)}
               >
                 {ins.riseFromBottomPct == null ? "—" : ins.riseFromBottomPct === 0 ? "0%" : `+${ins.riseFromBottomPct}%`}
-                {ins.riseFromBottomPct != null && mark}
               </td>
             </>
           );

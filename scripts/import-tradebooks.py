@@ -418,7 +418,10 @@ def recompute_derived_holding(cur, user_id, symbol):
     trade / snapshot date. Idempotent."""
     # Real broker snapshot rows for this symbol (everything except 'derived').
     cur.execute(
-        "select quantity::float8, avg_cost::float8, imported_at::text "
+        # first_seen_at, not imported_at (0079). This seeds first_date below,
+        # i.e. the derived row's holding-period start; imported_at is the last
+        # upload of that broker and restarts the clock on every re-import.
+        "select quantity::float8, avg_cost::float8, first_seen_at::text "
         "from app.portfolio_holding "
         "where user_id=%s and broker<>'derived' and symbol=%s",
         (user_id, symbol))
@@ -491,16 +494,17 @@ def recompute_derived_holding(cur, user_id, symbol):
     cur.execute("""
         insert into app.portfolio_holding
           (user_id, broker, raw_symbol, isin, symbol, is_mapped, quantity,
-           avg_cost, source_batch, imported_at)
-        values (%s,'derived',%s,%s,%s,true,%s,%s,gen_random_uuid(),%s)
+           avg_cost, source_batch, imported_at, first_seen_at)
+        values (%s,'derived',%s,%s,%s,true,%s,%s,gen_random_uuid(),%s,%s)
         on conflict (user_id, broker, raw_symbol) do update
           set quantity=excluded.quantity,
               avg_cost=excluded.avg_cost,
               isin=excluded.isin,
               symbol=excluded.symbol,
               is_mapped=true,
-              imported_at=excluded.imported_at
-    """, (user_id, symbol, isin, symbol, qty, avg_cost, imported_at))
+              imported_at=excluded.imported_at,
+              first_seen_at=excluded.first_seen_at
+    """, (user_id, symbol, isin, symbol, qty, avg_cost, imported_at, imported_at))
 
 DDL = """
 create table if not exists app.portfolio_transaction (
