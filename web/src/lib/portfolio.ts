@@ -2102,3 +2102,111 @@ async function computePortfolio(
     brokerSnapshots,
   };
 }
+
+// ───────────────────────────── import ledger ────────────────────────────────
+
+/**
+ * One row per broker: when its holdings snapshot and its tradebook were last
+ * imported, and how far the tradebook actually reaches.
+ *
+ * WHY THIS EXISTS, AND WHY IT IS NOT THE SAME AS `brokerSnapshots`
+ *
+ * `brokerSnapshots` answers "can I trust the quantities on the Holdings tab?"
+ * — holdings only. But the two imports go stale INDEPENDENTLY and for
+ * different reasons, and the tradebook is the one that rots unseen: holdings
+ * are replaced wholesale on re-import, so a fresh upload is self-evidently
+ * fresh, while the tradebook is append-and-dedup, so a stale one looks exactly
+ * like a complete one. Nothing on the page contradicts it. Measured on prod
+ * 2026-09-26: the Groww holdings snapshot was 7 days old while its tradebook,
+ * imported 47 days ago, still ended at 2026-02-27 — seven months of trades the
+ * cost basis, the B/S markers and the realized P&L all silently did without.
+ *
+ * So the ledger reports BOTH ages side by side plus `coversTo`, which is the
+ * figure that actually exposes the gap. `coversTo` is stated, never coloured:
+ * a tradebook that ends in February is either stale or a year you did not
+ * trade, and this query cannot tell the two apart. Import age can be coloured
+ * because it means one thing only.
+ *
+ * Manual entries are excluded — they are typed, not imported, so an "import
+ * age" for them would be a number with no referent.
+ *
+ * Built off a direct aggregate rather than the loaded holdings/trade arrays so
+ * a broker whose rows are all suppressed downstream (reconciled through manual
+ * trades, unmapped symbols) still reports its import date. The import
+ * happened; its age is a fact about the upload, not about what survived it.
+ */
+export type ImportLogRow = {
+  broker: Broker;
+  label: string;
+  /** MAX(imported_at) of this broker's holdings rows, ISO. Null = never imported. */
+  holdingsAt: string | null;
+  holdingsAgeDays: number | null;
+  holdingsCount: number;
+  /** MAX(imported_at) of this broker's tradebook rows, ISO. Null = never imported. */
+  tradesAt: string | null;
+  tradesAgeDays: number | null;
+  tradesCount: number;
+  /** MAX(trade_date) — the last day the tradebook actually reaches. */
+  coversTo: string | null;
+};
+
+export async function loadImportLog(userId: number): Promise<ImportLogRow[]> {
+  const rows = await sql<
+    {
+      broker: string;
+      h_at: string | null; h_n: string;
+      t_at: string | null; t_n: string; covers_to: string | null;
+    }[]
+  >`
+    WITH h AS (
+      SELECT broker, MAX(imported_at) AS at, COUNT(*) AS n
+        FROM app.portfolio_holding
+       WHERE user_id = ${userId} AND broker <> 'derived'
+       GROUP BY broker
+    ), t AS (
+      SELECT broker, MAX(imported_at) AS at, COUNT(*) AS n, MAX(trade_date) AS covers_to
+        FROM app.portfolio_transaction
+       WHERE user_id = ${userId}
+         AND COALESCE(source_file, '') <> 'manual-entry'
+       GROUP BY broker
+    )
+    SELECT COALESCE(h.broker, t.broker)      AS broker,
+           h.at::text                        AS h_at,
+           COALESCE(h.n, 0)::text            AS h_n,
+           t.at::text                        AS t_at,
+           COALESCE(t.n, 0)::text            AS t_n,
+           t.covers_to::text                 AS covers_to
+      FROM h FULL OUTER JOIN t ON t.broker = h.broker
+  `;
+
+  const nowMs = Date.now();
+  const age = (iso: string | null): number | null => {
+    if (!iso) return null;
+    const ms = Date.parse(iso);
+    if (Number.isNaN(ms)) return null;
+    return Math.max(0, Math.floor((nowMs - ms) / 86_400_000));
+  };
+
+  return rows
+    .filter((r) => r.broker && r.broker !== "derived" && r.broker !== "manual")
+    .map((r) => ({
+      broker: r.broker as Broker,
+      label: TRADE_BROKER_LABEL[r.broker] ?? r.broker,
+      holdingsAt: r.h_at ? new Date(r.h_at).toISOString() : null,
+      holdingsAgeDays: age(r.h_at),
+      holdingsCount: Number(r.h_n) || 0,
+      tradesAt: r.t_at ? new Date(r.t_at).toISOString() : null,
+      tradesAgeDays: age(r.t_at),
+      tradesCount: Number(r.t_n) || 0,
+      coversTo: r.covers_to,
+    }))
+    // Stalest first, on whichever of the two imports is older. A broker with
+    // one import missing entirely sorts to the top: absent is staler than old.
+    .sort((a, b) => {
+      const worst = (x: ImportLogRow) =>
+        x.holdingsAt == null || x.tradesAt == null
+          ? Number.POSITIVE_INFINITY
+          : Math.max(x.holdingsAgeDays ?? 0, x.tradesAgeDays ?? 0);
+      return worst(b) - worst(a) || a.label.localeCompare(b.label);
+    });
+}

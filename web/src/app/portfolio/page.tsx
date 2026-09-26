@@ -9,7 +9,7 @@
  */
 import Link from "next/link";
 import { getSession, isAdminRequest } from "@/lib/auth";
-import { loadPortfolio, loadRealizedPnl, loadPerformanceStats, loadRealizedTimeline, loadTradeLog } from "@/lib/portfolio";
+import { loadPortfolio, loadRealizedPnl, loadPerformanceStats, loadRealizedTimeline, loadTradeLog, loadImportLog } from "@/lib/portfolio";
 import { PortfolioClient } from "./PortfolioClient";
 
 export const dynamic = "force-dynamic";
@@ -50,10 +50,11 @@ export default async function PortfolioPage() {
     );
   }
 
-  const [portfolio, realized, tradeLog, owner] = await Promise.all([
+  const [portfolio, realized, tradeLog, importLog, owner] = await Promise.all([
     loadPortfolio(session.userId),
     loadRealizedPnl(session.userId),
     loadTradeLog(session.userId),
+    loadImportLog(session.userId),
     isAdminRequest(), // Performance tab is owner-only for now.
   ]);
 
@@ -69,6 +70,7 @@ export default async function PortfolioPage() {
         portfolio={portfolio}
         realized={realized}
         tradeLog={tradeLog}
+        importLog={importLog}
         owner={owner}
         perf={perf}
         timeline={timeline}

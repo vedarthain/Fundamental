@@ -19,7 +19,7 @@ import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
   PieChart, Pie, Cell, BarChart, Bar, ScatterChart, Scatter, ZAxis, ReferenceLine,
 } from "recharts";
-import type { Portfolio, Instrument, RealizedPnl, RealizedLot, RealizedTerm, PerformanceStats, RealizedTimeline, TradeLog, TradeRow } from "@/lib/portfolio";
+import type { Portfolio, Instrument, RealizedPnl, RealizedLot, RealizedTerm, PerformanceStats, RealizedTimeline, TradeLog, TradeRow, ImportLogRow } from "@/lib/portfolio";
 import { TradeSheet } from "@/components/ManualTradeSheet";
 import { PortfolioScorecard } from "./PortfolioScorecard";
 import { PortfolioReturnsTable } from "./PortfolioReturnsTable";
@@ -95,6 +95,7 @@ export function PortfolioClient({
   portfolio,
   realized,
   tradeLog,
+  importLog = [],
   owner = false,
   perf = null,
   timeline = null,
@@ -102,6 +103,10 @@ export function PortfolioClient({
   portfolio: Portfolio;
   realized: RealizedPnl;
   tradeLog: TradeLog;
+  // Per-broker import ledger for the Transactions tab. Defaulted so a cached
+  // render from a previous deploy that lacks the prop degrades to no panel
+  // rather than a crash — same reason brokerSnapshots is read with `?.`.
+  importLog?: ImportLogRow[];
   owner?: boolean; // gates the (personal, owner-only) Performance analysis tab
   perf?: PerformanceStats | null; // time-weighted stats (owner-only)
   timeline?: RealizedTimeline | null; // realized-over-time analytics (owner-only)
@@ -237,6 +242,8 @@ export function PortfolioClient({
             onUpload={onUpload}
             brokers={portfolio.brokers}
           />
+
+          <ImportLedger rows={importLog} />
 
           <div className="mt-4 card p-4 md:p-5 flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -2296,6 +2303,113 @@ function ImportPanel({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─────────────────────────── import ledger ─────────────────────────────────
+
+/**
+ * One row per broker, directly under the upload panel: how old each of its two
+ * imports is, and how far the tradebook actually reaches.
+ *
+ * The holdings age duplicates what BrokerFreshness already shows on the
+ * Holdings tab, deliberately — this panel sits where you act on it. You come
+ * to Transactions to upload a file; the question you are answering at that
+ * moment is "which file", and that question needs both ages next to each
+ * other, not one of them a tab away.
+ *
+ * COVERS TO is never coloured. A tradebook ending in February is either stale
+ * or a quiet year, and nothing in the data distinguishes them — colouring it
+ * would assert something this page cannot know. The import age IS coloured,
+ * because an old upload means exactly one thing.
+ */
+function agoLabel(days: number | null): string {
+  if (days == null) return "—";
+  return days === 0 ? "today" : days === 1 ? "yesterday" : `${days}d ago`;
+}
+
+function staleTone(days: number | null): string | null {
+  if (days == null) return null;
+  return days >= STALE_BAD_DAYS ? RED : days >= STALE_WARN_DAYS ? AMBER : null;
+}
+
+function ImportCell({
+  at, ageDays, count, unit,
+}: { at: string | null; ageDays: number | null; count: number; unit: string }) {
+  if (!at) {
+    return (
+      <span className="text-[12px]" style={{ color: "var(--color-muted)" }}>
+        never imported
+      </span>
+    );
+  }
+  const tone = staleTone(ageDays);
+  return (
+    <span
+      className="inline-flex flex-col leading-[1.25]"
+      title={`Imported ${new Date(at).toLocaleString("en-IN")}`}
+    >
+      <span className="text-[12.5px] tabular-nums" style={tone ? { color: tone } : undefined}>
+        {agoLabel(ageDays)}
+      </span>
+      <span className="text-[11px] tabular-nums" style={{ color: "var(--color-muted)" }}>
+        {new Date(at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
+        {" · "}
+        {count} {unit}
+        {count === 1 ? "" : "s"}
+      </span>
+    </span>
+  );
+}
+
+function ImportLedger({ rows }: { rows: ImportLogRow[] }) {
+  if (!rows?.length) return null;
+  return (
+    <div className="mt-4 card p-4 md:p-5">
+      <div className="flex items-baseline justify-between gap-3 flex-wrap">
+        <div className="text-[14px] font-semibold">Import freshness</div>
+        <p className="muted-text text-[11.5px] leading-snug">
+          A broker can only show you what you last uploaded. Trades made after an
+          import are invisible — they don&apos;t look missing, the position just
+          reads stale.
+        </p>
+      </div>
+
+      <div className="overflow-x-auto mt-3 -mx-1">
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="text-[11px] font-semibold muted-text uppercase tracking-wide">
+              <th className="py-1.5 px-1 font-semibold">Broker</th>
+              <th className="py-1.5 px-1 font-semibold">Holdings imported</th>
+              <th className="py-1.5 px-1 font-semibold">Tradebook imported</th>
+              <th className="py-1.5 px-1 font-semibold">Trades cover to</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr
+                key={r.broker}
+                className="border-t"
+                style={{ borderColor: "var(--color-border-default)" }}
+              >
+                <td className="py-2 px-1 text-[13px] font-medium whitespace-nowrap">{r.label}</td>
+                <td className="py-2 px-1">
+                  <ImportCell at={r.holdingsAt} ageDays={r.holdingsAgeDays} count={r.holdingsCount} unit="position" />
+                </td>
+                <td className="py-2 px-1">
+                  <ImportCell at={r.tradesAt} ageDays={r.tradesAgeDays} count={r.tradesCount} unit="trade" />
+                </td>
+                <td className="py-2 px-1 text-[12.5px] tabular-nums whitespace-nowrap">
+                  {r.coversTo
+                    ? new Date(r.coversTo).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
+                    : <span style={{ color: "var(--color-muted)" }}>—</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
