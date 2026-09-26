@@ -346,6 +346,8 @@ export type TradeUniverse = {
   byIsin: Map<string, string>;
   bySym: Map<string, string>;
   byName: { norm: string; symbol: string }[];
+  /** BSE scrip code → NSE symbol. Empty unless the caller supplied codes. */
+  byBse: Map<string, string>;
 };
 
 /** Strip company-name noise for the fuzzy name-prefix fallback. */
@@ -358,8 +360,31 @@ export function normalizeName(n: string | null): string {
   return s.replace(/\s+/g, " ").trim();
 }
 
+/**
+ * Punctuation-only normalisation, for the name→SYMBOL tier.
+ *
+ * Deliberately NOT normalizeName(). That one strips " INDUSTRIES", which turns
+ * a name into a DIFFERENT listed company's ticker — measured against
+ * app.universe on 2026-09-27, five of them:
+ *
+ *   Balkrishna Industries → BALKRISHNA = Balkrishna Paper Mills
+ *   Zuari Industries      → ZUARI      = Zuari Agro Chemicals
+ *   PTC Industries        → PTC        = PTC India
+ *   Supreme Industries    → SUPREME    = Supreme Holdings & Hospitality
+ *   Deep Industries       → DEEP       = Deep Polymers
+ *
+ * Every one of those would have been a silently wrong symbol on a real trade.
+ * Keeping the suffix means "ZUARI INDUSTRIES" simply misses, which is the
+ * outcome a miss is supposed to have.
+ */
+export function bareName(n: string | null): string {
+  if (!n) return "";
+  return n.toUpperCase().replace(/[.,\-&']/g, " ").replace(/\s+/g, " ").trim();
+}
+
 export function buildTradeUniverse(
   rows: { symbol: string; isin: string | null; company_name: string | null }[],
+  bseRows: { bse_code: string | null; symbol: string | null }[] = [],
 ): TradeUniverse {
   const byIsin = new Map<string, string>();
   const bySym = new Map<string, string>();
@@ -369,7 +394,22 @@ export function buildTradeUniverse(
     bySym.set(r.symbol.toUpperCase(), r.symbol);
     byName.push({ norm: normalizeName(r.company_name), symbol: r.symbol });
   }
-  return { byIsin, bySym, byName };
+  // BSE scrip code → NSE symbol. Upstox's trade report carries NEITHER a symbol
+  // nor an ISIN — only a six-digit BSE code and a 20-char truncated company
+  // name — so without this, most of its rows resolve to nothing.
+  //
+  // SOURCE CAVEAT (§5): app.corporate_action.bse_code is a BY-PRODUCT of the
+  // corporate-actions scrape, not a maintained identifier table; it covers
+  // roughly half the universe and grows only when a company announces
+  // something. Safe to consult anyway because a six-digit code is an EXACT
+  // key: a hit is certain and a miss falls through to the name tiers. A symbol
+  // the table never learns is no worse off than it is today. The caller
+  // de-duplicates — a code mapping to two symbols must not be supplied.
+  const byBse = new Map<string, string>();
+  for (const r of bseRows) {
+    if (r.bse_code && r.symbol) byBse.set(String(r.bse_code).trim(), r.symbol);
+  }
+  return { byIsin, bySym, byName, byBse };
 }
 
 /** ISIN → exact symbol → unique normalized-name prefix. null if unresolved
@@ -382,9 +422,30 @@ export function resolveTradeSymbol(t: ParsedTrade, uni: TradeUniverse): string |
   if (t.rawSymbol) {
     const s = uni.bySym.get(bareSymbol(t.rawSymbol).toUpperCase()) ?? uni.bySym.get(t.rawSymbol.trim().toUpperCase());
     if (s) return s;
+    // BSE scrip code, before any name tier: a numeric code is an exact key and
+    // a name is a guess, so the certain test goes first.
+    const raw = t.rawSymbol.trim();
+    if (/^\d+$/.test(raw)) {
+      const b = uni.byBse.get(raw);
+      if (b) return b;
+    }
+  }
+  // The name IS the ticker. 5paisa ships only a company name — no symbol, no
+  // ISIN, no code — and for a family of companies that name is literally the
+  // NSE symbol ("ONGC", "FACT"). Exact equality against the symbol table, so
+  // it belongs above the fuzzy tiers. See bareName() for why it does not reuse
+  // normalizeName().
+  const bn = bareName(t.rawName);
+  if (bn) {
+    const s = uni.bySym.get(bn);
+    if (s) return s;
   }
   const nn = normalizeName(t.rawName);
-  if (nn.length >= 4) {
+  // No length guard on the EXACT tier. The old `nn.length >= 4` existed to stop
+  // a 2–3 char fragment prefix-matching half the market; that risk is real for
+  // prefix matching and absent for equality, and the guard was silently costing
+  // short-named companies. The token tier below keeps its guard.
+  if (nn) {
     // Exact normalized-name match wins outright — this disambiguates a family of
     // near-names where a SHORTER universe name is a prefix of the trade name
     // (e.g. "Raymond Lifestyle" would otherwise also match "Raymond" via the
@@ -428,8 +489,10 @@ export function resolveTradeSymbol(t: ParsedTrade, uni: TradeUniverse): string |
     // to greedily match a distinct universe token by prefix, and accept only a
     // UNIQUE hit — so "…IN & FIN CO" resolves CHOLAFIN but stays ambiguous-safe
     // against CHOLAHLDNG (Financial Holdings), where "IN"/"CO" match nothing.
-    const tok = tokenPrefixMatch(nn, uni);
-    if (tok) return tok;
+    if (nn.length >= 4) {
+      const tok = tokenPrefixMatch(nn, uni);
+      if (tok) return tok;
+    }
   }
   return null;
 }

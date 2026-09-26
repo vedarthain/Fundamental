@@ -52,7 +52,18 @@ async function loadUniverse(): Promise<TradeUniverse> {
   const rows = await sql<{ symbol: string; isin: string | null; company_name: string | null }[]>`
     SELECT symbol, isin, company_name FROM app.universe WHERE is_active
   `;
-  return buildTradeUniverse(rows);
+  // BSE scrip codes, for the Upstox reports that carry neither a symbol nor an
+  // ISIN. HAVING count(distinct symbol) = 1 is load-bearing: a code that has
+  // pointed at two symbols over its life (renames, re-listings) is not an exact
+  // key any more, and must miss rather than pick one.
+  const bseRows = await sql<{ bse_code: string | null; symbol: string | null }[]>`
+    SELECT bse_code::text AS bse_code, MIN(symbol) AS symbol
+      FROM app.corporate_action
+     WHERE bse_code IS NOT NULL AND symbol IS NOT NULL
+     GROUP BY bse_code
+    HAVING COUNT(DISTINCT symbol) = 1
+  `;
+  return buildTradeUniverse(rows, bseRows);
 }
 
 export async function POST(req: NextRequest) {

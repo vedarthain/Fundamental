@@ -49,7 +49,28 @@ def load_universe(cur):
             by_isin[isin.strip().upper()] = sym
         by_symbol[sym.upper()] = sym
         by_name.append((normalize_name(name), sym))
-    return by_isin, by_symbol, by_name
+    # BSE scrip code -> NSE symbol. Upstox's trade report carries NEITHER a
+    # symbol nor an ISIN — only a six-digit BSE code and a 20-char truncated
+    # company name — so without this, 21 of its 26 equity rows resolve to
+    # nothing, including BANCOINDIA (500039) and JTEKTINDIA (520057), two of the
+    # three Upstox positions with no purchase history.
+    #
+    # SOURCE CAVEAT (§5): app.corporate_action.bse_code is a BY-PRODUCT of the
+    # corporate-actions scrape, not a maintained identifier table. It covers
+    # 1207 of ~2600 symbols and grows only when a company happens to announce
+    # something. It is used here because a six-digit code is an EXACT key — a
+    # hit is certain, a miss is merely a miss that falls through to the name
+    # tiers below. That asymmetry is what makes a partial table safe to consult.
+    # A symbol that never appears is no worse off than it is today.
+    cur.execute("""
+        select bse_code, min(symbol)
+          from app.corporate_action
+         where bse_code is not null and symbol is not null
+         group by bse_code
+        having count(distinct symbol) = 1
+    """)
+    by_bse = {str(c).strip(): s for c, s in cur.fetchall()}
+    return by_isin, by_symbol, by_name, by_bse
 
 def normalize_name(n):
     if not n:
@@ -59,24 +80,182 @@ def normalize_name(n):
         n = n.replace(junk, " ")
     return re.sub(r"\s+", " ", n).strip()
 
+def _bare_name(n):
+    """Punctuation-only normalisation, for the name->SYMBOL tier.
+
+    MUST match bareName() in web/src/lib/tradebookImport.ts.
+
+    Deliberately NOT normalize_name(). That one strips " INDUSTRIES", which
+    turns a name into a DIFFERENT listed company's ticker — measured against
+    app.universe on 2026-09-27, five of them:
+
+        Balkrishna Industries -> BALKRISHNA = Balkrishna Paper Mills
+        Zuari Industries      -> ZUARI      = Zuari Agro Chemicals
+        PTC Industries        -> PTC        = PTC India
+        Supreme Industries    -> SUPREME    = Supreme Holdings & Hospitality
+        Deep Industries       -> DEEP       = Deep Polymers
+
+    Every one of those would have been a silently wrong symbol on a real trade.
+    Keeping the suffix means "ZUARI INDUSTRIES" simply misses, which is the
+    outcome a miss is supposed to have.
+    """
+    if not n:
+        return ""
+    return re.sub(r"\s+", " ", re.sub(r"[.,\-&']", " ", n.upper())).strip()
+
+def _token_prefix_match(nn, by_name):
+    """Greedy token-prefix match. Port of tokenPrefixMatch() in tradebookImport.ts.
+
+    Brokers abbreviate rather than truncate: "CHOLAMANDALAM IN & FIN CO" for
+    "Cholamandalam Investment and Finance Company". String-prefix cannot bridge
+    that, but every trade token IS a prefix of a distinct universe token.
+    Require each trade token (>= 2 of them) to greedily claim a DISTINCT
+    universe token, and accept only a unique hit.
+    """
+    tks = [t for t in nn.split(" ") if t]
+    if len(tks) < 2:
+        return None
+    hits = set()
+    for un, sym in by_name:
+        if not un:
+            continue
+        utoks = [t for t in un.split(" ") if t]
+        used = [False] * len(utoks)
+        ok = True
+        for tk in tks:
+            found = -1
+            for i, ut in enumerate(utoks):
+                if not used[i] and ut.startswith(tk):
+                    found = i
+                    break
+            if found < 0:
+                ok = False
+                break
+            used[found] = True
+        if ok:
+            hits.add(sym)
+    return next(iter(hits)) if len(hits) == 1 else None
+
+_FUND_HINTS = ("ETF", "BEES", "GOLD", "SILVER", "LIQUID", "NIFTY", "SENSEX",
+               "BHARAT BOND", "INDEX FUND", "MUTUAL")
+
+def _looks_like_fund(rec):
+    """Label-only: does this unresolved row LOOK like an ETF / fund?
+
+    A name sniff, and it is allowed to be one because it changes nothing. The
+    row is dropped whichever bucket it lands in; this only decides which line
+    of the summary it is counted on, so a misfile costs a wrong label and not a
+    wrong trade. The same sniff would be unacceptable in `resolve()` or in
+    0080's backfill, where it would decide what gets written.
+
+    The reason it is not simply `bucket = "unresolved"` for everything: the
+    genuinely-expected ETFs would then inflate the number that is supposed to
+    mean "something is wrong", and a number that is never zero is a number
+    nobody reads.
+    """
+    hay = " ".join([
+        (rec.get("raw_name") or ""),
+        (rec.get("raw_symbol") or ""),
+    ]).upper()
+    return any(h in hay for h in _FUND_HINTS)
+
+def _drop_label(rec):
+    """The identifying fields, verbatim, for one unresolved row.
+
+    Verbatim and not normalized: the point of printing these is to see what the
+    broker actually shipped. Normalizing first would hide the truncation and
+    the missing-symbol cases that caused the miss.
+    """
+    return " | ".join(x for x in [
+        (rec.get("raw_symbol") or "").strip() or None,
+        (rec.get("raw_name") or "").strip() or None,
+        (rec.get("isin") or "").strip() or None,
+    ] if x) or "(no identifier)"
+
 def resolve(rec, ref):
-    by_isin, by_symbol, by_name = ref
-    # 1. ISIN
+    """MUST match resolveTradeSymbol() in web/src/lib/tradebookImport.ts.
+
+    IT DID NOT, and the gap was never small. The TS side grew an exact-name
+    tier, a prefix-DIRECTION guard and a token matcher; this function still had
+    the original three lines — ISIN, symbol, then one loose prefix test
+    requiring a unique hit. Everything the TS side learned, it learned alone.
+
+    The cost, measured on the 2026-09-26 five-paisa and Upstox files: 140 rows
+    dropped, reported under a counter named `etf/unmapped`, of which 5 were
+    actually ETFs. "ITC" lost to ITCHOTELS on a prefix tie. "Cyient" lost to
+    CYIENTDLM. "SRF" and "NLC" were never even asked, because of a
+    `len(nn) >= 4` guard that is meaningless once an exact match is possible.
+
+    tradebookParity.test.ts diffs the two implementations' PARSERS over shared
+    fixtures and has kept those honest for months. It does not touch resolution
+    — parsers return raw names and the resolver runs later, against a universe
+    the test has no copy of — which is exactly why this half drifted invisibly
+    while the other half stayed in lockstep. A parity test covers what it
+    covers; the untested half is where the divergence goes.
+    """
+    by_isin, by_symbol, by_name, by_bse = ref
+    # 1. ISIN — unambiguous.
     if rec.get("isin"):
         s = by_isin.get(rec["isin"].strip().upper())
         if s:
             return s
-    # 2. exact symbol
-    if rec.get("raw_symbol"):
-        s = by_symbol.get(rec["raw_symbol"].strip().upper())
+    # 2. exact symbol.
+    raw = (rec.get("raw_symbol") or "").strip()
+    if raw:
+        s = by_symbol.get(raw.upper())
         if s:
             return s
-    # 3. normalized name prefix (unique)
+        # 3. BSE scrip code. Before the name tiers deliberately: a numeric code
+        # is an exact key and a name is a guess, so the certain test goes first.
+        if raw.isdigit():
+            s = by_bse.get(raw)
+            if s:
+                return s
+    # 3.5 The name IS the ticker. 5paisa ships only a company name — no symbol,
+    # no ISIN, no code — and for a family of companies that name is literally
+    # the NSE symbol ("ONGC", "FACT"). Exact equality, so it outranks the fuzzy
+    # tiers. See _bare_name() for why it does not reuse normalize_name().
+    bn = _bare_name(rec.get("raw_name", ""))
+    if bn:
+        s = by_symbol.get(bn)
+        if s:
+            return s
     nn = normalize_name(rec.get("raw_name", ""))
+    if not nn:
+        return None
+    # 4. Exact normalized name WINS OUTRIGHT, and is tested before any length
+    # guard. The old `len(nn) >= 4` existed to stop a 2-3 char fragment matching
+    # half the market by prefix; that risk is real for PREFIX matching and
+    # absent for equality, and the guard was silently costing SRF and NLC.
+    exact, prefix, prefix_uni_shorter = set(), set(), set()
+    for un, sym in by_name:
+        if not un:
+            continue
+        if un == nn:
+            exact.add(sym)
+        elif un.startswith(nn):
+            prefix.add(sym)
+        elif nn.startswith(un):
+            # The dangerous direction: the UNIVERSE name is the shorter side, so
+            # the trade name carries qualifying tokens the universe name lacks
+            # and accepting the hit throws them away. "TATA MOTORS PASS VEH"
+            # starts with TMCV's "TATA MOTORS" and would resolve to the wrong
+            # company — the same trade arriving with an explicit symbol resolved
+            # to TMPV, so one fill was persisted under two symbols.
+            prefix.add(sym)
+            prefix_uni_shorter.add(sym)
+    if len(exact) == 1:
+        return next(iter(exact))
+    if not exact and len(prefix) == 1:
+        hit = next(iter(prefix))
+        if hit not in prefix_uni_shorter:
+            # Safe direction: the broker truncated the name, the universe name
+            # is the longer side, nothing is being discarded.
+            return hit
+        return _token_prefix_match(nn, by_name) or hit
+    # 5. Token-prefix, for abbreviated names no string prefix can bridge.
     if len(nn) >= 4:
-        hits = {sym for un, sym in by_name if un.startswith(nn) or nn.startswith(un)}
-        if len(hits) == 1:
-            return next(iter(hits))
+        return _token_prefix_match(nn, by_name)
     return None
 
 # ---------- parsers: yield normalized dicts ----------
@@ -634,6 +813,7 @@ def main():
     recs = collect()
 
     kept, dropped = [], {}
+    unresolved = {}
     seen = set()
     for r in recs:
         if r["side"] not in ("buy", "sell"):
@@ -642,8 +822,27 @@ def main():
             continue
         sym = resolve(r, ref)
         if not sym:
-            dropped.setdefault(f"etf/unmapped:{r['broker']}", 0)
-            dropped[f"etf/unmapped:{r['broker']}"] += 1
+            # ── Why this is two buckets and a name list, not one counter ─────
+            #
+            # This was a single counter called `etf/unmapped`. It read as a
+            # handful of gold/liquid ETFs nobody trades on fundamentals, so
+            # nobody looked. It was hiding 140 rows of ordinary equity —
+            # 5 were actually ETFs. A counter that merges "expected" with
+            # "unknown" reports the expected number and buries the rest:
+            # §5's check that cannot fail, in a print statement.
+            #
+            # `_looks_like_fund` is a NAME SNIFF and is deliberately confined
+            # to the LABEL. It decides nothing about what gets written; every
+            # unresolved row is dropped either way. The list below is the part
+            # that has teeth — the distinct descriptors are printed, so the
+            # next 140 arrive with their names attached and cannot hide behind
+            # an aggregate.
+            bucket = "etf" if _looks_like_fund(r) else "unresolved"
+            dropped.setdefault(f"{bucket}:{r['broker']}", 0)
+            dropped[f"{bucket}:{r['broker']}"] += 1
+            if bucket == "unresolved":
+                unresolved.setdefault((r["broker"], _drop_label(r)), 0)
+                unresolved[(r["broker"], _drop_label(r))] += 1
             continue
         r["symbol"] = sym
         k = dedup_key(r)
@@ -667,6 +866,10 @@ def main():
     print("dropped:")
     for k in sorted(dropped):
         print(f"  {k}: {dropped[k]}")
+    if unresolved:
+        print(f"unresolved instruments ({len(unresolved)} distinct):")
+        for (b, lab), n in sorted(unresolved.items(), key=lambda kv: (-kv[1], kv[0])):
+            print(f"  {n:4d}  {b:10s}  {lab}")
     syms = sorted(set(r["symbol"] for r in kept))
     print(f"distinct symbols: {len(syms)}")
     dr = sorted(r["trade_date"] for r in kept)

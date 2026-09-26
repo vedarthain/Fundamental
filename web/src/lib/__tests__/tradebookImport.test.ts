@@ -200,3 +200,59 @@ describe("resolveTradeSymbol", () => {
     expect(resolveTradeSymbol(trade({ rawName: "CPSE ETF" }), uni)).toBeNull();
   });
 });
+
+// ─────────────── identifier-poor brokers: BSE codes and bare names ──────────
+//
+// Each of these fails on the real input that motivated it, measured on the
+// 2026-09-26 Upstox and 5paisa files. Before this block the script and the
+// upload route disagreed: the script had grown a BSE tier and the route had
+// not, so the same file resolved differently depending on which door it came
+// through. That is the drift tradebookParity.test.ts cannot see, because it
+// diffs PARSERS and resolution happens afterwards against a universe the
+// parity test has no copy of.
+describe("resolveTradeSymbol — identifier-poor brokers", () => {
+  const uni = buildTradeUniverse(
+    [
+      { symbol: "ONGC", isin: "INE213A01029", company_name: "Oil & Natural Gas Corporation Limited" },
+      { symbol: "FACT", isin: "INE188A01015", company_name: "Fertilizers and Chemicals Travancore Limited" },
+      { symbol: "BANCOINDIA", isin: "INE213C01025", company_name: "Banco Products (India) Limited" },
+      // The landmine pair. normalizeName() strips " INDUSTRIES", so
+      // "Balkrishna Industries" collapses to "BALKRISHNA" — which is a
+      // DIFFERENT listed company. A name→symbol tier built on normalizeName()
+      // maps a real trade to the wrong issuer, silently.
+      { symbol: "BALKRISIND", isin: "INE787D01026", company_name: "Balkrishna Industries Limited" },
+      { symbol: "BALKRISHNA", isin: "INE875R01011", company_name: "Balkrishna Paper Mills Limited" },
+    ],
+    [{ bse_code: "500039", symbol: "BANCOINDIA" }],
+  );
+  const trade = (over: Partial<ParsedTrade>): ParsedTrade => ({
+    broker: "upstox", rawSymbol: "", rawName: "", isin: "", side: "buy",
+    quantity: 1, price: 1, tradeDate: "2026-09-26", tradeTime: "", tradeId: "", orderId: "",
+    ...over,
+  });
+
+  it("resolves an Upstox row that carries only a BSE scrip code", () => {
+    // Upstox ships no symbol and no ISIN — a six-digit BSE code and a 20-char
+    // truncated name. 21 of its 26 equity rows resolved to nothing.
+    expect(resolveTradeSymbol(trade({ rawSymbol: "500039", rawName: "BANCO PRODUCTS (I)" }), uni)).toBe("BANCOINDIA");
+  });
+
+  it("does not invent a symbol for an unknown BSE code", () => {
+    expect(resolveTradeSymbol(trade({ rawSymbol: "999999", rawName: "" }), uni)).toBeNull();
+  });
+
+  it("resolves a 5paisa name that IS the ticker, with no length guard", () => {
+    // 5paisa ships a company name and nothing else. "ONGC" and "FACT" are
+    // 4 and 4 chars; the old `nn.length >= 4` let them through by luck, and
+    // neither matched any company NAME, so both were dropped.
+    expect(resolveTradeSymbol(trade({ broker: "fivepaisa", rawName: "ONGC" }), uni)).toBe("ONGC");
+    expect(resolveTradeSymbol(trade({ broker: "fivepaisa", rawName: "FACT" }), uni)).toBe("FACT");
+  });
+
+  it("does NOT map a suffixed name onto another company's ticker", () => {
+    // The test that makes the tier safe rather than merely useful: this must
+    // resolve to Balkrishna INDUSTRIES via the name tiers, never to
+    // BALKRISHNA (Paper Mills) via a stripped-suffix symbol match.
+    expect(resolveTradeSymbol(trade({ broker: "fivepaisa", rawName: "Balkrishna Industries" }), uni)).toBe("BALKRISIND");
+  });
+});
