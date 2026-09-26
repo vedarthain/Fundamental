@@ -1957,6 +1957,80 @@ function downloadTradesCsv(rows: TradeRow[], period: string) {
   URL.revokeObjectURL(url);
 }
 
+// ─────────────────────── collapsible section state ──────────────────────────
+
+/**
+ * Open/closed state for a collapsible card, remembered across visits.
+ *
+ * WHY IT IS NOT JUST useState
+ *
+ * A toggle that resets on every navigation is not a preference, it is a
+ * gesture you have to repeat. The Transactions tab stacks four cards and the
+ * imported-trades table alone runs to hundreds of rows, so whichever one you
+ * collapsed is the one you would have to collapse again on the next visit.
+ * Persisting it is what makes the control worth having.
+ *
+ * WHY THE DEFAULT IS READ IN AN EFFECT, NOT DURING RENDER
+ *
+ * localStorage does not exist on the server. Reading it during render makes
+ * the server HTML and the first client render disagree, which React reports as
+ * a hydration error and repairs by throwing the client tree away. So the first
+ * paint always uses `defaultOpen` — identical to the server's — and the stored
+ * preference is applied immediately afterwards. A collapsed section therefore
+ * flashes open for one frame on a cold load. That is the deliberate trade: a
+ * visible frame costs less than a hydration mismatch, which would silently
+ * discard the search box and export controls further down the same card.
+ *
+ * Writes are wrapped because localStorage throws outright in Safari private
+ * browsing and when a site is set to block storage — an unhandled throw here
+ * would take down the whole Transactions tab over a UI preference.
+ */
+function useCollapsible(storageKey: string, defaultOpen = true) {
+  const [open, setOpen] = useState(defaultOpen);
+  const key = `pf.collapse.${storageKey}`;
+  useEffect(() => {
+    try {
+      const v = window.localStorage.getItem(key);
+      if (v === "0") setOpen(false);
+      else if (v === "1") setOpen(true);
+    } catch { /* storage blocked — keep the default */ }
+  }, [key]);
+  const toggle = () => {
+    setOpen((prev) => {
+      const next = !prev;
+      try { window.localStorage.setItem(key, next ? "1" : "0"); } catch { /* ignore */ }
+      return next;
+    });
+  };
+  return { open, toggle };
+}
+
+/**
+ * The chevron. It is a real <button> with aria-expanded rather than a styled
+ * div, so the section is reachable and announced by keyboard and screen
+ * readers — the card headers already carry interactive controls (search,
+ * export), and a div that only responds to a mouse would be the one thing in
+ * the row you cannot tab to.
+ */
+function CollapseToggle({ open, onClick, label }: { open: boolean; onClick: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-expanded={open}
+      aria-label={`${open ? "Collapse" : "Expand"} ${label}`}
+      title={open ? "Collapse" : "Expand"}
+      className="inline-flex items-center justify-center w-6 h-6 rounded-md shrink-0 transition-colors hover:bg-[var(--color-paper)]"
+      style={{ color: "var(--color-muted)" }}
+    >
+      <IconChevron
+        size={15}
+        className={`transition-transform duration-150 ${open ? "" : "-rotate-90"}`}
+      />
+    </button>
+  );
+}
+
 function TradeLogView({ log }: { log: TradeLog }) {
   const { manual, imported } = log;
   const matchedCount = manual.filter((t) => t.matched).length;
@@ -1973,6 +2047,7 @@ function TradeLogView({ log }: { log: TradeLog }) {
     <div className="mt-4 space-y-4">
       <TradeTable
         title="Manual trades"
+        storageKey="manual-trades"
         rows={manual}
         emptyHint="No hand-entered trades. Use “Add manual trade” to log one."
         note={
@@ -1983,6 +2058,7 @@ function TradeLogView({ log }: { log: TradeLog }) {
       />
       <TradeTable
         title="Imported trades"
+        storageKey="imported-trades"
         rows={imported}
         emptyHint="No imported trades. Upload a broker tradebook on the panel above."
         exportable
@@ -1992,14 +2068,23 @@ function TradeLogView({ log }: { log: TradeLog }) {
 }
 
 function TradeTable({
-  title, rows, emptyHint, note, exportable,
+  title, storageKey, rows, emptyHint, note, exportable,
 }: {
   title: string;
+  /** Distinct key for the remembered open/closed state. */
+  storageKey: string;
   rows: TradeRow[];
   emptyHint: string;
   note?: string;
   exportable?: boolean;
 }) {
+  // Closed on a first visit. These two tables are the long ones — the imported
+  // log runs to hundreds of rows — and neither is what you came to the
+  // Transactions tab to do. The upload panel and the freshness ledger are; they
+  // get pushed below the fold if the logs are open by default. The row count in
+  // the heading stays visible while collapsed, so the card still answers "is
+  // anything in here" without being expanded.
+  const { open, toggle } = useCollapsible(storageKey, false);
   const periods = useMemo(() => (exportable ? tradePeriods(rows) : []), [exportable, rows]);
   const [period, setPeriod] = useState<string>("all");
   // Free-text filter across symbol / name / side / broker / date / source.
@@ -2014,18 +2099,26 @@ function TradeTable({
   }, [rows, q]);
   return (
     <div className="card overflow-hidden">
-      <div className="px-4 py-3 border-b hairline flex flex-wrap items-center gap-2">
+      <div className={`px-4 py-3 flex flex-wrap items-center gap-2 ${open ? "border-b hairline" : ""}`}>
+        <CollapseToggle open={open} onClick={toggle} label={title} />
         <span
           className="inline-flex items-center justify-center w-6 h-6 rounded-md shrink-0"
           style={{ background: "color-mix(in srgb, var(--color-accent-600) 12%, transparent)", color: "var(--color-accent-700)" }}
         >
           <IconList size={15} />
         </span>
-        <h2 className="text-[14px] font-semibold">
-          {title} ({q.trim() ? `${filtered.length} of ${rows.length}` : rows.length})
-        </h2>
+        {/* The heading is the click target too — a chevron alone is a small
+            hit area, and the row count is what you are aiming at anyway. */}
+        <button
+          type="button"
+          onClick={toggle}
+          aria-expanded={open}
+          className="text-[14px] font-semibold text-left"
+        >
+          {title} ({q.trim() && open ? `${filtered.length} of ${rows.length}` : rows.length})
+        </button>
         <div className="ml-auto flex items-center gap-1.5">
-          {rows.length > 0 && (
+          {open && rows.length > 0 && (
             <div className="relative">
               <input
                 type="search"
@@ -2038,7 +2131,7 @@ function TradeTable({
               />
             </div>
           )}
-          {exportable && rows.length > 0 && (
+          {open && exportable && rows.length > 0 && (
             <>
               <select
                 value={period}
@@ -2064,10 +2157,10 @@ function TradeTable({
           )}
         </div>
       </div>
-      {note && (
+      {open && note && (
         <p className="muted-text text-[11.5px] px-4 py-2 leading-snug border-b hairline">{note}</p>
       )}
-      {rows.length === 0 ? (
+      {!open ? null : rows.length === 0 ? (
         <div className="px-4 py-6 text-center text-[12.5px] muted-text">{emptyHint}</div>
       ) : filtered.length === 0 ? (
         <div className="px-4 py-6 text-center text-[12.5px] muted-text">
@@ -2364,19 +2457,38 @@ function ImportCell({
 }
 
 function ImportLedger({ rows }: { rows: ImportLogRow[] }) {
+  // Collapsible like the trade logs, but OPEN by default and alone in that.
+  // It is the only card here that can tell you something is wrong; a warning
+  // you have to expand to see is a warning that does not work. The two trade
+  // logs are records you go looking for, which is why they start closed.
+  const { open, toggle } = useCollapsible("import-freshness", true);
+  const stalest = rows?.[0];
   if (!rows?.length) return null;
   return (
     <div className="mt-4 card p-4 md:p-5">
-      <div className="flex items-baseline justify-between gap-3 flex-wrap">
-        <div className="text-[14px] font-semibold">Import freshness</div>
-        <p className="muted-text text-[11.5px] leading-snug">
-          A broker can only show you what you last uploaded. Trades made after an
-          import are invisible — they don&apos;t look missing, the position just
-          reads stale.
-        </p>
+      <div className="flex items-center gap-2 flex-wrap">
+        <CollapseToggle open={open} onClick={toggle} label="Import freshness" />
+        <button type="button" onClick={toggle} aria-expanded={open} className="text-[14px] font-semibold text-left">
+          Import freshness ({rows.length})
+        </button>
+        {/* Collapsed, the card still has to earn its space: name the broker
+            that needs attention rather than going silent. */}
+        {!open && stalest && (
+          <span className="text-[11.5px] muted-text">
+            — stalest: {stalest.label}
+          </span>
+        )}
       </div>
 
-      <div className="overflow-x-auto mt-3 -mx-1">
+      {open && (
+      <p className="muted-text text-[11.5px] leading-snug mt-1.5">
+        A broker can only show you what you last uploaded. Trades made after an
+        import are invisible — they don&apos;t look missing, the position just
+        reads stale.
+      </p>
+      )}
+
+      <div className={`overflow-x-auto mt-3 -mx-1 ${open ? "" : "hidden"}`}>
         <table className="w-full text-left border-collapse">
           <thead>
             <tr className="text-[11px] font-semibold muted-text uppercase tracking-wide">
@@ -3413,6 +3525,8 @@ const IconUpload = ({ className, size }: IconProps) =>
   svg(size, className, <><path d="M12 15V4" /><path d="m8 8 4-4 4 4" /><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" /></>);
 const IconEdit = ({ className, size }: IconProps) =>
   svg(size, className, <><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></>);
+const IconChevron = ({ className, size }: IconProps) =>
+  svg(size, className, <path d="m6 9 6 6 6-6" />);
 // Sector/industry glyphs for the holdings group headers.
 const IconFactory = ({ className, size }: IconProps) =>
   svg(size, className, <><path d="M3 21V10l6 4V10l6 4V7l6 4v10Z" /><path d="M3 21h18" /></>);
