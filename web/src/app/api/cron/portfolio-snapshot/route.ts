@@ -126,17 +126,34 @@ async function run(req: NextRequest): Promise<NextResponse> {
       p: i.pnl,
     }));
 
+    // The same book with the instruments golden has no bar for removed (0080).
+    // total_* stays whole so the row still reconciles to the broker apps; the
+    // charts read equity_* because the ETF leg is carried at a figure frozen at
+    // the last holdings upload — it sat at exactly 227,032 for 50 consecutive
+    // trading days, contributing a constant to both sides of every percentage.
+    //
+    // Computed here from live instruments rather than re-derived from the
+    // `holdings` jsonb below: same predicate, one fewer round-trip through a
+    // serialisation that has already been got wrong once in this file.
+    const eq = pf.instruments.filter((i) => i.isMapped);
+    const equityValue = eq.reduce((s, i) => s + i.currentValue, 0);
+    const equityCost = eq.reduce((s, i) => s + (i.currentValue - i.pnl), 0);
+
     await sql`
       INSERT INTO app.portfolio_snapshot
-        (user_id, snap_date, total_value, total_cost, day_change_value, holdings)
+        (user_id, snap_date, total_value, total_cost, day_change_value, holdings,
+         equity_value, equity_cost)
       VALUES
         (${userId}, ${snapDate}, ${pf.totals.currentValue}, ${pf.totals.invested},
-         ${pf.totals.dayChangeValue}, ${sql.json(holdings)})
+         ${pf.totals.dayChangeValue}, ${sql.json(holdings)},
+         ${equityValue}, ${equityCost})
       ON CONFLICT (user_id, snap_date) DO UPDATE SET
         total_value      = EXCLUDED.total_value,
         total_cost       = EXCLUDED.total_cost,
         day_change_value = EXCLUDED.day_change_value,
         holdings         = EXCLUDED.holdings,
+        equity_value     = EXCLUDED.equity_value,
+        equity_cost      = EXCLUDED.equity_cost,
         created_at       = now()
     `;
     written++;

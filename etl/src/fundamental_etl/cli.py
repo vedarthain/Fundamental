@@ -2321,7 +2321,7 @@ def coverage_cmd(
     """
     from .coverage import (
         write_ledger, check_partition, check_no_problems,
-        check_no_regression, delta_report, format_report,
+        check_no_regression, check_portfolio, delta_report, format_report,
     )
     configure_logging()
 
@@ -2347,7 +2347,12 @@ def coverage_cmd(
 
         results = (check_partition(conn, snap)
                    + check_no_problems(conn, snap)
-                   + check_no_regression(conn, snap))
+                   + check_no_regression(conn, snap)
+                   # Portfolio invariants ride the same command deliberately.
+                   # A check that lives in its own script is a check nobody
+                   # runs; this one already runs weekly and already exits
+                   # non-zero, which is the only property that matters.
+                   + check_portfolio(conn))
         for r in results:
             print(r.short())
 

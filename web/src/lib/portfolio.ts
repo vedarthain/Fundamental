@@ -243,8 +243,24 @@ export type PerformanceStats = {
 };
 
 export async function loadPerformanceStats(userId: number): Promise<PerformanceStats | null> {
+  // equity_value/equity_cost (0080) — the same book without the instruments
+  // golden has no daily bar for. COALESCE to total_* so a row written by a
+  // future code path that forgets the new columns degrades to the old, whole-
+  // book number rather than to NULL: a NULL here would be filtered out by the
+  // WHERE below and silently shorten the series, which reads as history
+  // disappearing rather than as a bug.
+  //
+  // This is the stored counterpart of the live cards' equities-only default.
+  // The ETF leg it removes was valued at exactly 227,032 on all 50 rows of the
+  // series — a frozen broker figure, not a measurement — so it added a constant
+  // to both the numerator and the denominator of every return this function
+  // computes, damping each one. total_value is still on the row for anyone
+  // reconciling against a broker app.
   const snaps = await sql<{ snap_date: string; total_value: string | null; total_cost: string | null; day_change_value: string | null }[]>`
-    SELECT snap_date::text, total_value::text, total_cost::text, day_change_value::text
+    SELECT snap_date::text,
+           COALESCE(equity_value, total_value)::text AS total_value,
+           COALESCE(equity_cost,  total_cost)::text  AS total_cost,
+           day_change_value::text
       FROM app.portfolio_snapshot
      WHERE user_id = ${userId} AND total_value IS NOT NULL
      ORDER BY snap_date ASC
@@ -460,8 +476,22 @@ export type PortfolioReturns = {
  */
 export async function loadPortfolioReturns(userId: number): Promise<PortfolioReturns> {
   const [snaps, flows] = await Promise.all([
+    // equity_value (0080), with the same COALESCE fallback as
+    // loadPerformanceStats. THE PAIRING MATTERS MORE HERE than it does there:
+    // TWR divides a value change by a value, and nets a cashflow out of it. Use
+    // an equities-only VALUE against a whole-book FLOW and an ETF purchase
+    // subtracts money that was never added to the numerator, which reads as a
+    // loss of exactly the purchase amount on that one day.
+    //
+    // Checked before making the change rather than assumed: all 1,469
+    // transactions on file resolve to an app.universe symbol, and none to an
+    // unmapped instrument — every ETF in the book arrived via a holdings
+    // upload, never a tradebook. So the flow series below is ALREADY
+    // equities-only and the two sides now agree. If ETF tradebooks are ever
+    // imported this stops being true silently, which is why it is written down
+    // here rather than left as a property of today's data.
     sql<{ d: string; v: string }[]>`
-      SELECT snap_date::text AS d, total_value::text AS v
+      SELECT snap_date::text AS d, COALESCE(equity_value, total_value)::text AS v
         FROM app.portfolio_snapshot
        WHERE user_id = ${userId} AND total_value IS NOT NULL
        ORDER BY snap_date ASC
@@ -1497,14 +1527,13 @@ async function currentLegBuyDateRows(userId: number) {
   //      sell-first shows a transient zero and would falsely reset the anchor.
   //      Day-end balance has no such artifact.
   //
-  //   2. The `base` offset. 8 held symbols drive the running balance NEGATIVE
-  //      (NATIONALUM to -96, KARURVYSYA to -90) — impossible unless shares were
-  //      bought before the transaction history begins, which for this data is
-  //      2024-02-01. Without the offset those phantom crossings read as exits:
-  //      JYOTHYLAB lost its anchor entirely and MCX reset to a date it never
-  //      exited on. Seeding the balance with the smallest pre-history quantity
-  //      that keeps it non-negative is the minimum assumption that makes the
-  //      ledger self-consistent.
+  //   2. The rebase. Held symbols drive the running balance NEGATIVE
+  //      (NATIONALUM to -48, KARURVYSYA to -17) — impossible unless shares were
+  //      bought before the transaction history begins. Without a rebase those
+  //      phantom crossings read as exits: JYOTHYLAB lost its anchor entirely
+  //      and MCX reset to a date it never exited on. The `kind` CTE below
+  //      decides whether to rebase and keep the file or to discard the part of
+  //      it that is not self-consistent; read that comment, it is the crux.
   //
   // A symbol still held but whose current leg contains no buy (fully sold on
   // the record, held only via pre-history shares) yields no row here and falls
@@ -1529,15 +1558,47 @@ async function currentLegBuyDateRows(userId: number) {
     -- because the shares arrived via a demerger or bonus (CEMPRO, ONESOURCE,
     -- NUVAMA) and so have no buy row anywhere.
     floor AS (
-      SELECT symbol, MIN(bal) AS mn FROM running GROUP BY symbol
+      SELECT symbol, MIN(bal) AS mn, MAX(bal) AS mx FROM running GROUP BY symbol
+    ),
+    -- NOT EVERY NEGATIVE MEANS "starts mid-position".
+    --
+    -- The first version of this rule discarded history whenever the balance
+    -- went negative AT ALL, by any amount. That is too strong, and it shipped a
+    -- regression the same day it fixed one: ICIL dips to -1 against a peak of
+    -- 34 and ZENSARTECH to -1 against 12, so a SINGLE unexplained share threw
+    -- away 16 and 8 trades of real history respectively and rendered "—".
+    --
+    -- The distinction is coverage, not sign. If 33 of 34 shares are accounted
+    -- for by buy rows in the file, the earliest buy is the anchor and the odd
+    -- share is what a one-share discrepancy almost always is: a bonus, a
+    -- fractional entitlement, a rounding artifact, an off-market transfer. If
+    -- HALF the peak position is unexplained (NATIONALUM -48 of 89, COALINDIA
+    -- -16 of 28, MCX -14 against a peak of 6) the file genuinely begins
+    -- mid-position and its earliest buy is a top-up of something older.
+    --
+    -- So: rebase small shortfalls and keep the history; discard large ones.
+    --   * absolute — one share is never a real prior position for someone who
+    --     then trades tens or hundreds of them.
+    --   * relative — 15%% of peak. Measured, not picked: the held book splits
+    --     at 11.1%% (AUROPHARMA, artifact) and 26.3%% (JYOTHYLAB, mid-position),
+    --     and 15 sits inside that gap rather than on either edge.
+    -- Re-derive both if the book changes shape; a threshold nobody re-measures
+    -- is §5's seeded-once bug wearing a number.
+    kind AS (
+      SELECT symbol, mn,
+             CASE WHEN mn >= -0.000001 THEN 'clean'
+                  WHEN -mn <= 1.000001 OR -mn <= 0.15 * GREATEST(mx, 0) THEN 'artifact'
+                  ELSE 'midpos' END AS k
+        FROM floor
     ),
     -- The LAST day the balance sits at that minimum — the point of maximum net
     -- liquidation, and the earliest date from which the ledger is self-
-    -- consistent without positing a larger unknown opening lot.
+    -- consistent without positing a larger unknown opening lot. Only computed
+    -- for 'midpos'; an 'artifact' symbol has no cutoff and keeps its whole file.
     cutoff AS (
       SELECT r.symbol, MAX(r.trade_date) AS d
-        FROM running r JOIN floor f USING (symbol)
-       WHERE f.mn < -0.000001 AND r.bal <= f.mn + 0.000001
+        FROM running r JOIN kind s USING (symbol)
+       WHERE s.k = 'midpos' AND r.bal <= s.mn + 0.000001
        GROUP BY r.symbol
     ),
     -- DISCARD everything up to and including that day, rather than the previous
@@ -1561,10 +1622,16 @@ async function currentLegBuyDateRows(userId: number) {
     --
     -- Symbols that never go negative (132 of 159) are untouched: mn >= 0 makes
     -- the LEFT JOINs no-ops and the rebase a subtraction of zero.
+    -- Rebase by the shortfall in BOTH surviving cases. For 'artifact' that is
+    -- the old seeded-opening-lot behaviour, now confined to shortfalls small
+    -- enough for the earliest buy to still be the real anchor. For 'midpos' it
+    -- lands the balance at exactly 0 on the cutoff day, so the leg counter
+    -- below starts the current leg there. LEAST(...,0) makes 'clean' a subtract
+    -- of zero rather than a rebase off a positive minimum.
     adjusted AS (
-      SELECT r.symbol, r.trade_date, r.bal - COALESCE(f.mn, 0) AS bal
+      SELECT r.symbol, r.trade_date, r.bal - LEAST(COALESCE(s.mn, 0), 0) AS bal
         FROM running r
-        LEFT JOIN floor  f ON f.symbol = r.symbol AND f.mn < -0.000001
+        JOIN kind s ON s.symbol = r.symbol
         LEFT JOIN cutoff c ON c.symbol = r.symbol
        WHERE c.d IS NULL OR r.trade_date > c.d
     ),

@@ -460,3 +460,153 @@ def format_report(rows: list[dict], prev: Optional[date], snapshot_date: date) -
         )
     lines.append(f"{'TOTAL (= active universe)':<30}{total_now:>8}")
     return "\n".join(lines)
+
+
+# ── Portfolio invariants ─────────────────────────────────────────────────────
+#
+# WHY THESE LIVE HERE AND NOT IN A UNIT TEST
+#
+# Every portfolio defect found in the 2026-09-26 session was a DATA defect, not
+# a logic defect: 144 trades double-counted because two writers hashed the same
+# fill into different dedup keyspaces, 4 more that no key-based cleanup could
+# see, and held positions with no transaction history because the broker's
+# tradebook was never uploaded. web/src/lib/portfolio.ts was correct throughout
+# and every unit test over it passed. A test cannot catch these; only a query
+# against the live table can.
+#
+# They are written to the same rule as the rest of this module: no tunable
+# numbers. One zero-assertion and one partition. A partial tradebook is
+# REPORTED, not failed — it is a fact about what the user has uploaded, not a
+# defect in the pipeline, and an alert you can only silence by doing someone
+# else's paperwork is an alert you learn to ignore.
+
+
+def check_portfolio(conn: psycopg.Connection) -> list[CoverageResult]:
+    """Invariants over app.portfolio_transaction / app.portfolio_holding.
+
+    1. NO CONTENT DUPLICATES — zero, across every user.
+
+       Matched on (user, broker, date, symbol, side, quantity, price): what the
+       fill IS, never how it was hashed. Two importers wrote the same trades
+       under three different dedup keyspaces over the project's life, and each
+       cutover ADDED a keyspace rather than replacing one, so every re-import
+       silently re-inserted everything written under the earlier shapes. A check
+       keyed on dedup_key is structurally incapable of seeing that — it would
+       have passed green through all 148 duplicate rows. Content cannot be
+       changed by a storage decision, so this check survives the next cutover.
+
+       CONTENT ALONE IS NOT ENOUGH, and the first version of this check learned
+       that in one run: it reported 40 surplus rows across 31 groups on a table
+       that was clean. Zerodha slices an order into separate fills, so "1 share
+       of GVT&D sold at 2050.55 on 2025-01-01" legitimately appears four times —
+       four distinct broker trade_ids, four real trades. A check that is red on
+       day one for correct data is the alert you learn to silence: the same
+       failure as a rotten threshold, reached faster.
+
+       So surplus counts only what cannot be a distinct fill:
+         * the same broker trade_id on file more than once — the 144-row bug,
+           one fill written under two dedup keyspaces. Unambiguous; the broker
+           issued that id exactly once.
+         * a keyless row whose content is already in the group. If the group has
+           keyed rows, every keyless row in it is a re-import of one (ids
+           2711-2714); if it has none, all but one are surplus.
+
+       Proven against both historical shapes injected into the aggregation:
+       0 on the live table, and it reports them when either is present.
+
+       The residual false positive is a broker that ships no trade_id AND
+       genuinely slices fills — 5paisa, three rows today. Accepted: a false
+       positive costs a minute of looking; the false negative doubled a position
+       and was caught only because Deb asked.
+
+    2. HELD POSITIONS ARE ACCOUNTED FOR — a partition, asserted at zero on the
+       residual bucket only.
+
+       Every mapped, non-derived holding lands in exactly one of:
+         has_trades      — transactions exist for the symbol
+         broker_silent   — the symbol has none AND its broker has uploaded no
+                           tradebook at all. Explained, not a defect: holdings
+                           and tradebooks are separate uploads, and a holdings
+                           import creates zero transactions by design.
+         broker_partial  — the symbol has none but its broker HAS transactions.
+                           This is the interesting bucket: it means a tradebook
+                           was uploaded and does not cover everything held
+                           there, so the anchor for those rows is a tracked-since
+                           proxy and nothing will ever fix it but a wider export.
+         unclassified    — impossible by construction; if it is ever non-zero
+                           the classifier has drifted from the schema.
+
+       Only `unclassified` fails. The other three are levels, and this module's
+       whole thesis is that levels get judged by a human and thresholds rot.
+    """
+    out: list[CoverageResult] = []
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            """
+            SELECT COUNT(*) FILTER (WHERE surplus > 0)::int AS groups,
+                   COALESCE(SUM(surplus), 0)::int AS extra
+              FROM (
+                SELECT (COUNT(*) FILTER (WHERE trade_id IS NOT NULL AND trade_id <> '')
+                        - COUNT(DISTINCT NULLIF(trade_id, '')))
+                       + GREATEST(COUNT(*) FILTER (WHERE trade_id IS NULL OR trade_id = '')
+                                  - CASE WHEN COUNT(DISTINCT NULLIF(trade_id, '')) = 0
+                                         THEN 1 ELSE 0 END, 0) AS surplus
+                  FROM app.portfolio_transaction
+                 GROUP BY user_id, broker, trade_date, symbol, side,
+                          ROUND(quantity::numeric, 4), ROUND(price::numeric, 2)
+              ) d
+            """
+        )
+        dup = cur.fetchone()
+
+        cur.execute(
+            """
+            WITH held AS (
+              SELECT DISTINCT h.user_id, h.broker, h.symbol
+                FROM app.portfolio_holding h
+               WHERE h.is_mapped AND h.broker <> 'derived' AND h.symbol IS NOT NULL
+            ),
+            broker_has_trades AS (
+              SELECT DISTINCT user_id, broker FROM app.portfolio_transaction
+            )
+            SELECT CASE
+                     WHEN EXISTS (SELECT 1 FROM app.portfolio_transaction t
+                                   WHERE t.user_id = held.user_id AND t.symbol = held.symbol)
+                       THEN 'has_trades'
+                     WHEN NOT EXISTS (SELECT 1 FROM broker_has_trades b
+                                       WHERE b.user_id = held.user_id AND b.broker = held.broker)
+                       THEN 'broker_silent'
+                     WHEN held.broker IS NOT NULL THEN 'broker_partial'
+                     ELSE 'unclassified'
+                   END AS bucket,
+                   COUNT(*)::int AS n
+              FROM held GROUP BY 1
+            """
+        )
+        buckets = {r["bucket"]: r["n"] for r in cur.fetchall()}
+
+    extra = dup["extra"] if dup else 0
+    groups = dup["groups"] if dup else 0
+    out.append(CoverageResult(
+        name="portfolio.no_duplicate_trades",
+        passed=(extra == 0),
+        message=(f"{extra} surplus row(s) across {groups} content group(s)"
+                 + ("" if extra == 0
+                    else " — a fill is on file more than once; the position is overstated")),
+    ))
+
+    total = sum(buckets.values())
+    unclassified = buckets.get("unclassified", 0)
+    out.append(CoverageResult(
+        name="portfolio.holdings_accounted_for",
+        passed=(unclassified == 0),
+        message=(
+            f"{total} mapped holding(s): "
+            f"{buckets.get('has_trades', 0)} with trades, "
+            f"{buckets.get('broker_silent', 0)} awaiting a first tradebook, "
+            f"{buckets.get('broker_partial', 0)} beyond their tradebook's window"
+            + ("" if unclassified == 0
+               else f", {unclassified} UNCLASSIFIED — the classifier has drifted")
+        ),
+    ))
+    return out
