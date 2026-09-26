@@ -311,7 +311,11 @@ function PerformanceTab({ portfolio, realized, perf, timeline }: { portfolio: Po
   // stays whole-book on purpose: those numbers are decompositions *of the whole
   // book* and become meaningless or misleading when sliced — "scored coverage"
   // of the Others segment is 0% by definition, "book quality" of it is null.
-  const [seg, setSeg] = useState<"all" | "stocks" | "others">("all");
+  // Defaults to "stocks", not "all": the money cards are read alongside charts
+  // and quality measures that are equities-only by construction, and an "All"
+  // default put an ETF-inclusive P&L next to an equities-only curve. "All" is
+  // one click away and still reconciles to the broker.
+  const [seg, setSeg] = useState<"all" | "stocks" | "others">("stocks");
   const segRows = useMemo(
     () => (seg === "all" ? instruments : instruments.filter((i) => (seg === "stocks" ? i.isMapped : !i.isMapped))),
     [instruments, seg],
@@ -381,6 +385,19 @@ function PerformanceTab({ portfolio, realized, perf, timeline }: { portfolio: Po
   // from every quality calc and surfaced only as an honest coverage caveat.
   const mapped = instruments.filter((i) => i.isMapped && i.composite != null);
   const mappedValue = mapped.reduce((s, i) => s + i.currentValue, 0);
+
+  // What the daily-profit curve cannot see. Same predicate the snapshot writer
+  // uses (`isMapped` ⇒ golden has a bar ⇒ a real close-to-close move exists),
+  // derived from the live rows so it can never disagree with the cards above it
+  // and goes to zero by itself the day ETF history lands in golden.
+  const dailyExcluded = useMemo(() => {
+    const others = instruments.filter((i) => !i.isMapped);
+    return {
+      count: others.length,
+      value: others.reduce((s, i) => s + i.currentValue, 0),
+      pnl: others.reduce((s, i) => s + i.pnl, 0),
+    };
+  }, [instruments]);
 
   // ── Zone 0 headline numbers ──
   const unrealized = instruments.reduce((s, i) => s + i.pnl, 0);
@@ -466,7 +483,7 @@ function PerformanceTab({ portfolio, realized, perf, timeline }: { portfolio: Po
       {/* Daily profit + invested value, straight off the snapshot series */}
       {perf && perf.series.length >= 2 && (
         <div className="grid lg:grid-cols-2 gap-4">
-          <DailyProfitChart series={perf.series} />
+          <DailyProfitChart series={perf.series} excluded={dailyExcluded} />
           <InvestedValueChart series={perf.series} />
         </div>
       )}
@@ -564,7 +581,30 @@ function YAxisGutter({ ticks, y, height, width = 44 }: {
 // you deposited ₹66k reads as whatever the market actually did. Plotting
 // diff(total_value) here would have shown a ₹66,398 "profit" on 2026-08-12 and
 // a ₹39,573 "loss" on 2026-08-24, both of which were cashflows.
-function DailyProfitChart({ series }: { series: PerformanceStats["series"] }) {
+// WHAT THIS CURVE DOES NOT CONTAIN — and why the title says "(equities)".
+//
+// dayPnl comes off the snapshot's day_change_value, which is Σ qty × (ltp −
+// prev_close) over instruments golden has a bar for. An unmapped ETF/fund has
+// no golden bar, so its only day-change signal is broker_day_pct — the broker's
+// own "day change %" column, frozen at the moment of import and re-added every
+// day until the next upload. That is not a measurement of today; it is one
+// day's move replayed indefinitely. It is worth ~₹-370/day at the moment and
+// would drift silently.
+//
+// The omission is not small: unmapped ETFs are ~20% of book value and ~half of
+// total unrealized P&L. A chart that silently drops half the P&L while sitting
+// next to a "Total P&L" card is §5's check-that-cannot-fail in chart form. So
+// the excluded book is printed beside it rather than explained in a comment.
+function DailyProfitChart({
+  series,
+  excluded,
+}: {
+  series: PerformanceStats["series"];
+  // Live, recomputed from the rows on every render — not a constant. If ETF
+  // daily history ever lands in golden, this block goes to zero on its own
+  // instead of needing someone to remember it.
+  excluded: { count: number; value: number; pnl: number };
+}) {
   // Plotted as a CUMULATIVE curve, not one mark per day.
   //
   // Daily P&L is noise around zero — 23 up days and 23 down days here, which as
@@ -619,7 +659,7 @@ function DailyProfitChart({ series }: { series: PerformanceStats["series"] }) {
     <div className="card p-4 md:p-5">
       <SectionHead
         icon={<IconChart size={15} />}
-        title="Daily profit"
+        title="Daily profit (equities)"
         right={<span className="text-[11px] muted-text">cumulative · {series.length} trading days</span>}
       />
       <div className="flex items-start">
@@ -704,10 +744,30 @@ function DailyProfitChart({ series }: { series: PerformanceStats["series"] }) {
           <div className="tabular-nums font-semibold text-[15px] mt-0.5" style={{ color: net >= 0 ? GREEN : RED }}>{signed(net)}</div>
         </div>
       </div>
+      {excluded.count > 0 && (
+        <div
+          className="mt-3 pt-3 flex items-baseline justify-between gap-3"
+          style={{ borderTop: "1px solid var(--hairline, rgba(128,128,128,.22))" }}
+        >
+          <div className="text-[10.5px] muted-text leading-snug">
+            <span className="font-semibold">Not in this curve:</span>{" "}
+            {excluded.count} ETF/fund {excluded.count === 1 ? "holding" : "holdings"} ·{" "}
+            <span className="tabular-nums">{inr(excluded.value)}</span> held
+          </div>
+          <div
+            className="tabular-nums font-semibold text-[13px] shrink-0"
+            style={{ color: excluded.pnl >= 0 ? GREEN : RED }}
+            title="Unrealized P&L on holdings with no daily price history. It is in Total P&L but cannot appear on a daily curve — the only day-change figure these carry is the broker's own percentage, frozen at import."
+          >
+            {signed(excluded.pnl)}
+          </div>
+        </div>
+      )}
       <p className="text-[10.5px] muted-text mt-2 leading-snug">
-        Running total of each day&apos;s market move — hover any point for that day on its own.
-        Buys, sells and broker re-imports move your portfolio value but are not profit, so they
-        are excluded.
+        Running total of each day&apos;s market move on your <strong>mapped equities</strong> — hover
+        any point for that day on its own. Buys, sells and broker re-imports move your portfolio
+        value but are not profit, so they are excluded. ETFs and funds are excluded too: we have no
+        daily price history for them, so they have no measured day move to add.
       </p>
     </div>
   );

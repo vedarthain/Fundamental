@@ -241,7 +241,21 @@ def _xlsx_rows(path, sheet=None):
             return [[sh.cell_value(r, c) for c in range(sh.ncols)]
                     for r in range(sh.nrows)]
         except Exception:
-            pass  # not BIFF after all — fall through to the zip-based reader
+            # Not BIFF after all — a mislabelled xlsx. The fall-through below
+            # USED TO BE A DEAD END: openpyxl.load_workbook() rejects on the
+            # FILENAME (_validate_archive raises "does not support the old .xls
+            # format" for any path ending .xls) before it ever looks at the
+            # bytes, so the documented fallback could never fire. 5paisa's
+            # Trade_Report_Equity_*.xls is a PK-zip — an xlsx wearing the wrong
+            # extension — and it aborted the whole collect(), taking every other
+            # broker's file down with it.
+            # Handing over an open file object skips the extension check and
+            # lets openpyxl judge the content, which is what the comment above
+            # always claimed happened.
+            with open(path, "rb") as fh:
+                wb = openpyxl.load_workbook(fh, data_only=True)
+            ws = wb[sheet] if sheet else wb[wb.sheetnames[0]]
+            return [list(r) for r in ws.iter_rows(values_only=True)]
     wb = openpyxl.load_workbook(path, data_only=True)
     ws = wb[sheet] if sheet else wb[wb.sheetnames[0]]
     return [list(r) for r in ws.iter_rows(values_only=True)]
@@ -391,7 +405,18 @@ def dump_json(broker, path):
 
 def collect():
     recs = []
-    for p in glob.glob(f"{DOWNLOADS}/tradebook-*-EQ*.csv"):
+    # Zerodha ships the SAME report in two containers, and which one you get
+    # depends on where you clicked: the Console "Download" button gives CSV,
+    # the emailed/"XLSX" option gives a workbook with a six-row preamble. Only
+    # the .csv was globbed here, so a year of history handed over as .xlsx was
+    # silently not imported — no error, just a smaller number in the summary
+    # than the pile of files on disk implied.
+    # parse_zerodha reads both (it goes through _xlsx_rows and locates the
+    # header row rather than assuming row 0), so this was purely a discovery
+    # gap. Note the upstox glob below is `trade_*` with an underscore and does
+    # not collide with `tradebook-*`.
+    for p in sorted(glob.glob(f"{DOWNLOADS}/tradebook-*-EQ*.csv")
+                    + glob.glob(f"{DOWNLOADS}/tradebook-*-EQ*.xlsx")):
         recs += parse_zerodha(p)
     for p in glob.glob(f"{DOWNLOADS}/FYERS_orderbook_*.csv"):
         recs += parse_fyers(p)
@@ -403,11 +428,41 @@ def collect():
         recs += parse_5paisa(p)
     return recs
 
-def dedup_key(r):
+def dedup_key(r, user_id=USER_ID):
+    """MUST byte-match tradeDedupKey() in web/src/lib/tradebookImport.ts.
+
+    It did not. The TS side made dedup_key user-scoped and this script was not
+    updated, so the two importers hashed DIFFERENT strings for the same trade:
+      route  md5("1|zerodha|tid|210423327")
+      script md5("zerodha|tid|210423327")
+    `ON CONFLICT (user_id, dedup_key) DO NOTHING` then deduped a file against
+    itself and against previous runs of the SAME importer, and never across the
+    two — so every trade already uploaded through the web page was inserted a
+    second time by this script. It reported those as "inserted N new rows",
+    which is true and completely misleading. 144 zerodha trades were doubled
+    before this was caught, and a doubled trade does not look wrong anywhere:
+    it inflates a derived holding's quantity and blends its average cost.
+
+    The unique index is on (user_id, dedup_key), so scoping by user is
+    redundant for correctness — but it is what the other writer does, and two
+    writers agreeing matters more than either being minimal.
+    """
     if r.get("trade_id"):
-        raw = f"{r['broker']}|tid|{r['trade_id']}"
+        raw = f"{user_id}|{r['broker']}|tid|{r['trade_id']}"
     else:
-        raw = f"{r['broker']}|{r['trade_date']}|{r['symbol']}|{r['side']}|{r['quantity']}|{r['price']}|{r.get('trade_time','')}"
+        raw = f"{user_id}|{r['broker']}|{r['trade_date']}|{r['side']}|{r['quantity']}|{r['price']}|{r.get('trade_time','')}"
+    return hashlib.md5(raw.encode()).hexdigest()
+
+
+def legacy_dedup_key(r, user_id=USER_ID):
+    """The pre-2026-09 composite, which also keyed on the RESOLVED symbol.
+    Mirrors legacyTradeDedupKey() in tradebookImport.ts — rows written before
+    the cutover are stored under it and can only be recognised by recomputing
+    it. Trades that carry a trade_id never used this path."""
+    if r.get("trade_id"):
+        return dedup_key(r, user_id)
+    raw = (f"{user_id}|{r['broker']}|{r['trade_date']}|{r['symbol']}|{r['side']}"
+           f"|{r['quantity']}|{r['price']}|{r.get('trade_time','')}")
     return hashlib.md5(raw.encode()).hexdigest()
 
 def recompute_derived_holding(cur, user_id, symbol):
@@ -642,8 +697,27 @@ def main():
         """, (USER_ID, r["broker"], r["symbol"], r["trade_date"], r["quantity"]))
         superseded += cur.rowcount
 
+    # Rows written before the key cutover are stored under the legacy composite
+    # (which also keyed on the resolved symbol). Their stored hashes cannot be
+    # regenerated in SQL, so the only way to recognise them is to recompute the
+    # legacy key here and skip any that already exist — the same two-keyspace
+    # check import-trades/route.ts does. Without it the cutover itself would
+    # re-insert every pre-cutover trade.
+    legacy = {legacy_dedup_key(r) for r in kept if not r.get("trade_id")}
+    already = set()
+    if legacy:
+        cur.execute(
+            "select dedup_key from app.portfolio_transaction"
+            " where user_id=%s and dedup_key = any(%s)",
+            (USER_ID, list(legacy)))
+        already = {row[0] for row in cur.fetchall()}
+
     ins = 0
+    skipped_legacy = 0
     for r in kept:
+        if not r.get("trade_id") and legacy_dedup_key(r) in already:
+            skipped_legacy += 1
+            continue
         cur.execute("""
             insert into app.portfolio_transaction
               (user_id,broker,trade_date,trade_time,side,symbol,raw_symbol,raw_name,
@@ -668,6 +742,8 @@ def main():
 
     conn.commit()
     print(f"\nCOMMITTED: inserted {ins} new rows (dedup_key conflicts skipped).")
+    if skipped_legacy:
+        print(f"skipped {skipped_legacy} rows already present under the legacy key.")
     if superseded:
         print(f"superseded {superseded} manual entries matched by CSV trades.")
     if symbols:

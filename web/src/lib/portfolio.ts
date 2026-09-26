@@ -1522,12 +1522,51 @@ async function currentLegBuyDateRows(userId: number) {
              SUM(net) OVER (PARTITION BY symbol ORDER BY trade_date) AS bal
         FROM daily
     ),
-    base AS (
-      SELECT symbol, GREATEST(0, -MIN(bal)) AS qty0 FROM running GROUP BY symbol
+    -- The deepest point the ledger reaches. Negative is proof the file starts
+    -- MID-POSITION: you cannot sell more than you bought, so shares existed
+    -- before the earliest trade on record. 27 of 159 symbols in the Zerodha
+    -- 2023→ history do this, some because the export window truncates and some
+    -- because the shares arrived via a demerger or bonus (CEMPRO, ONESOURCE,
+    -- NUVAMA) and so have no buy row anywhere.
+    floor AS (
+      SELECT symbol, MIN(bal) AS mn FROM running GROUP BY symbol
     ),
+    -- The LAST day the balance sits at that minimum — the point of maximum net
+    -- liquidation, and the earliest date from which the ledger is self-
+    -- consistent without positing a larger unknown opening lot.
+    cutoff AS (
+      SELECT r.symbol, MAX(r.trade_date) AS d
+        FROM running r JOIN floor f USING (symbol)
+       WHERE f.mn < -0.000001 AND r.bal <= f.mn + 0.000001
+       GROUP BY r.symbol
+    ),
+    -- DISCARD everything up to and including that day, rather than the previous
+    -- approach of seeding a synthetic opening lot (GREATEST(0,-MIN(bal))) and
+    -- keeping the whole file.
+    --
+    -- Both make the arithmetic work; only one is honest about what it knows.
+    -- The seed kept the earliest buy in the file as the anchor — but for a
+    -- mid-position history that buy is a top-up of a position opened at an
+    -- unknown earlier date, so the window it anchors is confidently wrong and
+    -- indistinguishable from a real one. A truncated file therefore produced a
+    -- WORSE answer than no file at all, and importing more history made it
+    -- worse for exactly the symbols the import was meant to fix.
+    -- After the cutoff every share held is one we hold a buy row for, so the
+    -- first buy past it is a genuine leg start.
+    --
+    -- A symbol left with no buy after its cutoff yields no row and falls
+    -- through to "—". That is the intended outcome: fall/rise now require a
+    -- real anchor and say so, and a dash is recoverable by uploading earlier
+    -- history. A wrong date is not — nothing downstream can tell it apart.
+    --
+    -- Symbols that never go negative (132 of 159) are untouched: mn >= 0 makes
+    -- the LEFT JOINs no-ops and the rebase a subtraction of zero.
     adjusted AS (
-      SELECT r.symbol, r.trade_date, r.bal + b.qty0 AS bal
-        FROM running r JOIN base b USING (symbol)
+      SELECT r.symbol, r.trade_date, r.bal - COALESCE(f.mn, 0) AS bal
+        FROM running r
+        LEFT JOIN floor  f ON f.symbol = r.symbol AND f.mn < -0.000001
+        LEFT JOIN cutoff c ON c.symbol = r.symbol
+       WHERE c.d IS NULL OR r.trade_date > c.d
     ),
     legs AS (
       SELECT symbol, trade_date,
@@ -1796,7 +1835,6 @@ async function computePortfolio(
     costSum: number; // Σ qty*avgCost
     costQty: number; // Σ qty where avgCost known (for blended)
     brokerCurValueSum: number; // Σ broker current value (unmapped fallback)
-    brokerDayValueSum: number; // Σ broker day-change value (unmapped fallback)
     firstImported: number | null; // MIN(imported_at) epoch ms across lots
     lots: BrokerLot[];
   };
@@ -1815,7 +1853,7 @@ async function computePortfolio(
         isMapped: h.is_mapped,
         rawName: bareSymbol(h.raw_symbol),
         qty: 0, costSum: 0, costQty: 0,
-        brokerCurValueSum: 0, brokerDayValueSum: 0,
+        brokerCurValueSum: 0,
         firstImported: null,
         lots: [],
       };
@@ -1828,13 +1866,11 @@ async function computePortfolio(
     }
     const bcv = num(h.broker_cur_value);
     if (bcv != null) a.brokerCurValueSum += bcv;
-    const bdp = num(h.broker_day_pct);
-    // day-change value ≈ curValue * pct/(100+pct) — but broker gives % on
-    // current, so day value = curValue - curValue/(1+pct/100).
-    if (bcv != null && bdp != null) {
-      const prevVal = bcv / (1 + bdp / 100);
-      a.brokerDayValueSum += bcv - prevVal;
-    }
+    // broker_day_pct is read and stored by the importer but is deliberately NOT
+    // aggregated here any more — see the unmapped branch in the instrument loop
+    // for why a figure frozen at upload cannot be a daily move. The column stays
+    // populated so the decision is reversible if ETF history ever lands in
+    // golden; it just no longer feeds anything the UI reports.
     // first_seen_at, NOT imported_at (0079). The old code read imported_at into
     // a field called `firstImported`; because a holdings import DELETEs and
     // reinserts, that was the LAST upload wearing the name `first`. Fall back
@@ -1978,11 +2014,31 @@ async function computePortfolio(
       } else {
         currentValue = a.brokerCurValueSum;
         price = a.qty > 0 ? currentValue / a.qty : null;
-        dayChangeValue = a.brokerDayValueSum || null;
-        dayChangePct =
-          currentValue - a.brokerDayValueSum !== 0
-            ? Math.round((a.brokerDayValueSum / (currentValue - a.brokerDayValueSum)) * 1000) / 10
-            : null;
+        // NO DAY CHANGE FOR AN UNPRICED ETF — deliberately blank, not zero and
+        // not the broker's figure.
+        //
+        // broker_day_pct is the "day change %" column of the holdings CSV,
+        // captured at upload and never refreshed. It used to be converted to
+        // rupees here and added to the book's day change, which meant one day's
+        // move was replayed EVERY day until the next upload: on 2026-09-26 the
+        // 13 unmapped rows carrying it were contributing a fixed −₹366.66/day
+        // left over from the 16 Sep files, on top of a live equity figure. Two
+        // eras in one number, and the stale half never moved — so the Day
+        // Change card could disagree in sign with the market while looking
+        // entirely plausible. §5: nothing kept it current.
+        //
+        // The branch above already refuses the same figure when a live ETF tick
+        // exists ("mix eras"). Having no tick is a weaker position, not a
+        // stronger one, so it cannot justify what the better-informed branch
+        // declines. Blank propagates correctly: the totals skip nulls, and the
+        // percentage is derived from the rupee sum, so the book's day change is
+        // now "the part we can actually measure" rather than a blend.
+        //
+        // This does NOT touch P&L. currentValue and therefore pnl still come
+        // from the broker's valuation — a total is a stock, not a flow, and the
+        // broker's own figure is a legitimate measurement of it.
+        dayChangeValue = null;
+        dayChangePct = null;
       }
     }
 
