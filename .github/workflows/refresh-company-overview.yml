@@ -1,7 +1,7 @@
 # Company-overview worker — fills app.company_overview from Screener's Key
 # Points, 80 symbols a run.
 #
-# MANUAL ONLY. Actions tab -> "Run workflow". There is deliberately no cron.
+# DAILY, plus manual dispatch from the Actions tab.
 #
 # WHY IT EXISTS
 #
@@ -18,25 +18,28 @@
 # daily. So 80 is the ceiling the source imposes on any single day, and running
 # twice in one day gains nothing — the second run exits 3 immediately.
 #
-# WHY MANUAL, AND WHAT IT COSTS
+# WHY DAILY, AND WHAT IT SPENDS
 #
-# Each symbol costs one Haiku call, so an unattended nightly job spends money
-# unattended. Deb runs it in his presence to keep that spend visible. The
-# tradeoff is real and is recorded here rather than left to be rediscovered:
-# app.company_overview sat at 178 of 2,591 rows precisely BECAUSE this was the
-# one ingest with no schedule — run by hand, twice, alphabetically. At 80 a run
-# the backfill needs ~31 runs to drain. If they stop happening it stalls part
-# way through the alphabet again, which is the CLAUDE.md section 5 failure in
-# its purest form.
+# Each symbol costs one Haiku call, so this job spends money unattended. That
+# was the reason it briefly ran manual-only, and the reason it does not any
+# more: measured on the 24 Sep run, 78 symbols cost roughly 2,000 input and
+# 300 output tokens each, which at Haiku 4.5 pricing is about $0.28 a run and
+# well under $10 for the whole 2,335-symbol backfill. Supervision is not worth
+# that. The budget is enforced instead by issuing ANTHROPIC_API_KEY inside a
+# spend-capped Anthropic workspace, so the cap holds whether or not anyone is
+# watching. A cap enforces; eyes do not.
 #
-# The queue itself does not care about cadence: app.company_overview_attempt
-# .retry_after means a run picks up wherever the last one stopped, whether that
-# was yesterday or a month ago. Nothing is lost by running irregularly except
-# time. Once drained, a run settles into near-zero work.
+# And manual was the more expensive risk. app.company_overview sat at 178 of
+# 2,591 rows precisely BECAUSE this was the one ingest with no schedule — run
+# by hand, twice, alphabetically. At 80 a run the backfill needs ~30 runs. Any
+# process that needs a human to remember it 30 times stalls part way through
+# the alphabet, which is the CLAUDE.md section 5 failure in its purest form,
+# and it already happened here once.
 #
-# If this is ever put back on a cron, do it with an API key issued inside a
-# spend-capped Anthropic workspace, so the cap enforces the budget instead of
-# Deb watching the run.
+# The queue does not care about cadence: app.company_overview_attempt
+# .retry_after means a run resumes wherever the last one stopped, whether that
+# was yesterday or a month ago. A missed night costs a day, nothing else. Once
+# drained, a run settles into near-zero work and near-zero spend.
 #
 # EXIT CODES — READ THIS BEFORE "FIXING" A RED RUN
 #
@@ -51,13 +54,18 @@
 # hits the wall, and an alert nobody reads is the only kind that truly stops
 # working.
 #
-# BEST TIME TO RUN: after 00:00 IST, when Screener's daily counter has most
-# likely reset. Running earlier in the Indian day risks colliding with a
-# counter already partly spent by a previous run.
+# WHEN
+#
+# 19:00 UTC = 00:30 IST. Just after Indian midnight, when Screener's daily
+# counter is most likely to have reset, and clear of the 18:00 Saturday DQ
+# check and the 22:00 announcements sweep. Running earlier in the Indian day
+# would collide with a counter already partly spent.
 
 name: Refresh Company Overviews
 
 on:
+  schedule:
+    - cron: '0 19 * * *'
   workflow_dispatch:
     inputs:
       limit:
