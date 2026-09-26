@@ -697,27 +697,52 @@ def main():
         """, (USER_ID, r["broker"], r["symbol"], r["trade_date"], r["quantity"]))
         superseded += cur.rowcount
 
-    # Rows written before the key cutover are stored under the legacy composite
-    # (which also keyed on the resolved symbol). Their stored hashes cannot be
-    # regenerated in SQL, so the only way to recognise them is to recompute the
-    # legacy key here and skip any that already exist — the same two-keyspace
-    # check import-trades/route.ts does. Without it the cutover itself would
-    # re-insert every pre-cutover trade.
-    legacy = {legacy_dedup_key(r) for r in kept if not r.get("trade_id")}
-    already = set()
-    if legacy:
-        cur.execute(
-            "select dedup_key from app.portfolio_transaction"
-            " where user_id=%s and dedup_key = any(%s)",
-            (USER_ID, list(legacy)))
-        already = {row[0] for row in cur.fetchall()}
+    # ── Keyless rows are deduped by CONTENT, not by key ──────────────────────
+    #
+    # A trade with a broker trade_id has one identity and `on conflict` settles
+    # it. A trade WITHOUT one has only its contents, and those have been hashed
+    # into at least three different shapes over this project's life: the web
+    # route's user-scoped composite, its pre-cutover variant that also keyed on
+    # the resolved symbol, and this script's old unscoped one. Each cutover
+    # added a keyspace, each keyspace re-imported everything written under the
+    # previous ones, and the only symptom was a larger "inserted N rows" than
+    # the operator had any way to check.
+    #
+    # Chasing that with a fourth recomputed key just schedules the next
+    # occurrence. Compare what the trade IS instead — broker, date, symbol,
+    # side, quantity, price — which no storage decision can change.
+    #
+    # As a MULTISET, not a set: two identical fills of the same size at the
+    # same price on the same day are a real and ordinary thing, and a plain
+    # "does this exist" test would silently drop the second one forever. We
+    # insert only the shortfall between what the file shows and what the table
+    # already holds, so re-running is a no-op and a genuine repeat still lands.
+    def content_key(r):
+        return (r["broker"], str(r["trade_date"])[:10], r["symbol"], r["side"],
+                round(float(r["quantity"]), 4), round(float(r["price"]), 2))
+
+    keyless = [r for r in kept if not r.get("trade_id")]
+    have = {}
+    if keyless:
+        cur.execute("""
+            select broker, trade_date::text, symbol, side,
+                   round(quantity::numeric, 4), round(price::numeric, 2), count(*)
+              from app.portfolio_transaction
+             where user_id = %s and (trade_id is null or trade_id = '')
+             group by 1,2,3,4,5,6
+        """, (USER_ID,))
+        for b, d, s, sd, q, p, c in cur.fetchall():
+            have[(b, d, s, sd, round(float(q), 4), round(float(p), 2))] = c
 
     ins = 0
     skipped_legacy = 0
     for r in kept:
-        if not r.get("trade_id") and legacy_dedup_key(r) in already:
-            skipped_legacy += 1
-            continue
+        if not r.get("trade_id"):
+            ck = content_key(r)
+            if have.get(ck, 0) > 0:
+                have[ck] -= 1          # consume one copy already on file
+                skipped_legacy += 1
+                continue
         cur.execute("""
             insert into app.portfolio_transaction
               (user_id,broker,trade_date,trade_time,side,symbol,raw_symbol,raw_name,
