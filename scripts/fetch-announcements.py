@@ -39,6 +39,8 @@ from urllib.request import Request, urlopen
 
 import psycopg
 
+from bse_headers import BSE_HEADERS
+
 REPO = Path(__file__).resolve().parent.parent
 
 # How far back each run asks BSE for, and how long we retain rows.
@@ -52,15 +54,10 @@ MAX_PER_SYMBOL = 40
 MAX_ERROR_FRACTION = 0.05
 MIN_MAPPED_FRACTION = 0.50
 
-UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-      "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
-HEADERS = {
-    "User-Agent": UA,
-    "Accept": "application/json, text/plain, */*",
-    "Referer": "https://www.bseindia.com/",
-    "Origin": "https://www.bseindia.com",
-    "Accept-Language": "en-US,en;q=0.9",
-}
+# Shared with fetch-corporate-actions.py and fetch-news.py. Do not inline a
+# copy here — BSE's edge rejected the old set on 2026-09-26 and three separate
+# copies is why that outage hit three jobs. See scripts/bse_headers.py.
+HEADERS = BSE_HEADERS
 SCRIP_MASTER = ("https://api.bseindia.com/BseIndiaAPI/api/ListofScripData/w"
                 "?Group=&Scripcode=&industry=&segment=Equity&status=Active")
 ANN_URL = ("https://api.bseindia.com/BseIndiaAPI/api/AnnSubCategoryGetData/w"

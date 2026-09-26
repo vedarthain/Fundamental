@@ -34,6 +34,8 @@ from urllib.error import HTTPError, URLError
 
 import psycopg
 
+from bse_headers import BSE_HEADERS
+
 REPO = Path(__file__).resolve().parent.parent
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
@@ -94,8 +96,11 @@ RECO_RE = re.compile(
 
 SCRIP_MASTER = ("https://api.bseindia.com/BseIndiaAPI/api/ListofScripData/w"
                 "?Group=&Scripcode=&industry=&segment=Equity&status=Active")
-TAG_HEADERS = {"User-Agent": UA, "Accept": "application/json",
-               "Referer": "https://www.bseindia.com/", "Origin": "https://www.bseindia.com"}
+# BSE only. Shared with fetch-announcements.py and fetch-corporate-actions.py
+# — do not inline a copy; BSE's edge rejected the old set on 2026-09-26 and
+# three separate copies is why that outage hit three jobs. The module-level UA
+# above stays as it is: it is what the RSS feeds get, and they are not BSE.
+TAG_HEADERS = BSE_HEADERS
 
 # Single-word company names too generic to match on their own.
 STOP = {"INDIA", "BANK", "POWER", "MOTORS", "FINANCE", "STEEL", "INFRA", "AUTO",
