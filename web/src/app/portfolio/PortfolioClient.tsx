@@ -2428,12 +2428,21 @@ function staleTone(days: number | null): string | null {
 }
 
 function ImportCell({
-  at, ageDays, count, unit,
-}: { at: string | null; ageDays: number | null; count: number; unit: string }) {
+  at, ageDays, count, unit, outcome,
+}: {
+  at: string | null;
+  ageDays: number | null;
+  count: number;
+  unit: string;
+  /** What the LAST upload did — the line that distinguishes "you uploaded and
+   *  nothing was new" from "you have not uploaded". Omitted for holdings,
+   *  which replace rather than merge and so have no such outcome. */
+  outcome?: string | null;
+}) {
   if (!at) {
     return (
       <span className="text-[12px]" style={{ color: "var(--color-muted)" }}>
-        never imported
+        never uploaded
       </span>
     );
   }
@@ -2441,7 +2450,7 @@ function ImportCell({
   return (
     <span
       className="inline-flex flex-col leading-[1.25]"
-      title={`Imported ${new Date(at).toLocaleString("en-IN")}`}
+      title={`Uploaded ${new Date(at).toLocaleString("en-IN")}`}
     >
       <span className="text-[12.5px] tabular-nums" style={tone ? { color: tone } : undefined}>
         {agoLabel(ageDays)}
@@ -2450,10 +2459,34 @@ function ImportCell({
         {new Date(at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
         {" · "}
         {count} {unit}
-        {count === 1 ? "" : "s"}
+        {count === 1 ? "" : "s"} stored
       </span>
+      {outcome && (
+        <span className="text-[11px] tabular-nums" style={{ color: "var(--color-muted)" }}>
+          {outcome}
+        </span>
+      )}
     </span>
   );
+}
+
+/**
+ * What the last tradebook upload added.
+ *
+ * Leads with the count, and "0 new trades" is a first-class result rather than
+ * a phrase apologising for itself. Zero is the normal outcome of re-uploading
+ * a window you have already imported, and it is the reading that proves the
+ * upload happened and found nothing missing — which is the whole point of
+ * dating the upload instead of the rows.
+ *
+ * Null when the upload predates the import ledger (migration 0077): the
+ * backfill could not recover what a historic file declined, and printing
+ * "0 new" for it would state a measurement nobody took.
+ */
+function uploadOutcome(r: ImportLogRow): string | null {
+  if (r.tradesNew == null) return null;
+  const n = `${r.tradesNew} new trade${r.tradesNew === 1 ? "" : "s"}`;
+  return r.tradesSkipped ? `${n} · ${r.tradesSkipped} already on record` : n;
 }
 
 function ImportLedger({ rows }: { rows: ImportLogRow[] }) {
@@ -2493,8 +2526,8 @@ function ImportLedger({ rows }: { rows: ImportLogRow[] }) {
           <thead>
             <tr className="text-[11px] font-semibold muted-text uppercase tracking-wide">
               <th className="py-1.5 px-1 font-semibold">Broker</th>
-              <th className="py-1.5 px-1 font-semibold">Holdings imported</th>
-              <th className="py-1.5 px-1 font-semibold">Tradebook imported</th>
+              <th className="py-1.5 px-1 font-semibold">Holdings uploaded</th>
+              <th className="py-1.5 px-1 font-semibold">Tradebook uploaded</th>
               <th className="py-1.5 px-1 font-semibold">Trades cover to</th>
             </tr>
           </thead>
@@ -2510,7 +2543,7 @@ function ImportLedger({ rows }: { rows: ImportLogRow[] }) {
                   <ImportCell at={r.holdingsAt} ageDays={r.holdingsAgeDays} count={r.holdingsCount} unit="position" />
                 </td>
                 <td className="py-2 px-1">
-                  <ImportCell at={r.tradesAt} ageDays={r.tradesAgeDays} count={r.tradesCount} unit="trade" />
+                  <ImportCell at={r.tradesAt} ageDays={r.tradesAgeDays} count={r.tradesCount} unit="trade" outcome={uploadOutcome(r)} />
                 </td>
                 <td className="py-2 px-1 text-[12.5px] tabular-nums whitespace-nowrap">
                   {r.coversTo

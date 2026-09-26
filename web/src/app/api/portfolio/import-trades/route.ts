@@ -201,6 +201,15 @@ export async function POST(req: NextRequest) {
     g.qtys.push(r.quantity!); // non-null: filtered to quantity > 0 above
   }
 
+  // The window the FILE covers, computed before the write so it can be
+  // recorded alongside the upload. Distinct from how far the STORED history
+  // reaches (that is every import together, read off portfolio_transaction) —
+  // this is what this one export claimed, which is the figure that tells you
+  // whether you exported the wrong date range.
+  const dates = uniqueRows.map((r) => r.tradeDate).sort();
+  const fileFrom = dates.length ? dates[0] : null;
+  const fileTo = dates.length ? dates[dates.length - 1] : null;
+
   let inserted = 0;
   let matchedManual = 0;
   let exited: string[] = [];
@@ -288,9 +297,29 @@ export async function POST(req: NextRequest) {
     // you no longer own (incomplete tradebook ⇒ non-zero net). Sweep those out
     // immediately — see clearDerivedHoldingsExitedPerSnapshots.
     exited = await clearDerivedHoldingsExitedPerSnapshots(tx, session.userId);
-  });
 
-  const dates = uniqueRows.map((r) => r.tradeDate).sort();
+    // Record the UPLOAD, unconditionally — including (especially) the
+    // inserted === 0 case. The freshness panel used to date this broker's
+    // tradebook by MAX(imported_at) over the trades themselves, which is
+    // stamped per row at insert. Re-upload an export whose trades are all
+    // already on record and dedup correctly inserts nothing, so no row carries
+    // the new timestamp and the panel goes on reporting the age of the last
+    // time a NEW trade arrived. It read "13d ago" on 26 Sep for a file
+    // uploaded that morning. A freshness warning that fires on the one outcome
+    // meaning "you are fully current" trains you to ignore it.
+    //
+    // Inside the same transaction as the trades: if the insert rolls back the
+    // upload record goes with it, so the table can never claim an import that
+    // did not happen.
+    await tx`
+      INSERT INTO app.portfolio_import
+        (user_id, broker, kind, file_name, parsed, inserted, skipped, covers_from, covers_to)
+      VALUES
+        (${session.userId}, ${broker}, 'trades', ${file.name},
+         ${parsed.length}, ${inserted}, ${uniqueRows.length - inserted},
+         ${fileFrom}, ${fileTo})
+    `;
+  });
 
   return NextResponse.json({
     ok: true,
@@ -304,6 +333,6 @@ export async function POST(req: NextRequest) {
     outsideCoverage: [...skippedSymbols],
     exited: exited.length,
     exitedSymbols: exited,
-    dateRange: dates.length ? { from: dates[0], to: dates[dates.length - 1] } : null,
+    dateRange: fileFrom && fileTo ? { from: fileFrom, to: fileTo } : null,
   });
 }

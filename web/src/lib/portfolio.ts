@@ -2107,7 +2107,7 @@ async function computePortfolio(
 
 /**
  * One row per broker: when its holdings snapshot and its tradebook were last
- * imported, and how far the tradebook actually reaches.
+ * uploaded, and how far the stored trade history actually reaches.
  *
  * WHY THIS EXISTS, AND WHY IT IS NOT THE SAME AS `brokerSnapshots`
  *
@@ -2121,32 +2121,49 @@ async function computePortfolio(
  * imported 47 days ago, still ended at 2026-02-27 — seven months of trades the
  * cost basis, the B/S markers and the realized P&L all silently did without.
  *
- * So the ledger reports BOTH ages side by side plus `coversTo`, which is the
- * figure that actually exposes the gap. `coversTo` is stated, never coloured:
- * a tradebook that ends in February is either stale or a year you did not
- * trade, and this query cannot tell the two apart. Import age can be coloured
+ * WHY IT READS app.portfolio_import AND NOT MAX(imported_at)
+ *
+ * The first version of this dated each tradebook by MAX(imported_at) over the
+ * trades. That column is stamped per ROW at insert, so a re-upload where every
+ * trade is already stored inserts nothing, no row carries the new timestamp,
+ * and the panel reports when a NEW TRADE last arrived rather than when a FILE
+ * was last uploaded. Those diverge precisely when you upload and nothing is
+ * new — the healthy outcome. It read "13d ago" for a Zerodha file uploaded
+ * that same morning. A warning that fires on the one case meaning "you are
+ * fully current" is worse than none: it teaches you to ignore the row it will
+ * eventually be right about.
+ *
+ * A row count cannot answer "when did you last upload", because a successful
+ * upload is allowed to produce zero rows. So the upload is recorded as its own
+ * fact (migration 0077) and read back here.
+ *
+ * `coversTo` still comes from the transactions, deliberately: it is a property
+ * of every import together, not of the latest file. It is stated and never
+ * coloured — a tradebook ending in February is either stale or a year you did
+ * not trade, and nothing here distinguishes those. Upload age IS coloured,
  * because it means one thing only.
  *
- * Manual entries are excluded — they are typed, not imported, so an "import
- * age" for them would be a number with no referent.
- *
- * Built off a direct aggregate rather than the loaded holdings/trade arrays so
- * a broker whose rows are all suppressed downstream (reconciled through manual
- * trades, unmapped symbols) still reports its import date. The import
- * happened; its age is a fact about the upload, not about what survived it.
+ * Manual entries are excluded — they are typed, not imported, so an upload age
+ * for them would be a number with no referent.
  */
 export type ImportLogRow = {
   broker: Broker;
   label: string;
-  /** MAX(imported_at) of this broker's holdings rows, ISO. Null = never imported. */
+  /** Last holdings UPLOAD, ISO. Null = never uploaded. */
   holdingsAt: string | null;
   holdingsAgeDays: number | null;
+  /** Positions currently stored for this broker. */
   holdingsCount: number;
-  /** MAX(imported_at) of this broker's tradebook rows, ISO. Null = never imported. */
+  /** Last tradebook UPLOAD, ISO — recorded even when it inserted nothing. */
   tradesAt: string | null;
   tradesAgeDays: number | null;
+  /** Trades currently stored for this broker (all imports). */
   tradesCount: number;
-  /** MAX(trade_date) — the last day the tradebook actually reaches. */
+  /** New trades the most recent tradebook upload added. 0 = already current. */
+  tradesNew: number | null;
+  /** Trades that upload declined as already on record. */
+  tradesSkipped: number | null;
+  /** MAX(trade_date) across all stored trades — how far the history reaches. */
   coversTo: string | null;
 };
 
@@ -2155,28 +2172,50 @@ export async function loadImportLog(userId: number): Promise<ImportLogRow[]> {
     {
       broker: string;
       h_at: string | null; h_n: string;
-      t_at: string | null; t_n: string; covers_to: string | null;
+      t_at: string | null; t_n: string;
+      t_new: string | null; t_skip: string | null;
+      covers_to: string | null;
     }[]
   >`
-    WITH h AS (
-      SELECT broker, MAX(imported_at) AS at, COUNT(*) AS n
+    WITH last_import AS (
+      -- Newest upload per (broker, kind). DISTINCT ON beats a MAX + re-join:
+      -- it carries that row's counts along, which a MAX cannot.
+      SELECT DISTINCT ON (broker, kind)
+             broker, kind, uploaded_at, inserted, skipped
+        FROM app.portfolio_import
+       WHERE user_id = ${userId}
+       ORDER BY broker, kind, uploaded_at DESC
+    ), h AS (
+      -- Stored counts still come from the data: the upload record says what
+      -- landed at the time, not what survived later edits or deletions.
+      SELECT broker, COUNT(*) AS n
         FROM app.portfolio_holding
        WHERE user_id = ${userId} AND broker <> 'derived'
        GROUP BY broker
     ), t AS (
-      SELECT broker, MAX(imported_at) AS at, COUNT(*) AS n, MAX(trade_date) AS covers_to
+      SELECT broker, COUNT(*) AS n, MAX(trade_date) AS covers_to
         FROM app.portfolio_transaction
        WHERE user_id = ${userId}
          AND COALESCE(source_file, '') <> 'manual-entry'
        GROUP BY broker
+    ), brokers AS (
+      SELECT broker FROM last_import
+      UNION SELECT broker FROM h
+      UNION SELECT broker FROM t
     )
-    SELECT COALESCE(h.broker, t.broker)      AS broker,
-           h.at::text                        AS h_at,
+    SELECT b.broker                          AS broker,
+           hi.uploaded_at::text              AS h_at,
            COALESCE(h.n, 0)::text            AS h_n,
-           t.at::text                        AS t_at,
+           ti.uploaded_at::text              AS t_at,
            COALESCE(t.n, 0)::text            AS t_n,
+           ti.inserted::text                 AS t_new,
+           ti.skipped::text                  AS t_skip,
            t.covers_to::text                 AS covers_to
-      FROM h FULL OUTER JOIN t ON t.broker = h.broker
+      FROM brokers b
+      LEFT JOIN last_import hi ON hi.broker = b.broker AND hi.kind = 'holdings'
+      LEFT JOIN last_import ti ON ti.broker = b.broker AND ti.kind = 'trades'
+      LEFT JOIN h  ON h.broker = b.broker
+      LEFT JOIN t  ON t.broker = b.broker
   `;
 
   const nowMs = Date.now();
@@ -2198,6 +2237,11 @@ export async function loadImportLog(userId: number): Promise<ImportLogRow[]> {
       tradesAt: r.t_at ? new Date(r.t_at).toISOString() : null,
       tradesAgeDays: age(r.t_at),
       tradesCount: Number(r.t_n) || 0,
+      // Null, not 0, when the upload predates migration 0077's ledger: the
+      // backfill could not recover what a historic file declined, and zero
+      // would assert it declined nothing.
+      tradesNew: r.t_new == null ? null : Number(r.t_new),
+      tradesSkipped: r.t_skip == null ? null : Number(r.t_skip),
       coversTo: r.covers_to,
     }))
     // Stalest first, on whichever of the two imports is older. A broker with

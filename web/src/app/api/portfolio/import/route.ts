@@ -163,6 +163,25 @@ export async function POST(req: NextRequest) {
     // forever. Absence from a holdings export is positive proof of a zero
     // position — sweep those out. See clearDerivedHoldingsExitedPerSnapshots.
     exited = await clearDerivedHoldingsExitedPerSnapshots(tx, session.userId);
+
+    // Record the upload. A holdings import DELETEs and reinserts, so every
+    // surviving row does carry the latest timestamp and dating this broker by
+    // MAX(imported_at) happened to be correct — but that is a coincidence of
+    // the write strategy above, not a property of the data. Move holdings to
+    // an upsert and it breaks exactly the way the tradebook did, silently.
+    // Both kinds are recorded so freshness has one source of truth.
+    //
+    // `parsed` is the file's row count and `inserted` the count after
+    // same-file de-duplication; the two differ when a broker lists an
+    // instrument twice. No `skipped` — a holdings import replaces, so nothing
+    // is ever declined.
+    await tx`
+      INSERT INTO app.portfolio_import
+        (user_id, broker, kind, file_name, parsed, inserted)
+      VALUES
+        (${session.userId}, ${broker}, 'holdings', ${file.name},
+         ${resolved.length}, ${rows.length})
+    `;
   });
 
   const mapped = rows.filter((r) => r.is_mapped).length;
