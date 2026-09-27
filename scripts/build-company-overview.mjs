@@ -180,12 +180,45 @@ const QUOTA = Symbol("screener-daily-quota-exhausted");
  */
 const LOGGED_OUT_MARKER = /<html|csrfmiddlewaretoken|auth-partition/i;
 const LOGGED_OUT = Symbol("screener-session-expired");
+/**
+ * The transport died — connection refused, DNS, TLS, socket timeout.
+ *
+ * A SEPARATE sentinel from null, and that distinction is the whole point of
+ * this fix. `null` means "Screener answered and this company has no Key Points
+ * page", and the caller acts on it by falling back to yfinance prose. A socket
+ * timeout is not that statement: Screener said nothing at all. Returning null
+ * for it would let one dropped connection silently rewrite a symbol from the
+ * worse source and stamp it fresh for 180 days — a downgrade caused by the
+ * network, indistinguishable afterwards from a real one.
+ *
+ * So this sentinel means "no information", and the caller writes nothing and
+ * leaves the symbol in the queue.
+ */
+const FETCH_FAILED = Symbol("screener-transport-error");
 /** Screener's stated allowance. Used only to size a run, never to trust. */
 export const SCREENER_DAILY_KEYPOINTS = 80;
 
-async function fetchKeyPoints(symbol, cookie) {
+/**
+ * Consecutive transport failures that mean "Screener is down", not "one
+ * request was unlucky".
+ *
+ * Needed because skipping a failed symbol is only correct while failures are
+ * isolated. Under a real outage every symbol fails, each is skipped, the run
+ * exits 0 having built nothing, and the queue silently stops advancing — §5's
+ * check that cannot fail, introduced by the very fix that stops the crash.
+ * Above this many in a row the run aborts loudly instead.
+ */
+const MAX_CONSECUTIVE_NET_FAILURES = 5;
+
+/** Exported so a test can assert it RETURNS on a transport error instead of
+ *  throwing — the regression that killed run 36307286200. FETCH_FAILED is
+ *  exported alongside it because the sentinel identity is the assertion. */
+export { FETCH_FAILED };
+export async function fetchKeyPoints(symbol, cookie) {
   if (!cookie) return null;
+  let transportError = null;
   for (let attempt = 0; attempt < 3; attempt++) {
+    try {
     const pageUrl = `https://www.screener.in/company/${symbol}/consolidated/`;
     const page = await fetch(pageUrl, { headers: { ...UA, cookie }, redirect: "follow" });
     const html = await page.text();
@@ -210,8 +243,23 @@ async function fetchKeyPoints(symbol, cookie) {
     // Below this it is a stub page ("About" + a one-liner), not worth preferring
     // over yfinance prose. Observed real Key Points run 2,700-5,800 chars.
     return cleaned.length >= 600 ? cleaned : null;
+    } catch (e) {
+      // Transport-level only. `fetch` rejects for connect/DNS/TLS/socket
+      // errors; an HTTP 4xx/5xx RESOLVES and is handled above, so nothing
+      // that reached Screener is swallowed here.
+      //
+      // Retried in the same loop as the rate-limit path, on a shorter backoff:
+      // the observed failure was a single ETIMEDOUT to 3.7.241.105 that killed
+      // an entire 80-symbol run at symbol 50 on 2026-09-27, and a retry would
+      // very likely have cleared it.
+      transportError = e;
+      console.error(`${symbol.padEnd(12)} transport error (attempt ${attempt + 1}/3): ${e?.cause?.code || e?.code || e?.message}`);
+      await sleep(5000);
+    }
   }
-  return null;
+  // Three attempts all died before Screener said anything. Report that as
+  // absence of information, never as "no Key Points".
+  return transportError ? FETCH_FAILED : null;
 }
 
 /** "| **Label** | value |" lines -> [{label, value}], order preserved. */
@@ -551,8 +599,31 @@ if (IS_CLI) (async () => {
 
   let built = 0, skipped = 0, noInput = 0, protectedRows = 0, quotaHit = false;
   let attempted = 0, gotKeyPoints = 0, loggedOut = false, empty = 0;
+  let netFailed = 0, consecutiveNetFailures = 0, netDead = false;
   for (const row of universe) {
     const kp = await fetchKeyPoints(row.symbol, cookie);
+
+    // Transport died for this symbol after three attempts. Skip it and keep
+    // going — write nothing, record no attempt, so the queue re-serves it
+    // tomorrow. Before this, the raw error escaped fetchKeyPoints and killed
+    // the process: on 2026-09-27 one ETIMEDOUT ended an 80-symbol run at 49
+    // built and skipped the staleness sweep entirely.
+    if (kp === FETCH_FAILED) {
+      netFailed++;
+      if (++consecutiveNetFailures >= MAX_CONSECUTIVE_NET_FAILURES) {
+        console.error(
+          `\n!! ${consecutiveNetFailures} consecutive transport failures ending at ${row.symbol} — ` +
+          `treating this as Screener being unreachable rather than ${consecutiveNetFailures} unlucky ` +
+          `requests. Stopping after ${built} build(s).`
+        );
+        netDead = true;
+        break;
+      }
+      console.log(`${row.symbol.padEnd(12)} unreachable — skipped, stays in queue`);
+      await sleep(3000);
+      continue;
+    }
+    consecutiveNetFailures = 0;
 
     // Screener's daily allowance is gone. Every remaining symbol would be
     // written from yfinance prose, which is worse input, so stop rather than
@@ -661,10 +732,14 @@ if (IS_CLI) (async () => {
 
   console.log(
     `\nbuilt=${built} skipped=${skipped} no_input=${noInput} empty=${empty} ` +
-    `kept_existing=${protectedRows}${quotaHit ? " QUOTA_EXHAUSTED" : ""}` +
-    `${loggedOut ? " SESSION_EXPIRED" : ""}  key_points=${gotKeyPoints}/${attempted}`
+    `kept_existing=${protectedRows} net_failed=${netFailed}${quotaHit ? " QUOTA_EXHAUSTED" : ""}` +
+    `${loggedOut ? " SESSION_EXPIRED" : ""}${netDead ? " SCREENER_UNREACHABLE" : ""}` +
+    `  key_points=${gotKeyPoints}/${attempted}`
   );
   if (loggedOut) { await db.end(); process.exit(1); }
+  // Exits 1, like the session-expired case and for the same reason: the run did
+  // not do its job and a green tick would say it had.
+  if (netDead) { await db.end(); process.exit(1); }
 
   // SECOND NET, BEHIND THE PRE-FLIGHT PROBE.
   //
