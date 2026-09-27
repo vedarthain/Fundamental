@@ -20,11 +20,41 @@ WHY THIS SOURCE
 ---------------
 EQUITY_L.csv is NSE's own list of listed equities. It is a static file on
 nsearchives (not the bot-walled dynamic API — see classification.py for that
-wall), and ETFs and rights entitlements are ABSENT from it entirely rather than
-tagged. That absence is the signal.
+wall), and ETFs are ABSENT from it entirely rather than tagged. That absence is
+the signal.
 
 Note it is NOT a series filter. The file carries SERIES values EQ / BE / BZ
 only; there is no 'ETF' series to exclude. Membership in the file is the test.
+
+CORRECTION, 2026-09-27: RIGHTS ENTITLEMENTS ARE NOT ABSENT
+----------------------------------------------------------
+This file used to claim absence covered rights entitlements too. It does not,
+and the claim was self-concealing. A rights entitlement IS in EQUITY_L for the
+~2-week subscription window and drops out when it expires:
+
+    CENTEXT-RE,Century Extrusions Limited-RE,BE,23-SEP-2026,…,INE281A20018,1
+
+The five REs that motivated this module (DUCON-RE1, JAYKAY-RE1, KSHITIJ-RE,
+RATNA-RE, VHLTD-RE1) all have a NULL listing_date in app.universe — they were
+measured AFTER their windows closed, when they had already fallen out of the
+file. So the absence rule appeared to catch rights entitlements while actually
+only catching EXPIRED ones: cleanup after the damage, never prevention. It is
+§5's failure exactly — a check whose passing condition arrives on its own.
+
+The cost was one CI failure per NSE rights issue, forever. CENTEXT-RE was
+onboarded 2026-09-26, Screener returned not_found (there is nothing to have a
+page about), and coverage.fetch_failing_is_empty went red.
+
+The discriminator that works was already in the row being read: the ISIN's
+security-type digits. See _is_equity_isin().
+
+WHAT KEEPS THIS CURRENT (§5)
+----------------------------
+coverage.fetch_failing_is_empty. A non-company admitted to the universe has no
+Screener page, so it lands in fetch_failing and fails the nightly run — which
+is how this defect surfaced in the first place. That check is the tripwire; no
+new assertion is added here, because a second one testing the same thing would
+be decoration.
 
 WHAT THIS DELIBERATELY DOES NOT DO
 ----------------------------------
@@ -83,6 +113,33 @@ def _parse_listing_date(raw: str) -> date | None:
         return None
 
 
+def _is_equity_isin(isin: str) -> bool:
+    """Is this ISIN an ORDINARY SHARE, as opposed to a rights entitlement?
+
+    Characters 8-9 of an Indian ISIN are the security type: '01' is equity
+    shares, '20' is a rights entitlement. INE281A01026 is Century Extrusions;
+    INE281A20018 is the right to subscribe to it, which is a tradeable
+    instrument for about two weeks and is not a company.
+
+    A WHITELIST, deliberately. Excluding a known-bad '20' would require knowing
+    the full security-type code list, which I do not; admitting only '01' means
+    an unfamiliar code is excluded rather than silently onboarded. Measured on
+    the 2026-09-27 file: 2584 rows are '01' and exactly one is '20'
+    (CENTEXT-RE). Across the live active universe, 2576 members are '01', 24
+    have no ISIN, and none are anything else — so this rule retires nothing
+    real.
+
+    A missing or malformed ISIN returns True. That preserves the existing
+    admit-on-doubt tradeoff: the ISIN filter elsewhere deliberately admits an
+    unknown-ISIN candidate rather than drop a day-1 IPO nobody has indexed yet,
+    and this filter must not quietly reverse it.
+    """
+    isin = (isin or "").strip().upper()
+    if len(isin) != 12:
+        return True
+    return isin[7:9] == "01"
+
+
 def parse(raw_csv: str) -> dict[str, dict]:
     """symbol → {name, series, isin, listing_date, face_value}.
 
@@ -101,6 +158,8 @@ def parse(raw_csv: str) -> dict[str, dict]:
     for row in csv.DictReader(io.StringIO(raw_csv)):
         sym = pick(row, "SYMBOL")
         if not sym:
+            continue
+        if not _is_equity_isin(pick(row, " ISIN NUMBER", "ISIN NUMBER")):
             continue
         out[sym] = {
             "name": pick(row, "NAME OF COMPANY"),
