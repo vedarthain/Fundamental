@@ -45,9 +45,43 @@ WHAT KEEPS THIS CURRENT (CLAUDE.md §5)
   and --check exits 1 when the newest snapshot is older than --max-age-hours so
   a scheduled job can fail rather than succeed over stale data.
 
+THE PRICE PASS NEEDS NO TOKEN — ON PURPOSE
+
+  "How is it trading now" comes from Upstox's PUBLIC instrument master,
+  https://assets.upstox.com/market-quote/instruments/exchange/NSE.csv.gz, which
+  carries instrument_key, tradingsymbol and last_price for every NSE equity and
+  sends no Authorization header. Matched on ISIN, not symbol: 86/86 NSE-listed
+  rows matched by ISIN on 2026-10-02, and matching by symbol is the fragile one
+  because tradingsymbols get renamed.
+
+  Not golden.price_history, which looks like the right source and is not:
+  0 of those 86 symbols exist in golden.stocks (2,981 rows). golden.stocks was
+  seeded and is not enriched on a new NSE listing, so a newly-listed IPO is
+  always exactly the case it has not caught up with.
+
+  Because the price pass is unauthenticated it runs even when the IPO token is
+  dead — a lapsed token degrades the calendar without also blanking the returns.
+  Hence --prices-only, which does the price pass and nothing else.
+
+RETENTION — 6 MONTHS, AND THE CLEANUP IS THE POINT
+
+  Upstox only serves ~3 months of listed history (its listed set stopped dead at
+  2026-07-06 for both regular and SME, a server-side window, not pagination), so
+  the 6-month view is built by ACCUMULATING: once a row is in app.ipo it is ours
+  and survives disappearing from the API.
+
+  The counterpart to accumulating is evicting, which is §5's other half — the
+  coverage ledger grew forever because it could upsert and not delete. So every
+  run prunes listed rows whose listing_date is older than --retain-days (183),
+  prints the count, and --no-prune turns it off. Rows with a NULL listing_date
+  are NEVER pruned: age unknown is not age exceeded.
+
 USAGE
   # Local snapshot against the prod app DB (the token lives there)
   etl/.venv/bin/python scripts/fetch-ipos.py
+
+  # Refresh only the post-listing prices (works with an expired IPO token)
+  etl/.venv/bin/python scripts/fetch-ipos.py --prices-only
 
   # Fetch + print, write nothing
   etl/.venv/bin/python scripts/fetch-ipos.py --dry-run
@@ -66,6 +100,9 @@ EXIT CODES
 from __future__ import annotations
 
 import argparse
+import csv
+import gzip
+import io
 import json
 import os
 import sys
@@ -78,6 +115,12 @@ from urllib.request import Request, urlopen
 import psycopg
 
 LIST_ENDPOINT = "https://api.upstox.com/v2/ipos"
+NSE_MASTER = "https://assets.upstox.com/market-quote/instruments/exchange/NSE.csv.gz"
+
+# How much listed history app.ipo keeps. Six months, because that is the window
+# the tracker offers; Upstox itself only serves ~3, so the back half of it is
+# built by this script not deleting what it already has.
+RETAIN_DAYS = 183
 STATUSES = ("upcoming", "open", "closed", "listed")
 ISSUE_TYPES = ("regular", "sme")
 
@@ -286,6 +329,93 @@ def fetch_all(token: str, want_listed_details: bool, verbose: bool) -> list[dict
     return [flatten(r) for r in seen.values() if r.get("id") and r.get("status") and r.get("issue_type")]
 
 
+def refresh_prices(conn: psycopg.Connection, verbose: bool) -> tuple[int, int]:
+    """ISIN → (instrument_key, last_price) off Upstox's public NSE master.
+
+    Returns (priced, wanted). Only rows that HAVE an ISIN and are already listed
+    are candidates — an unlisted issue has no scrip to price, and the 20
+    upcoming rows have no ISIN either.
+
+    A last_price of 0 in the master means "has not traded", not "worth nothing",
+    so it is written as NULL. The DB's ipo_last_price_positive constraint is the
+    backstop if that ever regresses here.
+
+    Nothing is deleted when a row goes unmatched: the 55 BSE-only issues will
+    never appear in the NSE master, and blanking a price we hold because today's
+    file did not mention it would be the same NULL-means-gone bug the upsert's
+    COALESCE exists to prevent.
+    """
+    with conn.cursor() as cur:
+        cur.execute("SELECT id, isin FROM app.ipo "
+                    "WHERE status = 'listed' AND isin IS NOT NULL")
+        want = {isin: ipo_id for ipo_id, isin in cur.fetchall()}
+    if not want:
+        return (0, 0)
+
+    req = Request(NSE_MASTER, headers={"User-Agent": _UA})
+    with urlopen(req, timeout=120) as r:
+        raw = gzip.decompress(r.read())
+    rows: list[tuple] = []
+    seen_at = datetime.now(timezone.utc)
+    for rec in csv.DictReader(io.StringIO(raw.decode("utf-8", "replace"))):
+        if rec.get("instrument_type") != "EQUITY":
+            continue
+        key = rec.get("instrument_key") or ""
+        isin = key.rsplit("|", 1)[-1]
+        if isin not in want:
+            continue
+        px = num(rec.get("last_price"))
+        rows.append((key, px if (px is not None and px > 0) else None,
+                     seen_at if (px is not None and px > 0) else None,
+                     want[isin]))
+
+    if rows:
+        with conn.cursor() as cur:
+            cur.executemany(
+                "UPDATE app.ipo SET instrument_key = %s, "
+                "last_price    = COALESCE(%s, app.ipo.last_price), "
+                "last_price_at = COALESCE(%s, app.ipo.last_price_at) "
+                "WHERE id = %s",
+                rows,
+            )
+    priced = sum(1 for r in rows if r[1] is not None)
+    if verbose:
+        print(f"prices: matched {len(rows)}/{len(want)} listed ISINs in the NSE "
+              f"master, {priced} with a tradeable last_price")
+    return (priced, len(want))
+
+
+def prune(conn: psycopg.Connection, retain_days: int, verbose: bool) -> int:
+    """Evict listed issues older than the retention window.
+
+    Shows the count before deleting, per CLAUDE.md. `listing_date IS NULL` is
+    deliberately excluded from the predicate rather than treated as ancient —
+    unknown age is not exceeded age, and a NULL listing_date on a listed row
+    means the detail pass has not run for it yet.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*), min(listing_date), max(listing_date) FROM app.ipo "
+            "WHERE status = 'listed' AND listing_date IS NOT NULL "
+            "  AND listing_date < current_date - %s::int",
+            (retain_days,),
+        )
+        n, lo, hi = cur.fetchone()
+        if not n:
+            if verbose:
+                print(f"prune: 0 listed rows older than {retain_days} days")
+            return 0
+        print(f"prune: deleting {n} listed row(s) listed {lo}..{hi}, "
+              f"older than {retain_days} days")
+        cur.execute(
+            "DELETE FROM app.ipo "
+            " WHERE status = 'listed' AND listing_date IS NOT NULL "
+            "   AND listing_date < current_date - %s::int",
+            (retain_days,),
+        )
+    return n
+
+
 def check_freshness(conn: psycopg.Connection, max_age_hours: float) -> int:
     with conn.cursor() as cur:
         cur.execute("SELECT max(fetched_at), count(*) FROM app.ipo")
@@ -310,6 +440,13 @@ def main() -> int:
     ap.add_argument("--check", action="store_true",
                     help="only assert the stored snapshot is fresh; no Upstox calls")
     ap.add_argument("--max-age-hours", type=float, default=36.0)
+    ap.add_argument("--prices-only", action="store_true",
+                    help="refresh post-listing prices from the public NSE "
+                         "master and exit; needs no Upstox token")
+    ap.add_argument("--retain-days", type=int, default=RETAIN_DAYS,
+                    help=f"keep listed issues this recent (default {RETAIN_DAYS})")
+    ap.add_argument("--no-prune", action="store_true",
+                    help="skip the retention delete")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
@@ -317,6 +454,15 @@ def main() -> int:
     with psycopg.connect(url) as conn:
         if args.check:
             return check_freshness(conn, args.max_age_hours)
+
+        if args.prices_only:
+            try:
+                refresh_prices(conn, not args.quiet)
+            except (HTTPError, URLError, TimeoutError, OSError) as e:
+                print(f"NSE instrument master unreachable: {e}", file=sys.stderr)
+                return 1
+            conn.commit()
+            return 0
 
         token, expires = load_token(conn)
         if not token:
@@ -361,8 +507,26 @@ def main() -> int:
             return 0
 
         n = upsert(conn, rows)
-        conn.commit()
         print(f"upserted {n} rows into app.ipo")
+
+        # Prices and the prune run AFTER the upsert and inside the same
+        # transaction. Order matters: a row that became 'listed' on this run
+        # should get a price on this run, and the prune must see the statuses
+        # this run established rather than yesterday's.
+        #
+        # A failure in the price pass must not lose the snapshot, which is the
+        # expensive part (~40 authenticated calls). So it is caught and reported
+        # rather than raised.
+        try:
+            refresh_prices(conn, not args.quiet)
+        except (HTTPError, URLError, TimeoutError, OSError) as e:
+            print(f"  !! price pass skipped, NSE master unreachable: {e}",
+                  file=sys.stderr)
+
+        if not args.no_prune:
+            prune(conn, args.retain_days, not args.quiet)
+
+        conn.commit()
         return 0
 
 
