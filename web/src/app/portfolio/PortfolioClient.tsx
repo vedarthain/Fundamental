@@ -390,6 +390,10 @@ function PerformanceTab({ portfolio, realized, perf, timeline }: { portfolio: Po
   // uses (`isMapped` ⇒ golden has a bar ⇒ a real close-to-close move exists),
   // derived from the live rows so it can never disagree with the cards above it
   // and goes to zero by itself the day ETF history lands in golden.
+  //
+  // Only `.pnl` is consumed now, to subtract out of total unrealized and get the
+  // equities-only figure the curve is about. count/value are kept because they
+  // are what tells you whether a zero here means "no ETFs" or "ETFs flat".
   const dailyExcluded = useMemo(() => {
     const others = instruments.filter((i) => !i.isMapped);
     return {
@@ -483,7 +487,10 @@ function PerformanceTab({ portfolio, realized, perf, timeline }: { portfolio: Po
       {/* Daily profit + invested value, straight off the snapshot series */}
       {perf && perf.series.length >= 2 && (
         <div className="grid lg:grid-cols-2 gap-4">
-          <DailyProfitChart series={perf.series} excluded={dailyExcluded} />
+          <DailyProfitChart
+            series={perf.series}
+            equityPnl={unrealized - dailyExcluded.pnl}
+          />
           <InvestedValueChart series={perf.series} />
         </div>
       )}
@@ -591,19 +598,36 @@ function YAxisGutter({ ticks, y, height, width = 44 }: {
 // day's move replayed indefinitely. It is worth ~₹-370/day at the moment and
 // would drift silently.
 //
-// The omission is not small: unmapped ETFs are ~20% of book value and ~half of
-// total unrealized P&L. A chart that silently drops half the P&L while sitting
-// next to a "Total P&L" card is §5's check-that-cannot-fail in chart form. So
-// the excluded book is printed beside it rather than explained in a comment.
+// This card used to print the excluded ETF/fund book (count, value and P&L)
+// under the curve, on the reasoning that dropping ~half the unrealized P&L
+// while sitting next to a "Total P&L" card was §5's check-that-cannot-fail in
+// chart form. That reasoning was built on a wrong reading of the card: the
+// Total P&L beside this chart is `equity_value − equity_cost` off
+// app.portfolio_snapshot, which is ALREADY equities-only (+8,039 on 2026-10-01,
+// with the ETF +41,927 outside it). Nothing on this screen was ever claiming to
+// include the ETFs, so the footer was answering a discrepancy that did not
+// exist, and the one real difference — horizon, not scope — got buried.
+//
+// So the ETF block is gone and `equityPnl` took its place: gain-vs-cost on the
+// same equities this curve plots, printed directly under the window figure.
+// There is deliberately no equity/others toggle, because there is no "others"
+// series to plot — an unmapped ETF has no golden bar, so it has no measured
+// daily move on any day. A toggle would switch to an empty chart.
 function DailyProfitChart({
   series,
-  excluded,
+  equityPnl,
 }: {
   series: PerformanceStats["series"];
-  // Live, recomputed from the rows on every render — not a constant. If ETF
-  // daily history ever lands in golden, this block goes to zero on its own
-  // instead of needing someone to remember it.
-  excluded: { count: number; value: number; pnl: number };
+  // Open P&L on the SAME mapped equities this curve plots, measured against
+  // cost basis rather than against the start of the window.
+  //
+  // It is here because "Net over window" (+42K) and the Total P&L card (+8,039)
+  // get read as the same number and are not. Both are equities-only; they differ
+  // only in where they measure FROM — the window figure sums the daily moves of
+  // the days plotted, this one is gain against cost basis. The gap is simply
+  // that the equities were ~34K underwater when the window opened. Neither can
+  // be made to equal the other, so both are printed in the same place.
+  equityPnl: number;
 }) {
   // Plotted as a CUMULATIVE curve, not one mark per day.
   //
@@ -636,6 +660,28 @@ function DailyProfitChart({
   // One date label per ~5 days keeps ~55px between them at SLOT=11, which is
   // about the width of "17 Jul '26". Denser and they overlap into mush.
   const xStep = Math.max(1, Math.ceil(48 / SLOT));
+
+  // Which days get a date label.
+  //
+  // The last day is ALWAYS labelled — it is the one you opened the chart for —
+  // and that is exactly what broke the old `i % xStep === 0 || i === n - 1`
+  // rule: when n-1 is not a multiple of xStep it lands a few pixels from the
+  // regular tick before it, and the two render on top of each other. Observed
+  // at 53 days, SLOT=11, xStep=5: index 50 drew "29 Sep" and index 52 drew
+  // "1 Oct" 22px apart, overlapping into "29 Se1 Oct".
+  //
+  // So the final label wins and any regular tick inside MIN_LABEL_GAP px of it
+  // is dropped, rather than both being drawn and left to collide. Dropping the
+  // earlier one is the right way round: a missing intermediate date is
+  // recoverable from the ones either side of it; an unreadable last date is not.
+  const MIN_LABEL_GAP = 46;
+  const xTickIdx = (() => {
+    const regular: number[] = [];
+    for (let i = 0; i < n - 1; i += xStep) regular.push(i);
+    const keep = regular.filter((i) => (n - 1 - i) * SLOT >= MIN_LABEL_GAP);
+    return [...keep, n - 1];
+  })();
+  const xTickSet = new Set(xTickIdx);
   const linePts = cum.map((c, i) => `${x(i).toFixed(1)},${y(c.total).toFixed(1)}`).join(" ");
   const endsUp = cum[n - 1].total >= 0;
   const lineColor = endsUp ? GREEN : RED;
@@ -723,7 +769,7 @@ function DailyProfitChart({
             {/* X axis */}
             <line x1={0} y1={PLOT_BOT + 6} x2={W} y2={PLOT_BOT + 6} stroke="var(--color-border)" strokeWidth={1} />
             {cum.map((c, i) =>
-              i % xStep === 0 || i === n - 1 ? (
+              xTickSet.has(i) ? (
                 <g key={`xt-${c.date}`}>
                   <line x1={x(i)} y1={PLOT_BOT + 6} x2={x(i)} y2={PLOT_BOT + 9} stroke="var(--color-border)" strokeWidth={1} />
                   <text x={x(i)} y={PLOT_BOT + 19} textAnchor="middle" style={{ fontSize: 9, fill: "var(--color-muted)" }}>
@@ -825,29 +871,24 @@ function DailyProfitChart({
           <div className="text-[10px] muted-text">{shortDate(worst.date)}</div>
         </div>
         <div>
-          <div className="text-[10.5px] font-semibold muted-text uppercase tracking-wide">Net over window</div>
+          <div
+            className="text-[10.5px] font-semibold muted-text uppercase tracking-wide"
+            title="Sum of the daily close-to-close moves over the days plotted. Not lifetime gain."
+          >
+            Net over window
+          </div>
           <div className="tabular-nums font-semibold text-[15px] mt-0.5" style={{ color: net >= 0 ? GREEN : RED }}>{signed(net)}</div>
+          <div
+            className="text-[10px] muted-text mt-1 whitespace-nowrap"
+            title="Open P&L on these same equities measured against cost basis, not against the start of the window. Differs from the Total P&L card above because that one also includes ETFs and funds."
+          >
+            equity P&L{" "}
+            <span className="tabular-nums font-semibold" style={{ color: equityPnl >= 0 ? GREEN : RED }}>
+              {signed(equityPnl)}
+            </span>
+          </div>
         </div>
       </div>
-      {excluded.count > 0 && (
-        <div
-          className="mt-3 pt-3 flex items-baseline justify-between gap-3"
-          style={{ borderTop: "1px solid var(--hairline, rgba(128,128,128,.22))" }}
-        >
-          <div className="text-[10.5px] muted-text leading-snug">
-            <span className="font-semibold">Not in this curve:</span>{" "}
-            {excluded.count} ETF/fund {excluded.count === 1 ? "holding" : "holdings"} ·{" "}
-            <span className="tabular-nums">{inr(excluded.value)}</span> held
-          </div>
-          <div
-            className="tabular-nums font-semibold text-[13px] shrink-0"
-            style={{ color: excluded.pnl >= 0 ? GREEN : RED }}
-            title="Unrealized P&L on holdings with no daily price history. It is in Total P&L but cannot appear on a daily curve — the only day-change figure these carry is the broker's own percentage, frozen at import."
-          >
-            {signed(excluded.pnl)}
-          </div>
-        </div>
-      )}
       <p className="text-[10.5px] muted-text mt-2 leading-snug">
         Running total of each day&apos;s market move on your <strong>mapped equities</strong> — hover
         any point for that day on its own. Buys, sells and broker re-imports move your portfolio
