@@ -97,9 +97,23 @@ MAX_DAYS_BACK = 5
 FETCH_RETRY_BACKOFF = (3, 8, 20)  # seconds between attempts; len = retry count
 
 # We only update prices for equity scrips. T2T (BE/BZ) and limited-trading
-# (BL) are still equities, just with stricter settlement. Exclude bonds,
-# preference shares, ETFs, etc.
-ALLOWED_SERIES = {"EQ", "BE", "BZ", "BL"}
+# (BL) are still equities, just with stricter settlement. SM/ST are the NSE
+# EMERGE (SME) board — normal and T2T respectively. Exclude bonds, preference
+# shares, ETFs, etc.
+#
+# SM AND ST ADDED 2026-10-02, and this one line was why every SME IPO since July
+# was invisible on the site. SME scrips are not in a separate file: they sit in
+# the SAME sec_bhavdata_full_DDMMYYYY.csv under their own series, so the omission
+# read as "NSE doesn't publish SME prices" rather than "we filter them out".
+# Measured on sec_bhavdata_full_01102026.csv: EQ 2662, SM 389, BE 246, ST 87,
+# GS 55, GB 44, BZ 26, IV 16, RR 6, E1 2 — so this admits 476 more rows per day.
+# All 24 NSE-listed SME issues in app.ipo had zero rows in golden.price_history
+# before it, which is also why none of them could be onboarded or linked to.
+#
+# The series list stays a WHITELIST. GS/GB are government securities, IV/RR/E1
+# are not ordinary shares, and an unfamiliar new series must be excluded by
+# default rather than silently priced as equity.
+ALLOWED_SERIES = {"EQ", "BE", "BZ", "BL", "SM", "ST"}
 
 # Yahoo Finance suffix — golden.price_history stores symbols as 'SBIN.NS'
 # (matches the format used by the local yfinance ingest and sync-neon.sh).

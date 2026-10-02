@@ -906,7 +906,14 @@ def sync_universe_cmd(
                 drop = set(excluded_funds)
                 new_syms = [s for s in new_syms if s not in drop]
 
-        # ── 2c. NSE EQUITY_L master — the second, ISIN-independent signal ────
+        # ── 2c. NSE listed-equity masters — the second, ISIN-independent signal ─
+        #
+        # "Masters" plural since 2026-10-02: nse_equity_master.fetch() now unions
+        # EQUITY_L.csv (mainboard) with SME_EQUITY_L.csv (EMERGE). It is one
+        # all-or-nothing fetch on purpose — a mainboard-only map would make every
+        # SME member look absent from the master, and the conjunction below would
+        # then retire the ones without fundamentals yet on the strength of a
+        # single transient 403.
         # The INF-ISIN filter above deliberately admits a candidate with NO ISIN
         # anywhere, so a day-1 IPO is never dropped. ETFs and rights
         # entitlements with no ISIN slip through that same door (40 of them had,
@@ -928,6 +935,12 @@ def sync_universe_cmd(
                 log.error("equity_master_unavailable", error=str(e))
                 print(f"!! EQUITY_L.csv unavailable ({e})")
                 print("!! Falling back to ISIN-only filtering for this run.")
+
+        # Which board each symbol trades on. Empty when the master could not be
+        # fetched — and empty must mean "we do not know", never "none are SME",
+        # so the is_sme maintenance pass in §3d is skipped entirely in that case
+        # rather than running and clearing the flag on all 575.
+        sme_syms = nse_equity_master.sme_symbols(master) if master_ok else set()
 
         # ── 2c-isin. Backfill the ISIN we are already holding ────────────────
         #
@@ -1164,13 +1177,14 @@ def sync_universe_cmd(
                 live[s]["sector"], live[s]["industry"],
                 live[s]["isin"], live[s]["listing_date"],
                 first_bar.get(s),
+                s in sme_syms,
             ) for s in new_syms]
             with conn.cursor() as cur:
                 cur.executemany("""
                     INSERT INTO app.universe
                         (symbol, company_name, sector, industry, isin, listing_date,
-                         first_bar_date, is_active, synced_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, true, now())
+                         first_bar_date, is_sme, is_active, synced_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, true, now())
                     ON CONFLICT (symbol) DO NOTHING
                 """, payload)
                 inserted = cur.rowcount
@@ -1263,6 +1277,39 @@ def sync_universe_cmd(
                 conn.commit()
         if listing_filled:
             print(f"listing_date backfilled from EQUITY_L on {listing_filled} row(s).")
+
+        # ── 3d. Re-stamp is_sme for EVERY row, not just new ones ──────────────
+        #
+        # Board membership is not an insert-time fact. NSE migrates companies off
+        # EMERGE onto the mainboard once they outgrow it, and that is a routine
+        # event rather than an edge case — the scrip leaves SME_EQUITY_L.csv and
+        # appears in EQUITY_L.csv. Stamping only at insert would leave migrated
+        # names flagged SME forever, which is CLAUDE.md §5's exact failure: a
+        # field populated by the initial load with nothing maintaining it.
+        #
+        # So this is a full reconciliation in both directions — set where the
+        # master says SME and the row says otherwise, and clear where the master
+        # no longer says SME. It runs over all rows including inactive ones: a
+        # retired symbol can be reactivated later and would otherwise carry a
+        # stale flag back in with it.
+        #
+        # IS DISTINCT FROM means a steady-state run writes zero rows, so the
+        # printed count is a real signal rather than always 3,166. Guarded on
+        # master_ok because an empty sme_syms means "the fetch failed", and
+        # running this with an empty set would clear all 575 flags at once.
+        sme_restamped = 0
+        if master_ok and not dry_run:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE app.universe u SET is_sme = (u.symbol = ANY(%s)), "
+                    "       synced_at = now() "
+                    " WHERE u.is_sme IS DISTINCT FROM (u.symbol = ANY(%s))",
+                    (list(sme_syms), list(sme_syms)),
+                )
+                sme_restamped = cur.rowcount
+            conn.commit()
+        if sme_restamped:
+            print(f"is_sme re-stamped on {sme_restamped} row(s).")
 
         # ── 4. Optionally retire names that have gone dark on NSE ─────────────
         retired = 0

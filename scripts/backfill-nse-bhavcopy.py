@@ -122,8 +122,13 @@ _HEADERS = {
     "Referer": "https://www.nseindia.com/",
 }
 
-# Only equity series — excludes bonds, ETFs, preference shares, etc.
-ALLOWED_SERIES = {"EQ", "BE", "BZ", "BL"}
+# Only equity series — excludes bonds, ETFs, preference shares, etc. SM/ST are
+# the NSE EMERGE (SME) board; they must match refresh-ltp.py's list exactly, or
+# this repair tool would silently refuse to backfill history for the very symbols
+# the daily ingest is now collecting. See the longer note there for why they were
+# missing. Both lists are short and the drift between them would be invisible,
+# so if a third series is ever added, add it in both places in the same commit.
+ALLOWED_SERIES = {"EQ", "BE", "BZ", "BL", "SM", "ST"}
 
 # NSE format A switched to the new URL somewhere around this date.
 # We try Format A first for ALL dates; fall back to Format B on 404.

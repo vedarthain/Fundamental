@@ -85,6 +85,23 @@ from .log import log
 
 CSV_URL = "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv"
 
+# NSE EMERGE — the SME board. A SEPARATE file, not a series inside EQUITY_L.
+#
+# WHY THIS WAS ADDED (2026-10-02). Every SME IPO since July was invisible on the
+# site: 24 of 24 NSE-listed SME issues in app.ipo had zero rows in
+# golden.price_history and no app.universe membership. Two independent gates were
+# doing it. The first was the bhavcopy series filter (scripts/refresh-ltp.py),
+# which admitted EQ/BE/BZ/BL and so dropped series SM and ST — SME scrips are in
+# the SAME sec_bhavdata_full file, just under those two series. The second is
+# THIS module: sync-universe refuses to onboard a candidate that is absent from
+# the master and has zero fundamentals, and a day-1 SME IPO is exactly that
+# shape, so fixing the series filter alone would have moved the blockage one
+# step later and looked like a different bug.
+#
+# EQUITY_L is mainboard-only — measured 2026-10-02, 2,593 rows, and none of
+# COREIN / TEJA / METALIC / POOJALOGIS appear in it while all four trade.
+SME_CSV_URL = "https://nsearchives.nseindia.com/emerge/corporates/content/SME_EQUITY_L.csv"
+
 # nsearchives serves the static CSVs to a plain client, but a default httpx
 # User-Agent gets a 403 — the same edge rules that wall the dynamic API apply
 # here, just less aggressively.
@@ -97,20 +114,42 @@ _UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
 # symbols are not listed equities" and retire the entire universe if trusted.
 MIN_PLAUSIBLE_ROWS = 1500
 
+# Same floor logic for the EMERGE file, sized to it: 575 rows on 2026-10-02.
+# It gets its own constant rather than sharing one, because a single floor that
+# both files must clear would have to be set low enough for the smaller file and
+# would then stop protecting the larger one.
+MIN_PLAUSIBLE_SME_ROWS = 300
+
 
 class EquityMasterError(RuntimeError):
     """Raised when the master cannot be fetched or fails the sanity floor."""
 
 
 def _parse_listing_date(raw: str) -> date | None:
-    """'06-OCT-2008' → date(2008, 10, 6). None when absent or unparseable."""
+    """'06-OCT-2008' → date(2008, 10, 6). None when absent or unparseable.
+
+    THE TWO FILES DO NOT AGREE ON THE YEAR. EQUITY_L writes four digits
+    ('29-NOV-1995'); the EMERGE file writes two ('30-Sep-26'), so %Y alone
+    returned None for all 574 SME rows — silently, since None is also the
+    legitimate "no date here" answer. That mattered beyond cosmetics:
+    maturity_tier reserves 'new' for stocks listed within ~2 years and reads
+    listing_date to do it, so every SME name would have been tiered purely on
+    Screener history depth, and the §3c listing_date backfill would have had
+    nothing to write.
+
+    %y resolves 00-68 to 20xx, which is correct for every SME listing — the
+    EMERGE board opened in 2012. Four-digit is tried first so nothing about the
+    mainboard parse changes.
+    """
     raw = (raw or "").strip()
     if not raw:
         return None
-    try:
-        return datetime.strptime(raw, "%d-%b-%Y").date()
-    except ValueError:
-        return None
+    for fmt in ("%d-%b-%Y", "%d-%b-%y"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    return None
 
 
 def _is_equity_isin(isin: str) -> bool:
@@ -140,12 +179,21 @@ def _is_equity_isin(isin: str) -> bool:
     return isin[7:9] == "01"
 
 
-def parse(raw_csv: str) -> dict[str, dict]:
-    """symbol → {name, series, isin, listing_date, face_value}.
+def parse(raw_csv: str, board: str = "main") -> dict[str, dict]:
+    """symbol → {name, series, isin, listing_date, board}.
 
-    Several headers carry a LEADING SPACE in NSE's file (' SERIES',
+    Several headers carry a LEADING SPACE in NSE's mainboard file (' SERIES',
     ' ISIN NUMBER', ' DATE OF LISTING'). Both spellings are accepted so a
     silent upstream cleanup doesn't empty every field at once.
+
+    THE EMERGE FILE SPELLS ITS HEADERS WITH UNDERSCORES. Same columns, same
+    order, different names: NAME_OF_COMPANY, SERIES, DATE_OF_LISTING,
+    ISIN_NUMBER. This matters more than it looks: without the underscore
+    spellings every SME row parses to an empty ISIN, and _is_equity_isin("")
+    returns True by design (admit-on-doubt), so all 575 would be ADMITTED with
+    no name and no listing_date rather than rejected loudly. A header-name miss
+    here fails open, not closed — which is why both spellings are listed for
+    every field instead of branching on `board`.
     """
     def pick(row: dict, *names: str) -> str:
         for n in names:
@@ -159,42 +207,77 @@ def parse(raw_csv: str) -> dict[str, dict]:
         sym = pick(row, "SYMBOL")
         if not sym:
             continue
-        if not _is_equity_isin(pick(row, " ISIN NUMBER", "ISIN NUMBER")):
+        if not _is_equity_isin(pick(row, " ISIN NUMBER", "ISIN NUMBER",
+                                    "ISIN_NUMBER")):
             continue
         out[sym] = {
-            "name": pick(row, "NAME OF COMPANY"),
+            "name": pick(row, "NAME OF COMPANY", "NAME_OF_COMPANY"),
             "series": pick(row, " SERIES", "SERIES"),
-            "isin": pick(row, " ISIN NUMBER", "ISIN NUMBER"),
+            "isin": pick(row, " ISIN NUMBER", "ISIN NUMBER", "ISIN_NUMBER"),
             "listing_date": _parse_listing_date(
-                pick(row, " DATE OF LISTING", "DATE OF LISTING")),
+                pick(row, " DATE OF LISTING", "DATE OF LISTING",
+                     "DATE_OF_LISTING")),
+            "board": board,
         }
     return out
 
 
+def _get(url: str) -> str:
+    try:
+        resp = httpx.get(url, headers={"User-Agent": _UA}, timeout=30.0,
+                         follow_redirects=True)
+    except httpx.HTTPError as e:
+        raise EquityMasterError(f"GET {url} failed: {e}") from e
+    if resp.status_code != 200:
+        raise EquityMasterError(f"GET {url} → HTTP {resp.status_code}")
+    return resp.text
+
+
 def fetch() -> dict[str, dict]:
-    """Download and parse the master. Raises EquityMasterError on any doubt.
+    """Download and parse BOTH masters, unioned. Raises on any doubt.
 
     Raising rather than returning a partial map is deliberate: every caller
     uses this to decide what is NOT a listed equity, so an empty or truncated
     map does not mean "nothing is listed" — it means we do not know, and acting
     on it would retire real companies.
-    """
-    try:
-        resp = httpx.get(CSV_URL, headers={"User-Agent": _UA}, timeout=30.0,
-                         follow_redirects=True)
-    except httpx.HTTPError as e:
-        raise EquityMasterError(f"GET {CSV_URL} failed: {e}") from e
-    if resp.status_code != 200:
-        raise EquityMasterError(f"GET {CSV_URL} → HTTP {resp.status_code}")
 
-    master = parse(resp.text)
-    if len(master) < MIN_PLAUSIBLE_ROWS:
+    WHY A FAILED EMERGE FETCH RAISES INSTEAD OF DEGRADING TO MAINBOARD-ONLY.
+    The tempting fallback — "EQUITY_L loaded, EMERGE didn't, carry on with what
+    we have" — is the most dangerous thing this module could do. non_equity()
+    reads absence from the returned map as evidence, so a mainboard-only map
+    makes every SME member of app.universe look absent; the ones without
+    fundamentals yet would then be retired by a transient 403 on one file. One
+    missing file must mean "we do not know", exactly as it already does for
+    EQUITY_L, so both fetches are inside the same all-or-nothing contract and
+    the caller's existing `master_ok=False` path (retire nothing, exclude
+    nothing) covers the SME board for free.
+
+    Overlap between the two files is not expected and not relied on; mainboard
+    is applied last so a symbol appearing in both is labelled 'main'.
+    """
+    sme = parse(_get(SME_CSV_URL), board="sme")
+    if len(sme) < MIN_PLAUSIBLE_SME_ROWS:
         raise EquityMasterError(
-            f"EQUITY_L.csv parsed to only {len(master)} symbols "
+            f"SME_EQUITY_L.csv parsed to only {len(sme)} symbols "
+            f"(floor {MIN_PLAUSIBLE_SME_ROWS}) — refusing to treat this as the "
+            f"EMERGE master")
+
+    main = parse(_get(CSV_URL), board="main")
+    if len(main) < MIN_PLAUSIBLE_ROWS:
+        raise EquityMasterError(
+            f"EQUITY_L.csv parsed to only {len(main)} symbols "
             f"(floor {MIN_PLAUSIBLE_ROWS}) — refusing to treat this as the "
             f"listed-equity master")
-    log.info("equity_master_loaded", symbols=len(master))
+
+    master = {**sme, **main}
+    log.info("equity_master_loaded", symbols=len(master),
+             main=len(main), sme=len(sme))
     return master
+
+
+def sme_symbols(master: dict[str, dict]) -> set[str]:
+    """Symbols the EMERGE master claims, for stamping app.universe.is_sme."""
+    return {s for s, r in master.items() if r.get("board") == "sme"}
 
 
 def _absent(master: dict[str, dict], symbols) -> set[str]:
