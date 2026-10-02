@@ -24,6 +24,7 @@ import { band, bandColor, tierLabel, hasScoreableHistory } from "@/lib/score";
 import { getOIAlerts } from "@/lib/oi-alerts";
 import { Sparkline, type SparkPoint } from "@/components/Sparkline";
 import { WatchlistButton } from "@/components/WatchlistButton";
+import { loadIpos, IpoTracker } from "./IpoTracker";
 
 // Score data changes weekly. 6h ISR cache avoids waking Neon on every visit.
 export const revalidate = 21600;
@@ -436,6 +437,101 @@ function ideasHref(
   return qs ? `/ideas?${qs}` : "/ideas";
 }
 
+/** Top-level view. Sits above `?bucket`, which only means anything in "trends". */
+type IdeasView = "trends" | "ipo";
+
+/**
+ * The view strip: Trends ⇄ IPO tracker.
+ *
+ * Plain `<Link>`s, not client state, because this page is entirely server-side
+ * and the two views load different queries — a client toggle would have to ship
+ * both payloads to hide one. `scroll={false}` matches the bucket tabs so
+ * switching does not jump the page.
+ *
+ * Switching to IPO drops `bucket` and `cal` from the URL: they are
+ * trends-only, and carrying them along would make a shared /ideas?view=ipo link
+ * silently restore someone else's bucket when the reader switched back.
+ */
+function ViewTabs({ view, sp }: { view: IdeasView; sp: Record<string, string | undefined> }) {
+  const items: { key: IdeasView; label: string; sub: string; href: string }[] = [
+    { key: "trends", label: "Trends", sub: "Scored stock ideas",
+      href: ideasHref(sp, { view: null }) },
+    { key: "ipo", label: "IPO tracker", sub: "Open · upcoming · listed",
+      href: ideasHref(sp, { view: "ipo", bucket: null, cal: null }) },
+  ];
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {items.map((it) => {
+        const active = it.key === view;
+        return (
+          <Link
+            key={it.key}
+            href={it.href}
+            scroll={false}
+            className="px-3 py-1.5 rounded-lg border transition-colors"
+            style={
+              active
+                ? {
+                    borderColor: "var(--color-accent-300)",
+                    backgroundColor: "var(--color-accent-50)",
+                    color: "var(--color-accent-700)",
+                  }
+                : { borderColor: "var(--color-border-default)", backgroundColor: "transparent" }
+            }
+          >
+            <div className="text-[13px]" style={{ fontWeight: active ? 600 : 500 }}>{it.label}</div>
+            <div className="text-[10px] muted-text leading-tight">{it.sub}</div>
+          </Link>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * Page chrome for a non-trends view: container, title, the view strip, then the
+ * view's own body.
+ *
+ * The trends branch does NOT use this — it has a header carrying snapshot dates
+ * and an idea count that only it can compute, and forcing both through one
+ * shared shell would mean passing those in as optional props that are null half
+ * the time. Two headers that each say what their own view knows is the smaller
+ * lie.
+ *
+ * NOTE on caching: this route is `revalidate = 21600` (6h), set for weekly score
+ * data. The IPO snapshot itself refreshes at most once a day — the Upstox token
+ * it needs expires daily and can only be renewed by hand — so 6h of ISR on top
+ * is not the binding staleness here. The age the reader sees comes from
+ * `fetched_at` in the row, not from when the page was rendered, so the ISR
+ * window cannot make a stale snapshot look fresh.
+ */
+function IdeasShell({
+  view, sp, children,
+}: {
+  view: IdeasView;
+  sp: Record<string, string | undefined>;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="mx-auto max-w-[1200px] px-6 py-10">
+      <header className="max-w-[760px]">
+        <div className="text-[12px] uppercase tracking-wide muted-text">Ideas Feed</div>
+        <h1 className="font-display text-[36px] tracking-tight leading-tight mt-1">
+          {view === "ipo" ? (
+            <>Issues <em className="accent">coming to market</em>.</>
+          ) : (
+            <>Stocks worth a <em className="accent">closer look</em>.</>
+          )}
+        </h1>
+      </header>
+      <nav className="mt-6">
+        <ViewTabs view={view} sp={sp} />
+      </nav>
+      {children}
+    </div>
+  );
+}
+
 /** Score movers are derived in the page from the 4-week window that loadIdeas
  *  already computes (curr vs `windowBack` snapshots ago, ~4 weeks) — see
  *  buildScoreMovers below. We use the longer window deliberately: between
@@ -745,6 +841,21 @@ export default async function IdeasPage({
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const sp = await searchParams;
+
+  // Top-level view, ABOVE the bucket tabs. "trends" is the scored-stock feed
+  // this page has always been; "ipo" is the IPO tracker, which shares nothing
+  // with it but the header. See IpoTracker.tsx for why it is not a ninth bucket.
+  //
+  // The two branches return early from each other rather than both rendering,
+  // so ?view=ipo does NOT pay for loadIdeas/loadResultWinners/loadUpcomingEvents
+  // — three queries over the whole scored universe that the IPO table has no
+  // use for. A single shared render that hid one half with CSS would have cost
+  // them on every visit.
+  const view: IdeasView = sp.view === "ipo" ? "ipo" : "trends";
+  if (view === "ipo") {
+    return <IdeasShell view="ipo" sp={sp}><IpoTracker data={await loadIpos()} /></IdeasShell>;
+  }
+
   // Single page-wide universe control: one index tier drives everything —
   // buckets, score movers, result winners and the calendar. Default = Nifty 50
   // (the highlighted pill): the cleanest, most recognizable slice. Opt wider via
@@ -914,9 +1025,16 @@ export default async function IdeasPage({
         )}
       </header>
 
+      {/* Top-level view strip (Trends ⇄ IPO tracker), then the universe control.
+          Two rows on purpose: the universe tier only applies to Trends, so
+          sitting it beside the view switch would imply it filters IPOs too. */}
+      <nav className="mt-6">
+        <ViewTabs view="trends" sp={sp} />
+      </nav>
+
       {/* Universe control — single page-wide index tier (drives buckets, movers,
           winners and the calendar). */}
-      <nav className="mt-6">
+      <nav className="mt-4">
         <TierPills items={idxItems} />
       </nav>
 
