@@ -23,14 +23,20 @@
  *
  * WHY RELATIVE AGE AND NOT A DATE.
  *
- * The question being answered is "how many sectors have I done this week", not
+ * The question being answered is "how many sectors have I done this cycle", not
  * "what date did I do Financials". A row of absolute dates forces you to diff 9
  * of them against today in your head. `3d` answers it directly in two glyphs,
  * and the primary signal is not text at all — reviewed-inside-the-window rows
  * dim, so "what's left" is a visual scan with nothing to read.
  *
- * The window is a ROLLING 7 days, not a calendar week: it is self-referential,
- * so it cannot rot, and there is no Monday reset to reason about.
+ * The window is a ROLLING 30 days, not a calendar month: it is self-referential,
+ * so it cannot rot, and there is no 1st-of-the-month reset to reason about.
+ *
+ * It was 7 days until 2026-10-02. A week was too short for a 9-sector sweep —
+ * markers aged out before the pass finished, so the counter kept resetting
+ * toward 0/9 and stopped describing a pass at all. Widening it only makes the
+ * dimming last longer; nothing else reads this constant, and `prune()` already
+ * runs on every write, so no previously-expired marker can resurface.
  *
  * Persistence mirrors scannerBookmarks exactly: server-backed and cross-device
  * when signed in (app.user_scanner_bookmark via /api/scanner/bookmarks),
@@ -55,7 +61,7 @@ export const THEME_REVIEWS_KEY = "er:themeReviews:v1";
 
 /** Rolling review window. A marker older than this stops counting and the row
  *  returns to full contrast — the sector has come back around. */
-export const REVIEW_WINDOW_DAYS = 7;
+export const REVIEW_WINDOW_DAYS = 30;
 
 const DAY_MS = 24 * 3600 * 1000;
 

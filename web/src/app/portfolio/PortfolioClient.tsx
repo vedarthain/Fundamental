@@ -649,6 +649,13 @@ function DailyProfitChart({
     if (el) el.scrollLeft = el.scrollWidth;
   }, [n]);
 
+  // Hovered point index. Drives the crosshair: a vertical rule to the X axis
+  // with that day's DATE, and a horizontal rule to the Y axis with the running
+  // TOTAL at that point. The native <title> tooltip is kept underneath because
+  // it is the only thing that works on touch, where there is no hover.
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const hov = hoverIdx != null && hoverIdx >= 0 && hoverIdx < n ? cum[hoverIdx] : null;
+
   const upDays = series.filter((s) => s.dayPnl > 0).length;
   const downDays = series.filter((s) => s.dayPnl < 0).length;
   const best = series.reduce((a, b) => (b.dayPnl > a.dayPnl ? b : a));
@@ -694,6 +701,24 @@ function DailyProfitChart({
               strokeLinecap="round"
               vectorEffect="non-scaling-stroke"
             />
+            {/* One dot per trading day, so the line reads as a sequence of
+                measurements rather than a smooth curve — the gaps between dots
+                are where no snapshot exists (weekends, holidays), which a bare
+                polyline hides by interpolating straight through them. Small
+                enough (r=1.7 at SLOT=11) that 45+ of them do not merge into a
+                rope; the hovered one grows instead of a separate marker
+                appearing, so nothing shifts under the cursor. */}
+            {cum.map((c, i) => (
+              <circle
+                key={`pt-${c.date}`}
+                cx={x(i)}
+                cy={y(c.total)}
+                r={hoverIdx === i ? 3.4 : 1.7}
+                fill={hoverIdx === i ? lineColor : "var(--color-card)"}
+                stroke={lineColor}
+                strokeWidth={1.2}
+              />
+            ))}
             <circle cx={x(n - 1)} cy={y(cum[n - 1].total)} r={3} fill={lineColor} />
             {/* X axis */}
             <line x1={0} y1={PLOT_BOT + 6} x2={W} y2={PLOT_BOT + 6} stroke="var(--color-border)" strokeWidth={1} />
@@ -707,10 +732,70 @@ function DailyProfitChart({
                 </g>
               ) : null,
             )}
+            {/* Crosshair for the hovered day. Drawn after the axis so it sits
+                above the gridlines, and before the hit strips so it can never
+                steal the pointer from them.
+
+                The date rides the X axis and the running total rides the point,
+                NOT the Y gutter — the gutter is a separate SVG outside the
+                scroller (see YAxisGutter) and cannot be drawn into from here.
+                Putting the value at the point also means the two readouts are
+                never both at the far left, which is what makes a crosshair
+                readable at a glance. */}
+            {hov && (
+              <g pointerEvents="none">
+                <line x1={x(hoverIdx!)} y1={PLOT_TOP} x2={x(hoverIdx!)} y2={PLOT_BOT + 6}
+                      stroke={lineColor} strokeWidth={1} strokeDasharray="2 2" opacity={0.75} />
+                <line x1={0} y1={y(hov.total)} x2={W} y2={y(hov.total)}
+                      stroke={lineColor} strokeWidth={1} strokeDasharray="2 2" opacity={0.45} />
+                {/* Date chip, centred on the rule but clamped inside the plot so
+                    the first and last day's label is not half cut off. */}
+                {(() => {
+                  const label = shortDate(hov.date).slice(0, -4);
+                  const w = label.length * 5.2 + 8;
+                  const cx = Math.min(Math.max(x(hoverIdx!), w / 2 + 1), W - w / 2 - 1);
+                  return (
+                    <>
+                      <rect x={cx - w / 2} y={PLOT_BOT + 10} width={w} height={13} rx={2}
+                            fill={lineColor} opacity={0.92} />
+                      <text x={cx} y={PLOT_BOT + 19.5} textAnchor="middle"
+                            style={{ fontSize: 9, fill: "#fff", fontWeight: 600 }}>{label}</text>
+                    </>
+                  );
+                })()}
+                {/* Value chip beside the point, flipped to the left half when the
+                    point is near the right edge. */}
+                {(() => {
+                  const label = signed(hov.total);
+                  const w = label.length * 5.4 + 10;
+                  const flip = x(hoverIdx!) + 8 + w > W;
+                  const bx = flip ? x(hoverIdx!) - 8 - w : x(hoverIdx!) + 8;
+                  const by = Math.min(Math.max(y(hov.total) - 7, PLOT_TOP), PLOT_BOT - 14);
+                  return (
+                    <>
+                      <rect x={bx} y={by} width={w} height={14} rx={2} fill={lineColor} opacity={0.92} />
+                      <text x={bx + w / 2} y={by + 10} textAnchor="middle" className="tabular-nums"
+                            style={{ fontSize: 9.5, fill: "#fff", fontWeight: 600 }}>{label}</text>
+                    </>
+                  );
+                })()}
+              </g>
+            )}
             {/* Invisible hit strips — one per day, full plot height, so the
-                hover target is the column and not the 2px line itself. */}
+                hover target is the column and not the 2px line itself. The
+                <title> stays: it is the only readout on touch devices, where
+                the crosshair's hover never fires. */}
             {cum.map((c, i) => (
-              <rect key={c.date} x={x(i) - SLOT / 2} y={0} width={SLOT} height={PLOT_BOT} fill="transparent">
+              <rect
+                key={c.date}
+                x={x(i) - SLOT / 2}
+                y={0}
+                width={SLOT}
+                height={PLOT_BOT}
+                fill="transparent"
+                onMouseEnter={() => setHoverIdx(i)}
+                onMouseLeave={() => setHoverIdx((p) => (p === i ? null : p))}
+              >
                 <title>{`${shortDate(c.date)}\nthat day  ${signed(c.day)}\nrunning   ${signed(c.total)}`}</title>
               </rect>
             ))}
