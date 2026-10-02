@@ -1,0 +1,187 @@
+# Daily IPO calendar + post-listing price refresh for app.ipo.
+#
+# WHY THIS IS TWO STEPS AND NOT ONE
+#
+#   scripts/fetch-ipos.py has two halves with completely different failure
+#   modes, and collapsing them would make the fragile one take the robust one
+#   down with it:
+#
+#     1. The CALENDAR (status, band, lot size, timeline, subscription) comes from
+#        Upstox /v2/ipos, which needs a user OAuth token that expires every day
+#        at 22:00 UTC and has NO refresh flow. Only a human at /admin/upstox can
+#        renew it. On 2026-10-02 the stored token had been dead for nine days and
+#        nothing said so.
+#
+#     2. The PRICES ("trading at X now, +N% since issue") come from Upstox's
+#        PUBLIC NSE instrument master, which needs no Authorization header at
+#        all. It cannot be affected by the token.
+#
+#   So the job runs the full fetch first; if it exits 2 (token missing/expired)
+#   it opens a loud GitHub issue AND falls through to --prices-only, which also
+#   does the 183-day retention prune. Result: a lapsed login costs you the
+#   calendar's freshness and nothing else. The alternative — one step that fails
+#   on exit 2 — would freeze the returns column as collateral damage for weeks.
+#
+# WHY exit 2 IS NOT A WORKFLOW FAILURE
+#
+#   Because it is not a defect, it is a chore, and conflating the two is how
+#   alerting gets ignored. An expired token is the EXPECTED state of this
+#   integration on any day Deb has not logged in; marking the run red every such
+#   morning would train him to ignore red. It gets a de-duped issue instead, so
+#   the signal accumulates in one place and is visible regardless of email
+#   settings — same pattern as refresh-ltp.yml and sync-upstox-instruments.yml.
+#   A genuine fault (exit 1, network, DB) still fails the job.
+#
+# TIMING
+#
+#   12:45 UTC = 18:15 IST, daily including weekends.
+#
+#   After NSE closes at 15:30 IST, so last_price is that day's settled close
+#   rather than a mid-session print. Before the 22:00 UTC token expiry, so a
+#   login done at any point during the day is still valid. Weekends included on
+#   purpose: IPO bidding windows, allotment dates and listing dates are published
+#   and revised on non-trading days, and the price pass is a no-op write when the
+#   master has not changed.
+#
+# WHAT KEEPS THIS CURRENT (CLAUDE.md §5)
+#
+#   This workflow is that answer for app.ipo — the table was snapshotted by hand
+#   on 2026-10-02 and had nothing scheduled behind it, which is the "seeded once"
+#   pattern verbatim. The freshness tripwire is the second half: the final step
+#   runs --check --max-age-hours 36 and FAILS the job if the newest fetched_at is
+#   older than that, so "the workflow is green but the data is three weeks old"
+#   cannot happen. That check can fail, which is the whole point of it.
+#
+# Required secret:
+#   NEON_APP_URL — Postgres URL for fundamental_app on Neon. The Upstox token is
+#   read from app.upstox_session in that same database, not from a secret.
+
+name: Refresh IPOs
+
+on:
+  schedule:
+    - cron: '45 12 * * *'
+  workflow_dispatch:
+    inputs:
+      listed_details:
+        description: 'Also pull /ipos/{id} for already-listed rows (one-time backfill, ~181 calls)'
+        type: boolean
+        default: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install psycopg
+        run: pip install 'psycopg[binary]==3.2.*'
+
+      # Exit codes, from the script's docstring:
+      #   0 ok · 1 fatal (config/network/Upstox error) · 2 token missing/expired
+      # Only 2 is tolerated here, and it is recorded in TOKEN_DEAD for the steps
+      # below rather than swallowed.
+      - name: Snapshot the IPO calendar
+        id: calendar
+        env:
+          APP_DB_URL:       ${{ secrets.NEON_APP_URL }}
+          PYTHONUNBUFFERED: "1"
+        run: |
+          set +e
+          python scripts/fetch-ipos.py \
+            ${{ inputs.listed_details && '--listed-details' || '' }}
+          code=$?
+          set -e
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" = "2" ]; then
+            echo "token_dead=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Upstox session expired — calendar not refreshed. Prices will still update."
+            exit 0
+          fi
+          exit "$code"
+
+      # Runs whether or not the calendar step found a live token: no auth needed,
+      # and it carries the retention prune so eviction does not depend on the
+      # login either.
+      - name: Refresh post-listing prices and prune old history
+        if: always() && steps.calendar.outputs.code != '1'
+        env:
+          APP_DB_URL:       ${{ secrets.NEON_APP_URL }}
+          PYTHONUNBUFFERED: "1"
+        run: python scripts/fetch-ipos.py --prices-only
+
+      - name: Ask for a login when the token is dead
+        if: steps.calendar.outputs.token_dead == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TITLE="🔑 Upstox session expired — IPO calendar is not refreshing"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          BODY=$(printf '%s\n' \
+            "The IPO refresh at $(date -u '+%Y-%m-%d %H:%M UTC') could not reach Upstox /v2/ipos: the access token in app.upstox_session is missing or expired." \
+            "" \
+            "Upstox tokens die daily at 22:00 UTC (03:30 IST) and there is no refresh flow. **Log in at https://equityroots.in/admin/upstox**, then re-run this workflow." \
+            "" \
+            "What is and is not affected:" \
+            "- The /ideas?view=ipo calendar keeps rendering the last good snapshot, with its real age shown. Past 36h the caption turns into a stale-snapshot warning." \
+            "- Post-listing prices and the 'since issue' column DID still update — they come from Upstox's public instrument master and need no token." \
+            "- app.stock_intraday is affected by the same token, so intraday prices are probably also stalled." \
+            "" \
+            "Run log: $RUN_URL")
+          EXISTING=$(gh issue list --state open --search "$TITLE in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+            echo "Appended to existing alert issue #$EXISTING"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+            echo "Opened a new alert issue"
+          fi
+
+      # The check that can fail. A green run over a three-week-old snapshot is
+      # exactly the state CLAUDE.md §5 warns about, so freshness is asserted
+      # against the DB rather than inferred from the steps above having exited 0.
+      # Deliberately AFTER the login-request step so a dead token produces both
+      # the issue and a red run once the snapshot actually goes stale — the
+      # warning is for today, the failure is for the day it starts to matter.
+      - name: Assert the snapshot is fresh
+        if: always() && steps.calendar.outputs.code != '1'
+        env:
+          APP_DB_URL:       ${{ secrets.NEON_APP_URL }}
+          PYTHONUNBUFFERED: "1"
+        run: python scripts/fetch-ipos.py --check --max-age-hours 36
+
+      - name: Raise a loud alert on a real failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TITLE="🚨 IPO refresh FAILED"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          BODY=$(printf '%s\n' \
+            "The daily IPO refresh did not complete cleanly at $(date -u '+%Y-%m-%d %H:%M UTC')." \
+            "" \
+            "Status: ${{ job.status }}. Calendar step exit code: ${{ steps.calendar.outputs.code }}." \
+            "" \
+            "Run log: $RUN_URL" \
+            "" \
+            "Impact: /ideas?view=ipo is serving a stale snapshot. It says so in its own header, but bidding windows and subscription figures there may already have passed. The script is idempotent; investigate, then re-run the workflow.")
+          EXISTING=$(gh issue list --state open --search "$TITLE in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+          fi

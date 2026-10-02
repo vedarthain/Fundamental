@@ -66,7 +66,31 @@ export type IpoData = { rows: IpoRow[]; fetchedAt: string | null };
  *  different staleness definitions for one table is how they drift apart. */
 export const IPO_STALE_HOURS = 36;
 
-const ORDER: Record<IpoRow["status"], number> = { open: 0, upcoming: 1, closed: 2, listed: 3 };
+/** Status order, and the only place it is defined. The rail, the default-tab
+ *  fallback and the counts all read it, so they cannot drift out of step. */
+export const IPO_STATUSES = ["open", "upcoming", "closed", "listed"] as const;
+export type IpoStatus = (typeof IPO_STATUSES)[number];
+
+export function isIpoStatus(s: string | undefined): s is IpoStatus {
+  return s != null && (IPO_STATUSES as readonly string[]).includes(s);
+}
+
+export function ipoCounts(rows: IpoRow[]): Record<IpoStatus, number> {
+  const out = { open: 0, upcoming: 0, closed: 0, listed: 0 };
+  for (const r of rows) out[r.status] += 1;
+  return out;
+}
+
+/** First status that actually has rows, in display order.
+ *
+ *  The landing tab is NOT hardcoded to "open" because for most of the year
+ *  nothing is open — the 2026-10-02 snapshot had 3 open and 86 listed, but a
+ *  quiet fortnight has 0. Defaulting to an empty table would make the tracker
+ *  look broken on exactly the days there is nothing to apply for. */
+export function defaultIpoStatus(rows: IpoRow[]): IpoStatus {
+  const c = ipoCounts(rows);
+  return IPO_STATUSES.find((s) => c[s] > 0) ?? "upcoming";
+}
 
 /**
  * NSE-bound IPOs, newest-relevant first.
@@ -249,25 +273,28 @@ const STATUS_STYLE: Record<IpoRow["status"], { label: string; color: string; bg:
   listed: { label: "Listed", color: "var(--color-muted)", bg: "transparent" },
 };
 
-export function IpoTracker({ data }: { data: IpoData }) {
+/**
+ * One status at a time, chosen by the left rail.
+ *
+ * It used to stack all four sections down the page. That was wrong for the same
+ * reason the Trends side shows one bucket: the listed section alone is 86 rows,
+ * so "Open" — the only section with a deadline attached — sat three screens above
+ * the fold behind history nobody scrolls to. Sectioning everything visible is
+ * only honest when the sections are comparable in size, and these are 3 / 21 /
+ * 10 / 86.
+ */
+export function IpoTracker({ data, active }: { data: IpoData; active: IpoStatus }) {
   const { rows, fetchedAt } = data;
   const ageH = fetchedAt
     ? (Date.now() - new Date(fetchedAt).getTime()) / 3_600_000
     : null;
   const stale = ageH == null || ageH > IPO_STALE_HOURS;
 
-  const counts = rows.reduce<Record<string, number>>((m, r) => {
-    m[r.status] = (m[r.status] ?? 0) + 1;
-    return m;
-  }, {});
-
-  const groups = (["open", "upcoming", "closed", "listed"] as const)
-    .map((s) => ({ status: s, rows: rows.filter((r) => r.status === s) }))
-    .filter((g) => g.rows.length > 0)
-    .sort((a, b) => ORDER[a.status] - ORDER[b.status]);
+  const counts = ipoCounts(rows);
+  const groups = [{ status: active, rows: rows.filter((r) => r.status === active) }];
 
   return (
-    <div className="mt-6">
+    <div>
       {/* Freshness first, above the data. See the module docstring: this is the
           one control that keeps a snapshot surface honest. */}
       <div
@@ -312,16 +339,40 @@ export function IpoTracker({ data }: { data: IpoData }) {
       {groups.map((g) => {
         const st = STATUS_STYLE[g.status];
         return (
-          <section key={g.status} className="mt-7">
+          <section key={g.status} className="mt-4">
             <div className="flex items-baseline gap-2">
               <h2 className="font-display text-[19px] tracking-tight" style={{ color: st.color }}>
                 {st.label}
               </h2>
               <span className="text-[11.5px] muted-text">{g.rows.length}</span>
             </div>
-            <div className="mt-2.5 overflow-x-auto">
-              <table className="w-full text-[12.5px]" style={{ borderCollapse: "collapse" }}>
-                <thead>
+            {g.rows.length === 0 && (
+              <p className="mt-3 text-[13px] muted-text">
+                Nothing {st.label.toLowerCase()} in this snapshot. That is a real answer, not a
+                gap — IPO windows are lumpy and most weeks have none open.
+              </p>
+            )}
+            {/* overflow-x-auto ONLY below md, and that is load-bearing for the
+                sticky header rather than a responsive nicety.
+
+                Per CSS overflow rules, `overflow-x: auto` with `overflow-y:
+                visible` computes overflow-y to `auto` as well, which makes the
+                element a scroll container. A `position: sticky` <th> inside then
+                sticks to THAT container — which never scrolls vertically — so it
+                pins to the top of the table and never follows the page. The
+                header appears to work and silently does nothing.
+                md:overflow-x-visible restores a truly-visible box on desktop, so
+                sticky resolves against the viewport. Mobile keeps the contained
+                horizontal scroll and gives up the sticky header, which is the
+                right way round: there is no vertical room to benefit from it on
+                a phone anyway. */}
+            <div className="mt-2.5 overflow-x-auto md:overflow-x-visible">
+              <table className="w-full text-[12.5px]" style={{ borderCollapse: "separate", borderSpacing: 0 }}>
+                {/* top-[84px] clears the global site header, matching the offset
+                    the bucket strip on the Trends side uses. Opaque rather than
+                    translucent: tabular-nums sliding under a blurred header is
+                    legible, column labels sliding under one are not. */}
+                <thead className="sticky z-10 top-0 md:top-[84px]" style={{ backgroundColor: "var(--color-paper)" }}>
                   <tr className="text-[10.5px] uppercase tracking-wide muted-text">
                     <th className="text-left font-semibold py-1.5 pr-3">Issue</th>
                     <th className="text-left font-semibold py-1.5 pr-3">Type</th>

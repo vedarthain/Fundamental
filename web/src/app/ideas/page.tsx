@@ -24,7 +24,15 @@ import { band, bandColor, tierLabel, hasScoreableHistory } from "@/lib/score";
 import { getOIAlerts } from "@/lib/oi-alerts";
 import { Sparkline, type SparkPoint } from "@/components/Sparkline";
 import { WatchlistButton } from "@/components/WatchlistButton";
-import { loadIpos, IpoTracker } from "./IpoTracker";
+import {
+  loadIpos,
+  IpoTracker,
+  IPO_STATUSES,
+  isIpoStatus,
+  ipoCounts,
+  defaultIpoStatus,
+  type IpoStatus,
+} from "./IpoTracker";
 
 // Score data changes weekly. 6h ISR cache avoids waking Neon on every visit.
 export const revalidate = 21600;
@@ -441,62 +449,170 @@ function ideasHref(
 type IdeasView = "trends" | "ipo";
 
 /**
- * The view strip: Trends ⇄ IPO tracker.
+ * One entry in the left rail.
  *
- * Plain `<Link>`s, not client state, because this page is entirely server-side
- * and the two views load different queries — a client toggle would have to ship
- * both payloads to hide one. `scroll={false}` matches the bucket tabs so
- * switching does not jump the page.
- *
- * Switching to IPO drops `bucket` and `cal` from the URL: they are
- * trends-only, and carrying them along would make a shared /ideas?view=ipo link
- * silently restore someone else's bucket when the reader switched back.
+ * `n` is optional and NOT defaulted to 0, because "no count" and "a count of
+ * zero" are different claims: the view switch has no meaningful count, while a
+ * bucket with 0 rows genuinely has none and should say so.
  */
-function ViewTabs({ view, sp }: { view: IdeasView; sp: Record<string, string | undefined> }) {
-  const items: { key: IdeasView; label: string; sub: string; href: string }[] = [
-    { key: "trends", label: "Trends", sub: "Scored stock ideas",
-      href: ideasHref(sp, { view: null }) },
-    { key: "ipo", label: "IPO tracker", sub: "Open · upcoming · listed",
-      href: ideasHref(sp, { view: "ipo", bucket: null, cal: null }) },
-  ];
+type RailItem = {
+  key: string;
+  label: string;
+  href: string;
+  active: boolean;
+  n?: number;
+  sub?: string;
+  dot?: string;
+};
+
+type RailGroup = { eyebrow: string; items: RailItem[] };
+
+/**
+ * The left rail — every tab on this page, in one vertical column.
+ *
+ * WHY THE TABS MOVED OUT OF THE CONTENT COLUMN
+ *
+ * They were three horizontal strips stacked above the boards: the view switch,
+ * the universe pills, and a two-row sticky bucket strip. That cost ~160px of
+ * vertical space before any data appeared, and the bucket strip was
+ * `sticky top-[84px]` — the same offset a sticky table header needs. Two sticky
+ * boxes claiming one offset is not a layout, it is a race. Moving the tabs into
+ * a rail frees that offset for the table headers and gives the data the top of
+ * the page, which is what "start from the top" means.
+ *
+ * Mirrors the scanner's rail (tools/scanner/ScannerTabs.tsx) deliberately: same
+ * 232px width, same vertical tablist, same universe control pinned at the foot
+ * behind a hairline. Two surfaces that navigate the same way is worth more than
+ * either one being individually optimal.
+ *
+ * Server component, plain `<Link>`s. The scanner's rail is collapsible because
+ * it is a client component with its own state; this page is entirely
+ * server-rendered and each tab is a different query, so there is nothing to
+ * collapse into.
+ */
+function IdeasRail({
+  groups,
+  universe,
+}: {
+  groups: RailGroup[];
+  /** Index-tier pills, or null on views the tier does not filter (the IPO
+   *  tracker). Rendering a disabled universe control there would imply the
+   *  snapshot is scoped to Nifty 50, which it is not. */
+  universe: { key: string; label: string; active: boolean; href: string }[] | null;
+}) {
   return (
-    <div className="flex flex-wrap gap-1.5">
-      {items.map((it) => {
-        const active = it.key === view;
-        return (
-          <Link
-            key={it.key}
-            href={it.href}
-            scroll={false}
-            className="px-3 py-1.5 rounded-lg border transition-colors"
-            style={
-              active
-                ? {
-                    borderColor: "var(--color-accent-300)",
-                    backgroundColor: "var(--color-accent-50)",
-                    color: "var(--color-accent-700)",
-                  }
-                : { borderColor: "var(--color-border-default)", backgroundColor: "transparent" }
-            }
-          >
-            <div className="text-[13px]" style={{ fontWeight: active ? 600 : 500 }}>{it.label}</div>
-            <div className="text-[10px] muted-text leading-tight">{it.sub}</div>
-          </Link>
-        );
-      })}
-    </div>
+    <aside className="w-full md:w-[232px] md:shrink-0 md:sticky md:top-[84px]">
+      <div className="rounded-xl border hairline" style={{ borderColor: "var(--color-border-default)" }}>
+        <nav role="tablist" aria-orientation="vertical" className="p-2">
+          {groups.map((g, gi) => (
+            <div key={g.eyebrow} className={gi === 0 ? "" : "mt-3 pt-3 border-t hairline"}>
+              <div className="px-2 pb-1.5 text-[10px] uppercase tracking-wide muted-text">
+                {g.eyebrow}
+              </div>
+              <div className="flex flex-col gap-0.5">
+                {g.items.map((it) => (
+                  <RailTab key={it.key} item={it} />
+                ))}
+              </div>
+            </div>
+          ))}
+        </nav>
+        {universe && (
+          <div className="px-2 pb-2.5 pt-2.5 border-t hairline">
+            <div className="px-2 pb-1.5 text-[10px] uppercase tracking-wide muted-text">
+              Universe
+            </div>
+            <div className="px-1">
+              <TierPills items={universe} />
+            </div>
+          </div>
+        )}
+      </div>
+    </aside>
   );
 }
 
-/**
- * Page chrome for a non-trends view: container, title, the view strip, then the
- * view's own body.
+function RailTab({ item }: { item: RailItem }) {
+  return (
+    <Link
+      href={item.href}
+      scroll={false}
+      role="tab"
+      aria-selected={item.active}
+      className="rounded-lg px-2 py-1.5 transition-colors block"
+      style={
+        item.active
+          ? { backgroundColor: "var(--color-accent-50)", color: "var(--color-accent-700)" }
+          : { backgroundColor: "transparent", color: "var(--color-muted)" }
+      }
+    >
+      <div className="flex items-center gap-2">
+        {item.dot && (
+          <span
+            className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
+            style={{ background: item.dot }}
+          />
+        )}
+        <span
+          className="text-[12.5px] leading-tight flex-1 min-w-0"
+          style={{ fontWeight: item.active ? 600 : 500 }}
+        >
+          {item.label}
+        </span>
+        {item.n != null && (
+          <span className="tabular-nums text-[11px] muted-text shrink-0">{item.n}</span>
+        )}
+      </div>
+      {item.sub && (
+        <div className="text-[10px] muted-text leading-tight mt-0.5 pl-[0.5px]">{item.sub}</div>
+      )}
+    </Link>
+  );
+}
+
+/** The two view-switch entries, shared by both branches so the rail's top group
+ *  is identical whichever view is rendering it.
  *
- * The trends branch does NOT use this — it has a header carrying snapshot dates
- * and an idea count that only it can compute, and forcing both through one
- * shared shell would mean passing those in as optional props that are null half
- * the time. Two headers that each say what their own view knows is the smaller
- * lie.
+ *  Switching to IPO drops `bucket` and `cal`; switching back drops `ipo`. They
+ *  are per-view keys, and carrying them across would make a shared link restore
+ *  a tab the sender was not on. */
+function viewItems(view: IdeasView, sp: Record<string, string | undefined>): RailItem[] {
+  return [
+    {
+      key: "trends",
+      label: "Trends",
+      sub: "Scored stock ideas",
+      active: view === "trends",
+      href: ideasHref(sp, { view: null, ipo: null }),
+    },
+    {
+      key: "ipo",
+      label: "IPO tracker",
+      sub: "Open · upcoming · listed",
+      active: view === "ipo",
+      href: ideasHref(sp, { view: "ipo", bucket: null, cal: null }),
+    },
+  ];
+}
+
+/** Rail labels and dots for the IPO statuses. Kept in step with
+ *  IpoTracker's STATUS_STYLE by using the same CSS variables — the colours are
+ *  the one thing the rail and the section heading must agree on, since the rail
+ *  dot is how the reader knows which heading they are looking at. */
+const IPO_RAIL: Record<IpoStatus, { label: string; dot: string }> = {
+  open: { label: "Open now", dot: "var(--color-score-good)" },
+  upcoming: { label: "Upcoming", dot: "var(--color-accent-700)" },
+  closed: { label: "Closed", dot: "var(--color-score-weak)" },
+  listed: { label: "Listed", dot: "var(--color-muted)" },
+};
+
+/**
+ * Two-column page frame: rail left, content right.
+ *
+ * The <h1> and the "Ideas Feed" eyebrow that used to sit here are gone. They
+ * cost a screen of height to say what the nav already says, and on a surface
+ * whose whole job is "what changed this week" the data has the better claim to
+ * the fold. `pt-6` rather than `py-10` for the same reason.
  *
  * NOTE on caching: this route is `revalidate = 21600` (6h), set for weekly score
  * data. The IPO snapshot itself refreshes at most once a day — the Upstox token
@@ -506,28 +622,18 @@ function ViewTabs({ view, sp }: { view: IdeasView; sp: Record<string, string | u
  * window cannot make a stale snapshot look fresh.
  */
 function IdeasShell({
-  view, sp, children,
+  rail,
+  children,
 }: {
-  view: IdeasView;
-  sp: Record<string, string | undefined>;
+  rail: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
-    <div className="mx-auto max-w-[1200px] px-6 py-10">
-      <header className="max-w-[760px]">
-        <div className="text-[12px] uppercase tracking-wide muted-text">Ideas Feed</div>
-        <h1 className="font-display text-[36px] tracking-tight leading-tight mt-1">
-          {view === "ipo" ? (
-            <>Issues <em className="accent">coming to market</em>.</>
-          ) : (
-            <>Stocks worth a <em className="accent">closer look</em>.</>
-          )}
-        </h1>
-      </header>
-      <nav className="mt-6">
-        <ViewTabs view={view} sp={sp} />
-      </nav>
-      {children}
+    <div className="mx-auto max-w-[1200px] px-6 pt-6 pb-10">
+      <div className="flex flex-col gap-6 md:flex-row md:items-start md:gap-8">
+        {rail}
+        <div className="min-w-0 flex-1">{children}</div>
+      </div>
     </div>
   );
 }
@@ -829,6 +935,30 @@ function isTabKey(s: string | undefined): s is TabKey {
   return !!s && (TAB_KEYS as readonly string[]).includes(s);
 }
 
+/**
+ * Label, dot colour and rail group for each bucket — the single place they are
+ * defined.
+ *
+ * They used to be literals inside the tab strip, duplicated again in each
+ * <Board title=...>. That is the copy-paste shape CLAUDE.md's regression note
+ * calls out: a rename lands in one of the two and the rail then disagrees with
+ * the board it navigates to. The boards still carry their own subtitle and icon,
+ * which the rail has no room for; the label and the colour are shared.
+ *
+ * The trend/themed split is data here rather than two hand-written arrays, so
+ * adding a bucket to TAB_KEYS cannot silently leave it out of the rail.
+ */
+const BUCKET_META: Record<TabKey, { label: string; dot: string; group: "trend" | "themed" }> = {
+  strength:    { label: "Building strength",     dot: "var(--color-score-good)",      group: "trend" },
+  losing:      { label: "Losing ground",         dot: "var(--color-score-poor)",      group: "trend" },
+  breakout:    { label: "Recent breakouts",      dot: "var(--color-score-excellent)", group: "trend" },
+  breakdown:   { label: "Recent breakdowns",     dot: "var(--color-score-weak)",      group: "trend" },
+  compounder:  { label: "Quality compounders",   dot: "var(--color-accent-600)",      group: "themed" },
+  cheap:       { label: "Cheap in cluster",      dot: "var(--color-accent-500)",      group: "themed" },
+  promoter_up: { label: "Promoter accumulation", dot: "var(--color-accent-400)",      group: "themed" },
+  fii_up:      { label: "FII accumulation",      dot: "var(--color-score-good)",      group: "themed" },
+};
+
 export const metadata = {
   title: "Ideas — weekly NSE stock ideas from the scoring engine · EquityRoots",
   description:
@@ -853,7 +983,38 @@ export default async function IdeasPage({
   // them on every visit.
   const view: IdeasView = sp.view === "ipo" ? "ipo" : "trends";
   if (view === "ipo") {
-    return <IdeasShell view="ipo" sp={sp}><IpoTracker data={await loadIpos()} /></IdeasShell>;
+    const ipos = await loadIpos();
+    // ?ipo=open|upcoming|closed|listed. Falls back to the first status that has
+    // rows rather than to a hardcoded "open": for most of the year nothing is
+    // open, and landing on an empty table makes the tracker look broken on
+    // exactly the days there is nothing to apply for. See defaultIpoStatus.
+    const ipoStatus: IpoStatus = isIpoStatus(sp.ipo) ? sp.ipo : defaultIpoStatus(ipos.rows);
+    const ipoN = ipoCounts(ipos.rows);
+    return (
+      <IdeasShell
+        rail={
+          <IdeasRail
+            universe={null}
+            groups={[
+              { eyebrow: "View", items: viewItems("ipo", sp) },
+              {
+                eyebrow: "Status",
+                items: IPO_STATUSES.map((s) => ({
+                  key: s,
+                  label: IPO_RAIL[s].label,
+                  n: ipoN[s],
+                  dot: IPO_RAIL[s].dot,
+                  active: s === ipoStatus,
+                  href: ideasHref(sp, { view: "ipo", ipo: s, bucket: null, cal: null }),
+                })),
+              },
+            ]}
+          />
+        }
+      >
+        <IpoTracker data={ipos} active={ipoStatus} />
+      </IdeasShell>
+    );
   }
 
   // Single page-wide universe control: one index tier drives everything —
@@ -995,48 +1156,70 @@ export default async function IdeasPage({
   const tierEmpty = idxTier !== "all" && stocks.length === 0 && snapshots.length > 0;
   const idxLabel = IDX_TIERS.find((t) => t.key === idxTier)?.label ?? "All";
 
+  const bucketCounts: Record<TabKey, number> = {
+    strength: sectioned.strength.length,
+    losing: sectioned.losing.length,
+    breakout: sectioned.breakout.length,
+    breakdown: sectioned.breakdown.length,
+    compounder: compounders.length,
+    cheap: cheap.length,
+    promoter_up: promoterUp.length,
+    fii_up: fiiUp.length,
+  };
+
+  // Rail content. The bucket metadata comes from BUCKET_META so the rail label,
+  // the dot and the board can never disagree about what a bucket is called —
+  // they were three separate literals before, which is exactly the drift
+  // CLAUDE.md's regression note is about.
+  const railBuckets = (group: "trend" | "themed"): RailItem[] =>
+    TAB_KEYS.filter((k) => BUCKET_META[k].group === group).map((k) => ({
+      key: k,
+      label: BUCKET_META[k].label,
+      dot: BUCKET_META[k].dot,
+      n: bucketCounts[k],
+      active: k === activeTab,
+      href: ideasHref(sp, { view: null, ipo: null, bucket: k }),
+    }));
+
   return (
-    <div className="mx-auto max-w-[1200px] px-6 py-10">
-      {/* Header */}
-      <header className="max-w-[760px]">
-        <div className="text-[12px] uppercase tracking-wide muted-text">Ideas Feed</div>
-        <h1 className="font-display text-[36px] tracking-tight leading-tight mt-1">
-          Stocks worth a <em className="accent">closer look</em>.
-        </h1>
-
-        {snapshots.length > 0 && (
-          <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-[12px] muted-text">
-            <span>
-              Latest snapshot: <span className="tabular-nums ink-text">{snapshots[0]}</span>
-              {windowBack >= 2 && (
-                <>
-                  {" "}· comparing vs{" "}
-                  <span className="tabular-nums ink-text">
-                    {snapshots[Math.min(windowBack, snapshots.length) - 1]}
-                  </span>
-                </>
-              )}
-            </span>
-            <span className="muted-text">·</span>
-            <span>
-              {totalIdeas.toLocaleString("en-IN")} idea{totalIdeas === 1 ? "" : "s"} surfaced
-            </span>
-          </div>
-        )}
-      </header>
-
-      {/* Top-level view strip (Trends ⇄ IPO tracker), then the universe control.
-          Two rows on purpose: the universe tier only applies to Trends, so
-          sitting it beside the view switch would imply it filters IPOs too. */}
-      <nav className="mt-6">
-        <ViewTabs view="trends" sp={sp} />
-      </nav>
-
-      {/* Universe control — single page-wide index tier (drives buckets, movers,
-          winners and the calendar). */}
-      <nav className="mt-4">
-        <TierPills items={idxItems} />
-      </nav>
+    <IdeasShell
+      rail={
+        <IdeasRail
+          universe={idxItems}
+          groups={[
+            { eyebrow: "View", items: viewItems("trends", sp) },
+            { eyebrow: "Trend", items: railBuckets("trend") },
+            { eyebrow: "Themed", items: railBuckets("themed") },
+          ]}
+        />
+      }
+    >
+      {/* What the deleted <h1> block carried that the nav does not: which
+          snapshot this is and what it is compared against. Kept, but as one
+          caption line rather than a screen of masthead — a scoring surface
+          whose snapshot date is invisible is a surface you cannot date a claim
+          against. */}
+      {snapshots.length > 0 && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] muted-text">
+          <span>
+            Snapshot <span className="tabular-nums ink-text">{snapshots[0]}</span>
+            {windowBack >= 2 && (
+              <>
+                {" "}vs{" "}
+                <span className="tabular-nums ink-text">
+                  {snapshots[Math.min(windowBack, snapshots.length) - 1]}
+                </span>
+              </>
+            )}
+          </span>
+          <span>·</span>
+          <span>
+            {totalIdeas.toLocaleString("en-IN")} idea{totalIdeas === 1 ? "" : "s"} surfaced
+          </span>
+          <span>·</span>
+          <span>{idxLabel}</span>
+        </div>
+      )}
 
       {/* Banners */}
       {snapshots.length === 0 && <FirstSnapshotBanner />}
@@ -1045,10 +1228,6 @@ export default async function IdeasPage({
         <ConvictionFilterBanner snapshotsHave={snapshots.length} />
       )}
 
-      {/* Tab strip — one bucket at a time. URL-driven so each tab is shareable.
-          The dot color matches the section's accent so the eye finds the
-          active tab fast. Counts give an at-a-glance overview of where the
-          action is this week. */}
       {snapshots.length > 0 && !tierEmpty && (
         <>
           <ThisWeekBand
@@ -1063,22 +1242,8 @@ export default async function IdeasPage({
             calNextHref={calNextHref}
           />
 
-          <BucketTabs
-            active={activeTab}
-            scopeQuery={`&idx=${idxTier}`}
-            counts={{
-              strength: sectioned.strength.length,
-              losing: sectioned.losing.length,
-              breakout: sectioned.breakout.length,
-              breakdown: sectioned.breakdown.length,
-              compounder: compounders.length,
-              cheap: cheap.length,
-              promoter_up: promoterUp.length,
-              fii_up: fiiUp.length,
-            }}
-          />
-
-          {/* Single active board — keeps the page short and scroll-free. */}
+          {/* Single active board — the bucket tabs that used to sit here are in
+              the rail now. */}
           <div className="mt-6">
             {activeTab === "strength" && (
               <Board
@@ -1189,129 +1354,13 @@ export default async function IdeasPage({
         filings and prices. Stocks listed here are those whose fundamentals have moved
         relative to their peer cluster, not predictions about future prices.
       </footer>
-    </div>
+    </IdeasShell>
   );
 }
 
 // ---------------------------------------------------------------------------
 // UI components
 // ---------------------------------------------------------------------------
-
-/**
- * Tab strip for /ideas — two rows, fully visible at first paint.
- *   Row 1: Trend buckets (Building strength / Losing ground / Breakouts / Breakdowns)
- *   Row 2: Themed buckets (Quality compounders / Cheap / Promoter / FII)
- *
- * Each row has a tiny eyebrow on the left so the user knows what the row
- * means without reading every tab. The previous single-row + scroll-overflow
- * version buried the themed buckets unless the user noticed the scrollbar.
- *
- * Tabs use scroll={false} so clicking a tab doesn't reset scroll position —
- * a long stock list stays where it was. The selected tab gets a tinted
- * background + colored border + bold label so it stands apart from the rest.
- *
- * URL: /ideas?bucket=<key>[&scope=nifty200]. Scope is preserved.
- */
-function BucketTabs({
-  active, counts, scopeQuery,
-}: {
-  active: TabKey;
-  scopeQuery: string;
-  counts: {
-    strength: number; losing: number; breakout: number; breakdown: number;
-    compounder: number; cheap: number; promoter_up: number; fii_up: number;
-  };
-}) {
-  const trendItems = [
-    { key: "strength"   as TabKey, label: "Building strength",  dot: "var(--color-score-good)",      n: counts.strength },
-    { key: "losing"     as TabKey, label: "Losing ground",      dot: "var(--color-score-poor)",      n: counts.losing },
-    { key: "breakout"   as TabKey, label: "Recent breakouts",   dot: "var(--color-score-excellent)", n: counts.breakout },
-    { key: "breakdown"  as TabKey, label: "Recent breakdowns",  dot: "var(--color-score-weak)",      n: counts.breakdown },
-  ];
-  const themedItems = [
-    { key: "compounder"  as TabKey, label: "Quality compounders",   dot: "var(--color-accent-600)", n: counts.compounder },
-    { key: "cheap"       as TabKey, label: "Cheap in cluster",      dot: "var(--color-accent-500)", n: counts.cheap },
-    { key: "promoter_up" as TabKey, label: "Promoter accumulation", dot: "var(--color-accent-400)", n: counts.promoter_up },
-    { key: "fii_up"      as TabKey, label: "FII accumulation",      dot: "var(--color-score-good)", n: counts.fii_up },
-  ];
-
-  // Sticky on mobile so the tab strip stays reachable while you scroll
-  // through a long board. Desktop also sticks but at a lower position
-  // (below the global header). Backdrop-blur keeps the underlying content
-  // legible through the sticky strip.
-  return (
-    <div
-      className="mt-6 flex flex-col gap-2 sticky top-[84px] z-20 -mx-6 px-6 py-2 backdrop-blur-md"
-      style={{ backgroundColor: "color-mix(in srgb, var(--color-paper) 92%, transparent)" }}
-    >
-      <BucketTabRow eyebrow="Trend"  items={trendItems}  active={active} scopeQuery={scopeQuery} />
-      <BucketTabRow eyebrow="Themed" items={themedItems} active={active} scopeQuery={scopeQuery} />
-    </div>
-  );
-}
-
-function BucketTabRow({
-  eyebrow, items, active, scopeQuery,
-}: {
-  eyebrow: string;
-  items: { key: TabKey; label: string; dot: string; n: number }[];
-  active: TabKey;
-  scopeQuery: string;
-}) {
-  return (
-    <div className="flex items-center gap-2 flex-wrap">
-      <span
-        className="text-[10px] uppercase tracking-wide muted-text shrink-0"
-        style={{ minWidth: 48 }}
-      >
-        {eyebrow}
-      </span>
-      <div className="flex flex-wrap gap-1.5">
-        {items.map((it) => (
-          <BucketTab key={it.key} item={it} active={it.key === active} scopeQuery={scopeQuery} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function BucketTab({
-  item, active, scopeQuery,
-}: {
-  item: { key: TabKey; label: string; dot: string; n: number };
-  active: boolean;
-  scopeQuery: string;
-}) {
-  const href = `/ideas?bucket=${item.key}${scopeQuery}`;
-  return (
-    <Link
-      href={href}
-      scroll={false}
-      className="px-3 py-1.5 rounded-md text-[12.5px] inline-flex items-center gap-2 transition-colors whitespace-nowrap border"
-      style={
-        active
-          ? {
-              borderColor: item.dot,
-              backgroundColor: "var(--color-card)",
-              color: "var(--color-ink)",
-              boxShadow: `inset 0 0 0 1px ${item.dot}`,
-            }
-          : {
-              borderColor: "var(--color-border-default)",
-              backgroundColor: "transparent",
-              color: "var(--color-muted)",
-            }
-      }
-    >
-      <span
-        className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
-        style={{ background: item.dot }}
-      />
-      <span className={active ? "font-semibold" : "font-medium"}>{item.label}</span>
-      <span className="tabular-nums text-[11px] muted-text">{item.n}</span>
-    </Link>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // "This week" top band — the first-batch digest. Three cards, side by side on

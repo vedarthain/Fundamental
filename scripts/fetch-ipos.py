@@ -456,11 +456,18 @@ def main() -> int:
             return check_freshness(conn, args.max_age_hours)
 
         if args.prices_only:
+            # Prunes too. Everything that does not need the OAuth token belongs
+            # on this path, because this is the path that still runs on the days
+            # nobody logged in — and a retention rule that only fires when the
+            # token happens to be alive is a retention rule that stops firing
+            # the first time it is needed for a while.
             try:
                 refresh_prices(conn, not args.quiet)
             except (HTTPError, URLError, TimeoutError, OSError) as e:
                 print(f"NSE instrument master unreachable: {e}", file=sys.stderr)
                 return 1
+            if not args.no_prune:
+                prune(conn, args.retain_days, not args.quiet)
             conn.commit()
             return 0
 
