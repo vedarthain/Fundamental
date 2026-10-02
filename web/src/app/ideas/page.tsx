@@ -33,6 +33,7 @@ import {
   defaultIpoStatus,
   type IpoStatus,
 } from "./IpoTracker";
+import { IdeasNav, type NavItem } from "./IdeasNav";
 
 // Score data changes weekly. 6h ISR cache avoids waking Neon on every visit.
 export const revalidate = 21600;
@@ -448,158 +449,36 @@ function ideasHref(
 /** Top-level view. Sits above `?bucket`, which only means anything in "trends". */
 type IdeasView = "trends" | "ipo";
 
-/**
- * One entry in the left rail.
- *
- * `n` is optional and NOT defaulted to 0, because "no count" and "a count of
- * zero" are different claims: the view switch has no meaningful count, while a
- * bucket with 0 rows genuinely has none and should say so.
- */
-type RailItem = {
-  key: string;
-  label: string;
-  href: string;
-  active: boolean;
-  n?: number;
-  sub?: string;
-  dot?: string;
-};
-
-type RailGroup = { eyebrow: string; items: RailItem[] };
-
-/**
- * The left rail — every tab on this page, in one vertical column.
- *
- * WHY THE TABS MOVED OUT OF THE CONTENT COLUMN
- *
- * They were three horizontal strips stacked above the boards: the view switch,
- * the universe pills, and a two-row sticky bucket strip. That cost ~160px of
- * vertical space before any data appeared, and the bucket strip was
- * `sticky top-[84px]` — the same offset a sticky table header needs. Two sticky
- * boxes claiming one offset is not a layout, it is a race. Moving the tabs into
- * a rail frees that offset for the table headers and gives the data the top of
- * the page, which is what "start from the top" means.
- *
- * Mirrors the scanner's rail (tools/scanner/ScannerTabs.tsx) deliberately: same
- * 232px width, same vertical tablist, same universe control pinned at the foot
- * behind a hairline. Two surfaces that navigate the same way is worth more than
- * either one being individually optimal.
- *
- * Server component, plain `<Link>`s. The scanner's rail is collapsible because
- * it is a client component with its own state; this page is entirely
- * server-rendered and each tab is a different query, so there is nothing to
- * collapse into.
- */
-function IdeasRail({
-  groups,
-  universe,
-}: {
-  groups: RailGroup[];
-  /** Index-tier pills, or null on views the tier does not filter (the IPO
-   *  tracker). Rendering a disabled universe control there would imply the
-   *  snapshot is scoped to Nifty 50, which it is not. */
-  universe: { key: string; label: string; active: boolean; href: string }[] | null;
-}) {
-  return (
-    <aside className="w-full md:w-[232px] md:shrink-0 md:sticky md:top-[84px]">
-      <div className="rounded-xl border hairline" style={{ borderColor: "var(--color-border-default)" }}>
-        <nav role="tablist" aria-orientation="vertical" className="p-2">
-          {groups.map((g, gi) => (
-            <div key={g.eyebrow} className={gi === 0 ? "" : "mt-3 pt-3 border-t hairline"}>
-              <div className="px-2 pb-1.5 text-[10px] uppercase tracking-wide muted-text">
-                {g.eyebrow}
-              </div>
-              <div className="flex flex-col gap-0.5">
-                {g.items.map((it) => (
-                  <RailTab key={it.key} item={it} />
-                ))}
-              </div>
-            </div>
-          ))}
-        </nav>
-        {universe && (
-          <div className="px-2 pb-2.5 pt-2.5 border-t hairline">
-            <div className="px-2 pb-1.5 text-[10px] uppercase tracking-wide muted-text">
-              Universe
-            </div>
-            <div className="px-1">
-              <TierPills items={universe} />
-            </div>
-          </div>
-        )}
-      </div>
-    </aside>
-  );
-}
-
-function RailTab({ item }: { item: RailItem }) {
-  return (
-    <Link
-      href={item.href}
-      scroll={false}
-      role="tab"
-      aria-selected={item.active}
-      className="rounded-lg px-2 py-1.5 transition-colors block"
-      style={
-        item.active
-          ? { backgroundColor: "var(--color-accent-50)", color: "var(--color-accent-700)" }
-          : { backgroundColor: "transparent", color: "var(--color-muted)" }
-      }
-    >
-      <div className="flex items-center gap-2">
-        {item.dot && (
-          <span
-            className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
-            style={{ background: item.dot }}
-          />
-        )}
-        <span
-          className="text-[12.5px] leading-tight flex-1 min-w-0"
-          style={{ fontWeight: item.active ? 600 : 500 }}
-        >
-          {item.label}
-        </span>
-        {item.n != null && (
-          <span className="tabular-nums text-[11px] muted-text shrink-0">{item.n}</span>
-        )}
-      </div>
-      {item.sub && (
-        <div className="text-[10px] muted-text leading-tight mt-0.5 pl-[0.5px]">{item.sub}</div>
-      )}
-    </Link>
-  );
-}
-
-/** The two view-switch entries, shared by both branches so the rail's top group
+/** The two view-switch entries, shared by both branches so the first nav column
  *  is identical whichever view is rendering it.
  *
  *  Switching to IPO drops `bucket` and `cal`; switching back drops `ipo`. They
  *  are per-view keys, and carrying them across would make a shared link restore
  *  a tab the sender was not on. */
-function viewItems(view: IdeasView, sp: Record<string, string | undefined>): RailItem[] {
+function viewItems(view: IdeasView, sp: Record<string, string | undefined>): NavItem[] {
   return [
     {
       key: "trends",
       label: "Trends",
-      sub: "Scored stock ideas",
+      sub: "Scored ideas",
       active: view === "trends",
       href: ideasHref(sp, { view: null, ipo: null }),
     },
     {
       key: "ipo",
       label: "IPO tracker",
-      sub: "Open · upcoming · listed",
+      sub: "New issues",
       active: view === "ipo",
       href: ideasHref(sp, { view: "ipo", bucket: null, cal: null }),
     },
   ];
 }
 
-/** Rail labels and dots for the IPO statuses. Kept in step with
- *  IpoTracker's STATUS_STYLE by using the same CSS variables — the colours are
- *  the one thing the rail and the section heading must agree on, since the rail
- *  dot is how the reader knows which heading they are looking at. */
-const IPO_RAIL: Record<IpoStatus, { label: string; dot: string }> = {
+/** Nav labels and dots for the IPO statuses. Kept in step with IpoTracker's
+ *  STATUS_STYLE by using the same CSS variables — the colours are the one thing
+ *  the nav and the section heading must agree on, since the dot is how the
+ *  reader knows which heading they are looking at. */
+const IPO_NAV: Record<IpoStatus, { label: string; dot: string }> = {
   open: { label: "Open now", dot: "var(--color-score-good)" },
   upcoming: { label: "Upcoming", dot: "var(--color-accent-700)" },
   closed: { label: "Closed", dot: "var(--color-score-weak)" },
@@ -607,12 +486,17 @@ const IPO_RAIL: Record<IpoStatus, { label: string; dot: string }> = {
 };
 
 /**
- * Two-column page frame: rail left, content right.
+ * Three-column page frame: view switch, view's own tabs, then the data.
  *
  * The <h1> and the "Ideas Feed" eyebrow that used to sit here are gone. They
  * cost a screen of height to say what the nav already says, and on a surface
  * whose whole job is "what changed this week" the data has the better claim to
  * the fold. `pt-6` rather than `py-10` for the same reason.
+ *
+ * max-w-[1600px], not 1200: with two nav columns taking ~370px, a 1200px cap
+ * left the IPO table's eleven columns under 800px and it wrapped. The cap exists
+ * at all — rather than full-bleed — because the trends boards are one-line rows
+ * whose text would run to an unreadable measure on a 27" display.
  *
  * NOTE on caching: this route is `revalidate = 21600` (6h), set for weekly score
  * data. The IPO snapshot itself refreshes at most once a day — the Upstox token
@@ -622,16 +506,16 @@ const IPO_RAIL: Record<IpoStatus, { label: string; dot: string }> = {
  * window cannot make a stale snapshot look fresh.
  */
 function IdeasShell({
-  rail,
+  nav,
   children,
 }: {
-  rail: React.ReactNode;
+  nav: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
-    <div className="mx-auto max-w-[1200px] px-6 pt-6 pb-10">
-      <div className="flex flex-col gap-6 md:flex-row md:items-start md:gap-8">
-        {rail}
+    <div className="mx-auto max-w-[1600px] px-5 pt-6 pb-10">
+      <div className="flex flex-col gap-5 md:flex-row md:items-start md:gap-5">
+        {nav}
         <div className="min-w-0 flex-1">{children}</div>
       </div>
     </div>
@@ -992,18 +876,19 @@ export default async function IdeasPage({
     const ipoN = ipoCounts(ipos.rows);
     return (
       <IdeasShell
-        rail={
-          <IdeasRail
+        nav={
+          <IdeasNav
+            views={viewItems("ipo", sp)}
+            contextLabel="Status"
             universe={null}
             groups={[
-              { eyebrow: "View", items: viewItems("ipo", sp) },
               {
                 eyebrow: "Status",
                 items: IPO_STATUSES.map((s) => ({
                   key: s,
-                  label: IPO_RAIL[s].label,
+                  label: IPO_NAV[s].label,
                   n: ipoN[s],
-                  dot: IPO_RAIL[s].dot,
+                  dot: IPO_NAV[s].dot,
                   active: s === ipoStatus,
                   href: ideasHref(sp, { view: "ipo", ipo: s, bucket: null, cal: null }),
                 })),
@@ -1167,11 +1052,11 @@ export default async function IdeasPage({
     fii_up: fiiUp.length,
   };
 
-  // Rail content. The bucket metadata comes from BUCKET_META so the rail label,
+  // Nav content. The bucket metadata comes from BUCKET_META so the nav label,
   // the dot and the board can never disagree about what a bucket is called —
   // they were three separate literals before, which is exactly the drift
   // CLAUDE.md's regression note is about.
-  const railBuckets = (group: "trend" | "themed"): RailItem[] =>
+  const navBuckets = (group: "trend" | "themed"): NavItem[] =>
     TAB_KEYS.filter((k) => BUCKET_META[k].group === group).map((k) => ({
       key: k,
       label: BUCKET_META[k].label,
@@ -1183,13 +1068,14 @@ export default async function IdeasPage({
 
   return (
     <IdeasShell
-      rail={
-        <IdeasRail
+      nav={
+        <IdeasNav
+          views={viewItems("trends", sp)}
+          contextLabel="Bucket"
           universe={idxItems}
           groups={[
-            { eyebrow: "View", items: viewItems("trends", sp) },
-            { eyebrow: "Trend", items: railBuckets("trend") },
-            { eyebrow: "Themed", items: railBuckets("themed") },
+            { eyebrow: "Trend", items: navBuckets("trend") },
+            { eyebrow: "Themed", items: navBuckets("themed") },
           ]}
         />
       }
@@ -1337,16 +1223,21 @@ export default async function IdeasPage({
         </>
       )}
 
-      {/* How to read this page — moved to the foot so the surfaces lead, and the
-          methodology note is there for anyone who scrolls to understand it. */}
-      <section className="mt-12 pt-6 border-t hairline max-w-[760px]">
-        <div className="text-[12px] uppercase tracking-wide muted-text mb-1.5">How to read this</div>
-        <p className="text-[13px] muted-text leading-[1.6]">
+      {/* Collapsed by default. A <details>, not a client toggle: it is static
+          prose, so there is nothing to hydrate. It stays on the page rather than
+          moving to a tooltip because methodology that is only reachable by
+          hovering is methodology nobody reads — closed is not the same as gone. */}
+      <details className="mt-10 pt-5 border-t hairline max-w-[760px] group">
+        <summary className="text-[12px] uppercase tracking-wide muted-text cursor-pointer list-none flex items-center gap-1.5 select-none">
+          <span className="transition-transform group-open:rotate-90">›</span>
+          How to read this
+        </summary>
+        <p className="text-[13px] muted-text leading-[1.6] mt-2">
           We surface stocks where our score has changed meaningfully over the last few weeks
           — fundamentals strengthening, slipping, breaking out, or breaking down. Each entry
           shows the 12-week trail so you can judge spike vs trend yourself.
         </p>
-      </section>
+      </details>
 
       {/* Footer disclaimer (persistent trust builder) */}
       <footer className="mt-6 text-[11.5px] muted-text leading-[1.6] max-w-[760px]">
@@ -1538,41 +1429,6 @@ function ThisWeekBand({
         </div>
       </div>
     </section>
-  );
-}
-
-/** Index-tier pills for the band — Nifty 50 / 200 / 500 / All. Nifty 50 is the
- *  default (highlighted) slice. Reuses the same URL-preserving links the rest
- *  of the page uses, with scroll={false} so switching tiers doesn't jump. */
-function TierPills({ items }: { items: { key: string; label: string; active: boolean; href: string }[] }) {
-  return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <span className="text-[10px] uppercase tracking-wide muted-text mr-0.5">Universe</span>
-      {items.map((it) => (
-        <Link
-          key={it.key}
-          href={it.href}
-          scroll={false}
-          className="px-2.5 py-1 rounded-full text-[11.5px] border transition-colors whitespace-nowrap"
-          style={
-            it.active
-              ? {
-                  borderColor: "var(--color-accent-300)",
-                  backgroundColor: "var(--color-accent-50)",
-                  color: "var(--color-accent-700)",
-                  fontWeight: 600,
-                }
-              : {
-                  borderColor: "var(--color-border-default)",
-                  backgroundColor: "transparent",
-                  color: "var(--color-muted)",
-                }
-          }
-        >
-          {it.label}
-        </Link>
-      ))}
-    </div>
   );
 }
 

@@ -81,15 +81,25 @@ export function ipoCounts(rows: IpoRow[]): Record<IpoStatus, number> {
   return out;
 }
 
-/** First status that actually has rows, in display order.
+/** Landing tab: first status that actually has rows, in LANDING order — which is
+ *  not the display order.
  *
- *  The landing tab is NOT hardcoded to "open" because for most of the year
- *  nothing is open — the 2026-10-02 snapshot had 3 open and 86 listed, but a
- *  quiet fortnight has 0. Defaulting to an empty table would make the tracker
- *  look broken on exactly the days there is nothing to apply for. */
+ *  Display order leads with "Open now" because that is the only section with a
+ *  deadline attached. Landing leads with "Listed", which is a deliberate
+ *  trade: "has this issue listed, and where is it trading now" is the question
+ *  actually asked of this surface, and it is the section that is never empty
+ *  (86 rows vs. 3). Landing on "Open now" meant the recently-listed names Deb
+ *  came to check were a click away and read as missing twice in one session.
+ *
+ *  The fallback chain is still a chain, not a constant, because the listed
+ *  section CAN be empty — a fresh database, or a retention prune that has
+ *  outrun the backfill. Defaulting to an empty table would make the tracker
+ *  look broken rather than quiet. */
+const IPO_LANDING_ORDER = ["listed", "open", "upcoming", "closed"] as const;
+
 export function defaultIpoStatus(rows: IpoRow[]): IpoStatus {
   const c = ipoCounts(rows);
-  return IPO_STATUSES.find((s) => c[s] > 0) ?? "upcoming";
+  return IPO_LANDING_ORDER.find((s) => c[s] > 0) ?? "listed";
 }
 
 /**
@@ -507,9 +517,17 @@ export function IpoTracker({ data, active }: { data: IpoData; active: IpoStatus 
         );
       })}
 
-      <section className="mt-10 pt-6 border-t hairline max-w-[760px]">
-        <div className="text-[12px] uppercase tracking-wide muted-text mb-1.5">How to read this</div>
-        <p className="text-[13px] muted-text leading-[1.6]">
+      {/* Collapsed by default — three paragraphs of methodology below an 86-row
+          table pushed the page's real end a long way down. A <details> rather
+          than a client toggle: static prose has nothing to hydrate. Still on the
+          page, because a caveat reachable only by hover is a caveat nobody
+          reads, and the GMP disclaimer in the last paragraph is not optional. */}
+      <details className="mt-10 pt-5 border-t hairline max-w-[760px] group">
+        <summary className="text-[12px] uppercase tracking-wide muted-text cursor-pointer list-none flex items-center gap-1.5 select-none">
+          <span className="transition-transform group-open:rotate-90">›</span>
+          How to read this
+        </summary>
+        <p className="text-[13px] muted-text leading-[1.6] mt-2">
           Every figure here is the issue&apos;s own published detail as Upstox reports it —
           price band, lot size, issue size, the bidding and allotment dates, and the live
           subscription multiple. <span className="ink-text">1 lot</span> is the minimum
@@ -531,7 +549,7 @@ export function IpoTracker({ data, active }: { data: IpoData; active: IpoStatus 
           There is no grey-market premium here and no view on whether to apply. GMP has no
           verifiable source, and the rest would be advice.
         </p>
-      </section>
+      </details>
     </div>
   );
 }
