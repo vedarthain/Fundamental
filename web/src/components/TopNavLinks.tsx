@@ -498,6 +498,18 @@ function PopupSheet({
                     active={isActive(pathname, "/admin/upstox")}
                     onClose={onClose}
                   />
+                  {/* Kept in step with UserMenu.tsx — the two admin menus are
+                      separate components rendering the same list, so an entry
+                      added to one and not the other is invisible on whichever
+                      breakpoint the operator happens to be using. */}
+                  <PopupLink
+                    href="/admin/screener"
+                    label="Screener session"
+                    sublabel="Rotate the Screener.in session cookie"
+                    badge="ADMIN"
+                    active={isActive(pathname, "/admin/screener")}
+                    onClose={onClose}
+                  />
                   <PopupLink
                     href="/admin/daily-brief"
                     label="News-Brief"

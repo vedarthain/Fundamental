@@ -198,6 +198,22 @@ export function UserMenu({ email, displayName, isAdmin = false }: Props) {
                 Upstox session{" "}
                 <AdminBadge />
               </Link>
+              {/* Sits next to Upstox because they are the same chore: a
+                  credential that expires and that only a human can renew. It is
+                  in this menu rather than only at a bookmarked URL because the
+                  Screener cookie's failure mode is being forgotten — it went 33
+                  days stale in the GitHub secrets before anyone noticed. A link
+                  you pass every day is part of the fix. */}
+              <Link
+                href="/admin/screener"
+                role="menuitem"
+                onClick={() => setOpen(false)}
+                className="block px-4 py-2.5 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
+                title="Admin · rotate the Screener.in session cookie"
+              >
+                Screener session{" "}
+                <AdminBadge />
+              </Link>
               <Link
                 href="/admin/daily-brief"
                 role="menuitem"

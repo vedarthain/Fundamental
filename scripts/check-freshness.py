@@ -342,7 +342,16 @@ def _probe_screener_session(symbol: str, sid: str, csrf: str) -> tuple[str, str]
                 if _LOGGED_OUT_RE.search(html) and "csrfmiddlewaretoken" in html.lower():
                     return "dead", f"{symbol}: company page served without a wiki data-url"
                 return "unknown", f"{symbol}: no wiki data-url on the company page"
-            frag = client.get("https://www.screener.in" + m.group(1)).text
+            # X-Requested-With + Referer because build-company-overview.mjs
+            # sends both on this exact request. This check exists to predict
+            # that script's failure, so it must ask the question the same way —
+            # a probe with different headers can report a verdict the real
+            # scraper would not reproduce.
+            frag = client.get(
+                "https://www.screener.in" + m.group(1),
+                headers={"X-Requested-With": "XMLHttpRequest",
+                         "Referer": f"https://www.screener.in/company/{symbol}/consolidated/"},
+            ).text
     except Exception as e:                      # transport only — say nothing
         return "unknown", f"{type(e).__name__}: {str(e)[:80]}"
 

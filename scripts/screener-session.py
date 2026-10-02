@@ -134,17 +134,22 @@ def login(email: str, password: str) -> tuple[str, str]:
                   "password": password, "next": "/dash/"},
             headers={"Referer": f"{BASE}/login/"},
         )
-        if resp.status_code not in (200, 302):
-            fail(f"POST /login/ → HTTP {resp.status_code}")
-
         sid = c.cookies.get("sessionid")
         csrf = c.cookies.get("csrftoken")
-        if not sid:
-            # Django re-renders the form with an error rather than 4xx-ing, so
-            # status alone cannot distinguish wrong password from success.
-            hint = ("credentials rejected"
-                    if "password" in resp.text.lower() else "no sessionid cookie set")
-            fail(f"login did not produce a session — {hint}")
+        # TWO SIGNALS, BOTH NEEDED (measured 2026-10-02). A non-existent account
+        # returns HTTP 200 with no sessionid — Django re-renders the form rather
+        # than 4xx-ing, so status alone cannot separate a wrong password from
+        # success. But "a sessionid was issued" is not proof either: Django hands
+        # an anonymous session to a failed attempt whenever the login view
+        # touches request.session. Only a redirect AND a session cookie together
+        # mean we are in. Accepting one of them reports a rejected password as
+        # an unauthenticated cookie and sends you looking at the wrong thing.
+        # follow_redirects=True, so a successful login shows up as a non-empty
+        # .history with a final 200 — not as a 302 status.
+        if not sid or (not resp.history and resp.status_code == 200):
+            fail(f"Screener rejected those credentials (HTTP {resp.status_code}, "
+                 f"session cookie {'issued' if sid else 'not issued'}). A "
+                 f"successful login redirects; this re-rendered the login form.")
         return sid, csrf or token
 
 
@@ -161,7 +166,14 @@ def probe(sid: str, csrf: str) -> str:
             m = DATA_URL_RE.search(page.text)
             if not m:
                 continue
-            frag = c.get(BASE + m.group(1)).text
+            # Same headers build-company-overview.mjs sends on this request.
+            # A probe that asks differently can bless a cookie that script
+            # rejects.
+            frag = c.get(
+                BASE + m.group(1),
+                headers={"X-Requested-With": "XMLHttpRequest",
+                         "Referer": f"{BASE}/company/{sym}/consolidated/"},
+            ).text
             if LOGGED_OUT_RE.search(frag):
                 fail(f"the Key Points fragment for {sym} was served as a login "
                      f"page — this cookie is NOT authenticated. Nothing was "

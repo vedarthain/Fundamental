@@ -80,7 +80,7 @@ function readCookie(res: Response, name: string): string | null {
 }
 
 type LoginResult =
-  | { ok: true; sessionid: string; csrftoken: string }
+  | { ok: true; sessionid: string; csrftoken: string; status: number }
   | { ok: false; error: string };
 
 async function screenerLogin(username: string, password: string): Promise<LoginResult> {
@@ -124,22 +124,35 @@ async function screenerLogin(username: string, password: string): Promise<LoginR
     body,
   });
 
+  // TWO SIGNALS, BOTH NEEDED, MEASURED AGAINST THE REAL ENDPOINT 2026-10-02.
+  //
+  // Posting a non-existent account returns HTTP 200 with NO sessionid: Django
+  // re-renders the form with a field error rather than 4xx-ing, so the status
+  // code alone cannot distinguish a wrong password from success. A successful
+  // login redirects (302) to `next`.
+  //
+  // Neither signal is sufficient on its own. "sessionid was issued" is not proof
+  // of authentication — Django will hand an anonymous session to a failed
+  // attempt whenever the login view touches request.session, which is why the
+  // first version of this route reported a rejected password as an
+  // unauthenticated cookie and sent the operator looking at the probe. Requiring
+  // a redirect AS WELL names the real failure.
   const sessionid = readCookie(resp, "sessionid");
-  if (!sessionid) {
-    // Django re-renders the form with a field error rather than returning 4xx,
-    // so the status code cannot distinguish a wrong password from success. The
-    // only reliable discriminator is whether a session cookie was issued.
+  const redirected = resp.status >= 300 && resp.status < 400;
+  if (!sessionid || !redirected) {
     return {
       ok: false,
       error:
-        resp.status === 200
-          ? "Screener rejected those credentials — no session was issued"
-          : `login did not produce a session (HTTP ${resp.status})`,
+        `Screener rejected those credentials (HTTP ${resp.status}, ` +
+        `session cookie ${sessionid ? "issued" : "not issued"}). A successful ` +
+        `login redirects; this re-rendered the login form. Check the email and ` +
+        `password — nothing was stored.`,
     };
   }
   return {
     ok: true,
     sessionid,
+    status: resp.status,
     csrftoken: readCookie(resp, "csrftoken") ?? cookieToken,
   };
 }
@@ -156,17 +169,28 @@ async function probe(sessionid: string, csrftoken: string): Promise<ProbeResult>
     Cookie: `sessionid=${sessionid}; csrftoken=${csrftoken}`,
   };
   for (const symbol of PROBE_SYMBOLS) {
-    const page = await fetch(`${BASE}/company/${symbol}/consolidated/`, { headers });
+    const pageUrl = `${BASE}/company/${symbol}/consolidated/`;
+    const page = await fetch(pageUrl, { headers });
     const m = DATA_URL_RE.exec(await page.text());
     if (!m) continue;
 
-    const frag = await (await fetch(BASE + m[1], { headers })).text();
+    // X-Requested-With and Referer are NOT decoration. build-company-overview.mjs
+    // sends both on this exact request and is the thing this probe exists to
+    // predict; a probe that asks differently can certify a cookie that script
+    // then rejects, or reject one it would have accepted. The headers are part
+    // of the contract, not of the transport.
+    const res = await fetch(BASE + m[1], {
+      headers: { ...headers, "X-Requested-With": "XMLHttpRequest", Referer: pageUrl },
+    });
+    const frag = await res.text();
     if (LOGGED_OUT_RE.test(frag)) {
       return {
         ok: false,
         error:
-          `the Key Points fragment for ${symbol} came back as a page, not a ` +
-          `fragment — this cookie is NOT authenticated. Nothing was stored.`,
+          `logged in, but the Key Points fragment for ${symbol} came back as a ` +
+          `full page (HTTP ${res.status}, ${frag.length} bytes), which only ` +
+          `happens for an unauthenticated request. The account logged in but ` +
+          `does not appear to have Key Points access. Nothing was stored.`,
       };
     }
     if (frag.length < 200) {
