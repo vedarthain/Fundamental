@@ -263,21 +263,139 @@ def check_price_age(conn: psycopg.Connection, max_days: int) -> tuple[bool, str]
     )
 
 
+# Screener's daily key-insights wall returns HTTP 200 with a ~381-byte stub
+# saying "We allow 80 key-insights per day". It is a quota, not a rate limit;
+# sleeping does not clear it.
+_QUOTA_RE = re.compile(r"key-insights per day", re.I)
+# A correct Key Points response is an XHR FRAGMENT. It contains no <html>
+# element and no Django CSRF field, so their presence means we were served a
+# page — the login page, the register page, or any future interstitial —
+# without having to enumerate which. Copied deliberately from
+# build-company-overview.mjs's LOGGED_OUT_MARKER; the two must agree, because
+# this check exists to predict that script's failure.
+_LOGGED_OUT_RE = re.compile(r"<html|csrfmiddlewaretoken|auth-partition", re.I)
+_DATA_URL_RE = re.compile(r'data-url="(/wiki/company/\d+/commentary/v2/)"')
+
+
+def _screener_cookie(conn: psycopg.Connection) -> tuple[str, str, str]:
+    """Resolve the cookie the way the scrapers do: app.screener_session, then env.
+
+    This check only has teeth if it probes THE SAME cookie the workflows use. The
+    scrapers read 0084's singleton row first and fall back to the environment
+    (see etl/src/fundamental_etl/screener/cookies.py), so this must too — probing
+    the env copy while the jobs used the DB copy would be a check that cannot
+    fail for the reason it was written.
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT sessionid, csrftoken FROM app.screener_session WHERE id = 1"
+            )
+            row = cur.fetchone()
+        if row and row[0] and row[1]:
+            return row[0], row[1], "db"
+    except Exception:          # table absent on a pre-0084 database
+        conn.rollback()
+
+    return (os.environ.get("SCREENER_SESSIONID") or "",
+            os.environ.get("SCREENER_CSRFTOKEN") or "",
+            "env")
+
+
+def _probe_screener_session(symbol: str, sid: str, csrf: str) -> tuple[str, str]:
+    """Ask Screener, with the cookie we actually hold, whether we are logged in.
+
+    Returns (verdict, detail) where verdict is one of:
+      'live'      — served the wiki fragment. The session works.
+      'dead'      — served a login/register page. Rotate the cookie.
+      'quota'     — hit the 80/day key-insights wall. See below: this is
+                    EVIDENCE OF A LIVE SESSION, not an unknown.
+      'no_cookie' — the env vars are not set here.
+      'unknown'   — transport error, or the probe symbol lost its wiki page.
+                    No information; must not be reported as either state.
+
+    WHY 'quota' COUNTS AS LIVE. The wall is only reachable by making 80
+    successful authenticated requests, which Screener will not serve to a
+    logged-out client. Being told "you have used your allowance" is therefore
+    proof the cookie was alive today. Treating it as unknown would blind this
+    check on exactly the days the pipeline worked hardest — including every day
+    of a backlog drain.
+    """
+    if not sid or not csrf:
+        return "no_cookie", "no cookie in app.screener_session or the environment"
+
+    import httpx
+
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Cookie": f"sessionid={sid}; csrftoken={csrf}",
+    }
+    try:
+        with httpx.Client(timeout=20.0, follow_redirects=True,
+                          headers=headers) as client:
+            page = client.get(f"https://www.screener.in/company/{symbol}/consolidated/")
+            html = page.text
+            # Checked on the COMPANY page too, not only the fragment: a dead
+            # session can still expose the data-url while refusing the fragment.
+            m = _DATA_URL_RE.search(html)
+            if not m:
+                if _LOGGED_OUT_RE.search(html) and "csrfmiddlewaretoken" in html.lower():
+                    return "dead", f"{symbol}: company page served without a wiki data-url"
+                return "unknown", f"{symbol}: no wiki data-url on the company page"
+            frag = client.get("https://www.screener.in" + m.group(1)).text
+    except Exception as e:                      # transport only — say nothing
+        return "unknown", f"{type(e).__name__}: {str(e)[:80]}"
+
+    if _QUOTA_RE.search(frag):
+        return "quota", f"{symbol}: daily key-insights allowance exhausted"
+    if _LOGGED_OUT_RE.search(frag):
+        return "dead", (f"{symbol}: served Screener's login/register page "
+                        f"instead of the wiki fragment")
+    if len(frag) < 200:
+        return "unknown", f"{symbol}: fragment was only {len(frag)} bytes"
+    return "live", f"{symbol}: {len(frag)} byte fragment"
+
+
 def check_cookie_health(conn: psycopg.Connection) -> tuple[bool, str]:
-    """Detect Screener cookie expiry — alert on EVEN ONE recent auth_failed.
+    """Is the Screener session alive? ASKED, not inferred.
 
-    fetch-many runs with stop_on_auth_fail=True (the weekly workflow's
-    default), so the *first* auth failure HALTS the whole run — recording just
-    ONE auth_failed row before truncating and leaving the rest of the universe
-    unscraped. So a single recent auth_failed is the real signal that the
-    cookie expired and the weekly run was silently cut short.
+    WHY THIS WAS REWRITTEN (2026-10-02). The previous version counted rows in
+    app.screener_meta with last_status='auth_failed' in the last 3 days, and it
+    could not fail in the case that actually happens. On 2026-10-02 this check
+    printed "✓ cookie_health: 0 auth_failed scrape(s) in last 3d" at 06:01
+    while Refresh Company Overviews was failing on a dead session at the same
+    time, and the GitHub secrets turned out to have been stale for 33 days.
 
-    (The old threshold of ≥10 never fired in this mode — the halt meant the
-    count never got past ~1 — so an expired cookie truncated the run with no
-    alert. That's the gap this closes.)
+    The blindness was structural, not a tuning error.
+    build-company-overview.mjs probes the session BEFORE touching any symbol
+    and exits without writing when the probe fails — correctly, that is what
+    "Nothing was written" in its own error message means. A session that dies
+    cleanly therefore produces ZERO auth_failed rows, so counting them reports
+    health. The old check could only fire when a cookie died MID-RUN, after at
+    least one symbol had already been attempted and recorded. It was watching
+    the one failure mode the pipeline had been fixed to avoid.
 
-    Window: 3 days — covers the weekly Saturday run plus the 12h check cadence,
-    while ageing out so a fixed-and-re-run cookie clears the alert.
+    This is CLAUDE.md §5's "what would make this fail?" — the honest answer for
+    the old version was "a cookie that expires between two symbols of the same
+    run", which is the rare case, not the common one.
+
+    SO THIS ASKS SCREENER DIRECTLY. One request per run, twice a day against
+    an 80/day allowance, using the same cookie the workflows use — which means
+    in CI it tests the GitHub secrets themselves, the thing that was actually
+    stale. The passive auth_failed count is KEPT as a second clause rather than
+    replaced: it catches a mid-run death that a point-in-time probe would miss,
+    and the two failure modes are genuinely different.
+
+    WHAT MAKES THIS ABLE TO FAIL. The probe symbol is read from the database as
+    one that ALREADY produced Key Points, so a missing wiki fragment cannot be
+    explained away as "we guessed an obscure company". Feed it a garbage
+    sessionid and it must report dead; that test is in the commit message.
+
+    UNKNOWN IS NOT PASS AND NOT FAIL. A socket timeout means Screener said
+    nothing, and reporting that as either state is how a check starts lying. It
+    returns ok=True with the reason visible in the line, so a run of consecutive
+    unknowns is readable rather than silent — but it does not fail the job on
+    a flaky network.
     """
     with conn.cursor() as cur:
         cur.execute("""
@@ -287,19 +405,40 @@ def check_cookie_health(conn: psycopg.Connection) -> tuple[bool, str]:
                AND last_scraped_at > NOW() - INTERVAL '3 days'
         """)
         row = cur.fetchone()
-    n = (row[0] or 0) if row else 0
-    ok = n < 1
+        n = (row[0] or 0) if row else 0
+
+        cur.execute("""
+            SELECT symbol FROM app.company_overview
+             WHERE source = 'screener_keypoints'
+             ORDER BY generated_at DESC LIMIT 1
+        """)
+        prow = cur.fetchone()
+
+    sid, csrf, source = _screener_cookie(conn)
+
+    if prow is None:
+        verdict, detail = "unknown", "no screener_keypoints overview to probe with"
+    else:
+        verdict, detail = _probe_screener_session(prow[0], sid, csrf)
+
+    live = verdict in ("live", "quota")
+    ok = live and n < 1
     icon = "✓" if ok else "✗"
-    suffix = (
-        "" if ok else
-        " — Screener cookies likely expired; the run HALTED/truncated. Rotate "
-        "SCREENER_SESSIONID + SCREENER_CSRFTOKEN (GitHub secrets + .env.local), "
-        "then re-run the fetch."
-    )
-    return ok, (
-        f"{icon} cookie_health: {n} auth_failed scrape(s) in last 3d "
-        f"(alert if ≥ 1){suffix}"
-    )
+
+    msg = (f"{icon} cookie_health: probe={verdict} from {source} ({detail}); "
+           f"{n} auth_failed in last 3d")
+    if verdict == "dead":
+        msg += (" — the session is EXPIRED. Rotate it at "
+                "https://equityroots.in/admin/screener, which logs in, proves the "
+                "new cookie against the gated fragment and writes "
+                "app.screener_session — the single copy every workflow reads.")
+    elif verdict == "no_cookie":
+        msg += (" — cannot verify: app.screener_session is empty and no env "
+                "fallback is set. Rotate at /admin/screener.")
+    elif not ok and n:
+        msg += (" — the session answered but a recent run still hit auth_failed, "
+                "so it died mid-run or the cookie differs between environments.")
+    return ok, msg
 
 
 def check_panel_cache_populated(conn: psycopg.Connection) -> tuple[bool, str]:

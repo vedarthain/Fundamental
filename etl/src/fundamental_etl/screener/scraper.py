@@ -18,6 +18,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 
 from ..config import settings
 from ..log import log
+from . import cookies
 
 BASE = "https://www.screener.in"
 
@@ -68,25 +69,27 @@ def _client() -> httpx.Client:
     # bind to an IPv6 target, so httpcore moves on to the A record). `retries`
     # adds transport-level retry on connect errors, on top of the @retry
     # decorators that already cover TransportError mid-request.
-    # Cookies are optional at config load (so unrelated commands can import
-    # freely) but MANDATORY here — a scrape without a valid session silently
-    # gets logged-out HTML. Fail loud and early with an actionable message.
-    if not settings.screener_sessionid or not settings.screener_csrftoken:
+    # Cookies come from app.screener_session first and the environment second —
+    # see screener/cookies.py for why that order and not the reverse. They are
+    # optional at config load (so unrelated commands can import freely) but
+    # MANDATORY here: a scrape without a valid session silently gets logged-out
+    # HTML. Fail loud and early with an actionable message.
+    sid, csrf, source = cookies.resolve()
+    if not sid or not csrf:
         raise RuntimeError(
-            "Screener session cookies are missing. Set SCREENER_SESSIONID and "
-            "SCREENER_CSRFTOKEN (Screener.in → DevTools → Application → Cookies). "
-            "These rotate ~monthly; refresh them if the weekly fetch started failing."
+            "Screener session cookies are missing. Rotate them at "
+            "https://equityroots.in/admin/screener (the button logs in and "
+            "writes app.screener_session), or set SCREENER_SESSIONID and "
+            "SCREENER_CSRFTOKEN for a one-off override."
         )
+    log.debug("screener_cookie_source", source=source)
     transport = httpx.HTTPTransport(local_address="0.0.0.0", retries=3)
     # Browser-like default headers. Bot detectors usually look at the full
     # combination (UA + Accept + Accept-Language), not just User-Agent —
     # so we mirror what a real Chrome request would send.
     return httpx.Client(
         transport=transport,
-        cookies={
-            "sessionid": settings.screener_sessionid,
-            "csrftoken": settings.screener_csrftoken,
-        },
+        cookies={"sessionid": sid, "csrftoken": csrf},
         headers={
             "User-Agent": settings.screener_user_agent,
             "Accept": (

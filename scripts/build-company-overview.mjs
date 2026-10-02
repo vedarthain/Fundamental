@@ -111,9 +111,43 @@ const UA = { "User-Agent": "Mozilla/5.0" };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const sha = (s) => createHash("sha256").update(s, "utf8").digest("hex");
 
-function cookieHeader() {
-  const sid = process.env.SCREENER_SESSIONID;
-  const csrf = process.env.SCREENER_CSRFTOKEN;
+/**
+ * Resolve the Screener cookie — app.screener_session first, environment second.
+ *
+ * WHY DB FIRST. Until 0084 this cookie lived in two places that expired
+ * independently: .env.local on one laptop and this repo's GitHub secrets. On
+ * 2026-10-02 the GitHub copy was found 33 days stale, having silently broken
+ * this workflow and three others, with 2,062 symbols holding no overview at
+ * all. One row in a table every workflow already connects to removes the second
+ * place to forget.
+ *
+ * Env is a FALLBACK, not an override: it wins only when the row is empty. An
+ * explicitly set SCREENER_SESSIONID shadowing a freshly rotated row would
+ * recreate the exact two-sources-of-truth bug this replaces. Same precedence as
+ * etl/src/fundamental_etl/screener/cookies.py — the two must not drift.
+ *
+ * A failed read is not fatal here. The table may not exist yet on a database
+ * that predates 0084, and the caller already handles a null cookie correctly
+ * (fatal in queue mode, a visible downgrade by hand).
+ */
+async function cookieHeader(db) {
+  let sid = null;
+  let csrf = null;
+  try {
+    const rows = await db`
+      SELECT sessionid, csrftoken FROM app.screener_session WHERE id = 1`;
+    if (rows[0]?.sessionid && rows[0]?.csrftoken) {
+      sid = rows[0].sessionid;
+      csrf = rows[0].csrftoken;
+    }
+  } catch (err) {
+    console.error(`!! could not read app.screener_session (${String(err.message).slice(0, 120)}) ` +
+                  `— falling back to the environment`);
+  }
+  if (!sid || !csrf) {
+    sid = process.env.SCREENER_SESSIONID;
+    csrf = process.env.SCREENER_CSRFTOKEN;
+  }
   if (!sid || !csrf) return null;
   return `sessionid=${sid}; csrftoken=${csrf}`;
 }
@@ -507,7 +541,13 @@ if (IS_CLI) (async () => {
   if (!process.env.APP_DB_URL) throw new Error("APP_DB_URL not set");
   if (!dryRun && !process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY not set");
 
-  const cookie = cookieHeader();
+  // `postgres` (porsager) rather than node-postgres — it is what web/src/lib/db.ts
+  // already uses, so this script adds no dependency the app does not have.
+  // Opened BEFORE the cookie check because app.screener_session is where the
+  // cookie now lives (0084); the environment is only the fallback.
+  const db = postgres(process.env.APP_DB_URL, { max: 2, idle_timeout: 10 });
+
+  const cookie = await cookieHeader(db);
   // A MISSING COOKIE IS FATAL IN QUEUE MODE, AND ONLY IN QUEUE MODE.
   //
   // By hand, falling back to yfinance prose is a choice the operator can see
@@ -517,17 +557,16 @@ if (IS_CLI) (async () => {
   // The announcements cron did precisely this until 2026-09-24.
   if (!cookie) {
     if (queueIdx >= 0) {
-      console.error("FAILED: SCREENER_SESSIONID / SCREENER_CSRFTOKEN not set. Every symbol " +
+      console.error("FAILED: no Screener session in app.screener_session and no " +
+                    "SCREENER_SESSIONID / SCREENER_CSRFTOKEN fallback. Every symbol " +
                     "would be written from yfinance prose, which is a silent downgrade. " +
-                    "Refusing to run unattended.");
+                    "Refusing to run unattended. Rotate at /admin/screener.");
+      await db.end();
       process.exit(1);
     }
     console.error("!! No Screener cookies — falling back to yfinance prose for every symbol.");
   }
 
-  // `postgres` (porsager) rather than node-postgres — it is what web/src/lib/db.ts
-  // already uses, so this script adds no dependency the app does not have.
-  const db = postgres(process.env.APP_DB_URL, { max: 2, idle_timeout: 10 });
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
   if (queueIdx >= 0) {
@@ -582,7 +621,7 @@ if (IS_CLI) (async () => {
             ? `was served Screener's login/register page instead of the wiki fragment.`
             : `returned no Key Points, but that symbol's stored overview WAS built from ` +
               `Key Points, so the page has not simply disappeared.`) +
-          ` Refresh SCREENER_SESSIONID / SCREENER_CSRFTOKEN. Nothing was written.`
+          ` Rotate the session at /admin/screener. Nothing was written.`
         );
         await db.end(); process.exit(1);
       }
@@ -761,7 +800,7 @@ if (IS_CLI) (async () => {
       `(${(100 * gotKeyPoints / attempted).toFixed(0)}%, floor ${KEYPOINT_FLOOR * 100}%). ` +
       `The session cookie has almost certainly expired — Screener answers 200 with a ` +
       `logged-out page, which is indistinguishable from "no wiki page" per symbol. ` +
-      `Refresh SCREENER_SESSIONID / SCREENER_CSRFTOKEN.`
+      `Rotate the session at /admin/screener.`
     );
     await db.end();
     process.exit(1);

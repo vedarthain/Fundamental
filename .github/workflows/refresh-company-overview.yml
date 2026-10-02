@@ -88,8 +88,6 @@ jobs:
     env:
       APP_DB_URL: ${{ secrets.NEON_APP_URL }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      SCREENER_SESSIONID: ${{ secrets.SCREENER_SESSIONID }}
-      SCREENER_CSRFTOKEN: ${{ secrets.SCREENER_CSRFTOKEN }}
       FUNDAMENTAL_ALLOW_REMOTE_DB: '1'
     steps:
       - uses: actions/checkout@v4
@@ -153,8 +151,9 @@ jobs:
             "a zero-row overview under any circumstance. If this issue is open, all three" \
             "held and nothing was corrupted." \
             "" \
-            "**Fix:** log in to screener.in, copy the sessionid and csrftoken cookies, and" \
-            "update the SCREENER_SESSIONID / SCREENER_CSRFTOKEN repository secrets." \
+            "**Fix:** open https://equityroots.in/admin/screener and rotate the session. It logs in," \
+            "proves the new cookie against the gated Key Points fragment, and writes" \
+            "app.screener_session — the one copy this job reads. No repository secret is involved." \
             "" \
             "Note: exit code 3 (daily quota reached) is NOT a failure and does not reach" \
             "this step. If you are reading this, it was exit 1 or a crash.")

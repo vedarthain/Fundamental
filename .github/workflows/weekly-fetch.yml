@@ -22,10 +22,15 @@
 #   NEON_APP_URL        — fundamental_app on Neon (needs INSERT on
 #                         screener_export_raw; use the owner role)
 #   NEON_GOLDEN_URL     — golden_db on Neon
-#   SCREENER_SESSIONID  — Screener session cookie  ┐ ROTATE ~MONTHLY. Copy fresh
-#   SCREENER_CSRFTOKEN  — Screener CSRF cookie      ┘ values from your browser
-#                         (Screener.in → DevTools → Application → Cookies) into
-#                         Settings → Secrets → Actions.
+#
+# NO SCREENER SECRETS ANY MORE. The Screener cookie comes from
+# app.screener_session (migration 0084), read over NEON_APP_URL. Rotate it at
+# https://equityroots.in/admin/screener, which logs in, proves the new cookie
+# against Screener's login-gated Key Points fragment, and writes that one row.
+# It WAS SCREENER_SESSIONID / SCREENER_CSRFTOKEN here, and that copy expired
+# independently of the laptop's: on 2026-10-02 it was found 33 days stale, having
+# silently broken this job and three others. Two copies was the bug; a better
+# reminder was not the fix.
 
 name: Weekly Fetch (Screener)
 
@@ -124,8 +129,6 @@ jobs:
           # The ETL refuses a remote APP_DB_URL by default (etl/src/fundamental_etl/db.py) so a local run cannot drift onto prod. CI writes to prod on purpose, so it says so out loud.
           FUNDAMENTAL_ALLOW_REMOTE_DB: "1"
           GOLDEN_DB_URL:        ${{ secrets.NEON_GOLDEN_URL }}
-          SCREENER_SESSIONID:   ${{ secrets.SCREENER_SESSIONID }}
-          SCREENER_CSRFTOKEN:   ${{ secrets.SCREENER_CSRFTOKEN }}
           PYTHONUNBUFFERED:     "1"
         run: python -m fundamental_etl.cli fetch-classification
 
@@ -139,8 +142,6 @@ jobs:
           # The ETL refuses a remote APP_DB_URL by default (etl/src/fundamental_etl/db.py) so a local run cannot drift onto prod. CI writes to prod on purpose, so it says so out loud.
           FUNDAMENTAL_ALLOW_REMOTE_DB: "1"
           GOLDEN_DB_URL:        ${{ secrets.NEON_GOLDEN_URL }}
-          SCREENER_SESSIONID:   ${{ secrets.SCREENER_SESSIONID }}
-          SCREENER_CSRFTOKEN:   ${{ secrets.SCREENER_CSRFTOKEN }}
           PYTHONUNBUFFERED:     "1"
         run: >
           python -m fundamental_etl.cli fetch-many --max-runtime-min 180
@@ -156,8 +157,6 @@ jobs:
           # The ETL refuses a remote APP_DB_URL by default (etl/src/fundamental_etl/db.py) so a local run cannot drift onto prod. CI writes to prod on purpose, so it says so out loud.
           FUNDAMENTAL_ALLOW_REMOTE_DB: "1"
           GOLDEN_DB_URL:        ${{ secrets.NEON_GOLDEN_URL }}
-          SCREENER_SESSIONID:   ${{ secrets.SCREENER_SESSIONID }}
-          SCREENER_CSRFTOKEN:   ${{ secrets.SCREENER_CSRFTOKEN }}
           PYTHONUNBUFFERED:     "1"
         run: python -m fundamental_etl.cli fetch-dividend-only
 
