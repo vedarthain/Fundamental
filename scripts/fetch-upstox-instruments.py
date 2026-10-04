@@ -96,12 +96,33 @@ def fetch_dump() -> list[dict]:
     return data
 
 
+# Upstox's `instrument_type` on NSE_EQ rows is NOT a type — it is the NSE
+# SERIES code (measured on the live dump 2026-10-04: EQ 2688, SG 4328, SM 477,
+# BE 237, ST 99, BZ 39, plus a long tail of warrant/bond series).
+#
+# Reading it as a type is why this loader stored 2,688 symbols while the dump
+# carried 9,793 NSE_EQ rows: `instrument_type == "EQ"` silently excluded every
+# SME name. SLONE is series SM and ESCONET is ST, so neither had an
+# instrument_key — and without a key nothing can ask Upstox for their history.
+#
+# This is deliberately the SAME whitelist as refresh-ltp.py and
+# backfill-nse-bhavcopy.py. The three must agree: a symbol priced from the
+# bhavcopy but absent from this table can never be backfilled, and a symbol
+# here but not priced there would be a key pointing at nothing. If you change
+# one, change all three — grep ALLOWED_SERIES.
+#
+# It stays a WHITELIST for the reason refresh-ltp.py gives: GS/GB are
+# government securities, IV/RR/E1 are not ordinary shares, and an unfamiliar
+# new series must be excluded by default rather than silently treated as equity.
+ALLOWED_SERIES = {"EQ", "BE", "BZ", "BL", "SM", "ST"}
+
+
 def filter_equities(raw_rows: list[dict]) -> list[dict]:
     """Keep only plain NSE equity rows. Drops F&O, indices, bonds, ETFs.
 
     Filter rules:
       - segment must be NSE_EQ (cash equity segment)
-      - instrument_type must be EQ (equity, not futures/options/INDEX)
+      - instrument_type (really the NSE series code) must be in ALLOWED_SERIES
       - tradingsymbol must be non-empty and ASCII (NSE symbols are)
     """
     out: list[dict] = []
@@ -110,7 +131,7 @@ def filter_equities(raw_rows: list[dict]) -> list[dict]:
             continue
         if r.get("segment") != "NSE_EQ":
             continue
-        if r.get("instrument_type") != "EQ":
+        if r.get("instrument_type") not in ALLOWED_SERIES:
             continue
         sym = (r.get("trading_symbol") or r.get("tradingsymbol") or "").strip()
         if not sym:
