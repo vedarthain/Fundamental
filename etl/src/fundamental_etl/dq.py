@@ -117,10 +117,28 @@ _PCT_ASSERTIONS = [
         "app.universe u LEFT JOIN app.scores s ON s.symbol = u.symbol "
         "AND s.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)",
         "u.is_active",                                       "valuation_pct",  90.0),
-    ("scores.momentum_pct (active)",
+    # SME EXCLUSION — TEMPORARY, AND THE TEMPORARINESS IS ENFORCED BELOW.
+    #
+    # On 2026-10-04 sync-universe onboarded 475 NSE EMERGE (SME) names in one
+    # go. They arrive with no Screener scrape and no price history, so on the
+    # morning they land momentum coverage is 9.5% on the SME side and 96.8% on
+    # the main board — and the blended figure (83.3%) trips a 90% floor that is
+    # measuring onboarding lag, not a defect. That red run cost more than a
+    # false alarm: exit 1 skipped the snapshot rebuild and the cache purge, so
+    # 479 freshly scored symbols never reached the site.
+    #
+    # Excluding them is honest — the assertion's job is to catch main-board
+    # coverage rotting, and that signal was being swamped. What is NOT honest is
+    # an exclusion that outlives its reason, which is exactly §5's "seeded once
+    # and nothing maintains it". So the exclusion carries an expiry in code:
+    # see sme_backfill_still_incomplete in _COUNT_ASSERTIONS, which goes RED the
+    # moment SME coverage is good enough that these two lines should be deleted.
+    # Do not remove the exclusion without removing that assertion, or the other
+    # way round — they are one mechanism.
+    ("scores.momentum_pct (active, main board)",
         "app.universe u LEFT JOIN app.scores s ON s.symbol = u.symbol "
         "AND s.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)",
-        "u.is_active",                                       "momentum_pct",   90.0),
+        "u.is_active AND NOT COALESCE(u.is_sme, false)",      "momentum_pct",   90.0),
 
     # Screener meta — required for the LTP + market cap on cards.
     #
@@ -138,9 +156,16 @@ _PCT_ASSERTIONS = [
     ("screener_meta.market_cap_cr (active)",
         "app.universe u LEFT JOIN app.screener_meta sm USING (symbol)",
         "u.is_active",                                       "market_cap_cr",   90.0),
-    ("screener_meta.current_price (active)",
+    # Excluded for the same reason and under the same expiry as
+    # scores.momentum_pct above — see that comment. Note the exclusion is
+    # deliberately NOT applied to market_cap_cr one line up: measured
+    # 2026-10-04, SME names arrive WITH a market cap (100.0% overall) and
+    # WITHOUT a price (0.0% on the SME side). Excluding is_sme there would have
+    # been cargo-culting the shape of the fix onto an assertion that was never
+    # in trouble, and would have blinded a check that is currently perfect.
+    ("screener_meta.current_price (active, main board)",
         "app.universe u LEFT JOIN app.screener_meta sm USING (symbol)",
-        "u.is_active",                                       "current_price",   90.0),
+        "u.is_active AND NOT COALESCE(u.is_sme, false)",      "current_price",   90.0),
 ]
 
 # Row-count assertions — sanity checks that the materialised caches
@@ -154,6 +179,31 @@ _COUNT_ASSERTIONS = [
     ("cluster_stocks_panel_cache (latest snapshot)",
         "app.cluster_stocks_panel_cache",
         "snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)", 2000),
+
+    # THE EXPIRY ON THE SME EXCLUSION. Read the comment on
+    # scores.momentum_pct (active, main board) first.
+    #
+    # This is an assertion written to FAIL ON SUCCESS, which is why it looks
+    # backwards. It counts active SME symbols that still have no Screener price,
+    # and it demands that count stay at or ABOVE 48 (10% of the 475 onboarded on
+    # 2026-10-04). While the backfill is genuinely incomplete it passes silently.
+    # The moment SME price coverage climbs past 90% — the same floor the two
+    # excluded assertions use — this goes RED with a name that says what to do:
+    # the exclusion has served its purpose, delete it and delete this.
+    #
+    # Why bother, instead of a note in a doc or a reminder: §5 of CLAUDE.md is
+    # about exactly this failure. An exclusion added "temporarily" has no force
+    # that removes it; it survives as a permanently blinded check that reports
+    # green forever. A TODO cannot fail. This can, and it fails precisely when
+    # the reason for the exclusion stops being true, so the two assertions get
+    # their 475 symbols back whether or not anyone remembered.
+    #
+    # It also fails if the SME names are DELISTED or deactivated rather than
+    # backfilled — the count drops below 48 either way. That is correct: in both
+    # worlds the exclusion is no longer warranted and should be re-examined.
+    ("sme_backfill_still_incomplete (delete the SME exclusion when this fails)",
+        "app.universe u LEFT JOIN app.screener_meta sm USING (symbol)",
+        "u.is_active AND COALESCE(u.is_sme, false) AND sm.current_price IS NULL", 48),
 ]
 
 

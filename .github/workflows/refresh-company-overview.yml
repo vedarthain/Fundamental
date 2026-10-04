@@ -107,7 +107,15 @@ jobs:
         id: build
         run: |
           set +e
-          node scripts/build-company-overview.mjs --queue "${{ github.event.inputs.limit || 80 }}"
+          # 100, not 80. Screener's key-insights allowance measured ~130/day;
+          # 80 was a conservative first guess and left ~40% of the nightly
+          # headroom unused while 2,301 symbols sat without an overview
+          # (measured 2026-10-04). Exit code 3 already makes hitting the wall a
+          # non-event — the rows built before it are good and the rest stay
+          # queued — so the cost of overshooting is zero and the cost of
+          # undershooting is a week of backlog. 100 keeps margin under the
+          # measured ceiling rather than racing it.
+          node scripts/build-company-overview.mjs --queue "${{ github.event.inputs.limit || 100 }}"
           code=$?
           set -e
           echo "code=$code" >> "$GITHUB_OUTPUT"
