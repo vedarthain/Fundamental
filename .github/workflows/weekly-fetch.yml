@@ -60,10 +60,17 @@ env:
 jobs:
   fetch:
     runs-on: ubuntu-latest
-    # Fetch is capped at --max-runtime-min 180 (graceful exit 0). 200 gives the
-    # prune step margin. A throttled/halted scrape resumes next run via
-    # skip_recent_hours.
-    timeout-minutes: 200
+    # Fetch is capped at --max-runtime-min 180 (graceful exit 0), but that cap
+    # only governs the fetch STEP. Run 37139452710 (2026-10-03) was killed at
+    # exactly 200m01s with the fetch still mid-scrape: install + sync-universe +
+    # classify had already burned 33 minutes before fetch started, so the job
+    # ceiling fired 13 minutes BEFORE the step's own graceful exit could. A
+    # timeout that pre-empts the graceful exit turns a clean partial run into a
+    # cancelled one — the budget must cover setup + 180 + the tail steps, not
+    # just 180. 33 (setup) + 180 (fetch) + ~15 (dividends, prune) = ~230; 300
+    # leaves room for a slow runner without approaching GitHub's 360 hard cap.
+    # A throttled/halted scrape still resumes next run via skip_recent_hours.
+    timeout-minutes: 300
     steps:
       - name: Checkout
         uses: actions/checkout@v4
