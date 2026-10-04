@@ -36,9 +36,25 @@ class AssertionResult:
     total: int           # denominator
     shape: str = "pct"   # "pct" or "count"
 
+    # ADVISORY — reported, never fatal.
+    #
+    # An assertion is advisory when the condition it detects is real and worth
+    # seeing, but is resolved by a HUMAN decision rather than by a pipeline
+    # rerun. Making such a check fatal does not speed up the decision; it just
+    # exits 1, and on 2026-10-04 an exit 1 after a completed scoring run skipped
+    # the snapshot rebuild and the cache purge, leaving 479 freshly scored
+    # symbols off the site. The check was right and the blast radius was wrong.
+    #
+    # This is NOT a backdoor for muting inconvenient checks. A data-integrity
+    # failure — a column that stopped populating, a feed that went stale, a
+    # count that collapsed — means the run's OUTPUT is untrustworthy, and
+    # publishing it is the harm. Those stay fatal. Advisory is only for "a
+    # person needs to look at this eventually", where the run's output is fine.
+    advisory: bool = False
+
     def short(self) -> str:
         """One-line human-readable summary."""
-        icon = "✓" if self.passed else "✗"
+        icon = "✓" if self.passed else ("!" if self.advisory else "✗")
         if self.shape == "count":
             return (
                 f"{icon} {self.name:<55} {self.total} rows "
@@ -240,7 +256,42 @@ _COUNT_ASSERTIONS = [
 # the assertion and the delta is the alarm. A ceiling is only defensible for a
 # quantity with no healthy value of zero — and there is no such quantity in this
 # module today, which is why the list is empty.
-_MAX_COUNT_ASSERTIONS: list[tuple[str, str, int]] = []
+_MAX_COUNT_ASSERTIONS: list[tuple[str, str, int, bool]] = [
+    # THE EXPIRY ON THE 'Unclassified' SECTOR BUCKET.
+    #
+    # classification.py parks symbols Screener has not classified under
+    # UNCLASSIFIED_SECTOR rather than leaving sector NULL, because a null
+    # vanishes from every aggregate that would have found it. The cost of a
+    # named bucket is that it looks settled — a row sitting in a labelled group
+    # reads as classified to anyone skimming, and nothing forces it out.
+    #
+    # This is that force. A brand-new listing with no breadcrumb is NORMAL —
+    # Screener classifies these names once they mature, and all three symbols
+    # in the bucket on 2026-10-04 (ARMEE, QUALIANCE, GENXAI) listed within four
+    # months. So the clock is the symbol's own listing_date, not the run date:
+    # the assertion ignores recent listings entirely and fires only on a symbol
+    # that is still unclassified 30 days after listing, which is a real hole
+    # someone has to resolve by hand.
+    #
+    # The ceiling is ZERO, which is why this does not contradict the argument
+    # above. The objection there is to NONZERO ceilings: a ceiling of 25 encodes
+    # "25 broken rows is the normal operating temperature" and reports green for
+    # as long as the breakage stays the size it was when someone measured it.
+    # Zero encodes nothing. It cannot drift, it cannot be tuned, and there is no
+    # baseline to go stale — the first aged symbol fails it.
+    ("unclassified_sector_aged (>30d since listing)",
+        "SELECT COUNT(*)::int AS n FROM app.universe "
+        " WHERE is_active AND sector = 'Unclassified' "
+        "   AND listing_date IS NOT NULL "
+        "   AND listing_date < CURRENT_DATE - INTERVAL '30 days'", 0,
+     # ADVISORY. Resolving this means a human deciding what GENXAI actually
+     # does and assigning it a sector by hand — no rerun fixes it. Meanwhile the
+     # scoring output is completely sound: the symbol is scored, priced and
+     # clustered, it just sits in a named bucket instead of a real one. Blocking
+     # the snapshot rebuild and the cache purge over that would withhold the
+     # whole site's refresh to protest one unlabelled microcap.
+     True),
+]
 
 
 def _run_pct(conn, name, table_clause, where_clause, column, threshold) -> AssertionResult:
@@ -289,7 +340,7 @@ def _run_count(conn, name, table, where_clause, minimum) -> AssertionResult:
     )
 
 
-def _run_max_count(conn, name, sql, maximum) -> AssertionResult:
+def _run_max_count(conn, name, sql, maximum, advisory=False) -> AssertionResult:
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(sql)
         row = cur.fetchone()
@@ -302,6 +353,7 @@ def _run_max_count(conn, name, sql, maximum) -> AssertionResult:
         populated=n,
         total=n,
         shape="count_max",
+        advisory=advisory,
     )
 
 
@@ -416,8 +468,8 @@ def run_assertions(conn: psycopg.Connection) -> list[AssertionResult]:
         out.append(_run_pct(conn, name, table, where, col, threshold))
     for name, table, where, minimum in _COUNT_ASSERTIONS:
         out.append(_run_count(conn, name, table, where, minimum))
-    for name, sql, maximum in _MAX_COUNT_ASSERTIONS:
-        out.append(_run_max_count(conn, name, sql, maximum))
+    for name, sql, maximum, advisory in _MAX_COUNT_ASSERTIONS:
+        out.append(_run_max_count(conn, name, sql, maximum, advisory))
     return out
 
 

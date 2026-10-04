@@ -2284,7 +2284,14 @@ def score_cmd(
                                 actual=r.actual_pct, threshold=r.threshold_pct,
                                 populated=r.populated, total=r.total)
             log.info("dq_checks_done", passed=passed, failed=failed, total=len(results))
-            dq_failed_names = [r.name for r in results if not r.passed]
+            # Advisory failures are logged above like any other, but they do
+            # NOT enter dq_failed_names — that list is what makes the command
+            # exit 1, and exit 1 after a completed scoring run skips the
+            # snapshot rebuild and the cache purge. See AssertionResult
+            # .advisory for which failures qualify and why that is not a mute
+            # switch.
+            dq_failed_names = [r.name for r in results
+                               if not r.passed and not r.advisory]
         except Exception as e:
             # DQ checks failing to RUN is itself a warning, not a hard error.
             log.warning("dq_checks_errored", error=str(e)[:200])

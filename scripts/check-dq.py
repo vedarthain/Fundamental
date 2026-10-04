@@ -99,15 +99,30 @@ def main() -> int:
     for r in results:
         print(r.short())
 
-    passed, failed = summarize(results)
+    passed, _ = summarize(results)
     print()
-    if failed:
-        print(f"FAIL — {failed} of {len(results)} check(s) below threshold:")
-        for r in results:
-            if not r.passed:
-                print(f"  {r.short()}")
+
+    # Advisory failures are printed but do not set the exit code — they mean a
+    # human has something to look at, not that the data is untrustworthy. See
+    # AssertionResult.advisory. They are listed SEPARATELY rather than folded
+    # into the pass list, because a failure summarised as a pass is how a check
+    # stops being read at all.
+    advisory = [r for r in results if not r.passed and r.advisory]
+    hard = [r for r in results if not r.passed and not r.advisory]
+
+    if advisory:
+        print(f"ADVISORY — {len(advisory)} check(s) need a human, not a rerun:")
+        for r in advisory:
+            print(f"  {r.short()}")
+        print()
+
+    if hard:
+        print(f"FAIL — {len(hard)} of {len(results)} check(s) below threshold:")
+        for r in hard:
+            print(f"  {r.short()}")
         return 1
-    print(f"OK — all {len(results)} checks passed.")
+    print(f"OK — {passed} of {len(results)} checks passed"
+          f"{f', {len(advisory)} advisory' if advisory else ''}.")
     return 0
 
 

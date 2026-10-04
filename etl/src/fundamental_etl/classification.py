@@ -98,6 +98,28 @@ _TAGS = re.compile(r"<[^>]+>")
 SECTOR_DEPTH = 2
 INDUSTRY_DEPTH = 3
 
+# THE HOLDING PEN FOR SYMBOLS SCREENER HAS NOT CLASSIFIED YET.
+#
+# Some genuinely recent listings render a company page with NO classification
+# breadcrumb at all — verified live 2026-10-04 on ARMEE, QUALIANCE and GENXAI,
+# all listed within four months. There is nothing to copy, and this module
+# refuses to guess (see the ELSE-arm note in coverage.py for why a plausible
+# label is worse than no label).
+#
+# Before this, those symbols kept sector NULL. NULL is the exact failure this
+# codebase already has a scar from: cli.py's fetch-classification docstring
+# records 484 symbols that "quietly accumulate with no sector, no cluster, and
+# no score" for five months while every job stayed green. A NULL disappears
+# from GROUP BY, from counts, from any aggregate that touches it — so the hole
+# is invisible precisely to the queries someone would run to find it.
+#
+# A named bucket is countable. `WHERE sector = 'Unclassified'` is one query,
+# and dq.py's unclassified_sector_aged assertion turns it into an alarm.
+# The precedent is dividend_only.SECTOR: this codebase's existing answer to
+# "does not fit the equity taxonomy" is a separate named group, not a null.
+UNCLASSIFIED_SECTOR = "Unclassified"
+UNCLASSIFIED_INDUSTRY = "Pending Classification"
+
 
 def _clean(raw: str) -> str:
     """Anchor innerHTML → the stored label.
@@ -193,7 +215,18 @@ def fetch_many(
             rows = cur.fetchall()
 
     if skip_existing:
-        targets = [r["symbol"] for r in rows if not r["sector"] or not r["industry"]]
+        # The sentinel counts as MISSING, not as present. This is the whole
+        # risk of writing a placeholder: "skip rows that already have a sector"
+        # would see 'Unclassified' as a filled sector and never look at that
+        # symbol again, converting a temporary holding pen into a permanent
+        # one. Screener classifies these names once they mature, so they must
+        # stay in the retry set — the placeholder marks them as unresolved, it
+        # does not resolve them.
+        targets = [
+            r["symbol"] for r in rows
+            if not r["sector"] or not r["industry"]
+            or r["sector"] == UNCLASSIFIED_SECTOR
+        ]
         counts["skipped"] = len(rows) - len(targets)
     else:
         targets = [r["symbol"] for r in rows]
@@ -224,6 +257,28 @@ def fetch_many(
             if not found["sector"] and not found["industry"]:
                 counts["no_data"] += 1
                 log.warning("no_classification", symbol=sym)
+                # Park it in the named bucket instead of leaving NULL. Note the
+                # WHERE guard: this writes the placeholder ONLY over a null, so
+                # a symbol that already carries a real sector can never be
+                # downgraded to 'Unclassified' by a transient Screener blip
+                # that returns an empty breadcrumb. The COALESCE pattern below
+                # protects the real-value path the same way, in the opposite
+                # direction.
+                with app_conn() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            UPDATE app.universe
+                               SET sector    = COALESCE(sector, %s),
+                                   industry  = COALESCE(industry, %s),
+                                   synced_at = %s
+                             WHERE symbol = %s
+                               AND (sector IS NULL OR industry IS NULL)
+                            """,
+                            (UNCLASSIFIED_SECTOR, UNCLASSIFIED_INDUSTRY,
+                             datetime.now(timezone.utc), sym),
+                        )
+                    conn.commit()
             else:
                 if not found["sector"] or not found["industry"]:
                     counts["partial"] += 1
