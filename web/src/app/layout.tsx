@@ -179,12 +179,12 @@ function SiteFooter() {
         <div className="grid grid-cols-2 md:grid-cols-5 gap-8">
           {/* Brand */}
           <div className="col-span-2 md:col-span-1">
-            <Link href="/" className="flex items-center gap-2.5 mb-4">
+            <a href="/" className="flex items-center gap-2.5 mb-4">
               <BanyanLogo />
               <span className="font-display text-[18px] tracking-tight leading-none">
                 EquityRoots
               </span>
-            </Link>
+            </a>
             <p className="text-[12px] muted-text leading-relaxed max-w-[260px]">
               Indian stocks, scored against their real peers. Quality,
               Valuation, and Momentum percentiles — recomputed weekly,

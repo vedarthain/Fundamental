@@ -1,11 +1,9 @@
-"use client";
-
-import Link from "next/link";
 import type { ReactNode } from "react";
 
 /**
- * Logo always targets the marketing `/`. `/dashboard` is unfinished and
- * lives in the account menu — do not steal the public land for it.
+ * Logo always does a full navigation to the marketing landing (`/`).
+ * Do not use next/link here: a client Link can keep a signed-in user
+ * inside the app shell and land on `/dashboard` (the account-menu Home).
  */
 export function BrandLink({
   className,
@@ -15,8 +13,8 @@ export function BrandLink({
   children: ReactNode;
 }) {
   return (
-    <Link href="/" className={className}>
+    <a href="/" className={className}>
       {children}
-    </Link>
+    </a>
   );
 }
