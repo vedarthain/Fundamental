@@ -10,7 +10,7 @@
 # GitHub's `schedule:` — top-of-hour scheduled events get load-shed and whole
 # batches of hourly runs silently never fired. workflow_dispatch events are
 # reliable, so an external pinger gives us dependable timing without GitHub's
-# flaky cron. (RSS is free + the script prunes to a 30-day window, so frequent
+# flaky cron. (RSS is free + the script prunes to a 180-day window, so frequent
 # runs are cheap. Each run also does ~1 BSE scrip-master call.)
 #
 # Required secret: NEON_APP_URL.

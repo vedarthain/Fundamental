@@ -17,7 +17,6 @@
 import Link from "next/link";
 import { getSession } from "@/lib/auth";
 import { WatchlistTabs } from "./WatchlistTabs";
-import { AttentionStrip } from "@/components/AttentionStrip";
 
 export const dynamic = "force-dynamic";
 
@@ -59,7 +58,6 @@ export default async function WatchlistPage() {
 
   return (
     <div className="mx-auto max-w-[1600px] px-4 md:px-6 py-3 md:py-4">
-      <AttentionStrip userId={session.userId} />
       <WatchlistTabs />
     </div>
   );

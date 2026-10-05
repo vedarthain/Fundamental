@@ -181,7 +181,7 @@ export function NewsClient({
       {talked.length > 0 && (
         <section className="card p-3 mb-4">
           <div className="text-[10.5px] uppercase tracking-wide muted-text mb-2">
-            Most talked about · last 3 days
+            Most talked about · last 30 days
           </div>
           <div className="flex flex-wrap gap-1.5">
             {talked.map((t) => (

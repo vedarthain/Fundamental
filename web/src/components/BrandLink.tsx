@@ -7,8 +7,8 @@ import { SIGNED_IN_HOME } from "@/lib/homePath";
 
 /**
  * Logo target: marketing `/` while signed out (and while session is unknown,
- * so anonymous visitors never flash a private route). Signed-in → /dashboard,
- * which redirects to portfolio or watchlist. Footer should keep `/`.
+ * so anonymous visitors never flash a private route). Signed-in → /dashboard.
+ * Footer should keep `/`.
  */
 export function BrandLink({
   className,

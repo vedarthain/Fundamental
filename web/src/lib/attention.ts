@@ -1,5 +1,5 @@
 /**
- * Morning attention payload for the strip on /portfolio and /watchlist.
+ * Morning attention payload for the strip on /dashboard.
  *
  * Reads the last-reconciled alert set (same as /tools/alerts) — does NOT
  * re-evaluate. Headlines are a 2-day intersect with held + saved names;

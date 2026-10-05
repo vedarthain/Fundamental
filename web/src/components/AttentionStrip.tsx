@@ -18,8 +18,9 @@ const HOLD_SENTINEL = "__ALL__";
 export type StaleBroker = { label: string; ageDays: number };
 
 /**
- * Compact "needs a look" strip. Quiet books render nothing.
- * Alerts are the last-reconciled set — never re-evaluated here.
+ * One-line "needs a look" disclosure. Closed by default — five alert
+ * cards on first paint stole the holdings table. Native <details>, no
+ * hydrate. Quiet books render nothing.
  */
 export async function AttentionStrip({
   userId,
@@ -34,53 +35,62 @@ export async function AttentionStrip({
     return null;
   }
 
+  const bits: string[] = [];
+  if (alerts.length > 0) bits.push(`${alerts.length} open`);
+  if (stale.length > 0) bits.push(`${stale.length} stale file${stale.length > 1 ? "s" : ""}`);
+  if (headlines.length > 0) bits.push(`${headlines.length} headline${headlines.length > 1 ? "s" : ""}`);
+  const urgent = alerts.filter((a) => a.severity === "urgent").length;
+
   return (
-    <section
-      className="mb-4 rounded-md border hairline overflow-hidden"
+    <details
+      className="group mb-2 rounded-md border hairline"
       style={{ backgroundColor: "var(--color-card)" }}
-      aria-label="Needs a look today"
     >
-      <div
-        className="flex items-baseline justify-between gap-3 px-3 py-1.5 border-b hairline"
-      >
-        <span className="text-[11px] font-medium muted-text">
-          Needs a look today
-          {alerts.length > 0 ? ` · ${alerts.length} open` : ""}
+      <summary className="cursor-pointer list-none flex items-center gap-2 px-3 py-1.5 text-[12px] select-none">
+        <span className="muted-text transition-transform group-open:rotate-90" aria-hidden>
+          ›
         </span>
-        <Link
-          href="/tools/alerts"
-          className="text-[11px] font-medium"
-          style={{ color: "var(--color-accent-700)" }}
-        >
-          See all alerts
-        </Link>
+        <span className="font-medium">Needs a look</span>
+        <span className="muted-text">· {bits.join(" · ")}</span>
+        {urgent > 0 && (
+          <span
+            className="ml-auto text-[11px] font-medium"
+            style={{ color: "var(--color-score-poor)" }}
+          >
+            {urgent} urgent
+          </span>
+        )}
+      </summary>
+      <div className="border-t hairline">
+        {stale.map((b) => (
+          <p key={b.label} className="px-3 py-1.5 text-[12px] border-b hairline">
+            {b.label} holdings file is {b.ageDays} days old — day-change may
+            be about the CSV, not the market.
+          </p>
+        ))}
+        {alerts.map((a) => (
+          <AlertLine key={`${a.ruleKey}-${a.id}`} row={a} />
+        ))}
+        {headlines.map((h) => (
+          <p key={h.id} className="px-3 py-1.5 text-[12px] border-t hairline">
+            <span className="muted-text text-[11px] mr-1.5">News</span>
+            {h.title}
+            {h.symbols.length > 0 && (
+              <span className="muted-text"> · {h.symbols.slice(0, 3).join(", ")}</span>
+            )}
+          </p>
+        ))}
+        <div className="px-3 py-1.5 border-t hairline">
+          <Link
+            href="/tools/alerts"
+            className="text-[11px] font-medium"
+            style={{ color: "var(--color-accent-700)" }}
+          >
+            See all alerts
+          </Link>
+        </div>
       </div>
-      {stale.map((b) => (
-        <p
-          key={b.label}
-          className="px-3 py-2 text-[13px] border-b hairline"
-          style={{ backgroundColor: "var(--color-tab-tint-about, #fbf2ed)" }}
-        >
-          {b.label} holdings file is {b.ageDays} days old — day-change may be a
-          story about the CSV, not the market.
-        </p>
-      ))}
-      {alerts.map((a) => (
-        <AlertLine key={`${a.ruleKey}-${a.id}`} row={a} />
-      ))}
-      {headlines.map((h) => (
-        <p key={h.id} className="px-3 py-2 text-[13px] border-t hairline">
-          <span className="muted-text text-[11px] mr-2">News</span>
-          {h.title}
-          {h.symbols.length > 0 && (
-            <span className="muted-text text-[12px]">
-              {" "}
-              · {h.symbols.slice(0, 3).join(", ")}
-            </span>
-          )}
-        </p>
-      ))}
-    </section>
+    </details>
   );
 }
 
@@ -92,21 +102,19 @@ function AlertLine({ row }: { row: AlertRow }) {
   return (
     <Link
       href={href}
-      className="grid grid-cols-[72px_minmax(0,1fr)] gap-x-3 px-3 py-2 border-t hairline hover:bg-[var(--color-paper)]"
+      className="grid grid-cols-[56px_minmax(0,1fr)] gap-x-2 px-3 py-1.5 border-t hairline hover:bg-[var(--color-paper)]"
     >
       <span
-        className="text-[11px] font-medium pt-0.5"
+        className="text-[11px] font-medium"
         style={{ color: SEV_COLOR[row.severity] }}
       >
         {SEV_LABEL[row.severity]}
       </span>
-      <span>
-        <span className="font-medium text-[13px] font-mono">
+      <span className="min-w-0 truncate">
+        <span className="font-medium text-[12px] font-mono">
           {row.symbol === HOLD_SENTINEL ? row.title : row.symbol}
         </span>
-        <span className="block text-[12px] muted-text leading-snug mt-0.5">
-          {row.reason}
-        </span>
+        <span className="muted-text text-[12px]"> — {row.reason}</span>
       </span>
     </Link>
   );

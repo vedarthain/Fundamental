@@ -20,7 +20,19 @@ Newest first. Each entry: the decision, why, and what would reverse it.
 
 ---
 
+## 2026-10-05 — `/dashboard` is the signed-in home, not a redirect
+
+`/dashboard` is one composed page: collapsed `AttentionStrip`, latest FII/DII cash-market net from `app.fii_dii_flow` (date shown; do not hide staleness), equity KPIs + top holdings from `loadPortfolio`. Watchlist and calls stay on `/watchlist` — they are not peeks on this page. `/portfolio` stays the full book. The strip does not appear on those two routes. Logo and login land on `/dashboard`. `/` stays the ISR marketing page. Do not paste `PortfolioClient` or `WatchlistClient` onto this route. Do not run a 309-name golden waterfall here. Do not read `market_snapshot_cache` just for FII — that blob is the retired `/market` page.
+
+**Why:** a returning visitor wants one scan of the equity book, not a bounce into whichever workspace was heavier. The list and calls are first-class elsewhere; duplicating them here was clutter.
+
+**Reverses if:** the page becomes a second portfolio (full table, trade log, charts). Then it is drift, and the redirect is the cheaper home again.
+
+---
+
 ## 2026-10-05 — `/dashboard` is a redirect; attention lives on /portfolio and /watchlist
+
+**Superseded the same day** by the composed-home entry above. Left here so the reversal is visible.
 
 Do not build a widget home. `/dashboard` only chooses between `/portfolio` (has holdings, or empty account) and `/watchlist` (saved names or open calls). The morning job is an `AttentionStrip` on those two pages (alerts, stale broker file, headlines that name your symbols). Logo goes there when signed in; `/` stays the ISR marketing page. Alerts are in the account menu, not a seventh desktop nav item.
 

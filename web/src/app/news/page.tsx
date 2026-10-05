@@ -50,21 +50,22 @@ async function loadNews(): Promise<RawNews[]> {
                       ARRAY[]::text[]) AS symbols
         FROM app.news n
         LEFT JOIN app.news_stock ns ON ns.news_id = n.id
-       -- Show a fixed 2-day window (predictable "last 2 days" regardless of
-       -- feed volume), not a fixed count. Retention stays 30d for per-stock
-       -- cards. LIMIT is just a payload safety bound.
-       WHERE n.published_at > now() - interval '2 days'
+       -- Show a 30-day window. Two days went blank the moment ingest lagged
+       -- (local: newest row 2026-09-18, window empty). Retention in
+       -- fetch-news.py is KEEP_DAYS=180; this LIMIT is a payload cap, not
+       -- the store. Per-stock pages still read the full retained history.
+       WHERE n.published_at > now() - interval '30 days'
        GROUP BY n.id
        ORDER BY n.published_at DESC NULLS LAST
-       LIMIT 400
+       LIMIT 5000
     `;
   } catch {
     return [];
   }
 }
-const getNews = unstable_cache(loadNews, ["news-feed-v2"], { revalidate: 300, tags: ["news"] });
+const getNews = unstable_cache(loadNews, ["news-feed-v3"], { revalidate: 300, tags: ["news"] });
 
-// "Most talked about" — stocks ranked by headline mentions in the last 3 days,
+// "Most talked about" — stocks ranked by headline mentions in the last 30 days,
 // with their latest composite percentile for a quality cue.
 async function loadMostTalkedAbout(): Promise<TalkedItem[]> {
   try {
@@ -76,7 +77,7 @@ async function loadMostTalkedAbout(): Promise<TalkedItem[]> {
         LEFT JOIN app.scores s
           ON s.symbol = ns.symbol
          AND s.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
-       WHERE n.published_at > now() - interval '3 days'
+       WHERE n.published_at > now() - interval '30 days'
        GROUP BY ns.symbol, u.company_name, s.composite_pct
        ORDER BY mentions DESC, ns.symbol
        LIMIT 12
@@ -85,7 +86,7 @@ async function loadMostTalkedAbout(): Promise<TalkedItem[]> {
     return [];
   }
 }
-const getTalked = unstable_cache(loadMostTalkedAbout, ["news-talked"], { revalidate: 300, tags: ["news"] });
+const getTalked = unstable_cache(loadMostTalkedAbout, ["news-talked-v2"], { revalidate: 300, tags: ["news"] });
 
 // ----- our context for tagged stocks (the differentiator) -----------------
 // Industry Score + standout pillar (from app.scores) and today's 1D move (from
