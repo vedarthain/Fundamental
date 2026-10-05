@@ -8,7 +8,6 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
-import { SIGNED_IN_HOME } from "@/lib/homePath";
 import { loadPortfolio, type Instrument, type Portfolio } from "@/lib/portfolio";
 import { loadFiiDii, type FiiDay } from "@/lib/fiiDii";
 import { AttentionStrip } from "@/components/AttentionStrip";
@@ -22,7 +21,7 @@ const FII_DAYS = 5;
 export default async function DashboardPage() {
   const session = await getSession();
   if (!session) {
-    redirect(`/login?next=${encodeURIComponent(SIGNED_IN_HOME)}`);
+    redirect(`/login?next=${encodeURIComponent("/dashboard")}`);
   }
 
   const [portfolio, fii] = await Promise.all([

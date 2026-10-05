@@ -3,7 +3,8 @@
  *
  * On success, fires a session-changed event so the top nav swaps
  * "Sign in" for "Watchlist" without a full reload, then redirects to the
- * URL passed via ?next=, falling back to /dashboard (adaptive land).
+ * URL passed via ?next=, falling back to `/` until `/dashboard` is a
+ * finished Home (account menu only).
  */
 import { Suspense } from "react";
 import { LoginForm } from "./LoginForm";

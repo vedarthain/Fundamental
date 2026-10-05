@@ -2,13 +2,10 @@
 
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { useSession } from "@/lib/session-client";
-import { SIGNED_IN_HOME } from "@/lib/homePath";
 
 /**
- * Logo target: marketing `/` while signed out (and while session is unknown,
- * so anonymous visitors never flash a private route). Signed-in → /dashboard.
- * Footer should keep `/`.
+ * Logo always targets the marketing `/`. `/dashboard` is unfinished and
+ * lives in the account menu — do not steal the public land for it.
  */
 export function BrandLink({
   className,
@@ -17,10 +14,8 @@ export function BrandLink({
   className?: string;
   children: ReactNode;
 }) {
-  const { user, loading } = useSession();
-  const href = !loading && user ? SIGNED_IN_HOME : "/";
   return (
-    <Link href={href} className={className}>
+    <Link href="/" className={className}>
       {children}
     </Link>
   );

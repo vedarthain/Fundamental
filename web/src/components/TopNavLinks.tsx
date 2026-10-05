@@ -102,9 +102,6 @@ export function TopNavLinks() {
             : <DesktopLink key={l.href} href={l.href} label={l.label} active={active} />;
         })}
         {showWatchlist && (
-          <DesktopLink href="/dashboard" label="Home" active={isActive(pathname, "/dashboard")} />
-        )}
-        {showWatchlist && (
           <DesktopLink href="/portfolio" label="Portfolio" active={isActive(pathname, "/portfolio")} />
         )}
         {showWatchlist && (

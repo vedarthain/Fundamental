@@ -22,7 +22,7 @@ Newest first. Each entry: the decision, why, and what would reverse it.
 
 ## 2026-10-05 — `/dashboard` is the signed-in home, not a redirect
 
-`/dashboard` is one composed page: collapsed `AttentionStrip`, latest FII/DII cash-market net from `app.fii_dii_flow` (date shown; do not hide staleness), equity KPIs + top holdings from `loadPortfolio`. Watchlist and calls stay on `/watchlist` — they are not peeks on this page. `/portfolio` stays the full book. The strip does not appear on those two routes. Logo and login land on `/dashboard`. `/` stays the ISR marketing page. Do not paste `PortfolioClient` or `WatchlistClient` onto this route. Do not run a 309-name golden waterfall here. Do not read `market_snapshot_cache` just for FII — that blob is the retired `/market` page.
+`/dashboard` is one composed page: collapsed `AttentionStrip`, latest FII/DII cash-market net from `app.fii_dii_flow` (date shown; do not hide staleness), equity KPIs + top holdings from `loadPortfolio`. Watchlist and calls stay on `/watchlist` — they are not peeks on this page. `/portfolio` stays the full book. The strip does not appear on those two routes. Until this page is finished, it is **not** in the main nav and the logo does **not** go there — both stay on `/`. Reach it from the signed-in account menu. Login without `?next=` also lands on `/`. Do not paste `PortfolioClient` or `WatchlistClient` onto this route. Do not run a 309-name golden waterfall here. Do not read `market_snapshot_cache` just for FII — that blob is the retired `/market` page.
 
 **Why:** a returning visitor wants one scan of the equity book, not a bounce into whichever workspace was heavier. The list and calls are first-class elsewhere; duplicating them here was clutter.
 
