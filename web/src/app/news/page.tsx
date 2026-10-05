@@ -5,7 +5,7 @@
  *
  * Server-rendered from app.news (written by scripts/fetch-news.py on a short
  * cron). Categorises + dedups here, then hands off to NewsClient for the
- * interactive layout (category tabs, most-talked strip).
+ * interactive layout (Watchlist / Market / Economy / Policy / Others).
  * Fail-soft: missing tables → empty state, not a 500.
  *
  * No per-user data on this page — ISR-cached at the Vercel edge (revalidate
@@ -14,7 +14,8 @@
  */
 import { unstable_cache } from "next/cache";
 import { sql, golden } from "@/lib/db";
-import { NewsClient, type FeedItem, type NewsCategory, type StockTag, type TalkedItem } from "./NewsClient";
+import { clusterByTitle, isNoiseHeadline } from "@/lib/newsCluster";
+import { NewsClient, type FeedItem, type NewsCategory, type StockTag } from "./NewsClient";
 
 // No session reads — safe to ISR cache at the edge. Revalidate every 5 min
 // (matching getNews TTL so users see fresh headlines without a forced
@@ -64,29 +65,6 @@ async function loadNews(): Promise<RawNews[]> {
   }
 }
 const getNews = unstable_cache(loadNews, ["news-feed-v3"], { revalidate: 300, tags: ["news"] });
-
-// "Most talked about" — stocks ranked by headline mentions in the last 30 days,
-// with their latest composite percentile for a quality cue.
-async function loadMostTalkedAbout(): Promise<TalkedItem[]> {
-  try {
-    return await sql<TalkedItem[]>`
-      SELECT ns.symbol, u.company_name, COUNT(*)::int AS mentions, s.composite_pct
-        FROM app.news_stock ns
-        JOIN app.news n     ON n.id = ns.news_id
-        JOIN app.universe u ON u.symbol = ns.symbol
-        LEFT JOIN app.scores s
-          ON s.symbol = ns.symbol
-         AND s.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
-       WHERE n.published_at > now() - interval '30 days'
-       GROUP BY ns.symbol, u.company_name, s.composite_pct
-       ORDER BY mentions DESC, ns.symbol
-       LIMIT 12
-    `;
-  } catch {
-    return [];
-  }
-}
-const getTalked = unstable_cache(loadMostTalkedAbout, ["news-talked-v2"], { revalidate: 300, tags: ["news"] });
 
 // ----- our context for tagged stocks (the differentiator) -----------------
 // Industry Score + standout pillar (from app.scores) and today's 1D move (from
@@ -186,12 +164,11 @@ function attachTags(
 
 // ----- categorisation + dedup (rule-based; no LLM) ------------------------
 
-const POLICY_RE = /\b(sebi|rbi|govern|govt|ministry|minister|budget|\btax\b|gst|tariff|policy|polic|regulat|parliament|cabinet|fdi|sebi|supreme court|lok sabha|union)\b/i;
-const MACRO_RE  = /\b(inflation|gdp|repo rate|\brepo\b|\biip\b|\bcpi\b|\bwpi\b|rupee|crude|brent|\bfed\b|fomc|economy|economic|trade deficit|current account|unemployment|jobs data|monsoon|forex|reserves)\b/i;
-const MARKETS_RE = /\b(nifty|sensex|\bfii\b|\bdii\b|sell-?off|rally|markets?|bourses?|\bindex\b|indices|futures|f&o|\bipo\b|listing|bull|bear)\b/i;
+const POLICY_RE = /\b(sebi|rbi|ministry|minister|budget|gst|tariff|policy|parliament|cabinet|fdi|supreme court|lok sabha)\b/i;
+const MACRO_RE  = /\b(inflation|gdp|repo rate|\brepo\b|\biip\b|\bcpi\b|\bwpi\b|rupee|crude|brent|\bfed\b|fomc|\beconomy\b|trade deficit|current account|unemployment|monsoon|forex reserves)\b/i;
+const MARKETS_RE = /\b(nifty(?:\s*50)?|sensex|\bfii\b|\bdii\b|bourses?|\bf&o\b|\bipo\b|gift nifty|sgx nifty|bank nifty)\b/i;
 
-function classify(title: string, summary: string | null, tagged: boolean): NewsCategory {
-  if (tagged) return "stocks";
+function classify(title: string, summary: string | null): NewsCategory {
   const t = `${title} ${summary ?? ""}`;
   if (POLICY_RE.test(t)) return "policy";
   if (MACRO_RE.test(t)) return "macro";
@@ -302,83 +279,37 @@ function sentimentOf(title: string, summary: string | null): Sentiment {
   return "neutral"; // conflict or neither → stay neutral
 }
 
-const STOP = new Set(["the", "and", "for", "with", "from", "that", "this", "are", "was", "its", "into", "after", "over", "amid", "say", "says", "will"]);
-function titleTokens(s: string): Set<string> {
-  return new Set(
-    s.toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/)
-      .filter((w) => w.length > 2 && !STOP.has(w)),
-  );
-}
-function jaccard(a: Set<string>, b: Set<string>): number {
-  let inter = 0;
-  for (const x of a) if (b.has(x)) inter++;
-  const union = a.size + b.size - inter;
-  return union === 0 ? 0 : inter / union;
-}
-
-/** Cluster near-identical headlines (same story across outlets / re-posts) so
- *  10 re-reports read as ~3 stories. Keeps the first (most recent) of each
- *  cluster as the representative and counts the rest as `related`. Generic so
- *  the feed and the watchlist sidebar cluster the same way. */
-function clusterByTitle<T extends { title: string }>(rows: T[]): (T & { related: number })[] {
-  const reps: (T & { related: number })[] = [];
-  const repTokens: Set<string>[] = [];
-  for (const r of rows) {
-    const tk = titleTokens(r.title);
-    const hit = repTokens.findIndex((k) => jaccard(k, tk) >= 0.6);
-    if (hit >= 0) {
-      reps[hit].related += 1; // fold into the existing story
-      continue;
-    }
-    repTokens.push(tk);
-    reps.push({ ...r, related: 0 });
-  }
-  return reps;
-}
-
 // Display-time recommendation / tip filter — a second line of defence that
 // drops any headline that slipped through the ingest filter (old rows, RSS
 // encoding quirks). Keep in sync with RECO_RE in scripts/fetch-news.py.
 // "shares?" added alongside "stocks?" to catch "Shares to buy or sell" form.
 const DISPLAY_RECO_RE = /\b(?:stocks?|shares?)\s+to\s+(?:buy|sell|bet|grab|add)\b|\b\d+\s+(?:stocks?|shares?)\s+to\s+(?:buy|sell|bet|grab|add|watch)\b|\brecommends?\s+(?:\w+\s+){0,3}(?:stocks?|shares?)\s+to\s+(?:buy|sell)\b|\btop\s+(?:stock\s+)?picks?\b|\bstock\s+picks?\b|\bbuy\s+or\s+sell\b|\bshould\s+you\s+(?:buy|sell|invest)\b|\bmulti-?bagger\w*|\bstock\s+tips?\b|\b(?:stock|share)\s+recommendations?\b|\btrade\s+setups?\b|\btrading\s+guide\b|\bf&o\s+(?:strateg|pick|trade)\w*|\bintraday\s+(?:pick|tip|trade)\w*|\bbuy\s+this\s+stock\b|\bbest\s+(?:stocks?|shares?)\s+to\b|\bhot\s+stocks?\b/i;
 
-/** Build the feed: (1) drop recommendation/tip headlines, (2) cluster
- *  near-identical titles, then (3) collapse repeated SINGLE-stock stories
- *  into one card. Step 3 is what stops one busy name (e.g. a Vedanta demerger
- *  spawning 6 differently-worded headlines, all tagged only to VEDL) from
- *  flooding the feed — token overlap is too low to cluster them, but they
- *  share the sole stock + window, so we fold them. Multi-stock headlines
- *  (market round-ups) are left alone. */
+/** Build the feed: drop recommendation/tip headlines, then cluster
+ *  near-identical titles. Do not fold every single-stock story into one
+ *  card — Watchlist is stock → headlines, and that needs the distinct
+ *  stories kept. */
 function enrich(rows: RawNews[]): Enriched[] {
   // Drop tip/recommendation headlines at display time (defence-in-depth).
   const noReco = rows.filter(
-    (r) => !DISPLAY_RECO_RE.test(`${r.title} ${r.summary ?? ""}`),
+    (r) =>
+      !DISPLAY_RECO_RE.test(`${r.title} ${r.summary ?? ""}`) &&
+      !isNoiseHeadline(r.title),
   );
-  const clustered = clusterByTitle(noReco);
-  const out: Enriched[] = [];
-  const repBySymbol = new Map<string, number>(); // sole symbol → index in out
-  for (const r of clustered) {
-    const sole = r.symbols.length === 1 ? r.symbols[0] : null;
-    if (sole !== null && repBySymbol.has(sole)) {
-      out[repBySymbol.get(sole)!].related += 1 + r.related; // fold in
-      continue;
-    }
-    if (sole !== null) repBySymbol.set(sole, out.length);
-    out.push({
-      id: r.id, title: r.title, summary: r.summary, url: r.url,
-      published_at: r.published_at, related: r.related,
-      category: classify(r.title, r.summary, r.symbols.length > 0),
-      symbols: r.symbols,
-      regulatory: isRegulatory(r.title, r.summary),
-      sentiment: sentimentOf(r.title, r.summary),
-    });
-  }
-  return out;
+  const clustered = clusterByTitle(noReco, 0.45);
+  return clustered.map((r) => ({
+    id: r.id, title: r.title, summary: r.summary, url: r.url,
+    published_at: r.published_at, related: r.related,
+    category: classify(r.title, r.summary),
+    symbols: r.symbols,
+    regulatory: isRegulatory(r.title, r.summary),
+    sentiment: sentimentOf(r.title, r.summary),
+  }));
 }
 
 export default async function NewsPage() {
-  const [rawNews, talked, ctxRows, moveRows] = await Promise.all([
-    getNews(), getTalked(), getStockCtx(), getMoves1D(),
+  const [rawNews, ctxRows, moveRows] = await Promise.all([
+    getNews(), getStockCtx(), getMoves1D(),
   ]);
 
   // Index our context by symbol, then attach to each headline.
@@ -391,14 +322,14 @@ export default async function NewsPage() {
       <header className="mb-4">
         <h1 className="font-display text-[22px] md:text-[26px] leading-tight">Market News</h1>
         <p className="muted-text text-[12px] mt-1">
-          Headlines tagged to the stocks they mention — each with our Industry Score, price &amp; today&apos;s move
+          Watchlist names, then the market, economy and policy wires. Last 30 days.
         </p>
       </header>
 
       {news.length === 0 ? (
         <div className="card p-6 muted-text text-[13px]">No headlines yet.</div>
       ) : (
-        <NewsClient news={news} talked={talked} />
+        <NewsClient news={news} />
       )}
     </div>
   );
