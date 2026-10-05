@@ -11,8 +11,8 @@
  * no extra round-trip. We also redirect ?next=/watchlist on the login
  * link so users land back here after authenticating.
  *
- * Once signed in, the page delegates to WatchlistClient which calls
- * /api/watchlist (no args → server returns the user's stored list).
+ * Once signed in, useWatchlist bootstraps symbols via GET ?list=1 (app DB
+ * only). WatchlistClient then loads cards once with ?symbols=…&lean=1.
  */
 import Link from "next/link";
 import { getSession } from "@/lib/auth";

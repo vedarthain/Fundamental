@@ -10,6 +10,9 @@
  * Layout: import panel → summary cards → equity curve vs NIFTY 500 →
  * allocation donuts (broker / sector) → per-instrument holdings table with
  * cross-broker drill-down and the Q/V/M scoring overlay for mapped equities.
+ *
+ * Booked P&L, the trade log, the import ledger and (owner) performance arrive
+ * from /api/portfolio/deferred after first paint — see extrasEpoch.
  */
 
 import { useRouter } from "next/navigation";
@@ -91,28 +94,62 @@ type ImportResult = {
 
 type PortfolioTab = "holdings" | "performance" | "transactions" | "booked" | "scorecard" | "returns";
 
+const EMPTY_REALIZED: RealizedPnl = {
+  rows: [],
+  totals: { proceeds: 0, costOfSold: 0, realized: 0, realizedPct: null, winners: 0, losers: 0 },
+};
+const EMPTY_TRADE_LOG: TradeLog = { manual: [], imported: [] };
+
 export function PortfolioClient({
   portfolio,
-  realized,
-  tradeLog,
-  importLog = [],
   owner = false,
-  perf = null,
-  timeline = null,
+  extrasEpoch,
 }: {
   portfolio: Portfolio;
-  realized: RealizedPnl;
-  tradeLog: TradeLog;
-  // Per-broker import ledger for the Transactions tab. Defaulted so a cached
-  // render from a previous deploy that lacks the prop degrades to no panel
-  // rather than a crash — same reason brokerSnapshots is read with `?.`.
-  importLog?: ImportLogRow[];
   owner?: boolean; // gates the (personal, owner-only) Performance analysis tab
-  perf?: PerformanceStats | null; // time-weighted stats (owner-only)
-  timeline?: RealizedTimeline | null; // realized-over-time analytics (owner-only)
+  /** Changes on every RSC render so a router.refresh() refetches deferred tabs. */
+  extrasEpoch: number;
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<PortfolioTab>("holdings");
+  const [realized, setRealized] = useState<RealizedPnl>(EMPTY_REALIZED);
+  const [tradeLog, setTradeLog] = useState<TradeLog>(EMPTY_TRADE_LOG);
+  const [importLog, setImportLog] = useState<ImportLogRow[]>([]);
+  const [perf, setPerf] = useState<PerformanceStats | null>(null);
+  const [timeline, setTimeline] = useState<RealizedTimeline | null>(null);
+  const [extrasStatus, setExtrasStatus] = useState<"loading" | "ok" | "error">("loading");
+
+  useEffect(() => {
+    let alive = true;
+    setExtrasStatus("loading");
+    fetch("/api/portfolio/deferred", { credentials: "include" })
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json() as Promise<{
+          realized: RealizedPnl;
+          tradeLog: TradeLog;
+          importLog: ImportLogRow[];
+          perf: PerformanceStats | null;
+          timeline: RealizedTimeline | null;
+        }>;
+      })
+      .then((data) => {
+        if (!alive) return;
+        setRealized(data.realized ?? EMPTY_REALIZED);
+        setTradeLog(data.tradeLog ?? EMPTY_TRADE_LOG);
+        setImportLog(data.importLog ?? []);
+        setPerf(data.perf ?? null);
+        setTimeline(data.timeline ?? null);
+        setExtrasStatus("ok");
+      })
+      .catch(() => {
+        if (!alive) return;
+        setExtrasStatus("error");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [extrasEpoch]);
   const [broker, setBroker] = useState<string>("zerodha");
   const [kind, setKind] = useState<ImportKind>("holdings");
   const [busy, setBusy] = useState(false);
@@ -191,7 +228,7 @@ export function PortfolioClient({
                 {portfolio.instruments.length}
               </span>
             )}
-            {o.v === "booked" && realized.rows.length > 0 && (
+            {o.v === "booked" && extrasStatus === "ok" && realized.rows.length > 0 && (
               <span className="ml-1.5 text-[11px] tabular-nums" style={{ color: up(realized.totals.realized) ? GREEN : RED }}>
                 {signed(realized.totals.realized)}
               </span>
@@ -204,7 +241,13 @@ export function PortfolioClient({
       </div>
 
       {tab === "booked" ? (
-        <BookedPnl realized={realized} instruments={portfolio.instruments} />
+        extrasStatus === "loading" ? (
+          <p className="muted-text text-[13px] py-8">Loading booked P&amp;L…</p>
+        ) : extrasStatus === "error" ? (
+          <p className="muted-text text-[13px] py-8">Could not load booked P&amp;L. Open this tab again.</p>
+        ) : (
+          <BookedPnl realized={realized} instruments={portfolio.instruments} />
+        )
       ) : tab === "holdings" ? (
         !portfolio.hasHoldings ? (
           <div className="card p-8 text-center mt-6">
@@ -218,7 +261,11 @@ export function PortfolioClient({
           <HoldingsSheets instruments={portfolio.instruments} totalValue={t.currentValue} priceAsOf={portfolio.priceAsOf} priceAsOfTs={portfolio.priceAsOfTs} />
         )
       ) : tab === "performance" && owner ? (
-        !portfolio.hasHoldings && realized.rows.length === 0 ? (
+        extrasStatus === "loading" ? (
+          <p className="muted-text text-[13px] py-8">Loading performance…</p>
+        ) : extrasStatus === "error" ? (
+          <p className="muted-text text-[13px] py-8">Could not load performance. Open this tab again.</p>
+        ) : !portfolio.hasHoldings && realized.rows.length === 0 ? (
           <div className="card p-8 text-center mt-6">
             <h2 className="font-display text-[20px] mb-2">Nothing to analyse yet</h2>
             <p className="muted-text text-[13px] max-w-md mx-auto">
@@ -243,7 +290,13 @@ export function PortfolioClient({
             brokers={portfolio.brokers}
           />
 
-          <ImportLedger rows={importLog} />
+          {extrasStatus === "loading" ? (
+            <p className="muted-text text-[13px] py-4">Loading import history…</p>
+          ) : extrasStatus === "error" ? (
+            <p className="muted-text text-[13px] py-4">Could not load import history.</p>
+          ) : (
+            <ImportLedger rows={importLog} />
+          )}
 
           <div className="mt-4 card p-4 md:p-5 flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -263,7 +316,13 @@ export function PortfolioClient({
             </button>
           </div>
 
-          <TradeLogView log={tradeLog} />
+          {extrasStatus === "loading" ? (
+            <p className="muted-text text-[13px] py-4">Loading trade log…</p>
+          ) : extrasStatus === "error" ? (
+            <p className="muted-text text-[13px] py-4">Could not load the trade log.</p>
+          ) : (
+            <TradeLogView log={tradeLog} />
+          )}
         </>
       ) : tab === "scorecard" && owner ? (
         <PortfolioScorecard />

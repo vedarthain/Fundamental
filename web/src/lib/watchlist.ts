@@ -63,7 +63,7 @@ function clearLocal(): void {
 
 async function fetchServerWatchlist(): Promise<{ signedIn: boolean; symbols: string[] }> {
   try {
-    const r = await fetch("/api/watchlist", { credentials: "include" });
+    const r = await fetch("/api/watchlist?list=1", { credentials: "include" });
     if (!r.ok) return { signedIn: false, symbols: [] };
     const data: { signedIn: boolean; symbols: string[] } = await r.json();
     return { signedIn: !!data.signedIn, symbols: Array.isArray(data.symbols) ? data.symbols : [] };
@@ -311,7 +311,8 @@ function mutateRemove(upper: string): void {
  *
  * All instances share one module-level store (see above), so the server is
  * hit exactly once per page load regardless of how many buttons render.
- * Mode (server vs local) is decided by that single /api/watchlist call.
+ * Mode (server vs local) is decided by GET /api/watchlist?list=1 (symbols
+ * only — card data is a second, explicit ?symbols= fetch on /watchlist).
  */
 export function useWatchlist() {
   const snap = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);

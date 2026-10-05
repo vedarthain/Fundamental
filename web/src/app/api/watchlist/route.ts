@@ -1,23 +1,25 @@
 /**
  * /api/watchlist — read/write the watchlist.
  *
- *   GET    — if ?symbols=A,B,C is provided, returns card data for those
- *            symbols (used by signed-out clients reading their local
- *            list).  If no ?symbols and the user is signed in, returns
- *            their server-side watchlist (the source of truth).
+ *   GET    — two shapes, on purpose:
+ *              no ?symbols (or ?list=1) → { symbols, signedIn } only. This is
+ *              the bootstrap every WatchlistButton shares. It must not touch
+ *              golden: a heart on /stock used to pay the full 309-name quote
+ *              waterfall, then /watchlist paid it a second time for cards.
+ *              ?symbols=A,B / @portfolio → card rows (lean=1 skips glance).
  *   POST   — body { symbol } — adds to the signed-in user's list.
  *   DELETE — ?symbol=X — removes from the signed-in user's list.
  *
  * Signed-out POST/DELETE return 401. The client uses localStorage when
  * signed out, so it never calls those routes anonymously.
  *
- * All card data comes from app.cluster_stocks_panel_cache — same
- * materialised table /sectors uses. Single indexed read.
+ * Card rows read app.cluster_stocks_panel_cache plus golden quotes.
  *
  * Cost (Rule #1):
- *   GET:    one cheap query (rows + optional userlist read)
- *   POST:   one tiny INSERT … ON CONFLICT DO NOTHING
- *   DELETE: one tiny DELETE
+ *   GET list:  watchlist + holdings + open-calls (app only)
+ *   GET cards: quotes + panel cache for the requested symbols
+ *   POST:      one tiny INSERT … ON CONFLICT DO NOTHING
+ *   DELETE:    one tiny DELETE
  */
 import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
@@ -310,6 +312,9 @@ async function loadSnapshotDate(): Promise<string | null> {
 
 export async function GET(req: NextRequest) {
   const param = req.nextUrl.searchParams.get("symbols");
+  // List-only: the shared useWatchlist bootstrap (and any ?list=1 caller).
+  // Must return BEFORE loadQuotes — that is the whole point of splitting GET.
+  const listOnly = param === null || req.nextUrl.searchParams.get("list") === "1";
   // `lean=1` — skip the three loaders that exist purely for the scorecard CARD
   // UI: glance (sector-aware peer fundamentals), verdict, and glance_keys.
   // Measured on a 92-name portfolio they are 65% of the response body
@@ -371,6 +376,15 @@ export async function GET(req: NextRequest) {
     // Stored watchlist first (recency order), then any held/called names not
     // already present, capped at MAX_SYMBOLS.
     symbols = Array.from(new Set([...base, ...extra])).slice(0, MAX_SYMBOLS);
+  }
+
+  if (listOnly) {
+    return NextResponse.json({
+      rows: [],
+      symbols,
+      signedIn: session !== null,
+      snapshot_date: null,
+    });
   }
 
   const [rows, snapshotDate, persistence, quotes, meta, glance, verdicts, scorecardKeys] = await Promise.all([

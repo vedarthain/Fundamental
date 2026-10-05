@@ -310,7 +310,9 @@ export function WatchlistClient({ source }: { source?: WatchSource } = {}) {
     // The selected card now gets its glance rows from /api/watchlist/extras,
     // which it was already fetching on open anyway — so this costs no extra
     // round-trip, it just moves the payload off the critical path.
-    fetch(`/api/watchlist?symbols=${encodeURIComponent(symbols.join(","))}&lean=1`)
+    fetch(`/api/watchlist?symbols=${encodeURIComponent(symbols.join(","))}&lean=1`, {
+      credentials: "include",
+    })
       .then((r) => {
         if (!r.ok) throw new Error(`Server returned ${r.status}`);
         return r.json();

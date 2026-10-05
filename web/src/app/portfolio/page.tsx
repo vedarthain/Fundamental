@@ -9,7 +9,7 @@
  */
 import Link from "next/link";
 import { getSession, isAdminRequest } from "@/lib/auth";
-import { loadPortfolio, loadRealizedPnl, loadPerformanceStats, loadRealizedTimeline, loadTradeLog, loadImportLog } from "@/lib/portfolio";
+import { loadPortfolio } from "@/lib/portfolio";
 import { PortfolioClient } from "./PortfolioClient";
 
 export const dynamic = "force-dynamic";
@@ -50,30 +50,20 @@ export default async function PortfolioPage() {
     );
   }
 
-  const [portfolio, realized, tradeLog, importLog, owner] = await Promise.all([
+  // Holdings first. Realized / trade log / import ledger / performance are
+  // fetched after paint from /api/portfolio/deferred so a 1,800-row trade log
+  // cannot stall the table the visitor actually opened.
+  const [portfolio, owner] = await Promise.all([
     loadPortfolio(session.userId),
-    loadRealizedPnl(session.userId),
-    loadTradeLog(session.userId),
-    loadImportLog(session.userId),
-    isAdminRequest(), // Performance tab is owner-only for now.
+    isAdminRequest(),
   ]);
-
-  // Time-weighted stats + realized timeline are only surfaced on the owner-gated
-  // Performance tab, so skip the extra queries for everyone else.
-  const [perf, timeline] = owner
-    ? await Promise.all([loadPerformanceStats(session.userId), loadRealizedTimeline(session.userId)])
-    : [null, null];
 
   return (
     <div className="mx-auto max-w-[1300px] px-4 md:px-6 py-6 md:py-8">
       <PortfolioClient
         portfolio={portfolio}
-        realized={realized}
-        tradeLog={tradeLog}
-        importLog={importLog}
         owner={owner}
-        perf={perf}
-        timeline={timeline}
+        extrasEpoch={Date.now()}
       />
     </div>
   );
