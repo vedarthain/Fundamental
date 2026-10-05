@@ -162,6 +162,14 @@ export function UserMenu({ email, displayName, isAdmin = false }: Props) {
             </div>
           </div>
           <Link
+            href="/tools/alerts"
+            role="menuitem"
+            onClick={() => setOpen(false)}
+            className="block px-4 py-2.5 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
+          >
+            Alerts
+          </Link>
+          <Link
             href="/portfolio"
             role="menuitem"
             onClick={() => setOpen(false)}

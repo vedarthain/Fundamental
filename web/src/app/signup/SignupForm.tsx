@@ -4,12 +4,13 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { broadcastSessionChange } from "@/lib/session-client";
+import { SIGNED_IN_HOME } from "@/lib/homePath";
 import { mergeLocalWatchlistIntoServer, mergeLegacyStarredIntoWatchlist } from "@/lib/watchlist";
 
 export function SignupForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const next = searchParams.get("next") || "/watchlist";
+  const next = searchParams.get("next") || SIGNED_IN_HOME;
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -141,7 +142,7 @@ export function SignupForm() {
       <div className="text-center text-[12px] muted-text pt-1">
         Already have one?{" "}
         <Link
-          href={`/login${next !== "/watchlist" ? `?next=${encodeURIComponent(next)}` : ""}`}
+          href={`/login${next !== SIGNED_IN_HOME ? `?next=${encodeURIComponent(next)}` : ""}`}
           className="underline"
           style={{ color: "var(--color-accent-600)" }}
         >

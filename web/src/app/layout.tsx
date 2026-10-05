@@ -4,6 +4,7 @@ import Link from "next/link";
 import { StockSearch } from "@/components/StockSearch";
 import { SnapshotRibbon } from "@/components/SnapshotRibbon";
 import { TopNavLinks } from "@/components/TopNavLinks";
+import { BrandLink } from "@/components/BrandLink";
 import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import { EngagementTracker } from "@/components/EngagementTracker";
@@ -89,7 +90,7 @@ function SiteHeader() {
         width with room to spare for it.
       */}
       <div className="hidden lg:flex mx-auto max-w-[1300px] px-6 h-14 items-center gap-6">
-        <Link href="/" className="flex items-center gap-2.5 shrink-0">
+        <BrandLink className="flex items-center gap-2.5 shrink-0">
           <BanyanLogo />
           <div className="flex flex-col leading-none gap-0.5">
             <div className="flex items-baseline gap-2">
@@ -100,7 +101,7 @@ function SiteHeader() {
               Indian fundamentals, made easy — with a sharper view.
             </span>
           </div>
-        </Link>
+        </BrandLink>
         {/* min-w-0 lets the search yield width instead of forcing the row
             wider. Without it this flex item refuses to go below its content. */}
         <div className="flex-1 min-w-0 justify-center flex">
@@ -115,7 +116,7 @@ function SiteHeader() {
             UserMenu lives inside TopNavLinks; we render it via a small
             mobile-only slot rather than duplicating the auth logic here. */}
         <div className="h-12 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2 shrink-0">
+          <BrandLink className="flex items-center gap-2 shrink-0">
             <BanyanLogo />
             <div className="flex items-baseline gap-2">
               <span className="font-display text-[17px] tracking-tight">EquityRoots</span>
@@ -123,7 +124,7 @@ function SiteHeader() {
                 NSE India
               </span>
             </div>
-          </Link>
+          </BrandLink>
         </div>
 
         {/* Row 2: stock search — restored on mobile in its own row, no

@@ -4,12 +4,13 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { broadcastSessionChange } from "@/lib/session-client";
+import { SIGNED_IN_HOME } from "@/lib/homePath";
 import { mergeLocalWatchlistIntoServer, mergeLegacyStarredIntoWatchlist } from "@/lib/watchlist";
 
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const next = searchParams.get("next") || "/watchlist";
+  const next = searchParams.get("next") || SIGNED_IN_HOME;
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -109,7 +110,7 @@ export function LoginForm() {
       <div className="text-center text-[12px] muted-text pt-1">
         No account?{" "}
         <Link
-          href={`/signup${next !== "/watchlist" ? `?next=${encodeURIComponent(next)}` : ""}`}
+          href={`/signup${next !== SIGNED_IN_HOME ? `?next=${encodeURIComponent(next)}` : ""}`}
           className="underline"
           style={{ color: "var(--color-accent-600)" }}
         >

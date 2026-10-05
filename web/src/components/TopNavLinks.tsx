@@ -465,6 +465,15 @@ function PopupSheet({
               </div>
               {showWatchlist && (
                 <PopupLink
+                  href="/tools/alerts"
+                  label="Alerts"
+                  sublabel="Holdings that need a look"
+                  active={isActive(pathname, "/tools/alerts")}
+                  onClose={onClose}
+                />
+              )}
+              {showWatchlist && (
+                <PopupLink
                   href="/portfolio"
                   label="Your portfolio"
                   sublabel="Broker holdings, valued & scored"

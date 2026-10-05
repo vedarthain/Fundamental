@@ -11,6 +11,7 @@ import Link from "next/link";
 import { getSession, isAdminRequest } from "@/lib/auth";
 import { loadPortfolio } from "@/lib/portfolio";
 import { PortfolioClient } from "./PortfolioClient";
+import { AttentionStrip } from "@/components/AttentionStrip";
 
 export const dynamic = "force-dynamic";
 
@@ -60,6 +61,13 @@ export default async function PortfolioPage() {
 
   return (
     <div className="mx-auto max-w-[1300px] px-4 md:px-6 py-6 md:py-8">
+      <AttentionStrip
+        userId={session.userId}
+        staleBrokers={portfolio.brokerSnapshots.map((b) => ({
+          label: b.label,
+          ageDays: b.ageDays,
+        }))}
+      />
       <PortfolioClient
         portfolio={portfolio}
         owner={owner}

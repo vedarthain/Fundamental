@@ -17,6 +17,7 @@
 import Link from "next/link";
 import { getSession } from "@/lib/auth";
 import { WatchlistTabs } from "./WatchlistTabs";
+import { AttentionStrip } from "@/components/AttentionStrip";
 
 export const dynamic = "force-dynamic";
 
@@ -58,9 +59,7 @@ export default async function WatchlistPage() {
 
   return (
     <div className="mx-auto max-w-[1600px] px-4 md:px-6 py-3 md:py-4">
-      {/* No page header. The nav already says where you are, and the tab strip
-          below repeats it — the title plus its description cost ~64px of the
-          first screen to tell you something you already knew. */}
+      <AttentionStrip userId={session.userId} />
       <WatchlistTabs />
     </div>
   );
