@@ -1441,7 +1441,9 @@ function portfolioFingerprint(holdings: HoldingRow[], manualSymbols: string[]): 
  *  (userId, IST day, holdings fingerprint), so repeat opens of an unchanged
  *  portfolio cost ZERO golden queries on a warm hit. */
 export async function loadPortfolio(userId: number): Promise<Portfolio> {
-  const holdings = await sql<HoldingRow[]>`
+  // These three do not depend on each other. Waiting in series was three
+  // Neon round-trips before the cached valuation could even start.
+  const holdingsP = sql<HoldingRow[]>`
     SELECT h.broker, h.raw_symbol, h.isin, h.symbol, h.is_mapped, h.quantity::text,
            h.avg_cost::text, h.broker_ltp::text, h.broker_cur_value::text,
            h.broker_day_pct::text, h.imported_at::text, h.first_seen_at::text,
@@ -1453,13 +1455,11 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
       -- give the bare NSE ticker and no ISIN at all. ISIN first because it is
       -- an identifier rather than a label; the ticker only as a fallback. These
       -- must stay LEFT joins — an unresolvable ETF has to keep rendering at its
-      -- broker value, not vanish.
+      // broker value, not vanish.
       LEFT JOIN app.upstox_instrument byIsin   ON byIsin.isin = h.isin
       LEFT JOIN app.upstox_instrument byTicker ON byTicker.symbol = upper(trim(h.raw_symbol))
      WHERE h.user_id = ${userId}
   `;
-  if (holdings.length === 0) return emptyPortfolio();
-
   // Symbols the user has hand-entered trades for. Each such symbol is reconciled
   // into a single synthetic 'derived' row (snapshot opening lot + manual trades,
   // see derivedHoldings.ts); we suppress its raw broker snapshot rows below so
@@ -1471,15 +1471,21 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
   // no longer participates in the derivation has no business suppressing the
   // snapshot either — keeping it here is how a matched hand-entry kept erasing
   // a live position.
-  const manualRows = await sql<{ symbol: string }[]>`
+  const manualP = sql<{ symbol: string }[]>`
     SELECT DISTINCT symbol FROM app.portfolio_transaction
      WHERE user_id = ${userId} AND source_file = 'manual-entry' AND symbol IS NOT NULL
        AND matched_at IS NULL
   `;
+  const buyP = currentLegBuyDateRows(userId);
+
+  const holdings = await holdingsP;
+  if (holdings.length === 0) return emptyPortfolio();
+
+  const [manualRows, buyRows] = await Promise.all([manualP, buyP]);
   const manualSymbols = manualRows.map((r) => r.symbol).sort();
 
   const firstBuyBySym: Record<string, string> = {};
-  for (const r of await currentLegBuyDateRows(userId)) {
+  for (const r of buyRows) {
     if (r.d) firstBuyBySym[r.symbol] = r.d;
   }
 
@@ -1768,14 +1774,30 @@ async function computePortfolio(
            WHERE r.symbol = ANY(${mappedSyms})
         `
       : Promise.resolve([] as CacheRow[]),
+    // Last two closes. A window over every daily bar for the book read
+    // 400,361 rows and sorted them to disk (272 ms locally) to keep two
+    // prices per name. The primary key is (symbol, interval, date); without
+    // `interval = '1d'` in the predicate Postgres cannot walk it backwards,
+    // so LIMIT 2 still scanned each symbol's whole history. With the
+    // predicate it is one backward index seek per symbol (3 ms, 184/184
+    // rows identical to the window on the live book).
     gsyms.length
       ? golden<{ symbol: string; close: string; date: string; rn: string }[]>`
-          SELECT symbol, close::text AS close, date::text AS date, rn FROM (
-            SELECT symbol, close, date,
-                   row_number() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
-            FROM golden.price_history_1d
-            WHERE symbol = ANY(${gsyms}) AND close IS NOT NULL
-          ) t WHERE rn <= 2
+          SELECT c.symbol, p.close::text AS close, p.date::text AS date, p.rn::text AS rn
+            FROM unnest(${gsyms}::text[]) AS c(symbol)
+            CROSS JOIN LATERAL (
+              SELECT close, date,
+                     row_number() OVER (ORDER BY date DESC) AS rn
+                FROM (
+                  SELECT close, date
+                    FROM golden.price_history_1d ph
+                   WHERE ph.symbol = c.symbol
+                     AND ph.interval = '1d'
+                     AND ph.close IS NOT NULL
+                   ORDER BY ph.date DESC
+                   LIMIT 2
+                ) s
+            ) p
         `
       : Promise.resolve([] as { symbol: string; close: string; date: string; rn: string }[]),
     sql<{ d: string | null }[]>`

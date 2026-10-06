@@ -15,6 +15,7 @@
  * from /api/portfolio/deferred after first paint — see extrasEpoch.
  */
 
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
@@ -23,10 +24,20 @@ import {
   PieChart, Pie, Cell, BarChart, Bar, ScatterChart, Scatter, ZAxis, ReferenceLine,
 } from "recharts";
 import type { Portfolio, Instrument, RealizedPnl, RealizedLot, RealizedTerm, PerformanceStats, RealizedTimeline, TradeLog, TradeRow, ImportLogRow } from "@/lib/portfolio";
-import { TradeSheet } from "@/components/ManualTradeSheet";
-import { PortfolioScorecard } from "./PortfolioScorecard";
-import { PortfolioReturnsTable } from "./PortfolioReturnsTable";
 import { refreshWatchlist } from "@/lib/watchlist";
+
+// Holdings is the tab that opens. Scorecard pulls in the whole watchlist
+// client, and Returns / the trade sheet are their own trees — keep them
+// out of the first-load bundle.
+const PortfolioScorecard = dynamic(() =>
+  import("./PortfolioScorecard").then((m) => m.PortfolioScorecard),
+);
+const PortfolioReturnsTable = dynamic(() =>
+  import("./PortfolioReturnsTable").then((m) => m.PortfolioReturnsTable),
+);
+const TradeSheet = dynamic(() =>
+  import("@/components/ManualTradeSheet").then((m) => m.TradeSheet),
+);
 
 const BROKERS = [
   { value: "upstox", label: "Upstox" },
