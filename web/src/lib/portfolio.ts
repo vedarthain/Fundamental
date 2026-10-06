@@ -1455,7 +1455,7 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
       -- give the bare NSE ticker and no ISIN at all. ISIN first because it is
       -- an identifier rather than a label; the ticker only as a fallback. These
       -- must stay LEFT joins — an unresolvable ETF has to keep rendering at its
-      // broker value, not vanish.
+      -- broker value, not vanish.
       LEFT JOIN app.upstox_instrument byIsin   ON byIsin.isin = h.isin
       LEFT JOIN app.upstox_instrument byTicker ON byTicker.symbol = upper(trim(h.raw_symbol))
      WHERE h.user_id = ${userId}
