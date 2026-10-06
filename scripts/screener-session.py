@@ -53,13 +53,31 @@ It also never prints a cookie value, and never writes credentials anywhere. The
 only artefacts are .env.local (already gitignored) and the app.screener_session
 row.
 
-ON PUTTING THE PASSWORD IN CI
-----------------------------
-Deliberately not done. Doing it would let a scheduled job rotate the session
-unattended and remove this failure mode entirely, at the cost of a reusable
-credential sitting in CI instead of a cookie that expires on its own. That is a
-security tradeoff with an owner, and it should be made explicitly rather than
-arrived at because it was convenient.
+ON PUTTING THE PASSWORD IN CI — DECIDED YES, 2026-10-06
+-------------------------------------------------------
+This section used to say "deliberately not done", on the grounds that a
+reusable credential in CI is worse than a cookie that expires on its own. The
+tradeoff was left open for an owner to settle. Deb settled it on 2026-10-06,
+and the reason is that the premise had been measured wrong.
+
+"Expires on its own" was assumed to mean roughly monthly. It does not. The
+cookie rotated at 2026-10-03 00:13 IST was dead by 2026-10-06 00:41 UTC —
+THREE DAYS — after working for the 10-03 and 10-04 runs. Verified by hand
+against RELIANCE's own Key Points fragment, not just the failing probe symbol,
+so it was the session and not one company's page. At that cadence a human
+rotation is not a monthly chore, it is a standing outage: four scheduled jobs
+break, each opens an issue, and the backlog they exist to drain stops draining.
+
+So the cost of NOT having credentials in CI is a pipeline that is broken more
+often than it works. The credential is scoped to a free read-only data account
+with no payment method and no write access to anything of ours, and it buys a
+job that repairs itself. That is the trade, stated so the next reader can
+re-open it rather than rediscover it.
+
+What did NOT change: there is still exactly ONE copy of the cookie, in
+app.screener_session. `--ensure` writes that row and nothing else. The bug this
+file was created to kill was two copies expiring independently, and putting the
+PASSWORD in CI does not resurrect it — a password is not a second cookie.
 """
 from __future__ import annotations
 
@@ -153,16 +171,35 @@ def login(email: str, password: str) -> tuple[str, str]:
         return sid, csrf or token
 
 
-def probe(sid: str, csrf: str) -> str:
+def probe(sid: str, csrf: str, strict: bool = True) -> str | None:
     """Prove the cookie is authenticated. Returns a short description on success.
 
     Anonymous visitors can read Screener company pages, so only the login-gated
     Key Points fragment settles the question.
+
+    `strict` is the difference between the two callers. After a login, a failed
+    probe is fatal — it means we are about to store a cookie we cannot prove,
+    which is the one thing this script refuses to do. For `--ensure`, a failed
+    probe is the NORMAL case it exists to handle: it must return None so the
+    caller can log in, not exit the process. Passing strict=False for the
+    post-login probe would silently reintroduce writing unverified cookies.
     """
+    def no(msg: str) -> None:
+        if strict:
+            fail(msg)
+        print(f"  probe: {msg}")
+
     headers = {"User-Agent": UA, "Cookie": f"sessionid={sid}; csrftoken={csrf}"}
     with httpx.Client(timeout=30.0, follow_redirects=True, headers=headers) as c:
         for sym in PROBE_SYMBOLS:
-            page = c.get(f"{BASE}/company/{sym}/consolidated/")
+            try:
+                page = c.get(f"{BASE}/company/{sym}/consolidated/")
+            except httpx.HTTPError as e:
+                # A network failure is not evidence the cookie is dead. Under
+                # --ensure, treating it as such would log in and rotate a
+                # perfectly good session on every blip.
+                no(f"{sym} unreachable ({e.__class__.__name__})")
+                continue
             m = DATA_URL_RE.search(page.text)
             if not m:
                 continue
@@ -175,15 +212,18 @@ def probe(sid: str, csrf: str) -> str:
                          "Referer": f"{BASE}/company/{sym}/consolidated/"},
             ).text
             if LOGGED_OUT_RE.search(frag):
-                fail(f"the Key Points fragment for {sym} was served as a login "
-                     f"page — this cookie is NOT authenticated. Nothing was "
-                     f"written.")
+                no(f"the Key Points fragment for {sym} was served as a login "
+                   f"page — this cookie is NOT authenticated. Nothing was "
+                   f"written.")
+                return None
             if len(frag) < 200:
-                fail(f"Key Points fragment for {sym} was only {len(frag)} bytes. "
-                     f"Nothing was written.")
+                no(f"Key Points fragment for {sym} was only {len(frag)} bytes. "
+                   f"Nothing was written.")
+                return None
             return f"{sym}: {len(frag)} byte fragment"
-    fail("no probe symbol exposed a Key Points data-url — cannot verify the "
-         "session, so nothing was written")
+    no("no probe symbol exposed a Key Points data-url — cannot verify the "
+       "session, so nothing was written")
+    return None
 
 
 def write_env(path: Path, updates: dict[str, str]) -> None:
@@ -219,6 +259,29 @@ def write_env(path: Path, updates: dict[str, str]) -> None:
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
         raise
+
+
+def read_db_session() -> tuple[str, str] | None:
+    """The cookie the WORKFLOWS actually read. Returns None if there isn't one.
+
+    --ensure must probe this row and not .env.local. On a CI runner .env.local
+    does not exist at all, and on this laptop it can hold a different (usually
+    older) cookie than the one the scheduled jobs use — so probing the file
+    would answer a question nobody asked and bless or condemn the wrong value.
+    """
+    url = os.environ.get("APP_DB_URL")
+    if not url:
+        fail("APP_DB_URL not set — --ensure reads app.screener_session.")
+
+    import psycopg
+
+    with psycopg.connect(url) as conn, conn.cursor() as cur:
+        cur.execute("SELECT sessionid, csrftoken FROM app.screener_session "
+                    "WHERE id = 1")
+        row = cur.fetchone()
+    if not row or not row[0] or not row[1]:
+        return None
+    return row[0], row[1]
 
 
 def write_db(sid: str, csrf: str, symbol: str) -> str:
@@ -263,10 +326,43 @@ def main() -> int:
     ap.add_argument("--check", action="store_true",
                     help="Probe the CURRENT cookie and exit. Writes nothing, "
                          "logs in to nothing, needs no credentials.")
+    ap.add_argument("--ensure", action="store_true",
+                    help="CI entrypoint. Probe app.screener_session and log in "
+                         "ONLY if it is dead. Exits 0 when the stored cookie "
+                         "still works, so it is cheap to run before every job.")
     args = ap.parse_args()
 
     env = {**read_env(ENV_FILE), **{k: v for k, v in os.environ.items()
                                     if k.startswith("SCREENER_")}}
+
+    if args.ensure:
+        # Probe FIRST. Logging in unconditionally would mint a new session on
+        # every scheduled run — more logins than a human ever made, against an
+        # account whose rate limits are not ours to discover, and it would
+        # invalidate the cookie a concurrently-running job is holding.
+        current = read_db_session()
+        if current and probe(*current, strict=False):
+            print("session is LIVE — no login needed")
+            return 0
+        print("stored session is dead or missing — logging in")
+
+        email = env.get("SCREENER_EMAIL")
+        password = env.get("SCREENER_PASSWORD")
+        if not email or not password:
+            fail("the stored session is dead and SCREENER_EMAIL / "
+                 "SCREENER_PASSWORD are not set, so it cannot be renewed. In "
+                 "CI these are repository secrets; locally they go in "
+                 ".env.local. Rotate by hand at /admin/screener meanwhile.")
+
+        sid, csrf = login(email, password)
+        where = probe(sid, csrf)                 # strict: fails before writing
+        host = write_db(sid, csrf, where.split(":")[0])
+        # .env.local is deliberately NOT written here. On a runner that would
+        # create a file holding a live cookie in the workspace; on the laptop
+        # it would be a side effect of a command whose job is the DB row.
+        print(f"session renewed and verified ({where})")
+        print(f"updated app.screener_session on {host}")
+        return 0
 
     if args.check:
         sid, csrf = env.get("SCREENER_SESSIONID"), env.get("SCREENER_CSRFTOKEN")

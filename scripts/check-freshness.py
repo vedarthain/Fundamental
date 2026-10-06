@@ -263,10 +263,26 @@ def check_price_age(conn: psycopg.Connection, max_days: int) -> tuple[bool, str]
     )
 
 
-# Screener's daily key-insights wall returns HTTP 200 with a ~381-byte stub
-# saying "We allow 80 key-insights per day". It is a quota, not a rate limit;
-# sleeping does not clear it.
-_QUOTA_RE = re.compile(r"key-insights per day", re.I)
+# Screener's key-insights wall returns HTTP 200 with a ~400-byte stub instead
+# of the fragment. It is a quota, not a rate limit; sleeping does not clear it.
+#
+# The wording CHANGED on or before 2026-10-06, from a daily cap ("We allow 80
+# key-insights per day") to a rolling one ("Paid users can access 800
+# key-insights within the last 30 days", plus "Please contact support to read
+# more key insights"). This regex matched only the old phrasing, so the stub
+# stopped registering as a quota here at the same moment it stopped
+# registering in build-company-overview.mjs — the two copies failed together,
+# which is exactly the risk of keeping a vendor's prose in two files.
+#
+# MUST STAY IDENTICAL to build-company-overview.mjs::QUOTA_MARKER. This check
+# exists to predict that script's behaviour, so a disagreement makes it lie.
+# Both wordings are kept: the endpoint has reworded once already.
+_QUOTA_RE = re.compile(
+    r"key[-\s]insights?\s+per\s+day"
+    r"|key[-\s]insights?\s+within\s+the\s+last"
+    r"|contact\s+support\s+to\s+read\s+more\s+key[-\s]insights?",
+    re.I,
+)
 # A correct Key Points response is an XHR FRAGMENT. It contains no <html>
 # element and no Django CSRF field, so their presence means we were served a
 # page — the login page, the register page, or any future interstitial —
@@ -308,8 +324,9 @@ def _probe_screener_session(symbol: str, sid: str, csrf: str) -> tuple[str, str]
     Returns (verdict, detail) where verdict is one of:
       'live'      — served the wiki fragment. The session works.
       'dead'      — served a login/register page. Rotate the cookie.
-      'quota'     — hit the 80/day key-insights wall. See below: this is
-                    EVIDENCE OF A LIVE SESSION, not an unknown.
+      'quota'     — hit the key-insights wall (800 per rolling 30 days as of
+                    2026-10-06). See below: this is EVIDENCE OF A LIVE
+                    SESSION, not an unknown.
       'no_cookie' — the env vars are not set here.
       'unknown'   — transport error, or the probe symbol lost its wiki page.
                     No information; must not be reported as either state.
@@ -356,7 +373,9 @@ def _probe_screener_session(symbol: str, sid: str, csrf: str) -> tuple[str, str]
         return "unknown", f"{type(e).__name__}: {str(e)[:80]}"
 
     if _QUOTA_RE.search(frag):
-        return "quota", f"{symbol}: daily key-insights allowance exhausted"
+        return "quota", (f"{symbol}: key-insights allowance exhausted "
+                         f"(800 per rolling 30 days — not a daily reset, and "
+                         f"not a session problem)")
     if _LOGGED_OUT_RE.search(frag):
         return "dead", (f"{symbol}: served Screener's login/register page "
                         f"instead of the wiki fragment")

@@ -163,14 +163,40 @@ function cleanWiki(html) {
 }
 
 /**
- * Screener's Key Points endpoint enforces a HARD DAILY QUOTA, not a rate limit.
- * Past it, /wiki/company/{id}/commentary/v2/ returns HTTP 200 with a 381-byte
- * stub whose text is:
+ * Screener's Key Points endpoint enforces a HARD QUOTA, not a rate limit.
+ * Past it, /wiki/company/{id}/commentary/v2/ returns HTTP 200 with a ~400-byte
+ * stub instead of the fragment.
+ *
+ * THE QUOTA CHANGED SHAPE, AND THAT IS WHY THIS COMMENT IS LONG.
+ *
+ * Original wording (measured 2026-09-24), a DAILY cap:
  *
  *   "We allow 80 key-insights per day. This is to prevent users from copying
  *    and distributing them."
  *
- * Sleeping does not clear it. It resets daily.
+ * Current wording (measured 2026-10-06), a ROLLING 30-DAY cap:
+ *
+ *   "Please contact support to read more key insights."
+ *   "Paid users can access 800 key-insights within the last 30 days. We
+ *    restrict them to prevent copying and free distribution."
+ *
+ * The marker below matched only the first. When Screener reworded it, the stub
+ * stopped being recognised as a quota wall — and because it contains no <html>
+ * and no csrfmiddlewaretoken it was not recognised as a logged-out page
+ * either. It fell through to "this company has no Key Points", which made the
+ * startup session probe report a DEAD SESSION and exit 1 every night. The
+ * cookie was fine the whole time. Three layers each misread the stub as the
+ * failure one layer down.
+ *
+ * So the marker is now an alternation over MEASURED strings, old and new both
+ * kept: this endpoint has rewritten its refusal once and may do it again, and
+ * the old phrasing costs one regex branch to keep. The lesson is the cheaper
+ * half — a sentinel matched on a vendor's prose is a dependency on that prose.
+ *
+ * "Sleeping does not clear it" still holds, but "run again tomorrow" no longer
+ * does: at 800 per ROLLING 30 days, a day of 100 borrows from the next 29.
+ * Sustainable rate is ~26/day. Exceeding it does not throttle, it mutes the
+ * endpoint until the window slides.
  *
  * WHY THIS CONSTANT EXISTS AS A SEPARATE, EXPLICIT CHECK. The first 100-symbol
  * run got Key Points for 81 companies and then silently fell back to yfinance
@@ -185,8 +211,12 @@ function cleanWiki(html) {
  * sentinel below is a THIRD return value, distinct from null, and the caller
  * aborts on it rather than degrading.
  */
-const QUOTA_MARKER = /key-insights per day/i;
-const QUOTA = Symbol("screener-daily-quota-exhausted");
+// Each branch is a string measured off a real stub, not a guess. Hyphenation
+// varies between the two wordings ("key-insights" vs "key insights"), so the
+// separator is a class rather than a literal.
+const QUOTA_MARKER =
+  /key[-\s]insights?\s+per\s+day|key[-\s]insights?\s+within\s+the\s+last|contact\s+support\s+to\s+read\s+more\s+key[-\s]insights?/i;
+const QUOTA = Symbol("screener-key-insights-quota-exhausted");
 
 /**
  * THE FOURTH RETURN VALUE: the session is dead.
@@ -610,8 +640,10 @@ if (IS_CLI) (async () => {
     if (probeRow.length) {
       const probe = await fetchKeyPoints(probeRow[0].symbol, cookie);
       if (probe === QUOTA) {
-        console.log(`Screener daily allowance already exhausted (probe ${probeRow[0].symbol}). ` +
-                    `Nothing attempted; run again tomorrow.`);
+        console.log(`Screener key-insights allowance already exhausted (probe ${probeRow[0].symbol}). ` +
+                    `Nothing attempted. NOTE: the cap is 800 per ROLLING 30 days, not per day — ` +
+                    `tomorrow only helps if usage 30 days ago is aging out. The cookie is fine; ` +
+                    `do not rotate the session for this.`);
         await db.end(); process.exit(3);
       }
       if (probe === LOGGED_OUT || !probe) {

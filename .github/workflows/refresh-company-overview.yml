@@ -1,5 +1,5 @@
 # Company-overview worker — fills app.company_overview from Screener's Key
-# Points, 80 symbols a run.
+# Points, 23 symbols a run.
 #
 # DAILY, plus manual dispatch from the Actions tab.
 #
@@ -10,13 +10,45 @@
 # this repo is on a cron; this one had been run by hand, twice, alphabetically
 # — which is why the stored rows are almost all symbols starting A, B or C.
 #
-# WHY 80
+# WHY 23 (WAS 80, THEN 100, BRIEFLY 26)
 #
-# 80 is not a throttle we chose. Screener's Key Points endpoint enforces a HARD
-# DAILY QUOTA of 80 and past it returns HTTP 200 with a 381-byte stub reading
-# "We allow 80 key-insights per day." Sleeping does not clear it; it resets
-# daily. So 80 is the ceiling the source imposes on any single day, and running
-# twice in one day gains nothing — the second run exits 3 immediately.
+# Not a throttle we chose. Screener's Key Points endpoint enforces a hard quota
+# and past it returns HTTP 200 with a ~400-byte stub instead of the fragment.
+#
+# The quota CHANGED SHAPE, measured 2026-10-06. It used to be a DAILY cap —
+# "We allow 80 key-insights per day", resetting at midnight. It is now a
+# ROLLING 30-DAY cap: "Paid users can access 800 key-insights within the last
+# 30 days." 800/30 = 26.67 units a day.
+#
+# BUT THE PROBES SPEND THE SAME BUDGET, which is why this is 23 and not 26.
+# Every Key Points request counts, including the ones we make to ask whether
+# Key Points still works:
+#
+#   freshness-check.yml   2/day (cron '30 */12 * * *')  = 60 per 30 days
+#   this job's pre-flight session probe   1/run         = 30 per 30 days
+#
+# That is 90 units of the 800 spent on observation, leaving 710, or 23.7/day.
+# At 26 the job would overspend by ~70 units a month and re-enter exactly the
+# starved state this change exists to end — a limit set from the headline
+# number while the monitoring quietly ate the difference. 23 + 1 probe + 2
+# freshness probes = 26 units/day = 780 per 30 days, inside 800 with margin.
+#
+# WHY A BIGGER NUMBER IS NOT FASTER, WHICH IS THE POINT. Under a daily cap an
+# overshoot cost nothing: it bounced that day and tomorrow started clean. Under
+# a ROLLING window an overshoot borrows from the next 29 days. The 100 set here
+# on 2026-10-04 drained the allowance and then produced NOTHING for days —
+# strictly worse than 26 would have done. There is no burst to exploit; the
+# average is the cap.
+#
+# It also broke the job silently. The reworded stub matched neither the quota
+# marker nor the logged-out marker, so the startup session probe read it as a
+# DEAD COOKIE, exited 1 nightly, and opened an issue telling a human to rotate
+# a session that was perfectly healthy. Fixed in build-company-overview.mjs and
+# check-freshness.py; this limit is the other half of that fix.
+#
+# If the backlog must move faster than 26/day, the lever is NOT this number.
+# It is build-overview-from-filing.mjs — annual reports are free and unmetered
+# and reach 1,572 of the 2,238 symbols still missing (measured 2026-10-06).
 #
 # WHY DAILY, AND WHAT IT SPENDS
 #
@@ -34,7 +66,9 @@
 # by hand, twice, alphabetically. At 80 a run the backfill needs ~30 runs. Any
 # process that needs a human to remember it 30 times stalls part way through
 # the alphabet, which is the CLAUDE.md section 5 failure in its purest form,
-# and it already happened here once.
+# and it already happened here once. At 23 a run, Screener alone needs ~97 runs
+# to drain the 2,238-symbol backlog — which is the argument for the filings
+# path, not for a bigger number here.
 #
 # The queue does not care about cadence: app.company_overview_attempt
 # .retry_after means a run resumes wherever the last one stopped, whether that
@@ -44,9 +78,11 @@
 # EXIT CODES — READ THIS BEFORE "FIXING" A RED RUN
 #
 #   0  worked, or nothing was due (the steady state)
-#   3  Screener's daily allowance ran out mid-run. NOT A FAILURE. The rows
-#      built before the wall are good; the rest are still queued. Run again
-#      tomorrow. The step below translates 3 to success deliberately.
+#   3  Screener's key-insights allowance ran out mid-run. NOT A FAILURE. The
+#      rows built before the wall are good; the rest are still queued. The step
+#      below translates 3 to success deliberately. NOTE: the cap is 800 per
+#      ROLLING 30 days, so "run again tomorrow" only helps if usage from 30
+#      days ago is aging out. Exit 3 is never a reason to rotate the session.
 #   1  a real failure: session cookie dead or expired mid-run, or a crash.
 #      Raises the GitHub issue below.
 #
@@ -56,10 +92,11 @@
 #
 # WHEN
 #
-# 19:00 UTC = 00:30 IST. Just after Indian midnight, when Screener's daily
-# counter is most likely to have reset, and clear of the 18:00 Saturday DQ
-# check and the 22:00 announcements sweep. Running earlier in the Indian day
-# would collide with a counter already partly spent.
+# 19:00 UTC = 00:30 IST. Chosen when the quota was daily, to land just after
+# an Indian-midnight reset. A ROLLING 30-day window has no reset, so that
+# reason no longer applies and the time is now kept only for what still holds:
+# it is clear of the 18:00 Saturday DQ check and the 22:00 announcements
+# sweep. Left unchanged rather than silently re-justified.
 
 name: Refresh Company Overviews
 
@@ -69,9 +106,9 @@ on:
   workflow_dispatch:
     inputs:
       limit:
-        description: 'Symbols to attempt (default 80 = Screener daily quota)'
+        description: 'Symbols to attempt (default 23; 800/30d minus probe cost)'
         required: false
-        default: '80'
+        default: '23'
 
 permissions:
   contents: read
@@ -107,22 +144,23 @@ jobs:
         id: build
         run: |
           set +e
-          # 100, not 80. Screener's key-insights allowance measured ~130/day;
-          # 80 was a conservative first guess and left ~40% of the nightly
-          # headroom unused while 2,301 symbols sat without an overview
-          # (measured 2026-10-04). Exit code 3 already makes hitting the wall a
-          # non-event — the rows built before it are good and the rest stay
-          # queued — so the cost of overshooting is zero and the cost of
-          # undershooting is a week of backlog. 100 keeps margin under the
-          # measured ceiling rather than racing it.
-          node scripts/build-company-overview.mjs --queue "${{ github.event.inputs.limit || 100 }}"
+          # 23, not 26: the session probes spend the same quota. See "WHY 23".
+          #
+          # The comment this replaces read: "the cost of overshooting is zero
+          # and the cost of undershooting is a week of backlog." That was true
+          # of a DAILY quota and is false of a rolling one — overshooting now
+          # spends the next 29 days. Keeping the sentence here, struck through,
+          # because the reasoning was sound and the premise was what moved.
+          node scripts/build-company-overview.mjs --queue "${{ github.event.inputs.limit || 23 }}"
           code=$?
           set -e
           echo "code=$code" >> "$GITHUB_OUTPUT"
-          # 3 == Screener daily quota reached. Expected on every night of the
-          # backfill; the work done before the wall is committed and good.
+          # 3 == Screener key-insights quota reached. Expected while the
+          # backfill runs; the work done before the wall is committed and good.
+          # NOT a session problem and NOT a daily reset — see "WHY 26" above.
           if [ "$code" = "3" ]; then
-            echo "Screener daily allowance reached — partial run, this is normal."
+            echo "Screener key-insights allowance reached (800 per rolling 30 days)."
+            echo "Partial run, this is normal. Do NOT rotate the session for this."
             exit 0
           fi
           exit $code
@@ -149,7 +187,15 @@ jobs:
             "" \
             "Run: $RUN_URL" \
             "" \
-            "**Most likely cause: the Screener session cookie has expired.**" \
+            "**Check the quota BEFORE rotating anything.** On 2026-10-06 this alert fired" \
+            "for four nights against a perfectly healthy cookie: Screener reworded its" \
+            "quota stub, the marker stopped matching, and the session probe read a quota" \
+            "wall as a dead session. Exit 3 is quota and never reaches this step — but a" \
+            "stub we FAIL TO RECOGNISE arrives here as exit 1. If the run log shows no" \
+            "Key Points for a symbol that previously had them, suspect the stub wording" \
+            "first and compare it against QUOTA_MARKER in build-company-overview.mjs." \
+            "" \
+            "**Otherwise, most likely cause: the Screener session cookie has expired.**" \
             "" \
             "Screener does not return 401 for a dead session. It answers HTTP 200 with its" \
             "Register/Login page — measured at 20,236 bytes against 5,779 for a real wiki" \
@@ -163,7 +209,7 @@ jobs:
             "proves the new cookie against the gated Key Points fragment, and writes" \
             "app.screener_session — the one copy this job reads. No repository secret is involved." \
             "" \
-            "Note: exit code 3 (daily quota reached) is NOT a failure and does not reach" \
+            "Note: exit code 3 (quota reached) is NOT a failure and does not reach" \
             "this step. If you are reading this, it was exit 1 or a crash.")
           EXISTING=$(gh issue list --state open --search "$TITLE in:title" --json number --jq '.[0].number // empty')
           if [ -n "$EXISTING" ]; then
