@@ -71,25 +71,42 @@ DENY_RE = re.compile(
     re.I,
 )
 
-# "Recommendation"/tip headlines — buy/sell calls, stock picks, F&O strategies.
-# We surface market NEWS, not advice (regulatory posture), so drop these at
-# ingest. Tuned to explicit tip framing only — leaves real news like "X launches
-# product; stock in focus" or "Nifty target cut by Citi" untouched.
+# Tip / progress / grey-market headlines — we surface market NEWS, not
+# advice (regulatory posture) and not a price ticker. Keep in sync with
+# TIP_OR_PROGRESS_RE in web/src/lib/newsCluster.ts (display-time defence
+# for rows that already landed). Leaves "stock in focus" through: that
+# phrase tags real corporate news as often as a tip list.
 RECO_RE = re.compile(
     "|".join([
-        # "stocks/shares to buy/sell" — covers both noun forms
-        r"\b(?:stocks?|shares?)\s+to\s+(buy|sell|bet|grab|add)\b",
+        r"\b(?:stocks?|shares?)\s+to\s+(buy|sell|bet|grab|add|watch)\b",
         r"\b\d+\s+(?:stocks?|shares?)\s+to\s+(buy|sell|bet|grab|add|watch)\b",
-        # "recommends [N] stocks/shares to buy" — analyst tip framing
         r"\brecommends?\s+(?:\w+\s+){0,3}(?:stocks?|shares?)\s+to\s+(buy|sell)\b",
         r"\btop\s+(stock\s+)?picks?\b", r"\bstock\s+picks?\b",
-        r"\bbuy\s+or\s+sell\b", r"\bshould\s+you\s+(buy|sell|invest)\b",
+        r"\bbuy\s+or\s+sell\b",
+        r"\bshould\s+you\s+(buy|sell|invest|subscribe|apply)\b",
         r"\bmulti-?bagger\w*", r"\bstock\s+tips?\b",
         r"\b(stock|share)\s+recommendations?\b",
         r"\btrade\s+setups?\b", r"\btrading\s+guide\b",
-        r"\bf&o\s+(strateg|pick|trade)\w*", r"\bintraday\s+(pick|tip|trade)\w*",
+        r"\bf&o\s+(strateg|pick|trade)\w*",
+        r"\bintraday\s+(pick|tip|trade|levels?)\b",
         r"\bbuy\s+this\s+stock\b",
         r"\bbest\s+(?:stocks?|shares?)\s+to\b", r"\bhot\s+stocks?\b",
+        r"\bstock\s+of\s+the\s+day\b",
+        r"\bwhat\s+to\s+(buy|sell|trade)\b",
+        r"\bportfolio\s+picks?\b",
+        r"\bnifty\s+prediction\b",
+        r"\btop\s+(gainer|loser|performer)s?\b",
+        r"\b(?:gainers?|losers?)\s+today\b",
+        r"\bmost\s+active\s+stocks?\b",
+        r"\bgrey\s+market\b", r"\bgmp\b",
+        r"\blisting\s+gains?\b",
+        r"\b(?:share|stock)\s+price\s+(live|today|update|latest)\b",
+        r"\bstock\s+market\s+live\b",
+        r"\bwhat\s+should\s+investors?\b",
+        r"\bbest\s+ipo\b",
+        r"\bstocks?\s+in\s+news\b",
+        r"\bbuy\s+rating\b", r"\bsell\s+rating\b",
+        r"\btechnical\s+(view|analysis|breakout|outlook)\b",
     ]),
     re.I,
 )

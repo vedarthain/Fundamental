@@ -23,6 +23,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { loadGlance, loadScorecardKeys } from "@/lib/watchlistCards";
+import { cleanStockNews } from "@/lib/newsCluster";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -60,7 +61,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const [dividends, bonuses, quarterlyRaw, news, shareholding, glanceMap, keysMap] = await Promise.all([
+    const [dividends, bonuses, quarterlyRaw, newsRaw, shareholding, glanceMap, keysMap] = await Promise.all([
       sql<Dividend[]>`
         SELECT ex_date::text AS ex_date, amount::float AS amount, purpose
           FROM app.corporate_action
@@ -122,7 +123,7 @@ export async function GET(req: NextRequest) {
          -- rendered as "1 Jan '70" (new Date(null) is the epoch). Undated
          -- headlines still show, just after the ones we can date.
          ORDER BY n.published_at DESC NULLS LAST
-         LIMIT 8
+         LIMIT 40
       `,
       // ~12 quarters of promoter holding, newest-first — drives the promoter
       // growth sparkline + QoQ / YoY deltas in the fundamentals column.
@@ -160,6 +161,8 @@ export async function GET(req: NextRequest) {
     // Only surface the most recent 5 quarters in the UI; the extra 4 were
     // fetched solely so the oldest displayed quarter still has a YoY base.
     const quarterlyOut = quarterly.slice(0, 5);
+    // Same drop + title-dedup as /stock/[symbol] and /news, then keep 8.
+    const news = cleanStockNews(newsRaw).slice(0, 8);
 
     return NextResponse.json({
       symbol: raw,

@@ -2403,25 +2403,21 @@ function NewsGrid({ news }: { news: NewsItem[] }) {
                   #1d324b against ink #15171c — at 11px those are the same
                   colour to the eye, so recolouring the headline changed
                   nothing you could see. */}
-              <div className="text-[11px] leading-tight group-hover:underline line-clamp-2">
-                {isFreshNews(n.published_at) && (
-                  <span
-                    className="inline-block align-[1px] mr-1.5 px-1 rounded text-[8.5px] font-bold uppercase tracking-wide leading-[1.5]"
-                    style={{ background: "var(--color-accent-600)", color: "#fff" }}
-                    title="Published in the last 7 days"
-                  >
-                    New
-                  </span>
-                )}
-                {n.title}
-              </div>
-              <div
-                className="text-[9px] muted-text tabular-nums flex items-center gap-1.5"
-                style={isFreshNews(n.published_at) ? { color: "var(--color-accent-600)" } : undefined}
-              >
-                {n.source && <span>{n.source}</span>}
-                {n.source && <span aria-hidden>·</span>}
-                <span>{fmtNewsDate(n.published_at)}</span>
+              <div className="flex items-start gap-2">
+                <div className="text-[12px] leading-snug group-hover:underline line-clamp-2 flex-1">
+                  {isFreshNews(n.published_at) && (
+                    <span
+                      className="inline-block align-[1px] mr-1.5 px-1 text-[8.5px] font-bold uppercase tracking-wide leading-[1.5] border hairline"
+                      title="Published in the last 7 days"
+                    >
+                      New
+                    </span>
+                  )}
+                  {n.title}
+                </div>
+                <span className="tabular-nums text-[10px] muted-text shrink-0">
+                  {fmtNewsDate(n.published_at)}
+                </span>
               </div>
             </a>
           </li>

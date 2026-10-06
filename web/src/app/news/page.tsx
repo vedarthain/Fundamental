@@ -5,21 +5,22 @@
  *
  * Server-rendered from app.news (written by scripts/fetch-news.py on a short
  * cron). Categorises + dedups here, then hands off to NewsClient for the
- * interactive layout (Watchlist / Market / Economy / Policy / Others).
+ * interactive layout (Market first, then Economy / Policy / Others / Watchlist).
  * Fail-soft: missing tables → empty state, not a 500.
  *
  * No per-user data on this page — ISR-cached at the Vercel edge (revalidate
- * 300s). Individual data queries have their own unstable_cache TTLs so
- * background revalidations hit Neon as little as possible.
+ * 300s). Scores and 1D moves stay in unstable_cache. The 30-day news
+ * dump does not: ~4,070 rows serialise to 2.4MB and Next refuses to
+ * store anything over 2MB (`items over 2MB cannot be cached`). Wrapping
+ * that in unstable_cache threw on every render (the "3 issues" overlay)
+ * and never saved a Neon round-trip. ISR is the cache for the feed.
  */
 import { unstable_cache } from "next/cache";
 import { sql, golden } from "@/lib/db";
-import { clusterByTitle, isNoiseHeadline } from "@/lib/newsCluster";
+import { clusterByTitle, dropDisplayHeadline, isMarketProgressHeadline } from "@/lib/newsCluster";
 import { NewsClient, type FeedItem, type NewsCategory, type StockTag } from "./NewsClient";
 
-// No session reads — safe to ISR cache at the edge. Revalidate every 5 min
-// (matching getNews TTL so users see fresh headlines without a forced
-// per-request render).
+// No session reads — safe to ISR cache at the edge. Revalidate every 5 min.
 export const revalidate = 300;
 
 export const metadata = {
@@ -64,7 +65,7 @@ async function loadNews(): Promise<RawNews[]> {
     return [];
   }
 }
-const getNews = unstable_cache(loadNews, ["news-feed-v3"], { revalidate: 300, tags: ["news"] });
+// Not wrapped in unstable_cache — see the file header. 2.4MB > 2MB cap.
 
 // ----- our context for tagged stocks (the differentiator) -----------------
 // Industry Score + standout pillar (from app.scores) and today's 1D move (from
@@ -279,37 +280,28 @@ function sentimentOf(title: string, summary: string | null): Sentiment {
   return "neutral"; // conflict or neither → stay neutral
 }
 
-// Display-time recommendation / tip filter — a second line of defence that
-// drops any headline that slipped through the ingest filter (old rows, RSS
-// encoding quirks). Keep in sync with RECO_RE in scripts/fetch-news.py.
-// "shares?" added alongside "stocks?" to catch "Shares to buy or sell" form.
-const DISPLAY_RECO_RE = /\b(?:stocks?|shares?)\s+to\s+(?:buy|sell|bet|grab|add)\b|\b\d+\s+(?:stocks?|shares?)\s+to\s+(?:buy|sell|bet|grab|add|watch)\b|\brecommends?\s+(?:\w+\s+){0,3}(?:stocks?|shares?)\s+to\s+(?:buy|sell)\b|\btop\s+(?:stock\s+)?picks?\b|\bstock\s+picks?\b|\bbuy\s+or\s+sell\b|\bshould\s+you\s+(?:buy|sell|invest)\b|\bmulti-?bagger\w*|\bstock\s+tips?\b|\b(?:stock|share)\s+recommendations?\b|\btrade\s+setups?\b|\btrading\s+guide\b|\bf&o\s+(?:strateg|pick|trade)\w*|\bintraday\s+(?:pick|tip|trade)\w*|\bbuy\s+this\s+stock\b|\bbest\s+(?:stocks?|shares?)\s+to\b|\bhot\s+stocks?\b/i;
-
-/** Build the feed: drop recommendation/tip headlines, then cluster
- *  near-identical titles. Do not fold every single-stock story into one
- *  card — Watchlist is stock → headlines, and that needs the distinct
- *  stories kept. */
+/** Build the feed: drop recommendation/tip/progress headlines, then
+ *  cluster near-identical titles. Do not fold every single-stock story
+ *  into one card — Watchlist is stock → headlines, and that needs the
+ *  distinct stories kept. */
 function enrich(rows: RawNews[]): Enriched[] {
-  // Drop tip/recommendation headlines at display time (defence-in-depth).
-  const noReco = rows.filter(
-    (r) =>
-      !DISPLAY_RECO_RE.test(`${r.title} ${r.summary ?? ""}`) &&
-      !isNoiseHeadline(r.title),
-  );
+  const noReco = rows.filter((r) => !dropDisplayHeadline(r.title, r.summary));
   const clustered = clusterByTitle(noReco, 0.45);
-  return clustered.map((r) => ({
-    id: r.id, title: r.title, summary: r.summary, url: r.url,
-    published_at: r.published_at, related: r.related,
-    category: classify(r.title, r.summary),
-    symbols: r.symbols,
-    regulatory: isRegulatory(r.title, r.summary),
-    sentiment: sentimentOf(r.title, r.summary),
-  }));
+  return clustered
+    .map((r) => ({
+      id: r.id, title: r.title, summary: r.summary, url: r.url,
+      published_at: r.published_at, related: r.related,
+      category: classify(r.title, r.summary),
+      symbols: r.symbols,
+      regulatory: isRegulatory(r.title, r.summary),
+      sentiment: sentimentOf(r.title, r.summary),
+    }))
+    .filter((r) => r.category !== "markets" || !isMarketProgressHeadline(r.title, r.summary));
 }
 
 export default async function NewsPage() {
   const [rawNews, ctxRows, moveRows] = await Promise.all([
-    getNews(), getStockCtx(), getMoves1D(),
+    loadNews(), getStockCtx(), getMoves1D(),
   ]);
 
   // Index our context by symbol, then attach to each headline.
@@ -318,14 +310,7 @@ export default async function NewsPage() {
   const news = attachTags(enrich(rawNews), ctxMap, moveMap);
 
   return (
-    <div className="mx-auto max-w-[1200px] px-4 md:px-6 py-6 md:py-8">
-      <header className="mb-4">
-        <h1 className="font-display text-[22px] md:text-[26px] leading-tight">Market News</h1>
-        <p className="muted-text text-[12px] mt-1">
-          Watchlist names, then the market, economy and policy wires. Last 30 days.
-        </p>
-      </header>
-
+    <div className="px-3 md:px-4 py-3">
       {news.length === 0 ? (
         <div className="card p-6 muted-text text-[13px]">No headlines yet.</div>
       ) : (

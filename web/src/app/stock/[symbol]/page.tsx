@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { sql, golden } from "@/lib/db";
+import { cleanStockNews } from "@/lib/newsCluster";
 import { band, bandColor, fmtPct, fmtRupeesCr, tierLabel, displayCompanyName, isRecentListing, listingYear, hasScoreableHistory, monthsSinceListing, observedFrom, ordinal } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import CapTierBadge from "@/components/CapTierBadge";
@@ -1513,36 +1514,6 @@ function AnnouncementsCard({
 
 /* ------------------------------ In the news ------------------------ */
 
-// Listicle / recommendation headlines to drop from a stock's news feed — these
-// are "stocks to watch/buy today" filler, not news about the company. Mirrors
-// DISPLAY_RECO_RE in the /news feed, plus the bare "stocks to watch" form
-// (no leading number) so "Stocks to watch today: X, Y, Z" is caught too.
-const STOCK_RECO_RE =
-  /\b(?:stocks?|shares?)\s+to\s+(?:buy|sell|bet|grab|add|watch)\b|\b\d+\s+(?:stocks?|shares?)\s+to\s+(?:buy|sell|bet|grab|add|watch)\b|\btop\s+(?:stock\s+)?picks?\b|\bstock\s+picks?\b|\bbuy\s+or\s+sell\b|\bshould\s+you\s+(?:buy|sell|invest)\b|\bmulti-?bagger\w*|\bstock\s+tips?\b|\b(?:stock|share)\s+recommendations?\b|\btrade\s+setups?\b|\btrading\s+guide\b|\bintraday\s+(?:pick|tip|trade)\w*|\bbuy\s+this\s+stock\b|\bbest\s+(?:stocks?|shares?)\s+to\b|\bhot\s+stocks?\b|\bstocks?\s+to\s+watch\s+today\b/i;
-
-/** Normalised title key for dedup — case/punctuation/whitespace-insensitive so
- *  the same story syndicated across sources collapses to one row. */
-function newsKey(title: string): string {
-  return title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-}
-
-/** Drop recommendation filler, then de-duplicate by normalised title (keeping
- *  the most recent, since the query is already ordered newest-first). */
-function cleanStockNews(
-  rows: { title: string; source: string; url: string; published_at: string | null }[],
-): { title: string; source: string; url: string; published_at: string | null }[] {
-  const seen = new Set<string>();
-  const out: typeof rows = [];
-  for (const n of rows) {
-    if (!n.title || STOCK_RECO_RE.test(n.title)) continue;
-    const key = newsKey(n.title);
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    out.push(n);
-  }
-  return out;
-}
-
 function StockNewsCard({
   news,
 }: {
@@ -1569,20 +1540,18 @@ function StockNewsCard({
           {news.length} stor{news.length === 1 ? "y" : "ies"} · deduplicated · links open source
         </span>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6">
         {shown.map((n, i) => (
           <a
             key={`${n.url}-${i}`}
             href={n.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="block rounded-md px-2.5 py-2 -mx-2 border-b hairline hover:bg-[var(--color-paper)] transition-colors"
+            className="flex gap-2 items-start px-1 py-1.5 -mx-1 border-b hairline"
+            title={n.source ? `${n.source}` : undefined}
           >
-            <div className="flex items-center gap-2 text-[10px] muted-text mb-0.5">
-              <span className="font-medium uppercase tracking-wide" style={{ color: "var(--color-accent-700)" }}>{n.source}</span>
-              <span className="tabular-nums">· {ago(n.published_at)}</span>
-            </div>
-            <div className="text-[13.5px] leading-snug">{n.title}</div>
+            <div className="text-[13px] leading-snug flex-1">{n.title}</div>
+            <span className="tabular-nums text-[11px] muted-text shrink-0">{ago(n.published_at)}</span>
           </a>
         ))}
       </div>
