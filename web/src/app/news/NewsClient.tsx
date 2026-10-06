@@ -6,7 +6,10 @@
  * Lands on Market. Wires have a left date rail (Today / Yesterday /
  * 3–7 days / 8–30 days). Pick a date, see every clustered story for
  * that day — no 32-item cap. Summary sits to the right of the list.
- * Watchlist keeps the stock tree (today / week / month).
+ *
+ * Watchlist uses hearted names only (?saved=1), grouped Today /
+ * Yesterday / This week / Rest of month. Picking a stock under a
+ * heading shows only that stock's headlines in that window.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -43,11 +46,42 @@ export type FeedItem = {
 type Lane = "watchlist" | "markets" | "macro" | "policy" | "general";
 type StockRow = { symbol: string; tag: StockTag; n: number; items: FeedItem[] };
 type DateSel = "today" | "yesterday" | "week" | "month" | `day:${string}`;
+type WatchWin = "today" | "yesterday" | "week" | "month";
 
 /** Selection: ink edge. Headline rows also get a faint wash. */
 const EDGE = "inset 2px 0 0 var(--color-ink)";
 const EDGE_TAB = "inset 0 -2px 0 var(--color-ink)";
 const PICK_WASH = "#e4f3e8";
+
+/** Mild heading washes for the Watchlist stock tree. */
+const WIN_HEAD: Record<WatchWin, string> = {
+  today: "#e4f3e8",
+  yesterday: "#f3efe4",
+  week: "#e8eef6",
+  month: "#ececec",
+};
+
+function winRange(w: WatchWin): [number, number] {
+  if (w === "today") return [0, 0];
+  if (w === "yesterday") return [1, 1];
+  if (w === "week") return [2, 7];
+  return [8, 999];
+}
+
+function itemsInWin(items: FeedItem[], newest: string, w: WatchWin): FeedItem[] {
+  const [lo, hi] = winRange(w);
+  return items.filter((n) => {
+    const age = daysBehind(dayKey(n.published_at), newest);
+    return age >= lo && age <= hi;
+  });
+}
+
+function winForAge(age: number): WatchWin {
+  if (age <= 0) return "today";
+  if (age === 1) return "yesterday";
+  if (age <= 7) return "week";
+  return "month";
+}
 
 const LANES: { id: Lane; label: string }[] = [
   { id: "watchlist", label: "Watchlist" },
@@ -166,6 +200,7 @@ export function NewsClient({ news }: { news: FeedItem[] }) {
   const [symbols, setSymbols] = useState<string[]>([]);
   const [lane, setLane] = useState<Lane>("markets");
   const [stock, setStock] = useState<string | null>(null);
+  const [watchWin, setWatchWin] = useState<WatchWin>("today");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [dateSel, setDateSel] = useState<DateSel>("today");
   const [dateSeed, setDateSeed] = useState("");
@@ -185,7 +220,8 @@ export function NewsClient({ news }: { news: FeedItem[] }) {
       return;
     }
     let cancelled = false;
-    fetch("/api/watchlist?list=1", { credentials: "include" })
+    // Hearted names only — not the holdings/calls union the /watchlist page uses.
+    fetch("/api/watchlist?list=1&saved=1", { credentials: "include" })
       .then((r) => r.json())
       .then((d: { symbols?: string[] }) => {
         if (!cancelled) setSymbols(Array.isArray(d.symbols) ? d.symbols : []);
@@ -250,25 +286,48 @@ export function NewsClient({ news }: { news: FeedItem[] }) {
 
   const stockBuckets = useMemo(() => {
     const today: StockRow[] = [];
+    const yesterday: StockRow[] = [];
     const week: StockRow[] = [];
     const month: StockRow[] = [];
     for (const s of stockRows) {
       const age = latestAge(s.items, watchNewest);
-      if (age <= 0) today.push(s);
-      else if (age <= 7) week.push(s);
-      else month.push(s);
+      const win = winForAge(age);
+      const items = itemsInWin(s.items, watchNewest, win);
+      const row: StockRow = { ...s, items, n: items.length };
+      if (win === "today") today.push(row);
+      else if (win === "yesterday") yesterday.push(row);
+      else if (win === "week") week.push(row);
+      else month.push(row);
     }
-    return { today, week, month };
+    return { today, yesterday, week, month };
   }, [stockRows, watchNewest]);
 
-  const activeStock = stock && stockRows.some((s) => s.symbol === stock)
-    ? stock
-    : (stockBuckets.today[0] ?? stockBuckets.week[0] ?? stockBuckets.month[0])?.symbol ?? null;
+  const defaultWatch = stockBuckets.today[0]
+    ?? stockBuckets.yesterday[0]
+    ?? stockBuckets.week[0]
+    ?? stockBuckets.month[0]
+    ?? null;
 
+  const activeWin: WatchWin =
+    stock && stockBuckets[watchWin].some((s) => s.symbol === stock)
+      ? watchWin
+      : defaultWatch
+        ? winForAge(latestAge(
+            stockRows.find((s) => s.symbol === defaultWatch.symbol)?.items ?? [],
+            watchNewest,
+          ))
+        : "today";
+
+  const activeStock =
+    stock && stockBuckets[activeWin].some((s) => s.symbol === stock)
+      ? stock
+      : defaultWatch?.symbol ?? null;
+
+  // Only headlines in the window of the heading the stock sits under.
   const watchHeadlines = useMemo(() => {
     if (!activeStock) return [] as FeedItem[];
-    return stockRows.find((s) => s.symbol === activeStock)?.items ?? [];
-  }, [stockRows, activeStock]);
+    return stockBuckets[activeWin].find((s) => s.symbol === activeStock)?.items ?? [];
+  }, [stockBuckets, activeStock, activeWin]);
 
   const wireAll = lane === "watchlist" ? watchHeadlines : buckets[lane];
   const newest = dayKey(wireAll[0]?.published_at);
@@ -287,9 +346,11 @@ export function NewsClient({ news }: { news: FeedItem[] }) {
     const seed = `${lane}:${dayGroups.map((d) => d.key).join("|")}`;
     if (seed === dateSeed) return;
     setDateSeed(seed);
-    setDateSel(firstSel(dayGroups));
+    if (lane !== "watchlist") {
+      setDateSel(firstSel(dayGroups));
+      setOpenRange({ week: weekG.length > 0 && todayN + yestN === 0, month: false });
+    }
     setSelectedId(null);
-    setOpenRange({ week: weekG.length > 0 && todayN + yestN === 0, month: false });
   }, [lane, dayGroups, dateSeed, weekG.length, todayN, yestN]);
 
   const visibleItems = useMemo(() => {
@@ -382,7 +443,9 @@ export function NewsClient({ news }: { news: FeedItem[] }) {
           style={{ backgroundColor: "var(--color-card)" }}
         >
           {visibleLanes.map((t) => {
-            const n = buckets[t.id].length;
+            // Watchlist tab counts names with news, not headlines — the
+            // headline count was ~500 and read as "500 stocks".
+            const n = t.id === "watchlist" ? stockRows.length : buckets[t.id].length;
             const on = lane === t.id;
             return (
               <button
@@ -419,16 +482,19 @@ export function NewsClient({ news }: { news: FeedItem[] }) {
       {lane === "watchlist" ? (
         <WatchBoard
           today={stockBuckets.today}
+          yesterday={stockBuckets.yesterday}
           week={stockBuckets.week}
           month={stockBuckets.month}
           activeStock={activeStock}
+          activeWin={activeWin}
           headlines={watchHeadlines}
           selected={selected}
           signedIn={!!user}
           loading={loading}
           now={now}
-          onStock={(s) => {
+          onStock={(s, win) => {
             setStock(s);
+            setWatchWin(win);
             setSelectedId(null);
           }}
           onPick={setSelectedId}
@@ -505,7 +571,7 @@ function WireBoard({
         onPickDate={onPickDate}
         onToggleRange={onToggleRange}
       />
-      <HeadlineCol items={items} selectedId={selected?.id ?? null} now={now} onPick={onPick} />
+      <HeadlineCol items={items} selectedId={selected?.id ?? null} now={now} onPick={onPick} pickWash={PICK_WASH} />
       <SummaryPane item={selected} now={now} />
     </div>
   );
@@ -659,11 +725,13 @@ function HeadlineCol({
   selectedId,
   now,
   onPick,
+  pickWash = PICK_WASH,
 }: {
   items: FeedItem[];
   selectedId: string | null;
   now: number | null;
   onPick: (id: string) => void;
+  pickWash?: string;
 }) {
   return (
     <div className="border-r hairline overflow-y-auto">
@@ -681,7 +749,7 @@ function HeadlineCol({
             title={n.title}
             onClick={() => onPick(n.id)}
             className="flex w-full items-start gap-2 text-left px-3 py-2 border-b hairline"
-            style={on ? { boxShadow: EDGE, backgroundColor: PICK_WASH } : undefined}
+            style={on ? { boxShadow: EDGE, backgroundColor: pickWash } : undefined}
           >
             <span className="text-[13px] leading-snug flex-1">{n.title}</span>
             <span className="tabular-nums text-[11px] muted-text shrink-0 mt-0.5">
@@ -696,9 +764,11 @@ function HeadlineCol({
 
 function WatchBoard({
   today,
+  yesterday,
   week,
   month,
   activeStock,
+  activeWin,
   headlines,
   selected,
   signedIn,
@@ -708,17 +778,33 @@ function WatchBoard({
   onPick,
 }: {
   today: StockRow[];
+  yesterday: StockRow[];
   week: StockRow[];
   month: StockRow[];
   activeStock: string | null;
+  activeWin: WatchWin;
   headlines: FeedItem[];
   selected: FeedItem | null;
   signedIn: boolean;
   loading: boolean;
   now: number | null;
-  onStock: (s: string) => void;
+  onStock: (s: string, win: WatchWin) => void;
   onPick: (id: string) => void;
 }) {
+  // One date bucket open by default. Header click toggles that bucket
+  // without closing others — so you can open a second if you want.
+  // Picking a stock collapses to that stock's bucket only.
+  const firstWin: WatchWin =
+    today.length > 0 ? "today"
+    : yesterday.length > 0 ? "yesterday"
+    : week.length > 0 ? "week"
+    : "month";
+  const [openWins, setOpenWins] = useState<WatchWin[]>([firstWin]);
+
+  useEffect(() => {
+    setOpenWins((cur) => (cur.includes(activeWin) ? cur : [activeWin]));
+  }, [activeWin]);
+
   if (loading) {
     return <div className="card p-6 muted-text text-[13px]">Loading watchlist…</div>;
   }
@@ -729,12 +815,23 @@ function WatchBoard({
       </div>
     );
   }
-  if (today.length + week.length + month.length === 0) {
+  if (today.length + yesterday.length + week.length + month.length === 0) {
     return (
       <div className="card p-6 muted-text text-[13px]">
         No headlines in the last 30 days for your watchlist.
       </div>
     );
+  }
+
+  function toggleWin(win: WatchWin) {
+    setOpenWins((cur) =>
+      cur.includes(win) ? cur.filter((w) => w !== win) : [...cur, win],
+    );
+  }
+
+  function pickStock(s: string, win: WatchWin) {
+    setOpenWins([win]);
+    onStock(s, win);
   }
 
   return (
@@ -743,11 +840,54 @@ function WatchBoard({
       style={{ backgroundColor: "#fff", height: BOARD_H }}
     >
       <div className="border-r hairline overflow-y-auto">
-        <StockSection title="Today" rows={today} active={activeStock} onStock={onStock} defaultOpen={today.length > 0} />
-        <StockSection title="This week" rows={week} active={activeStock} onStock={onStock} defaultOpen={today.length === 0} />
-        <StockSection title="Rest of month" rows={month} active={activeStock} onStock={onStock} />
+        <StockSection
+          title="Today"
+          win="today"
+          rows={today}
+          active={activeStock}
+          activeWin={activeWin}
+          open={openWins.includes("today")}
+          onToggle={() => toggleWin("today")}
+          onStock={pickStock}
+        />
+        <StockSection
+          title="Yesterday"
+          win="yesterday"
+          rows={yesterday}
+          active={activeStock}
+          activeWin={activeWin}
+          open={openWins.includes("yesterday")}
+          onToggle={() => toggleWin("yesterday")}
+          onStock={pickStock}
+        />
+        <StockSection
+          title="This week"
+          win="week"
+          rows={week}
+          active={activeStock}
+          activeWin={activeWin}
+          open={openWins.includes("week")}
+          onToggle={() => toggleWin("week")}
+          onStock={pickStock}
+        />
+        <StockSection
+          title="Rest of month"
+          win="month"
+          rows={month}
+          active={activeStock}
+          activeWin={activeWin}
+          open={openWins.includes("month")}
+          onToggle={() => toggleWin("month")}
+          onStock={pickStock}
+        />
       </div>
-      <HeadlineCol items={headlines} selectedId={selected?.id ?? null} now={now} onPick={onPick} />
+      <HeadlineCol
+        items={headlines}
+        selectedId={selected?.id ?? null}
+        now={now}
+        onPick={onPick}
+        pickWash={WIN_HEAD[activeWin]}
+      />
       <SummaryPane item={selected} now={now} />
     </div>
   );
@@ -755,18 +895,23 @@ function WatchBoard({
 
 function StockSection({
   title,
+  win,
   rows,
   active,
+  activeWin,
+  open,
+  onToggle,
   onStock,
-  defaultOpen = false,
 }: {
   title: string;
+  win: WatchWin;
   rows: StockRow[];
   active: string | null;
-  onStock: (s: string) => void;
-  defaultOpen?: boolean;
+  activeWin: WatchWin;
+  open: boolean;
+  onToggle: () => void;
+  onStock: (s: string, win: WatchWin) => void;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
   if (rows.length === 0) return null;
   const Icon = open ? ChevronDown : ChevronRight;
   return (
@@ -774,25 +919,27 @@ function StockSection({
       <button
         type="button"
         aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
+        onClick={onToggle}
         className="flex w-full items-center gap-1 px-2.5 py-1.5 text-left border-b hairline"
+        style={{ backgroundColor: WIN_HEAD[win] }}
       >
-        <Icon size={12} className="shrink-0 muted-text" />
+        <Icon size={12} className="shrink-0" />
         <span className="text-[10px] font-semibold uppercase tracking-wider">{title}</span>
         <span className="ml-auto text-[10px] tabular-nums muted-text">{rows.length}</span>
       </button>
       {open &&
         rows.map((s) => {
-          const on = s.symbol === active;
+          const on = s.symbol === active && activeWin === win;
           const move = s.tag.ret_1d;
           return (
             <div
+              key={s.symbol}
               className="flex items-start gap-1 px-3 py-1.5 border-b hairline"
-              style={on ? { boxShadow: EDGE } : undefined}
+              style={on ? { boxShadow: EDGE, backgroundColor: WIN_HEAD[win] } : undefined}
             >
               <button
                 type="button"
-                onClick={() => onStock(s.symbol)}
+                onClick={() => onStock(s.symbol, win)}
                 className="flex-1 text-left min-w-0"
                 style={on ? { fontWeight: 600 } : undefined}
               >

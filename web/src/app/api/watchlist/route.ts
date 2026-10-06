@@ -16,7 +16,10 @@
  * Card rows read app.cluster_stocks_panel_cache plus golden quotes.
  *
  * Cost (Rule #1):
- *   GET list:  watchlist + holdings + open-calls (app only)
+ *   GET list:  watchlist + holdings + open-calls (app only).
+ *              ?saved=1 with list=1 → hearted names only (no holdings/calls
+ *              union). Used by /news Watchlist so the rail matches the
+ *              saved list, not "everything you hold or have a call on".
  *   GET cards: quotes + panel cache for the requested symbols
  *   POST:      one tiny INSERT … ON CONFLICT DO NOTHING
  *   DELETE:    one tiny DELETE
@@ -322,6 +325,9 @@ export async function GET(req: NextRequest) {
   // branches, glance being the heaviest. Table consumers (the portfolio
   // Returns tab) read none of them.
   const lean = req.nextUrl.searchParams.get("lean") === "1";
+  // Hearted names only — skip the holdings/calls union. /news Watchlist
+  // asks for this so its rail cannot outgrow the saved list.
+  const savedOnly = req.nextUrl.searchParams.get("saved") === "1";
   const session = await getSession();
 
   // If the client passed a specific symbol list, use that (signed-out
@@ -347,35 +353,39 @@ export async function GET(req: NextRequest) {
       symbols = cleanSymbolList(param);
     }
   } else if (session) {
-    // One-directional inclusion: every name you currently HOLD (active
-    // portfolio) or have an OPEN Buy/Sell call on appears on the watchlist,
-    // even if you never hearted it. This is a read-time union — NOT persisted
-    // into user_watchlist — so selling out or clearing the call drops the name
-    // automatically, and hearting a watchlist name never writes back to the
-    // portfolio or calls. (Exited/traded-but-not-held names are excluded: only
-    // active positions ride along.)
-    const [wl, held, callSyms] = await Promise.all([
-      sql<{ symbol: string }[]>`
-        SELECT symbol FROM app.user_watchlist
-         WHERE user_id = ${session.userId}
-         ORDER BY added_at DESC
-         LIMIT ${MAX_SYMBOLS}
-      `,
-      loadPortfolioSymbols(session.userId).catch(() => [] as string[]),
-      sql<{ symbol: string }[]>`
-        SELECT DISTINCT symbol FROM app.stock_call
-         WHERE user_id = ${session.userId} AND cleared_at IS NULL
-      `.catch(() => [] as { symbol: string }[]),
-    ]);
-    heldFromList = held;
+    const wl = await sql<{ symbol: string }[]>`
+      SELECT symbol FROM app.user_watchlist
+       WHERE user_id = ${session.userId}
+       ORDER BY added_at DESC
+       LIMIT ${MAX_SYMBOLS}
+    `;
     const base = wl.map((r) => r.symbol);
-    const extra = [
-      ...held.map((s) => s.toUpperCase()),
-      ...callSyms.map((r) => r.symbol.toUpperCase()),
-    ];
-    // Stored watchlist first (recency order), then any held/called names not
-    // already present, capped at MAX_SYMBOLS.
-    symbols = Array.from(new Set([...base, ...extra])).slice(0, MAX_SYMBOLS);
+    if (savedOnly) {
+      symbols = base;
+    } else {
+      // One-directional inclusion: every name you currently HOLD (active
+      // portfolio) or have an OPEN Buy/Sell call on appears on the watchlist,
+      // even if you never hearted it. This is a read-time union — NOT persisted
+      // into user_watchlist — so selling out or clearing the call drops the name
+      // automatically, and hearting a watchlist name never writes back to the
+      // portfolio or calls. (Exited/traded-but-not-held names are excluded: only
+      // active positions ride along.)
+      const [held, callSyms] = await Promise.all([
+        loadPortfolioSymbols(session.userId).catch(() => [] as string[]),
+        sql<{ symbol: string }[]>`
+          SELECT DISTINCT symbol FROM app.stock_call
+           WHERE user_id = ${session.userId} AND cleared_at IS NULL
+        `.catch(() => [] as { symbol: string }[]),
+      ]);
+      heldFromList = held;
+      const extra = [
+        ...held.map((s) => s.toUpperCase()),
+        ...callSyms.map((r) => r.symbol.toUpperCase()),
+      ];
+      // Stored watchlist first (recency order), then any held/called names not
+      // already present, capped at MAX_SYMBOLS.
+      symbols = Array.from(new Set([...base, ...extra])).slice(0, MAX_SYMBOLS);
+    }
   }
 
   if (listOnly) {
