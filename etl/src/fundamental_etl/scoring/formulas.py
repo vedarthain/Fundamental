@@ -1075,10 +1075,17 @@ def pct_above_200ema_252d(annual, quarterly, meta, signals, nifty_returns):
 
 @_higher
 def ema_stack_bull(annual, quarterly, meta, signals, nifty_returns):
-    if not signals:
-        return None
-    v = signals.get("ema_stack")
-    return 1.0 if v else 0.0
+    # Was `signals.get("ema_stack")` from indicators.daily_signals — a table
+    # with zero rows and no writer in this repo, so this returned None for all
+    # 3,082 symbols. Now computed from the close series in
+    # metrics.compute_ema_metrics (9 > 20 > 50 EMA on the latest session).
+    #
+    # Note the old version returned 0.0 for a missing signal only when
+    # `signals` was truthy — it could never actually reach that branch. The
+    # distinction matters now: a genuine "not stacked" IS 0.0, while too little
+    # price history to compute the EMAs at all is None, and those must not be
+    # the same value when a percentile is taken over them.
+    return meta.get("ema_stack_bull")
 
 
 @_higher

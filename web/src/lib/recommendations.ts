@@ -102,9 +102,19 @@ export const LEG_WEIGHTS = {
 export const MIN_LEG_COVERAGE = 2;
 
 // Which raw cluster_metrics fields feed each leg. `roce` is synthetic
-// (roce_5y with roce_3y fallback). Fields that are 100%/85% null across the
-// universe (tech_net_score_scaled, ema_stack_bull, pct_above_200ema_252d) are
-// deliberately excluded — they'd contribute nothing. Safety carries three
+// (roce_5y with roce_3y fallback).
+//
+// tech_net_score_scaled is excluded because it is still 100% null: it mapped
+// to indicators.daily_signals.net_score, a table with no writer anywhere in
+// the repo, and reviving it means DEFINING what net_score is, not backfilling.
+//
+// ema_stack_bull and pct_above_200ema_252d were excluded for the same reason
+// and that reason expired. As of 2026-10 both are computed from the close
+// series in metrics.compute_ema_metrics and are populated for every symbol
+// with enough price history. Adding them to the momentum leg is now possible
+// and is a decision nobody has taken — not an oversight. Left out until it is.
+//
+// Safety carries three
 // metrics (not just np_consistency + net_debt, which alone leaves most names
 // under MIN_LEG_COVERAGE because net_debt_ebitda is ~85% null) so the leg
 // actually differentiates.

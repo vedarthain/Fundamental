@@ -99,8 +99,15 @@ def load_split_factors(conn_golden: psycopg.Connection, symbol: str) -> list[tup
         return [(r["ex_date"], float(r["split_factor"])) for r in cur.fetchall()]
 
 
-def load_price_history(conn_golden: psycopg.Connection, symbol: str) -> list[dict]:
-    """1-year of daily closes for the symbol, back-adjusted for corporate actions.
+def load_price_history(conn_golden: psycopg.Connection, symbol: str, limit: int = 260) -> list[dict]:
+    """Daily closes for the symbol, newest-first, back-adjusted for corporate actions.
+
+    `limit` defaults to 260 (one trading year), which is all the return windows
+    need. The EMA metrics need far more: a 252-day "share of days above the
+    200 EMA" requires 252 observations each of which already has a 200-period
+    EMA behind it, so the caller asks for ~700. Passing a longer series through
+    compute_returns is safe — it indexes from the newest end (closes[-w-1]), so
+    older bars cannot change any return.
 
     Filters close IS NOT NULL — golden.price_history can have rows where the
     daily ingest wrote the row but failed to populate close (e.g. partial
@@ -121,8 +128,8 @@ def load_price_history(conn_golden: psycopg.Connection, symbol: str) -> list[dic
             FROM golden.price_history
             WHERE symbol = %s AND interval = '1d' AND close IS NOT NULL
             ORDER BY date DESC
-            LIMIT 260
-        """, (g_symbol,))
+            LIMIT %s
+        """, (g_symbol, limit))
         rows = cur.fetchall()
 
     actions = load_split_factors(conn_golden, symbol)
@@ -141,20 +148,97 @@ def load_price_history(conn_golden: psycopg.Connection, symbol: str) -> list[dic
     return out
 
 
-def load_above_200ema(conn_golden: psycopg.Connection, symbol: str) -> Optional[float]:
-    """% of last 252 trading days above 200 EMA."""
-    g_symbol = f"{symbol}.NS"
-    with conn_golden.cursor() as cur:
-        cur.execute("""
-            SELECT
-              SUM(CASE WHEN above_200ema THEN 1 ELSE 0 END)::float / NULLIF(COUNT(*), 0) AS pct
-            FROM (
-              SELECT above_200ema FROM indicators.daily_signals
-              WHERE symbol = %s ORDER BY date DESC LIMIT 252
-            ) x
-        """, (g_symbol,))
-        row = cur.fetchone()
-        return float(row["pct"]) if row and row["pct"] is not None else None
+EMA_MIN_BARS = 250  # see compute_ema_metrics
+
+
+def _ema(closes: list[float], span: int) -> list[Optional[float]]:
+    """Exponential moving average over an oldest-first close series.
+
+    Seeded with a simple mean of the first `span` bars rather than with
+    closes[0]. A single-point seed takes roughly 2-3 spans to decay, which for
+    span=200 is 400-600 bars of quietly wrong values — and those are exactly
+    the bars the 252-day window would then count. Entries before the seed are
+    None, never a partially-converged number.
+    """
+    if len(closes) < span:
+        return [None] * len(closes)
+    k = 2.0 / (span + 1.0)
+    out: list[Optional[float]] = [None] * (span - 1)
+    prev = sum(closes[:span]) / span
+    out.append(prev)
+    for c in closes[span:]:
+        prev = c * k + prev * (1.0 - k)
+        out.append(prev)
+    return out
+
+
+def compute_ema_metrics(prices: list[dict]) -> dict[str, Optional[float]]:
+    """pct_above_200ema_252d and ema_stack_bull, computed from the close series.
+
+    WHY THIS IS COMPUTED HERE RATHER THAN READ
+
+    Both metrics used to be read from `indicators.daily_signals` in golden_db.
+    That table has 60-plus columns, an immutability trigger, and — as of
+    2026-10 — zero rows and no writer anywhere in this repository. It is read
+    by metrics.py and by nothing else; whatever was meant to fill it never got
+    built. So every one of the 3,082 scored symbols carried NULL for both
+    metrics, silently, which cost the momentum pillar 19.8% of its weight on
+    average across all 48 scorecards (16-22%) — and specifically the
+    trend-structure portion, leaving momentum as relative returns plus
+    quarterly growth with no read on price action at all.
+
+    Both are pure functions of the daily close series, and golden.price_history
+    holds 7.2M bars. Computing them deletes the dead dependency instead of
+    feeding it. `tech_net_score_scaled` is deliberately NOT computed here: it
+    maps to `signals.net_score`, a composite defined nowhere in this codebase,
+    and reviving it would mean inventing a technical score and handing it 5% of
+    every momentum pillar. That is a product decision, not a backfill, so the
+    metric stays NULL until it is made.
+
+    DEFINITIONS, STATED BECAUSE THE OLD ONES WERE OPAQUE
+
+    pct_above_200ema_252d — share (0..1) of the last 252 sessions whose close
+    sat above the 200-period EMA as it stood on that session. A persistence
+    measure, not a snapshot: 0.95 means the stock has been above its long
+    trend essentially all year, 0.10 means a brief bounce in a downtrend.
+
+    ema_stack_bull — 1.0 when the 9, 20 and 50 EMAs are strictly stacked
+    9 > 20 > 50 on the latest session, else 0.0. Short-term alignment, which
+    is what the UI has always called it ("Short-term EMA stack bullish" in
+    FallenLeadersClient). Strict inequality on purpose: equality is the
+    degenerate flat case and is not bullish.
+
+    COVERAGE, AND WHY None RATHER THAN A SHORTER WINDOW
+
+    Needs 200 bars for the EMA to exist at all, and EMA_MIN_BARS=250 sessions
+    on top for the share-of-days figure to mean anything. Short of that both
+    come back None. Shortening the window for young listings would make their
+    number incomparable with everyone else's while still landing in the same
+    percentile pool — the exact "renders as a real value" failure this codebase
+    keeps paying for. A recent listing has no trend history; that is a fact
+    about the stock, and COVERAGE_FLOOR in scorer.py is what decides whether
+    the remaining momentum evidence is enough.
+    """
+    out: dict[str, Optional[float]] = {
+        "pct_above_200ema_252d": None,
+        "ema_stack_bull": None,
+    }
+    # prices arrive newest-first from load_price_history.
+    closes = [p["close"] for p in reversed(prices) if p.get("close") is not None]
+
+    ema200 = _ema(closes, 200)
+    # Count only sessions where the EMA actually existed, then require a long
+    # enough run of them that the ratio is a trend statement and not noise.
+    pairs = [(c, e) for c, e in zip(closes, ema200) if e is not None]
+    window = pairs[-252:]
+    if len(window) >= EMA_MIN_BARS:
+        out["pct_above_200ema_252d"] = sum(1 for c, e in window if c > e) / len(window)
+
+    e9, e20, e50 = (_ema(closes, s)[-1] if closes else None for s in (9, 20, 50))
+    if e9 is not None and e20 is not None and e50 is not None:
+        out["ema_stack_bull"] = 1.0 if (e9 > e20 > e50) else 0.0
+
+    return out
 
 
 def load_nifty_returns(conn_golden: psycopg.Connection) -> dict[str, float]:
@@ -581,14 +665,20 @@ def compute_metrics_for_symbol(
         """, (meta.get("market_cap_cr"),
               meta.get("face_value"), meta.get("no_of_shares"), symbol))
 
+    # Still queried, still empty: indicators.daily_signals now feeds only
+    # tech_net_score_scaled, which stays NULL until someone defines what
+    # net_score means here. Kept rather than ripped out so the formula
+    # signature does not change for a metric that may yet be revived.
     signals = load_signals(golden_conn, symbol)
-    pct_above = load_above_200ema(golden_conn, symbol)
-    prices = load_price_history(golden_conn, symbol)
+    # 700 bars, not 260: the 200-period EMA needs 200 to exist and the
+    # share-of-days-above window needs ~250 on top of that. compute_returns
+    # indexes from the newest end so the extra history cannot shift a return.
+    prices = load_price_history(golden_conn, symbol, limit=700)
     rets = compute_returns(prices)
     meta_full = {
         **meta,
         **rets,
-        "pct_above_200ema_252d": pct_above,
+        **compute_ema_metrics(prices),
     }
 
     sc = (get_scorecard_from(scorecard_overrides, cluster_id, tier)

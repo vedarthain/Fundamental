@@ -16,6 +16,13 @@ from the same single CSV download:
   4. golden.price_history (interval='1d')        — today's OHLC bar for
                                                    /sectors 1W/1M/1Y returns
                                                    and scoring
+  5. golden.delivery_data                        — today's delivery qty/% ,
+                                                   from the SAME CSV (the
+                                                   DELIV_QTY / DELIV_PER
+                                                   columns were parsed past
+                                                   and discarded until
+                                                   2026-10; the table sat at
+                                                   zero rows with no writer)
 
 Designed to run as a GitHub Action every weekday after market close +
 bhavcopy publish time (cron 13:00 UTC = 18:30 IST). Also runnable manually:
@@ -290,6 +297,19 @@ def parse_bhavcopy(csv_text: str) -> dict[str, dict]:
             "low":    _f(row.get("LOW_PRICE", "")),
             "close":  close,
             "volume": _i(row.get("TTL_TRD_QNTY", "")),
+            # Delivery columns. These have been in this CSV all along and were
+            # being parsed past and thrown away, while golden.delivery_data sat
+            # empty and nothing on the platform could tell accumulation from
+            # intraday churn. They are NOT in `required` above: if NSE ever
+            # renames or drops them the price path must keep working, so a
+            # missing column yields None here rather than failing the parse.
+            #
+            # DELIV_QTY is literally the string "-" for series where NSE does
+            # not compute delivery (and occasionally blank). _i returns None on
+            # both, which is the honest value — not zero. A zero would read as
+            # "nothing was delivered" and would drag every average down.
+            "deliv_qty": _i(row.get("DELIV_QTY", "")),
+            "deliv_pct": _f(row.get("DELIV_PER", "")),
         }
     return out
 
@@ -495,6 +515,53 @@ def insert_ohlc(
     return len(rows)
 
 
+def insert_delivery(
+    conn: psycopg.Connection,
+    bars: dict[str, dict],
+    trade_date: date,
+) -> int:
+    """INSERT today's delivery figures into golden.delivery_data.
+
+    Delivery percentage is the one NSE-specific signal that separates genuine
+    accumulation from intraday churn, and until now the platform had none of
+    it: the table was created, given an immutability trigger and a FK, and left
+    at zero rows with no writer anywhere in the repo. The data was arriving in
+    the same CSV this script already downloads every weekday.
+
+    Insert-only by necessity, not by choice — golden.delivery_data carries
+    trg_immutable, which raises on UPDATE and DELETE. ON CONFLICT DO NOTHING is
+    therefore the only safe re-run behaviour; a second run on the same day, or
+    a backfill overlapping existing dates, is a no-op rather than an error.
+
+    Rows with no delivery figure are skipped entirely rather than written as
+    NULL or zero. NSE reports "-" for series where it does not compute
+    delivery, and a stored zero would read as "nothing was delivered" and
+    poison every average computed over the column later.
+
+    Same FK parent as price_history (golden.stocks), already ensured by
+    upsert_golden_stocks before this runs.
+    """
+    rows = [
+        (sym + YF_SUFFIX, trade_date, b["deliv_qty"], b["volume"], b["deliv_pct"])
+        for sym, b in bars.items()
+        if b.get("deliv_qty") is not None or b.get("deliv_pct") is not None
+    ]
+    if not rows:
+        return 0
+    with conn.cursor() as cur:
+        cur.executemany(
+            """
+            INSERT INTO golden.delivery_data
+                (symbol, date, delivery_volume, total_traded_volume, delivery_pct)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (symbol, date) DO NOTHING
+            """,
+            rows,
+        )
+    conn.commit()
+    return len(rows)
+
+
 def main() -> None:
     today = date.today()
     print(f"refresh-ltp: looking for latest bhavcopy from {today.isoformat()}")
@@ -541,8 +608,27 @@ def main() -> None:
         stocks_seen = upsert_golden_stocks(conn, bars, known)
         print(f"  ensured {stocks_seen:,} symbols in golden.stocks (FK parent)")
         submitted = insert_ohlc(conn, bars, known, trade_date)
-    print(f"✓ submitted {submitted:,} OHLC rows to golden.price_history "
-          f"(date={trade_date.isoformat()}, conflicts ignored)")
+        print(f"✓ submitted {submitted:,} OHLC rows to golden.price_history "
+              f"(date={trade_date.isoformat()}, conflicts ignored)")
+
+        # Step 3: delivery figures from the same parsed rows.
+        #
+        # Deliberately inside its own try: the price write above is what the
+        # whole site depends on, and it has already been committed by the time
+        # we get here. A delivery failure — NSE renaming a column, a FK edge
+        # case — must leave that committed and the job green, because losing
+        # today's prices to protect a signal nobody had until this week is a
+        # bad trade. It prints loudly so the loss is visible rather than
+        # swallowed (CLAUDE.md §5: a skipped step must not render as success).
+        try:
+            n_deliv = insert_delivery(conn, bars, trade_date)
+            print(f"✓ submitted {n_deliv:,} delivery rows to golden.delivery_data")
+        except Exception as e:  # noqa: BLE001 — see comment above
+            conn.rollback()
+            print(f"✗ delivery write FAILED ({type(e).__name__}: {e}) — "
+                  f"prices for {trade_date.isoformat()} are safe and committed, "
+                  f"but delivery data for this date is now permanently missing "
+                  f"unless backfilled", file=sys.stderr)
 
 
 if __name__ == "__main__":
