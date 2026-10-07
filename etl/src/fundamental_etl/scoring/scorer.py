@@ -381,8 +381,18 @@ def _score_bucket(
         else:
             comp = None
 
+        # Record which pillars the composite did NOT see. The renormalisation
+        # above is correct arithmetic and silent disclosure: a Q+V composite
+        # lands in the same column, in the same re-percentile pool, as a Q+V+M
+        # one. COVERAGE_FLOOR made that silence louder by withholding thin
+        # pillars on purpose, so the composite has to say when it is standing on
+        # fewer than three. NULL here means all three. See migration 0085 for
+        # why this is flagged rather than suppressed.
+        missing = "".join(k for k in ("q", "v", "m") if pillar_scores.get(k) is None)
+
         composite_raw.append(comp)
         persisted_rows.append({
+            "missing_pillars": missing or None,
             "symbol": symbol,
             "cluster_id": cluster_id,
             "tier": tier,
@@ -408,8 +418,9 @@ def _score_bucket(
                 INSERT INTO app.scores
                   (symbol, snapshot_date, cluster_id, maturity_tier,
                    quality_pct, valuation_pct, momentum_pct, composite_pct,
-                   quality_components, valuation_components, momentum_components, score_status)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s)
+                   quality_components, valuation_components, momentum_components, score_status,
+                   missing_pillars)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s)
                 ON CONFLICT (symbol, snapshot_date) DO UPDATE SET
                   cluster_id = EXCLUDED.cluster_id,
                   maturity_tier = EXCLUDED.maturity_tier,
@@ -420,7 +431,8 @@ def _score_bucket(
                   quality_components = EXCLUDED.quality_components,
                   valuation_components = EXCLUDED.valuation_components,
                   momentum_components = EXCLUDED.momentum_components,
-                  score_status = EXCLUDED.score_status
+                  score_status = EXCLUDED.score_status,
+                  missing_pillars = EXCLUDED.missing_pillars
             """, (
                 p["symbol"], snapshot_date, p["cluster_id"], p["tier"],
                 p["q"], p["v"], p["m"], composite_pcts[i],
@@ -428,4 +440,5 @@ def _score_bucket(
                 psycopg.types.json.Json({k: v for k, v in p["v_components"].items()}),
                 psycopg.types.json.Json({k: v for k, v in p["m_components"].items()}),
                 partial_status or "full",
+                p["missing_pillars"],
             ))

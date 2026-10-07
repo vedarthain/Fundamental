@@ -107,6 +107,10 @@ type Stock = {
   valuation_components: Record<string, number>;
   momentum_components: Record<string, number>;
   score_status: string | null;
+  // Which pillars the composite was NOT built from ('m', 'qv', ...), or null
+  // when it used all three. See migration 0085 — the composite renormalises
+  // across the survivors, and this is the only record that it did.
+  missing_pillars: string | null;
 };
 
 type AnnualRow = {
@@ -259,7 +263,7 @@ async function loadStock(symbol: string) {
       sm.price_fetched_at::text,
       s.composite_pct, s.quality_pct, s.valuation_pct, s.momentum_pct,
       s.quality_components, s.valuation_components, s.momentum_components,
-      s.score_status
+      s.score_status, s.missing_pillars
     FROM app.universe u
     LEFT JOIN app.cluster_assignment ca USING (symbol)
     LEFT JOIN app.cluster c ON c.id = ca.cluster_id
@@ -1129,6 +1133,7 @@ export default async function StockPage({
                 composite={stock.composite_pct}
                 cluster={stock.industry_name}
                 tier={stock.maturity_tier}
+                missingPillars={stock.missing_pillars}
               />
             </aside>
           </div>
@@ -1731,7 +1736,17 @@ function CompositeExplainer(props: {
   composite: number | null;
   cluster: string | null; // null when the symbol has no cluster assignment
   tier: string | null;
+  missingPillars: string | null;
 }) {
+  // A composite built from two pillars is renormalised onto those two and then
+  // ranked in the same pool as the three-pillar ones. That is defensible
+  // arithmetic only if the reader is told, so say it here rather than letting
+  // the dash in the Pillars panel carry the whole message.
+  const missingNames = (props.missingPillars ?? "")
+    .split("")
+    .map((c) => ({ q: "Quality", v: "Valuation", m: "Momentum" }[c]))
+    .filter(Boolean) as string[];
+
   return (
     <footer className="mt-12 pt-6 border-t hairline">
       <div className="text-[11px] uppercase tracking-wide muted-text mb-2">
@@ -1747,6 +1762,16 @@ function CompositeExplainer(props: {
           Read the methodology
         </Link>.
       </p>
+      {missingNames.length > 0 && (
+        <p className="text-[12px] leading-relaxed muted-text max-w-[820px] mt-3">
+          <strong className="ink-text">
+            This score is missing {missingNames.length === 3 ? "every pillar" : missingNames.join(" and ")}.
+          </strong>{" "}
+          {missingNames.length === 3
+            ? "Nothing could be scored for this stock — there is no composite above."
+            : `Not enough data resolved to publish ${missingNames.length > 1 ? "those pillars" : "that pillar"}, so the composite was built from the remaining ${3 - missingNames.length === 1 ? "one" : "two"} and their weights were scaled up to fill the gap. It is still ranked against peers whose score used all three, so treat it as a narrower opinion rather than a weaker one.`}
+        </p>
+      )}
       <p className="text-[12px] leading-relaxed muted-text max-w-[820px] mt-3">
         <strong className="ink-text">What this score does not do.</strong> It measures how good
         the <em>reported</em> numbers are versus peers — it assumes those numbers are accurate.
