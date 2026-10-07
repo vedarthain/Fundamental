@@ -24,6 +24,12 @@ import {
 } from "@/lib/scannerBookmarks";
 import type { BusinessHealth } from "@/lib/businessHealth";
 import { parseSummary, splitLede } from "@/lib/businessSummary";
+import {
+  VerdictChipButton,
+  VerdictSheet,
+  useVerdictChips,
+} from "@/components/VerdictSheet";
+import type { VerdictChip } from "@/lib/verdictTypes";
 import { useWatchlist, saveWatchlistNote } from "@/lib/watchlist";
 import { band, bandColor, tierLabel } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
@@ -236,13 +242,22 @@ export type WatchSource = {
   ownerLabel: string;
 };
 
-export function WatchlistClient({ source }: { source?: WatchSource } = {}) {
+export function WatchlistClient({
+  source,
+  isAdmin = false,
+}: { source?: WatchSource; isAdmin?: boolean } = {}) {
   const wl = useWatchlist();
   const symbols = source ? source.symbols : wl.symbols;
   const hydrated = source ? source.hydrated : wl.hydrated;
   const count = symbols.length;
   const signedIn = source ? true : wl.signedIn;
   const remove = wl.remove;
+  // Hand-written verdicts, as a per-row marker. Fetched separately from the
+  // watchlist payload and only for an admin session — see VerdictSheet's
+  // header for why the chip carries the drift state rather than being a
+  // button that has to be clicked to find out whether it was worth clicking.
+  const verdictChips = useVerdictChips(symbols, isAdmin);
+  const [openVerdict, setOpenVerdict] = useState<string | null>(null);
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -692,6 +707,7 @@ export function WatchlistClient({ source }: { source?: WatchSource } = {}) {
                                     row={r}
                                     active={selected === r.symbol}
                                     onSelect={() => setSelected(r.symbol)}
+                                    chip={verdictChips.get(r.symbol)}
                                   />
                                 ))}
                               </div>
@@ -899,6 +915,8 @@ export function WatchlistClient({ source }: { source?: WatchSource } = {}) {
                   signedIn={signedIn}
                   onRemove={() => removeStock(sel.symbol)}
                   showRemove={!source}
+                  chip={verdictChips.get(sel.symbol)}
+                  onOpenVerdict={setOpenVerdict}
                 />
               </>
             );
@@ -953,7 +971,62 @@ export function WatchlistClient({ source }: { source?: WatchSource } = {}) {
           Top
         </button>
       )}
+
+      {/* Mounted at the top level rather than inside WatchRow so that closing
+          the sheet cannot be disturbed by the detail panel re-rendering under
+          it, and so this list and the Verdict tab open the same component. */}
+      {openVerdict && (
+        <VerdictSheet symbol={openVerdict} onClose={() => setOpenVerdict(null)} />
+      )}
     </div>
+  );
+}
+
+/**
+ * The rail marker. Bucket colour for the call, plus a dot when the evidence
+ * has moved or the verdict has aged past the review mark.
+ *
+ * Deliberately not clickable — see ThinRow. It answers "is there an opinion
+ * here, and is it still standing?" at a glance across a hundred names, which
+ * is the question the rail is for. Acting on the answer is one click away.
+ */
+function VerdictDot({ chip }: { chip: VerdictChip }) {
+  const color =
+    chip.bucket === "buy"
+      ? "var(--color-delta-up)"
+      : chip.bucket === "sell"
+        ? "var(--color-delta-down)"
+        : chip.bucket === "watch"
+          ? "var(--color-score-mid, #d4951a)"
+          : "var(--color-accent-600)";
+  const needsAttention = chip.movedCount > 0 || chip.stale;
+  return (
+    <span
+      className="inline-flex items-center gap-[3px] shrink-0 rounded px-1 py-px text-[8.5px] font-bold tracking-wide leading-none"
+      style={{ color, background: `color-mix(in srgb, ${color} 12%, transparent)` }}
+      title={
+        `${chip.verdict} (${chip.confidence}), written ${chip.ageDays}d ago. ` +
+        (chip.movedCount > 0
+          ? `${chip.movedCount} of ${chip.comparableCount} stored figures have moved.`
+          : chip.comparableCount > 0
+            ? "Stored figures unchanged."
+            : "No stored figure can be rechecked.")
+      }
+    >
+      {chip.verdict.split(/[\s—–-]+/)[0].toUpperCase().slice(0, 4)}
+      {needsAttention && (
+        <span
+          aria-hidden
+          className="inline-block w-[4px] h-[4px] rounded-full"
+          style={{
+            background:
+              chip.movedCount > 0
+                ? "var(--color-delta-down)"
+                : "var(--color-score-mid, #d4951a)",
+          }}
+        />
+      )}
+    </span>
   );
 }
 
@@ -1116,10 +1189,12 @@ function ThinRow({
   row,
   active,
   onSelect,
+  chip,
 }: {
   row: Row;
   active: boolean;
   onSelect: () => void;
+  chip?: VerdictChip;
 }) {
   const ltp = row.ltp ?? row.current_price;
   const sinceAdd =
@@ -1144,6 +1219,12 @@ function ThinRow({
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
           <span className="font-medium text-[13px] tabular-nums truncate">{row.symbol}</span>
+          {/* Marker only, not a button: this row IS a button and nesting one
+              inside another is invalid HTML — the inner click would be
+              swallowed by the row selection. Its job in the rail is to say
+              which names to look at; the clickable chip is in the detail
+              panel, one selection away. */}
+          {chip && <VerdictDot chip={chip} />}
           {/* Shares held. The detail panel already carries this via HoldChip,
               but the left rail is what gets scanned across 100+ names, so the
               position size belongs here too. Hidden for names you don't hold,
@@ -1183,11 +1264,15 @@ function WatchRow({
   signedIn,
   onRemove,
   showRemove = true,
+  chip,
+  onOpenVerdict,
 }: {
   row: Row;
   signedIn: boolean;
   onRemove: () => void;
   showRemove?: boolean;
+  chip?: VerdictChip;
+  onOpenVerdict?: (symbol: string) => void;
 }) {
   const compositeBand = band(row.composite_pct);
   const compositeColor = bandColor(compositeBand);
@@ -1244,6 +1329,9 @@ function WatchRow({
             >
               i
             </button>
+            {chip && onOpenVerdict && (
+              <VerdictChipButton chip={chip} onOpen={onOpenVerdict} />
+            )}
             {row.stale && row.ltp_date ? <StaleChip date={row.ltp_date} /> : null}
             {row.current_price != null && (
               <IntradayPriceBadge

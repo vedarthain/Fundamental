@@ -15,7 +15,7 @@
  * only). WatchlistClient then loads cards once with ?symbols=…&lean=1.
  */
 import Link from "next/link";
-import { getSession } from "@/lib/auth";
+import { getSession, isAdminRequest } from "@/lib/auth";
 import { WatchlistTabs } from "./WatchlistTabs";
 
 export const dynamic = "force-dynamic";
@@ -56,9 +56,16 @@ export default async function WatchlistPage() {
     );
   }
 
+  // Resolved here, not in the client shell: the Verdict tab and the row chips
+  // are an admin overlay, and the boolean has to come from the server so the
+  // markup for a normal session never contains them. The data behind both is
+  // separately gated in /api/admin/verdict — this flag only decides whether to
+  // ask.
+  const isAdmin = await isAdminRequest();
+
   return (
     <div className="mx-auto max-w-[1600px] px-4 md:px-6 py-3 md:py-4">
-      <WatchlistTabs />
+      <WatchlistTabs isAdmin={isAdmin} />
     </div>
   );
 }

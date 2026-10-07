@@ -8,11 +8,20 @@
 import { useState } from "react";
 import { WatchlistClient } from "./WatchlistClient";
 import { CallsClient } from "./CallsClient";
+import { VerdictQueueClient } from "./VerdictQueueClient";
 import { useCalls } from "@/lib/stockCalls";
 
-type View = "watchlist" | "calls";
+type View = "watchlist" | "calls" | "verdict";
 
-export function WatchlistTabs() {
+/**
+ * `isAdmin` is resolved on the server in page.tsx and passed down, rather than
+ * being probed from the client. A client-side check would have to ask an API
+ * whether the session is privileged, and the tab would flicker into existence
+ * for the one person who has it while every other user's browser made a
+ * pointless request. Passing the boolean also means the Verdict tab is absent
+ * from the rendered markup entirely for everyone else, not hidden in it.
+ */
+export function WatchlistTabs({ isAdmin = false }: { isAdmin?: boolean }) {
   const [view, setView] = useState<View>("watchlist");
   const { list } = useCalls();
   // Badge counts active calls only — cleared ones are history, not open calls.
@@ -43,8 +52,15 @@ export function WatchlistTabs() {
       <div className="mb-1.5 inline-flex items-center gap-0.5 rounded-md border hairline p-0.5">
         {tab("watchlist", "Watchlist")}
         {tab("calls", "Calls", activeCount)}
+        {isAdmin && tab("verdict", "Verdict")}
       </div>
-      {view === "watchlist" ? <WatchlistClient /> : <CallsClient />}
+      {view === "verdict" ? (
+        <VerdictQueueClient />
+      ) : view === "watchlist" ? (
+        <WatchlistClient isAdmin={isAdmin} />
+      ) : (
+        <CallsClient />
+      )}
     </div>
   );
 }

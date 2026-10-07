@@ -27,7 +27,9 @@ import { TrendSection, TrendCommentary } from "@/components/TrendSection";
 import { ScoreHistoryChart, type ScoreHistoryPoint } from "@/components/ScoreHistoryChart";
 import { loadPersistenceForSymbol } from "@/lib/persistence";
 import { getOIAlertForSymbol, type OIAlert } from "@/lib/oi-alerts";
-import { getSession } from "@/lib/auth";
+import { getSession, isAdminRequest } from "@/lib/auth";
+import { loadVerdict } from "@/lib/verdict";
+import { VerdictPanel, VerdictEmpty } from "@/components/VerdictPanel";
 import { loadPriceAlertsForSymbol, type PriceAlert } from "@/lib/price-alerts";
 import { loadHoldingEntryMarks, type TradeMark } from "@/lib/portfolio";
 import { AlertTriangle } from "lucide-react";
@@ -615,13 +617,27 @@ export default async function StockPage({
 }) {
   const { symbol: rawSymbol } = await params;
   const symbol = decodeSymbolParam(rawSymbol);
-  const [data, persistence, session] = await Promise.all([
+  const [data, persistence, session, isAdmin] = await Promise.all([
     loadStock(symbol),
     loadPersistenceForSymbol(symbol),
     getSession(),
+    isAdminRequest(),
   ]);
   if (!data) return notFound();
   const { stock, scorecard, annual, quarterly, priceHistory, dayChangePct, shareholding, overview, overviewLatestFy, corporateActions, stockNews, announcements, scoreHistory, oiAlert, nextEvent, rankInIndustry, industryPeerCount, isThinlyTraded, medTurnover, liqSessions } = data;
+
+  // Hand-written verdict (app.stock_verdict) — ADMIN ONLY.
+  //
+  // The query itself is gated, not just the render. A non-admin request never
+  // touches the table and `verdictNode` stays undefined, so StockPageTabs omits
+  // the tab entirely and no part of the opinion is serialised into the page.
+  // Rendering it hidden would have shipped it to every reader.
+  const verdictData = isAdmin ? await loadVerdict(symbol).catch(() => null) : null;
+  const verdictNode = !isAdmin
+    ? undefined
+    : verdictData
+      ? <VerdictPanel symbol={symbol.toUpperCase()} data={verdictData} />
+      : <VerdictEmpty symbol={symbol.toUpperCase()} />;
 
   // Signed-in users can set price alerts on the chart; load their live lines.
   const priceAlerts: PriceAlert[] = session
@@ -1121,6 +1137,7 @@ export default async function StockPage({
             }
           />
         }
+        verdict={verdictNode}
         strengths={
           <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-8">
             <section className="card p-6">

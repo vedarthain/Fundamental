@@ -9,6 +9,16 @@
  *   • The Numbers       — annual + quarterly fundamentals tables
  *   • Corporate actions — dividends, bonus/splits, board meetings
  *
+ * and a seventh, conditionally:
+ *   • Verdict           — hand-written opinion, ADMIN ONLY
+ *
+ * The Verdict tab is rendered only when the `verdict` prop is a node. page.tsx
+ * decides that by calling isAdminRequest(), and passes nothing otherwise — so
+ * for an ordinary visitor the content is never serialised into the page and the
+ * tab is absent from TABS, leaving nothing to find in the markup. This has to
+ * stay a server-side omission: gating it in CSS or with a client-side check
+ * would ship a private opinion to every reader.
+ *
  * Why client-side state instead of URL: switching is instant, no navigation
  * spinner, and the parent server component still controls all data fetching.
  * Trade-off: tab choice doesn't survive a page reload — acceptable for now.
@@ -19,9 +29,9 @@
  */
 
 import { useEffect, useState, type ReactNode } from "react";
-import { Activity, Info, Layers, BarChart3, TrendingUp, CalendarClock } from "lucide-react";
+import { Activity, Info, Layers, BarChart3, TrendingUp, CalendarClock, Gavel } from "lucide-react";
 
-type TabKey = "results" | "about" | "strengths" | "trend" | "numbers" | "actions";
+type TabKey = "results" | "about" | "strengths" | "trend" | "numbers" | "actions" | "verdict";
 
 type TabDef = {
   key: TabKey;
@@ -81,6 +91,18 @@ const TABS: TabDef[] = [
   },
 ];
 
+// Appended to TABS only when a verdict node is supplied. Kept out of the const
+// above so that the array a non-admin renders from cannot contain it by
+// accident — adding a tab is a deliberate concatenation, not a filter that
+// someone can later forget to apply.
+const VERDICT_TAB: TabDef = {
+  key: "verdict",
+  label: "Verdict",
+  icon: <Gavel size={14} strokeWidth={1.8} />,
+  stripe: "var(--color-delta-down)",
+  tint: "var(--color-tab-tint-about)",
+};
+
 export function StockPageTabs({
   results,
   about,
@@ -88,6 +110,7 @@ export function StockPageTabs({
   trend,
   numbers,
   actions,
+  verdict,
 }: {
   results: ReactNode;
   about: ReactNode;
@@ -95,7 +118,10 @@ export function StockPageTabs({
   trend: ReactNode;
   numbers: ReactNode;
   actions: ReactNode;
+  /** Admin-only. Omitted entirely for a non-admin request — see the header. */
+  verdict?: ReactNode;
 }) {
+  const tabs = verdict ? [...TABS, VERDICT_TAB] : TABS;
   // Default to "about" so every visitor lands on the company overview first.
   // Deep-link support via URL hash (chip/link click from another page or tab):
   //   #latest-result   → Results tab (browser scrolls to the anchor naturally)
@@ -108,7 +134,7 @@ export function StockPageTabs({
     if (hash === "#latest-result") setActive("results");
     else if (hash === "#announcements") setActive("actions");
   }, []);
-  const activeDef = TABS.find((t) => t.key === active)!;
+  const activeDef = tabs.find((t) => t.key === active) ?? tabs[0];
 
   return (
     <div className="mt-3">
@@ -125,7 +151,7 @@ export function StockPageTabs({
         }}
       >
         <div className="flex flex-wrap items-center gap-1.5">
-          {TABS.map((t) => {
+          {tabs.map((t) => {
             const isActive = t.key === active;
             return (
               <button
@@ -182,6 +208,9 @@ export function StockPageTabs({
           <Panel show={active === "trend"}     keyName="trend">     {trend}     </Panel>
           <Panel show={active === "numbers"}   keyName="numbers">   {numbers}   </Panel>
           <Panel show={active === "actions"}   keyName="actions">   {actions}   </Panel>
+          {verdict ? (
+            <Panel show={active === "verdict"} keyName="verdict">{verdict}</Panel>
+          ) : null}
         </div>
       </div>
     </div>
