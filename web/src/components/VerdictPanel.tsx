@@ -28,14 +28,7 @@
  */
 
 import type { VerdictData, VerdictRow, DriftRow, EvidenceValue } from "@/lib/verdictTypes";
-import { STALE_DAYS, verdictBucket } from "@/lib/verdictTypes";
-
-const BUCKET_COLOR: Record<string, string> = {
-  buy: "var(--color-delta-up)",
-  hold: "var(--color-accent-600)",
-  watch: "var(--color-score-mid, #d4951a)",
-  sell: "var(--color-delta-down)",
-};
+import { BUCKET_COLOR, STALE_DAYS, verdictBucket } from "@/lib/verdictTypes";
 
 /** Keys whose stored value is a 0..1 rate and reads better as a percentage. */
 const RATE_KEYS = new Set([

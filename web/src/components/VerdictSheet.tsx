@@ -30,14 +30,8 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { VerdictPanel, VerdictEmpty } from "@/components/VerdictPanel";
+import { BUCKET_COLOR } from "@/lib/verdictTypes";
 import type { VerdictChip, VerdictData } from "@/lib/verdictTypes";
-
-const BUCKET_COLOR: Record<string, string> = {
-  buy: "var(--color-delta-up)",
-  hold: "var(--color-accent-600)",
-  watch: "var(--color-score-mid, #d4951a)",
-  sell: "var(--color-delta-down)",
-};
 
 /** First word of the label, which is the call itself — "HOLD — downgraded
  *  from BUY" has to fit in a table cell without losing which way it points. */

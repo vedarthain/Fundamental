@@ -184,6 +184,21 @@ export function hasMoved(
   return { moved, relPct: rel, liveMissing: false };
 }
 
+/**
+ * The one colour map for verdict buckets.
+ *
+ * Lives here rather than in a component because three places now paint a
+ * verdict — the watchlist chip, the by-call groups on the Verdict tab, and the
+ * panel's header. Two of them agreeing and one drifting is a colour that means
+ * "sell" in one view and nothing in another.
+ */
+export const BUCKET_COLOR: Record<VerdictBucket, string> = {
+  buy: "var(--color-delta-up)",
+  hold: "var(--color-accent-600)",
+  watch: "var(--color-score-mid, #d4951a)",
+  sell: "var(--color-delta-down)",
+};
+
 /** Colour bucket for a verdict label. Prefix-matched rather than enumerated
  *  because the labels carry their own correction ("HOLD — downgraded from
  *  BUY"), and an enum would flatten that back to "HOLD". */

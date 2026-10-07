@@ -23,11 +23,22 @@
  * verdict's argument first stopped matching the data. That column moves every
  * week and is worth reading. The writing batches sit on the same line so a
  * quiet stretch is visibly a quiet stretch rather than missing data.
+ *
+ * WHY "BY CALL" CARRIES THE DRIFT MARKER TOO
+ *
+ * A list grouped under a BUY heading is the single easiest place in this whole
+ * feature to misread a stale call as a current one — the heading asserts a
+ * position and the row says nothing about whether the argument behind it still
+ * holds. That is precisely the failure the drift machinery exists to catch, so
+ * the by-call view is the same rows with the same "what moved" column, and
+ * drifted rows sort to the top of their own group rather than sitting in
+ * symbol order among the ones that still stand. Without that it would be a
+ * view that quietly argues with the rest of the tab.
  */
 
 import { useEffect, useMemo, useState } from "react";
 import { VerdictSheet } from "@/components/VerdictSheet";
-import type { QueueBucket } from "@/lib/verdictTypes";
+import { BUCKET_COLOR, verdictBucket, type QueueBucket } from "@/lib/verdictTypes";
 import type { QueueEntry, TimelineWeek, VerdictQueue } from "@/lib/verdict";
 
 const BUCKET_META: Record<QueueBucket, { label: string; color: string; blurb: string }> = {
@@ -63,12 +74,44 @@ function shortDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 }
 
+/* ------------------------------------------------------------- by call */
+
+/**
+ * The call itself, which is the first word of the label.
+ *
+ * Deliberately NOT `verdictBucket()`. That collapses ACCUMULATE into "buy" and
+ * REDUCE/AVOID into "sell" because it exists to pick a colour, and four colours
+ * is the right number for a chip. But "accumulate" and "buy" are different
+ * instructions to a person holding cash, and flattening them here would answer
+ * the question this view was added to answer with a coarser one. The bucket is
+ * still used — for the colour, which is all it was ever for.
+ */
+function callOf(verdict: string): string {
+  return verdict.split(/[\s—–-]+/)[0].toUpperCase().slice(0, 12);
+}
+
+/** Strongest conviction first, in both directions from HOLD. Anything the
+ *  report invents that is not on this list sorts after it, alphabetically,
+ *  rather than being dropped — an unrecognised call is still a call. */
+const CALL_ORDER = [
+  "BUY", "ACCUMULATE", "HOLD", "WATCH", "SPECULATIVE", "REDUCE", "SELL", "AVOID",
+];
+
+/** Drifted first, then stale, then oldest. A BUY whose evidence has moved is
+ *  the row in this view most likely to be acted on wrongly, so it goes on top
+ *  of its own group rather than wherever the alphabet puts it. */
+function byUrgency(a: QueueEntry, b: QueueEntry): number {
+  const d = (e: QueueEntry) => (e.movedCount > 0 ? 0 : (e.ageDays ?? 0) > 45 ? 1 : 2);
+  return d(a) - d(b) || (b.ageDays ?? 0) - (a.ageDays ?? 0) || a.symbol.localeCompare(b.symbol);
+}
+
 export function VerdictQueueClient() {
   const [state, setState] = useState<
     { kind: "loading" } | { kind: "ok"; q: VerdictQueue } | { kind: "error"; msg: string }
   >({ kind: "loading" });
   const [open, setOpen] = useState<string | null>(null);
   const [show, setShow] = useState<QueueBucket>("due");
+  const [axis, setAxis] = useState<"status" | "call">("status");
 
   useEffect(() => {
     let live = true;
@@ -107,6 +150,36 @@ export function VerdictQueueClient() {
     return m;
   }, [state]);
 
+  /**
+   * Every live verdict, grouped by the call it makes.
+   *
+   * Dormant verdicts are excluded. A symbol that is no longer on the watchlist
+   * or in the portfolio still has a row in app.stock_verdict as history, and
+   * listing it under "BUY" would be this tab asserting a position on something
+   * that is not being tracked — the same stale-row-presented-as-current
+   * failure the dormant bucket was added to prevent. They remain reachable
+   * under Dormant on the status axis.
+   */
+  const byCall = useMemo(() => {
+    const m = new Map<string, QueueEntry[]>();
+    if (state.kind !== "ok") return [] as { call: string; rows: QueueEntry[] }[];
+    for (const e of state.q.entries) {
+      if (!e.verdict || e.bucket === "dormant") continue;
+      const c = callOf(e.verdict);
+      const a = m.get(c) ?? [];
+      a.push(e);
+      m.set(c, a);
+    }
+    return [...m.entries()]
+      .map(([call, rows]) => ({ call, rows: rows.slice().sort(byUrgency) }))
+      .sort((a, b) => {
+        const ia = CALL_ORDER.indexOf(a.call);
+        const ib = CALL_ORDER.indexOf(b.call);
+        if (ia !== ib) return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+        return a.call.localeCompare(b.call);
+      });
+  }, [state]);
+
   if (state.kind === "loading") {
     return <div className="py-10 text-center text-[13px] muted-text">Reading the queue…</div>;
   }
@@ -139,6 +212,36 @@ export function VerdictQueueClient() {
         </span>
       </div>
 
+      {/* Axis toggle. Two ways of cutting the same rows: what is owed, and
+          what has been called. The queue stays the default — this tab is a
+          work list before it is a report, and opening on "By call" would put
+          the celebratory view first, which is how §5's monument gets built. */}
+      <div className="flex gap-1.5 text-[12px]">
+        {(["status", "call"] as const).map((a) => (
+          <button
+            key={a}
+            type="button"
+            onClick={() => setAxis(a)}
+            aria-pressed={axis === a}
+            className="px-2.5 py-1 rounded-md font-medium border transition-colors"
+            style={{
+              borderColor: axis === a ? "var(--color-accent-600)" : "var(--color-border-default)",
+              color: axis === a ? "var(--color-accent-600)" : "var(--color-muted)",
+              background:
+                axis === a
+                  ? "color-mix(in srgb, var(--color-accent-600) 10%, transparent)"
+                  : "transparent",
+            }}
+          >
+            {a === "status" ? "By status" : "By call"}
+          </button>
+        ))}
+      </div>
+
+      {axis === "call" ? (
+        <ByCall groups={byCall} onOpen={setOpen} />
+      ) : (
+      <>
       {/* Bucket switcher. Counts live on the control so the shape of the
           backlog is visible without selecting each one in turn. */}
       <div className="flex flex-wrap gap-1.5">
@@ -194,84 +297,192 @@ export function VerdictQueueClient() {
             </thead>
             <tbody>
               {rows.map((e) => (
-                <tr
+                <EntryRow
                   key={e.symbol}
-                  style={{ borderTop: "1px solid var(--color-border-default)" }}
-                  className="hover:bg-[var(--color-paper)]"
-                >
-                  <td className="py-1.5 pr-3">
-                    <button
-                      type="button"
-                      onClick={() => setOpen(e.symbol)}
-                      className="font-semibold underline-offset-2 hover:underline"
-                    >
-                      {e.symbol}
-                    </button>
-                    {e.company_name && (
-                      <div className="text-[11px] muted-text truncate max-w-[220px]">
-                        {e.company_name}
-                      </div>
-                    )}
-                  </td>
-                  <td className="py-1.5 px-3">
-                    {e.verdict ?? <span className="muted-text">—</span>}
-                    {e.confidence && (
-                      <span className="muted-text"> · {e.confidence}</span>
-                    )}
-                  </td>
-                  <td className="py-1.5 px-3 text-right tabular-nums muted-text">
-                    {e.generated_at ? shortDate(e.generated_at) : "—"}
-                  </td>
-                  <td
-                    className="py-1.5 px-3 text-right tabular-nums"
-                    style={
-                      e.ageDays != null && e.ageDays > 45
-                        ? { color: "var(--color-score-mid, #d4951a)" }
-                        : { color: "var(--color-muted)" }
-                    }
-                  >
-                    {e.ageDays != null ? `${e.ageDays}d` : "—"}
-                  </td>
-                  <td className="py-1.5 pl-3">
-                    {show === "missing" ? (
-                      <span className="muted-text">
-                        {e.addedAt ? shortDate(e.addedAt) : "—"}
-                      </span>
-                    ) : e.movedKeys.length > 0 ? (
-                      <span style={{ color: "var(--color-delta-down)" }}>
-                        {e.movedKeys.slice(0, 4).map((k) => k.replace(/_/g, " ")).join(", ")}
-                        {e.movedKeys.length > 4 && ` +${e.movedKeys.length - 4}`}
-                      </span>
-                    ) : e.comparableCount === 0 ? (
-                      <span
-                        style={
-                          e.unverifiableCount > 0
-                            ? { color: "var(--color-score-mid, #d4951a)" }
-                            : undefined
-                        }
-                        className={e.unverifiableCount > 0 ? "" : "muted-text"}
-                      >
-                        {e.unverifiableCount > 0
-                          ? `${e.unverifiableCount} not computed this snapshot`
-                          : "nothing recheckable"}
-                      </span>
-                    ) : (
-                      <span className="muted-text">
-                        {e.comparableCount} unchanged
-                        {e.unverifiableCount > 0 && `, ${e.unverifiableCount} unverified`}
-                      </span>
-                    )}
-                  </td>
-                </tr>
+                  e={e}
+                  lastCol={show === "missing" ? "added" : "moved"}
+                  onOpen={setOpen}
+                />
               ))}
             </tbody>
           </table>
         </div>
       )}
+      </>
+      )}
 
       <Timeline weeks={timeline} onOpen={setOpen} />
 
       {open && <VerdictSheet symbol={open} onClose={() => setOpen(null)} />}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------- one row */
+
+/**
+ * One queue row, used by both axes.
+ *
+ * Shared rather than copied because the last column encodes the whole point of
+ * the feature — what moved, what could not be checked, what is merely
+ * unchanged — and a second copy of that rule under the "By call" heading would
+ * be free to drift from this one. CLAUDE.md §4, the watchlist buy marker.
+ */
+function EntryRow({
+  e,
+  lastCol,
+  onOpen,
+}: {
+  e: QueueEntry;
+  lastCol: "added" | "moved";
+  onOpen: (s: string) => void;
+}) {
+  return (
+    <tr
+      style={{ borderTop: "1px solid var(--color-border-default)" }}
+      className="hover:bg-[var(--color-paper)]"
+    >
+      <td className="py-1.5 pr-3">
+        <button
+          type="button"
+          onClick={() => onOpen(e.symbol)}
+          className="font-semibold underline-offset-2 hover:underline"
+        >
+          {e.symbol}
+        </button>
+        {e.company_name && (
+          <div className="text-[11px] muted-text truncate max-w-[220px]">{e.company_name}</div>
+        )}
+      </td>
+      <td className="py-1.5 px-3">
+        {e.verdict ?? <span className="muted-text">—</span>}
+        {e.confidence && <span className="muted-text"> · {e.confidence}</span>}
+      </td>
+      <td className="py-1.5 px-3 text-right tabular-nums muted-text">
+        {e.generated_at ? shortDate(e.generated_at) : "—"}
+      </td>
+      <td
+        className="py-1.5 px-3 text-right tabular-nums"
+        style={
+          e.ageDays != null && e.ageDays > 45
+            ? { color: "var(--color-score-mid, #d4951a)" }
+            : { color: "var(--color-muted)" }
+        }
+      >
+        {e.ageDays != null ? `${e.ageDays}d` : "—"}
+      </td>
+      <td className="py-1.5 pl-3">
+        {lastCol === "added" ? (
+          <span className="muted-text">{e.addedAt ? shortDate(e.addedAt) : "—"}</span>
+        ) : e.movedKeys.length > 0 ? (
+          <span style={{ color: "var(--color-delta-down)" }}>
+            {e.movedKeys.slice(0, 4).map((k) => k.replace(/_/g, " ")).join(", ")}
+            {e.movedKeys.length > 4 && ` +${e.movedKeys.length - 4}`}
+          </span>
+        ) : e.comparableCount === 0 ? (
+          <span
+            style={
+              e.unverifiableCount > 0 ? { color: "var(--color-score-mid, #d4951a)" } : undefined
+            }
+            className={e.unverifiableCount > 0 ? "" : "muted-text"}
+          >
+            {e.unverifiableCount > 0
+              ? `${e.unverifiableCount} not computed this snapshot`
+              : "nothing recheckable"}
+          </span>
+        ) : (
+          <span className="muted-text">
+            {e.comparableCount} unchanged
+            {e.unverifiableCount > 0 && `, ${e.unverifiableCount} unverified`}
+          </span>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+/* ------------------------------------------------------------- by call */
+
+function ByCall({
+  groups,
+  onOpen,
+}: {
+  groups: { call: string; rows: QueueEntry[] }[];
+  onOpen: (s: string) => void;
+}) {
+  if (groups.length === 0) {
+    return (
+      <div
+        className="rounded-lg border px-4 py-6 text-center text-[13px] muted-text"
+        style={{ borderColor: "var(--color-border-default)" }}
+      >
+        No verdicts have been written yet, so there are no calls to group.
+      </div>
+    );
+  }
+
+  const drifted = groups.reduce(
+    (n, g) => n + g.rows.filter((r) => r.movedCount > 0 || (r.ageDays ?? 0) > 45).length,
+    0,
+  );
+
+  return (
+    <div className="space-y-5">
+      <p className="text-[12px] muted-text max-w-[760px] leading-relaxed -mt-2">
+        Every live verdict, grouped by the call it makes.{" "}
+        {drifted > 0 ? (
+          <>
+            <b style={{ color: "var(--color-delta-down)" }}>{drifted}</b> of them were written
+            against figures that have since moved or are past the review mark; those sit at the top
+            of their group. A heading is not evidence — read the last column before acting on one.
+          </>
+        ) : (
+          <>
+            Nothing here has drifted or aged past the review mark, so every call still rests on the
+            figures it was written against.
+          </>
+        )}{" "}
+        Dormant verdicts — symbols no longer tracked — are left out; they are under By status.
+      </p>
+
+      {groups.map((g) => {
+        const color = BUCKET_COLOR[verdictBucket(g.call)];
+        return (
+          <div key={g.call}>
+            <div className="flex items-baseline gap-2 mb-1">
+              <span
+                className="px-2 py-[1px] rounded text-[11.5px] font-semibold tracking-wide"
+                style={{
+                  color,
+                  background: `color-mix(in srgb, ${color} 12%, transparent)`,
+                  border: `1px solid color-mix(in srgb, ${color} 30%, transparent)`,
+                }}
+              >
+                {g.call}
+              </span>
+              <span className="text-[12px] muted-text tabular-nums">{g.rows.length}</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-[12.5px] min-w-[680px]">
+                <thead>
+                  <tr className="muted-text">
+                    <th className="text-left py-1.5 pr-3 font-medium">Symbol</th>
+                    <th className="text-left py-1.5 px-3 font-medium">Verdict</th>
+                    <th className="text-right py-1.5 px-3 font-medium">Written</th>
+                    <th className="text-right py-1.5 px-3 font-medium">Age</th>
+                    <th className="text-left py-1.5 pl-3 font-medium">What moved</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {g.rows.map((e) => (
+                    <EntryRow key={e.symbol} e={e} lastCol="moved" onOpen={onOpen} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
