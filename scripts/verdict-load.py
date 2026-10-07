@@ -43,7 +43,7 @@ hand-written INSERT:
      a 23-symbol batch printed the same 13 legitimately-derived names 23 times
      — and a check that is noise 299 lines out of 300 gets scrolled past
      together with the one line that mattered. DERIVED_KEYS here MUST mirror
-     the set in web/src/lib/verdict.ts: a key the loader accepts silently but
+     the set in web/src/lib/verdictTypes.ts: a key the loader accepts silently but
      the tab does not know is derived renders as "unchanged" forever, which is
      the one thing the drift table exists to prevent. Any addition goes in
      both files in the same commit.
@@ -74,15 +74,17 @@ ROOT = Path(__file__).resolve().parent.parent
 REQUIRED = ("symbol", "verdict", "confidence", "points")
 VALID_CONFIDENCE = {"high", "medium", "low"}
 
-# Figures a report derives for itself — own-history PE band, TTM vs prior TTM,
-# shareholding — for which no cluster_metrics counterpart exists or ever will.
-# Must stay identical to DERIVED_KEYS in web/src/lib/verdict.ts; see the
+# Figures with no cluster_metrics counterpart: the own-history PE band (needs a
+# price × earnings computation nothing performs), delivery_pct (no history in
+# golden.delivery_data to compare against) and pledge_pct (column exists, NULL
+# in every row). The TTM, margin and shareholding figures used to be here and
+# are now written into cluster_metrics each snapshot — see CONTEXT_KEYS in
+# etl/src/fundamental_etl/scoring/metrics.py.
+# Must stay identical to DERIVED_KEYS in web/src/lib/verdictTypes.ts; see the
 # docstring for why that coupling is load-bearing rather than tidy.
 DERIVED_KEYS = {
     "pe_band_lo", "pe_band_hi", "pe_band_avg", "pe_vs_own_history",
-    "ttm_sales_pct", "ttm_op_pct", "ttm_np_pct", "opm_now", "opm_prev",
-    "delivery_pct", "promoter_pct", "fii_pct", "dii_pct", "pledge_pct",
-    "shareholders",
+    "delivery_pct", "pledge_pct",
 }
 
 

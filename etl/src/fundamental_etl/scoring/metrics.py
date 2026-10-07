@@ -613,6 +613,108 @@ def _freshest_period_end(annual: list[dict], quarterly: list[dict]) -> Optional[
     return max(candidates) if candidates else None
 
 
+# ----------------------- Context metrics -----------------------------------
+#
+# WHY THESE EXIST AND WHY THEY ARE NOT FORMULAS
+#
+# The hand-written verdicts in app.stock_verdict freeze the figures they were
+# argued from, and the Verdict panel re-reads each one against the newest
+# cluster_metrics to say whether the argument still holds. A figure with no
+# live counterpart renders "cannot be rechecked" forever — which was true of
+# 14 of the ~22 evidence keys, because the verdict script computed them itself
+# from golden quarterlies and app.shareholding_pattern and then discarded the
+# source. The check existed; the data to run it against did not.
+#
+# So these nine are written into cluster_metrics every snapshot purely so the
+# drift check has something to compare to. They are NOT scorecard formulas and
+# must never become them by accident:
+#
+#   - they are merged in AFTER score_status is computed, so they cannot inflate
+#     the non-null share that decides whether a symbol is "full" or
+#     "partial-data" (adding nine always-populated keys to that denominator
+#     would have quietly promoted thin symbols — a check that stops failing),
+#   - scorer.py percentiles only the names its scorecard asks for, so extra
+#     keys in the JSONB are inert there,
+#   - CONTEXT_KEYS is asserted disjoint from the formula registry at import, so
+#     a future formula of the same name is a loud startup error rather than a
+#     silent overwrite of a scored value.
+#
+# pledge_pct is deliberately NOT here. The column exists in
+# app.shareholding_pattern and is NULL in all 31,014 rows — nothing parses it
+# yet. Writing a key that is always null would turn "cannot be rechecked" into
+# "not computed this snapshot", which is a worse lie: it implies the figure is
+# coming. It stays uncheckable until something populates it.
+CONTEXT_KEYS = (
+    "ttm_sales_pct", "ttm_op_pct", "ttm_np_pct", "opm_now", "opm_prev",
+    "promoter_pct", "fii_pct", "dii_pct", "shareholders",
+)
+
+_collisions = sorted(set(CONTEXT_KEYS) & set(FORMULAS))
+if _collisions:  # pragma: no cover - import-time guard
+    raise RuntimeError(
+        "CONTEXT_KEYS collides with scoring formulas and would overwrite scored "
+        f"values in cluster_metrics: {', '.join(_collisions)}"
+    )
+
+
+def load_shareholding_latest(conn: psycopg.Connection) -> dict[str, dict]:
+    """Newest shareholding row per symbol, for the whole universe, in one query.
+
+    Loaded once per run and passed down rather than queried per symbol: the
+    metrics pass walks ~3,000 symbols over a cross-region link, and 3,000 extra
+    round-trips for nine context values is wall time spent on something that is
+    one index scan.
+    """
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT DISTINCT ON (symbol)
+                   symbol, period_end, promoter_pct, fii_pct, dii_pct, shareholders
+              FROM app.shareholding_pattern
+             ORDER BY symbol, period_end DESC
+        """)
+        return {r["symbol"]: r for r in cur.fetchall()}
+
+
+def compute_ttm_context(quarterly: list[dict]) -> dict[str, Optional[float]]:
+    """Trailing-twelve-month growth and operating margin, from the last 8 quarters.
+
+    Mirrors what the verdict evidence packs compute, deliberately: the whole
+    point is that the stored figure and the live one are the same calculation
+    on different days. Last four quarters against the four before them, growth
+    in percent; OPM as operating profit over sales within each window.
+
+    Returns None for any window that is not exactly four reported quarters —
+    a three-quarter sum compared against a four-quarter one reads as a 25%
+    collapse, and the drift check would report that as the argument breaking.
+    """
+    out: dict[str, Optional[float]] = {k: None for k in
+                                       ("ttm_sales_pct", "ttm_op_pct", "ttm_np_pct",
+                                        "opm_now", "opm_prev")}
+    rows = [r for r in quarterly if r.get("period_end") is not None]
+    if len(rows) < 8:
+        return out
+    cur_q, pri_q = rows[-4:], rows[-8:-4]
+
+    def agg(window: list[dict], field: str) -> Optional[float]:
+        vals = [w.get(field) for w in window if w.get(field) is not None]
+        return float(sum(vals)) if len(vals) == 4 else None
+
+    for field, key in (("sales", "ttm_sales_pct"),
+                       ("operating_profit", "ttm_op_pct"),
+                       ("net_profit", "ttm_np_pct")):
+        a, b = agg(pri_q, field), agg(cur_q, field)
+        # Growth off a non-positive base is not a percentage anyone can read:
+        # -10 -> +5 is "+150%" and means nothing. Left null.
+        if a is not None and b is not None and a > 0:
+            out[key] = (b / a - 1) * 100.0
+
+    for window, key in ((cur_q, "opm_now"), (pri_q, "opm_prev")):
+        sales, op = agg(window, "sales"), agg(window, "operating_profit")
+        if sales and op is not None:
+            out[key] = op / sales * 100.0
+    return out
+
+
 def compute_metrics_for_symbol(
     app_conn: psycopg.Connection,
     golden_conn: psycopg.Connection,
@@ -622,6 +724,7 @@ def compute_metrics_for_symbol(
     nifty_returns: dict,
     scorecard_overrides: dict | None = None,
     snapshot_date: date | None = None,
+    shareholding: dict[str, dict] | None = None,
 ) -> tuple[dict, dict, str]:
     """Compute all metrics for one stock. Returns (cluster_metrics, meta, score_status)."""
     annual = load_annual(app_conn, symbol)
@@ -700,8 +803,29 @@ def compute_metrics_for_symbol(
         except Exception:
             out[fname] = None
 
-    # score_status: count what fraction of expected metrics came back null
+    # score_status: count what fraction of expected metrics came back null.
+    # Counted BEFORE the context keys are merged in — see CONTEXT_KEYS.
     nonnull = sum(1 for v in out.values() if v is not None)
+
+    ctx = compute_ttm_context(quarterly)
+    # A caller that did not preload falls back to a single-symbol read rather
+    # than to nulls: a context value that is absent because nobody passed a map
+    # is indistinguishable, downstream, from one the company never reported.
+    if shareholding is None:
+        with app_conn.cursor() as cur:
+            cur.execute("""
+                SELECT promoter_pct, fii_pct, dii_pct, shareholders
+                  FROM app.shareholding_pattern
+                 WHERE symbol = %s ORDER BY period_end DESC LIMIT 1
+            """, (symbol,))
+            shp = cur.fetchone() or {}
+    else:
+        shp = shareholding.get(symbol) or {}
+    for key in ("promoter_pct", "fii_pct", "dii_pct", "shareholders"):
+        v = shp.get(key)
+        ctx[key] = float(v) if v is not None else None
+    out.update(ctx)
+
     if not needed_formulas:
         return out, meta_full, "no_scorecard"
 

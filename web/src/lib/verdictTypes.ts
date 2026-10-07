@@ -125,8 +125,27 @@ export const REL_THRESHOLD = 0.1;
 export const ABS_THRESHOLD_FOR_RATES = 0.05;
 
 /**
- * Keys the evidence script derives itself — no live counterpart exists, so
- * they must never render as "unchanged".
+ * Keys that have no live counterpart and never will under the current
+ * pipeline, so they must never render as "unchanged".
+ *
+ * This list used to be nearly twice as long. The TTM growth figures, the
+ * operating margins and the shareholding splits were on it not because they
+ * were uncheckable in principle but because nothing wrote them anywhere a
+ * check could read — the verdict script computed them from golden quarterlies
+ * and app.shareholding_pattern and threw the sources away. They are now
+ * written into cluster_metrics every snapshot (CONTEXT_KEYS in
+ * etl/src/fundamental_etl/scoring/metrics.py) and have moved off this list.
+ *
+ * What is left is genuinely uncheckable today:
+ *   - pe_band_*, pe_vs_own_history — need a price × earnings history
+ *     computation nothing in the pipeline performs,
+ *   - delivery_pct — golden.delivery_data carries no history to compare to,
+ *   - pledge_pct — the column exists and is NULL in every row; nothing parses
+ *     it. Writing an always-null key would read as "not computed yet" and
+ *     imply it is coming.
+ *
+ * Each of those is a missing input, not a permanent property. When one is
+ * filled in, it comes off this list in the same change.
  *
  * This set is duplicated in scripts/verdict-load.py and the two MUST agree.
  * A key the loader treats as derived but this file does not will render as a
@@ -137,9 +156,7 @@ export const ABS_THRESHOLD_FOR_RATES = 0.05;
  */
 export const DERIVED_KEYS = new Set([
   "pe_band_lo", "pe_band_hi", "pe_band_avg", "pe_vs_own_history",
-  "ttm_sales_pct", "ttm_op_pct", "ttm_np_pct", "opm_now", "opm_prev",
-  "delivery_pct", "promoter_pct", "fii_pct", "dii_pct", "pledge_pct",
-  "shareholders",
+  "delivery_pct", "pledge_pct",
 ]);
 
 export function asNumber(v: EvidenceValue): number | null {

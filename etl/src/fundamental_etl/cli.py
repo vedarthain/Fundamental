@@ -28,7 +28,8 @@ from .screener.persist import (
     save_raw_export, save_parsed, update_meta_success, update_meta_failure,
     save_dividend_only_meta, save_dividend_only_annual,
 )
-from .scoring.metrics import compute_metrics_for_symbol, persist_metrics, load_nifty_returns
+from .scoring.metrics import (compute_metrics_for_symbol, persist_metrics,
+                              load_nifty_returns, load_shareholding_latest)
 from .scoring.scorecards import load_db_overrides
 from .scoring.scorer import score_snapshot
 
@@ -1573,6 +1574,11 @@ def compute_metrics_cmd(
         overrides = load_db_overrides(ac)
         log.info("scorecard_overrides_loaded", count=len(overrides))
 
+        # Shareholding for the whole universe in one scan — see CONTEXT_KEYS in
+        # scoring/metrics.py for why these ride along in cluster_metrics.
+        shareholding = load_shareholding_latest(ac)
+        log.info("shareholding_loaded", symbols=len(shareholding))
+
         with golden_conn() as gc:
             nifty = load_nifty_returns(gc)
             log.info("nifty_returns", **{k: round(v, 4) if v is not None else None for k, v in nifty.items()})
@@ -1599,6 +1605,7 @@ def compute_metrics_cmd(
                     cm, meta, status = compute_metrics_for_symbol(
                         ac, gc, s["symbol"], s["cluster_id"], s["maturity_tier"], nifty,
                         scorecard_overrides=overrides, snapshot_date=snap,
+                        shareholding=shareholding,
                     )
                     persist_metrics(ac, s["symbol"], snap, cm, meta, s["maturity_tier"], status)
                     ok += 1
