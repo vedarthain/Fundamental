@@ -51,6 +51,31 @@ MIN_PEERS = 10
 # shrinkage factor is 1.0 (no effect).
 SHRINK_N = 10
 
+# Minimum share of a pillar's intended weight that must resolve to a non-null
+# component before we publish a score for that pillar. Below it the pillar is
+# withheld (None) instead of renormalising onto whatever survived.
+#
+# Why this exists: renormalisation does not merely drop a missing input, it
+# redistributes that input's weight onto the ones that remain. A pillar built
+# from two of eight components is a two-component opinion wearing an
+# eight-component score, and nothing downstream can tell the difference.
+#
+# Why 0.20 and not 0.50. Measured on the 2026-10 snapshot (n=3,061), rate of
+# extreme valuation scores (>=80 or <=20) by surviving weight:
+#     0-9%   47%  (n=15)      40-49%  25%
+#     10-19% 32%  (n=249)     50-59%  34%
+#     20-29% 16%               60-99%  17-24%
+# The distortion is confined to the bottom two bands; from 20% upward thin
+# coverage produces no more extremes than full coverage does. A 0.50 floor
+# would have withheld 764 symbols on a hypothesis the data does not support.
+# 0.20 withholds ~264 and every one of them is a score resting on under a
+# fifth of its intended evidence.
+#
+# This is a guard against the general failure, not against any one symbol.
+# SHANTIGOLD — the case that prompted it — sits above 20% coverage and is NOT
+# caught here; that one needed the stub-row fix in formulas._bs().
+COVERAGE_FLOOR = 0.20
+
 
 def _shrink_toward_50(pct: Optional[int], n: int) -> Optional[int]:
     """Damp a percentile toward 50 when the peer pool is small.
@@ -127,13 +152,28 @@ def _renorm(weights: dict[str, float]) -> dict[str, float]:
 def _weighted_pillar_score(
     component_pcts: dict[str, Optional[int]],
     weights: dict[str, float],
+    full_weight: Optional[float] = None,
 ) -> Optional[float]:
-    """Renormalize across non-null components, then weighted sum."""
+    """Renormalize across non-null components, then weighted sum.
+
+    Returns None when less than COVERAGE_FLOOR of the pillar's intended weight
+    survived — see the constant for why 20% and not something rounder.
+
+    `full_weight` is the blueprint total this pillar was *meant* to carry. It
+    matters for valuation: _splice_loss_maker_fallback silently drops pe_ttm's
+    weight when neither pe_ttm nor its fallbacks resolve, so `sum(weights)` has
+    already shrunk and measuring coverage against it would score the loss as if
+    it never happened. Callers pass the pre-splice total. Defaults to
+    sum(weights) for pillars that are not spliced.
+    """
     valid = {k: w for k, w in weights.items() if component_pcts.get(k) is not None}
     if not valid:
         return None
     s = sum(valid.values())
     if s <= 0:
+        return None
+    denom = full_weight if full_weight and full_weight > 0 else sum(weights.values())
+    if denom > 0 and (s / denom) < COVERAGE_FLOOR:
         return None
     score = sum(component_pcts[k] * (w / s) for k, w in valid.items())
     return score
@@ -310,7 +350,13 @@ def _score_bucket(
         m_pcts = _gather(sc.momentum)
 
         q_score_raw = _weighted_pillar_score(q_pcts, sc.quality)
-        v_score_raw = _weighted_pillar_score(v_pcts, val_weights_per_target[idx])
+        # Valuation measures coverage against the PRE-splice blueprint total:
+        # if pe_ttm and all its loss-maker fallbacks are null, that weight has
+        # already vanished from val_weights_per_target and would otherwise go
+        # uncounted as missing evidence.
+        v_score_raw = _weighted_pillar_score(
+            v_pcts, val_weights_per_target[idx], full_weight=sum(sc.valuation.values())
+        )
         m_score = _weighted_pillar_score(m_pcts, sc.momentum)
 
         # Apply thin-bucket shrinkage to Q and V (M comes from universe pool).
