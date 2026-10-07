@@ -74,6 +74,40 @@ def _safe_div(num, den):
     return num / den
 
 
+def _bs(annual: list[dict]) -> dict | None:
+    """Latest annual row that actually carries a balance sheet.
+
+    Screener publishes a results-season STUB row — `sales` filled, every
+    balance-sheet and cash-flow column NULL — months before the annual report
+    lands. `annual[-1]` picks that stub up, and because the readers below
+    coerce a missing line with `or 0`, a missing inventory became ZERO
+    inventory days, a missing borrowing became ZERO net debt, and both are
+    @_lower metrics — so *absent data scored as perfection*. SHANTIGOLD
+    published valuation_pct=100 and composite_pct=100 off exactly this: its
+    FY2026 row is sales-only, while FY2025 (inventory ₹148.58cr on sales
+    ₹1,106cr → ~49 inventory days) sat one row back, unused.
+
+    So balance-sheet and cash-flow formulas read the newest row that HAS a
+    balance sheet. Income-statement formulas keep using `annual[-1]`: the
+    stub's sales and operating profit are real and current, and that recency
+    is the whole point of the stub.
+
+    `total_assets` is the stub detector because it is the one line every
+    reporting entity files — unlike `inventory`, which 509 symbols legitimately
+    leave NULL (banks, NBFCs, internet businesses). Keying off a per-line NULL
+    would have stripped a TRUE inv_days=0 from INDIAMART, NAUKRI, MEESHO and
+    19 others; keying off total_assets leaves them untouched.
+
+    Returns None when the symbol has never reported a balance sheet (7 symbols
+    as of 2026-10). That is the honest answer: the metric goes NULL rather than
+    fabricating a zero, and the caller must handle it.
+    """
+    for r in reversed(annual):
+        if r.get("total_assets") is not None:
+            return r
+    return None
+
+
 def _ttm_sum(quarterly: list[dict], key: str, n: int = 4) -> float | None:
     if len(quarterly) < n:
         # Annualize from what we have
@@ -680,9 +714,12 @@ def debt_equity(annual, *_):
 
 @_lower
 def net_debt_ebitda(annual, quarterly, meta, signals, nifty_returns):
-    if not annual:
+    # Net debt must come from a real balance sheet. On a stub row borrowings
+    # and cash both coerce to 0, giving net debt 0 — and this is @_lower, so a
+    # company we know nothing about outranked every genuinely debt-free peer.
+    r = _bs(annual)
+    if r is None:
         return None
-    r = annual[-1]
     ebitda_ttm = _ttm_sum(quarterly, "operating_profit")  # use op_profit; no quarterly dep
     if ebitda_ttm is None:
         ebitda = (r.get("operating_profit") or 0) + (r.get("depreciation") or 0)
@@ -790,9 +827,11 @@ def cfo_sales_3y(annual, *_):
 
 @_lower
 def wc_days(annual, *_):
-    if not annual:
+    # Sales comes from the same row as the balance-sheet lines so the ratio is
+    # period-consistent — FY26 sales over FY25 inventory would be nonsense.
+    r = _bs(annual)
+    if r is None:
         return None
-    r = annual[-1]
     s = r.get("sales")
     if not s or s <= 0:
         return None
@@ -802,9 +841,9 @@ def wc_days(annual, *_):
 
 @_lower
 def dso(annual, *_):
-    if not annual:
+    r = _bs(annual)
+    if r is None:
         return None
-    r = annual[-1]
     s = r.get("sales")
     if not s or s <= 0:
         return None
@@ -813,9 +852,9 @@ def dso(annual, *_):
 
 @_lower
 def inv_days(annual, *_):
-    if not annual:
+    r = _bs(annual)
+    if r is None:
         return None
-    r = annual[-1]
     s = r.get("sales")
     if not s or s <= 0:
         return None
@@ -874,9 +913,15 @@ def pb(annual, quarterly, meta, signals, nifty_returns):
 @_lower
 def ev_ebitda_ttm(annual, quarterly, meta, signals, nifty_returns):
     mc = meta.get("market_cap_cr")
-    if mc is None or not annual:
+    if mc is None:
         return None
-    r = annual[-1]
+    # Latest real balance sheet + TTM earnings is the standard pairing. On a
+    # stub, borr/cash coerce to 0 so EV collapses to market cap — understating
+    # EV and making a levered company look cheap. That is half of why
+    # SHANTIGOLD read EV/EBITDA 8.8 and scored valuation 100.
+    r = _bs(annual)
+    if r is None:
+        return None
     borr = r.get("borrowings") or 0
     cash = r.get("cash_and_bank") or 0
     op_ttm = _ttm_valuation_base(quarterly, "operating_profit")
@@ -958,9 +1003,11 @@ def earnings_yield_trend(annual, quarterly, meta, signals, nifty_returns):
 @_lower
 def ev_sales_ttm(annual, quarterly, meta, signals, nifty_returns):
     mc = meta.get("market_cap_cr")
-    if mc is None or not annual:
+    if mc is None:
         return None
-    r = annual[-1]
+    r = _bs(annual)  # same stub problem as ev_ebitda_ttm
+    if r is None:
+        return None
     borr = r.get("borrowings") or 0
     cash = r.get("cash_and_bank") or 0
     sales_ttm = _ttm_valuation_base(quarterly, "sales")

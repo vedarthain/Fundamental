@@ -50,3 +50,8 @@ logs/
 !.claude/launch.json
 web/.claude/
 web/scripts/
+
+# Generated analysis reports (HTML). Contain portfolio holdings, cost basis and
+# P&L — personal financial data that must never reach a PUBLIC repo. Reproducible
+# from the DB at any time, so there is nothing to preserve here.
+reports/
