@@ -411,7 +411,7 @@ async function loadStock(symbol: string) {
   //     1 + (peers strictly above on composite_pct)
   // so ties share the higher rank, and NULL composites sink to the bottom.
   // Returns a single row.
-  const peerStats = await sql<{ median: number; rank: number; peer_count: number }[]>`
+  const peerStats = await sql<{ median: number; rank: number | null; peer_count: number }[]>`
     WITH peers AS (
       SELECT symbol, composite_pct
       FROM app.scores
@@ -423,11 +423,20 @@ async function loadStock(symbol: string) {
     )
     SELECT
       percentile_cont(0.5) WITHIN GROUP (ORDER BY composite_pct)::float AS median,
-      ((SELECT COUNT(*) FROM peers
-        WHERE COALESCE(composite_pct, -1) >
-              COALESCE((SELECT composite_pct FROM peers WHERE symbol = ${upper}), -1)
-       ) + 1)::int AS rank,
-      (SELECT COUNT(*) FROM peers)::int AS peer_count
+      -- Rank and denominator must describe the same population: the peers that
+      -- actually HAVE a composite. The scorer withholds one from any stock
+      -- missing a pillar, so a bucket of 50 can be a ranking of 35, and the old
+      -- "rank 3 of 50" claimed 47 peers beaten when only 34 were ever ranked.
+      -- A stock with no composite of its own gets rank NULL rather than being
+      -- parked at the bottom as though it had been measured and lost.
+      CASE WHEN (SELECT composite_pct FROM peers WHERE symbol = ${upper}) IS NULL
+           THEN NULL
+           ELSE ((SELECT COUNT(*) FROM peers
+                   WHERE composite_pct >
+                         (SELECT composite_pct FROM peers WHERE symbol = ${upper})
+                 ) + 1)
+      END::int AS rank,
+      (SELECT COUNT(*) FROM peers WHERE composite_pct IS NOT NULL)::int AS peer_count
     FROM peers
   `.catch(() => [] as { median: number; rank: number; peer_count: number }[]);
 
@@ -1030,6 +1039,8 @@ export default async function StockPage({
             marketCapCr={stock.market_cap_cr}
             currentPrice={stock.current_price}
             declaration={declaration}
+            listingDate={stock.listing_date}
+            hasAnnual={annual.length > 0}
           />
         }
         about={
@@ -1139,6 +1150,21 @@ export default async function StockPage({
           </div>
         }
         trend={
+          // A trend needs at least two points. 500 active symbols have one
+          // snapshot or none — newly scored names — and for those every child
+          // here renders an empty frame, which looked like a failure rather
+          // than a company we have simply not watched for long enough yet.
+          scoreHistory.length < 2 ? (
+            <EmptyPanel
+              title="Not enough history to show a trend"
+              body={
+                scoreHistory.length === 0
+                  ? "This stock has no score snapshots yet, so there is nothing to plot. It will appear here after it has been scored in a weekly run."
+                  : "This stock has been scored once. A trend needs at least two snapshots, so the chart will start after the next weekly scoring run."
+              }
+              footnote="Scores are recomputed weekly; history is kept from the first run a stock qualified for."
+            />
+          ) : (
           <div className="space-y-6 max-w-[960px]">
             {/* Full score history — all available weekly snapshots with
                 3M / 6M / All toggle.  This is the primary R1 chart. */}
@@ -1168,6 +1194,7 @@ export default async function StockPage({
               </div>
             </div>
           </div>
+          )
         }
         numbers={<FundamentalsTables annual={annual} quarterly={quarterly} shareholding={shareholding} />}
       />
@@ -2195,6 +2222,35 @@ function qLabel(iso: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Empty state
+// ---------------------------------------------------------------------------
+//
+// A tab that renders nothing is indistinguishable from a tab that failed. On
+// the 2026-10 universe that is not an edge case: 421 active symbols have no
+// quarterly row and 500 have one score snapshot or fewer, so roughly one stock
+// page in six had at least one silently blank tab. This component exists so
+// that absence always carries its reason — CLAUDE.md §5, the same shape as a
+// skipped check rendering as a green tick.
+
+function EmptyPanel({
+  title, body, footnote,
+}: {
+  title: string;
+  body: string;
+  footnote?: string | null;
+}) {
+  return (
+    <section className="card p-6">
+      <h2 className="font-display text-[15px] leading-none mb-2">{title}</h2>
+      <p className="text-[12.5px] leading-relaxed muted-text max-w-[620px]">{body}</p>
+      {footnote && (
+        <p className="text-[11.5px] muted-text mt-2 tabular-nums">{footnote}</p>
+      )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Latest result card
 // ---------------------------------------------------------------------------
 //
@@ -2286,7 +2342,7 @@ function ResultFlashChip({ latest }: { latest: QuarterLite }) {
 }
 
 function LatestResultCard({
-  quarterly, annual, marketCapCr, currentPrice, declaration,
+  quarterly, annual, marketCapCr, currentPrice, declaration, listingDate, hasAnnual,
 }: {
   quarterly: QuarterLite[];
   annual: AnnualLiteForRatios[];
@@ -2294,8 +2350,27 @@ function LatestResultCard({
   currentPrice: number | null;
   /** When + the filing link for the latest result's declaration. */
   declaration?: { date: string | null; pdfUrl: string | null } | null;
+  /** Used only to explain an empty panel — see EmptyPanel below. */
+  listingDate?: string | null;
+  hasAnnual?: boolean;
 }) {
-  if (!quarterly || quarterly.length === 0) return null;
+  // 421 of 3,082 active symbols have no quarterly row at all. Returning null
+  // rendered the tab as a blank rectangle, which reads as "the site is broken"
+  // rather than "there is nothing to show" — and gave no way to tell the two
+  // apart. Absence gets a reason now.
+  if (!quarterly || quarterly.length === 0) {
+    return (
+      <EmptyPanel
+        title="No quarterly results on file"
+        body={
+          hasAnnual
+            ? "Annual financials are available for this company, but no quarterly statements have been collected. That normally means it has not reported a standalone quarter since it entered our universe — most often a recent listing, or a smaller company that files annually in practice."
+            : "No financial statements have been collected for this company yet, quarterly or annual."
+        }
+        footnote={listingDate ? `Listed ${fmtResultDate(listingDate.slice(0, 10))}.` : null}
+      />
+    );
+  }
 
   // Quarterly rows arrive newest-first; index 1 is the previous quarter (QoQ)
   // and index 4 is the same quarter a year ago (YoY). Either may be missing

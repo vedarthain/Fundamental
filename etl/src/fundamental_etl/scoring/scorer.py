@@ -337,7 +337,8 @@ def _score_bucket(
     # Shrinkage applies to Q + V because they rely on the peer pool.
     # Momentum is exempt (its pool is the whole universe; shrinkage isn't needed).
     qv_pool_n = len(peer_rows)
-    target_n = len(target_rows)  # for composite_pct shrinkage (re-percentile pool)
+    # (composite_pct shrinkage uses the count of stocks that actually got a
+    # composite — computed after the loop, see ranked_n below.)
 
     for idx, r in enumerate(target_rows):
         symbol = r["symbol"]
@@ -371,24 +372,49 @@ def _score_bucket(
             if v_score_raw is not None else None
         )
 
-        # Composite: weighted by pillar weights, renormalize across non-null pillars
+        # Composite: all three pillars or nothing.
+        #
+        # This used to renormalise across whichever pillars survived, which is
+        # correct arithmetic and a biased estimate. Dropping a pillar and
+        # rescaling the rest does not withhold the missing pillar — it silently
+        # imputes it at the stock's own weighted average of the pillars it DOES
+        # have. So a stock with good valuation is handed good momentum for free.
+        #
+        # Measured on 2026-10 (before this change): 150 symbols outranked a peer
+        # in their own (cluster, tier) bucket that beat or matched them on both
+        # pillars the two actually shared — 197 such pairs. SUNTECH took the #1
+        # slot in construction/mid at composite 100 on quality 55 / valuation 83
+        # with no momentum at all, above SOLARWORLD's 84 on quality 80 /
+        # valuation 80 / momentum 32. Better stock, worse rank, because it had
+        # the third number and SUNTECH did not. Absence was outperforming.
+        #
+        # Imputing the missing pillar at 50 was the other candidate and is
+        # rejected: it is still a fabricated input, and it keeps the stock in a
+        # ranking built on a number nobody measured. Withholding the composite
+        # says the only true thing — we cannot rank this yet. The pillar scores
+        # and components are still written, so the stock remains fully readable
+        # on its own page and still appears in the screener (which orders
+        # composite_pct DESC NULLS LAST rather than filtering). What it drops
+        # out of is /ideas, /sectors and recommendations.ts, all of which
+        # already require composite_pct IS NOT NULL — correctly, because a stock
+        # we cannot score has no business in a recommendation list.
+        #
+        # Blast radius at the next scoring run: ~770 of 3,082 symbols lose
+        # composite_pct, nearly all recent listings with too little price
+        # history for momentum, plus the ~264 that COVERAGE_FLOOR withholds
+        # valuation for.
         pillar_weights = {"q": sc.pillar_weights["q"], "v": sc.pillar_weights["v"], "m": sc.pillar_weights["m"]}
         pillar_scores = {"q": q_score, "v": v_score, "m": m_score}
-        valid_w = {k: w for k, w in pillar_weights.items() if pillar_scores.get(k) is not None}
-        if valid_w:
-            tot = sum(valid_w.values())
-            comp = sum(pillar_scores[k] * (w / tot) for k, w in valid_w.items())
-        else:
-            comp = None
 
-        # Record which pillars the composite did NOT see. The renormalisation
-        # above is correct arithmetic and silent disclosure: a Q+V composite
-        # lands in the same column, in the same re-percentile pool, as a Q+V+M
-        # one. COVERAGE_FLOOR made that silence louder by withholding thin
-        # pillars on purpose, so the composite has to say when it is standing on
-        # fewer than three. NULL here means all three. See migration 0085 for
-        # why this is flagged rather than suppressed.
+        # Which pillars the composite could not see. NULL means all three were
+        # present, which is now also exactly the condition for publishing one.
         missing = "".join(k for k in ("q", "v", "m") if pillar_scores.get(k) is None)
+
+        if missing:
+            comp = None
+        else:
+            tot = sum(pillar_weights.values())
+            comp = sum(pillar_scores[k] * (w / tot) for k, w in pillar_weights.items())
 
         composite_raw.append(comp)
         persisted_rows.append({
@@ -409,7 +435,13 @@ def _score_bucket(
     # is thin. Without shrinkage, a 4-stock bucket would publish (0, 33, 67, 100)
     # — falsely precise. After shrinkage, roughly (33, 44, 56, 67).
     composite_pcts_raw = _percentile_rank(composite_raw, higher_is_better=True)
-    composite_pcts = [_shrink_toward_50(p, target_n) for p in composite_pcts_raw]
+    # Shrink against the pool that was actually ranked, not the bucket size.
+    # _percentile_rank skips nulls, and suppressing the composite for any stock
+    # missing a pillar now makes those nulls common — a 12-stock bucket where 9
+    # are suppressed is a 3-stock ranking, and shrinking it as though it were 12
+    # would publish the same false precision the shrinkage exists to prevent.
+    ranked_n = sum(1 for c in composite_raw if c is not None)
+    composite_pcts = [_shrink_toward_50(p, ranked_n) for p in composite_pcts_raw]
 
     # Persist
     with conn.cursor() as cur:
