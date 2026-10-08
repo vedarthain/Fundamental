@@ -133,43 +133,41 @@ _PCT_ASSERTIONS = [
         "app.universe u LEFT JOIN app.scores s ON s.symbol = u.symbol "
         "AND s.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)",
         "u.is_active",                                       "valuation_pct",  90.0),
-    # SME EXCLUSION — TEMPORARY, AND THE TEMPORARINESS IS ENFORCED BELOW.
+    # THE SME EXCLUSION LIVED HERE AND IS NOW GONE — 2026-10-08.
     #
     # On 2026-10-04 sync-universe onboarded 475 NSE EMERGE (SME) names in one
-    # go. They arrive with no Screener scrape and no price history, so on the
-    # morning they land momentum coverage is 9.5% on the SME side and 96.8% on
-    # the main board — and the blended figure (83.3%) trips a 90% floor that is
-    # measuring onboarding lag, not a defect. That red run cost more than a
-    # false alarm: exit 1 skipped the snapshot rebuild and the cache purge, so
-    # 479 freshly scored symbols never reached the site.
+    # go. On the morning they landed, momentum coverage was 9.5% on the SME side
+    # against 96.8% on the main board, and the blended 83.3% tripped this 90%
+    # floor — measuring onboarding lag, not a defect. That red run cost more
+    # than a false alarm: exit 1 skipped the snapshot rebuild and the cache
+    # purge, so 479 freshly scored symbols never reached the site. So the
+    # exclusion went in with an expiry assertion to force its own removal.
     #
-    # Excluding them is honest — the assertion's job is to catch main-board
-    # coverage rotting, and that signal was being swamped. What is NOT honest is
-    # an exclusion that outlives its reason, which is exactly §5's "seeded once
-    # and nothing maintains it". So the exclusion carries an expiry in code:
-    # see sme_momentum_still_absent in _COUNT_ASSERTIONS, which goes RED the
-    # moment SME momentum coverage is good enough that this line should be
-    # deleted. Do not remove the exclusion without removing that assertion, or
-    # the other way round — they are one mechanism.
+    # The expiry did its job on the first snapshot after it was keyed correctly.
+    # Measured on the 2026-10-07 scores: SME momentum coverage is 433/475 =
+    # 91.2% and the blended figure is 2948/3082 = 95.7%. The exclusion is
+    # therefore deleted, along with the sme_momentum_still_absent tripwire that
+    # demanded it — they were one mechanism and they end together.
     #
-    # THE EXPIRY WAS KEYED TO THE WRONG COLUMN UNTIL 2026-10-08. It counted
-    # active SME rows with no Screener `current_price`, on the assumption that
-    # "the SME backfill" was one event. It is not. The Screener price filled in
-    # within four days (475/475) while golden.price_history still holds ZERO
-    # daily bars for all 475 — and momentum is computed from price history, not
-    # from the Screener price. So the tripwire hit 0 against a floor of 48 and
-    # was about to go red demanding the deletion of an exclusion that is still
-    # completely warranted. A red DQ run is not a harmless false alarm here: it
-    # exits 1, which skips the snapshot rebuild and the cache purge, which is
-    # how 479 scored symbols failed to reach the site on 2026-10-04.
+    # WHAT MADE THE EXCLUSION LOOK PERMANENT, AND WHY IT WASN'T
     #
-    # The lesson is narrower than "be careful": an expiry must be keyed to the
-    # exact quantity its exclusion hides, not to a proxy that merely arrived at
-    # the same time. This one now reads momentum_pct itself.
-    ("scores.momentum_pct (active, main board)",
+    # It was briefly believed that golden held no price history for EMERGE names
+    # at all, which would have made SME momentum impossible rather than merely
+    # late. That was a measurement error, and it is worth recording because it
+    # is one line of SQL: golden.price_history keys symbols as `<SYMBOL>.NS`
+    # (see g_symbol in scoring/metrics.py), and a query that omits the suffix
+    # returns zero rows for every symbol in the universe — which reads exactly
+    # like a missing feed. Golden in fact has daily bars for all 475, 384 of
+    # them with the ≥252 needed for a 12m return.
+    #
+    # That error nearly produced two wrong conclusions: that SME momentum was
+    # fabricated from Screener fundamentals, and that these names should be
+    # gated out of scoring for lack of data. Neither is true. Before concluding
+    # a feed is empty, join it the way the code joins it.
+    ("scores.momentum_pct (active)",
         "app.universe u LEFT JOIN app.scores s ON s.symbol = u.symbol "
         "AND s.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)",
-        "u.is_active AND NOT COALESCE(u.is_sme, false)",      "momentum_pct",   90.0),
+        "u.is_active",                                       "momentum_pct",   90.0),
 
     # Screener meta — required for the LTP + market cap on cards.
     #
@@ -220,43 +218,21 @@ _COUNT_ASSERTIONS = [
         "app.cluster_stocks_panel_cache",
         "snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)", 2000),
 
-    # THE EXPIRY ON THE SME MOMENTUM EXCLUSION. Read the comment on
-    # scores.momentum_pct (active, main board) first — including the part about
-    # this check having been keyed to the wrong column until 2026-10-08.
+    # The sme_momentum_still_absent tripwire lived here until 2026-10-08. It was
+    # an assertion written to FAIL ON SUCCESS: it counted active SME symbols with
+    # no momentum_pct and demanded that count stay ABOVE 48, so that the moment
+    # SME momentum coverage cleared 90% it went red and said "delete the
+    # exclusion in _PCT_ASSERTIONS". It fired on the 2026-10-07 scores at 42, the
+    # exclusion was deleted, and so was it — see the comment on
+    # scores.momentum_pct (active) for the full story, including the .NS suffix
+    # mistake that briefly made the exclusion look permanent.
     #
-    # This is an assertion written to FAIL ON SUCCESS, which is why it looks
-    # backwards. It counts active SME symbols that still have no momentum_pct at
-    # the latest scores snapshot — the exact population the exclusion one
-    # section up removes from the denominator — and demands that count stay at
-    # or ABOVE 48 (10% of the 475 onboarded on 2026-10-04). While SME momentum
-    # is genuinely absent it passes silently. The moment coverage climbs past
-    # 90% this goes RED with a name that says what to do: the exclusion has
-    # served its purpose, delete it and delete this.
-    #
-    # Measured 2026-10-08: 475 of 475, because golden.price_history has zero
-    # daily bars for every EMERGE symbol. Momentum cannot populate until the
-    # price feed covers them, which is a different pipeline from the Screener
-    # scrape that filled current_price — and confusing the two is what broke
-    # the previous version of this check.
-    #
-    # The LEFT JOIN matters: an SME symbol the scorer never reached has no
-    # app.scores row at all, and must count as "no momentum" rather than
-    # dropping out of the population. Same survivor bug as the pct assertions.
-    #
-    # Why bother, instead of a note in a doc or a reminder: §5 of CLAUDE.md is
-    # about exactly this failure. An exclusion added "temporarily" has no force
-    # that removes it; it survives as a permanently blinded check that reports
-    # green forever. A TODO cannot fail. This can, and it fails precisely when
-    # the reason for the exclusion stops being true, so the assertion gets its
-    # 475 symbols back whether or not anyone remembered.
-    #
-    # It also fails if the SME names are DELISTED or deactivated rather than
-    # covered — the count drops below 48 either way. That is correct: in both
-    # worlds the exclusion is no longer warranted and should be re-examined.
-    ("sme_momentum_still_absent (delete the SME exclusion when this fails)",
-        "app.universe u LEFT JOIN app.scores s ON s.symbol = u.symbol "
-        "AND s.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)",
-        "u.is_active AND COALESCE(u.is_sme, false) AND s.momentum_pct IS NULL", 48),
+    # Left as a note rather than silence because the pattern is the reusable part:
+    # a temporary exclusion with no mechanism to remove it is CLAUDE.md §5's
+    # "seeded once and nothing maintains it", and a TODO cannot fail. If you add
+    # an exclusion here, add its expiry in the same commit, and key the expiry to
+    # the exact column the exclusion hides — not to a proxy that merely arrived at
+    # the same time, which is the error that cost this one a cycle.
 ]
 
 
