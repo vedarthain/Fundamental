@@ -652,10 +652,41 @@ def check_upstox_token(conn: psycopg.Connection) -> tuple[bool, str]:
     if expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
     ok = expires_at > datetime.now(timezone.utc)
-    icon = "✓" if ok else "✗"
-    suffix = "" if ok else " — reauth at /api/upstox/login; intraday prices are frozen until you do."
-    return ok, (
-        f"{icon} upstox_token: expires {expires_at.astimezone(IST):%Y-%m-%d %H:%M} IST{suffix}"
+    if ok:
+        return True, (
+            f"✓ upstox_token: session token, expires "
+            f"{expires_at.astimezone(IST):%Y-%m-%d %H:%M} IST"
+        )
+
+    # Expired session token, no analytics token visible HERE. Before calling
+    # that an outage, ask whether prices are actually frozen — because the
+    # most likely explanation is not a missed reauth, it is that
+    # UPSTOX_ANALYTICS_TOKEN is set in Vercel (where the pinger runs) and not
+    # in this job's environment. That misconfiguration is otherwise completely
+    # invisible: everything works, and this check just shouts "reauth" every
+    # morning until it is ignored, taking the real alert with it.
+    #
+    # The pinger's own heartbeat settles it. Fresh writes while the stored
+    # token is dead can only mean it authenticated with something else.
+    with conn.cursor() as cur:
+        cur.execute("SELECT MAX(price_fetched_at) FROM app.screener_meta")
+        hb = (cur.fetchone() or [None])[0]
+    if hb is not None:
+        if hb.tzinfo is None:
+            hb = hb.replace(tzinfo=timezone.utc)
+        if (datetime.now(timezone.utc) - hb).total_seconds() < 80 * 60:
+            return False, (
+                "✗ upstox_token: stored session token is expired, yet the pinger wrote "
+                f"prices {hb.astimezone(IST):%H:%M} IST — so it is running on an "
+                "analytics token this job cannot see. Add UPSTOX_ANALYTICS_TOKEN to "
+                "Settings → Secrets → Actions, or this check can never warn you before "
+                "that token's 1-year expiry."
+            )
+    return False, (
+        f"✗ upstox_token: session token expired "
+        f"{expires_at.astimezone(IST):%Y-%m-%d %H:%M} IST — reauth at /api/upstox/login, "
+        "or set UPSTOX_ANALYTICS_TOKEN to stop needing a daily reauth; intraday prices "
+        "are frozen until you do."
     )
 
 

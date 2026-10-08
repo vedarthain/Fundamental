@@ -99,6 +99,22 @@ jobs:
         env:
           APP_DB_URL:    ${{ secrets.NEON_APP_URL }}
           GOLDEN_DB_URL: ${{ secrets.NEON_GOLDEN_URL }}
+          # The token the intraday pinger actually authenticates with. It has
+          # to be passed here or check_upstox_token silently grades the WRONG
+          # OBJECT: with the var unset the check falls back to
+          # app.upstox_session and reports the daily OAuth token's state, which
+          # the pinger stopped using. It would then read red every morning
+          # while prices updated perfectly — and, far worse, say nothing at all
+          # when the analytics token neared its 1-year expiry, since that
+          # 30-day warning is the only notice that ever arrives for it.
+          #
+          # Absence is tolerated on purpose rather than failing the job: the
+          # check degrades to the session-token path, which is correct for a
+          # deployment that has not adopted the analytics token. So an empty
+          # secret here is invisible — if you set UPSTOX_ANALYTICS_TOKEN in
+          # Vercel, set it in Settings → Secrets → Actions too, or this check
+          # is watching a token nothing reads.
+          UPSTOX_ANALYTICS_TOKEN: ${{ secrets.UPSTOX_ANALYTICS_TOKEN }}
           PYTHONUNBUFFERED: "1"
         run: python scripts/check-freshness.py
 
