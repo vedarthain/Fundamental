@@ -94,27 +94,60 @@ from fundamental_etl.scoring.metrics import (  # noqa: E402
     compute_returns,
     load_price_history,
 )
+from fundamental_etl.scoring.scorecards import (  # noqa: E402
+    SCORECARDS_MATURE,
+    TIERS,
+    get_scorecard,
+)
 
 # Metrics the verdict prose actually leans on. The universe-wide NULL audit
-# runs over exactly this list, so adding a metric to a verdict means adding it
-# here — otherwise it can be dead everywhere and nothing will say so.
+# runs over exactly this list.
 #
 # These are keys of metrics_snapshot.cluster_metrics, NOT the flat columns on
 # that table. The flat columns are a narrower legacy set (there is no roce_5y
 # column, for one); cluster_metrics is what the scorer's formulas actually
 # read, so auditing anything else would audit something nothing consumes.
-AUDITED_METRICS = [
-    "roce_3y", "roce_5y", "roce_latest", "roe_3y", "roe_5y",
-    "op_margin_3y", "op_margin_latest", "op_margin_trend_3y", "op_margin_trend_7y",
-    "rev_cagr_3y", "rev_cagr_5y", "np_cagr_3y", "np_cagr_5y",
-    "np_consistency_5y", "cfo_pat_3y", "cfo_pat_latest", "cfo_ebitda_3y",
-    "debt_equity", "net_debt_ebitda", "equity_to_assets",
-    "pe_ttm", "pb", "ev_ebitda_ttm", "peg", "fcf_yield", "div_yield",
-    "wc_days", "inv_days", "dso", "asset_turnover",
-    "ret_3m_rel", "ret_6m_rel", "ret_12m_rel",
-    "pct_above_200ema_252d", "ema_stack_bull", "tech_net_score_scaled",
-    "sales_yoy_q", "np_yoy_q",
-]
+#
+# THIS LIST IS DERIVED, AND IT USED TO BE TYPED BY HAND. THAT COST A WHOLE
+# HEALTHCARE REVIEW — 2026-10-08
+#
+# The hand-written version listed 38 names. The scorecards between them
+# reference 60. The 22 it omitted were not obscure: `ebitda_margin_3y` and
+# `ebitda_margin_5y` carry 18 of the 100 quality points in `health_services`,
+# `np_cagr_10y` and `np_consistency_10y` are what every VETERAN actually
+# scores on (make_veteran rewrites the 5y keys away), `asset_turnover`,
+# `cfo_ebitda_5y`, `op_margin_trend_7y`, and the six
+# roe_avg_above_threshold_* / np_growth_above_inflation_* track-record
+# bonuses. Meanwhile it DID list `op_margin_3y`, `rev_cagr_3y`, `np_cagr_3y`,
+# `np_consistency_3y` and `debt_equity`, which no healthcare scorecard at
+# veteran tier reads at all.
+#
+# The failure mode is not that the audit missed something. It is that the
+# per-symbol pack carried `cluster_metrics` verbatim, a reader compared those
+# keys against a MID-tier symbol's key set, found the 3y names absent on the
+# veterans, and concluded the quality pillar was "running on two inputs" for
+# all nine hospital names. It was running on 100% of its declared weight. Two
+# verdicts and an entire "what would make these better" section were written
+# off that. It is CLAUDE.md §5's check-that-cannot-fail wearing the opposite
+# costume: an audit scoped to the wrong key set reports absence for everything
+# outside the scope, and the absence reads exactly like a data gap.
+#
+# So the list is now generated from the scorecards themselves, across every
+# (cluster, tier) pair plus the loss-maker valuation fallbacks. A metric
+# cannot be scored without being audited, and a metric cannot be audited
+# unless something scores it. If you add a formula to a scorecard, this
+# follows automatically — there is nothing to remember.
+def _audited_metrics() -> list[str]:
+    seen: set[str] = set()
+    for cluster_id in SCORECARDS_MATURE:
+        for tier in TIERS:
+            card = get_scorecard(cluster_id, tier)
+            seen |= set(card.quality) | set(card.valuation) | set(card.momentum)
+            seen |= {k for k, _ in (card.loss_maker_val_fallback or [])}
+    return sorted(seen)
+
+
+AUDITED_METRICS = _audited_metrics()
 
 # At or above this share of NULLs across the whole snapshot, a metric is not
 # "sparse" — it is not being produced at all, and any prose leaning on it is
@@ -302,19 +335,238 @@ def universe_sanity(app: psycopg.Connection, golden: psycopg.Connection) -> dict
 # --------------------------------------------------------------- per symbol
 
 
+def scorecard_coverage(cluster_id: Optional[str], tier: Optional[str],
+                       cluster_metrics: Optional[dict]) -> Optional[dict]:
+    """What this symbol's own scorecard asked for, and what it actually got.
+
+    THE ONLY HONEST DENOMINATOR IS THE SYMBOL'S OWN SCORECARD
+
+    `cluster_metrics` is a bag of whatever (cluster, tier) happened to need.
+    A VETERAN pharma name has `np_cagr_10y` and no `np_cagr_3y`; a MID one in
+    the same cluster has the reverse, because make_veteran and make_mid
+    rewrite the window keys. Neither is missing anything. Compare the two key
+    sets and you will "discover" a dozen absent metrics per symbol that were
+    never requested, and — the expensive direction — you will not notice the
+    one component that WAS requested and came back NULL, because it is just
+    another name in a list of names you had no expectation for.
+
+    That is exactly what happened on 2026-10-08. Nine health_services names
+    were reported as scoring quality off two inputs. Their real coverage was
+    100% of declared quality weight. The four names with a genuine hole —
+    AKUMS, INDSWFTLAB, LUPIN, STAR, each missing np_cagr_5y/10y because a loss
+    year makes a CAGR undefined, worth 10.8-12 quality points and 22 valuation
+    points via peg — went unmentioned.
+
+    So: resolve the symbol's scorecard, walk its declared components, and
+    report covered weight per pillar plus the named gaps with their weights.
+    `_weighted_pillar_score` renormalises over whatever is non-null, so a
+    pillar at 78% coverage is not wrong, it is a percentile computed from a
+    different question than the one the scorecard poses — and the verdict has
+    to know which components stopped being asked.
+
+    Returns None when the symbol has no cluster or no metrics row; the caller
+    raises that as a blocker rather than printing an empty table.
+    """
+    if not cluster_id or not tier or not cluster_metrics:
+        return None
+    try:
+        card = get_scorecard(cluster_id, tier)
+    except ValueError:
+        return None
+
+    out: dict[str, Any] = {"cluster_id": cluster_id, "tier": tier,
+                           "pillar_weights": dict(card.pillar_weights), "pillars": {}}
+    for name, weights in (("quality", card.quality),
+                          ("valuation", card.valuation),
+                          ("momentum", card.momentum)):
+        total = sum(weights.values())
+        present, missing = {}, {}
+        for k, w in weights.items():
+            v = cluster_metrics.get(k)
+            (present if v is not None else missing)[k] = round(w, 2)
+        covered = sum(present.values())
+        out["pillars"][name] = {
+            "declared_weight": round(total, 2),
+            "covered_weight": round(covered, 2),
+            "covered_pct": round(covered / total, 4) if total else None,
+            # Sorted heaviest-first: the top line is the component whose
+            # absence moved the percentile most.
+            "missing": dict(sorted(missing.items(), key=lambda kv: -kv[1])),
+            "values": {k: cluster_metrics.get(k) for k in sorted(present)},
+        }
+    return out
+
+
+# A pillar below this share of its declared weight is not a percentile of the
+# scorecard any more — it is a percentile of the subset that survived. 0.85 is
+# set so the healthcare cases that motivated it FIRE: LUPIN/STAR/INDSWFTLAB
+# quality at 0.89 passes (one missing CAGR is survivable and named anyway),
+# while their valuation at 0.73-0.78 trips, because losing `peg` costs 22 of
+# 100 valuation points and that is the pillar the verdict quotes hardest.
+# Tuned against the real cases rather than by intuition — CLAUDE.md §4: a
+# guard that would not have caught the bug that motivated it is decoration.
+_PILLAR_COVERAGE_FLOOR = 0.85
+
+
+def earnings_quality(annual: list[dict], quarterly: list[dict]) -> Optional[dict]:
+    """Is the reported profit growth showing up as cash and as operating profit?
+
+    derived_here: the engine has no exceptional-item flag. Screener's export
+    folds one-off gains — a licensing upfront, an asset sale, a tax writeback —
+    straight into `net_profit`, and every ratio built on it inherits them
+    silently. `pe_ttm` divides by the flattered base and reads cheap; the
+    momentum pillar's `np_yoy_q` reads the spike as operating strength.
+
+    GLENMARK, 2026-10-08, is the case this exists for: TTM net profit +138.5%
+    against operating profit +104.7% and operating margin stepping 17.6% ->
+    27.0% in one year. The quoted PE of 41.9 sits on that base.
+
+    AND THE 3-YEAR AVERAGE IS WHY THIS READS THE LATEST YEAR
+
+    The first verdict written off this pack called GLENMARK a one-off "that
+    never became cash", citing cfo_ebitda_3y = 0.22 — the lowest of 26 names.
+    That number is a THREE-YEAR MEAN, and it was dragged there by FY2024
+    (-0.22) and FY2025 (-0.35). GLENMARK's FY2026 conversion is 0.75: CFO
+    3,445cr on operating profit 4,572cr. The cash did arrive. A multi-year
+    average answers "has this company historically converted", which is a
+    quality question; "did THIS year's reported profit convert" is an
+    earnings-integrity question, and only the latest year can answer it.
+    Quoting one for the other produced a REDUCE on a position. So every
+    figure below is single-year, with the prior-years mean beside it as
+    context rather than as the reading.
+
+    Three tests, because each alone has honest false positives:
+
+      1. np_over_op_gap — the RATIO of growth factors, (1+np_g)/(1+op_g)-1,
+         not the difference of the two percentages. A 138% vs 105% pair
+         differs by 34 percentage points but only 16% multiplicatively, and
+         at those magnitudes the percentage-point gap is mostly an artifact
+         of the base. A genuine operating year moves the two together; a gap
+         means the increase arrived below EBIT — other income, a one-off, a
+         tax credit, or an interest swing. Deleveraging produces the same
+         signature, which is why tests 2 and 3 exist.
+      2. opm_step — TTM operating margin minus prior-TTM operating margin.
+         Margins move by a point or two a year; a step of several points is a
+         mix change, an acquisition, or something that is not trading.
+      3. cash conversion in the LATEST year, absolutely (<0.40) and relative
+         to the prior-years mean (<0.6x). Profit that was recognised but not
+         collected.
+
+    Returns the figures and a `flags` list. Interpretation is the verdict's
+    job — this only refuses to let the numbers go unmentioned.
+    """
+    out: dict[str, Any] = {"derived_here": True, "flags": []}
+
+    def _sum(rows, key):
+        vals = [r.get(key) for r in rows]
+        return None if not rows or any(v is None for v in vals) else sum(float(v) for v in vals)
+
+    if len(quarterly) >= 8:
+        cur, prv = quarterly[-4:], quarterly[-8:-4]
+        np_now, np_prev = _sum(cur, "net_profit"), _sum(prv, "net_profit")
+        op_now, op_prev = _sum(cur, "operating_profit"), _sum(prv, "operating_profit")
+        s_now, s_prev = _sum(cur, "sales"), _sum(prv, "sales")
+        if np_prev and op_prev and np_prev > 0 and op_prev > 0 and np_now is not None and op_now is not None:
+            np_f, op_f = np_now / np_prev, op_now / op_prev
+            out["ttm_np_growth"] = round(np_f - 1.0, 4)
+            out["ttm_op_growth"] = round(op_f - 1.0, 4)
+            # Ratio of growth FACTORS. See the docstring: differencing the two
+            # percentages overstates the gap at high growth rates.
+            out["np_over_op_gap"] = round(np_f / op_f - 1.0, 4)
+        if s_now and s_prev and s_now > 0 and s_prev > 0 and op_now is not None and op_prev is not None:
+            out["opm_now"] = round(op_now / s_now, 4)
+            out["opm_prev"] = round(op_prev / s_prev, 4)
+            out["opm_step"] = round(out["opm_now"] - out["opm_prev"], 4)
+
+    # Cash conversion: latest full year with both lines, vs the mean of the
+    # four before it. Uses operating profit as the EBITDA proxy the rest of
+    # this codebase already uses (see formulas.cfo_ebitda_3y).
+    conv = [(r.get("period_end"), float(r["cash_from_operating"]) / float(r["operating_profit"]))
+            for r in annual
+            if r.get("cash_from_operating") is not None
+            and r.get("operating_profit") not in (None, 0)
+            and float(r["operating_profit"]) > 0]
+    if conv:
+        out["cfo_op_latest"] = round(conv[-1][1], 3)
+        out["cfo_op_latest_fy"] = str(conv[-1][0])[:4]
+        prior = [c for _, c in conv[:-1]][-4:]
+        if prior:
+            out["cfo_op_prior_mean"] = round(sum(prior) / len(prior), 3)
+
+    gap = out.get("np_over_op_gap")
+    conv_now = out.get("cfo_op_latest")
+    # 0.15 and 0.05 are set so GLENMARK — the case that motivated this — trips
+    # BOTH: its multiplicative gap is 0.165 and its margin step is +9.4pp.
+    # CLAUDE.md §4: fed the original broken input, a guard has to reject it.
+    # A threshold picked by intuition at 0.25 would have passed it, green,
+    # forever, which is precisely how the buy-anchor tripwire was first set.
+    if gap is not None and gap >= 0.15:
+        # Both legs can be negative — NATCOPHARM's NP fell 33% while operating
+        # profit fell 46%, which is the same divergence and the opposite
+        # sentence. "Grew faster" there would have described a collapsing
+        # business as a growing one, in the one field a reader skims.
+        shape = ("outran" if (out.get("ttm_op_growth") or 0) > 0
+                 else "held up better than")
+        out["flags"].append(
+            f"net profit {shape} operating profit by {gap:.0%} over the TTM "
+            f"(NP {out['ttm_np_growth']:+.0%} vs OP {out['ttm_op_growth']:+.0%}) — the "
+            "difference sits below EBIT: other income, a one-off, tax or interest, "
+            "not trading. A PE quoted on this base is not a PE on operations.")
+    step = out.get("opm_step")
+    if step is not None and abs(step) >= 0.05:
+        out["flags"].append(
+            f"operating margin stepped {step:+.1%} in one year "
+            f"({out['opm_prev']:.1%} -> {out['opm_now']:.1%}). A move that size is a mix "
+            "change, an acquisition or a one-off — not an operating trend. Ask what "
+            "the margin is without it before using the current earnings base.")
+    if conv_now is not None and conv_now < 0.40:
+        out["flags"].append(
+            f"cash conversion {conv_now:.2f} in FY{out.get('cfo_op_latest_fy')} — under 0.40 of "
+            "operating profit reached operating cash. Reported profit is not being collected.")
+    prior_mean = out.get("cfo_op_prior_mean")
+    if conv_now is not None and prior_mean and prior_mean > 0 and conv_now < 0.6 * prior_mean:
+        out["flags"].append(
+            f"cash conversion fell to {conv_now:.2f} from a prior-years mean of {prior_mean:.2f} "
+            "— a deterioration, not a level. Check receivables and inventory.")
+    return out or None
+
+
 def pe_band(annual: list[dict]) -> Optional[dict]:
     """Own-history PE band from annual close price and reported net profit.
 
     derived_here: the engine stores no own-history valuation metric, only the
     cross-sectional percentile. Reading a cross-sectional percentile as though
     it meant "cheap" is the error that put Nilkamal at ACCUMULATE in v1.
+
+    THE UNITS DO NOT MATCH AND THE DIVISION WILL NOT TELL YOU
+
+    `net_profit` arrives from the Screener export in ₹ CRORE; the share count
+    in app.fundamentals_annual is a RAW COUNT. Dividing one by the other gives
+    an EPS 10,000,000× too small and therefore a PE 10,000,000× too large, and
+    nothing downstream objects — SUNPHARMA's band read lo=224,515,651
+    hi=670,630,227 and was emitted into the evidence pack as a valuation
+    figure, next to a pe_ttm of 38.5, for every symbol with ≥4 usable years.
+    22 of the 26 Healthcare packs carried one on 2026-10-08.
+
+    The CRORE constant below is the entire fix. It is spelled out rather than
+    folded into the expression because this is the second unit bug in this
+    column's lineage, and a bare `* 1e7` reads like a typo to the next person.
+
+    Worked check (SUNPHARMA FY2026): net_profit 11,479.42 cr → 114,794,200,000
+    ₹; shares 2,399,334,970 → EPS ₹47.84; close ₹1,757.20 → PE 36.7, which sits
+    beside the engine's independently computed pe_ttm of 38.5. Before the fix
+    the same row produced 367,000,000. If you change this function, redo that
+    comparison — a PE band that cannot be reconciled against pe_ttm is not
+    evidence, and the whole point of this script is that a model handed a pack
+    cannot interrogate it.
     """
+    CRORE = 10_000_000  # ₹ crore → ₹, to meet a raw share count
     pes = []
     for a in annual:
         px, np_, sh = a.get("annual_close_price"), a.get("net_profit"), a.get("no_of_equity_shares")
         if not px or not np_ or not sh or np_ <= 0 or sh <= 0:
             continue
-        eps = float(np_) / float(sh)
+        eps = (float(np_) * CRORE) / float(sh)
         if eps > 0:
             pes.append(float(px) / eps)
     if len(pes) < 4:
@@ -429,6 +681,12 @@ def build_symbol(app: psycopg.Connection, golden: psycopg.Connection,
 
     pack["pe_band"] = pe_band(annual)
     pack["ttm_vs_prior"] = ttm_vs_prior(quarterly)
+    pack["earnings_quality"] = earnings_quality(annual, quarterly)
+    pack["scorecard_coverage"] = scorecard_coverage(
+        (pack["scores"] or {}).get("cluster_id"),
+        (pack["scores"] or {}).get("maturity_tier") or (pack["metrics"] or {}).get("maturity_tier"),
+        (pack["metrics"] or {}).get("cluster_metrics"),
+    )
 
     # Technicals, via the scorer's own functions.
     prices = load_price_history(golden, symbol, limit=700)
@@ -484,6 +742,32 @@ def build_symbol(app: psycopg.Connection, golden: psycopg.Connection,
         b.append("no delivery row — cannot distinguish accumulation from churn")
     if pack["pe_band"] is None:
         b.append("insufficient usable annual history for an own-history PE band")
+
+    # Scorecard coverage. These read as blockers rather than as a table the
+    # reader is trusted to check, because the 2026-10-08 healthcare pack DID
+    # carry every number needed to see that LUPIN's valuation pillar was
+    # missing `peg` — in a 32-key JSON blob with no expectation attached to
+    # it. A pillar percentile quoted without its coverage is the same class of
+    # claim as a delivery average computed from one session.
+    cov = pack["scorecard_coverage"]
+    if cov is None:
+        b.append("no scorecard resolved (missing cluster, tier or metrics row) — the "
+                 "Q/V/M percentiles cannot be attributed to any set of components")
+    else:
+        for name, p in cov["pillars"].items():
+            pct = p["covered_pct"]
+            if pct is not None and pct < _PILLAR_COVERAGE_FLOOR:
+                gaps = ", ".join(f"{k} ({w:g}pts)" for k, w in p["missing"].items())
+                b.append(
+                    f"{name} pillar scored on {pct:.0%} of its declared weight "
+                    f"({p['covered_weight']:g} of {p['declared_weight']:g}) — "
+                    f"renormalised around: {gaps}. The percentile answers a narrower "
+                    "question than the scorecard asks; say which components are absent "
+                    "if the verdict leans on this pillar.")
+
+    eq = pack["earnings_quality"] or {}
+    for f in eq.get("flags", []):
+        b.append(f"earnings quality — {f}")
     return pack
 
 

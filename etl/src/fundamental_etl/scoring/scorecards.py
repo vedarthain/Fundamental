@@ -827,6 +827,14 @@ def make_new(card: Scorecard) -> Scorecard:
     )
 
 
+# Every tier a scorecard can be generated for. Exported so callers that need
+# to enumerate the full space of (cluster, tier) scorecards — the metric audit
+# in scripts/verdict-evidence.py — cannot drift out of step with the four
+# branches in get_scorecard() below. A hand-copied tier list is how an audit
+# silently stops covering a tier.
+TIERS: tuple[str, ...] = ("mature", "veteran", "mid", "new")
+
+
 def get_scorecard(cluster_id: str, tier: str) -> Scorecard:
     base = SCORECARDS_MATURE.get(cluster_id) or SCORECARDS_MATURE["unclassified"]
     if tier == "mature":
