@@ -1513,6 +1513,129 @@ def assign_clusters_cmd():
         print(f"  {cid:30s} {n:>5d}")
 
 
+_METRICS_BATCH = 100
+_METRICS_MAX_ATTEMPTS = 4
+_METRICS_RETRYABLE = (psycopg.errors.DeadlockDetected,
+                      psycopg.errors.SerializationFailure)
+
+
+def _compute_metrics_batches(ac, gc, stocks, snap, nifty, overrides, shareholding):
+    """Compute + persist metrics for `stocks`, committing every batch. Returns (ok, fail).
+
+    Batched commit every 100 — keeps the run fast over a cross-region link
+    (per-symbol commit tripled wall time and blew the CI timeout). Error
+    handling distinguishes THREE classes:
+
+      • A pure Python/data error for ONE symbol does NOT abort the DB
+        transaction, so we log + skip + continue (a few symbols legitimately
+        lack data). Original behaviour.
+
+      • A deadlock or serialization failure. Postgres chooses a victim
+        arbitrarily and the losing transaction is SAFE TO REPLAY — that is the
+        documented contract, not an optimism. So the batch is retried with
+        backoff.
+
+      • Any other Postgres error aborts the run loudly, as before. A constraint
+        violation or a bad statement will not fix itself on a second attempt,
+        and retrying it would only bury the message under three identical ones.
+
+    WHY RETRY RATHER THAN "PAUSE THE PINGERS AND RE-RUN"
+
+    That was the old hint, and it is a workaround wearing a fix's clothes. It
+    cost two consecutive weekly runs: 7 Oct died after a clean 3,082-symbol
+    pass, and the 8 Oct re-run died on POOJALOGIS ~15 minutes in — roughly 70
+    minutes of compute discarded because one row collided with a price update.
+    It also cannot be followed in practice: the pinger fires during exactly the
+    hours someone is awake to trigger a re-run, so "pause it first" means a
+    manual step before every manual run, and nothing enforces it. And the
+    instruction got less followable on 8 Oct, not more: the intraday cadence
+    doubled from 7 pulls a day to 14, which doubles the window in which this
+    collides.
+
+    RETRY MUST REPLAY THE WHOLE BATCH, NOT THE ONE SYMBOL
+
+    The rollback discards every uncommitted symbol since the last commit — up
+    to 99 of them, not just the one that raised. Retrying only the victim would
+    leave those 99 absent from the snapshot while the run still exited 0, which
+    is CLAUDE.md §5's failure that renders as success: a hole in
+    metrics_snapshot that every downstream figure silently inherits. So `pos`
+    only advances after a commit, and ok/fail are accumulated from per-attempt
+    counters so a replayed batch cannot double-count itself.
+
+    WHY THIS IS A SEPARATE FUNCTION
+
+    It lives outside compute_metrics_cmd so the retry path can be exercised
+    without a database: the only way to prove a deadlock branch works is to
+    raise a deadlock into it, and that is impossible through a Typer command
+    that first needs the real universe, cluster, price and shareholding reads.
+    CLAUDE.md §4 — a new guard must be fed the original broken input and seen
+    to reject it, or it is decoration.
+    """
+    ok = fail = 0
+    pos = 0
+    while pos < len(stocks):
+        batch = stocks[pos : pos + _METRICS_BATCH]
+        for attempt in range(1, _METRICS_MAX_ATTEMPTS + 1):
+            b_ok = b_fail = 0
+            at_symbol = batch[0]["symbol"]
+            try:
+                for s in batch:
+                    at_symbol = s["symbol"]
+                    try:
+                        cm, meta, status = compute_metrics_for_symbol(
+                            ac, gc, s["symbol"], s["cluster_id"],
+                            s["maturity_tier"], nifty,
+                            scorecard_overrides=overrides, snapshot_date=snap,
+                            shareholding=shareholding,
+                        )
+                        persist_metrics(ac, s["symbol"], snap, cm, meta,
+                                        s["maturity_tier"], status)
+                        b_ok += 1
+                    except psycopg.Error:
+                        raise          # transaction is aborted — handled below
+                    except Exception as e:
+                        # Data error for this symbol only — txn intact.
+                        b_fail += 1
+                        log.error("metrics_error", symbol=s["symbol"],
+                                  error=str(e)[:200])
+                ac.commit()
+            except _METRICS_RETRYABLE as e:
+                ac.rollback()
+                if attempt == _METRICS_MAX_ATTEMPTS:
+                    log.error("metrics_deadlock_exhausted", symbol=at_symbol,
+                              attempts=_METRICS_MAX_ATTEMPTS, batch_start=pos,
+                              error=str(e)[:200],
+                              hint="A concurrent writer held locks across every "
+                                   "attempt. Re-run outside market hours (the "
+                                   "intraday pinger stops after 15:45 IST).")
+                    raise SystemExit(1)
+                # 2s, 4s, 8s. Long enough that the counterparty's own
+                # transaction has committed — the pinger's bulk price UPDATE
+                # takes seconds, so one backoff normally clears it. Short
+                # enough that four attempts cannot add more than 14s to a
+                # 70-minute run.
+                delay = 2 ** attempt
+                log.warning("metrics_batch_retry", symbol=at_symbol,
+                            attempt=attempt, batch_start=pos,
+                            sleeping=delay, error=str(e)[:120])
+                time.sleep(delay)
+                continue
+            except psycopg.Error as e:
+                ac.rollback()
+                log.error("metrics_db_fatal", symbol=at_symbol,
+                          error=str(e)[:200],
+                          hint="Non-retryable DB error — this will not fix itself "
+                               "on a re-run; read the error.")
+                raise SystemExit(1)
+            ok += b_ok
+            fail += b_fail
+            break
+        pos += len(batch)
+        log.info("progress", done=pos, n=len(stocks), ok=ok, failed=fail)
+    ac.commit()
+    return ok, fail
+
+
 @app.command("compute-metrics")
 def compute_metrics_cmd(
     snapshot: str = typer.Option(None, help="YYYY-MM-DD; defaults to today"),
@@ -1583,46 +1706,9 @@ def compute_metrics_cmd(
             nifty = load_nifty_returns(gc)
             log.info("nifty_returns", **{k: round(v, 4) if v is not None else None for k, v in nifty.items()})
 
-            ok = fail = 0
-            for i, s in enumerate(stocks, 1):
-                # Batched commit every 100 — keeps the run fast over a
-                # cross-region link (per-symbol commit tripled wall time and
-                # blew the CI timeout). Error handling distinguishes two
-                # classes:
-                #
-                #   • A pure Python/data error for ONE symbol does NOT abort
-                #     the DB transaction, so we log + skip + continue (a few
-                #     symbols legitimately lack data). Original behaviour.
-                #
-                #   • A Postgres error (deadlock, etc.) ABORTS the whole
-                #     transaction — every later statement would fail with
-                #     "current transaction is aborted". Rather than cascade
-                #     thousands of those (the bug that wiped a manual run), we
-                #     roll back and fail the run loudly. A deadlock only
-                #     happens under concurrent writes, so the fix is to run
-                #     this with the intraday pingers paused, then re-run.
-                try:
-                    cm, meta, status = compute_metrics_for_symbol(
-                        ac, gc, s["symbol"], s["cluster_id"], s["maturity_tier"], nifty,
-                        scorecard_overrides=overrides, snapshot_date=snap,
-                        shareholding=shareholding,
-                    )
-                    persist_metrics(ac, s["symbol"], snap, cm, meta, s["maturity_tier"], status)
-                    ok += 1
-                    if i % 100 == 0:
-                        ac.commit()
-                        log.info("progress", done=i, n=len(stocks), ok=ok, failed=fail)
-                except psycopg.Error as e:
-                    ac.rollback()
-                    log.error("metrics_db_fatal", symbol=s["symbol"], error=str(e)[:200],
-                              hint="DB transaction aborted (likely a deadlock from a concurrent "
-                                   "writer). Pause the intraday pingers and re-run.")
-                    raise SystemExit(1)
-                except Exception as e:
-                    # Data error for this symbol only — txn intact, skip it.
-                    fail += 1
-                    log.error("metrics_error", symbol=s["symbol"], error=str(e)[:200])
-            ac.commit()
+            ok, fail = _compute_metrics_batches(
+                ac, gc, stocks, snap, nifty, overrides, shareholding,
+            )
 
     log.info("compute_metrics_done", ok=ok, failed=fail)
 
