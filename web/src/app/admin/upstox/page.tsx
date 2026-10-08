@@ -14,10 +14,23 @@
  *
  * Page shows token state (valid / expired / missing) at-a-glance so you
  * don't have to remember whether you already reauthed today.
+ *
+ * WHEN UPSTOX_ANALYTICS_TOKEN IS SET, THE DAILY TAP IS NOT NEEDED
+ *
+ * And then this page is actively dangerous if it keeps presenting the session
+ * row as the thing that matters: it would show "Expired" in orange every
+ * morning while the pinger ran perfectly off the analytics token, and the
+ * natural response is to tap Reauth — training you to perform a daily ritual
+ * that does nothing. Worse in the other direction: a green "Active" badge
+ * here says nothing about whether the token the pinger actually uses is
+ * alive. So when the analytics token is configured it is reported FIRST, the
+ * session row is demoted to a labelled fallback, and the reauth button says
+ * what it is for.
  */
 import { redirect } from "next/navigation";
 import { sql } from "@/lib/db";
 import { isAdminRequest } from "@/lib/auth";
+import { jwtExpiry } from "@/lib/upstoxToken";
 
 export const dynamic = "force-dynamic";
 
@@ -76,6 +89,14 @@ export default async function UpstoxAdminPage({
 
   const session = await loadSession();
   const status = sessionStatus(session);
+  // The token the pinger actually authenticates with, resolved in the same
+  // order as resolveMarketDataToken(). Only the expiry is read — the token
+  // itself is never rendered.
+  const analytics = process.env.UPSTOX_ANALYTICS_TOKEN?.trim();
+  const analyticsExp = analytics ? jwtExpiry(analytics) : null;
+  const analyticsDays = analyticsExp
+    ? Math.floor((analyticsExp.getTime() - Date.now()) / 86_400_000)
+    : null;
   const fmt = (iso: string | null): string => {
     if (!iso) return "—";
     const d = new Date(iso);
@@ -88,33 +109,56 @@ export default async function UpstoxAdminPage({
 
   return (
     <Mobile>
-      <h1 className="font-display text-[22px] leading-tight mb-1">Upstox session</h1>
+      <h1 className="font-display text-[22px] leading-tight mb-1">Upstox token</h1>
       <p className="muted-text text-[12px] mb-5">
-        Daily 1-tap reauth for the intraday LTP refresh.
+        {analytics
+          ? "Intraday LTP refresh runs on the long-lived analytics token. No daily tap needed."
+          : "Daily 1-tap reauth for the intraday LTP refresh."}
       </p>
 
-      <StatusBadge status={status} />
+      {analytics ? (
+        <AnalyticsPanel expiresAt={analyticsExp} days={analyticsDays} fmt={fmt} />
+      ) : (
+        <StatusBadge status={status} />
+      )}
 
       <dl className="mt-5 space-y-3 text-[13px]">
-        <Row label="User">
+        <Row label={analytics ? "OAuth fallback — user" : "User"}>
           {session.upstox_user_name || session.upstox_user_id || "—"}
         </Row>
         <Row label="Last reauth">{fmt(session.refreshed_at)}</Row>
-        <Row label="Token expires">{fmt(session.expires_at)}</Row>
+        <Row label="Session token expires">{fmt(session.expires_at)}</Row>
       </dl>
 
       <a
         href="/api/upstox/login"
         className="mt-7 inline-flex items-center justify-center w-full px-5 py-3 rounded-md font-medium text-[15px] transition-colors"
-        style={{ backgroundColor: "var(--color-accent-600)", color: "white" }}
+        style={{
+          backgroundColor: analytics ? "var(--color-surface-2, #e8e8e8)" : "var(--color-accent-600)",
+          color: analytics ? "var(--color-text)" : "white",
+        }}
       >
-        {status === "valid" ? "Reauth via Upstox" : "Sign in to Upstox"}
+        {analytics
+          ? "Reauth OAuth session (not required)"
+          : status === "valid" ? "Reauth via Upstox" : "Sign in to Upstox"}
       </a>
 
       <p className="muted-text text-[11px] mt-5 leading-snug">
-        Reauth opens Upstox&apos;s login. After you authorise, you&apos;ll be
-        redirected back here. The GH Action picks up the new token on
-        the next 30-min run automatically.
+        {analytics ? (
+          <>
+            The analytics token is read-only and lasts a year; nothing here
+            needs doing until it nears expiry. The OAuth session above is only
+            a fallback for when the analytics token is unset — an
+            &ldquo;Expired&rdquo; session is normal and harmless.
+          </>
+        ) : (
+          <>
+            Reauth opens Upstox&apos;s login. After you authorise, you&apos;ll
+            be redirected back here. The pinger picks up the new token on its
+            next pull automatically. To stop needing this daily, set
+            <code> UPSTOX_ANALYTICS_TOKEN</code>.
+          </>
+        )}
       </p>
     </Mobile>
   );
@@ -145,6 +189,44 @@ function StatusBadge({ status }: { status: Status }) {
         style={{ backgroundColor: "white", opacity: 0.85 }}
       />
       {c.label}
+    </div>
+  );
+}
+
+/**
+ * The analytics token's state. Amber inside 30 days and red past expiry —
+ * the same thresholds check-freshness.py alerts on, because a page that says
+ * "fine" while the nightly check pages you is worse than either alone.
+ */
+function AnalyticsPanel({
+  expiresAt, days, fmt,
+}: {
+  expiresAt: Date | null;
+  days: number | null;
+  fmt: (iso: string | null) => string;
+}) {
+  const tone =
+    days === null ? { label: "Active", bg: "#1f8a4c" }
+    : days < 0 ? { label: "Expired", bg: "#b3382c" }
+    : days <= 30 ? { label: `Expires in ${days}d`, bg: "#c97a3f" }
+    : { label: "Active", bg: "#1f8a4c" };
+  return (
+    <div>
+      <div
+        className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-[11.5px] font-semibold tracking-wide uppercase"
+        style={{ backgroundColor: tone.bg, color: "white" }}
+      >
+        <span
+          className="inline-block w-2 h-2 rounded-full"
+          style={{ backgroundColor: "white", opacity: 0.85 }}
+        />
+        Analytics token — {tone.label}
+      </div>
+      <div className="muted-text text-[11.5px] mt-2">
+        {expiresAt
+          ? <>Valid until {fmt(expiresAt.toISOString())}</>
+          : <>Expiry unreadable — the token is not a JWT we can parse, so there is no advance warning before it lapses.</>}
+      </div>
     </div>
   );
 }

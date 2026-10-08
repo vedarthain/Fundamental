@@ -11,6 +11,9 @@
  *   5. Token + identity are written into app.upstox_session (single-row
  *      table). Upstox tokens expire daily at 03:30 IST.
  *
+ * That daily expiry is why unattended market-data reads do NOT use this flow
+ * by default — see resolveMarketDataToken() and the analytics token.
+ *
  * Token-store table is single-row by design (CHECK id=1); we UPDATE in
  * place. See db/migrations/0026_upstox_session.sql for the schema.
  *
@@ -24,6 +27,12 @@
 import "server-only";
 import { createHmac, randomBytes, timingSafeEqual } from "crypto";
 import { sql } from "@/lib/db";
+import { jwtExpiry } from "@/lib/upstoxToken";
+
+// Re-exported so callers that already reach for the Upstox module don't have
+// to know about the DB-free split. New non-server callers should import from
+// @/lib/upstoxToken directly — see that file's header.
+export { jwtExpiry };
 
 const UPSTOX_DIALOG_BASE  = "https://api.upstox.com/v2/login/authorization/dialog";
 const UPSTOX_TOKEN_URL    = "https://api.upstox.com/v2/login/authorization/token";
@@ -240,18 +249,95 @@ export class UpstoxTokenError extends Error {
   constructor(msg: string) { super(msg); this.name = "UpstoxTokenError"; }
 }
 
-/** Load the session and assert the token is present + not past its stored
- *  expiry. Throws UpstoxTokenError otherwise. */
-async function requireFreshToken(): Promise<string> {
+/**
+ * WHY THERE ARE TWO KINDS OF TOKEN
+ *
+ * The OAuth access token above cannot survive a night. Upstox issues no
+ * refresh token and no non-interactive login — every access token dies at
+ * 03:30 IST "regardless of the time it was generated", so an unattended
+ * pinger is dead by definition until a human opens a browser. That is not a
+ * hypothetical: the intraday feed ran silently dead for four trading days in
+ * Sept 2026 on exactly this failure, and the only reason it surfaced was
+ * someone noticing a price badge hadn't moved.
+ *
+ * Upstox's answer is the ANALYTICS TOKEN: one per account, 1-year validity,
+ * read-only (GET requests only), generated straight from the Developer Apps
+ * page with no authorization redirect. Market Quote — the only Upstox
+ * endpoint this codebase calls — works with it and does NOT require a
+ * whitelisted static IP, which matters because the callers run on Vercel and
+ * GitHub runners with rotating egress IPs.
+ *
+ * So market-data reads prefer UPSTOX_ANALYTICS_TOKEN and fall back to the
+ * daily session token. The fallback is kept rather than removed: it is what
+ * makes setting the env var safe to do (and to undo) without a code change.
+ *
+ * What the analytics token CANNOT do: anything that is not a GET. Orders,
+ * portfolio and user endpoints are out, and those also need a static IP. This
+ * matters only if something later reaches for the token for a write — today
+ * `fetchLtpsByKeys` is the sole consumer and it is a GET. Anything that posts
+ * to Upstox must take the session token explicitly, not this resolver.
+ *
+ * And the §5 question — what keeps this current? A 1-year token nobody tracks
+ * is just a silent outage scheduled twelve months out, which is strictly worse
+ * than the daily one because the daily one at least taught you to notice. So
+ * the expiry is parsed out of the JWT and surfaced: the admin page shows it
+ * and check-freshness.py warns ahead of it. The token is not maintenance-free,
+ * it is annual-maintenance, and the difference has to be visible somewhere.
+ */
+export type MarketDataToken = {
+  token: string;
+  source: "analytics" | "session";
+  /** Parsed from the JWT `exp` claim (analytics) or the stored 03:30 IST
+   *  boundary (session). Null when it could not be determined. */
+  expiresAt: Date | null;
+};
+
+/**
+ * Resolve the token to use for a market-data GET, preferring the long-lived
+ * analytics token. Throws UpstoxTokenError when neither is usable.
+ */
+export async function resolveMarketDataToken(): Promise<MarketDataToken> {
+  const analytics = process.env.UPSTOX_ANALYTICS_TOKEN?.trim();
+  if (analytics) {
+    const expiresAt = jwtExpiry(analytics);
+    // An analytics token past its own stated expiry is not a reason to fall
+    // back silently — falling back would hide the one event this token exists
+    // to make rare, and the daily token is almost certainly dead too at that
+    // point. Say which one is wrong.
+    if (expiresAt && expiresAt <= new Date()) {
+      throw new UpstoxTokenError(
+        `UPSTOX_ANALYTICS_TOKEN expired ${expiresAt.toISOString().slice(0, 10)} — ` +
+        "generate a new one in the Upstox Developer Apps console and update the env var",
+      );
+    }
+    return { token: analytics, source: "analytics", expiresAt };
+  }
+
   const session = await loadSession();
   if (!session.access_token) {
-    throw new UpstoxTokenError("Upstox access token missing — reauth at /api/upstox/login");
+    throw new UpstoxTokenError(
+      "No Upstox token: UPSTOX_ANALYTICS_TOKEN unset and no stored session — " +
+      "set the analytics token, or reauth at /api/upstox/login",
+    );
   }
   // Our stored expires_at is the next 03:30 IST boundary; past it = dead.
   if (session.expires_at && new Date(session.expires_at) <= new Date()) {
-    throw new UpstoxTokenError("Upstox access token expired — reauth at /api/upstox/login");
+    throw new UpstoxTokenError(
+      "Upstox session token expired (they die daily at 03:30 IST) — set " +
+      "UPSTOX_ANALYTICS_TOKEN to stop needing a daily reauth, or reauth at /api/upstox/login",
+    );
   }
-  return session.access_token;
+  return {
+    token: session.access_token,
+    source: "session",
+    expiresAt: session.expires_at ? new Date(session.expires_at) : null,
+  };
+}
+
+/** Load the session and assert the token is present + not past its stored
+ *  expiry. Throws UpstoxTokenError otherwise. */
+async function requireFreshToken(): Promise<string> {
+  return (await resolveMarketDataToken()).token;
 }
 
 /**

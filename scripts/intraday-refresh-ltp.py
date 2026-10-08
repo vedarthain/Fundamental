@@ -10,7 +10,8 @@ the current_price column in:
     - app.cluster_stocks_panel_cache (drives /sectors and /market mover lists)
 
 Flow:
-  1. Load access_token from app.upstox_session.  Bail if missing/expired.
+  1. Resolve a token: UPSTOX_ANALYTICS_TOKEN if set (read-only, 1-year),
+     else app.upstox_session.  Bail if missing/expired.  See load_token.
   2. Pull symbol → instrument_key from app.upstox_instrument JOIN
      app.universe WHERE is_active.
   3. Chunk into batches of 200 (well under Upstox's 500/call limit).
@@ -120,9 +121,46 @@ def fetch_ltp_batch(token: str, instrument_keys: list[str]) -> dict[str, float]:
 
 # ----------------------- DB I/O -------------------------------------------
 
+def jwt_expiry(token: str) -> datetime | None:
+    """`exp` out of a JWT, unverified. We are not authenticating anything —
+    we are reading the issuer's stated expiry so it can be reported before it
+    bites. Unparseable returns None and the token is still used: refusing a
+    working token because its shape changed turns a reporting gap into an
+    outage."""
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+    try:
+        import base64
+        pad = "=" * (-len(parts[1]) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(parts[1] + pad))
+        exp = claims.get("exp")
+        if not isinstance(exp, (int, float)):
+            return None
+        return datetime.fromtimestamp(float(exp), tz=timezone.utc)
+    except Exception:
+        return None
+
+
 def load_token(conn: psycopg.Connection) -> tuple[str | None, datetime | None]:
-    """Returns (access_token, expires_at). Either may be None if the
-    upstox_session row hasn't been populated yet."""
+    """Returns (token, expires_at) for a market-data GET.
+
+    Prefers UPSTOX_ANALYTICS_TOKEN — read-only, 1-year validity, no browser
+    redirect to obtain and no static-IP whitelist for Market Quote. The OAuth
+    session token in app.upstox_session dies at 03:30 IST every night and
+    Upstox issues no refresh token, so it can never carry an unattended job;
+    it stays here as a fallback so setting (or unsetting) the env var needs no
+    code change. Must stay in step with resolveMarketDataToken() in
+    web/src/lib/upstox.ts — both resolve the same two sources in the same
+    order, and a disagreement means the script and the cron route are quoting
+    different prices into the same columns.
+    """
+    analytics = (os.environ.get("UPSTOX_ANALYTICS_TOKEN") or "").strip()
+    if not analytics:
+        analytics = (env_url("UPSTOX_ANALYTICS_TOKEN", required=False) or "").strip()
+    if analytics:
+        return (analytics, jwt_expiry(analytics))
+
     with conn.cursor() as cur:
         cur.execute("""
             SELECT access_token, expires_at FROM app.upstox_session WHERE id = 1
@@ -205,12 +243,14 @@ def main() -> None:
     with psycopg.connect(app_url) as conn:
         token, expires_at = load_token(conn)
         if not token:
-            print("no upstox access_token in DB — admin must visit "
-                  "/api/upstox/login first", file=sys.stderr)
+            print("no upstox token: UPSTOX_ANALYTICS_TOKEN unset and no stored "
+                  "session — set the analytics token, or visit /api/upstox/login",
+                  file=sys.stderr)
             sys.exit(0 if args.tolerate_expired else 2)
         if expires_at and expires_at < datetime.now(timezone.utc):
-            print(f"upstox token expired at {expires_at} — admin must "
-                  "re-auth via /api/upstox/login", file=sys.stderr)
+            print(f"upstox token expired at {expires_at} — regenerate "
+                  "UPSTOX_ANALYTICS_TOKEN in the Upstox Developer Apps console, "
+                  "or re-auth via /api/upstox/login", file=sys.stderr)
             sys.exit(0 if args.tolerate_expired else 2)
 
         mapping = load_instrument_map(conn)

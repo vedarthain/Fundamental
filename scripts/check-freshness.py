@@ -69,6 +69,8 @@ the GH Actions log is a complete diagnostic without needing to dig.
 from __future__ import annotations
 
 import argparse
+import base64
+import json
 import os
 import re
 import sys
@@ -80,7 +82,11 @@ import psycopg
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def env_url(name: str) -> str:
+def env_url(name: str, required: bool = True) -> str | None:
+    """Env var, falling back to .env.local. `required=False` returns None
+    instead of exiting — for optional settings like UPSTOX_ANALYTICS_TOKEN,
+    whose absence is a valid configuration (the OAuth session is the
+    fallback), not a misconfiguration."""
     v = os.environ.get(name)
     if v:
         return v
@@ -89,9 +95,29 @@ def env_url(name: str) -> str:
         for line in env_path.read_text().splitlines():
             if line.startswith(name + "="):
                 return line.split("=", 1)[1].strip().strip('"').strip("'")
+    if not required:
+        return None
     raise SystemExit(
         f"✗ {name} not set — pass as env var or add to .env.local"
     )
+
+
+def _jwt_expiry(token: str) -> datetime | None:
+    """`exp` out of a JWT, unverified — we are reading the issuer's stated
+    expiry, not authenticating. Unparseable returns None; see the same helper
+    in scripts/intraday-refresh-ltp.py and jwtExpiry() in web/src/lib/upstox.ts."""
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+    try:
+        pad = "=" * (-len(parts[1]) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(parts[1] + pad))
+        exp = claims.get("exp")
+        if not isinstance(exp, (int, float)):
+            return None
+        return datetime.fromtimestamp(float(exp), tz=timezone.utc)
+    except Exception:
+        return None
 
 
 def mask(url: str) -> str:
@@ -558,22 +584,69 @@ def check_intraday_price_age(conn: psycopg.Connection, max_minutes: int) -> tupl
 
 
 def check_upstox_token(conn: psycopg.Connection) -> tuple[bool, str]:
-    """The root cause one level up from intraday_age: is the stored Upstox
-    token usable right now? Checked only inside the market window, because an
-    expired token overnight is normal and expected — you reauth in the morning."""
+    """The root cause one level up from intraday_age: is the Upstox token the
+    pinger ACTUALLY uses usable right now?
+
+    "Actually uses" is the whole point. This check used to read
+    app.upstox_session unconditionally, and once UPSTOX_ANALYTICS_TOKEN was
+    introduced that row stopped being the thing the pinger authenticates with.
+    Left alone, the check would have gone on reporting a token nobody reads —
+    green while the real one was dead, or red while everything worked. Either
+    way it would have been measuring the wrong object, which is §5's check
+    that cannot fail wearing a different hat. It now resolves the same two
+    sources in the same order as resolveMarketDataToken() in
+    web/src/lib/upstox.ts and load_token() in scripts/intraday-refresh-ltp.py.
+
+    The analytics token is also checked for IMMINENT expiry, not just past
+    expiry. It lasts a year, which means the failure it sets up is one silent
+    outage twelve months from now — and unlike the daily token, nothing about
+    normal operation will remind you first. Thirty days of warning is the
+    reminder.
+
+    Checked only inside the market window, because an expired session token
+    overnight is normal and expected — you reauth in the morning.
+    """
     now_ist = datetime.now(IST)
     if not _in_market_window(now_ist):
         return True, "✓ upstox_token: outside market window — skipped"
+
+    analytics = (os.environ.get("UPSTOX_ANALYTICS_TOKEN") or "").strip()
+    if not analytics:
+        analytics = (env_url("UPSTOX_ANALYTICS_TOKEN", required=False) or "").strip()
+    if analytics:
+        exp = _jwt_expiry(analytics)
+        if exp is None:
+            return True, ("✓ upstox_token: analytics token in use, expiry unreadable "
+                          "(not a JWT?) — it will work until it doesn't")
+        days = (exp - datetime.now(timezone.utc)).days
+        if days < 0:
+            return False, (
+                f"✗ upstox_token: analytics token EXPIRED {exp.astimezone(IST):%Y-%m-%d} "
+                "— regenerate it in the Upstox Developer Apps console and update "
+                "UPSTOX_ANALYTICS_TOKEN; intraday prices are frozen until you do."
+            )
+        if days <= 30:
+            return False, (
+                f"✗ upstox_token: analytics token expires in {days}d "
+                f"({exp.astimezone(IST):%Y-%m-%d}) — regenerate it before it lapses. "
+                "This is the only warning you get; it does not fail daily like the "
+                "OAuth token does."
+            )
+        return True, (f"✓ upstox_token: analytics token, {days}d left "
+                      f"(expires {exp.astimezone(IST):%Y-%m-%d})")
+
     with conn.cursor() as cur:
         cur.execute(
             "SELECT access_token IS NOT NULL, expires_at FROM app.upstox_session WHERE id = 1"
         )
         row = cur.fetchone()
     if not row:
-        return False, "✗ upstox_token: no row in app.upstox_session"
+        return False, ("✗ upstox_token: UPSTOX_ANALYTICS_TOKEN unset and no row in "
+                       "app.upstox_session")
     has_token, expires_at = row[0], row[1]
     if not has_token:
-        return False, "✗ upstox_token: no access_token stored — reauth at /api/upstox/login"
+        return False, ("✗ upstox_token: no analytics token and no stored access_token "
+                       "— set UPSTOX_ANALYTICS_TOKEN, or reauth at /api/upstox/login")
     if expires_at is None:
         return True, "✓ upstox_token: present, no expiry recorded"
     if expires_at.tzinfo is None:
