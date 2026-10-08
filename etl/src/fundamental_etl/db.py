@@ -85,11 +85,37 @@ def _assert_local(url: str, var_name: str) -> None:
     )
 
 
+# TCP keepalives, because a long ETL run against Neon dies without them.
+#
+# MEASURED 2026-10-08: `compute-metrics` over 3,082 symbols takes ~30 minutes
+# and died three times — twice as "the connection is lost" and once as
+# "SSL SYSCALL error: Operation timed out" — at symbol ~1,300 and then ~1,700.
+# Not a bad symbol: the third run passed the point the first two died at. It is
+# an idle TCP connection being reaped mid-run. The loop holds BOTH connections
+# open for the whole pass while doing long stretches of work against only one
+# of them, so the other sits silent long enough for Neon, or any NAT on the
+# path, to drop it. libpq then discovers a dead socket on next use.
+#
+# Defaults are off (keepalives_idle unset means the OS default of ~2 hours),
+# which is useless here. 30s idle / 10s probe / 5 strikes keeps the socket
+# warm and still fails inside a minute if the network is genuinely gone.
+#
+# Applied to local connections too. They do not need it, and a parameter that
+# is only set on the path nobody tests locally is how this class of bug hides.
+_KEEPALIVE = {
+    "keepalives": 1,
+    "keepalives_idle": 30,
+    "keepalives_interval": 10,
+    "keepalives_count": 5,
+}
+
+
 @contextmanager
 def golden_conn() -> Iterator[psycopg.Connection]:
     """Read-only connection to golden_db. Treat as read-only by convention."""
     _assert_local(settings.golden_db_url, "GOLDEN_DB_URL")
-    with psycopg.connect(settings.golden_db_url, row_factory=dict_row) as conn:
+    with psycopg.connect(settings.golden_db_url, row_factory=dict_row,
+                         **_KEEPALIVE) as conn:
         yield conn
 
 
@@ -97,5 +123,6 @@ def golden_conn() -> Iterator[psycopg.Connection]:
 def app_conn() -> Iterator[psycopg.Connection]:
     """Writable connection to fundamental_app."""
     _assert_local(settings.app_db_url, "APP_DB_URL")
-    with psycopg.connect(settings.app_db_url, row_factory=dict_row) as conn:
+    with psycopg.connect(settings.app_db_url, row_factory=dict_row,
+                         **_KEEPALIVE) as conn:
         yield conn
