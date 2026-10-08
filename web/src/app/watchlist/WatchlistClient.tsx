@@ -30,7 +30,7 @@ import {
   useVerdictChips,
 } from "@/components/VerdictSheet";
 import type { VerdictChip } from "@/lib/verdictTypes";
-import { useWatchlist, saveWatchlistNote } from "@/lib/watchlist";
+import { useWatchlist, saveWatchlistNote, retryWatchlistLoad } from "@/lib/watchlist";
 import { band, bandColor, tierLabel } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { CallToggle } from "@/components/CallToggle";
@@ -383,6 +383,32 @@ export function WatchlistClient({
   // Render states ─────────────────────────────────────────────────────────
   if (!hydrated) {
     return <Skeleton />;
+  }
+
+  // A failed load is NOT an empty list, and this guard has to come first.
+  // It used to not exist: fetchServerWatchlist collapsed "server says signed
+  // out" and "request never answered" into one value, so a transient 500 fell
+  // through to localStorage — empty on a signed-in user's laptop — and this
+  // page said "No stocks on your watchlist yet" to someone with 251 saved
+  // names. CLAUDE.md §5: a failure that renders as a successful empty result
+  // is worse than an error, because the user believes it.
+  if (!source && wl.loadFailed) {
+    return (
+      <div className="card p-8 text-center">
+        <div className="text-[14px] mb-2">Couldn&apos;t load your watchlist</div>
+        <div className="muted-text text-[12px] mb-4">
+          The request didn&apos;t come back. Nothing has been lost — your saved
+          stocks are still there.
+        </div>
+        <button
+          type="button"
+          onClick={() => retryWatchlistLoad()}
+          className="text-[12px] underline"
+        >
+          Try again
+        </button>
+      </div>
+    );
   }
 
   if (count === 0) {

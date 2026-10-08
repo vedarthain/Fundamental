@@ -61,14 +61,38 @@ function clearLocal(): void {
 
 // ── Server-side mode helpers ───────────────────────────────────────────
 
-async function fetchServerWatchlist(): Promise<{ signedIn: boolean; symbols: string[] }> {
+/**
+ * Read the server list.
+ *
+ * Returns THREE outcomes, not two. The previous version collapsed "the server
+ * says you are signed out" and "the request failed" into the same
+ * `{signedIn:false, symbols:[]}`, and the caller then fell back to this
+ * browser's localStorage — which for a signed-in user on a fresh machine is
+ * empty. The result was that a 500 or a dropped connection rendered as "No
+ * stocks on your watchlist yet": a failure wearing the clothes of a legitimate
+ * empty state, on the one screen where an empty list is alarming. That is
+ * CLAUDE.md §5's "renders as success", and it cost a round of
+ * "did I lose my watchlist?".
+ *
+ * `ok:false` now means we do not know, and the UI must say so rather than
+ * guess at the least likely answer.
+ */
+type ServerList =
+  | { ok: true; signedIn: boolean; symbols: string[] }
+  | { ok: false; status: number | null };
+
+async function fetchServerWatchlist(): Promise<ServerList> {
   try {
     const r = await fetch("/api/watchlist?list=1", { credentials: "include" });
-    if (!r.ok) return { signedIn: false, symbols: [] };
+    if (!r.ok) return { ok: false, status: r.status };
     const data: { signedIn: boolean; symbols: string[] } = await r.json();
-    return { signedIn: !!data.signedIn, symbols: Array.isArray(data.symbols) ? data.symbols : [] };
+    return {
+      ok: true,
+      signedIn: !!data.signedIn,
+      symbols: Array.isArray(data.symbols) ? data.symbols : [],
+    };
   } catch {
-    return { signedIn: false, symbols: [] };
+    return { ok: false, status: null };
   }
 }
 
@@ -181,9 +205,20 @@ export async function mergeLegacyStarredIntoWatchlist(): Promise<void> {
 // heart toggled on one button reflects on all of them immediately — which
 // also fixes the previous cross-component desync.
 
-type WatchState = { symbols: string[]; hydrated: boolean; signedIn: boolean };
+type WatchState = {
+  symbols: string[];
+  hydrated: boolean;
+  signedIn: boolean;
+  /**
+   * Set when the server list could not be read at all. Distinct from
+   * `symbols.length === 0`, which means the server answered and the list is
+   * genuinely empty. Consumers MUST check this before rendering an empty
+   * state — see fetchServerWatchlist for what happened when they could not.
+   */
+  loadFailed: boolean;
+};
 
-let state: WatchState = { symbols: [], hydrated: false, signedIn: false };
+let state: WatchState = { symbols: [], hydrated: false, signedIn: false, loadFailed: false };
 const listeners = new Set<() => void>();
 let loadPromise: Promise<void> | null = null;
 
@@ -200,9 +235,19 @@ function setState(patch: Partial<WatchState>): void {
 function ensureLoaded(): void {
   if (state.hydrated || loadPromise) return;
   loadPromise = (async () => {
-    const { signedIn, symbols } = await fetchServerWatchlist();
+    const res = await fetchServerWatchlist();
+    if (!res.ok) {
+      // Do NOT fall back to localStorage here. On a signed-in user's machine
+      // that list is empty, and showing it would assert "you have nothing
+      // saved" on the strength of a request that never answered. Clear the
+      // in-flight promise so a retry is possible.
+      loadPromise = null;
+      setState({ loadFailed: true, hydrated: true, symbols: [], signedIn: false });
+      return;
+    }
+    const { signedIn, symbols } = res;
     if (!signedIn) {
-      setState({ signedIn: false, symbols: readLocal(), hydrated: true });
+      setState({ signedIn: false, symbols: readLocal(), hydrated: true, loadFailed: false });
       return;
     }
     // Signed in: the server list is authoritative. But self-heal any leftover
@@ -217,8 +262,19 @@ function ensureLoaded(): void {
       await mergeLocalWatchlistIntoServer(); // POSTs local, clears the key on success
       merged = Array.from(new Set([...symbols, ...local])).slice(0, MAX_SYMBOLS);
     }
-    setState({ signedIn: true, symbols: merged, hydrated: true });
+    setState({ signedIn: true, symbols: merged, hydrated: true, loadFailed: false });
   })();
+}
+
+/**
+ * Re-attempt the one load after a failure. Separate from refreshWatchlist
+ * because that one assumes a list is already in hand; this is the "nothing
+ * loaded, try again" path the error panel's retry button calls.
+ */
+export function retryWatchlistLoad(): void {
+  loadPromise = null;
+  setState({ hydrated: false, loadFailed: false });
+  ensureLoaded();
 }
 
 // Signed-out cross-tab sync: mirror localStorage writes into the store.
@@ -239,7 +295,9 @@ function subscribe(cb: () => void): () => void {
 }
 
 // Server snapshot: the store is inert during SSR, so return a stable empty.
-const SERVER_STATE: WatchState = { symbols: [], hydrated: false, signedIn: false };
+const SERVER_STATE: WatchState = {
+  symbols: [], hydrated: false, signedIn: false, loadFailed: false,
+};
 function getSnapshot(): WatchState {
   return state;
 }
@@ -291,9 +349,19 @@ export function includeVirtualSymbol(symbol: string): void {
  * Signed-out falls back to the local list (no server holdings/calls exist).
  */
 export async function refreshWatchlist(): Promise<void> {
-  const { signedIn, symbols } = await fetchServerWatchlist();
-  if (signedIn) setState({ signedIn: true, symbols, hydrated: true });
-  else setState({ signedIn: false, symbols: readLocal(), hydrated: true });
+  const res = await fetchServerWatchlist();
+  if (!res.ok) {
+    // A refresh is a nice-to-have on top of a list the user can already see.
+    // Blanking it because the re-pull failed would turn a cosmetic staleness
+    // into an apparent data loss, so keep what is on screen and say nothing.
+    console.error("watchlist refresh failed", res.status);
+    return;
+  }
+  if (res.signedIn) {
+    setState({ signedIn: true, symbols: res.symbols, hydrated: true, loadFailed: false });
+  } else {
+    setState({ signedIn: false, symbols: readLocal(), hydrated: true, loadFailed: false });
+  }
 }
 
 function mutateRemove(upper: string): void {
@@ -316,7 +384,7 @@ function mutateRemove(upper: string): void {
  */
 export function useWatchlist() {
   const snap = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
-  const { symbols, hydrated, signedIn } = snap;
+  const { symbols, hydrated, signedIn, loadFailed } = snap;
 
   const isWatched = useCallback(
     (sym: string) => symbols.includes(sym.toUpperCase()),
@@ -343,6 +411,9 @@ export function useWatchlist() {
     count: symbols.length,
     hydrated,
     signedIn,
+    /** True when the load failed outright. Check this BEFORE treating
+     *  `count === 0` as "nothing saved" — see WatchState.loadFailed. */
+    loadFailed,
     isWatched,
     add,
     remove,
