@@ -404,7 +404,16 @@ def run_golden_assertions(golden: psycopg.Connection) -> list[AssertionResult]:
               FROM golden.price_history WHERE interval = '1d'
             """
         )
-        days_behind = (cur.fetchone() or {}).get("n") or 99999
+        # `or 99999` here, and it was the one value this check must never
+        # reject: a feed imported TODAY gives CURRENT_DATE - MAX(date) = 0,
+        # which is falsy, so the freshest possible feed scored as "no data at
+        # all" and aborted scoring. That is what killed the 7 Oct weekly run
+        # 17 seconds after a clean 3,082-symbol compute-metrics pass, leaving
+        # app.scores three days behind app.metrics_snapshot on production. The
+        # COALESCE in the SQL already supplies the sentinel for a genuinely
+        # empty table; the only case Python has to cover is a missing row.
+        _n = (cur.fetchone() or {}).get("n")
+        days_behind = 99999 if _n is None else int(_n)
         out.append(AssertionResult(
             name="golden.price_feed_days_behind",
             passed=(days_behind <= _GOLDEN_FRESHNESS_MAX_DAYS),
