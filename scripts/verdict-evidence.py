@@ -454,8 +454,33 @@ def scorecard_coverage(cluster_id: Optional[str], tier: Optional[str],
 # guard that would not have caught the bug that motivated it is decoration.
 _PILLAR_COVERAGE_FLOOR = 0.85
 
+# Clusters whose operating cash flow IS the balance sheet, so cash conversion
+# and the NP-vs-OP gap measure funding flow rather than earnings quality. See
+# earnings_quality() for the measurements.
+#
+# AN EXPLICIT SET, NOT A `bfsi_` PREFIX. The prefix was the first version of
+# this gate and it was wrong: the live cluster ids under it (queried
+# 2026-10-08) include bfsi_amc_wealth, bfsi_broker, bfsi_capmarkets,
+# bfsi_exchange, bfsi_fintech and bfsi_rta_rating — fee businesses with no
+# loan book, where "profit is not being collected" is exactly the right
+# sentence and suppressing it would hide a real finding. An AMC that stops
+# converting fees to cash is the thing these tests exist to catch.
+#
+# The cost of the explicit form is that a NEW lender cluster is not covered
+# until it is added here, so the pack states the cluster id it gated on
+# (`flags_suppressed`) rather than leaving the reader to infer it.
+BALANCE_SHEET_LENDERS = frozenset({
+    "bfsi_nbfc", "bfsi_psu_banks", "bfsi_pvt_banks",
+    "bfsi_pvt_banks_large", "bfsi_pvt_banks_mid_small", "bfsi_sfb",
+    # Insurance for the same reason in a different shape: the operating cash
+    # line is premium float plus investment flow, and `operating_profit` for an
+    # insurer is not an underwriting result.
+    "bfsi_insurance",
+})
 
-def earnings_quality(annual: list[dict], quarterly: list[dict]) -> Optional[dict]:
+
+def earnings_quality(annual: list[dict], quarterly: list[dict],
+                     cluster_id: Optional[str] = None) -> Optional[dict]:
     """Is the reported profit growth showing up as cash and as operating profit?
 
     derived_here: the engine has no exceptional-item flag. Screener's export
@@ -499,10 +524,40 @@ def earnings_quality(annual: list[dict], quarterly: list[dict]) -> Optional[dict
          to the prior-years mean (<0.6x). Profit that was recognised but not
          collected.
 
+    TWO OF THE THREE DO NOT APPLY TO LENDERS, AND THAT IS GATED BELOW
+
+    Tests 1 and 3 both divide by `operating_profit`, and for a bank or an NBFC
+    neither side of those divisions means what it means for a manufacturer.
+
+      * CASH CONVERSION. A lender's operating cash flow is deposit growth and
+        loan disbursement, not collection of a receivable. Measured on the four
+        large private banks, 2026-10-08: HDFCBANK 0.78 against a prior mean of
+        0.27, ICICIBANK 1.29 against 2.17, AXISBANK -0.11 against 0.40,
+        INDUSINDBK 0.04 against 0.15. That spread tracks balance-sheet flow,
+        not credit quality, and it raised a flag on three of the four. "Profit
+        is not being collected" is simply the wrong sentence about a bank.
+      * NP vs OP. Screener's bank `operating_profit` is not a consistent line
+        across lenders — the same four report an operating margin of 42.7%,
+        24.7%, 59.7% and 49.0%, which is a definitional spread (provisions in
+        or out), not an operating one. A ratio of growth factors built on it
+        measures the inconsistency. INDUSINDBK's 43% "gap" is its provisioning
+        cycle, and calling that "other income, a one-off, tax or interest" is
+        an assertion about a line the figure never touched.
+
+    Test 2 (the margin step) survives: it compares a lender's own margin to its
+    own prior year, so the definitional spread cancels.
+
+    The figures are still COMPUTED and still returned — suppressing the number
+    would hide the thing a reader might want to check. Only the flags are
+    withheld, and `flags_suppressed` records which and why, because an absent
+    flag with no stated reason is indistinguishable from a clean reading. That
+    is the same rule the 200-EMA blocker above follows.
+
     Returns the figures and a `flags` list. Interpretation is the verdict's
     job — this only refuses to let the numbers go unmentioned.
     """
     out: dict[str, Any] = {"derived_here": True, "flags": []}
+    lender = cluster_id in BALANCE_SHEET_LENDERS
 
     def _sum(rows, key):
         vals = [r.get(key) for r in rows]
@@ -547,7 +602,7 @@ def earnings_quality(annual: list[dict], quarterly: list[dict]) -> Optional[dict
     # CLAUDE.md §4: fed the original broken input, a guard has to reject it.
     # A threshold picked by intuition at 0.25 would have passed it, green,
     # forever, which is precisely how the buy-anchor tripwire was first set.
-    if gap is not None and gap >= 0.15:
+    if gap is not None and gap >= 0.15 and not lender:
         # Both legs can be negative — NATCOPHARM's NP fell 33% while operating
         # profit fell 46%, which is the same divergence and the opposite
         # sentence. "Grew faster" there would have described a collapsing
@@ -566,15 +621,28 @@ def earnings_quality(annual: list[dict], quarterly: list[dict]) -> Optional[dict
             f"({out['opm_prev']:.1%} -> {out['opm_now']:.1%}). A move that size is a mix "
             "change, an acquisition or a one-off — not an operating trend. Ask what "
             "the margin is without it before using the current earnings base.")
-    if conv_now is not None and conv_now < 0.40:
+    if conv_now is not None and conv_now < 0.40 and not lender:
         out["flags"].append(
             f"cash conversion {conv_now:.2f} in FY{out.get('cfo_op_latest_fy')} — under 0.40 of "
             "operating profit reached operating cash. Reported profit is not being collected.")
     prior_mean = out.get("cfo_op_prior_mean")
-    if conv_now is not None and prior_mean and prior_mean > 0 and conv_now < 0.6 * prior_mean:
+    if (conv_now is not None and prior_mean and prior_mean > 0
+            and conv_now < 0.6 * prior_mean and not lender):
         out["flags"].append(
             f"cash conversion fell to {conv_now:.2f} from a prior-years mean of {prior_mean:.2f} "
             "— a deterioration, not a level. Check receivables and inventory.")
+    if lender:
+        # Named, not silent. The figures above are still in the pack; what is
+        # withheld is the reading of them, and the reader is told which reading
+        # and on what basis. An absent flag with no reason is the same defect
+        # as an absent number with no reason.
+        out["flags_suppressed"] = (
+            f"cluster '{cluster_id}' is a balance-sheet lender: the cash-conversion and "
+            "net-profit-vs-operating-profit tests are not applied, because operating cash "
+            "flow here is deposit and loan flow and `operating_profit` is not a comparable "
+            "line across lenders. The figures are reported above unflagged — read them as "
+            "balance-sheet growth, not as earnings quality. The one-year operating-margin "
+            "step IS still tested; it compares the lender against its own prior year.")
     return out or None
 
 
@@ -755,7 +823,8 @@ def build_symbol(app: psycopg.Connection, golden: psycopg.Connection,
 
     pack["pe_band"] = pe_band(annual)
     pack["ttm_vs_prior"] = ttm_vs_prior(quarterly)
-    pack["earnings_quality"] = earnings_quality(annual, quarterly)
+    pack["earnings_quality"] = earnings_quality(
+        annual, quarterly, (pack["scores"] or {}).get("cluster_id"))
     pack["scorecard_coverage"] = scorecard_coverage(
         (pack["scores"] or {}).get("cluster_id"),
         (pack["scores"] or {}).get("maturity_tier") or (pack["metrics"] or {}).get("maturity_tier"),
@@ -842,6 +911,12 @@ def build_symbol(app: psycopg.Connection, golden: psycopg.Connection,
     eq = pack["earnings_quality"] or {}
     for f in eq.get("flags", []):
         b.append(f"earnings quality — {f}")
+    # A suppression is a blocker in its own right: it tells the reader that two
+    # of the three tests returned no opinion here, which is not the same thing
+    # as returning a clean one. Without this line the pack for a bank and the
+    # pack for a clean manufacturer look identical.
+    if eq.get("flags_suppressed"):
+        b.append(f"earnings-quality tests not applicable — {eq['flags_suppressed']}")
     return pack
 
 

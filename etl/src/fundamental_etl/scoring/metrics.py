@@ -25,6 +25,7 @@ from typing import Optional
 import psycopg
 from openpyxl import load_workbook
 
+from ..log import log
 from .formulas import REGISTRY as FORMULAS, _VAL_RUNRATE_Q
 from .scorecards import get_scorecard, get_scorecard_from, load_db_overrides
 
@@ -99,6 +100,84 @@ def load_split_factors(conn_golden: psycopg.Connection, symbol: str) -> list[tup
         return [(r["ex_date"], float(r["split_factor"])) for r in cur.fetchall()]
 
 
+# How far the observed close ratio may sit from the stored split factor and
+# still corroborate it. A real 1:5 split gives ratio/factor = 1.00 plus one
+# session of ordinary price movement, so 0.15 is loose. It is also tight enough
+# to reject the failure that motivated it: a flat series against a 0.2 factor
+# gives ratio/factor ≈ 5.0. The two populations are a factor of five apart —
+# there is nothing to tune between them. Measured on the 261 price_detect rows,
+# this keeps 11 and drops 250.
+_SPLIT_CORROBORATION_TOL = 0.15
+
+
+def _corroborated_actions(symbol: str, actions: list[tuple], rows: list) -> list[tuple]:
+    """Keep only the corporate actions the price series itself confirms.
+
+    `rows` is the fetched window, newest-first, each with `date` and `close`.
+
+    An action is IRRELEVANT rather than wrong when its ex_date lies outside the
+    window: the factor only ever multiplies bars dated before the ex_date, so an
+    ex_date older than the oldest bar changes nothing, and one newer than the
+    newest bar has no bar to apply to. Those are dropped silently — warning
+    about them would make every long-history symbol noisy and train the reader
+    to skim the warning that matters.
+
+    Inside the window, a missing neighbouring bar means the step cannot be
+    measured. That is reported, not assumed in either direction.
+
+    ONE EFFECTIVE FACTOR PER EX_DATE, CHOSEN BY THE SERIES. Two rows can share
+    an ex_date for opposite reasons, and only the price can say which:
+
+      * ZFCVINDIA 2026-06-24 holds the SAME 1:6 action twice, once from
+        `price_detect` and once from `indianapi`. Multiplying both squared the
+        adjustment and turned a true −3.9% 12-month return into +501%.
+      * BAJFINANCE 2025-06-16 holds a 1:2 split AND a 1:4 bonus — two real,
+        distinct actions whose product IS the right adjustment.
+
+    So the candidates at an ex_date are the product of every factor there and
+    each factor on its own, and the one closest to the observed ratio wins.
+    Deduplicating blindly would break Bajaj; multiplying blindly breaks ZF.
+    """
+    if not rows:
+        return []
+    oldest, newest = rows[-1]["date"], rows[0]["date"]
+    by_date: dict = {}
+    for ex_date, sf in actions:
+        by_date.setdefault(ex_date, []).append(sf)
+
+    kept: list[tuple] = []
+    for ex_date in sorted(by_date):
+        sfs = by_date[ex_date]
+        if ex_date <= oldest or ex_date > newest:
+            continue  # cannot affect any bar in this window
+        pre = next((r for r in rows if r["date"] < ex_date), None)
+        post = next((r for r in reversed(rows) if r["date"] >= ex_date), None)
+        if pre is None or post is None or not float(pre["close"]):
+            log.warning("split_uncorroborated_no_neighbour", symbol=symbol,
+                        ex_date=str(ex_date), split_factors=sfs,
+                        detail="no bar on one side of the ex_date; factor NOT applied")
+            continue
+        ratio = float(post["close"]) / float(pre["close"])
+        product = 1.0
+        for sf in sfs:
+            product *= sf
+        candidates = {product, *sfs}
+        best = min(candidates, key=lambda c: abs(ratio / c - 1.0))
+        if abs(ratio / best - 1.0) <= _SPLIT_CORROBORATION_TOL:
+            if len(sfs) > 1:
+                log.info("split_factor_chosen", symbol=symbol, ex_date=str(ex_date),
+                         stored=sfs, chosen=best, observed_ratio=round(ratio, 4))
+            kept.append((ex_date, best))
+            continue
+        log.warning("split_factor_dropped_no_step", symbol=symbol,
+                    ex_date=str(ex_date), split_factors=sfs,
+                    observed_ratio=round(ratio, 4),
+                    pre_close=float(pre["close"]), post_close=float(post["close"]),
+                    detail="series shows no step matching these factors — treating it as "
+                           "already vendor-adjusted and NOT applying them")
+    return kept
+
+
 def load_price_history(conn_golden: psycopg.Connection, symbol: str, limit: int = 260) -> list[dict]:
     """Daily closes for the symbol, newest-first, back-adjusted for corporate actions.
 
@@ -114,12 +193,36 @@ def load_price_history(conn_golden: psycopg.Connection, symbol: str, limit: int 
     yfinance fetch). Including those would make the most-recent row a NULL,
     breaking every relative-return formula downstream.
 
-    golden.price_history is RAW/unadjusted: on a split/bonus ex_date the close
-    steps down by the split factor. Comparing a pre-ex close to a post-ex close
-    (as every relative-return window does) would read that cosmetic step as a
-    real crash — e.g. KOTAKBANK's 1:5 split showed as −82% 12m return. We
-    back-adjust each historical close by the product of split_factors for every
-    ex_date AFTER it, putting the whole series on the latest (current) scale.
+    golden.price_history is SOMETIMES raw and sometimes already vendor-adjusted,
+    and that is the whole difficulty. On a split ex_date an unadjusted close
+    steps down by the split factor, and comparing a pre-ex close to a post-ex
+    close (as every relative-return window does) reads that cosmetic step as a
+    real crash — KOTAKBANK's 1:5 split once showed as a −82% 12m return, which
+    is why this back-adjustment exists. But a re-ingested, already-adjusted
+    series has NO step, and applying the factor on top of it invents a cliff in
+    the opposite direction.
+
+    MEASURED 2026-10-08, AND THE MAJORITY CASE HAS FLIPPED. Of 261
+    `source='price_detect'` rows in golden.corporate_actions, 250 show no step
+    at all in the raw series and only 11 show one matching the stored factor.
+    62 of the 250 fall inside the live 252-session window. KOTAKBANK is the
+    same symbol as the original bug, now failing the other way: raw closes of
+    426.52 (2026-01-13) and 421.00 (2026-01-14) carry no split, yet the stored
+    0.2 factor rewrote the first as 85.30 and turned a true +3.4% 12-month
+    return into +417%. The scorer read that as top-decile momentum.
+
+    SO EVERY FACTOR IS NOW CORROBORATED AGAINST THE SERIES BEFORE IT IS USED.
+    An action is applied only if the actual close ratio across its ex_date is
+    close to the stored factor. A 5x factor with a flat ratio is a
+    double-adjustment and is dropped, loudly. This is deliberately a check on
+    the data rather than a delete of it: the `price_detect` job still writes
+    these rows, so deleting them fixes today and loses tomorrow (CLAUDE.md §5).
+
+    Note the asymmetry that makes this safe: a dropped-but-genuine factor
+    leaves the step visible in the series, which is the ORIGINAL bug and
+    bounded by the real split ratio. An applied-but-bogus factor fabricates a
+    move of the same size out of nothing. Given a corroboration failure, not
+    adjusting is the smaller error.
     """
     g_symbol = f"{symbol}.NS"
     with conn_golden.cursor() as cur:
@@ -133,6 +236,9 @@ def load_price_history(conn_golden: psycopg.Connection, symbol: str, limit: int 
         rows = cur.fetchall()
 
     actions = load_split_factors(conn_golden, symbol)
+    if not actions:
+        return [{"date": r["date"], "close": float(r["close"])} for r in rows]
+    actions = _corroborated_actions(symbol, actions, rows)
     if not actions:
         return [{"date": r["date"], "close": float(r["close"])} for r in rows]
 
