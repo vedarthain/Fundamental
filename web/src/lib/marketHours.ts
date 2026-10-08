@@ -9,13 +9,35 @@
  * closed, so off-hours fires cost zero DB wake-ups regardless of the external
  * schedule.
  *
- * Cadence: ONE pull per hour at :30, Mon–Fri, 09:30–15:30 IST — 7 pulls/day
- * (09:30, 10:30, …, 15:30). We gate to the :30–:39 minute band rather than the
- * whole trading day, so the DB wakes ~7×/day instead of ~26×. This is enforced
- * in code, NOT in the external pinger: cron-job.org can keep firing every 15
- * min (its usual over-firing) and every fire outside the :30 band no-ops here
- * before touching Neon, costing nothing. Any pinger aligned to :00 (15- or
- * 30-min interval) lands exactly one fire in the band each hour.
+ * Cadence: TWO pulls per hour, at :15 and :45, Mon–Fri, 09:15–15:45 IST —
+ * 14 pulls/day. We gate to the :15–:24 and :45–:54 minute bands rather than
+ * the whole trading day, so the DB wakes ~14×/day instead of ~26×.
+ *
+ * This is enforced in code, NOT in the external pinger: cron-job.org fires
+ * every 15 minutes aligned to :00, and the two bands accept exactly the :15
+ * and :45 fires while the :00 and :30 fires no-op here before touching Neon,
+ * costing nothing. The bands are 10 minutes wide to absorb pinger jitter and
+ * still narrower than the 15-minute gap, so no band can ever take two fires.
+ *
+ * WHY :15 AND :45 AND NOT :00 AND :30
+ *
+ * The first slot is the point of the choice. NSE opens at 09:15, and the
+ * previous cadence took its first pull at 09:30 — so for the first fifteen
+ * minutes of every session every page on the site showed yesterday's close
+ * while the market was visibly moving. A :15-aligned band puts the first
+ * refresh at the open instead of a quarter-hour into it.
+ *
+ * The 15:45 slot is after the 15:30 close and is deliberate: it is the first
+ * pull that can see the settled closing price, and it lands nearly three
+ * hours before the bhavcopy job (18:30 IST) makes that close authoritative.
+ * Before it existed the closing price on screen was whatever the 15:30 pull
+ * caught mid-auction.
+ *
+ * Changing the cadence here is the ONLY lever — the external pinger already
+ * fires every 15 min and has done throughout. Widening a band or moving
+ * FIRST_HOUR/LAST_HOUR changes Neon compute-hours and nothing else; each
+ * extra slot is one more 5-minute wake per trading day (~1.8 compute-hours
+ * per month per slot).
  *
  * Holiday caveat: a trading holiday that falls on a weekday still passes the
  * window check — a cosmetic edge that costs a few harmless ticks (prices just
@@ -23,11 +45,11 @@
  * a cost guard.
  */
 
-const FIRST_HOUR = 9;    // first pull at 09:30 IST
-const LAST_HOUR = 15;    // last pull at 15:30 IST → 7 hourly slots
-const SLOT_MIN = 30;     // pull at :30 past the hour
-const SLOT_MAX = 39;     // accept :30–:39 to absorb pinger jitter (narrower than
-                         // any 15-min interval, so only ONE fire/hour lands here)
+const FIRST_HOUR = 9;    // first pull at 09:15 IST, the open
+const LAST_HOUR = 15;    // last pull at 15:45 IST → 7 hours × 2 slots = 14
+// Two accepted bands per hour. Each is 10 min wide: enough for pinger jitter,
+// comfortably less than the 15-min fire interval, so one fire per band.
+const SLOTS: ReadonlyArray<readonly [number, number]> = [[15, 24], [45, 54]];
 const WEEKDAYS = new Set(["Mon", "Tue", "Wed", "Thu", "Fri"]);
 
 /** Current IST weekday + minutes-since-midnight, via Intl (no TZ libs). */
@@ -42,12 +64,13 @@ function istNow(d: Date = new Date()): { weekday: string; minutes: number } {
   return { weekday: p.weekday, minutes: hour * 60 + Number(p.minute) };
 }
 
-/** True only in an hourly :30 slot on a weekday, 09:30–15:30 IST. Every other
- *  pinger fire no-ops before any DB access, so Neon wakes ~7×/day. */
+/** True only in a :15 or :45 slot on a weekday, 09:15–15:45 IST. Every other
+ *  pinger fire no-ops before any DB access, so Neon wakes ~14×/day. */
 export function withinPingerWindow(d: Date = new Date()): boolean {
   const { weekday, minutes } = istNow(d);
   if (!WEEKDAYS.has(weekday)) return false;
   const hour = Math.floor(minutes / 60);
+  if (hour < FIRST_HOUR || hour > LAST_HOUR) return false;
   const minOfHour = minutes % 60;
-  return hour >= FIRST_HOUR && hour <= LAST_HOUR && minOfHour >= SLOT_MIN && minOfHour <= SLOT_MAX;
+  return SLOTS.some(([lo, hi]) => minOfHour >= lo && minOfHour <= hi);
 }

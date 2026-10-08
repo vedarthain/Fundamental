@@ -603,8 +603,13 @@ def main() -> int:
         help="Alert if scored/active-universe falls below this ratio (default 0.97)")
     parser.add_argument("--snapshot-max-gap-days", type=int, default=10,
         help="Alert if the gap between the two most recent weekly snapshots exceeds this (default 10 = 7d cadence + holiday slack; larger = a skipped week / archive hole)")
-    parser.add_argument("--intraday-max-minutes", type=int, default=150,
-        help="Alert if the intraday pinger's last write is older than this during market hours (default 150 = two missed hourly pulls of slack)")
+    # 150 was "two missed HOURLY pulls" and the cadence is now two pulls an
+    # hour (:15 and :45 — see withinPingerWindow). Left at 150 it would have
+    # tolerated five consecutive misses, i.e. a pinger dead since the open
+    # would still look healthy at 12:00 IST. 80 = two missed 30-min pulls plus
+    # jitter, which is the slack the old number was actually buying.
+    parser.add_argument("--intraday-max-minutes", type=int, default=80,
+        help="Alert if the intraday pinger's last write is older than this during market hours (default 80 = two missed 30-min pulls of slack)")
     args = parser.parse_args()
 
     app_url = env_url("APP_DB_URL")
