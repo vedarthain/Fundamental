@@ -410,6 +410,20 @@ function ByCall({
   groups: { call: string; rows: QueueEntry[] }[];
   onOpen: (s: string) => void;
 }) {
+  // The selected call, as a NAME rather than an index. Indices break the
+  // moment a group empties out — write one more AVOID and index 2 silently
+  // becomes a different call under a tab the reader already had open. The
+  // fallback below re-resolves against the live group list every render, so a
+  // call that disappears lands on the strongest remaining one instead of a
+  // blank panel.
+  //
+  // Declared ABOVE the empty-state return, not next to the code that uses it:
+  // the queue arrives asynchronously, so `groups` really does go 0 -> n on a
+  // normal load. A hook after that early return would be skipped on the first
+  // render and present on the second, which is the "rendered more hooks than
+  // during the previous render" crash, not a style nit.
+  const [sel, setSel] = useState<string | null>(null);
+
   if (groups.length === 0) {
     return (
       <div
@@ -426,15 +440,17 @@ function ByCall({
     0,
   );
 
+  const active = groups.find((g) => g.call === sel) ?? groups[0];
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <p className="text-[12px] muted-text max-w-[760px] leading-relaxed -mt-2">
-        Every live verdict, grouped by the call it makes.{" "}
+        Every live verdict, one call at a time.{" "}
         {drifted > 0 ? (
           <>
             <b style={{ color: "var(--color-delta-down)" }}>{drifted}</b> of them were written
             against figures that have since moved or are past the review mark; those sit at the top
-            of their group. A heading is not evidence — read the last column before acting on one.
+            of their tab. A heading is not evidence — read the last column before acting on one.
           </>
         ) : (
           <>
@@ -445,44 +461,59 @@ function ByCall({
         Dormant verdicts — symbols no longer tracked — are left out; they are under By status.
       </p>
 
-      {groups.map((g) => {
-        const color = BUCKET_COLOR[verdictBucket(g.call)];
-        return (
-          <div key={g.call}>
-            <div className="flex items-baseline gap-2 mb-1">
-              <span
-                className="px-2 py-[1px] rounded text-[11.5px] font-semibold tracking-wide"
-                style={{
-                  color,
-                  background: `color-mix(in srgb, ${color} 12%, transparent)`,
-                  border: `1px solid color-mix(in srgb, ${color} 30%, transparent)`,
-                }}
-              >
-                {g.call}
-              </span>
-              <span className="text-[12px] muted-text tabular-nums">{g.rows.length}</span>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-[12.5px] min-w-[680px]">
-                <thead>
-                  <tr className="muted-text">
-                    <th className="text-left py-1.5 pr-3 font-medium">Symbol</th>
-                    <th className="text-left py-1.5 px-3 font-medium">Verdict</th>
-                    <th className="text-right py-1.5 px-3 font-medium">Written</th>
-                    <th className="text-right py-1.5 px-3 font-medium">Age</th>
-                    <th className="text-left py-1.5 pl-3 font-medium">What moved</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {g.rows.map((e) => (
-                    <EntryRow key={e.symbol} e={e} lastCol="moved" onOpen={onOpen} />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        );
-      })}
+      {/* One tab per call, strongest conviction leftmost (CALL_ORDER). The
+          count stays ON the tab: separating the calls hides the shape of the
+          book, and a BUY tab of 1 next to a HOLD tab of 18 is the single most
+          useful thing this view says. Each tab is tinted with its own bucket
+          colour so the direction of a call is readable before it is selected —
+          an unselected grey "AVOID" next to a grey "BUY" is a strip of words. */}
+      <div className="flex flex-wrap gap-1.5">
+        {groups.map((g) => {
+          const color = BUCKET_COLOR[verdictBucket(g.call)];
+          const on = g.call === active.call;
+          return (
+            <button
+              key={g.call}
+              type="button"
+              onClick={() => setSel(g.call)}
+              aria-pressed={on}
+              className="px-2.5 py-1 rounded-md text-[11.5px] font-semibold tracking-wide border transition-colors"
+              style={{
+                color,
+                borderColor: on
+                  ? color
+                  : `color-mix(in srgb, ${color} 30%, transparent)`,
+                background: on
+                  ? `color-mix(in srgb, ${color} 16%, transparent)`
+                  : "transparent",
+                opacity: on ? 1 : 0.72,
+              }}
+            >
+              {g.call}
+              <span className="ml-1.5 tabular-nums font-medium opacity-80">{g.rows.length}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-[12.5px] min-w-[680px]">
+          <thead>
+            <tr className="muted-text">
+              <th className="text-left py-1.5 pr-3 font-medium">Symbol</th>
+              <th className="text-left py-1.5 px-3 font-medium">Verdict</th>
+              <th className="text-right py-1.5 px-3 font-medium">Written</th>
+              <th className="text-right py-1.5 px-3 font-medium">Age</th>
+              <th className="text-left py-1.5 pl-3 font-medium">What moved</th>
+            </tr>
+          </thead>
+          <tbody>
+            {active.rows.map((e) => (
+              <EntryRow key={e.symbol} e={e} lastCol="moved" onOpen={onOpen} />
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
