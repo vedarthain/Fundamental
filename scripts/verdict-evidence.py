@@ -68,6 +68,32 @@ site does not show. Where this script does compute something the engine has no
 metric for — the own-history PE band, TTM vs prior TTM — it is marked
 `derived_here: true` in the output, because a figure with no counterpart in the
 database cannot be reconciled against the site later.
+
+AND THE ONE-TIME OTHER-INCOME STRIP IS APPLIED BEFORE ANY OF IT
+
+The scorer removes a one-off other-income spike from the latest quarter before
+it computes anything net-profit-derived (`_oi_spike_adjustment` /
+`_apply_oi_adjustment` in scoring/metrics.py). This script used to read the raw
+quarterlies, so every figure it derived was on a base the engine had already
+rejected — and `ttm_vs_prior`/`earnings_quality` sat in the same pack as
+`cluster_metrics`, contradicting it.
+
+MINDACORP, 2026-10-08, is the case: ₹125.6cr of other income in Q1FY27 against
+a ~₹5.9cr baseline. Adjusted, TTM net profit grew 54.7%; raw, 95.3%. The pack
+reported 95.3% beside a stored `ttm_np_pct` of 54.7 for the same window, and a
+verdict was written off the pack carrying a caveat about a "pipeline bug" that
+was in fact this script disagreeing with the engine. It was the only mismatch
+in 78 checks across auto_components, which is exactly why it read as a one-off
+data fault rather than as a systematic second copy of the rule.
+
+So the adjustment happens once, in build_symbol, and every derived block below
+sees the adjusted lists. The strip itself is reported as
+`oi_spike_adjustment` whenever it fires — silently removing a ₹120cr gain and
+then flagging nothing would make the pack quieter than the raw data, which is
+the opposite of the point. Note the consequence for earnings_quality: a gap
+that was PURELY a one-off no longer flags, because the engine already took it
+out and the `pe_ttm` in the same pack is already clean. What flags now is a gap
+that survives the strip.
 """
 
 from __future__ import annotations
@@ -77,6 +103,7 @@ import json
 import os
 import sys
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Optional
 
@@ -90,6 +117,8 @@ sys.path.insert(0, str(ROOT / "etl" / "src"))
 
 from fundamental_etl.scoring.metrics import (  # noqa: E402
     EMA_MIN_BARS,
+    _apply_oi_adjustment,
+    _oi_spike_adjustment,
     compute_ema_metrics,
     compute_returns,
     load_price_history,
@@ -179,6 +208,24 @@ def env_url(name: str, required: bool = True) -> Optional[str]:
 
 def _f(x: Any) -> Optional[float]:
     return None if x is None else float(x)
+
+
+def _floatify_rows(rows: list[dict]) -> list[dict]:
+    """Decimal -> float across fundamental rows, before anything derives from them.
+
+    psycopg hands NUMERIC back as decimal.Decimal, while the scorer's own
+    load_quarterly casts to float. Mixing the two raises
+    "unsupported operand type(s) for +: 'Decimal' and 'float'" the moment a
+    shared function from scoring/metrics.py touches these rows — which is how
+    this surfaced when the one-time other-income strip was wired in. Coercing
+    at the boundary keeps every figure here computed in the same arithmetic the
+    engine uses, rather than at a different precision that would show up as a
+    last-decimal disagreement with cluster_metrics.
+    """
+    out = []
+    for r in rows:
+        out.append({k: (float(v) if isinstance(v, Decimal) else v) for k, v in r.items()})
+    return out
 
 
 # ----------------------------------------------------------------- selection
@@ -657,13 +704,13 @@ def build_symbol(app: psycopg.Connection, golden: psycopg.Connection,
         cur.execute(
             """SELECT * FROM app.fundamentals_annual
                 WHERE symbol = %s ORDER BY period_end DESC LIMIT 10""", (symbol,))
-        annual = list(reversed(cur.fetchall()))
+        annual = _floatify_rows(list(reversed(cur.fetchall())))
         pack["annual"] = annual
 
         cur.execute(
             """SELECT * FROM app.fundamentals_quarterly
                 WHERE symbol = %s ORDER BY period_end DESC LIMIT 12""", (symbol,))
-        quarterly = list(reversed(cur.fetchall()))
+        quarterly = _floatify_rows(list(reversed(cur.fetchall())))
         pack["quarterly"] = quarterly
 
         cur.execute(
@@ -678,6 +725,33 @@ def build_symbol(app: psycopg.Connection, golden: psycopg.Connection,
                  FROM app.stock_verdict WHERE symbol = %s
                 ORDER BY generated_at DESC LIMIT 3""", (symbol,))
         pack["prior_verdicts"] = cur.fetchall()
+
+    # Strip the one-time other-income spike exactly as the scorer does, BEFORE
+    # anything is derived from these rows. See the module docstring: the raw
+    # lists produce figures that contradict cluster_metrics in the same pack.
+    # `annual` is adjusted too, because _apply_oi_adjustment only touches the
+    # annual row when the spike quarter IS the fiscal year-end — which is when
+    # the cash-conversion denominator would otherwise carry the gain as well.
+    pbt_excess, np_excess = _oi_spike_adjustment(quarterly)
+    if pbt_excess or np_excess:
+        quarterly, annual = _apply_oi_adjustment(
+            quarterly, annual, pbt_excess, np_excess)
+        pack["oi_spike_adjustment"] = {
+            "pbt_excess_cr": round(pbt_excess, 2),
+            "np_excess_cr": round(np_excess, 2),
+            "quarter": str((pack["quarterly"] or [{}])[-1].get("period_end") or ""),
+            "note": "one-time other income removed from the latest quarter by the "
+                    "scorer; every figure below is on the adjusted base, matching "
+                    "cluster_metrics. The raw reported profit is higher.",
+        }
+        pack["blockers"].append(
+            f"a one-time other-income gain of ₹{pbt_excess:,.1f}cr pre-tax "
+            f"(₹{np_excess:,.1f}cr after tax) was stripped from the latest quarter "
+            "before any figure here was computed — as the scorer does. Reported "
+            "profit growth is higher than anything in this pack; do not quote a "
+            "number from a screener alongside these.")
+        pack["annual"] = annual
+        pack["quarterly"] = quarterly
 
     pack["pe_band"] = pe_band(annual)
     pack["ttm_vs_prior"] = ttm_vs_prior(quarterly)
