@@ -198,6 +198,7 @@ export function PriceChart({
   rangeReturns,
   dayChangePct,
   asOfLabel,
+  asOfKind = "eod",
   extraStats,
 }: {
   /** Split-safe daily OHLC candles, ascending by date. When omitted (and a
@@ -234,9 +235,15 @@ export function PriceChart({
   /** Latest 1-day move (PERCENT, e.g. -5.8). When present, the headline price is
    *  color-coded red/green by its sign and a "1D: …" line renders beneath it. */
   dayChangePct?: number | null;
-  /** Pre-formatted EOD "as of" date (e.g. "07 Sept '26"), shown next to the 1D
+  /** Pre-formatted "as of" date (e.g. "07 Sept '26"), shown next to the 1D
    *  move under the headline price. */
   asOfLabel?: string;
+  /** What that date describes. "eod" = a settled close off golden's newest bar;
+   *  "live" = today's intraday tick, which is what `currentPrice` carries during
+   *  market hours. The caller knows which — the chart cannot tell, and labelling
+   *  a tick "EOD" is how ₹501 (yesterday's close) came to sit under today's
+   *  date beside a 1D move computed from a price the line never showed. */
+  asOfKind?: "eod" | "live";
   /** Optional stats (e.g. Rel Vol / Turnover / Delivery) rendered inline to the
    *  right of the price-alert "Add" button. Only shows when the alert controls
    *  render (signed-in). */
@@ -490,8 +497,15 @@ export function PriceChart({
             </span>
           )}
           {asOfLabel && (
-            <span className="muted-text opacity-70 whitespace-nowrap text-[10.5px] tabular-nums">
-              EOD · {asOfLabel}
+            <span
+              className="muted-text opacity-70 whitespace-nowrap text-[10.5px] tabular-nums"
+              title={
+                asOfKind === "live"
+                  ? "Live intraday tick from today's session — ahead of the last candle, which is the previous close"
+                  : "Settled end-of-day close — the last candle on the chart"
+              }
+            >
+              {asOfKind === "live" ? "LIVE" : "EOD"} · {asOfLabel}
             </span>
           )}
           {periodCagr != null && (

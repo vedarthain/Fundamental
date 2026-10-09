@@ -125,6 +125,12 @@ type WatchRow = {
    *  rather than with a live tick. */
   eod_ltp: number | null;
   eod_ret_1d: number | null;
+  /** True when the overlay below replaced the EOD close with a live tick — i.e.
+   *  ltp / ret_1d / ltp_date describe today's session, not golden's newest bar.
+   *  Exposed so a consumer can LABEL the price it is showing; re-deriving it
+   *  client-side (ltp !== eod_ltp) silently reads "EOD" on any day the tick
+   *  lands exactly on the close. */
+  px_live: boolean;
   /** Portfolio ownership — mirrors the scanner graph's tri-state "P" badge.
    *  held = currently in the portfolio; traded = ever bought (held or exited). */
   held: boolean;
@@ -654,6 +660,7 @@ export async function GET(req: NextRequest) {
       row.ltp_date = row.intraday_ist_date;
       row.stale = false;
     }
+    row.px_live = useTick;
     row.eff_ltp = row.ltp;
     row.eff_ret_1d = row.ret_1d;
 

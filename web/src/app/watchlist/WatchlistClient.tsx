@@ -96,6 +96,9 @@ type Row = {
   /** LTP's trading date + staleness vs the feed's newest bar. */
   ltp_date?: string | null;
   stale?: boolean;
+  /** True when ltp/ret_1d/ltp_date come from today's live tick rather than
+   *  golden's newest EOD bar (set by the API's intraday overlay). */
+  px_live?: boolean;
   /** Portfolio ownership — drives the "P" badge (purple=held, grey=exited). */
   held?: boolean;
   traded?: boolean;
@@ -1492,7 +1495,9 @@ function WatchRow({
         trades={row.trades}
         rangeReturns={rowRangeReturns(row)}
         ret1d={row.ret_1d}
+        ltp={row.ltp ?? row.current_price}
         ltpDate={row.ltp_date}
+        pxLive={row.px_live}
         extraStats={
           <div className="flex items-baseline gap-x-3 gap-y-1 flex-wrap text-[10.5px] tabular-nums">
             <InlineStat
@@ -2036,7 +2041,9 @@ function DetailExtras({
   trades,
   rangeReturns,
   ret1d,
+  ltp,
   ltpDate,
+  pxLive,
   extraStats,
 }: {
   symbol: string;
@@ -2046,10 +2053,16 @@ function DetailExtras({
   /** Header pill returns (PERCENT) passed to the chart so its range tabs show
    *  the exact same number as the pills — one source of truth, no drift. */
   rangeReturns?: Partial<Record<ChartRange, number | null>>;
-  /** 1D move (percent) + EOD date, rendered as a thin strip directly above the
-   *  price chart (relocated out of the card header). */
+  /** 1D move (percent) + the price it was measured on + its date, rendered as a
+   *  thin strip directly above the price chart (relocated out of the card
+   *  header). `ltp` has to travel with the other two: the chart falls back to
+   *  the last candle when no price is given, so omitting it put the previous
+   *  session's close under today's date next to today's 1D move. */
   ret1d?: number | null;
+  ltp?: number | null;
   ltpDate?: string | null;
+  /** Whether ltp/ret1d/ltpDate describe a live tick rather than a settled bar. */
+  pxLive?: boolean;
   /** Rel Vol / Turnover / Delivery, rendered inline next to the chart's price-
    *  alert "Add" button. */
   extraStats?: ReactNode;
@@ -2091,7 +2104,9 @@ function DetailExtras({
             trades={trades}
             rangeReturns={rangeReturns}
             dayChangePct={ret1d}
+            currentPrice={ltp ?? undefined}
             asOfLabel={ltpDate ? formatShortDate(ltpDate) : undefined}
+            asOfKind={pxLive ? "live" : "eod"}
             extraStats={extraStats}
           />
         </div>
