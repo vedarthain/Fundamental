@@ -29,6 +29,7 @@ import {
   VerdictSheet,
   useVerdictChips,
 } from "@/components/VerdictSheet";
+import { BUCKET_COLOR } from "@/lib/verdictTypes";
 import type { VerdictChip } from "@/lib/verdictTypes";
 import { useWatchlist, saveWatchlistNote, retryWatchlistLoad } from "@/lib/watchlist";
 import { band, bandColor, tierLabel } from "@/lib/score";
@@ -1017,14 +1018,10 @@ export function WatchlistClient({
  * is the question the rail is for. Acting on the answer is one click away.
  */
 function VerdictDot({ chip }: { chip: VerdictChip }) {
-  const color =
-    chip.bucket === "buy"
-      ? "var(--color-delta-up)"
-      : chip.bucket === "sell"
-        ? "var(--color-delta-down)"
-        : chip.bucket === "watch"
-          ? "var(--color-score-mid, #d4951a)"
-          : "var(--color-accent-600)";
+  // BUCKET_COLOR is the one map (verdictTypes.ts). This used to be a local
+  // ternary that happened to agree with it; "happened to" is how the rail
+  // drifts from the panel.
+  const color = BUCKET_COLOR[chip.bucket];
   const needsAttention = chip.movedCount > 0 || chip.stale;
   return (
     <span
