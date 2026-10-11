@@ -221,6 +221,67 @@ class CoverageResult:
         return f"{icon} {self.name:<40} {self.message}"
 
 
+def unaccounted_split(
+    conn: psycopg.Connection,
+    snapshot_date: date,
+) -> tuple[list[str], list[str]]:
+    """Active symbols with no ledger row at `snapshot_date`, split by blame.
+
+    Returns (missing_known, missing_new).
+
+    The ledger is written once per weekly snapshot; the universe is synced on a
+    different schedule. So between a classification and the next one, every
+    newly listed symbol is legitimately absent from the newest ledger — it did
+    not exist when the partition was taken. Counting the ledger at
+    snapshot_date against `COUNT(*) FROM app.universe WHERE is_active` read at
+    CHECK time compares two different days and fails on ordinary growth: on
+    2026-10-10 a universe sync added 83 symbols and the assertion read
+    "3082 ledger rows vs 3165 active symbols — 83 UNACCOUNTED FOR" against a
+    ledger that was exhaustive when it was written.
+
+    That is worse than a false alarm. The assertion's whole claim is that it
+    contains no tunable number and therefore cannot rot — so when it goes red
+    for a benign reason, the only available response is to stop believing it,
+    and it was the one check capable of catching a symbol that silently fell
+    out of the pipeline.
+
+    The split restores the teeth. `app.universe_event` is the append-only log of
+    when each symbol entered (migration 0055), so arrival is a fact we own
+    rather than something inferred from `universe.synced_at` — which is
+    overwritten on every retire and would quietly re-date old symbols as new.
+
+      * missing_new   — first 'added' event is AFTER the snapshot. Pending the
+                        next classification. Not a defect.
+      * missing_known — everything else, INCLUDING symbols with no 'added' event
+                        at all. A symbol we cannot prove is new is treated as
+                        lost, because the alternative is a bucket that excuses
+                        anything it cannot explain.
+    """
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            """
+            SELECT u.symbol,
+                   (ev.first_add IS NOT NULL
+                    AND ev.first_add::date > %(snap)s::date) AS arrived_after
+              FROM app.universe u
+              LEFT JOIN app.coverage_ledger cl
+                     ON cl.symbol = u.symbol AND cl.snapshot_date = %(snap)s
+              LEFT JOIN (SELECT symbol, MIN(event_at) AS first_add
+                           FROM app.universe_event
+                          WHERE event = 'added'
+                          GROUP BY symbol) ev
+                     ON ev.symbol = u.symbol
+             WHERE u.is_active AND cl.symbol IS NULL
+             ORDER BY u.symbol
+            """,
+            {"snap": snapshot_date},
+        )
+        rows = cur.fetchall()
+    missing_new = [r["symbol"] for r in rows if r["arrived_after"]]
+    missing_known = [r["symbol"] for r in rows if not r["arrived_after"]]
+    return missing_known, missing_new
+
+
 def check_partition(conn: psycopg.Connection, snapshot_date: date) -> list[CoverageResult]:
     """The two assertions that contain no tunable numbers.
 
@@ -250,12 +311,27 @@ def check_partition(conn: psycopg.Connection, snapshot_date: date) -> list[Cover
         )
         unclassified_n = cur.fetchone()["n"]
 
+    # Symbols that arrived after the snapshot are not a hole in the partition —
+    # see unaccounted_split. A ledger holding MORE rows than the active universe
+    # is still a failure outright: eviction is the one thing the classifier's
+    # upsert cannot do on its own (see write_ledger), so a surplus means stale
+    # rows survived, and no arrival can explain it.
+    missing_known, missing_new = unaccounted_split(conn, snapshot_date)
+    surplus = max(0, ledger_n - universe_n)
+    bits = [f"{ledger_n} ledger rows vs {universe_n} active symbols"]
+    if missing_known:
+        bits.append(f"{len(missing_known)} UNACCOUNTED FOR "
+                    f"({', '.join(missing_known[:5])}"
+                    f"{'…' if len(missing_known) > 5 else ''})")
+    if surplus:
+        bits.append(f"{surplus} stale ledger rows not evicted")
+    if missing_new:
+        bits.append(f"{len(missing_new)} added since the snapshot, "
+                    "pending the next classification")
     out.append(CoverageResult(
         name="coverage.ledger_accounts_for_universe",
-        passed=(ledger_n == universe_n),
-        message=(f"{ledger_n} ledger rows vs {universe_n} active symbols"
-                 + ("" if ledger_n == universe_n
-                    else f" — {abs(universe_n - ledger_n)} UNACCOUNTED FOR")),
+        passed=(not missing_known and surplus == 0),
+        message=" — ".join(bits),
     ))
     out.append(CoverageResult(
         name="coverage.no_unclassified",

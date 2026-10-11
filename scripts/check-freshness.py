@@ -81,6 +81,14 @@ import psycopg
 
 ROOT = Path(__file__).resolve().parent.parent
 
+# The ledger reconciliation lives in ONE place. This script used to carry its
+# own copy of the comparison, and when the shared version learned that symbols
+# added after a snapshot are not a hole in the partition, this copy would have
+# gone on reporting them as one — the same drift that put two different "1D"
+# rules on the watchlist and the portfolio.
+sys.path.insert(0, str(ROOT / "etl" / "src"))
+from fundamental_etl.coverage import unaccounted_split  # noqa: E402
+
 
 def env_url(name: str, required: bool = True) -> str | None:
     """Env var, falling back to .env.local. `required=False` returns None
@@ -213,17 +221,36 @@ def check_snapshot_completeness(conn: psycopg.Connection, min_ratio: float) -> t
         cur.execute("""
             WITH latest AS (SELECT MAX(snapshot_date) AS d FROM app.scores)
             SELECT (SELECT COUNT(*)::int FROM app.scores s JOIN latest ON s.snapshot_date = latest.d),
-                   (SELECT COUNT(*)::int FROM app.universe WHERE is_active)
+                   (SELECT COUNT(*)::int FROM app.universe WHERE is_active),
+                   -- Symbols that joined the universe AFTER the snapshot was
+                   -- taken. They are part of the gap and SHOULD be: the whole
+                   -- point of a live denominator is that growth shows up as a
+                   -- deficit until the next score run covers it. Reported, not
+                   -- subtracted — the ratio keeps its teeth, the human reading
+                   -- a red line gets to tell "83 just listed" apart from
+                   -- "scoring dropped 83 names it used to carry", which are
+                   -- the same number and opposite emergencies.
+                   (SELECT COUNT(*)::int FROM app.universe u
+                     WHERE u.is_active
+                       AND EXISTS (SELECT 1 FROM app.universe_event e
+                                    WHERE e.symbol = u.symbol AND e.event = 'added'
+                                      AND e.event_at::date > (SELECT d FROM latest))
+                       AND NOT EXISTS (SELECT 1 FROM app.scores s2
+                                        WHERE s2.symbol = u.symbol
+                                          AND s2.snapshot_date = (SELECT d FROM latest)))
         """)
         row = cur.fetchone()
     n = int(row[0]) if row else 0
     universe = int(row[1]) if row else 0
+    arrived_after = int(row[2]) if row else 0
     ratio = (n / universe) if universe else 0.0
     ok = ratio >= min_ratio
     icon = "✓" if ok else "✗"
+    suffix = (f"; {arrived_after} of the {universe - n} unscored listed after this snapshot"
+              if arrived_after else "")
     return ok, (
         f"{icon} snapshot_coverage: {n}/{universe} active symbols scored "
-        f"({ratio:.1%}, expected ≥ {min_ratio:.0%})"
+        f"({ratio:.1%}, expected ≥ {min_ratio:.0%}){suffix}"
     )
 
 
@@ -260,9 +287,23 @@ def check_coverage_ledger(conn: psycopg.Connection) -> tuple[bool, str]:
         """, (snap, snap, snap))
         ledger_n, universe_n, unclassified_n, problem_n = cur.fetchone()
 
-    ok = (ledger_n == universe_n) and unclassified_n == 0 and problem_n == 0
+    # universe_n is read NOW; ledger_n was written at `snap`. Comparing the two
+    # directly fails on ordinary universe growth — see unaccounted_split, which
+    # separates "arrived after the snapshot" from "genuinely lost".
+    missing_known, missing_new = unaccounted_split(conn, snap)
+    surplus = max(0, ledger_n - universe_n)
+    ok = not missing_known and surplus == 0 and unclassified_n == 0 and problem_n == 0
     icon = "✓" if ok else "✗"
     bits = [f"{ledger_n}/{universe_n} accounted for"]
+    if missing_known:
+        bits.append(f"{len(missing_known)} UNACCOUNTED FOR "
+                    f"({', '.join(missing_known[:5])}"
+                    f"{'…' if len(missing_known) > 5 else ''})")
+    if surplus:
+        bits.append(f"{surplus} stale ledger rows not evicted")
+    if missing_new:
+        bits.append(f"{len(missing_new)} added since the snapshot, pending "
+                    "the next classification")
     if unclassified_n:
         bits.append(f"{unclassified_n} UNCLASSIFIED")
     if problem_n:
