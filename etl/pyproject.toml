@@ -13,6 +13,11 @@ dependencies = [
     "structlog>=24.1",
     "typer>=0.12",
     "tenacity>=9.0",
+    # Imported at module scope by officers.py and business_info.py. It was
+    # missing here while being present in the local venv, so every local run
+    # worked and refresh-company-info.yml — which installs this package and
+    # nothing else — died on ModuleNotFoundError at its monthly fire (#11).
+    "yfinance>=0.2",
 ]
 
 [project.scripts]

@@ -61,7 +61,9 @@ env:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # 8, not 5: installing the ETL package pulls more wheels than the single
+    # psycopg install this step used to be.
+    timeout-minutes: 8
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -71,8 +73,15 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install psycopg
-        run: pip install 'psycopg[binary]==3.2.*'
+      # Both scripts below import fundamental_etl (dq.py, coverage.py) off
+      # sys.path without the package being installed, so they inherited every
+      # transitive dependency those modules have while this step installed one.
+      # structlog was the one that bit: check-dq.py died on ModuleNotFoundError
+      # before running a single assertion, and the alert issue (#15) pointed at
+      # "a parser change silently NULLed a column". The report was never
+      # produced; only the coverage step's advisory GENXAI row was real.
+      - name: Install ETL package
+        run: pip install -e ./etl
 
       # Coverage FIRST, and as its own step, because it is the check the other
       # one structurally could not perform. check-dq.py measures how populated
