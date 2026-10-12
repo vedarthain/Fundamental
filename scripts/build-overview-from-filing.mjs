@@ -99,6 +99,13 @@ import { SPINE, SYSTEM, parseTable, latestFy } from "./build-company-overview.mj
 
 const MODEL = "claude-haiku-4-5";
 
+/** Provenance label for the --cli path. Deliberately NOT "claude-haiku-4-5":
+ *  the CLI resolves "haiku" to whatever the installed version points at, so the
+ *  exact weights are not knowable from here. Naming the TRANSPORT is honest;
+ *  naming a version we did not pin would be a guess written into a column
+ *  people audit from. */
+const CLI_MODEL = "claude-cli-haiku";
+
 /**
  * SECOND EXTRACTOR: Gemini 2.5 Flash, behind --gemini.
  *
@@ -457,7 +464,12 @@ async function main() {
   const useStale = args.includes("--stale");
   const useGemini = args.includes("--gemini");
   const useCli = args.includes("--cli");
-  const activeModel = useGemini ? GEMINI_MODEL : MODEL;
+  // Three extractors, three labels. The CLI path shipped reusing MODEL, so 45
+  // rows went in stamped "claude-haiku-4-5" as though the metered API had
+  // written them — the one column that says WHICH extractor produced a row was
+  // describing the wrong one. A provenance column that is only right for two
+  // of three paths cannot be used to audit any of them.
+  const activeModel = useGemini ? GEMINI_MODEL : useCli ? CLI_MODEL : MODEL;
   const missingIdx = args.indexOf("--missing");
   const missingN = missingIdx === -1 ? 0 : Number(args[missingIdx + 1]);
   if (missingIdx !== -1 && !(missingN > 0)) {
