@@ -212,6 +212,20 @@ const PAGE_FLOOR = 40;
 /** Front-of-report pages that actually describe the business. */
 const PROSE_PAGES = 30;
 
+/** Below this many characters, the fixed first-PROSE_PAGES window is assumed to
+ *  have landed on image pages rather than on prose, and proseOf() re-searches
+ *  from the first text-bearing page. Set above the ~1.5k chars a cover + notice
+ *  OCR-free PDF yields, and far below the ~100k a real 30-page window gives. */
+const PROSE_FLOOR = 4_000;
+
+/** Characters (whitespace stripped) on a single page for it to count as prose
+ *  rather than a caption under an image. */
+const PAGE_TEXT_FLOOR = 500;
+
+/** Consecutive text-bearing pages required to call it the body of the report
+ *  rather than an isolated covering letter. */
+const PROSE_RUN = 3;
+
 /** Hard cap on characters sent to the model. AWL's first 25 pages alone are
  *  220k chars; the prompt does not improve past roughly this much context and
  *  the bill does. */
@@ -350,16 +364,91 @@ async function recordAttempt(db, symbol, outcome) {
 }
 
 /**
+ * Third extractor: the Claude Code CLI in headless mode, billed to the
+ * interactive subscription rather than to a metered API key.
+ *
+ * SAME SYSTEM prompt, SAME user message, SAME parseTable as the other two —
+ * see the contract note in the header. The only variable is who answers.
+ *
+ * The flags are not decoration. A bare `claude -p` loads the full agent
+ * harness: tool definitions, MCP servers, project CLAUDE.md. Measured at 40,344
+ * cache-creation tokens to answer "OK" — per invocation, and there are 1,027
+ * invocations. Each flag below removes a part of that harness this job has no
+ * use for, because the task is one prompt in and one markdown table out with no
+ * tool ever called.
+ */
+function cliTable(system, user) {
+  return execFileSync(
+    "claude",
+    [
+      "-p", user,
+      "--model", "haiku",
+      "--append-system-prompt", system,
+      // No tool should ever fire; an extractor that can read the filesystem is
+      // an extractor that can answer from something other than the filing.
+      "--allowed-tools", "",
+      // Must be a full config object, not "{}" — the CLI validates the shape
+      // and rejects a bare empty object with "mcpServers: expected record".
+      "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
+      "--output-format", "text",
+    ],
+    {
+      encoding: "utf8",
+      maxBuffer: 16 * 1024 * 1024,
+      timeout: 180_000,
+      // An ANTHROPIC_API_KEY in the environment silently redirects the CLI to
+      // metered API billing — which is the exact cost this path exists to
+      // avoid, and it would not show up anywhere in this script's output.
+      env: { ...process.env, ANTHROPIC_API_KEY: undefined },
+    },
+  ).trim();
+}
+
+/**
  * Front-section text. -layout preserves the multi-column structure of a
  * designed annual report; without it the "Business segments" spread interleaves
  * into unreadable word salad.
  */
 function proseOf(path) {
-  const txt = execFileSync(
-    "pdftotext", ["-layout", "-f", "1", "-l", String(PROSE_PAGES), path, "-"],
-    { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
-  );
-  return txt.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim().slice(0, MAX_CHARS);
+  const run = (args) =>
+    execFileSync("pdftotext", ["-layout", ...args, path, "-"],
+      { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  const clean = (s) =>
+    s.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+
+  let txt = clean(run(["-f", "1", "-l", String(PROSE_PAGES)]));
+
+  // The window is "the first 30 pages", but on a sizeable minority of filings
+  // the first 30 pages are IMAGES — a designed cover, a scanned AGM notice, a
+  // signed letter — and the typeset prose only starts at page 40 or 50. Those
+  // reported "NO TEXT — scanned?" and were written off, when the business
+  // description was sitting a few pages further in. HGS: 1,582 chars in pages
+  // 1-40, 994,072 chars in the document. The fixed offset was the defect, not
+  // the PDF.
+  //
+  // So when the fixed window comes back near-empty, find the first page that
+  // actually carries text and take the window from THERE. A genuinely
+  // image-only report (HAZOOR: 1,439 chars across all 195 pages) still finds
+  // nothing and still reports NO TEXT — the fallback widens the search, it
+  // does not invent a pass.
+  if (txt.length < PROSE_FLOOR) {
+    const pages = run([]).split("\f");
+    const hasText = pages.map((p) => p.replace(/\s/g, "").length >= PAGE_TEXT_FLOOR);
+    // A RUN of PROSE_RUN text pages, not the first single one. HGS's page 1 is
+    // the covering letter — real text, 2,168 chars — followed by forty image
+    // pages. Anchoring on the first text-bearing page therefore lands back on
+    // page 1 and changes nothing, which is exactly what the first version of
+    // this fallback did. The body has to be a contiguous block to count.
+    let start = -1;
+    for (let i = 0; i + PROSE_RUN <= hasText.length; i++) {
+      if (hasText.slice(i, i + PROSE_RUN).every(Boolean)) { start = i; break; }
+    }
+    if (start >= 0) {
+      const slid = clean(pages.slice(start, start + PROSE_PAGES).join("\f"));
+      if (slid.length > txt.length) txt = slid;
+    }
+  }
+  return txt.slice(0, MAX_CHARS);
 }
 
 async function main() {
@@ -367,6 +456,7 @@ async function main() {
   const apply = args.includes("--apply");
   const useStale = args.includes("--stale");
   const useGemini = args.includes("--gemini");
+  const useCli = args.includes("--cli");
   const activeModel = useGemini ? GEMINI_MODEL : MODEL;
   const missingIdx = args.indexOf("--missing");
   const missingN = missingIdx === -1 ? 0 : Number(args[missingIdx + 1]);
@@ -496,7 +586,9 @@ async function main() {
       // raised against a healthy pipeline, which is how alerts stop being read.
       let raw;
       try {
-        if (useGemini) {
+        if (useCli) {
+          raw = cliTable(SYSTEM, prompt);
+        } else if (useGemini) {
           raw = await geminiTable(SYSTEM, prompt);
         } else {
           const res = await client.messages.create({
