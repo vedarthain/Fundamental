@@ -384,7 +384,26 @@ async function recordAttempt(db, symbol, outcome) {
  * use for, because the task is one prompt in and one markdown table out with no
  * tool ever called.
  */
-function cliTable(system, user) {
+function cliTable(system, user, attempt = 0) {
+  try {
+    return cliTableOnce(system, user);
+  } catch (e) {
+    // A throttle is not a provider outage. Three concurrent workers tripped
+    // rate limiting within 16 minutes, and because the caller aborts after
+    // three consecutive failures, each worker then burned through the rest of
+    // its slice printing built=0 — a transient 429 consumed a whole queue. The
+    // caller's guard is right for a dead key and wrong for backpressure, so
+    // backpressure is absorbed HERE and never reaches it. A probe one minute
+    // later answered normally, which is what makes this a wait, not an error.
+    if (attempt >= 4) throw e;
+    const wait = 15_000 * 2 ** attempt;
+    console.log(`  claude cli busy; retrying in ${wait / 1000}s`);
+    execFileSync("sleep", [String(wait / 1000)]);
+    return cliTable(system, user, attempt + 1);
+  }
+}
+
+function cliTableOnce(system, user) {
   return execFileSync(
     "claude",
     [
@@ -485,6 +504,13 @@ async function main() {
   // situation --gemini exists for.
   if (useGemini) {
     if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY not set");
+  } else if (useCli) {
+    // --cli authenticates through the installed Claude Code CLI's own session,
+    // not through a key in this environment. Demanding ANTHROPIC_API_KEY here
+    // would make the one path that needs no key refuse to start without one —
+    // and worse, invite someone to export the key to satisfy the check, which
+    // is exactly what cliTable() strips to keep the run off metered billing.
+    if (!process.env.PATH) throw new Error("no PATH; cannot find the claude CLI");
   } else if (!process.env.ANTHROPIC_API_KEY) {
     throw new Error("ANTHROPIC_API_KEY not set");
   }
