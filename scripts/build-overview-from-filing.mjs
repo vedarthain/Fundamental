@@ -501,9 +501,22 @@ async function main() {
   if (missingIdx !== -1 && !(missingN > 0)) {
     throw new Error("--missing needs a positive count, e.g. --missing 25");
   }
-  // The count that follows --missing is an argument, not a symbol.
-  const countIdx = missingIdx === -1 ? -1 : missingIdx + 1;
-  let symbols = args.filter((a, i) => !a.startsWith("--") && i !== countIdx);
+  // --limit bounds a --stale sweep. It exists because --stale is no longer a
+  // handful of rows: the superseded-filing rule below selects every symbol
+  // whose annual report has been refiled, which is most of the universe each
+  // August-September. An unbounded nightly sweep in that window would start
+  // 2,000 symbols and be reaped at the job timeout, every night, having
+  // committed whatever it reached — progress, but never a finishing run.
+  const limitIdx = args.indexOf("--limit");
+  const limitN = limitIdx === -1 ? 0 : Number(args[limitIdx + 1]);
+  if (limitIdx !== -1 && !(limitN > 0)) {
+    throw new Error("--limit needs a positive count, e.g. --limit 25");
+  }
+  // The counts that follow --missing and --limit are arguments, not symbols.
+  const countIdxs = new Set(
+    [missingIdx, limitIdx].filter((i) => i !== -1).map((i) => i + 1),
+  );
+  let symbols = args.filter((a, i) => !a.startsWith("--") && !countIdxs.has(i));
 
   if (!process.env.APP_DB_URL) throw new Error("APP_DB_URL not set");
   // Only the key for the extractor actually in use. Demanding both would make
@@ -530,16 +543,92 @@ async function main() {
   const client = useGemini ? null : new Anthropic();
 
   if (useStale) {
-    // Same cutoff the staleness audit uses: two fiscal years behind the last
-    // completed one. Derived from the date so it can never be quietly widened
-    // to make a run look clean.
+    // TWO REASONS, AND THE FIRST ONE IS THE LOAD-BEARING ONE.
+    //
+    // (1) SUPERSEDED FILING. The row was built from an annual report, and a
+    //     NEWER annual report has since been filed for that symbol. This is the
+    //     only rule that tracks the thing that actually changes — a company
+    //     filing its FY26 report in August 2026 does not alter the FY25 row we
+    //     already hold, so nothing about that row looks wrong. It is simply
+    //     describing last year.
+    //
+    //     Keyed on source_filing_date, NOT latest_fy. latest_fy is NULL on
+    //     1,843 of the 2,079 filing-sourced rows (88.6%, measured 2026-10-13)
+    //     because the model only fills it when the report states a fiscal year
+    //     plainly — so the old latest_fy-only rule below could not see 88.6% of
+    //     the corpus and quietly skipped it forever. Every one of those 2,079
+    //     rows has a source_filing_date.
+    //
+    //     The 30-day margin is not slack, it is the whole reason this does not
+    //     thrash. Companies file the same report two or three times in one
+    //     week — a covering letter, then the full book, then a corrected
+    //     version. Without the margin each refiling makes the row it just
+    //     produced look stale, and the symbol is rebuilt every night from a
+    //     document whose text is byte-identical. 'unchanged' outcomes would
+    //     climb and nothing would be wrong, but the sweep would never drain.
+    //
+    // (2) ANCIENT latest_fy, two fiscal years behind the last completed one.
+    //     Kept as a backstop for rows where app.announcement has no newer
+    //     filing to compare against — the filing may exist and simply not have
+    //     been fetched, in which case rule (1) is blind and this is the only
+    //     thing that notices. Derived from the date so it cannot be quietly
+    //     widened to make a run look clean.
+    //
+    // Superseded rows sort first, because under --limit they are the ones with
+    // a known-better document waiting; the backstop rows may well rebuild to
+    // the same content.
     const now = new Date();
     const lastFy = now.getUTCMonth() >= 3 ? now.getUTCFullYear() : now.getUTCFullYear() - 1;
     const rows = await db`
-      SELECT symbol FROM app.company_overview
-       WHERE latest_fy IS NOT NULL AND latest_fy <= ${lastFy - 2}
-       ORDER BY latest_fy, symbol`;
-    symbols = rows.map((r) => r.symbol);
+      SELECT symbol, reason FROM (
+        SELECT co.symbol,
+               'superseded' AS reason,
+               1 AS ord,
+               (SELECT max(a.published_at) FROM app.announcement a
+                 WHERE a.symbol = co.symbol
+                   AND a.pdf_url IS NOT NULL
+                   AND a.title ILIKE '%annual report%') AS sort_at
+          FROM app.company_overview co
+         WHERE co.source = 'filing'
+           AND co.source_filing_date IS NOT NULL
+           AND EXISTS (
+                 SELECT 1 FROM app.announcement a
+                  WHERE a.symbol = co.symbol
+                    AND a.pdf_url IS NOT NULL
+                    AND a.title ILIKE '%annual report%'
+                    AND a.published_at > co.source_filing_date + interval '30 days')
+        UNION ALL
+        SELECT co.symbol, 'old_fy' AS reason, 2 AS ord, NULL AS sort_at
+          FROM app.company_overview co
+         WHERE co.latest_fy IS NOT NULL AND co.latest_fy <= ${lastFy - 2}
+      ) q
+       ORDER BY ord, sort_at DESC NULLS LAST, symbol`;
+    // A symbol can match both rules. Rebuilding it twice in one run is wasted
+    // work, and the second pass would overwrite the first with the same text.
+    const seen = new Set();
+    const picked = rows.filter((r) => !seen.has(r.symbol) && seen.add(r.symbol));
+    const bucket = (name) => picked.filter((r) => r.reason === name).length;
+    console.log(`stale: ${picked.length} symbol(s) — ` +
+                `superseded=${bucket("superseded")} old_fy=${bucket("old_fy")}` +
+                (limitN ? ` (taking first ${limitN})` : ""));
+    // THE TRIPWIRE. On a quiet day rule (1) matches a handful of symbols and
+    // rule (2) a few dozen, so a sweep that selects nothing is indistinguishable
+    // from a sweep whose query is broken — a predicate typo, a renamed column, a
+    // title filter that stopped matching. Both read as a clean green run. Exit 2
+    // rather than 0 so the one outcome that can never be legitimately silent is
+    // the one that is loudest: there are 2,079 filing-sourced rows and nothing
+    // should ever conclude that not one of them is behind.
+    if (!picked.length) {
+      console.error("ABORT: --stale selected 0 symbols out of app.company_overview. " +
+                    "Both rules returning nothing is far more likely to be a broken " +
+                    "predicate than a corpus with no stale row in it. Check that " +
+                    "app.announcement still has annual-report rows with pdf_url, and " +
+                    "that company_overview.source_filing_date is still populated.");
+      await db.end();
+      process.exit(2);
+    }
+    symbols = picked.map((r) => r.symbol);
+    if (limitN) symbols = symbols.slice(0, limitN);
   }
   if (missingN) {
     const rows = await missingWithFilings(db, missingN);
@@ -554,7 +643,7 @@ async function main() {
   }
   if (!symbols.length) {
     console.error("usage: node scripts/build-overview-from-filing.mjs SYM [SYM...] [--apply]\n" +
-                  "       node scripts/build-overview-from-filing.mjs --stale [--apply]\n" +
+                  "       node scripts/build-overview-from-filing.mjs --stale [--limit N] [--apply]\n" +
                   "       node scripts/build-overview-from-filing.mjs --missing N [--apply]");
     await db.end();
     process.exit(2);

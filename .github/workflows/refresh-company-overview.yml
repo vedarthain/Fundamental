@@ -97,10 +97,20 @@ jobs:
 
       # Separate step so its failure is distinguishable from the build's. Stale
       # rows are a backlog to work through, not a broken pipeline.
+      #
+      # --limit 25 is mandatory, not tidiness. --stale now selects any row whose
+      # annual report has been superseded by a newer filing, and in August and
+      # September that is most of the universe at once. Unbounded, this step
+      # would start ~2,000 symbols, be killed at the 45-minute timeout every
+      # night, and commit whatever it reached — forward progress, but never a
+      # run that finishes or a log that means anything. Bounded, it drains the
+      # season over a few weeks and each night either completes or genuinely
+      # failed. The step also exits 2 if it selects NOTHING; that is deliberate
+      # and continue-on-error keeps it from failing the job, but it will show.
       - name: Rebuild stale overviews (report only)
         if: always() && steps.build.outcome != 'failure'
         continue-on-error: true
-        run: node scripts/build-overview-from-filing.mjs --stale --apply
+        run: node scripts/build-overview-from-filing.mjs --stale --limit 25 --apply
 
       - name: Raise a loud alert on failure
         if: failure() || cancelled()
