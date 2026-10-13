@@ -332,6 +332,30 @@ function fetchReport(cands, dir) {
  * the symbols the first one just failed on — without it, every run would walk
  * the same alphabetical prefix forever, which is precisely how this table
  * ended up full of symbols starting with A, B and C.
+ *
+ * BUT A NEW FILING INVALIDATES THE BACKOFF, AND THAT IS THE WHOLE SECOND HALF
+ * OF THIS QUERY. 'no_input' means "none of this symbol's annual-report rows
+ * yielded a usable report TODAY". It is a verdict on the rows that existed at
+ * that moment, not on the symbol — and it buys 90 days of silence. So when
+ * scripts/fetch-nse-annual-reports.py later lands the real report, the symbol
+ * is already serving a sentence handed down on evidence that no longer
+ * describes it, and the fetch that fixed it cannot trigger the rebuild.
+ *
+ * Measured 2026-10-13: 65 active symbols had no overview, a qualifying filing
+ * row, and a retry_after in late December or January. `--missing 65` printed
+ * "queue empty". Forty of those 65 had an announcement row fetched AFTER their
+ * last attempt — the newest fetch had already answered the objection and the
+ * backoff was suppressing the retry anyway. They had to be run by hand, by
+ * name, which is not a pipeline.
+ *
+ * Keyed on an.fetched_at > a.last_attempt_at, NOT published_at. published_at
+ * is the company's filing date and is routinely months behind the day we first
+ * see the row, so it says nothing about whether this attempt has already
+ * considered it. fetched_at is when the row entered app.announcement, which is
+ * exactly the question: is there input here that the last attempt did not see?
+ *
+ * This is section 5's "what keeps this current?" — the backoff was the thing
+ * nothing maintained.
  */
 async function missingWithFilings(db, limit) {
   return db`
@@ -341,7 +365,14 @@ async function missingWithFilings(db, limit) {
       LEFT JOIN app.company_overview_attempt a ON a.symbol = u.symbol
      WHERE u.is_active
        AND o.symbol IS NULL
-       AND (a.retry_after IS NULL OR a.retry_after <= now())
+       AND (a.retry_after IS NULL
+            OR a.retry_after <= now()
+            OR EXISTS (
+                 SELECT 1 FROM app.announcement an
+                  WHERE an.symbol = u.symbol
+                    AND an.pdf_url IS NOT NULL
+                    AND an.title ILIKE '%annual report%'
+                    AND an.fetched_at > a.last_attempt_at))
        AND EXISTS (
              SELECT 1 FROM app.announcement an
               WHERE an.symbol = u.symbol
