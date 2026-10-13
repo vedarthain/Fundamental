@@ -52,9 +52,19 @@
 #   older than that, so "the workflow is green but the data is three weeks old"
 #   cannot happen. That check can fail, which is the whole point of it.
 #
-# Required secret:
-#   NEON_APP_URL — Postgres URL for fundamental_app on Neon. The Upstox token is
-#   read from app.upstox_session in that same database, not from a secret.
+# Required secrets:
+#   NEON_APP_URL — Postgres URL for fundamental_app on Neon.
+#   UPSTOX_ANALYTICS_TOKEN — the one-per-account, one-year, read-only GET token
+#     from the Upstox Developer Apps console. scripts/upstox_token.py prefers it
+#     and falls back to the app.upstox_session row only when it is unset. Until
+#     2026-10-13 this workflow passed neither, so it always took the fallback —
+#     which is why the calendar sat four days dead while the token was fine.
+#
+# NOTE THE COMMENTS BELOW ARE NOW HALF-HISTORY. Everything about "a human at
+# /admin/upstox must renew it daily" describes the FALLBACK path, which should
+# now fire only if the analytics token is missing or revoked. Exit 2 stops being
+# a daily chore and becomes a real signal; it is still not a workflow failure,
+# for the reason given further down.
 
 name: Refresh IPOs
 
@@ -70,6 +80,14 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  # Set at the WORKFLOW level, not per step, because every step here shells into
+  # fetch-ipos.py and scripts/upstox_token.py resolves this before it will touch
+  # app.upstox_session. A step that omits it does not error — it silently falls
+  # back to the daily OAuth row and exits 2, which is the exact failure this
+  # secret exists to end. Unset is also tolerated (the fallback still works), so
+  # nothing in the job can tell you the wiring is missing: that is why it is one
+  # declaration covering all steps rather than three that can drift.
+  UPSTOX_ANALYTICS_TOKEN: ${{ secrets.UPSTOX_ANALYTICS_TOKEN }}
 
 permissions:
   contents: read
