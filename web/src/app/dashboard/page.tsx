@@ -44,6 +44,8 @@ import { IpoZone } from "./IpoZone";
 import { FilingsZone } from "./FilingsZone";
 import { ConcentrationZone } from "./ConcentrationZone";
 
+import { DashboardTabs } from "./DashboardTabs";
+
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Dashboard · EquityRoots" };
 
@@ -66,58 +68,64 @@ export default async function DashboardPage() {
         <MarketLine />
       </Suspense>
 
-      <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 items-start">
-        <div className="sm:col-span-2">
-          <Suspense fallback={<ZoneSkeleton title="Needs action" />}>
-            <NeedsAction userId={session.userId} />
-          </Suspense>
-        </div>
+      <DashboardTabs
+        bookGroup={
+          <>
+            <div className="sm:col-span-2">
+              <Suspense fallback={<ZoneSkeleton title="Needs action" />}>
+                <NeedsAction userId={session.userId} />
+              </Suspense>
+            </div>
 
-        <Suspense fallback={<ZoneSkeleton title="Open calls" />}>
-          <CallsZone userId={session.userId} />
-        </Suspense>
+            <Suspense fallback={<ZoneSkeleton title="Research calls" />}>
+              <CallsZone userId={session.userId} />
+            </Suspense>
 
-        <Suspense fallback={<ZoneSkeleton title="Your book" />}>
-          <BookZone userId={session.userId} />
-        </Suspense>
+            <Suspense fallback={<ZoneSkeleton title="Your book" />}>
+              <BookZone userId={session.userId} />
+            </Suspense>
 
-        {/* Results sits next to the book deliberately: the question it answers
-            is "which of these reports this week", which is only meaningful
-            beside the positions. */}
-        <Suspense fallback={<ZoneSkeleton title="Calendar" />}>
-          <ResultsZone userId={session.userId} />
-        </Suspense>
+            <Suspense fallback={<ZoneSkeleton title="Concentration" />}>
+              <ConcentrationZone userId={session.userId} />
+            </Suspense>
+          </>
+        }
+        signalsGroup={
+          <>
+            <Suspense fallback={<ZoneSkeleton title="Sector heat" />}>
+              <SectorHeat />
+            </Suspense>
 
-        <Suspense fallback={<ZoneSkeleton title="Sector heat" />}>
-          <SectorHeat />
-        </Suspense>
+            {/* Renders three sibling <Zone> boxes */}
+            <Suspense
+              fallback={
+                <>
+                  <ZoneSkeleton title="Igniting" />
+                  <ZoneSkeleton title="Trend" />
+                  <ZoneSkeleton title="At support" />
+                </>
+              }
+            >
+              <SignalsZone />
+            </Suspense>
+          </>
+        }
+        radarGroup={
+          <>
+            <Suspense fallback={<ZoneSkeleton title="Calendar" />}>
+              <ResultsZone userId={session.userId} />
+            </Suspense>
 
-        <Suspense fallback={<ZoneSkeleton title="IPO" />}>
-          <IpoZone />
-        </Suspense>
+            <Suspense fallback={<ZoneSkeleton title="Filings" />}>
+              <FilingsZone userId={session.userId} />
+            </Suspense>
 
-        <Suspense fallback={<ZoneSkeleton title="Filings" />}>
-          <FilingsZone userId={session.userId} />
-        </Suspense>
-
-        <Suspense fallback={<ZoneSkeleton title="Concentration" />}>
-          <ConcentrationZone userId={session.userId} />
-        </Suspense>
-
-        {/* Renders three sibling <Zone> boxes, so it must be a direct grid
-            child — do not wrap it in a <div> or they stop tiling. */}
-        <Suspense
-          fallback={
-            <>
-              <ZoneSkeleton title="Igniting" />
-              <ZoneSkeleton title="Trend" />
-              <ZoneSkeleton title="At support" />
-            </>
-          }
-        >
-          <SignalsZone />
-        </Suspense>
-      </div>
+            <Suspense fallback={<ZoneSkeleton title="IPO" />}>
+              <IpoZone />
+            </Suspense>
+          </>
+        }
+      />
     </div>
   );
 }

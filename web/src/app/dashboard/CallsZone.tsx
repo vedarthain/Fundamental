@@ -19,9 +19,9 @@ export async function CallsZone({ userId }: { userId: number }) {
 
   return (
     <Zone
-      title="Open calls"
+      title="Research calls"
       count={active.length || undefined}
-      meta={oldest ? `from ${fmtDay(oldest)}` : undefined}
+      meta={oldest ? `private · from ${fmtDay(oldest)}` : "private"}
     >
       {shown.length === 0 ? (
         <Empty>
