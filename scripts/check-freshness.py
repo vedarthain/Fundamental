@@ -204,41 +204,73 @@ def check_snapshot_completeness(conn: psycopg.Connection, min_ratio: float) -> t
 
     Note the denominator is app.universe, not `scores JOIN universe` — joining
     through scores would exclude the unscored rows that are the entire thing
-    being measured."""
+    being measured.
+
+    BUT THE DENOMINATOR IS ELIGIBLE SYMBOLS, NOT ALL OF THEM, AND THAT IS A
+    REVERSAL OF WHAT THIS FUNCTION USED TO ARGUE.
+
+    It previously counted symbols that joined the universe AFTER the snapshot
+    was taken as part of the deficit, on the reasoning that growth should show
+    up as a shortfall until scoring catches up. In practice that makes the check
+    red as a function of onboarding rate rather than of anything being wrong: on
+    2026-10-13 it failed at 96.7% while 83 of the 104 unscored had listed after
+    the snapshot date, and no scoring run had been due in between. A symbol that
+    did not exist when the snapshot ran cannot be in it. Asserting otherwise
+    tests the calendar.
+
+    The teeth do not come from the inflated denominator, they come from
+    snapshot_cadence: that check fails if more than 10 days pass between
+    snapshots, so a newly listed symbol cannot stay uncovered for long without
+    something going red. Two checks, two conditions, each able to fail for its
+    own reason — rather than one ratio that mixes "scoring dropped names it used
+    to carry" with "the universe grew on schedule" and reports the same number
+    for both.
+
+    So: the PASS/FAIL ratio is over symbols that existed at snapshot time. The
+    raw whole-universe figure is still printed, because the gross count is what
+    a human wants to see."""
     with conn.cursor() as cur:
         cur.execute("""
-            WITH latest AS (SELECT MAX(snapshot_date) AS d FROM app.scores)
-            SELECT (SELECT COUNT(*)::int FROM app.scores s JOIN latest ON s.snapshot_date = latest.d),
-                   (SELECT COUNT(*)::int FROM app.universe WHERE is_active),
-                   -- Symbols that joined the universe AFTER the snapshot was
-                   -- taken. They are part of the gap and SHOULD be: the whole
-                   -- point of a live denominator is that growth shows up as a
-                   -- deficit until the next score run covers it. Reported, not
-                   -- subtracted — the ratio keeps its teeth, the human reading
-                   -- a red line gets to tell "83 just listed" apart from
-                   -- "scoring dropped 83 names it used to carry", which are
-                   -- the same number and opposite emergencies.
-                   (SELECT COUNT(*)::int FROM app.universe u
-                     WHERE u.is_active
-                       AND EXISTS (SELECT 1 FROM app.universe_event e
-                                    WHERE e.symbol = u.symbol AND e.event = 'added'
-                                      AND e.event_at::date > (SELECT d FROM latest))
-                       AND NOT EXISTS (SELECT 1 FROM app.scores s2
-                                        WHERE s2.symbol = u.symbol
-                                          AND s2.snapshot_date = (SELECT d FROM latest)))
+            WITH latest AS (SELECT MAX(snapshot_date) AS d FROM app.scores),
+                 u AS (
+                   SELECT EXISTS (SELECT 1 FROM app.universe_event e
+                                   WHERE e.symbol = un.symbol AND e.event = 'added'
+                                     AND e.event_at::date > (SELECT d FROM latest)
+                                 ) AS new_since,
+                          EXISTS (SELECT 1 FROM app.scores s
+                                   WHERE s.symbol = un.symbol
+                                     AND s.snapshot_date = (SELECT d FROM latest)
+                                 ) AS scored
+                     FROM app.universe un
+                    WHERE un.is_active
+                 )
+            -- The numerator counts ACTIVE symbols scored, not scored rows. The
+            -- old version counted rows in app.scores, which also counted names
+            -- scored then delisted since — inflating coverage with symbols the
+            -- site no longer serves.
+            SELECT COUNT(*) FILTER (WHERE scored)::int,
+                   COUNT(*)::int,
+                   COUNT(*) FILTER (WHERE new_since AND NOT scored)::int,
+                   COUNT(*) FILTER (WHERE NOT new_since)::int,
+                   COUNT(*) FILTER (WHERE NOT new_since AND scored)::int
+              FROM u
         """)
         row = cur.fetchone()
     n = int(row[0]) if row else 0
     universe = int(row[1]) if row else 0
     arrived_after = int(row[2]) if row else 0
-    ratio = (n / universe) if universe else 0.0
+    eligible = int(row[3]) if row else 0
+    scored_eligible = int(row[4]) if row else 0
+    ratio = (scored_eligible / eligible) if eligible else 0.0
     ok = ratio >= min_ratio
     icon = "✓" if ok else "✗"
-    suffix = (f"; {arrived_after} of the {universe - n} unscored listed after this snapshot"
+    suffix = (f"; {arrived_after} more listed after the snapshot and are not counted "
+              f"against it (snapshot_cadence covers those)"
               if arrived_after else "")
     return ok, (
-        f"{icon} snapshot_coverage: {n}/{universe} active symbols scored "
-        f"({ratio:.1%}, expected ≥ {min_ratio:.0%}){suffix}"
+        f"{icon} snapshot_coverage: {scored_eligible}/{eligible} symbols that existed "
+        f"at snapshot time are scored ({ratio:.1%}, expected ≥ {min_ratio:.0%}); "
+        f"{n}/{universe} of the universe overall{suffix}"
     )
 
 
