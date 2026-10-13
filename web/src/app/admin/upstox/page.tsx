@@ -101,8 +101,14 @@ export default async function UpstoxAdminPage({
     if (!iso) return "—";
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return iso;
+    // THE YEAR IS LOAD-BEARING. Without it this rendered the analytics token's
+    // 2027-10-08 expiry as "Fri, 08 Oct", which next to a green ACTIVE badge
+    // reads as five days ago — and on 2026-10-13 it was reported as a bug in
+    // the badge. The badge was right; the date was ambiguous. Every date on
+    // this page is a year or a day away from now, so a day-month string cannot
+    // distinguish "expires next year" from "expired last week".
     return d.toLocaleString("en-IN", {
-      weekday: "short", day: "2-digit", month: "short",
+      weekday: "short", day: "2-digit", month: "short", year: "numeric",
       hour: "2-digit", minute: "2-digit",
     });
   };
@@ -224,7 +230,7 @@ function AnalyticsPanel({
       </div>
       <div className="muted-text text-[11.5px] mt-2">
         {expiresAt
-          ? <>Valid until {fmt(expiresAt.toISOString())}</>
+          ? <>Valid until {fmt(expiresAt.toISOString())}{days !== null && <> — {days}d left</>}</>
           : <>Expiry unreadable — the token is not a JWT we can parse, so there is no advance warning before it lapses.</>}
       </div>
     </div>
