@@ -70,10 +70,30 @@ function toWeekly(daily: Candle[]): Candle[] {
  * Fetch split-safe daily candles for each symbol over the last `days` calendar
  * days. Returns {} on any failure (charts render an empty state, the tab still
  * works). Keyed by bare symbol, each series ascending by date.
+ *
+ * `rollup` CONTROLS WHO DECIDES THE BAR SIZE, AND THE DEFAULT IS A TRAP THAT
+ * ALREADY FIRED. When true (the historical behaviour) a lookback past
+ * WEEKLY_THRESHOLD_DAYS is rolled up to weekly here, on the server, before the
+ * caller ever sees it. That is right for the scanner Graph tab, which asks for
+ * eight symbols at once to paint small cells and does not want ~62,000 daily
+ * bars crossing the wire to be thrown away in the browser.
+ *
+ * It was badly wrong for PriceChart. That component asks for days=11000 ONCE
+ * and then slices locally per range button, so every range — 1W, 1M, 3M, 1Y
+ * included — was drawn from a series this function had already collapsed to
+ * weekly. The watchlist chart had never once rendered a daily candle, at any
+ * zoom, and the symptom ("no per-day candles beyond 1Y") understated it
+ * because at 1Y and below 52 weekly bars still look like a plausible chart.
+ *
+ * A caller that slices client-side must therefore pass rollup: false. The
+ * payload is not the objection it sounds like: /api/indices/ohlc already ships
+ * the full daily series with no rollup whatsoever, and seventeen sector
+ * indices carry ~5,400 daily bars each in production today.
  */
 export async function loadCandles(
   symbols: string[],
   days: number,
+  { rollup = true }: { rollup?: boolean } = {},
 ): Promise<Record<string, Candle[]>> {
   const out: Record<string, Candle[]> = {};
   const uniq = Array.from(new Set(symbols)).filter(Boolean);
@@ -137,8 +157,9 @@ export async function loadCandles(
     });
   }
 
-  // Long lookbacks → weekly candles (fewer bars, smaller payload).
-  if (days > WEEKLY_THRESHOLD_DAYS) {
+  // Long lookbacks → weekly candles (fewer bars, smaller payload), unless the
+  // caller slices client-side and needs the days it asked for.
+  if (rollup && days > WEEKLY_THRESHOLD_DAYS) {
     for (const k of Object.keys(out)) out[k] = toWeekly(out[k]);
   }
   return out;
