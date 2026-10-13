@@ -53,8 +53,15 @@
  * a large token bill.
  *
  * The extraction contract (SPINE, SYSTEM, parseTable, latestFy) is IMPORTED
- * from build-company-overview.mjs, not copied. A copied prompt is a copy that
- * never receives the next fix.
+ * from overview-shared.mjs, not copied. A copied prompt is a copy that never
+ * receives the next fix. It used to be imported from build-company-overview.mjs,
+ * the Screener Key Points builder; that builder was retired on 2026-10-13 and
+ * the contract moved to its own module rather than being inlined here.
+ *
+ * THIS IS NOW THE ONLY WRITER OF app.company_overview. Rows with
+ * source='screener_keypoints' are historical and are left in place — they are
+ * valid overviews, just from a source that no longer refreshes. They age out
+ * through the ordinary stale sweep and get rebuilt from filings.
  *
  * USAGE
  *   node scripts/build-overview-from-filing.mjs SYM [SYM...]     # dry run
@@ -95,7 +102,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import postgres from "../web/node_modules/postgres/src/index.js";
 import Anthropic from "../web/node_modules/@anthropic-ai/sdk/index.mjs";
-import { SPINE, SYSTEM, parseTable, latestFy } from "./build-company-overview.mjs";
+import { SPINE, SYSTEM, parseTable, latestFy } from "./overview-shared.mjs";
 
 const MODEL = "claude-haiku-4-5";
 

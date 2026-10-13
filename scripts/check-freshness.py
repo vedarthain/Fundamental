@@ -350,34 +350,45 @@ def check_price_age(conn: psycopg.Connection, max_days: int) -> tuple[bool, str]
     )
 
 
-# Screener's key-insights wall returns HTTP 200 with a ~400-byte stub instead
-# of the fragment. It is a quota, not a rate limit; sleeping does not clear it.
+# WHAT THIS PROBE ASKS, AND WHY IT CHANGED ON 2026-10-13
 #
-# The wording CHANGED on or before 2026-10-06, from a daily cap ("We allow 80
-# key-insights per day") to a rolling one ("Paid users can access 800
-# key-insights within the last 30 days", plus "Please contact support to read
-# more key insights"). This regex matched only the old phrasing, so the stub
-# stopped registering as a quota here at the same moment it stopped
-# registering in build-company-overview.mjs — the two copies failed together,
-# which is exactly the risk of keeping a vendor's prose in two files.
+# It used to request Screener's gated Key Points wiki fragment, because the
+# company-overview worker did. That worker is retired — its 800-per-rolling-30-
+# days allowance could not drain a 2,238-symbol backlog, and overviews now come
+# from annual-report filings, which cost nothing and need no cookie.
 #
-# MUST STAY IDENTICAL to build-company-overview.mjs::QUOTA_MARKER. This check
-# exists to predict that script's behaviour, so a disagreement makes it lie.
-# Both wordings are kept: the endpoint has reworded once already.
-_QUOTA_RE = re.compile(
-    r"key[-\s]insights?\s+per\s+day"
-    r"|key[-\s]insights?\s+within\s+the\s+last"
-    r"|contact\s+support\s+to\s+read\s+more\s+key[-\s]insights?",
-    re.I,
-)
-# A correct Key Points response is an XHR FRAGMENT. It contains no <html>
-# element and no Django CSRF field, so their presence means we were served a
-# page — the login page, the register page, or any future interstitial —
-# without having to enumerate which. Copied deliberately from
-# build-company-overview.mjs's LOGGED_OUT_MARKER; the two must agree, because
-# this check exists to predict that script's failure.
-_LOGGED_OUT_RE = re.compile(r"<html|csrfmiddlewaretoken|auth-partition", re.I)
-_DATA_URL_RE = re.compile(r'data-url="(/wiki/company/\d+/commentary/v2/)"')
+# Probing a retired endpoint would be the purest form of the CLAUDE.md §5
+# failure: a check that reports on a pipeline nobody runs. Worse, it reported
+# RED for a quota that no longer has a consumer — a permanent false alarm, which
+# is how a freshness board gets ignored wholesale.
+#
+# So it now probes what Screener is still LOAD-BEARING for: the consolidated
+# company page that scraper.py parses for the XLSX export button. That is the
+# first request of weekly-fetch, the job that fills app.fundamentals_annual and
+# app.fundamentals_quarterly, and it is unmetered — a page GET, not an
+# allowance draw. There is no quota verdict any more because this path has no
+# quota.
+#
+# THE EXPORT BUTTON IS NOT AN AUTH SIGNAL. Measured 2026-10-13 against
+# /company/RELIANCE/consolidated/: the first version of this probe used it as
+# one, and a deliberately garbage sessionid came back 'live'. The check could
+# not have failed for the reason it exists. The button is reported as DETAIL
+# because it is what scraper.py actually needs, but it decides nothing.
+#
+# MUST STAY IDENTICAL to _RE_EXPORT_ID in
+# etl/src/fundamental_etl/screener/scraper.py.
+_EXPORT_RE = re.compile(r'formaction="/user/company/export/(\d+)/"')
+# THE discriminator, and the same one discover_export() uses ("No Logout link
+# → not authenticated"). Measured on the same page: logout present with a live
+# cookie, absent with a garbage cookie and absent with no cookie at all. Page
+# size moved too (301,245 vs 231,623 bytes) but that is a number that drifts
+# with the vendor's markup, so it is not the test.
+#
+# Note what is NOT used: "/login" appears on the page in BOTH states, so a
+# login-form marker would have fired constantly. That asymmetry is the whole
+# reason this is a presence test for the logged-in control rather than an
+# absence test for the logged-out one.
+_LOGOUT_RE = re.compile(r"/logout", re.I)
 
 
 def _screener_cookie(conn: psycopg.Connection) -> tuple[str, str, str]:
@@ -409,21 +420,21 @@ def _probe_screener_session(symbol: str, sid: str, csrf: str) -> tuple[str, str]
     """Ask Screener, with the cookie we actually hold, whether we are logged in.
 
     Returns (verdict, detail) where verdict is one of:
-      'live'      — served the wiki fragment. The session works.
+      'live'      — the consolidated page carried the XLSX export button. This
+                    is precisely what weekly-fetch needs to succeed.
+      'no_export' — authenticated (logout control present) but no export button.
+                    ALSO A PASS. scraper.py records exactly this as
+                    'no_export_button' and does not treat it as an auth
+                    failure; small companies legitimately lack the control, and
+                    failing here would make the verdict depend on which symbol
+                    happened to be scraped last.
       'dead'      — served a login/register page. Rotate the cookie.
-      'quota'     — hit the key-insights wall (800 per rolling 30 days as of
-                    2026-10-06). See below: this is EVIDENCE OF A LIVE
-                    SESSION, not an unknown.
-      'no_cookie' — the env vars are not set here.
-      'unknown'   — transport error, or the probe symbol lost its wiki page.
-                    No information; must not be reported as either state.
+      'no_cookie' — no cookie in the DB and none in the environment.
+      'unknown'   — transport error or a non-200. No information; must not be
+                    reported as either state.
 
-    WHY 'quota' COUNTS AS LIVE. The wall is only reachable by making 80
-    successful authenticated requests, which Screener will not serve to a
-    logged-out client. Being told "you have used your allowance" is therefore
-    proof the cookie was alive today. Treating it as unknown would blind this
-    check on exactly the days the pipeline worked hardest — including every day
-    of a backlog drain.
+    There is no 'quota' verdict. That existed for the key-insights allowance on
+    the Key Points fragment, and nothing requests that fragment any more.
     """
     if not sid or not csrf:
         return "no_cookie", "no cookie in app.screener_session or the environment"
@@ -434,41 +445,28 @@ def _probe_screener_session(symbol: str, sid: str, csrf: str) -> tuple[str, str]
         "User-Agent": "Mozilla/5.0",
         "Cookie": f"sessionid={sid}; csrftoken={csrf}",
     }
+    url = f"https://www.screener.in/company/{symbol}/consolidated/"
     try:
         with httpx.Client(timeout=20.0, follow_redirects=True,
                           headers=headers) as client:
-            page = client.get(f"https://www.screener.in/company/{symbol}/consolidated/")
+            page = client.get(url)
+            if page.status_code != 200:
+                return "unknown", f"{symbol}: HTTP {page.status_code} on the company page"
             html = page.text
-            # Checked on the COMPANY page too, not only the fragment: a dead
-            # session can still expose the data-url while refusing the fragment.
-            m = _DATA_URL_RE.search(html)
-            if not m:
-                if _LOGGED_OUT_RE.search(html) and "csrfmiddlewaretoken" in html.lower():
-                    return "dead", f"{symbol}: company page served without a wiki data-url"
-                return "unknown", f"{symbol}: no wiki data-url on the company page"
-            # X-Requested-With + Referer because build-company-overview.mjs
-            # sends both on this exact request. This check exists to predict
-            # that script's failure, so it must ask the question the same way —
-            # a probe with different headers can report a verdict the real
-            # scraper would not reproduce.
-            frag = client.get(
-                "https://www.screener.in" + m.group(1),
-                headers={"X-Requested-With": "XMLHttpRequest",
-                         "Referer": f"https://www.screener.in/company/{symbol}/consolidated/"},
-            ).text
     except Exception as e:                      # transport only — say nothing
         return "unknown", f"{type(e).__name__}: {str(e)[:80]}"
 
-    if _QUOTA_RE.search(frag):
-        return "quota", (f"{symbol}: key-insights allowance exhausted "
-                         f"(800 per rolling 30 days — not a daily reset, and "
-                         f"not a session problem)")
-    if _LOGGED_OUT_RE.search(frag):
-        return "dead", (f"{symbol}: served Screener's login/register page "
-                        f"instead of the wiki fragment")
-    if len(frag) < 200:
-        return "unknown", f"{symbol}: fragment was only {len(frag)} bytes"
-    return "live", f"{symbol}: {len(frag)} byte fragment"
+    # Authentication is decided FIRST and only by the logout control. The export
+    # button is then reported, because "logged in but this company offers no
+    # export" and "logged out" are different situations with the same symptom
+    # for the scraper.
+    if not _LOGOUT_RE.search(html):
+        return "dead", (f"{symbol}: no logout control on the company page "
+                        f"({len(html)} bytes) — served as an anonymous visitor")
+    if _EXPORT_RE.search(html):
+        return "live", f"{symbol}: authenticated, export button present"
+    return "no_export", (f"{symbol}: authenticated but no export button — "
+                         f"scraper.py records this as no_export_button")
 
 
 def check_cookie_health(conn: psycopg.Connection) -> tuple[bool, str]:
@@ -522,21 +520,27 @@ def check_cookie_health(conn: psycopg.Connection) -> tuple[bool, str]:
         row = cur.fetchone()
         n = (row[0] or 0) if row else 0
 
+        # Probe with a symbol that ALREADY produced a successful export, so a
+        # missing export button cannot be waved away as "we guessed an obscure
+        # company". This used to pick the newest screener_keypoints overview —
+        # a column that stopped being written on 2026-10-13 and would have
+        # frozen on one symbol forever, slowly becoming a probe of whether that
+        # single company still exists.
         cur.execute("""
-            SELECT symbol FROM app.company_overview
-             WHERE source = 'screener_keypoints'
-             ORDER BY generated_at DESC LIMIT 1
+            SELECT symbol FROM app.screener_meta
+             WHERE last_status = 'ok' AND last_scraped_at IS NOT NULL
+             ORDER BY last_scraped_at DESC LIMIT 1
         """)
         prow = cur.fetchone()
 
     sid, csrf, source = _screener_cookie(conn)
 
     if prow is None:
-        verdict, detail = "unknown", "no screener_keypoints overview to probe with"
+        verdict, detail = "unknown", "no successful screener_meta scrape to probe with"
     else:
         verdict, detail = _probe_screener_session(prow[0], sid, csrf)
 
-    live = verdict in ("live", "quota")
+    live = verdict in ("live", "no_export")
     ok = live and n < 1
     icon = "✓" if ok else "✗"
 
