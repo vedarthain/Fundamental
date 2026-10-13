@@ -232,7 +232,11 @@ def main() -> None:
         print(f"{len(symbols)} symbols to ask NSE about", file=sys.stderr)
         op = make_session()
 
-        found, written, empty, errors = 0, 0, 0, 0
+        # answered counts symbols for which NSE returned a NON-EMPTY report
+        # list, BEFORE the KEEP_DAYS filter. It is the only counter that
+        # distinguishes "the endpoint is talking to us" from "these companies
+        # have filed recently", and the guard at the bottom depends on it.
+        found, written, empty, errors, answered = 0, 0, 0, 0, 0
         for i, sym in enumerate(symbols, 1):
             try:
                 reports = get_reports(op, sym)
@@ -241,6 +245,8 @@ def main() -> None:
                 print(f"  ! {sym}: {type(e).__name__}", file=sys.stderr)
                 time.sleep(args.throttle)
                 continue
+            if reports:
+                answered += 1
             rows = build_rows(sym, reports, cutoff)
             if not rows:
                 empty += 1
@@ -275,6 +281,7 @@ def main() -> None:
             time.sleep(args.throttle)
 
     print(f"Done — {found}/{len(symbols)} symbols had a report inside {KEEP_DAYS}d "
+          f"· {answered} answered with at least one report of any age "
           f"· {written} rows written · {empty} empty · {errors} errored.")
 
     # A run where EVERY symbol came back empty is the signature of a dead
@@ -283,11 +290,26 @@ def main() -> None:
     # subtler one where cookies exist but the endpoint has moved on. Loud,
     # because the alternative is a green run that found nothing — the exact
     # failure shape this whole gap was hiding behind for months.
-    if symbols and found == 0 and errors == 0:
+    #
+    # THE CONDITION IS `answered`, NOT `found`, AND THE DIFFERENCE IS THE WHOLE
+    # POINT. It was `found` until 2026-10-13, which counts symbols with a report
+    # inside KEEP_DAYS — so a batch of companies whose newest filing is simply
+    # old tripped the alarm. Measured that day on 100 symbols with no annual
+    # report on file: it aborted with "0 returned an annual report", in a run
+    # whose own log showed MADHAVBAUG returning 3 and MEP returning 9. NSE was
+    # answering correctly; those companies just file late.
+    #
+    # That is this script's own stated failure mode turned on itself — a check
+    # that cannot tell a broken instrument from a real absence, which is exactly
+    # what it exists to prevent. `answered` is pre-filter, so it moves only when
+    # NSE genuinely says nothing for everyone. A targeted --symbols backfill of
+    # late filers is now a clean exit, and a dead cookie is still a loud one.
+    if symbols and answered == 0 and errors == 0:
         raise SystemExit(
-            f"ABORT: 0 of {len(symbols)} symbols returned an annual report and "
-            f"nothing errored. Verify the API by hand before trusting this: a "
-            f"silent empty list is how NSE reports a wrong `index` value."
+            f"ABORT: NSE returned an empty report list for all {len(symbols)} "
+            f"symbols and nothing errored — not one report of any age. Verify "
+            f"the API by hand before trusting this: a silent empty list is how "
+            f"NSE reports a wrong `index` value or an unprimed cookie jar."
         )
 
 
