@@ -74,11 +74,14 @@ export const metadata = {
     "All tracked Nifty indices with live levels, 1D–1Y performance and full constituents — each member's live price, 1D move and real NSE index weight.",
 };
 
+import { getSession } from "@/lib/auth";
+
 export default async function IndicesPage() {
-  const indices = await getCachedIndices();
+  const [indices, session] = await Promise.all([getCachedIndices(), getSession()]);
+  const isSignedIn = Boolean(session);
   return (
     <div className="mx-auto max-w-[1300px] px-4 md:px-6 py-6 md:py-8">
-      <IndicesClient indices={indices} />
+      <IndicesClient indices={indices} isSignedIn={isSignedIn} />
     </div>
   );
 }

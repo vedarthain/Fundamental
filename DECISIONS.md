@@ -20,6 +20,22 @@ Newest first. Each entry: the decision, why, and what would reverse it.
 
 ---
 
+## 2026-10-13 — Buy/Sell research calls are private to debs (`debs@gmail.com` / admin)
+
+Research calls (Buy/Sell tags anchored to price, stored in `app.stock_call`) are strictly personal to the author/founder (`debs` user) for research purposes. They must NEVER be visible, exposed, or operable by the outside world or regular users.
+
+**Enforcement:**
+1. All `/api/calls` endpoints (GET, POST, PATCH, DELETE) strictly require `isAdminRequest()` (403 forbidden otherwise).
+2. Stock page (`/stock/[symbol]`), Watchlist (`/watchlist`), Scanner, and Home (`/dashboard`) never render the Call toggle, Calls tab, or Calls zone unless `isAdmin`.
+3. Unauthenticated/outside visitors never see call tags, controls, or recommendations.
+4. `CallToggle` returns `null` if the session is not signed in and authorized.
+
+**Why:** calls are personal research notes, not public trade recommendations or advisory signals. Leaking them confuses users and creates unintended advisory liability.
+
+**Reverses if:** never for unauthenticated outside visitors. If collaborative team research is ever added, it would be an explicit multi-tenant permission, not a public leak.
+
+---
+
 ## 2026-10-05 — `/dashboard` is the signed-in home, not a redirect
 
 `/dashboard` is one composed page: collapsed `AttentionStrip`, latest FII/DII cash-market net from `app.fii_dii_flow` (date shown; do not hide staleness), equity KPIs + top holdings from `loadPortfolio`. Watchlist and calls stay on `/watchlist` — they are not peeks on this page. `/portfolio` stays the full book. The strip does not appear on those two routes. Until this page is finished, it is **not** in the main nav and the logo does **not** go there — both stay on `/`. Reach it from the signed-in account menu. Login without `?next=` also lands on `/`. Do not paste `PortfolioClient` or `WatchlistClient` onto this route. Do not run a 309-name golden waterfall here. Do not read `market_snapshot_cache` just for FII — that blob is the retired `/market` page.

@@ -31,7 +31,7 @@
  */
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
-import { getSession } from "@/lib/auth";
+import { getSession, isAdminRequest } from "@/lib/auth";
 import { ZoneSkeleton } from "./ui";
 import { MarketLine } from "./MarketLine";
 import { NeedsAction } from "./NeedsAction";
@@ -54,6 +54,7 @@ export default async function DashboardPage() {
   if (!session) {
     redirect(`/login?next=${encodeURIComponent("/dashboard")}`);
   }
+  const isAdmin = await isAdminRequest();
 
   return (
     <div className="mx-auto max-w-[1300px] px-3 md:px-5 py-3 md:py-4">
@@ -77,9 +78,11 @@ export default async function DashboardPage() {
               </Suspense>
             </div>
 
-            <Suspense fallback={<ZoneSkeleton title="Research calls" />}>
-              <CallsZone userId={session.userId} />
-            </Suspense>
+            {isAdmin && (
+              <Suspense fallback={<ZoneSkeleton title="Research calls" />}>
+                <CallsZone userId={session.userId} />
+              </Suspense>
+            )}
 
             <Suspense fallback={<ZoneSkeleton title="Your book" />}>
               <BookZone userId={session.userId} />

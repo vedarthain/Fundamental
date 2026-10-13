@@ -106,15 +106,18 @@ export const metadata = {
     "Browse NSE stocks by theme — Defence, Drone, Data Center, Green Hydrogen, Semiconductor, Nuclear Power and more — each constituent scored on Quality, Valuation and Momentum.",
 };
 
+import { getSession } from "@/lib/auth";
+
 export default async function ThemesPage({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  const [sp, data] = await Promise.all([searchParams, getCachedAll()]);
+  const [sp, data, session] = await Promise.all([searchParams, getCachedAll(), getSession()]);
+  const isSignedIn = Boolean(session);
   return (
     <div className="theme-teal mx-auto max-w-[1200px] px-4 md:px-6 py-6 md:py-8">
-      <ThemesClient data={data} initialSlug={sp.theme ?? null} />
+      <ThemesClient data={data} initialSlug={sp.theme ?? null} isSignedIn={isSignedIn} />
     </div>
   );
 }

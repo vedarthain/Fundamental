@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { loadLatestMomentum } from "@/lib/momentum";
 import { loadLatestTrendLeaders } from "@/lib/trendLeaders";
 import { loadLatestSupportFloor } from "@/lib/supportFloor";
@@ -98,8 +99,40 @@ export default async function MomentumPage({
   const initialTab: Tab = SCANNER_TABS.includes(normalizedTab as Tab) ? (normalizedTab as Tab) : "graph";
   // Per-user real holdings — kept OUT of the shared unstable_cache above (which
   // is keyed only by date and shared across all visitors). Drives the auto-lit
-  // "P" marker + Portfolio filter on the Graph tab. Cheap symbol-only query.
   const session = await getSession();
+  if (!session) {
+    return (
+      <div className="mx-auto max-w-[540px] px-4 md:px-6 py-14 md:py-24">
+        <div className="card p-8 md:p-10 text-center">
+          <div className="w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 mx-auto flex items-center justify-center text-xl mb-4 font-bold">
+            ⚡
+          </div>
+          <h1 className="font-display text-[24px] md:text-[26px] leading-[1.1] tracking-tight mb-3">
+            Sign in to access Market Scanners
+          </h1>
+          <p className="muted-text text-[13.5px] max-w-md mx-auto mb-6 leading-relaxed">
+            Abnormal volume breakouts, fresh Golden Cross trend leaders, and institutional support floors computed daily across 2,150+ NSE equities.
+          </p>
+          <div className="flex flex-wrap items-center justify-center gap-3 text-[13px]">
+            <Link
+              href="/login?next=/tools/scanner"
+              className="px-5 py-2.5 rounded-md font-semibold transition-colors"
+              style={{ backgroundColor: "var(--color-accent-600)", color: "white" }}
+            >
+              Sign in
+            </Link>
+            <Link
+              href="/signup?next=/tools/scanner"
+              className="px-5 py-2.5 rounded-md border font-medium transition-colors hover:bg-[var(--color-paper)]"
+              style={{ borderColor: "var(--color-border-default)" }}
+            >
+              Create free account
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const [momentum, trend, floor, rotation, dividendUniverse, themes, n500, portfolioSymbols, portfolioTrades, portfolioQty] = await Promise.all([
     cachedMomentum(one(sp.mDate)),

@@ -25,6 +25,8 @@ export function CallToggle({
   size?: "sm" | "md";
 }) {
   const { sideOf, setSide, signedIn } = useCalls();
+  if (!signedIn) return null;
+
   const side = sideOf(symbol);
 
   const pad = size === "sm" ? "px-1.5 py-0.5 text-[10px]" : "px-2 py-1 text-[12px]";

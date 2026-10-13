@@ -13,7 +13,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
-import { getSession } from "@/lib/auth";
+import { getSession, isAdminRequest } from "@/lib/auth";
 import { latestCloseBySymbol, loadCalls, type CallSide, type StockCall } from "@/lib/calls";
 
 export const runtime = "nodejs";
@@ -26,6 +26,8 @@ export type { CallSide, StockCall };
 export async function GET() {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "sign in required" }, { status: 401 });
+  const isAdmin = await isAdminRequest();
+  if (!isAdmin) return NextResponse.json({ error: "forbidden" }, { status: 403 });
 
   return NextResponse.json({ calls: await loadCalls(session.userId) });
 }
@@ -33,6 +35,8 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "sign in required" }, { status: 401 });
+  const isAdmin = await isAdminRequest();
+  if (!isAdmin) return NextResponse.json({ error: "forbidden" }, { status: 403 });
 
   let payload: { symbol?: unknown; side?: unknown };
   try {
@@ -102,6 +106,8 @@ export async function POST(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "sign in required" }, { status: 401 });
+  const isAdmin = await isAdminRequest();
+  if (!isAdmin) return NextResponse.json({ error: "forbidden" }, { status: 403 });
 
   let payload: { symbol?: unknown };
   try {
@@ -135,6 +141,8 @@ export async function PATCH(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "sign in required" }, { status: 401 });
+  const isAdmin = await isAdminRequest();
+  if (!isAdmin) return NextResponse.json({ error: "forbidden" }, { status: 403 });
 
   const symbol = (req.nextUrl.searchParams.get("symbol") || "").toUpperCase().trim();
   if (!symbol) return NextResponse.json({ error: "symbol is required" }, { status: 400 });

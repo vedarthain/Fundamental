@@ -1456,7 +1456,7 @@ function WatchRow({
                 {Math.round(row.composite_pct)}
               </span>
             )}
-            {/* Buy/Sell call toggle — shares state with the scanner + Calls tab. */}
+            {/* Buy/Sell call toggle — self-gates on signedIn (only debs/admin fetches /api/calls). */}
             <CallToggle symbol={row.symbol} size="sm" />
             {/* Quick remove — hidden when the list is sourced (e.g. Portfolio
                 tab), where "remove" has no meaning. */}

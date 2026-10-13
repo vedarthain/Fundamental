@@ -107,9 +107,11 @@ const deltaColor = (v: number | null) =>
 export function ThemesClient({
   data,
   initialSlug,
+  isSignedIn = true,
 }: {
   data: ThemesData;
   initialSlug: string | null;
+  isSignedIn?: boolean;
 }) {
   const { themes, stocksByTheme, snapshotDate } = data;
 
@@ -183,8 +185,8 @@ export function ThemesClient({
   // before the setPage(0) above is applied in the same render.
   const pageSafe = Math.min(page, pageCount - 1);
   const pageRows = useMemo(
-    () => rows.slice(pageSafe * PAGE_SIZE, pageSafe * PAGE_SIZE + PAGE_SIZE),
-    [rows, pageSafe],
+    () => (isSignedIn ? rows.slice(pageSafe * PAGE_SIZE, pageSafe * PAGE_SIZE + PAGE_SIZE) : rows.slice(0, 4)),
+    [rows, pageSafe, isSignedIn],
   );
 
   // ← / → page the table. Ignored while typing in the theme filter, and when a
@@ -337,7 +339,7 @@ export function ThemesClient({
                     </tr>
                   </thead>
                   <tbody>
-                    {pageRows.map((s) => (
+                    {pageRows.map((s, i) => (
                       <tr key={s.symbol} className="border-b hairline last:border-0">
                         <td className="py-2 pr-3">
                           <Link href={`/stock/${s.symbol}`} className="hover:underline">
@@ -350,7 +352,11 @@ export function ThemesClient({
                         <td className="text-right py-2 px-2 tabular-nums">{fmtNum(s.price)}</td>
                         <td className="text-right py-2 px-2 tabular-nums muted-text">{fmtMcap(s.market_cap_cr)}</td>
                         <td className="text-right py-2 px-2 tabular-nums">
-                          {s.composite_pct == null ? (
+                          {!isSignedIn && i >= 2 ? (
+                            <span className="text-[10px] muted-text font-semibold border hairline px-1.5 py-0.5 rounded" title="Sign in to view Composite Score">
+                              🔒
+                            </span>
+                          ) : s.composite_pct == null ? (
                             "—"
                           ) : (
                             <span style={{ color: bandColor(band(s.composite_pct)) }}>
@@ -369,7 +375,7 @@ export function ThemesClient({
                 </table>
               </div>
 
-              {pageCount > 1 && (
+              {isSignedIn && pageCount > 1 && (
                 <div className="flex items-center justify-between gap-3 mt-3">
                   <span className="muted-text text-[11px]">
                     Use ← → to page
@@ -388,6 +394,39 @@ export function ThemesClient({
                       disabled={pageSafe >= pageCount - 1}
                       onClick={() => setPage(pageSafe + 1)}
                     />
+                  </div>
+                </div>
+              )}
+
+              {!isSignedIn && (
+                <div className="p-4 md:p-6 mt-4 text-center rounded-lg border hairline bg-[var(--color-paper)]/50">
+                  <div
+                    className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10.5px] font-semibold uppercase tracking-wider mb-2"
+                    style={{ backgroundColor: "var(--color-accent-50)", color: "var(--color-accent-700)" }}
+                  >
+                    Researcher Preview · 4 of {rows.length} Stocks Shown
+                  </div>
+                  <h3 className="font-display text-[16px] md:text-[18px] font-bold mb-1.5 leading-tight">
+                    Unlock All {rows.length} Stocks in {active?.label ?? "Theme"}
+                  </h3>
+                  <p className="muted-text text-[12.5px] max-w-md mx-auto mb-4 leading-relaxed">
+                    Sign in to unlock full theme constituent lists, peer-relative composite percentiles, and multi-window performance.
+                  </p>
+                  <div className="flex flex-wrap items-center justify-center gap-2.5 text-[12px]">
+                    <Link
+                      href="/login?next=/themes"
+                      className="px-4 py-2 rounded-md font-semibold text-white transition-colors"
+                      style={{ backgroundColor: "var(--color-accent-600)" }}
+                    >
+                      Sign in to unlock
+                    </Link>
+                    <Link
+                      href="/signup?next=/themes"
+                      className="px-4 py-2 rounded-md border hairline hover:bg-[var(--color-card)] font-medium transition-colors"
+                      style={{ borderColor: "var(--color-border-default)" }}
+                    >
+                      Create free account
+                    </Link>
                   </div>
                 </div>
               )}

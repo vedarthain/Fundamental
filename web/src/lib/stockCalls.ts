@@ -70,7 +70,7 @@ type FetchResult =
 async function fetchServerCalls(): Promise<FetchResult> {
   try {
     const r = await fetch("/api/calls", { credentials: "include" });
-    if (r.status === 401) return { kind: "unauth" };
+    if (r.status === 401 || r.status === 403) return { kind: "unauth" };
     if (!r.ok) return { kind: "error" };
     const data: { calls: StockCall[] } = await r.json();
     return { kind: "ok", calls: Array.isArray(data.calls) ? data.calls : [] };

@@ -78,7 +78,7 @@ function fmtLevel(v: number): string {
 }
 
 // ── Board ───────────────────────────────────────────────────────────────────
-export function IndicesClient({ indices }: { indices: IndexBoardRow[] }) {
+export function IndicesClient({ indices, isSignedIn = true }: { indices: IndexBoardRow[]; isSignedIn?: boolean }) {
   const byCode = useMemo(() => new Map(indices.map((r) => [r.code, r])), [indices]);
   // Default to the first available code (prefer NIFTY50).
   const firstCode = byCode.has("NIFTY50") ? "NIFTY50" : indices[0]?.code ?? "";
@@ -141,7 +141,7 @@ export function IndicesClient({ indices }: { indices: IndexBoardRow[] }) {
         {/* Detail pane */}
         <section className="min-w-0">
           {row ? (
-            <IndexDetail row={row} tab={tab} setTab={setTab} />
+            <IndexDetail row={row} tab={tab} setTab={setTab} isSignedIn={isSignedIn} />
           ) : (
             <div className="card p-6 muted-text text-[13px]">No index data.</div>
           )}
@@ -183,11 +183,12 @@ function IndexListItem({
 
 // ── Detail pane ─────────────────────────────────────────────────────────────
 function IndexDetail({
-  row, tab, setTab,
+  row, tab, setTab, isSignedIn = true,
 }: {
   row: IndexBoardRow;
   tab: "chart" | "constituents";
   setTab: (t: "chart" | "constituents") => void;
+  isSignedIn?: boolean;
 }) {
   return (
     <div className="card overflow-hidden">
@@ -221,7 +222,7 @@ function IndexDetail({
         {tab === "chart" ? (
           <IndexCandleChart key={row.code} code={row.code} name={row.name} />
         ) : (
-          <ConstituentsPanel key={row.code} code={row.code} />
+          <ConstituentsPanel key={row.code} code={row.code} isSignedIn={isSignedIn} />
         )}
       </div>
     </div>
@@ -245,7 +246,7 @@ function TabButton({ label, active, onClick }: { label: string; active: boolean;
 }
 
 // ── Constituents (lazy) ─────────────────────────────────────────────────────
-function ConstituentsPanel({ code }: { code: string }) {
+function ConstituentsPanel({ code, isSignedIn = true }: { code: string; isSignedIn?: boolean }) {
   const [data, setData] = useState<ConstituentsResponse | null>(null);
   const [state, setState] = useState<"loading" | "ok" | "error">("loading");
 
@@ -272,6 +273,8 @@ function ConstituentsPanel({ code }: { code: string }) {
     return <div className="muted-text text-[12px] py-6 text-center">No constituent list ingested yet for this index.</div>;
   }
 
+  const visibleConstituents = isSignedIn ? data.constituents : data.constituents.slice(0, 5);
+
   return (
     <div>
       <div className="flex items-baseline justify-between gap-2 mb-1.5">
@@ -295,7 +298,7 @@ function ConstituentsPanel({ code }: { code: string }) {
             </tr>
           </thead>
           <tbody>
-            {data.constituents.map((c) => {
+            {visibleConstituents.map((c) => {
               const pct = c.pct_1d;
               return (
                 <tr key={c.symbol} className="border-t hairline hover:bg-[var(--color-paper)] transition-colors">
@@ -321,6 +324,39 @@ function ConstituentsPanel({ code }: { code: string }) {
           </tbody>
         </table>
       </div>
+
+      {!isSignedIn && (
+        <div className="p-3.5 md:p-5 mt-3 text-center rounded border hairline bg-[var(--color-paper)]/60">
+          <div
+            className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10.5px] font-semibold uppercase tracking-wider mb-2"
+            style={{ backgroundColor: "var(--color-accent-50)", color: "var(--color-accent-700)" }}
+          >
+            Researcher Preview · 5 of {data.count} Members Shown
+          </div>
+          <h3 className="font-display text-[15px] md:text-[17px] font-bold mb-1 leading-tight">
+            Unlock Complete {code} Constituents & Weightings
+          </h3>
+          <p className="muted-text text-[12px] max-w-md mx-auto mb-3 leading-relaxed">
+            Sign in to view all {data.count} index members with official NSE weights and live price moves.
+          </p>
+          <div className="flex flex-wrap items-center justify-center gap-2.5 text-[12px]">
+            <Link
+              href="/login?next=/indices"
+              className="px-4 py-1.5 rounded-md font-semibold text-white transition-colors"
+              style={{ backgroundColor: "var(--color-accent-600)" }}
+            >
+              Sign in to unlock
+            </Link>
+            <Link
+              href="/signup?next=/indices"
+              className="px-4 py-1.5 rounded-md border hairline hover:bg-[var(--color-card)] font-medium transition-colors"
+              style={{ borderColor: "var(--color-border-default)" }}
+            >
+              Create free account
+            </Link>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

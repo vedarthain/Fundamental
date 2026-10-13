@@ -950,11 +950,13 @@ export default async function StockPage({
               </div>
             </div>
           )}
-          {/* Buy/Sell call — a dated directional tag anchored to today's price. */}
-          <div className="mt-2 flex items-center gap-1.5 md:justify-end">
-            <span className="text-[11px] muted-text">Call</span>
-            <CallToggle symbol={stock.symbol} size="md" />
-          </div>
+          {/* Buy/Sell call — a dated directional tag anchored to today's price. Strictly debs/admin only. */}
+          {isAdmin && (
+            <div className="mt-2 flex items-center gap-1.5 md:justify-end">
+              <span className="text-[11px] muted-text">Call</span>
+              <CallToggle symbol={stock.symbol} size="md" />
+            </div>
+          )}
         </div>
       </header>
 

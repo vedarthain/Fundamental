@@ -82,10 +82,12 @@ export function SectorsClient({
   data,
   initialSectorId,
   initialIndustryId,
+  isSignedIn = true,
 }: {
   data: SectorsData;
   initialSectorId: string | null;
   initialIndustryId: string | null;
+  isSignedIn?: boolean;
 }) {
   // Group tiles by meta_cluster (sector). Done in useMemo since the input
   // never changes for a given snapshot — pure derivation from props.
@@ -231,6 +233,7 @@ export function SectorsClient({
                 <StocksPanel
                   industry={activeIndustry}
                   stocks={industryStocks}
+                  isSignedIn={isSignedIn}
                 />
               </div>
             )}
@@ -518,9 +521,11 @@ const TIER_ORDER = ["veteran", "mature", "mid", "new"] as const;
 function StocksPanel({
   industry,
   stocks,
+  isSignedIn = true,
 }: {
   industry: IndustryTile;
   stocks: StockRow[];
+  isSignedIn?: boolean;
 }) {
   const byTier = useMemo(() => {
     const m = new Map<string, StockRow[]>();
@@ -617,7 +622,11 @@ function StocksPanel({
             let visible: StockRow[];
             let hiddenCount = 0;
             let totalPages = 1;
-            if (isAllView) {
+            if (!isSignedIn) {
+              // Teaser view: show only top 4 stocks total
+              visible = bucket.slice(0, 4);
+              hiddenCount = bucket.length - visible.length;
+            } else if (isAllView) {
               // "All" view: cap each tier at TIER_CAP unless expanded.
               const isExpanded = expandedTiers.has(tier);
               const cap = isExpanded ? bucket.length : TIER_CAP;
@@ -637,13 +646,13 @@ function StocksPanel({
                   <TierHeader tier={tier} count={bucket.length} />
                 )}
                 <div className="divide-y hairline">
-                  {visible.map((s) => (
-                    <StockRowItem key={s.symbol} stock={s} />
+                  {visible.map((s, idx) => (
+                    <StockRowItem key={s.symbol} stock={s} isSignedIn={isSignedIn} rowIndex={idx} />
                   ))}
                 </div>
 
                 {/* "All" view: per-tier "Show all" / "Show top N only" toggle */}
-                {isAllView && hiddenCount > 0 && (
+                {isSignedIn && isAllView && hiddenCount > 0 && (
                   <div className="px-4 md:px-5 py-2.5 border-t hairline">
                     <button
                       type="button"
@@ -661,7 +670,7 @@ function StocksPanel({
                     </button>
                   </div>
                 )}
-                {isAllView && expandedTiers.has(tier) && bucket.length > TIER_CAP && (
+                {isSignedIn && isAllView && expandedTiers.has(tier) && bucket.length > TIER_CAP && (
                   <div className="px-4 md:px-5 py-2.5 border-t hairline">
                     <button
                       type="button"
@@ -680,7 +689,7 @@ function StocksPanel({
                 )}
 
                 {/* Specific-tier view: paginated nav */}
-                {!isAllView && totalPages > 1 && (
+                {isSignedIn && !isAllView && totalPages > 1 && (
                   <TierPagination
                     page={Math.min(tierPage, totalPages)}
                     totalPages={totalPages}
@@ -692,6 +701,39 @@ function StocksPanel({
               </section>
             );
           })}
+
+          {!isSignedIn && (
+            <div className="p-4 md:p-6 text-center border-t hairline bg-[var(--color-paper)]/60">
+              <div
+                className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10.5px] font-semibold uppercase tracking-wider mb-2"
+                style={{ backgroundColor: "var(--color-accent-50)", color: "var(--color-accent-700)" }}
+              >
+                Researcher Preview · 4 of {totalCount} Stocks Shown
+              </div>
+              <h3 className="font-display text-[17px] md:text-[19px] font-bold mb-1.5 leading-tight">
+                Unlock All {totalCount} Stocks in {industry.industry_name}
+              </h3>
+              <p className="muted-text text-[12.5px] max-w-md mx-auto mb-4 leading-relaxed">
+                Sign in to view all {totalCount} stocks with full peer-relative composite percentiles, comprehensive Quality/Valuation/Momentum breakdowns, and multi-year returns.
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-2.5 text-[12px]">
+                <Link
+                  href="/login?next=/sectors"
+                  className="px-4 py-2 rounded-md font-semibold text-white transition-colors"
+                  style={{ backgroundColor: "var(--color-accent-600)" }}
+                >
+                  Sign in to unlock
+                </Link>
+                <Link
+                  href="/signup?next=/sectors"
+                  className="px-4 py-2 rounded-md border hairline hover:bg-[var(--color-card)] font-medium transition-colors"
+                  style={{ borderColor: "var(--color-border-default)" }}
+                >
+                  Create free account
+                </Link>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </section>
@@ -881,7 +923,7 @@ function TierHeader({ tier, count }: { tier: string; count: number }) {
   );
 }
 
-function StockRowItem({ stock }: { stock: StockRow }) {
+function StockRowItem({ stock, isSignedIn = true, rowIndex = 0 }: { stock: StockRow; isSignedIn?: boolean; rowIndex?: number }) {
   const tc = tierColors(stock.maturity_tier);
   return (
     <Link
@@ -904,7 +946,7 @@ function StockRowItem({ stock }: { stock: StockRow }) {
           <PillarCell label="V" value={stock.valuation_pct} title="Valuation" />
           <PillarCell label="M" value={stock.momentum_pct} title="Momentum" />
         </div>
-        <CompositeBadge value={stock.composite_pct} />
+        <CompositeBadge value={stock.composite_pct} isSignedIn={isSignedIn} rowIndex={rowIndex} />
       </div>
 
       <div className="md:hidden px-4 py-2.5">
@@ -912,7 +954,7 @@ function StockRowItem({ stock }: { stock: StockRow }) {
           <div className="flex-1 min-w-0">
             <StockIdentity stock={stock} />
           </div>
-          <CompositeBadge value={stock.composite_pct} />
+          <CompositeBadge value={stock.composite_pct} isSignedIn={isSignedIn} rowIndex={rowIndex} />
         </div>
         <div className="mt-2 grid grid-cols-2 gap-2">
           <div className="grid grid-cols-3 gap-1 text-[10px]">
@@ -964,7 +1006,18 @@ function StockIdentity({ stock }: { stock: StockRow }) {
   );
 }
 
-function CompositeBadge({ value }: { value: number | null }) {
+function CompositeBadge({ value, isSignedIn = true, rowIndex = 0 }: { value: number | null; isSignedIn?: boolean; rowIndex?: number }) {
+  if (!isSignedIn && rowIndex >= 2) {
+    return (
+      <span
+        title="Sign in to view Composite Score"
+        className="inline-block min-w-[36px] text-center px-1.5 py-0.5 rounded-md text-[11px] font-semibold border hairline"
+        style={{ borderColor: "var(--color-border-default)", color: "var(--color-muted)" }}
+      >
+        🔒
+      </span>
+    );
+  }
   if (value == null) {
     return (
       <span

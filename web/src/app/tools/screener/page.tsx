@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { getSession } from "@/lib/auth";
 import IpoBadge, { isIpo } from "@/components/IpoBadge";
 import { sql } from "@/lib/db";
 import { band, bandColor, fmtPct, tierLabel, tierLabelPlural, displayCompanyName } from "@/lib/score";
@@ -532,6 +533,8 @@ export default async function ScreenerPage({
 }) {
   const sp = await searchParams;
   const params = parseParams(sp);
+  const session = await getSession();
+  const isSignedIn = Boolean(session);
   const [metas, clusters, { rows, total, maxSectorDepth, isSectorView, tierCounts }, coverage] = await Promise.all([
     loadMetas(),
     loadClusters(),
@@ -717,13 +720,15 @@ export default async function ScreenerPage({
             clusters={clusters}
           />
           <ResultsTable
-            rows={rows}
+            rows={isSignedIn ? rows : rows.slice(0, 6)}
             groupByIndustry={false}
             groupByTier={isSectorView}
             tierCounts={tierCounts}
             params={params}
+            isSignedIn={isSignedIn}
+            totalMatches={total}
           />
-          <Pagination params={params} totalPages={totalPages} />
+          {isSignedIn && <Pagination params={params} totalPages={totalPages} />}
           <MethodologyFooter />
         </main>
       </div>
@@ -979,8 +984,43 @@ function ResultsToolbar({
   );
 }
 
+function ScreenerCuriosityCard({ totalMatches }: { totalMatches?: number }) {
+  return (
+    <div className="card p-6 md:p-8 mt-6 text-center border hairline" style={{ backgroundColor: "var(--color-card)" }}>
+      <div
+        className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wider mb-2"
+        style={{ backgroundColor: "var(--color-accent-50)", color: "var(--color-accent-700)" }}
+      >
+        Researcher Preview · Sample Stocks Shown
+      </div>
+      <h3 className="font-display text-[20px] md:text-[22px] font-bold leading-tight mb-2">
+        Unlock All {totalMatches ? totalMatches.toLocaleString("en-IN") : "2,122+"} Stocks Ranked by Industry Score
+      </h3>
+      <p className="muted-text text-[13px] max-w-lg mx-auto mb-5 leading-relaxed">
+        Sign in to unlock full peer-relative composite percentiles, complete Quality, Valuation, and Momentum rankings, custom metric range filters, and CSV downloads.
+      </p>
+      <div className="flex flex-wrap items-center justify-center gap-3 text-[13px]">
+        <Link
+          href="/login?next=/tools/screener"
+          className="px-5 py-2 rounded-md font-semibold text-white transition-colors"
+          style={{ backgroundColor: "var(--color-accent-600)" }}
+        >
+          Sign in to unlock
+        </Link>
+        <Link
+          href="/signup?next=/tools/screener"
+          className="px-5 py-2 rounded-md border hairline hover:bg-[var(--color-paper)] font-medium transition-colors"
+          style={{ borderColor: "var(--color-border-default)" }}
+        >
+          Create free account
+        </Link>
+      </div>
+    </div>
+  );
+}
+
 function ResultsTable({
-  rows, groupByIndustry, groupByTier = false, tierCounts = {}, params,
+  rows, groupByIndustry, groupByTier = false, tierCounts = {}, params, isSignedIn = true, totalMatches,
 }: {
   rows: Row[];
   groupByIndustry: boolean;
@@ -993,6 +1033,8 @@ function ResultsTable({
    *  current filter scope. Used to render the "Show all N →" links. */
   tierCounts?: Record<string, number>;
   params: ScreenerParams;
+  isSignedIn?: boolean;
+  totalMatches?: number;
 }) {
   if (rows.length === 0) {
     return (
@@ -1023,43 +1065,51 @@ function ResultsTable({
       ...Array.from(byTier.keys()).filter((t) => !(TIER_ORDER as readonly string[]).includes(t)),
     ];
     return (
-      <div className="space-y-6">
-        {orderedTiers.map((tier) => {
-          const bucket = byTier.get(tier)!;
-          const total = tierCounts[tier] ?? bucket.length;
-          const hasMore = total > bucket.length;
-          // "Show all N →" — same screener URL plus `tiers=<tier>` so the
-          // user can drill into just that maturity bucket in the active
-          // sector. Flat pagination kicks in automatically since
-          // `tiers=[one]` exits sector-view mode.
-          const showAllHref = "/tools/screener" + paramsToQuery({
-            ...params,
-            tiers: [tier],
-            page: 1,
-          });
-          return (
-            <section key={tier}>
-              <TierSectionHeader tier={tier} shown={bucket.length} total={total} />
-              <IndustryBlock rows={bucket} showHeader={false} params={params} />
-              {hasMore && (
-                <div className="mt-2 text-right">
-                  <Link
-                    href={showAllHref}
-                    className="text-[12px] muted-text hover:text-[var(--color-accent-700)] transition-colors"
-                  >
-                    Show all {total} {tierLabelPlural(tier)} →
-                  </Link>
-                </div>
-              )}
-            </section>
-          );
-        })}
-      </div>
+      <>
+        <div className="space-y-6">
+          {orderedTiers.map((tier) => {
+            const bucket = byTier.get(tier)!;
+            const total = tierCounts[tier] ?? bucket.length;
+            const hasMore = total > bucket.length;
+            // "Show all N →" — same screener URL plus `tiers=<tier>` so the
+            // user can drill into just that maturity bucket in the active
+            // sector. Flat pagination kicks in automatically since
+            // `tiers=[one]` exits sector-view mode.
+            const showAllHref = "/tools/screener" + paramsToQuery({
+              ...params,
+              tiers: [tier],
+              page: 1,
+            });
+            return (
+              <section key={tier}>
+                <TierSectionHeader tier={tier} shown={bucket.length} total={total} />
+                <IndustryBlock rows={bucket} showHeader={false} params={params} isSignedIn={isSignedIn} />
+                {hasMore && (
+                  <div className="mt-2 text-right">
+                    <Link
+                      href={showAllHref}
+                      className="text-[12px] muted-text hover:text-[var(--color-accent-700)] transition-colors"
+                    >
+                      Show all {total} {tierLabelPlural(tier)} →
+                    </Link>
+                  </div>
+                )}
+              </section>
+            );
+          })}
+        </div>
+        {!isSignedIn && <ScreenerCuriosityCard totalMatches={totalMatches} />}
+      </>
     );
   }
 
   if (!groupByIndustry) {
-    return <IndustryBlock rows={rows} showHeader={false} params={params} />;
+    return (
+      <>
+        <IndustryBlock rows={rows} showHeader={false} params={params} isSignedIn={isSignedIn} />
+        {!isSignedIn && <ScreenerCuriosityCard totalMatches={totalMatches} />}
+      </>
+    );
   }
 
   // Group rows hierarchically: sector → industries → stocks. The SQL already
@@ -1082,39 +1132,43 @@ function ResultsTable({
   }
 
   return (
-    <div className="space-y-10">
-      {sectors.map((sec) => {
-        const stockCount = sec.industries.reduce((n, ig) => n + ig.rows.length, 0);
-        return (
-          <section key={sec.sectorName}>
-            <div className="flex items-baseline justify-between mb-4 pb-2 border-b hairline">
-              <h2 className="font-display text-[22px] tracking-tight">{sec.sectorName}</h2>
-              <div className="text-[11px] uppercase tracking-wide muted-text tabular-nums">
-                {sec.industries.length} {sec.industries.length === 1 ? "industry" : "industries"} · {stockCount} {stockCount === 1 ? "stock" : "stocks"}
+    <>
+      <div className="space-y-10">
+        {sectors.map((sec) => {
+          const stockCount = sec.industries.reduce((n, ig) => n + ig.rows.length, 0);
+          return (
+            <section key={sec.sectorName}>
+              <div className="flex items-baseline justify-between mb-4 pb-2 border-b hairline">
+                <h2 className="font-display text-[22px] tracking-tight">{sec.sectorName}</h2>
+                <div className="text-[11px] uppercase tracking-wide muted-text tabular-nums">
+                  {sec.industries.length} {sec.industries.length === 1 ? "industry" : "industries"} · {stockCount} {stockCount === 1 ? "stock" : "stocks"}
+                </div>
               </div>
-            </div>
-            <div className="space-y-6">
-              {sec.industries.map((ig) => (
-                <IndustryBlock
-                  key={ig.industryId}
-                  rows={ig.rows}
-                  showHeader
-                  sectorName={sec.sectorName}
-                  industryId={ig.industryId}
-                  industryName={ig.industryName}
-                  params={params}
-                />
-              ))}
-            </div>
-          </section>
-        );
-      })}
-    </div>
+              <div className="space-y-6">
+                {sec.industries.map((ig) => (
+                  <IndustryBlock
+                    key={ig.industryId}
+                    rows={ig.rows}
+                    showHeader
+                    sectorName={sec.sectorName}
+                    industryId={ig.industryId}
+                    industryName={ig.industryName}
+                    params={params}
+                    isSignedIn={isSignedIn}
+                  />
+                ))}
+              </div>
+            </section>
+          );
+        })}
+      </div>
+      {!isSignedIn && <ScreenerCuriosityCard totalMatches={totalMatches} />}
+    </>
   );
 }
 
 function IndustryBlock({
-  rows, showHeader, sectorName, industryId, industryName, params,
+  rows, showHeader, sectorName, industryId, industryName, params, isSignedIn = true,
 }: {
   rows: Row[];
   showHeader: boolean;
@@ -1122,6 +1176,7 @@ function IndustryBlock({
   industryId?: string;
   industryName?: string;
   params: ScreenerParams;
+  isSignedIn?: boolean;
 }) {
   // Density toggle — compact mode tightens row padding so ~2× more rows fit
   // on a screen without scrolling. Driven by the URL `density` param so the
@@ -1288,6 +1343,8 @@ function IndustryBlock({
                     peerCount={r.peer_count}
                     leadingPillar={r.leading_pillar}
                     className={rowPad}
+                    isSignedIn={isSignedIn}
+                    rowIndex={i}
                   />
                 </tr>
               ))}
@@ -1392,19 +1449,38 @@ function ordinal(n: number): string {
 }
 
 function CompositeCell({
-  value, peerRank, peerCount, leadingPillar, className = "px-4 py-3",
+  value, peerRank, peerCount, leadingPillar, className = "px-4 py-3", isSignedIn = true, rowIndex = 0,
 }: {
   value: number | null;
   peerRank: number | null;
   peerCount: number | null;
   leadingPillar: string | null;
   className?: string;
+  isSignedIn?: boolean;
+  rowIndex?: number;
 }) {
   const b = band(value);
   const rankLabel = peerRank != null && peerCount != null
     ? `${ordinal(peerRank)} of ${peerCount}`
     : null;
   void leadingPillar; // pillar label hidden in spreadsheet view (column shows it)
+
+  // Disable composite score view for anonymous users past the first 3 teaser rows
+  if (!isSignedIn && rowIndex >= 3) {
+    return (
+      <td className={`${className} text-right`}>
+        <Link
+          href="/login?next=/tools/screener"
+          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold border hairline hover:bg-[var(--color-paper)] transition-colors"
+          style={{ borderColor: "var(--color-border-default)", color: "var(--color-muted)" }}
+          title="Sign in to view Composite Score & Peer Rank"
+        >
+          <span>🔒</span>
+          <span>Sign in</span>
+        </Link>
+      </td>
+    );
+  }
 
   return (
     <td className={`${className} text-right`}>

@@ -51,15 +51,15 @@ export function WatchlistTabs({ isAdmin = false }: { isAdmin?: boolean }) {
           below it up by roughly 16px. */}
       <div className="mb-1.5 inline-flex items-center gap-0.5 rounded-md border hairline p-0.5">
         {tab("watchlist", "Watchlist")}
-        {tab("calls", "Calls", activeCount)}
+        {isAdmin && tab("calls", "Calls", activeCount)}
         {isAdmin && tab("verdict", "Verdict")}
       </div>
-      {view === "verdict" ? (
+      {view === "verdict" && isAdmin ? (
         <VerdictQueueClient />
-      ) : view === "watchlist" ? (
-        <WatchlistClient isAdmin={isAdmin} />
-      ) : (
+      ) : view === "calls" && isAdmin ? (
         <CallsClient />
+      ) : (
+        <WatchlistClient isAdmin={isAdmin} />
       )}
     </div>
   );

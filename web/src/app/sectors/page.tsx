@@ -170,12 +170,15 @@ export const metadata = {
     "Browse NSE peer groups ranked on Quality, Valuation and Momentum. See cluster leaders and laggards, scored weekly within their true peers — not broad sectors.",
 };
 
+import { getSession } from "@/lib/auth";
+
 export default async function Home({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  const [sp, data] = await Promise.all([searchParams, getCachedAll()]);
+  const [sp, data, session] = await Promise.all([searchParams, getCachedAll(), getSession()]);
+  const isSignedIn = Boolean(session);
 
   // Initial state is read from the URL on first paint so bookmarks /
   // share-links land on the right industry. Subsequent navigation is
@@ -189,6 +192,7 @@ export default async function Home({
         data={data}
         initialSectorId={initialSectorId}
         initialIndustryId={initialIndustryId}
+        isSignedIn={isSignedIn}
       />
     </div>
   );
