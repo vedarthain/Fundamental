@@ -33,12 +33,22 @@ hand-written INSERT:
      was built to prevent. So a row with no evidence is refused unless
      --allow-no-evidence is passed, and the flag exists to make the omission a
      visible decision rather than an oversight.
-  2. Evidence keys should be resolvable against cluster_metrics, because a key
-     with no live counterpart can never be rechecked. Unknown keys are listed
-     as warnings rather than rejected, so that a typo ("pe_tmm") cannot quietly
-     become a figure that is permanently uncheckable.
+  2. Evidence keys must be resolvable against cluster_metrics, because a key
+     with no live counterpart can never be rechecked. An unresolvable key is a
+     fatal error: a typo ("pe_tmm") would otherwise become a figure that is
+     permanently uncheckable, and the tab has no way to show that it failed to
+     resolve — it simply omits the row from the drift table, silently.
 
-     But the warning only fires for keys that are neither live NOR in
+     This was a warning until 2026-10-13. A warning does not stop a load, and
+     the dry-run then printed "N verdict(s) valid" underneath it, so the only
+     signal was one stderr line in a batch that prints dozens. Measured before
+     changing it: across all 220 verdict rows loaded to that date, zero carried
+     an unresolvable key — so making it fatal rejects nothing that has ever
+     been written deliberately. If a genuinely new derived figure is needed,
+     the fix is to add it to DERIVED_KEYS in BOTH files, which is the coupling
+     the next paragraph exists to protect.
+
+     The check only fires for keys that are neither live NOR in
      DERIVED_KEYS. The first version warned on every non-live key, which meant
      a 23-symbol batch printed the same 13 legitimately-derived names 23 times
      — and a check that is noise 299 lines out of 300 gets scrolled past
@@ -135,9 +145,12 @@ def validate(v: dict, known_keys: set[str], allow_no_evidence: bool) -> tuple[li
     else:
         unknown = [k for k in ev if k not in known_keys and k not in DERIVED_KEYS]
         if unknown:
-            warns.append("evidence keys that are neither live metrics nor known derived "
-                         "figures — a typo here is permanently uncheckable: "
-                         + ", ".join(sorted(unknown)))
+            errs.append("evidence keys that are neither live cluster_metrics nor known "
+                        "derived figures: " + ", ".join(sorted(unknown))
+                        + ". These can never be rechecked, so the verdict would have no "
+                          "expiry on those figures. Fix the typo, or add a genuinely new "
+                          "derived key to DERIVED_KEYS in BOTH scripts/verdict-load.py "
+                          "and web/src/lib/verdictTypes.ts.")
     return errs, warns
 
 
@@ -167,12 +180,13 @@ def main() -> int:
     default_snap: Optional[date] = row["snap"]
     known_keys = set(row["keys"] or [])
 
-    fatal = 0
+    fatal, warned = 0, 0
     for v in verdicts:
         errs, warns = validate(v, known_keys, args.allow_no_evidence)
         tag = str(v.get("symbol", "?")).upper()
         for w in warns:
             print(f"  ~  {tag}: {w}", file=sys.stderr)
+            warned += 1
         for e in errs:
             print(f"  X  {tag}: {e}", file=sys.stderr)
             fatal += 1
@@ -180,8 +194,12 @@ def main() -> int:
         print(f"\n{fatal} error(s) — nothing written.", file=sys.stderr)
         return 1
 
+    # "valid" on its own line read as clean even with warnings printed above it,
+    # which is how an unresolvable evidence key used to get through unread.
+    tally = f" ({warned} warning(s) above — read them)" if warned else ""
     if args.dry_run:
-        print(f"  .. {len(verdicts)} verdict(s) valid (dry run, nothing written)", file=sys.stderr)
+        print(f"  .. {len(verdicts)} verdict(s) valid{tally} (dry run, nothing written)",
+              file=sys.stderr)
         return 0
 
     written, conflicts = 0, []
