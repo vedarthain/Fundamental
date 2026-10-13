@@ -51,6 +51,12 @@ from urllib.request import Request, urlopen
 
 import psycopg
 
+# jwt_expiry/load_token live in upstox_token.py, not here. They were
+# duplicated into this script and check-freshness.py, and fetch-ipos.py
+# never got a copy at all — it read app.upstox_session unconditionally and
+# failed on 2026-10-12 with a token four days dead. One module now.
+from upstox_token import load_token
+
 
 LTP_ENDPOINT = "https://api.upstox.com/v2/market-quote/ltp"
 BATCH_SIZE = 200  # safely below Upstox's per-call limit
@@ -120,56 +126,6 @@ def fetch_ltp_batch(token: str, instrument_keys: list[str]) -> dict[str, float]:
 
 
 # ----------------------- DB I/O -------------------------------------------
-
-def jwt_expiry(token: str) -> datetime | None:
-    """`exp` out of a JWT, unverified. We are not authenticating anything —
-    we are reading the issuer's stated expiry so it can be reported before it
-    bites. Unparseable returns None and the token is still used: refusing a
-    working token because its shape changed turns a reporting gap into an
-    outage."""
-    parts = token.split(".")
-    if len(parts) != 3:
-        return None
-    try:
-        import base64
-        pad = "=" * (-len(parts[1]) % 4)
-        claims = json.loads(base64.urlsafe_b64decode(parts[1] + pad))
-        exp = claims.get("exp")
-        if not isinstance(exp, (int, float)):
-            return None
-        return datetime.fromtimestamp(float(exp), tz=timezone.utc)
-    except Exception:
-        return None
-
-
-def load_token(conn: psycopg.Connection) -> tuple[str | None, datetime | None]:
-    """Returns (token, expires_at) for a market-data GET.
-
-    Prefers UPSTOX_ANALYTICS_TOKEN — read-only, 1-year validity, no browser
-    redirect to obtain and no static-IP whitelist for Market Quote. The OAuth
-    session token in app.upstox_session dies at 03:30 IST every night and
-    Upstox issues no refresh token, so it can never carry an unattended job;
-    it stays here as a fallback so setting (or unsetting) the env var needs no
-    code change. Must stay in step with resolveMarketDataToken() in
-    web/src/lib/upstox.ts — both resolve the same two sources in the same
-    order, and a disagreement means the script and the cron route are quoting
-    different prices into the same columns.
-    """
-    analytics = (os.environ.get("UPSTOX_ANALYTICS_TOKEN") or "").strip()
-    if not analytics:
-        analytics = (env_url("UPSTOX_ANALYTICS_TOKEN", required=False) or "").strip()
-    if analytics:
-        return (analytics, jwt_expiry(analytics))
-
-    with conn.cursor() as cur:
-        cur.execute("""
-            SELECT access_token, expires_at FROM app.upstox_session WHERE id = 1
-        """)
-        row = cur.fetchone()
-    if not row:
-        return (None, None)
-    return (row[0], row[1])
-
 
 def load_instrument_map(conn: psycopg.Connection) -> list[tuple[str, str]]:
     """Returns [(symbol, instrument_key), ...] for active-universe symbols

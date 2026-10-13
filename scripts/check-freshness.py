@@ -69,7 +69,6 @@ the GH Actions log is a complete diagnostic without needing to dig.
 from __future__ import annotations
 
 import argparse
-import base64
 import json
 import os
 import re
@@ -78,6 +77,12 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import psycopg
+
+# The analytics-token lookup and the JWT expiry parse are shared with the
+# scripts that USE the token. They were copied here, and the copy is how
+# fetch-ipos.py ended up never migrated at all: a rule that lives in three
+# files gets fixed in the one someone happens to open.
+from upstox_token import analytics_token, jwt_expiry
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -109,23 +114,6 @@ def env_url(name: str, required: bool = True) -> str | None:
         f"✗ {name} not set — pass as env var or add to .env.local"
     )
 
-
-def _jwt_expiry(token: str) -> datetime | None:
-    """`exp` out of a JWT, unverified — we are reading the issuer's stated
-    expiry, not authenticating. Unparseable returns None; see the same helper
-    in scripts/intraday-refresh-ltp.py and jwtExpiry() in web/src/lib/upstox.ts."""
-    parts = token.split(".")
-    if len(parts) != 3:
-        return None
-    try:
-        pad = "=" * (-len(parts[1]) % 4)
-        claims = json.loads(base64.urlsafe_b64decode(parts[1] + pad))
-        exp = claims.get("exp")
-        if not isinstance(exp, (int, float)):
-            return None
-        return datetime.fromtimestamp(float(exp), tz=timezone.utc)
-    except Exception:
-        return None
 
 
 def mask(url: str) -> str:
@@ -651,11 +639,9 @@ def check_upstox_token(conn: psycopg.Connection) -> tuple[bool, str]:
     if not _in_market_window(now_ist):
         return True, "✓ upstox_token: outside market window — skipped"
 
-    analytics = (os.environ.get("UPSTOX_ANALYTICS_TOKEN") or "").strip()
-    if not analytics:
-        analytics = (env_url("UPSTOX_ANALYTICS_TOKEN", required=False) or "").strip()
+    analytics = analytics_token()
     if analytics:
-        exp = _jwt_expiry(analytics)
+        exp = jwt_expiry(analytics)
         if exp is None:
             return True, ("✓ upstox_token: analytics token in use, expiry unreadable "
                           "(not a JWT?) — it will work until it doesn't")

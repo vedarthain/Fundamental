@@ -114,6 +114,8 @@ from urllib.request import Request, urlopen
 
 import psycopg
 
+from upstox_token import load_token, token_source
+
 LIST_ENDPOINT = "https://api.upstox.com/v2/ipos"
 NSE_MASTER = "https://assets.upstox.com/market-quote/instruments/exchange/NSE.csv.gz"
 
@@ -165,13 +167,6 @@ def get_json(url: str, token: str) -> dict:
     })
     with urlopen(req, timeout=30) as r:
         return json.loads(r.read().decode("utf-8"))
-
-
-def load_token(conn: psycopg.Connection) -> tuple[str | None, datetime | None]:
-    with conn.cursor() as cur:
-        cur.execute("SELECT access_token, expires_at FROM app.upstox_session WHERE id = 1")
-        row = cur.fetchone()
-    return (row[0], row[1]) if row else (None, None)
 
 
 def num(v):
@@ -426,8 +421,20 @@ def check_freshness(conn: psycopg.Connection, max_age_hours: float) -> int:
     age_h = (datetime.now(timezone.utc) - newest).total_seconds() / 3600
     print(f"app.ipo: {n} rows, newest fetched_at {newest.isoformat()} ({age_h:.1f}h old)")
     if age_h > max_age_hours:
-        print(f"STALE — older than {max_age_hours}h. Re-login at /admin/upstox, "
-              f"then re-run this script.", file=sys.stderr)
+        # Say which credential is in play. "Re-login at /admin/upstox" was the
+        # only advice this printed, and on 2026-10-12 it sent the reader to a
+        # browser login for a job that should have been on the analytics token
+        # — the instruction was not wrong so much as it concealed that the
+        # migration had never reached this script.
+        src = token_source()
+        fix = ("check UPSTOX_ANALYTICS_TOKEN is set wherever this runs (it is "
+               "NOT currently a GitHub secret) and still valid"
+               if src == "analytics" else
+               "no UPSTOX_ANALYTICS_TOKEN here, so this falls back to the daily "
+               "session token — re-login at /admin/upstox, or set the analytics "
+               "token to stop needing a daily human")
+        print(f"STALE — older than {max_age_hours}h. Credential in use: {src}; "
+              f"{fix}. Then re-run this script.", file=sys.stderr)
         return 1
     return 0
 
@@ -472,23 +479,47 @@ def main() -> int:
             return 0
 
         token, expires = load_token(conn)
+        src = token_source()
         if not token:
-            print("no upstox access_token in app.upstox_session — a human must "
-                  "log in at /admin/upstox", file=sys.stderr)
+            print("no Upstox credential: UPSTOX_ANALYTICS_TOKEN is unset and "
+                  "app.upstox_session holds no access_token. Set the analytics "
+                  "token (Developer Apps console, 1-year, read-only) so this job "
+                  "stops needing a daily human, or log in at /admin/upstox.",
+                  file=sys.stderr)
             return 2
         if expires and expires <= datetime.now(timezone.utc):
-            print(f"upstox token expired at {expires.isoformat()} — a human must "
-                  f"re-login at /admin/upstox. Leaving the existing snapshot and "
-                  f"its fetched_at untouched.", file=sys.stderr)
+            # Name WHICH credential died. The old message said "re-login at
+            # /admin/upstox" regardless, which is the right instruction for the
+            # session token and the wrong one for the analytics token — a
+            # re-login does not touch an env var, so following it would appear
+            # to do nothing and the same failure would return tomorrow.
+            fix = ("generate a new analytics token in the Upstox Developer Apps "
+                   "console and update UPSTOX_ANALYTICS_TOKEN"
+                   if src == "analytics" else
+                   "a human must re-login at /admin/upstox")
+            print(f"upstox {src} token expired at {expires.isoformat()} — {fix}. "
+                  f"Leaving the existing snapshot and its fetched_at untouched.",
+                  file=sys.stderr)
             return 2
+        if not args.quiet:
+            print(f"upstox: using {src} token", file=sys.stderr)
 
         try:
             rows = fetch_all(token, args.listed_details, not args.quiet)
         except HTTPError as e:
             detail = e.read().decode("utf-8", "replace")[:300] if hasattr(e, "read") else ""
             if e.code in (401, 403):
-                print(f"Upstox rejected the token (HTTP {e.code}) — re-login at "
-                      f"/admin/upstox. {detail}", file=sys.stderr)
+                # The analytics token is scoped read-only and was introduced
+                # for Market Quote; /v2/ipos is a different Upstox product. If
+                # it turns out not to be covered, THIS is where that shows up,
+                # and the fix is to keep this one caller on the session token —
+                # not to assume the credential is merely stale.
+                hint = ("the analytics token may not cover /v2/ipos (it was "
+                        "adopted for Market Quote); if a freshly generated one "
+                        "also 401s here, this caller needs the session token"
+                        if src == "analytics" else "re-login at /admin/upstox")
+                print(f"Upstox rejected the {src} token (HTTP {e.code}) — {hint}. "
+                      f"{detail}", file=sys.stderr)
                 return 2
             print(f"Upstox HTTP {e.code}: {detail}", file=sys.stderr)
             return 1
