@@ -44,13 +44,24 @@ THE PASS-RATE DENOMINATOR RULE -- read this before quoting "n of N"
 Two scorecard metrics look alike and are counted differently. Getting this
 wrong does not raise; it produces a plausible wrong fraction.
 
-  roe_avg_above_threshold_Ny / roe_excess_13_Ny -- a LEVEL test. One
-      observation per year, so the denominator is **N**.
-      5y -> 5, 7y -> 7, 10y -> 10.
+  roe_avg_above_threshold_Ny -- a LEVEL test. One observation per year, so
+      the denominator is **N**.  5y -> 5, 7y -> 7, 10y -> 10.
 
   np_growth_above_inflation_Ny -- a GROWTH test. Each step needs two points,
       so the denominator is **N-1**.
       5y -> 4, 7y -> 6, 10y -> 9.
+
+  roe_excess_13_Ny -- NOT A RATE AT ALL, and this guard used to assert it was.
+      `_roe_excess_above()` in scoring/formulas.py returns the *mean of
+      (ROE - 0.13) across the window* -- a signed fraction, so x100 gives
+      percentage points of excess over the 13% hurdle. It is routinely
+      negative, which no pass rate can be: RELIGARE's roe_excess_13_7y is
+      -1.6409, i.e. -164pp, matching its roe_7y of -151%. Reading it as "1.6
+      of 7 years" is nonsense in both directions. The error survived five
+      batches because no earlier batch scored a bfsi_nbfc name -- the only
+      cluster whose scorecard uses it -- so the guard had nothing to fire on
+      and its wrongness read as a green tick. Never quote it with a
+      denominator; quote it as pp above or below 13%.
 
 CHENNPETRO: roe 0.7 on 10y = 7 of 10. np_growth 0.4444 on 10y = 4 of 9. Use
 the wrong denominator and you get 6.3 and 4.285 -- fractions of a year, which
@@ -90,7 +101,10 @@ NUM = re.compile(r"-?\d[\d,]*\.?\d*")
 LEVEL_DENOM = {"5y": 5, "7y": 7, "10y": 10}
 GROWTH_DENOM = {"5y": 4, "7y": 6, "10y": 9}
 
-LEVEL_KEYS = ("roe_avg_above_threshold_{w}", "roe_excess_13_{w}")
+#: roe_excess_13_{w} is deliberately NOT here -- it is a mean excess in
+#: fractions, not a pass rate. See the docstring. Putting it back makes this
+#: guard fire on every correctly-written bfsi verdict.
+LEVEL_KEYS = ("roe_avg_above_threshold_{w}",)
 GROWTH_KEYS = ("np_growth_above_inflation_{w}",)
 
 
