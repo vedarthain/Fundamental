@@ -7,20 +7,22 @@
  *
  * Totals are recomputed from the equity subset rather than read off
  * portfolio.totals, which spans every instrument including the unmapped ones.
+ *
+ * No sparkline column. A 20px-tall SVG per row set the row height for the whole
+ * table and bought one shape you cannot read at that size; /stock/[symbol] has
+ * the real chart one click away. The KPI row lives INSIDE the box so the widget
+ * occupies exactly one grid cell.
  */
 import Link from "next/link";
-import { loadPortfolio, type Instrument } from "@/lib/portfolio";
-import { loadSparklines } from "@/lib/sparklines";
-import { Sparkline, type SparkPoint } from "@/components/Sparkline";
+import { type Instrument } from "@/lib/portfolio";
+import { getPortfolio } from "./portfolioOnce";
 import { Zone, Kpi, Delta, Empty, SymbolLink, inr, signed, pct } from "./ui";
 
-const HOLD_N = 8;
-const SPARK_DAYS = 90;
-const SPARK_POINTS = 24;
+const HOLD_N = 12;
 const STALE_BROKER_DAYS = 5;
 
 export async function BookZone({ userId }: { userId: number }) {
-  const portfolio = await loadPortfolio(userId);
+  const portfolio = await getPortfolio(userId);
   const equities = portfolio.instruments.filter((i) => i.isMapped);
 
   if (!portfolio.hasHoldings) {
@@ -54,17 +56,16 @@ export async function BookZone({ userId }: { userId: number }) {
 
   const t = totals(equities);
   const top = [...equities].sort((a, b) => b.currentValue - a.currentValue).slice(0, HOLD_N);
-  const sparks = await loadSparklines(
-    top.map((i) => i.symbol).filter((s): s is string => s != null),
-    SPARK_DAYS,
-    SPARK_POINTS,
-  ).catch(() => ({}) as Record<string, SparkPoint[]>);
-
   const stale = portfolio.brokerSnapshots.filter((b) => b.ageDays >= STALE_BROKER_DAYS);
 
   return (
-    <>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+    <Zone
+      title="Your book"
+      href="/portfolio"
+      count={equities.length || undefined}
+      meta={portfolio.priceAsOfTs ? "live" : portfolio.priceAsOf ?? undefined}
+    >
+      <div className="grid grid-cols-4 gap-x-2 pb-1 border-b hairline">
         <Kpi label="Value" value={inr(t.currentValue)} sub={`${t.holdingCount} names`} />
         <Kpi label="Invested" value={inr(t.invested)} />
         <Kpi
@@ -81,76 +82,52 @@ export async function BookZone({ userId }: { userId: number }) {
         />
       </div>
 
-      <Zone
-        title="Your book"
-        href="/portfolio"
-        count={equities.length || undefined}
-        meta={portfolio.priceAsOfTs ? "live" : portfolio.priceAsOf ?? undefined}
-      >
-        {equities.length === 0 ? (
-          <Empty>
-            No equity holdings — ETFs and funds stay on{" "}
-            <Link href="/portfolio" className="underline" style={{ color: "var(--color-accent-700)" }}>
-              Portfolio
-            </Link>
-            .
-          </Empty>
-        ) : (
-          <table className="w-full text-[12.5px] table-fixed">
-            <thead>
-              <tr className="muted-text text-[11px]">
-                <th className="pb-1 font-normal text-left">Name</th>
-                <th className="pb-1 font-normal text-right hidden sm:table-cell w-[22%]">3M</th>
-                <th className="pb-1 font-normal text-right w-[26%] sm:w-[20%]">Value</th>
-                <th className="pb-1 font-normal text-right w-[18%] sm:w-[14%]">Day</th>
-                <th className="pb-1 font-normal text-right w-[18%] sm:w-[14%]">P&amp;L</th>
+      {equities.length === 0 ? (
+        <Empty>
+          No equity holdings — ETFs and funds stay on{" "}
+          <Link href="/portfolio" className="underline" style={{ color: "var(--color-accent-700)" }}>
+            Portfolio
+          </Link>
+          .
+        </Empty>
+      ) : (
+        <table className="w-full text-[11.5px] table-fixed">
+          <thead>
+            <tr className="muted-text text-[9.5px] uppercase tracking-wide">
+              <th className="pb-0.5 font-normal text-left">Name</th>
+              <th className="pb-0.5 font-normal text-right w-[30%]">Value</th>
+              <th className="pb-0.5 font-normal text-right w-[18%]">Day</th>
+              <th className="pb-0.5 font-normal text-right w-[18%]">P&amp;L</th>
+            </tr>
+          </thead>
+          <tbody>
+            {top.map((i) => (
+              <tr key={i.key} className="border-t hairline">
+                <td className="py-[3px] text-left truncate">
+                  <SymbolLink symbol={i.symbol} label={i.symbol ?? i.name} />
+                </td>
+                <td className="py-[3px] text-right tabular-nums truncate">
+                  {inr(i.currentValue)}
+                </td>
+                <td className="py-[3px] text-right tabular-nums">
+                  <Delta v={i.dayChangePct} />
+                </td>
+                <td className="py-[3px] text-right tabular-nums">
+                  <Delta v={i.pnlPct} />
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {top.map((i) => (
-                <tr key={i.key} className="border-t hairline">
-                  <td className="py-1 text-left truncate">
-                    <SymbolLink symbol={i.symbol} label={i.symbol ?? i.name} />
-                  </td>
-                  <td className="py-1 text-right hidden sm:table-cell">
-                    {i.symbol && sparks[i.symbol]?.length ? (
-                      <Sparkline
-                        data={sparks[i.symbol]}
-                        width={90}
-                        height={20}
-                        fill
-                        showBaseline={false}
-                        stroke={
-                          (i.pnlPct ?? 0) >= 0
-                            ? "var(--color-delta-up)"
-                            : "var(--color-delta-down)"
-                        }
-                      />
-                    ) : (
-                      <span className="muted-text">—</span>
-                    )}
-                  </td>
-                  <td className="py-1 text-right tabular-nums truncate">{inr(i.currentValue)}</td>
-                  <td className="py-1 text-right tabular-nums">
-                    <Delta v={i.dayChangePct} />
-                  </td>
-                  <td className="py-1 text-right tabular-nums">
-                    <Delta v={i.pnlPct} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+            ))}
+          </tbody>
+        </table>
+      )}
 
-        {stale.length > 0 && (
-          <p className="muted-text text-[11px] mt-2">
-            {stale.map((b) => `${b.label} ${b.ageDays}d old`).join(" · ")} — quantity
-            and cost are frozen at import, so trades since then are invisible here.
-          </p>
-        )}
-      </Zone>
-    </>
+      {stale.length > 0 && (
+        <p className="muted-text text-[10px] mt-1.5">
+          {stale.map((b) => `${b.label} ${b.ageDays}d old`).join(" · ")} — quantity and
+          cost are frozen at import, so trades since then are invisible here.
+        </p>
+      )}
+    </Zone>
   );
 }
 

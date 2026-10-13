@@ -20,7 +20,11 @@ import { loadVerdictChips, type VerdictChip } from "@/lib/verdict";
 import type { Severity } from "@/lib/alerts";
 import { Zone, Empty, SymbolLink } from "./ui";
 
-const ITEM_CAP = 12;
+/**
+ * The box scrolls, so the cap only has to be small enough that the DOM stays
+ * cheap — not small enough to fit the visible area.
+ */
+const ITEM_CAP = 20;
 /** A verdict older than this is called out even when nothing has moved. */
 const VERDICT_STALE_DAYS = 120;
 
@@ -130,23 +134,28 @@ export async function NeedsAction({ userId }: { userId: number }) {
       ) : (
         <ul className="divide-y hairline">
           {shown.map((i) => (
-            <li key={i.key} className="py-1.5 flex gap-2 items-start">
+            <li key={i.key} className="py-[3px] flex gap-1.5 items-baseline">
               <span
-                className="mt-[5px] shrink-0 rounded-full"
+                className="shrink-0 rounded-full self-center"
                 style={{
-                  width: 6,
-                  height: 6,
+                  width: 5,
+                  height: 5,
                   backgroundColor: SEV_COLOR[i.severity],
                 }}
                 aria-label={i.severity}
               />
-              <div className="min-w-0">
-                <div className="text-[12.5px] flex flex-wrap items-baseline gap-x-1.5">
-                  {i.symbol && <SymbolLink symbol={i.symbol} />}
-                  <span className="font-medium">{i.label}</span>
-                </div>
-                <div className="muted-text text-[11.5px]">{i.reason}</div>
-              </div>
+              {/* One line per item, reason truncated: the point of this zone is
+                  the count and the names, not the prose. The detail is on
+                  /tools/alerts, which is one tap away in the header. */}
+              <span className="min-w-0 flex-1 text-[11.5px] truncate">
+                {i.symbol && (
+                  <>
+                    <SymbolLink symbol={i.symbol} />{" "}
+                  </>
+                )}
+                <span className="font-medium">{i.label}</span>
+                <span className="muted-text"> — {i.reason}</span>
+              </span>
             </li>
           ))}
         </ul>
@@ -154,7 +163,7 @@ export async function NeedsAction({ userId }: { userId: number }) {
       {items.length > shown.length && (
         <Link
           href="/tools/alerts"
-          className="block mt-2 text-[11px]"
+          className="block mt-1 text-[10px]"
           style={{ color: "var(--color-accent-700)" }}
         >
           {items.length - shown.length} more

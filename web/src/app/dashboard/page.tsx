@@ -1,5 +1,5 @@
 /**
- * /dashboard — signed-in home. One screen, five zones, ordered by how urgently
+ * /dashboard — signed-in home. One screen of tiles, ordered by how urgently
  * each one asks something of you.
  *
  * This page awaits NOTHING but the session. Every zone is its own async server
@@ -8,10 +8,20 @@
  * hold the whole page. That is the entire reason the zones are separate files:
  * if you inline a loader here, you reintroduce the blocking first paint.
  *
- * Mobile is the primary layout: a single scrolling column in urgency order, no
- * collapsing and no stored UI state. Desktop goes 2-up from `lg` for the two
- * book-side zones only — the market line, the action list and the signals grid
- * stay full-width because they are already multi-column internally.
+ * Layout: a DENSE GRID of fixed-height widget boxes, not a stack of cards. One
+ * column on a phone, 2-up from `sm`, 3-up from `lg`. Every tile is the same
+ * height (`ui.tsx`'s BODY_H) and scrolls inside itself, so the grid never goes
+ * ragged and the page does not grow with the data. "Needs action" spans two
+ * columns on desktop because its rows are sentences, not numbers.
+ *
+ * Eleven tiles. Every one of them is a different QUESTION, which is the only
+ * admission test: "what moved", "what needs a decision", "what do I own", "how
+ * concentrated is it", "what is due", "what did they file", "what is listing".
+ * A twelfth tile that re-answers one of those belongs inside the tile that
+ * already owns the question, not beside it.
+ *
+ * The market strip is the one non-widget: four index levels and the FII/DII net
+ * on a single line above the grid. Boxing it wasted a whole row.
  *
  * Everything here is end-of-day. There is no intraday feed in this app, so each
  * zone carries its own "as of" rather than implying live prices.
@@ -28,6 +38,11 @@ import { NeedsAction } from "./NeedsAction";
 import { BookZone } from "./BookZone";
 import { CallsZone } from "./CallsZone";
 import { SignalsZone } from "./SignalsZone";
+import { SectorHeat } from "./SectorHeat";
+import { ResultsZone } from "./ResultsZone";
+import { IpoZone } from "./IpoZone";
+import { FilingsZone } from "./FilingsZone";
+import { ConcentrationZone } from "./ConcentrationZone";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Dashboard · EquityRoots" };
@@ -39,32 +54,67 @@ export default async function DashboardPage() {
   }
 
   return (
-    <div className="mx-auto max-w-[1300px] px-4 md:px-6 py-5 md:py-6">
-      <h1 className="font-display text-[22px] md:text-[26px] leading-[1.1] tracking-tight mb-3">
-        Home
-      </h1>
+    <div className="mx-auto max-w-[1300px] px-3 md:px-5 py-3 md:py-4">
+      <div className="flex items-baseline gap-2 mb-2">
+        <h1 className="font-display text-[18px] md:text-[20px] leading-none tracking-tight">
+          Home
+        </h1>
+        <span className="muted-text text-[10px]">end of day</span>
+      </div>
 
-      <div className="space-y-3">
-        <Suspense fallback={<ZoneSkeleton title="Market" rows={2} />}>
-          <MarketLine />
-        </Suspense>
+      <Suspense fallback={<div className="h-[34px] rounded-md border hairline" />}>
+        <MarketLine />
+      </Suspense>
 
-        <Suspense fallback={<ZoneSkeleton title="Needs action" rows={4} />}>
-          <NeedsAction userId={session.userId} />
-        </Suspense>
-
-        <div className="grid gap-3 lg:grid-cols-[2fr_1fr] lg:items-start">
-          <div className="space-y-3">
-            <Suspense fallback={<ZoneSkeleton title="Your book" rows={5} />}>
-              <BookZone userId={session.userId} />
-            </Suspense>
-          </div>
-          <Suspense fallback={<ZoneSkeleton title="Open calls" rows={4} />}>
-            <CallsZone userId={session.userId} />
+      <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 items-start">
+        <div className="sm:col-span-2">
+          <Suspense fallback={<ZoneSkeleton title="Needs action" />}>
+            <NeedsAction userId={session.userId} />
           </Suspense>
         </div>
 
-        <Suspense fallback={<ZoneSkeleton title="Signals" rows={5} />}>
+        <Suspense fallback={<ZoneSkeleton title="Open calls" />}>
+          <CallsZone userId={session.userId} />
+        </Suspense>
+
+        <Suspense fallback={<ZoneSkeleton title="Your book" />}>
+          <BookZone userId={session.userId} />
+        </Suspense>
+
+        {/* Results sits next to the book deliberately: the question it answers
+            is "which of these reports this week", which is only meaningful
+            beside the positions. */}
+        <Suspense fallback={<ZoneSkeleton title="Calendar" />}>
+          <ResultsZone userId={session.userId} />
+        </Suspense>
+
+        <Suspense fallback={<ZoneSkeleton title="Sector heat" />}>
+          <SectorHeat />
+        </Suspense>
+
+        <Suspense fallback={<ZoneSkeleton title="IPO" />}>
+          <IpoZone />
+        </Suspense>
+
+        <Suspense fallback={<ZoneSkeleton title="Filings" />}>
+          <FilingsZone userId={session.userId} />
+        </Suspense>
+
+        <Suspense fallback={<ZoneSkeleton title="Concentration" />}>
+          <ConcentrationZone userId={session.userId} />
+        </Suspense>
+
+        {/* Renders three sibling <Zone> boxes, so it must be a direct grid
+            child — do not wrap it in a <div> or they stop tiling. */}
+        <Suspense
+          fallback={
+            <>
+              <ZoneSkeleton title="Igniting" />
+              <ZoneSkeleton title="Trend" />
+              <ZoneSkeleton title="At support" />
+            </>
+          }
+        >
           <SignalsZone />
         </Suspense>
       </div>

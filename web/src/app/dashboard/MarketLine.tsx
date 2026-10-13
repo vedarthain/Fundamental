@@ -1,5 +1,9 @@
 /**
- * Zone 1 — the market in one row: four index levels + the FII/DII cash net.
+ * Zone 1 — the market as a single thin strip: four index levels + FII/DII net.
+ *
+ * Deliberately NOT a <Zone> widget. It is one line of reference numbers that
+ * nothing scrolls and nobody drills into from here, so giving it a boxed,
+ * fixed-height widget wasted a whole grid row on four figures.
  *
  * EOD only. app.market_index_history is the daily NSE driver (same source as
  * /indices); there is no intraday index feed in this app, so the "as of" date
@@ -8,10 +12,11 @@
  * Cached under the "market" tag so the daily refresh purge busts it; the body
  * is one row per index, so a miss is still cheap.
  */
+import Link from "next/link";
 import { unstable_cache } from "next/cache";
 import { sql } from "@/lib/db";
 import { loadFiiDii, type FiiDay } from "@/lib/fiiDii";
-import { Zone, Delta, cr, fmtDay, num } from "./ui";
+import { Delta, cr, fmtDay, num } from "./ui";
 
 const FII_DAYS = 5;
 const HEADLINE_INDICES = ["NIFTY50", "NIFTYBANK", "NIFTYMIDCAP100", "NIFTY500"];
@@ -58,26 +63,34 @@ export async function MarketLine() {
   const asOf = ordered[0]?.date ?? fii[0]?.date ?? null;
 
   return (
-    <Zone
-      title="Market"
-      href="/indices"
-      meta={asOf ? `EOD · ${fmtDay(asOf)}` : undefined}
+    <section
+      className="rounded-md border hairline px-2 py-1.5 flex flex-wrap items-baseline gap-x-4 gap-y-1"
+      style={{ backgroundColor: "var(--color-card)" }}
     >
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-3 gap-y-2">
-        {ordered.map((r) => (
-          <div key={r.code} className="min-w-0">
-            <div className="text-[11px] muted-text truncate">{r.name}</div>
-            <div className="font-mono text-[14px] font-semibold tabular-nums">
-              {num(r.close)}
-            </div>
-            <div className="text-[11px] tabular-nums">
-              <Delta v={r.pct_change_1d} digits={2} />
-            </div>
-          </div>
-        ))}
-      </div>
+      {ordered.map((r) => (
+        <span key={r.code} className="flex items-baseline gap-1 min-w-0">
+          <span className="muted-text text-[10px] uppercase tracking-wide truncate">
+            {r.name}
+          </span>
+          <span className="font-mono text-[12.5px] font-semibold tabular-nums">
+            {num(r.close)}
+          </span>
+          <span className="text-[10.5px] tabular-nums">
+            <Delta v={r.pct_change_1d} digits={2} />
+          </span>
+        </span>
+      ))}
+
       {fii.length > 0 && <FiiLine days={fii} />}
-    </Zone>
+
+      <Link
+        href="/indices"
+        className="ml-auto shrink-0 text-[10px]"
+        style={{ color: "var(--color-accent-700)" }}
+      >
+        {asOf ? `EOD · ${fmtDay(asOf)}` : "Indices"}
+      </Link>
+    </section>
   );
 }
 
@@ -86,18 +99,14 @@ function FiiLine({ days }: { days: FiiDay[] }) {
   const fiiSum = sumNets(days.map((d) => d.fii_net));
   const diiSum = sumNets(days.map((d) => d.dii_net));
   return (
-    <div className="mt-3 pt-2 border-t hairline flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[12px]">
-      <span className="muted-text text-[11px]">FII / DII cash</span>
-      <span className="tabular-nums">
-        FII <Flow net={latest.fii_net} />
+    <span className="flex items-baseline gap-1.5 text-[10.5px] tabular-nums">
+      <span className="muted-text text-[10px] uppercase tracking-wide">FII/DII</span>
+      <Flow net={latest.fii_net} />
+      <Flow net={latest.dii_net} />
+      <span className="muted-text">
+        {days.length}d {cr(fiiSum)} / {cr(diiSum)}
       </span>
-      <span className="tabular-nums">
-        DII <Flow net={latest.dii_net} />
-      </span>
-      <span className="muted-text text-[11px] tabular-nums">
-        {days.length}d: FII {cr(fiiSum)} · DII {cr(diiSum)}
-      </span>
-    </div>
+    </span>
   );
 }
 

@@ -9,31 +9,38 @@
 import { loadCalls } from "@/lib/calls";
 import { Zone, MiniTable, Delta, Empty, SymbolLink, fmtDay, num } from "./ui";
 
-const CALL_N = 8;
+const CALL_N = 12;
 
 export async function CallsZone({ userId }: { userId: number }) {
   const all = await loadCalls(userId).catch(() => []);
   const active = all.filter((c) => c.cleared_at == null);
   const shown = active.slice(0, CALL_N);
+  const oldest = shown.length > 0 ? shown[shown.length - 1].anchor_date : null;
 
   return (
-    <Zone title="Open calls" count={active.length || undefined}>
+    <Zone
+      title="Open calls"
+      count={active.length || undefined}
+      meta={oldest ? `from ${fmtDay(oldest)}` : undefined}
+    >
       {shown.length === 0 ? (
         <Empty>
           No open calls. Tag a stock Buy or Sell from its page or the scanner and
           it gets a server-side price anchor to score against.
         </Empty>
       ) : (
+        /* The anchor date used to sit on a second line under the anchor price;
+           it doubled every row's height for a date nobody acts on, so it moved
+           to the header as the oldest open call. */
         <MiniTable
           headers={["Name", "Anchor", "LTP", "Move"]}
           rows={shown.map((c) => [
-            <span key={c.symbol} className="flex items-baseline gap-1.5 min-w-0">
+            <span key={c.symbol} className="flex items-baseline gap-1 min-w-0">
               <SideChip side={c.side} />
               <SymbolLink symbol={c.symbol} />
             </span>,
             <span key={`${c.symbol}-a`} className="muted-text">
               {num(c.anchor_price)}
-              <span className="block text-[10px]">{fmtDay(c.anchor_date)}</span>
             </span>,
             num(c.ltp),
             <Delta key={`${c.symbol}-m`} v={c.pct_move} />,
