@@ -52,43 +52,49 @@ export async function SignalsZone() {
 
   return (
     <>
-      <SignalZone
-        title="Igniting"
-        sub="abnormal volume"
-        href="/tools/scanner?tab=igniting"
-        asOf={stamp(momentum?.snapDate)}
-        rows={(momentum?.signals ?? []).slice(0, ROW_N).map((s) => ({
-          symbol: s.symbol,
-          right: <Delta v={s.retPct} />,
-          note: `${s.volX.toFixed(1)}× vol${s.newHigh ? " · new high" : ""}`,
-        }))}
-      />
-      <SignalZone
-        title="Trend"
-        sub="fresh golden cross"
-        href="/tools/scanner?tab=trend"
-        asOf={stamp(trend?.snapDate)}
-        rows={(trend?.signals ?? []).slice(0, ROW_N).map((s) => ({
-          symbol: s.symbol,
-          right: <Delta v={s.pctSinceCross} />,
-          note: `since ${fmtDay(s.crossDate)}`,
-        }))}
-      />
-      <SignalZone
-        title="At support"
-        sub="tested floor"
-        href="/tools/scanner?tab=floor"
-        asOf={stamp(floor?.snapDate)}
-        rows={(floor?.signals ?? []).slice(0, ROW_N).map((s) => ({
-          symbol: s.symbol,
-          right: (
-            <span className="muted-text">
-              {s.pctAbove == null ? "—" : `${s.pctAbove.toFixed(1)}%`}
-            </span>
-          ),
-          note: `floor ${num(s.floorPx)} · ${s.nTouch} tests`,
-        }))}
-      />
+      <div data-tab="signals">
+        <SignalZone
+          title="Igniting"
+          sub="abnormal volume"
+          href="/tools/scanner?tab=igniting"
+          asOf={stamp(momentum?.snapDate)}
+          rows={(momentum?.signals ?? []).slice(0, ROW_N).map((s) => ({
+            symbol: s.symbol,
+            right: <Delta v={s.retPct} />,
+            note: `${s.volX.toFixed(1)}× vol${s.newHigh ? " · new high" : ""}`,
+          }))}
+        />
+      </div>
+      <div data-tab="signals">
+        <SignalZone
+          title="Trend"
+          sub="fresh golden cross"
+          href="/tools/scanner?tab=trend"
+          asOf={stamp(trend?.snapDate)}
+          rows={(trend?.signals ?? []).slice(0, ROW_N).map((s) => ({
+            symbol: s.symbol,
+            right: <Delta v={s.pctSinceCross} />,
+            note: `since ${fmtDay(s.crossDate)}`,
+          }))}
+        />
+      </div>
+      <div data-tab="signals">
+        <SignalZone
+          title="At support"
+          sub="tested floor"
+          href="/tools/scanner?tab=floor"
+          asOf={stamp(floor?.snapDate)}
+          rows={(floor?.signals ?? []).slice(0, ROW_N).map((s) => ({
+            symbol: s.symbol,
+            right: (
+              <span className="muted-text">
+                {s.pctAbove == null ? "—" : `${s.pctAbove.toFixed(1)}%`}
+              </span>
+            ),
+            note: `floor ${num(s.floorPx)} · ${s.nTouch} tests`,
+          }))}
+        />
+      </div>
     </>
   );
 }

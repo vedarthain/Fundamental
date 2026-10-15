@@ -69,66 +69,70 @@ export default async function DashboardPage() {
         <MarketLine />
       </Suspense>
 
-      <DashboardTabs
-        bookGroup={
-          <>
-            <div className="sm:col-span-2">
-              <Suspense fallback={<ZoneSkeleton title="Needs action" />}>
-                <NeedsAction userId={session.userId} />
-              </Suspense>
-            </div>
+      <DashboardTabs>
+        <div data-tab="book" className="sm:col-span-2">
+          <Suspense fallback={<ZoneSkeleton title="Needs action" />}>
+            <NeedsAction userId={session.userId} />
+          </Suspense>
+        </div>
 
-            {isAdmin && (
-              <Suspense fallback={<ZoneSkeleton title="Research calls" />}>
-                <CallsZone userId={session.userId} />
-              </Suspense>
-            )}
+        {isAdmin && (
+          <div data-tab="book">
+            <Suspense fallback={<ZoneSkeleton title="Research calls" />}>
+              <CallsZone userId={session.userId} />
+            </Suspense>
+          </div>
+        )}
 
-            <Suspense fallback={<ZoneSkeleton title="Your book" />}>
-              <BookZone userId={session.userId} />
-            </Suspense>
+        <div data-tab="book">
+          <Suspense fallback={<ZoneSkeleton title="Your book" />}>
+            <BookZone userId={session.userId} />
+          </Suspense>
+        </div>
 
-            <Suspense fallback={<ZoneSkeleton title="Concentration" />}>
-              <ConcentrationZone userId={session.userId} />
-            </Suspense>
-          </>
-        }
-        signalsGroup={
-          <>
-            <Suspense fallback={<ZoneSkeleton title="Sector heat" />}>
-              <SectorHeat />
-            </Suspense>
+        <div data-tab="radar">
+          <Suspense fallback={<ZoneSkeleton title="Calendar" />}>
+            <ResultsZone userId={session.userId} />
+          </Suspense>
+        </div>
 
-            {/* Renders three sibling <Zone> boxes */}
-            <Suspense
-              fallback={
-                <>
-                  <ZoneSkeleton title="Igniting" />
-                  <ZoneSkeleton title="Trend" />
-                  <ZoneSkeleton title="At support" />
-                </>
-              }
-            >
-              <SignalsZone />
-            </Suspense>
-          </>
-        }
-        radarGroup={
-          <>
-            <Suspense fallback={<ZoneSkeleton title="Calendar" />}>
-              <ResultsZone userId={session.userId} />
-            </Suspense>
+        <div data-tab="signals">
+          <Suspense fallback={<ZoneSkeleton title="Sector heat" />}>
+            <SectorHeat />
+          </Suspense>
+        </div>
 
-            <Suspense fallback={<ZoneSkeleton title="Filings" />}>
-              <FilingsZone userId={session.userId} />
-            </Suspense>
+        <div data-tab="radar">
+          <Suspense fallback={<ZoneSkeleton title="IPO" />}>
+            <IpoZone />
+          </Suspense>
+        </div>
 
-            <Suspense fallback={<ZoneSkeleton title="IPO" />}>
-              <IpoZone />
-            </Suspense>
-          </>
-        }
-      />
+        <div data-tab="radar">
+          <Suspense fallback={<ZoneSkeleton title="Filings" />}>
+            <FilingsZone userId={session.userId} />
+          </Suspense>
+        </div>
+
+        <div data-tab="book">
+          <Suspense fallback={<ZoneSkeleton title="Concentration" />}>
+            <ConcentrationZone userId={session.userId} />
+          </Suspense>
+        </div>
+
+        {/* Renders three sibling <Zone> boxes directly in the grid */}
+        <Suspense
+          fallback={
+            <>
+              <div data-tab="signals"><ZoneSkeleton title="Igniting" /></div>
+              <div data-tab="signals"><ZoneSkeleton title="Trend" /></div>
+              <div data-tab="signals"><ZoneSkeleton title="At support" /></div>
+            </>
+          }
+        >
+          <SignalsZone />
+        </Suspense>
+      </DashboardTabs>
     </div>
   );
 }
