@@ -1,0 +1,630 @@
+"""bfsi_nbfc batch 4 — the 27 `gold_micro_msme` lenders, written as verdicts.
+
+Peer set: `build/verdicts/bfsi_segments.py` -> SEGMENTS["gold_micro_msme"].
+Gold-loan books, joint-liability microfinance and small-ticket MSME lending.
+They belong together because all three are high-yield, short-duration,
+collection-intensive lending to borrowers with no formal credit record — the
+cycle hits them at the same time and in the same way, which is exactly what
+the 2022-2024 microfinance stress in this list shows.
+
+Deliberate choices, recorded so batch 5 does not re-litigate them:
+
+1. **Every row is `medium`, and all 27 are writable at 5 points.** All 27 carry
+   the cluster-wide balance-sheet-lender blocker, so medium is the ceiling
+   (VERDICT_WRITING §5). None is data-blocked: every one of the 27 carries a
+   composite with no suppressed pillar. Sixteen carry a second, named blocker
+   — a one-year operating-margin step — and each row states its own with both
+   values, per Deb's standing instruction.
+
+2. **Two names are effectively unlevered and their returns are not comparable
+   to the rest.** UYFINCORP's <code>equity_to_assets</code> is 94.89% (1.05x
+   assets to equity) and SAHLIBHFI's is 71.40% (1.40x). A lender at 1.05x
+   gearing is a balance sheet of investments, not a loan book, so UYFINCORP's
+   11.55% `roa_3y` — the highest of the 27 — is not the same achievement as
+   MUTHOOTFIN's 4.64% at 4.40x. Both rows say so with the number.
+
+3. **Only five own-history PE bands are quoted.** The rule applied is
+   `n >= 8 and lo >= 4.0`, which admits MUTHOOTFIN (10 years, 7.84-17.94, avg
+   12.15), MANAPPURAM (10, 5.45-23.51, avg 10.91), ARMANFIN (10, 8.44-48.73,
+   avg 21.76), CREDITACC (8, 14.56-77.87, avg 29.79) and UYFINCORP (9,
+   4.56-33.38, avg 16.53). Everything else is refused for one of two reasons:
+   a sub-4x low that cannot be distinguished from a split-adjustment artefact
+   (CSLFINANCE 1.54, SATIN 1.95, SAHLIBHFI 1.09, BAIDFIN 0.42, SGFIN 0.73,
+   MUTHOOTCAP 3.60, CGCL 3.97, TRU 4.07 on a loss base), or a high built on a
+   near-zero earnings base which makes the whole band arithmetic rather than
+   informative (SATIN hi 224.69, SGFIN 105.91, SPANDANA 292.20, TRU 981.37 with
+   avg 313.79, CAPTRUST 256.38, MONEYBOXX 34.29-308.05). Nine names have no
+   band at all.
+
+4. **Four names have no PE because the trailing year is a loss** — INDOSTAR,
+   SPANDANA, TRU, CAPTRUST. Their rows are priced on book and AUM instead, and
+   say which.
+
+5. **Six names have no 200-EMA trend reading, and that is a listing-history
+   fact, not a weak trend** — AYE (173 price bars), SAHLIBHFI (134), DCCL (277),
+   LAXMIINDIA (308), SGFIN (308), MONEYBOXX (260). The metric needs ~450. Any
+   row that mentions it says which way the absence runs.
+
+6. **`roe_excess_13_Ny` is percentage points, not a pass rate.** CAPTRUST's
+   -41.37 is -41.37pp against the 13% hurdle, consistent with its `roe_5y` of
+   -28.37%. `np_growth_above_inflation_Ny` IS a pass rate, denominator N-1
+   (5y->4, 7y->6, 10y->9) — VERDICT_WRITING §3. Eleven names carry neither test
+   (AFIL, SBFC, MANBA, MUTHOOTMF, FUSION, SPANDANA, TRU, AYE, MUFIN,
+   LAXMIINDIA, DCCL), so their hurdle question is unanswered rather than
+   passed, and those rows say that rather than implying a pass.
+
+7. **Nothing here is held. MANAPPURAM and MUTHOOTFIN are on the watchlist.**
+   Checked `app.portfolio_holding` and `app.user_watchlist`.
+
+8. **The spine of this batch is MUTHOOTFIN against MANAPPURAM.** The same
+   collateral, the same regulator: MUTHOOTFIN at 9.52x earnings against its own
+   ten-year average of 12.15x on a 20.82% ROE, MANAPPURAM at 20.02x against an
+   own average of 10.91x with five- and seven-year profit CAGRs of -6.78% and
+   -6.14%. Twice the multiple for shrinking profit. Everything else in the
+   segment is read against that pair, and against CSLFINANCE, which is the
+   cheapest profitable name here at 5.71x.
+
+Run from the repo root:
+    etl/.venv/bin/python build/verdicts/mk_gold_27.py
+"""
+
+import json
+
+PACK = "/tmp/gold_pack.json"
+OUT = "build/verdicts/gold-27-verdicts.json"
+GENERATED_AT = "2026-10-15T12:00:00+00:00"
+SOURCE_REPORT = "bfsi-nbfc gold_micro_msme v1"
+MODEL = "claude-opus-4-7"
+
+PEERS = "the 27 gold-loan, microfinance and MSME lenders in this peer set"
+TNS = ("<code>tech_net_score_scaled</code> is NULL for every scored company on "
+       "the platform; the momentum pillar renormalises around the components "
+       "that do exist, so the percentile is a narrower question than the "
+       "scorecard asks rather than a lost weight.")
+
+SPEC = {
+
+# ----------------------------------------------------------------- accumulate
+
+"MUTHOOTFIN": {
+ "confidence": "medium",
+ "verdict": "ACCUMULATE — the best returns of the 27 on every window, at 9.52x earnings against its own ten-year average of 12.15x",
+ "points": [
+  "<b>Not held — MUTHOOTFIN is on your watchlist.</b> Muthoot Finance, ₹108,280cr, gold loans in India and Sri Lanka plus personal and small-business lending, promoter stake 73.35%. The largest of " + PEERS + ". Composite 93 inside bfsi_nbfc: quality 76, valuation 48, momentum 49.",
+  "<b>It out-returns every other name here, and not narrowly.</b> <code>roe_3y</code> 20.82%, <code>roe_5y</code> 20.10% and <code>roe_7y</code> 21.64% are each the highest of the 27, and <code>roe_excess_13_5y</code> +7.10pp, <code>roe_excess_13_7y</code> +8.64pp and <code>roe_excess_13_10y</code> +8.40pp are each the highest too — the second-placed name on the ten-year excess is MANAPPURAM at +4.64pp, half as much. Net profit beat inflation in 3 of the last 4 years, 4 of 6 and 7 of 9.",
+  "<b>And it is earned on the asset, not on the gearing.</b> <code>roa_3y</code> 4.64% is fifth of the 27, and the four names above it are not carrying the same balance sheet: UYFINCORP (11.55%) and SAHLIBHFI (8.05%) run at 1.05x and 1.40x assets to equity, so their ROAs answer a different question, while FIVESTAR (7.18%) and CSLFINANCE (6.00%) run at roughly half this gearing. <code>equity_to_assets</code> 22.71% puts this book at about 4.40x gearing, ordinary for the segment. <code>loan_book_cagr_3y</code> 34.67%, <code>np_cagr_5y</code> 27.43%, <code>np_cagr_7y</code> 22.47%, <code>book_value_cagr_10y</code> 21.99%.",
+  "<b>The blocker is a margin step, and it runs the right way.</b> The operating margin went from <code>opm_prev</code> 74.31% to <code>opm_now</code> 82.53%, +8.22pp in a single year — the pack flags any step this size as a mix change or a one-off rather than a trend, and it is flagged here even though it is favourable. TTM sales +50.65%, operating profit +67.31%, net profit +84.79%; <code>sales_yoy_q</code> +34.44% and <code>np_yoy_q</code> +38.83%. At <code>pe_ttm</code> 9.52x the stock sits below its own ten-year band of 7.84-17.94x whose average is 12.15x, on <code>pb</code> 2.77x, <code>p_aum</code> 0.56x and <code>div_yield</code> 1.11%. <code>ret_12m_rel</code> -19.58%, with the close above its 200-day EMA on 61.1% of the last 252 sessions. " + TNS,
+  "<i>The honest read: the best lender in the segment is also one of the cheaper ones, and the market's reason is that gold prices did the heavy lifting on the +84.79% profit line. Strip the margin step and the ROE is still the highest of the 27 on five- and seven-year windows, which no single year of gold can manufacture. Add on weakness. The thing that would break it is not a bad quarter but a gold-loan LTV or auction rule change, which is a regulatory event you cannot forecast from the pack.</i>",
+ ],
+ "trigger": "roe_3y holding above 18% with opm_now stabilising near 82% -> the step was mix, not a one-off, and 9.52x against a 12.15x own average is a straightforward discount. np_yoy_q turning negative while loan_book_cagr_3y stays above 30% -> the book is growing into a worsening spread, which is how gold lenders have broken before.",
+ "evidence": ["roe_3y", "roe_5y", "roe_excess_13_10y", "roa_3y", "equity_to_assets", "pe_ttm", "pb", "p_aum", "opm_now", "opm_prev", "loan_book_cagr_3y", "ttm_np_pct"],
+},
+
+"CSLFINANCE": {
+ "confidence": "medium",
+ "verdict": "ACCUMULATE — the highest composite of the 27 and the cheapest earnings here at 5.71x, with a 4.74% yield and the strongest inflation record in the set",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> CSL Finance, ₹475cr, secured SME and wholesale lending — structured finance against real-estate collateral plus a retail book — promoter stake 48.16%. Composite 99 inside bfsi_nbfc, the highest of " + PEERS + ": quality 73, valuation 76, momentum 36.",
+  "<b>The cleanest profit record in the segment, measured against inflation.</b> Net profit beat inflation in 4 of the last 4 years, 6 of 6 and 8 of 9 — of the 16 names here that carry the test it is the only 6-of-6 on the seven-year window, and joint-best on the four- and ten-year windows, with <code>np_consistency_10y</code> 1.63. <code>np_cagr_5y</code> 26.67%, <code>np_cagr_7y</code> 25.10%, <code>book_value_cagr_10y</code> 20.71%. <code>roe_3y</code> 13.50% is third of the 27 and <code>roe_5y</code> 12.70% sixth, but <code>roe_excess_13_5y</code> -0.30pp and <code>roe_excess_13_10y</code> -1.07pp say it only just misses the 13% hurdle rather than clearing it.",
+  "<b>Because the balance sheet is half equity, the return is understated relative to the asset.</b> <code>roa_3y</code> 6.00% is the highest of any genuinely levered name here, and <code>equity_to_assets</code> 44.49% means only about 2.25x assets to equity — less than half MUTHOOTFIN's gearing. That is why a 6.00% ROA converts to a 13.50% ROE. <code>loan_book_cagr_3y</code> 24.08%, with TTM sales +19.33%, operating profit +20.52% and net profit +16.06% on a flat margin, <code>opm_prev</code> 75.93% to <code>opm_now</code> 76.70%.",
+  "<b>Priced as though none of that were true.</b> <code>pe_ttm</code> 5.71x is the cheapest of the 23 names here that have a PE at all, on <code>pb</code> 0.76x and <code>p_aum</code> 0.32x, with <code>div_yield</code> 4.74% — the highest of the nine payers in the set. The own-history band is not quoted: its 1.54x low cannot be distinguished from a split-adjustment artefact. The catch is liquidity and attention, not valuation: <code>shareholders</code> 8,342, <code>fii_pct</code> 0.10% and <code>dii_pct</code> 3.54% on a ₹475cr market cap. <code>sales_yoy_q</code> +17.70% but <code>np_yoy_q</code> only +3.89%; <code>ret_12m_rel</code> -23.26% and the close held above its 200-day EMA on just 6.0% of the last 252 sessions. " + TNS,
+  "<i>The uncomfortable part is not the business, it is the exit. A ₹475cr lender with 8,342 shareholders and almost no institutional holding can stay at 5.71x for years regardless of what the book does, and you will not sell a position quickly. Size it as an illiquid holding and let the 4.74% dividend be the return you actually expect; the re-rating is optional. Against that, the collateral is real estate rather than gold or a joint-liability guarantee, which makes this the least cycle-exposed book of the 27.</i>",
+ ],
+ "trigger": "np_yoy_q re-accelerating above 15% while div_yield stays near 4.7% -> the flat quarter was timing and 5.7x on an 8-of-9 inflation record is indefensible. roe_3y falling under 11%, or the real-estate-backed book showing a provision step -> 0.76x book is the whole margin of safety and the collateral is the one thing that justifies it.",
+ "evidence": ["pe_ttm", "pb", "p_aum", "div_yield", "roe_3y", "roa_3y", "equity_to_assets", "np_cagr_5y", "np_growth_above_inflation_10y", "shareholders", "np_yoy_q"],
+},
+
+"FIVESTAR": {
+ "confidence": "medium",
+ "verdict": "ACCUMULATE — the highest quality pillar of the 27 on a 7.18% asset return, but growth has stalled and the margin stepped down 5.38pp",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> Five-Star Business Finance, ₹14,944cr, secured small-business and mortgage lending to micro-entrepreneurs and the self-employed. Promoter stake is only 18.61% — the lowest of " + PEERS + " — against <code>fii_pct</code> 43.97% and <code>dii_pct</code> 22.35%, both the highest here: this is an institution-owned lender, not a family one. Composite 95: quality 79 (the highest of the 27), valuation 46, momentum 48.",
+  "<b>The asset return is the second-best of any levered name here.</b> <code>roa_3y</code> 7.18% on <code>equity_to_assets</code> 44.97% — about 2.22x gearing — gives <code>roe_3y</code> 16.00%, second of the 27 behind MUTHOOTFIN's 20.82%. <code>roe_5y</code> 14.82% and <code>roe_7y</code> 14.72% hold the level, and <code>roe_excess_13_5y</code> +1.82pp, <code>roe_excess_13_7y</code> +1.72pp and <code>roe_excess_13_10y</code> +0.23pp clear the 13% hurdle on all three windows — one of only four names here that do. Net profit beat inflation in 3 of the last 4 years, 5 of 6 and 8 of 9.",
+  "<b>Now the blocker, and it matters more than the history.</b> The operating margin stepped down from <code>opm_prev</code> 72.74% to <code>opm_now</code> 67.36%, -5.38pp in one year, and the trailing lines have gone flat with it: TTM sales +9.84%, operating profit +1.71%, net profit +1.53%. The quarter confirms rather than contradicts — <code>sales_yoy_q</code> +5.38% and <code>np_yoy_q</code> +1.92%. <code>loan_book_cagr_3y</code> 21.97% is the three-year record; the current year is not running at that rate.",
+  "<b>Valuation sits in the middle and the band cannot help.</b> <code>pe_ttm</code> 13.82x, <code>pb</code> 2.02x, <code>p_aum</code> 0.97x, <code>div_yield</code> 0.40%. The own-history band is not quoted at all: it rests on 4 usable years, below the 8 this batch requires. <code>book_value_cagr_10y</code> 47.37% is the second-highest of the 16 names with a ten-year series, which is the compounding record the 2.02x book is paying for. <code>ret_12m_rel</code> -3.32%, above the 200-day EMA on 30.2% of the last 252 sessions. " + TNS,
+  "<i>The uncomfortable read: the best underwriting record of the 27 has arrived at a year where profit grew 1.53% and the spread fell 5.40pp. Two of those at once is how a high-yield small-ticket lender tells you its pricing power has gone. 2.02x book for a stalled 16% ROE is not obviously cheap — the case for adding is that the hurdle clearance is structural across three windows and the stall is one year old. Add in tranches, and treat the next margin print as the decision, not the next profit print.</i>",
+ ],
+ "trigger": "opm_now stabilising above 67% with np_yoy_q back above 12% -> the step was a one-year funding-cost effect and a 16% ROE at 2.0x book is fair. A second consecutive margin step down, or roa_3y falling under 6% -> the yield on a secured micro-enterprise book is compressing structurally and 2.0x book has no support.",
+ "evidence": ["roa_3y", "roe_3y", "roe_excess_13_5y", "equity_to_assets", "opm_now", "opm_prev", "ttm_np_pct", "pe_ttm", "pb", "p_aum", "promoter_pct", "fii_pct"],
+},
+
+"SATIN": {
+ "confidence": "medium",
+ "verdict": "ACCUMULATE — 6.13x earnings and 0.88x book on a recovered microfinance book, with the weakest long-run hurdle record of the four names I would add to",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> Satin Creditcare Network, ₹2,513cr, joint-liability microcredit to women in rural and semi-urban India, promoter stake 36.17%. Composite 91 inside bfsi_nbfc: quality 56, valuation 72, momentum 67.",
+  "<b>This is a recovery story and the numbers are recovery numbers.</b> TTM net profit +225.36% on sales +20.69% and operating profit +43.60%, with the operating margin stepping up from <code>opm_prev</code> 47.57% to <code>opm_now</code> 56.61% — a +9.03pp move the pack flags as a mix change or one-off rather than a trend, so the current earnings base should not be extrapolated. <code>np_yoy_q</code> +172.00% against <code>sales_yoy_q</code> of only +8.39% says the same thing: the profit is coming from credit cost normalising, not from volume.",
+  "<b>The long-run record is the objection.</b> <code>roe_excess_13_5y</code> -5.26pp, <code>roe_excess_13_7y</code> -6.08pp and <code>roe_excess_13_10y</code> -5.16pp — it has never cleared the 13% hurdle on any window, and net profit beat inflation in only 2 of the last 4 years, 3 of 6 and 5 of 9, and it is the weakest record of the five names in this batch worth adding to. <code>roe_3y</code> 12.36% is fifth of the 27 but <code>roe_5y</code> 7.74% and <code>roe_7y</code> 6.92% show what the cycle costs this model. <code>roa_3y</code> 2.69% on <code>equity_to_assets</code> 21.58% is about 4.63x gearing — the fourth-most levered book of the 27.",
+  "<b>What makes it worth owning anyway is the price.</b> <code>pe_ttm</code> 6.13x and <code>pb</code> 0.88x, with <code>p_aum</code> 0.18x the third-lowest of the 27 — the market is paying 18 paise for a rupee of managed assets. <code>earnings_yield_trend</code> +4.89% is the third-highest here. The own-history band is refused: a 1.95x low and a 224.69x high make the arithmetic meaningless. <code>loan_book_cagr_3y</code> 22.35% and <code>np_cagr_5y</code> 100.15% (off a loss-affected base). <code>ret_12m_rel</code> +53.94% is the third-highest of the 25 names with a reading, and the close held above its 200-day EMA on 63.1% of the last 252 sessions. " + TNS,
+  "<i>Buy the discount, not the business. Below book with 18 paise paid per rupee of AUM, you are compensated for a model that has lost money twice in nine years and has never earned 13% through a cycle — and the +9.03pp margin step means the current 6.13x is on an earnings base that may not repeat. This is the most cycle-exposed name of the five I would add to, and it should be the smallest of them. If the next microfinance stress arrives, 4.63x gearing on unsecured joint-liability lending is where it lands first.</i>",
+ ],
+ "trigger": "opm_now holding above 55% for two more quarters while loan_book_cagr_3y stays above 20% -> the recovery is the new base and 0.88x book is wrong. np_yoy_q turning negative, or state-level microfinance delinquency headlines returning -> the 2022 pattern repeats and an unsecured book at 4.6x gearing has no cushion.",
+ "evidence": ["pe_ttm", "pb", "p_aum", "roe_3y", "roe_5y", "roe_excess_13_10y", "roa_3y", "equity_to_assets", "opm_now", "opm_prev", "ttm_np_pct", "ret_12m_rel"],
+},
+
+"ARMANFIN": {
+ "confidence": "medium",
+ "verdict": "ACCUMULATE — the third-best seven-year ROE of the 27 and a 38.13% book compounder, trading at 15.99x against its own ten-year average of 21.76x",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> Arman Financial Services, ₹1,861cr, microfinance plus MSME and two-wheeler lending to the unorganised sector in rural and semi-rural India. Promoter stake 22.00%, the second-lowest of " + PEERS + ". Composite 83: quality 62, valuation 42, momentum 72.",
+  "<b>It has earned the hurdle through a cycle, which almost nothing else in microfinance here has.</b> <code>roe_5y</code> 14.82% and <code>roe_7y</code> 14.84% are the third-highest of the 27, and <code>roe_excess_13_5y</code> +1.82pp, <code>roe_excess_13_7y</code> +1.84pp and <code>roe_excess_13_10y</code> +2.06pp clear 13% on all three windows — only MUTHOOTFIN, MANAPPURAM and FIVESTAR also do. Net profit beat inflation in 3 of the last 4 years, 4 of 6 and 7 of 9, and <code>book_value_cagr_10y</code> 38.13% is the third-highest of the 16 names with a ten-year series.",
+  "<b>The trailing year is a rebound off a bad one, and the margin step says so.</b> TTM net profit +1,779.64% — the highest of the 27 and a number that means the prior year was near zero, not that the business grew eighteenfold. The operating margin stepped from <code>opm_prev</code> 35.16% to <code>opm_now</code> 52.37%, +17.21pp in one year, which the pack flags as a mix change or one-off rather than an operating trend; the current earnings base should be read with that in mind. TTM sales were flat at 0.00% while operating profit rose 48.95%, so all of the improvement is credit cost and spread, none of it volume. <code>sales_yoy_q</code> +33.63% and <code>np_yoy_q</code> +409.81%.",
+  "<b>Growth is the slowest here and the valuation already reflects a recovery.</b> <code>loan_book_cagr_3y</code> 11.14% is the slowest of any name in the set with a growing book, and <code>np_cagr_7y</code> 5.30% is modest against its own ROE. <code>pe_ttm</code> 15.99x sits inside its ten-year band of 8.44-48.73x, below the 21.76x average, on <code>pb</code> 1.99x and <code>p_aum</code> 0.70x with no dividend. <code>ret_12m_rel</code> +6.82%, above the 200-day EMA on 70.6% of the last 252 sessions. " + TNS,
+  "<i>This is the quality end of Indian microfinance: 14.8% through seven years including two stress cycles, at a 1.99x book. The honest objection is that you are buying it after the recovery — a +17.21pp margin step and a +1,780% profit print are the top of a cycle, not the start of one — and the book is growing 11% while the segment's faster names run above 30%. Add on the view that the through-cycle ROE repeats, not on the trailing number; if you want microfinance exposure cheaper, SATIN is half the multiple with a worse record.</i>",
+ ],
+ "trigger": "loan_book_cagr_3y re-accelerating past 18% while roe_5y holds near 15% -> slow growth was the only objection to the best microfinance record of the 27. opm_now falling back toward 40%, or np_yoy_q turning negative -> the +17.21pp step was the one-off the pack warns it may be and 1.99x book is paying for a peak.",
+ "evidence": ["roe_5y", "roe_7y", "roe_excess_13_10y", "roa_3y", "equity_to_assets", "opm_now", "opm_prev", "ttm_np_pct", "pe_ttm", "pb", "loan_book_cagr_3y", "book_value_cagr_10y"],
+},
+
+# ---------------------------------------------------------------- speculative
+
+"SGFIN": {
+ "confidence": "medium",
+ "verdict": "SPECULATIVE — the fastest-growing book of the 27 at 56.96% and the best twelve-month return, on an 8.82% ROE priced at 26.55x",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> SG Finserve, ₹4,164cr, supply-chain finance — dealer, vendor, retail and logistics financing, formerly a different business entirely — promoter stake 56.95%. Composite 92 inside bfsi_nbfc: quality 70, valuation 32, momentum 84.",
+  "<b>Nothing here grows faster.</b> <code>loan_book_cagr_3y</code> 56.96% is the fastest of the 27, <code>np_cagr_5y</code> 257.68% the highest and <code>book_value_cagr_10y</code> 80.25% the highest of the 16 names with a ten-year series. TTM sales +106.13%, operating profit +129.38%, net profit +82.09%, with <code>sales_yoy_q</code> +101.38% and <code>np_yoy_q</code> +118.92% — the growth is current, not historic. <code>opm_now</code> 92.88% is the highest operating margin of the 26 names that report one.",
+  "<b>The return on that growth is poor, and that is the whole problem.</b> <code>roe_3y</code> 8.82% is seventeenth of the 27, <code>roe_5y</code> 7.69% and <code>roe_7y</code> 6.09% are worse, and <code>roe_excess_13_5y</code> -5.31pp, <code>roe_excess_13_7y</code> -6.91pp and <code>roe_excess_13_10y</code> -8.12pp mean it has never been near the 13% hurdle. <code>roa_3y</code> 3.61% on <code>equity_to_assets</code> 40.82% — about 2.45x gearing — is a respectable asset yield that equity-heavy funding then dilutes. Net profit beat inflation in 3 of the last 4 years, 4 of 6 and 5 of 9 — the ten-year window is the weak one.",
+  "<b>And the margin step means the current earnings base is not a base.</b> <code>opm_prev</code> 83.47% to <code>opm_now</code> 92.88% is +9.41pp in one year, flagged by the pack as a mix change or one-off rather than an operating trend. <code>pe_ttm</code> 26.55x is the third-highest of the 23 names here with a PE, on <code>pb</code> 2.85x and <code>p_aum</code> 1.00x with no dividend. The own-history band is refused outright: a 0.73x low and a 105.91x high on 8 years is arithmetic, not a range. <code>ret_12m_rel</code> +79.37% is the highest of the 25 names with a reading. There is no 200-EMA trend reading at all — 308 price bars against the ~450 the metric needs, which means a short listing history, not a weak trend. " + TNS,
+  "<i>Speculative, not accumulate, and the reason is arithmetic rather than judgement: you are paying 26.55x and 2.85x book for an 8.82% ROE. Supply-chain finance against corporate anchors is a genuinely different and better-collateralised business than the rest of this list, and at 57% book growth it may earn its way into the multiple — but nothing in nine years of history says it will, and a +9.41pp margin step plus a 79% relative run means both the earnings and the price are at their best simultaneously. Position size it as a bet on execution you cannot yet verify.</i>",
+ ],
+ "trigger": "roe_3y rising through 13% while loan_book_cagr_3y stays above 35% -> the growth is finally converting to a return and 26.55x was the right price. opm_now falling back below 85%, or loan_book_cagr_3y halving -> a 26.55x multiple on an 8.82% ROE has nothing underneath it and the de-rating would be severe.",
+ "evidence": ["loan_book_cagr_3y", "np_cagr_5y", "roe_3y", "roe_excess_13_10y", "roa_3y", "equity_to_assets", "opm_now", "opm_prev", "pe_ttm", "pb", "p_aum", "ret_12m_rel"],
+},
+
+"UYFINCORP": {
+ "confidence": "medium",
+ "verdict": "SPECULATIVE — 7.02x earnings and the strongest momentum of the 27, but equity_to_assets of 94.89% means this is not a lender's balance sheet",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> U. Y. Fincorp, ₹435cr, corporate and personal loans plus investment and trading in securities, promoter stake 71.38%. Composite 97 inside bfsi_nbfc: quality 59, valuation 66, momentum 86 — the highest momentum pillar of " + PEERS + ".",
+  "<b>Start with the figure that invalidates the comparisons.</b> <code>equity_to_assets</code> is 94.89%, which is about 1.05x assets to equity: there is almost no borrowed money funding this book. That means its <code>roa_3y</code> of 11.55% — nominally the highest of the 27 — is not an underwriting achievement but an artefact of an unlevered balance sheet, and it converts to a <code>roe_3y</code> of only 12.13%. Every ROA, gearing and spread comparison in this segment reads wrong for this name, and that is a property of the company rather than a data defect.",
+  "<b>The trailing year is a step change nobody can annualise.</b> TTM sales +117.99%, operating profit +342.98%, net profit +390.73%, with the operating margin moving from <code>opm_prev</code> 19.60% to <code>opm_now</code> 39.83% — a +20.23pp step the pack flags as a mix change or one-off. <code>sales_yoy_q</code> +230.64% is the highest of the 27. Against that, <code>book_value_cagr_10y</code> 5.82% is the second-lowest of the 16 ten-year series, and net profit beat inflation in just 2 of the last 4 years, 3 of 6 and 3 of 9 — the long record is of a dormant balance sheet, not a growing lender.",
+  "<b>The price is low and the momentum is extreme.</b> <code>pe_ttm</code> 7.02x against an own nine-year band of 4.56-33.38x whose average is 16.53x, on <code>pb</code> 1.12x and <code>p_aum</code> 1.08x. <code>ret_12m_rel</code> +57.73%, <code>ret_6m_rel</code> +63.27% and <code>ret_3m_rel</code> +44.96% are all top-two of the 27, and <code>earnings_yield_trend</code> +3.84%. Two gaps to name: there is no delivery row at all, so accumulation cannot be distinguished from churn, and <code>roe_excess_13_10y</code> -7.37pp says the hurdle has never been met. " + TNS,
+  "<i>The uncomfortable answer: at 1.05x gearing this is a securities portfolio with a lending licence, and a 390% profit jump on a 5.82% ten-year book compounding is a change of activity rather than operating leverage. 7.02x earnings looks cheap only if the new earnings base holds, and there is no history to say it will. Buy it as a small speculation on the new book proving real, not as the cheapest high-ROA lender of the 27 — it is not that, whatever the percentile says.</i>",
+ ],
+ "trigger": "equity_to_assets falling toward 60% as a real loan book is funded, with opm_now holding near 40% -> the pivot is genuine and 7.02x is early. np_yoy_q turning negative, or equity_to_assets staying above 90% for another year -> there is no lending business being built and the trailing year was a one-off gain.",
+ "evidence": ["equity_to_assets", "roa_3y", "roe_3y", "roe_excess_13_10y", "pe_ttm", "pb", "p_aum", "ttm_np_pct", "opm_now", "opm_prev", "sales_yoy_q", "ret_12m_rel"],
+},
+
+# ----------------------------------------------------------------------- hold
+
+"MANAPPURAM": {
+ "confidence": "medium",
+ "verdict": "HOLD — the second-best long-run returns of the 27, but 20.02x earnings against an own ten-year average of 10.91x and five-year profit shrinking 6.78% a year",
+ "points": [
+  "<b>Not held — MANAPPURAM is on your watchlist.</b> Manappuram Finance, ₹29,016cr, gold loans plus microfinance, vehicle and home finance, promoter stake 41.66% with <code>shareholders</code> 526,798 — the widest retail register of " + PEERS + ". Composite 72 inside bfsi_nbfc: quality 60, valuation 36, momentum 72.",
+  "<b>Through a cycle it is the second-best lender here.</b> <code>roe_7y</code> 16.50% is second of the 27 behind MUTHOOTFIN's 21.64%, <code>roe_5y</code> 13.27% is fourth, and <code>roe_excess_13_7y</code> +3.50pp and <code>roe_excess_13_10y</code> +4.64pp are both second-highest — it is one of only four names here that clear the 13% hurdle on every window. <code>np_consistency_10y</code> 1.74 is the highest of the 16 names with a ten-year series, a fraction ahead of BAIDFIN's 1.74. Net profit beat inflation in 2 of the last 4 years, 3 of 6 and 5 of 9.",
+  "<b>But the last five years have gone backwards.</b> <code>np_cagr_5y</code> -6.78% and <code>np_cagr_7y</code> -6.14% are both negative — the only name of the 27 with a ten-year hurdle clearance whose profit has actually shrunk over five and seven years — and <code>roe_3y</code> 11.66% is now ninth rather than second. The microfinance subsidiary is where that went. TTM net profit +81.21% on sales of only +4.68% is the rebound off that, and it comes with the blocker: the operating margin stepped from <code>opm_prev</code> 49.54% to <code>opm_now</code> 62.68%, +13.14pp in one year, which the pack flags as a mix change or one-off rather than a trend.",
+  "<b>And the price has already paid for the recovery.</b> <code>pe_ttm</code> 20.02x sits near the top of its own ten-year band of 5.45-23.51x, well above the 10.91x average — the market is paying twice its historic multiple. <code>pb</code> 1.81x, <code>p_aum</code> 0.41x, <code>div_yield</code> 0.65%. <code>roa_3y</code> 2.83% on <code>equity_to_assets</code> 23.83% is about 4.20x gearing. <code>loan_book_cagr_3y</code> 23.58%, <code>np_yoy_q</code> +322.45%, <code>ret_12m_rel</code> +9.37%, and the close held above its 200-day EMA on 84.5% of the last 252 sessions — the second-highest of the 21 names with a reading. " + TNS,
+  "<i>Keep it on the watchlist and do not buy it here. It is the same collateral and the same regulator as MUTHOOTFIN, which trades at 9.52x below its own average on a 20.82% ROE while this trades at 20.02x above its own average on 11.66% — there is no version of that comparison where this is the better purchase. What would change it is the microfinance book being sold, shrunk or ring-fenced, because that is the specific thing that turned a 16.5% seven-year ROE into a negative five-year profit CAGR.</i>",
+ ],
+ "trigger": "pe_ttm falling back toward its 10.91x ten-year average while roe_3y recovers past 14% -> the discount to MUTHOOTFIN closes and the gold book alone justifies it. np_cagr_5y staying negative with opm_now sliding back under 55% -> the margin step was the one-off the pack warns of and 20x is paying for a recovery that did not happen.",
+ "evidence": ["roe_7y", "roe_excess_13_10y", "np_cagr_5y", "np_cagr_7y", "roe_3y", "roa_3y", "equity_to_assets", "pe_ttm", "pb", "opm_now", "opm_prev", "pct_above_200ema_252d"],
+},
+
+"CREDITACC": {
+ "confidence": "medium",
+ "verdict": "HOLD — the largest pure microfinance lender here at 16.43x earnings and 2.54x book, with a 13.19% ROE that misses the hurdle on every window",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> CreditAccess Grameen, ₹19,888cr, joint-liability microcredit to women from low-income households, promoter stake 66.21% — the largest pure microfinance lender of " + PEERS + ". Composite 70 inside bfsi_nbfc: quality 61, valuation 40, momentum 63.",
+  "<b>The returns are good for microfinance and still short of the hurdle.</b> <code>roe_3y</code> 13.19% is fourth of the 27 and <code>roe_5y</code> 12.84% fifth, but <code>roe_excess_13_5y</code> -0.16pp, <code>roe_excess_13_7y</code> -1.57pp and <code>roe_excess_13_10y</code> -0.99pp mean it has sat just under 13% on every window rather than above it. <code>roa_3y</code> 3.12% on <code>equity_to_assets</code> 24.11% is about 4.15x gearing. Net profit beat inflation in 3 of the last 4 years, 4 of 6 and 6 of 9, with <code>np_consistency_10y</code> 1.56.",
+  "<b>The trailing year is a credit-cost rebound, not growth.</b> TTM net profit +524.34% on sales of only +11.86%, and the operating margin stepped from <code>opm_prev</code> 39.17% to <code>opm_now</code> 57.05% — +17.88pp in one year, flagged by the pack as a mix change or one-off rather than a trend, so the earnings the 16.43x multiple rests on are not a settled base. <code>np_yoy_q</code> +719.72% against <code>sales_yoy_q</code> +21.92% is the same story in one quarter. <code>loan_book_cagr_3y</code> 13.47% is slow for this segment — nineteenth of the 26 names with a reading.",
+  "<b>Priced above its own worst years and below its own best.</b> <code>pe_ttm</code> 16.43x against an own eight-year band of 14.56-77.87x whose average is 29.79x, on <code>pb</code> 2.54x and <code>p_aum</code> 0.66x with no dividend. The band's 77.87x high is itself a loss-year artefact, so the 29.79x average flatters the comparison — the useful reading is that 16.43x is near the bottom of the range, not that it is half the average. <code>np_cagr_5y</code> 21.82% and <code>np_cagr_7y</code> 15.15%, <code>book_value_cagr_10y</code> 30.99%. <code>ret_12m_rel</code> -3.69%, above the 200-day EMA on 69.4% of the last 252 sessions. " + TNS,
+  "<i>Hold rather than buy. This is the best-run large microfinance book in the country and it still has not earned 13% on equity through any window measured here, which is the honest verdict on the model rather than on the management. At 2.54x book you are paying a quality premium for a business whose returns do not clear the hurdle — ARMANFIN does, at 1.99x. Revisit if the post-rebound margin holds above 55% for a full year, which would be the first evidence that the credit cost has structurally improved rather than cyclically normalised.</i>",
+ ],
+ "trigger": "opm_now holding above 55% with roe_3y rising past 15% -> the credit cost has structurally reset and 2.54x book is cheap for the scale. np_yoy_q turning negative or loan_book_cagr_3y falling under 10% -> the growth premium has gone and 2.54x on a sub-hurdle ROE de-rates toward book.",
+ "evidence": ["roe_3y", "roe_5y", "roe_excess_13_5y", "roa_3y", "equity_to_assets", "opm_now", "opm_prev", "ttm_np_pct", "pe_ttm", "pb", "p_aum", "loan_book_cagr_3y"],
+},
+
+"CGCL": {
+ "confidence": "medium",
+ "verdict": "HOLD — the third-fastest book of the 27 at 40.42% growth and the lowest valuation pillar score among the fast growers, at 21.27x and 3.33x book",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> Capri Global Capital, ₹23,980cr, a diversified NBFC — gold loans, housing finance, MSME and construction finance plus car-loan distribution — promoter stake 59.92%. Composite 80 inside bfsi_nbfc: quality 65, valuation 26, momentum 78.",
+  "<b>The growth is real, broad and sustained.</b> <code>loan_book_cagr_3y</code> 40.42% is the third-fastest of the 27, <code>np_cagr_5y</code> 46.68% and <code>np_cagr_7y</code> 34.37% are both top-four, and <code>book_value_cagr_10y</code> 22.49% says it has compounded equity through two cycles. The current year matches: TTM sales +50.16%, operating profit +55.81%, net profit +95.19%, <code>sales_yoy_q</code> +57.05% and <code>np_yoy_q</code> +102.05%. Net profit beat inflation in 3 of the last 4 years, 5 of 6 and 8 of 9.",
+  "<b>The return on equity has never kept up with the growth.</b> <code>roe_3y</code> 10.53%, <code>roe_5y</code> 9.60% and <code>roe_7y</code> 9.82% all sit below the segment median, and <code>roe_excess_13_5y</code> -3.40pp, <code>roe_excess_13_7y</code> -3.18pp and <code>roe_excess_13_10y</code> -4.12pp mean the 13% hurdle has never been cleared. <code>roa_3y</code> 2.35% on <code>equity_to_assets</code> 22.68% is about 4.41x gearing — so a 40% book growth rate is being funded with borrowings at an asset yield of 2.35%, which is how a diversified lender ends up growing fast and earning little. Unusually for this batch there is no margin-step blocker: <code>opm_prev</code> 63.96% to <code>opm_now</code> 66.36% is a +2.40pp move.",
+  "<b>And the price is the objection.</b> <code>pe_ttm</code> 21.27x and <code>pb</code> 3.33x — the second-richest book multiple of the 27 — on <code>p_aum</code> 0.77x and a token <code>div_yield</code> of 0.08%. The valuation pillar scores 26, the lowest of any name in the set growing its book above 30%. The own-history band is refused: its 3.97x low falls under the 4.0x floor this batch requires, so the whole range including the average is contaminated. <code>ret_12m_rel</code> +30.67%, above the 200-day EMA on 66.3% of the last 252 sessions. " + TNS,
+  "<i>Hold. The growth record is one of the best three here and the market knows it: 3.33x book for a 10.53% ROE prices in the return catching up with the book, and nothing in ten years of history shows that happening. The thing to watch is not the next quarter's profit — it will be large — but <code>roa_3y</code>, because a diversified lender at 4.4x gearing earning 2.35% on assets has to improve the asset yield or stop growing. If it does neither, the de-rating comes from the multiple rather than from the earnings.</i>",
+ ],
+ "trigger": "roa_3y rising past 3% with loan_book_cagr_3y still above 30% -> the growth is finally profitable and 3.33x book is defensible. roe_3y staying under 11% for another year, or np_yoy_q falling under 25% -> a 3.33x book multiple on a sub-hurdle return has nothing supporting it.",
+ "evidence": ["loan_book_cagr_3y", "np_cagr_5y", "roe_3y", "roe_excess_13_10y", "roa_3y", "equity_to_assets", "pe_ttm", "pb", "p_aum", "opm_now", "opm_prev", "ret_12m_rel"],
+},
+
+"SBFC": {
+ "confidence": "medium",
+ "verdict": "HOLD — the fastest seven-year profit compounding of the 27 at 52.74%, priced at 19.45x and 2.51x book with the lowest valuation pillar in the set",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> SBFC Finance, ₹9,337cr, secured MSME lending plus gold loans and unsecured personal and business loans, promoter stake 52.31%. Composite 36 inside bfsi_nbfc: quality 70, valuation 13 — the lowest valuation pillar of " + PEERS + " — momentum 42.",
+  "<b>The compounding record is the best here.</b> <code>np_cagr_7y</code> 52.74% is the fastest of the 27 and <code>np_cagr_5y</code> 62.58% fourth-fastest, on <code>book_value_cagr_5y</code> 30.43%. The current year is consistent rather than spiking: TTM sales +27.56%, operating profit +28.25%, net profit +30.71%, with <code>sales_yoy_q</code> +26.53% and <code>np_yoy_q</code> +28.97% and a flat margin, <code>opm_prev</code> 68.44% to <code>opm_now</code> 68.81%. That matters — this is one of the few names in the batch whose trailing profit is not a rebound off a bad year, so the earnings under the multiple are a real base.",
+  "<b>The returns are mid-table and the hurdle question is unanswered.</b> <code>roe_3y</code> 10.49%, <code>roe_5y</code> 9.03% and <code>roe_7y</code> 7.96% are all below the 13% hurdle, and as a mature-tier name it carries neither the <code>roe_excess_13_Ny</code> nor the <code>np_growth_above_inflation_Ny</code> test at all — so its through-cycle inflation record is not measured here rather than passed. <code>roa_3y</code> 3.81% on <code>equity_to_assets</code> 36.68% is about 2.73x gearing, conservative for the segment, which is why a good asset yield converts to a mid-table ROE. <code>loan_book_cagr_3y</code> 24.49%.",
+  "<b>Price is the entire objection, and one pillar is partial.</b> <code>pe_ttm</code> 19.45x and <code>pb</code> 2.51x on <code>p_aum</code> 0.88x with no dividend. There is no own-history PE band — too little usable annual history — so there is no way to say whether 19.45x is high or low for this company specifically. The valuation pillar scored 13 on 75% of its declared weight, renormalised around <code>earnings_yield_trend</code> and <code>div_yield</code>, both of which are absent; the percentile therefore answers a narrower question than the scorecard asks. <code>ret_12m_rel</code> -27.98%, above the 200-day EMA on only 25.4% of the last 252 sessions. " + TNS,
+  "<i>Hold. A secured MSME book compounding profit above 50% for seven years with a flat margin is the cleanest growth record in this batch, and 2.51x book for a 10.49% ROE is the market charging you for all of it in advance. The down year has already started in the price — 28% behind the market over twelve months — so the de-rating is in progress rather than ahead. Watch whether <code>roe_3y</code> crosses 12% as the equity base is levered up; that is the only route by which 2.51x becomes cheap rather than merely justified.</i>",
+ ],
+ "trigger": "roe_3y rising through 12% while opm_now holds near 69% -> the gearing is being used and a 50%-plus compounder at 2.5x book is reasonable. np_yoy_q falling under 15%, or equity_to_assets staying above 35% for another year -> growth is slowing before the return improved and the valuation pillar score of 13 is the correct reading.",
+ "evidence": ["np_cagr_7y", "np_cagr_5y", "roe_3y", "roa_3y", "equity_to_assets", "opm_now", "opm_prev", "pe_ttm", "pb", "p_aum", "loan_book_cagr_3y", "ret_12m_rel"],
+},
+
+"AFIL": {
+ "confidence": "medium",
+ "verdict": "HOLD — 7.81x earnings and 0.82x book on a 4.57% asset return, but the price has never closed above its 200-day EMA in a year",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> Akme Fintrade (India), ₹346cr, two-wheeler, four-wheeler, used-vehicle, business and solar-rooftop lending, promoter stake 39.02%. Composite 95 inside bfsi_nbfc: quality 73, valuation 92, momentum 41.",
+  "<b>The asset return is genuinely good and the gearing is why the ROE is not.</b> <code>roa_3y</code> 4.57% is sixth of the 27, but <code>equity_to_assets</code> 51.05% means barely 1.96x assets to equity — the third-least-levered balance sheet in the set — so it converts to a <code>roe_3y</code> of only 8.99%. <code>roe_5y</code> 7.42% and <code>roe_7y</code> 9.55% say the same. Whether that is prudence or an inability to raise debt is not answerable from the pack, and the verdict does not assume either.",
+  "<b>Growth is fast and the margin is flat, which is the right combination.</b> <code>loan_book_cagr_3y</code> 33.76% is seventh of the 26 names with a reading, <code>np_cagr_5y</code> 79.02%, <code>book_value_cagr_5y</code> 32.66%. TTM sales +40.30%, operating profit +40.29%, net profit +29.33%, with <code>opm_prev</code> 75.32% and <code>opm_now</code> 75.31% — a -0.01pp step, the steadiest margin of the 26 that report one, and no margin-step blocker. <code>sales_yoy_q</code> +30.86%, <code>np_yoy_q</code> +20.40%. As a mature-tier name it carries neither the <code>roe_excess_13_Ny</code> nor the <code>np_growth_above_inflation_Ny</code> test, so its hurdle and inflation record are unmeasured here rather than passed.",
+  "<b>Cheap, and the market has not agreed once in a year.</b> <code>pe_ttm</code> 7.81x, <code>pb</code> 0.82x, <code>p_aum</code> 0.38x, no dividend. <code>pct_above_200ema_252d</code> is 0.00% — the close did not finish above its 200-day EMA on a single one of the last 252 sessions, and only TRU shares that of the 21 names with a reading. <code>ret_12m_rel</code> -6.08% and <code>ret_3m_rel</code> -17.52%. There is no own-history PE band (insufficient usable annual history), and the valuation pillar's 92 was scored on 75% of its declared weight, renormalised around <code>earnings_yield_trend</code> and <code>div_yield</code>, both absent — so that 92 is a narrower claim than it looks. " + TNS,
+  "<i>Hold, and the reason is not the business. Below book with a 4.57% asset yield and a 34% book growth rate, this screens as the second-cheapest quality name here after CSLFINANCE. What stops it being a buy is a ₹346cr market cap with 0.35% FII and 1.95% DII holding and a price that has spent an entire year under its own trend line — in a stock this small, that is usually information rather than noise, and the pack cannot tell you what. Wait for the price to clear its 200-day EMA at all before treating the valuation as the signal.</i>",
+ ],
+ "trigger": "pct_above_200ema_252d turning positive while roa_3y holds above 4% -> the trend has finally agreed with the balance sheet and 0.82x book is indefensible. np_yoy_q falling under 10%, or the loan book growth dropping below 20% -> a sub-book multiple on an unlevered 9% ROE is a value trap and the price was right.",
+ "evidence": ["roa_3y", "roe_3y", "equity_to_assets", "pe_ttm", "pb", "p_aum", "loan_book_cagr_3y", "opm_now", "opm_prev", "pct_above_200ema_252d", "ret_12m_rel", "fii_pct"],
+},
+
+"MUTHOOTCAP": {
+ "confidence": "medium",
+ "verdict": "HOLD — the cheapest book of the 27 at 0.54x and the lowest price to AUM at 0.09x, against a seven-year profit CAGR of -24.54%",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> Muthoot Capital Services, ₹359cr, two-wheeler, used-car, used-commercial-vehicle and secured business lending, promoter stake 63.33%. Composite 50 inside bfsi_nbfc: quality 41, valuation 71, momentum 51.",
+  "<b>Nothing here is priced lower.</b> <code>pb</code> 0.54x is the cheapest book multiple of " + PEERS + " and <code>p_aum</code> 0.09x the lowest — nine paise for a rupee of managed assets, against a segment where the next-lowest is SATIN at 0.18x. <code>pe_ttm</code> 14.96x is unremarkable because the earnings base is small, and <code>earnings_yield_trend</code> +7.59% is the highest of the 19 names with a reading. The own-history band is refused: a 3.60x low sits under the 4.0x floor this batch requires.",
+  "<b>The reason it is that cheap is seven years of destroyed profit.</b> <code>np_cagr_7y</code> -24.54% is the worst of the 27, <code>roe_5y</code> 1.08% is effectively zero and <code>roe_7y</code> 3.79% barely better, with <code>roe_excess_13_5y</code> -11.92pp and <code>roe_excess_13_7y</code> -9.21pp. Net profit beat inflation in only 2 of the last 4 years, 2 of 6 and 4 of 9. <code>roe_3y</code> 9.56% is the recovery, and <code>roa_3y</code> 2.28% on <code>equity_to_assets</code> 20.44% — about 4.89x gearing, the second-most levered book of the 27 behind TRU's 19.74% — is how a thin asset yield still produces it.",
+  "<b>The trailing year is not yet a turn.</b> TTM sales +22.00% and operating profit +17.63%, but net profit -20.84%, with the margin easing from <code>opm_prev</code> 56.68% to <code>opm_now</code> 54.66%. <code>np_yoy_q</code> +273.88% off a tiny base against <code>sales_yoy_q</code> of only +7.11%. <code>loan_book_cagr_3y</code> 18.53% is mid-table. <code>ret_12m_rel</code> -17.02%, above the 200-day EMA on 13.9% of the last 252 sessions, with <code>shareholders</code> 21,704 and institutional holding near nil — <code>fii_pct</code> 1.25%, <code>dii_pct</code> 1.01%. " + TNS,
+  "<i>Hold, not buy, and the distinction is leverage. Nine paise per rupee of AUM is the kind of price that makes money when a book stabilises — but this is the second-most levered balance sheet of the 27 at 4.89x, attached to unsecured two-wheeler lending, and trailing net profit is still falling 20.84% while sales rise 22%. That gap is credit cost, and until it closes the 0.54x book is correctly priced rather than mistakenly so. The turn to wait for is <code>ttm_np_pct</code> turning positive, not the next quarterly percentage off a near-zero base.</i>",
+ ],
+ "trigger": "ttm_np_pct turning positive while roe_3y holds near 10% -> the credit cost has normalised and 0.54x book on 0.09x AUM re-rates hard. roe_3y falling back under 6%, or equity_to_assets dropping below 19% -> a 4.89x-geared unsecured two-wheeler book in a bad credit year is where equity disappears.",
+ "evidence": ["pb", "p_aum", "pe_ttm", "np_cagr_7y", "roe_5y", "roe_excess_13_5y", "roe_3y", "roa_3y", "equity_to_assets", "opm_now", "opm_prev", "ttm_np_pct"],
+},
+
+"MANBA": {
+ "confidence": "medium",
+ "verdict": "HOLD — the steadiest five-year profit record of the 27 and a 35.87% book growth rate, at 14.32x earnings and 1.70x book",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> Manba Finance, ₹698cr, new and used two- and three-wheeler and EV lending plus personal and small-business loans. Promoter stake 74.98% — the highest of " + PEERS + ", which is a liquidity fact as much as a control one. Composite 82 inside bfsi_nbfc: quality 67, valuation 43, momentum 70.",
+  "<b>The profit record is the steadiest in the batch on the window it has.</b> <code>np_consistency_5y</code> 1.67 is the highest of the seven names measured on a five-year window, with <code>np_cagr_5y</code> 48.09% and <code>np_cagr_7y</code> 16.44% and <code>book_value_cagr_5y</code> 28.05%. The margin is flat — <code>opm_prev</code> 65.22% to <code>opm_now</code> 65.97%, a +0.75pp step — so there is no earnings-quality blocker and no rebound distortion: TTM sales +31.73%, operating profit +33.24%, net profit +15.34%, <code>sales_yoy_q</code> +38.21%, <code>np_yoy_q</code> +36.00%.",
+  "<b>The return sits just below the hurdle and the test that would judge it is absent.</b> <code>roe_3y</code> 12.29% is sixth of the 27, <code>roe_5y</code> 10.43% and <code>roe_7y</code> 10.27% behind it, on <code>roa_3y</code> 2.69% and <code>equity_to_assets</code> 22.16% — about 4.51x gearing. As a mature-tier name it carries neither <code>roe_excess_13_Ny</code> nor <code>np_growth_above_inflation_Ny</code>, so whether it has beaten the 13% hurdle or inflation through a cycle is unmeasured here rather than passed. <code>loan_book_cagr_3y</code> 35.87% is the fourth-fastest of the 26 names with a reading.",
+  "<b>Priced mid-table with no own-history reference.</b> <code>pe_ttm</code> 14.32x, <code>pb</code> 1.70x, <code>p_aum</code> 0.37x, <code>div_yield</code> 0.72%. There is no own-history PE band — insufficient usable annual history — so there is no company-specific test of whether 14.32x is dear. Institutional interest is effectively nil: <code>fii_pct</code> 0.92%, <code>dii_pct</code> 0.00%, <code>shareholders</code> 17,898. <code>ret_12m_rel</code> +7.00% and <code>ret_6m_rel</code> +32.79%, above the 200-day EMA on 39.3% of the last 252 sessions. " + TNS,
+  "<i>Hold. A 12.29% ROE growing its book 36% a year with a flat margin is a competent two-wheeler lender priced fairly at 1.70x book, and the reason not to buy is structural rather than operational: a 75% promoter stake, no DII holding and 17,898 shareholders on a ₹698cr float means the price can ignore the fundamentals for a long time. The short history is the other half — five years is not a cycle, and two-wheeler lending is where the last two credit cycles did most of their damage. Revisit when there is a seven-year hurdle reading to judge it on.</i>",
+ ],
+ "trigger": "roe_3y clearing 13% while loan_book_cagr_3y stays above 30% -> a hurdle-clearing two-wheeler book at 1.7x is worth owning. opm_now falling under 62%, or np_yoy_q dropping below 15% -> the spread on unsecured two-wheeler credit is compressing and 36% book growth becomes the risk.",
+ "evidence": ["np_consistency_5y", "np_cagr_5y", "roe_3y", "roa_3y", "equity_to_assets", "opm_now", "opm_prev", "loan_book_cagr_3y", "pe_ttm", "pb", "p_aum", "promoter_pct"],
+},
+
+"LAXMIINDIA": {
+ "confidence": "medium",
+ "verdict": "HOLD — 11.03x earnings and 1.34x book on a 48.81% three-year profit CAGR, but three years is the entire measurable history",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> Laxmi India Finance, ₹624cr, MSME, wholesale, business, personal and residential-construction lending, promoter stake 60.17%. Composite 71 inside bfsi_nbfc: quality 55, valuation 77, momentum 57.",
+  "<b>Everything measurable about it is good and short.</b> <code>np_cagr_3y</code> 48.81% is the second-fastest of the four names scored on a three-year window, <code>book_value_cagr_3y</code> 51.90% and <code>np_consistency_3y</code> 1.76. <code>roe_3y</code> 11.93% is eighth of the 27 on <code>roa_3y</code> 2.52% and <code>equity_to_assets</code> 21.45% — about 4.66x gearing, among the most levered here. There is no <code>roe_5y</code>, no <code>roe_7y</code>, no <code>roe_excess_13_Ny</code> and no <code>np_growth_above_inflation_Ny</code> reading: this company has not been listed through a credit cycle, so the hurdle question is unanswerable rather than failed.",
+  "<b>Growth is current, with a mild margin give-back.</b> <code>loan_book_cagr_3y</code> 32.66% is eighth of the 26 with a reading. TTM sales +28.83%, operating profit +24.38%, net profit +44.41%; <code>sales_yoy_q</code> +34.18% and <code>np_yoy_q</code> +69.43%. <code>opm_prev</code> 66.11% to <code>opm_now</code> 63.82% is a -2.29pp step, below the threshold that would flag an earnings-quality blocker.",
+  "<b>Priced cheaply, with three measurement gaps that matter.</b> <code>pe_ttm</code> 11.03x, <code>pb</code> 1.34x, <code>p_aum</code> 0.38x, no dividend. First, there is no own-history PE band, so 11.03x has no company-specific reference. Second, there is no 200-EMA trend reading at all — 308 price bars against the ~450 the metric needs — and that absence means a short listing history, not a weak trend. Third, the valuation pillar's 77 was scored on 75% of its declared weight, renormalised around <code>earnings_yield_trend</code> and <code>div_yield</code>, both absent. <code>ret_12m_rel</code> -23.23% while <code>ret_3m_rel</code> is +5.09%. " + TNS,
+  "<i>Hold on insufficient history rather than on a flaw. An MSME lender at 1.34x book earning 11.93% and growing its book 33% is priced reasonably, and if the three-year record extends it is a buy — but a 4.66x-geared unsecured-leaning book with no reading through any downturn is exactly the profile that looks best immediately before its first bad year. The 23% twelve-month underperformance against a +5% last quarter says the market is undecided too. Wait for a five-year ROE series.</i>",
+ ],
+ "trigger": "a five-year roe series arriving above 12% while loan_book_cagr_3y holds above 25% -> the record extends through a cycle and 1.34x book is cheap. np_yoy_q falling under 20%, or opm_now sliding under 60% -> the first credit cycle has arrived at a lender with no track record of surviving one.",
+ "evidence": ["np_cagr_3y", "book_value_cagr_3y", "roe_3y", "roa_3y", "equity_to_assets", "loan_book_cagr_3y", "pe_ttm", "pb", "p_aum", "opm_now", "opm_prev", "ret_12m_rel"],
+},
+
+"BAIDFIN": {
+ "confidence": "medium",
+ "verdict": "HOLD — 0.72x book and the second-highest ten-year profit consistency of the 27 at 1.74, on a 7.23% ROE that has never been near the hurdle",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> Baid Finserv, ₹167cr, a non-deposit-taking NBFC lending against cars, commercial vehicles and tractors plus SME and mortgage loans, promoter stake 49.73%. The fourth-smallest of " + PEERS + " by market capitalisation. Composite 58 inside bfsi_nbfc: quality 56, valuation 54, momentum 42.",
+  "<b>The record is consistent and small.</b> <code>np_consistency_10y</code> 1.74 is the second-highest of the 16 names with a ten-year series — a whisker behind MANAPPURAM, which also rounds to 1.74 — and net profit beat inflation in 3 of the last 4 years, 4 of 6 and 6 of 9, with <code>book_value_cagr_10y</code> 22.92%. That is a decade of steady, modest compounding: <code>np_cagr_5y</code> 14.24% and <code>np_cagr_7y</code> 11.94%.",
+  "<b>The return has never been good.</b> <code>roe_3y</code> 7.23%, <code>roe_5y</code> 6.88% and <code>roe_7y</code> 6.53%, with <code>roe_excess_13_5y</code> -6.12pp, <code>roe_excess_13_7y</code> -6.47pp and <code>roe_excess_13_10y</code> -3.96pp. <code>roa_3y</code> 2.92% is respectable; the problem is <code>equity_to_assets</code> 40.58%, only about 2.46x assets to equity, so a decent asset yield never becomes a decent equity return. That is a choice about funding, and at this size it may not be a free one.",
+  "<b>And the current year has stopped growing.</b> <code>sales_yoy_q</code> -9.00% is one of only five negative quarterly sales readings of the 27, <code>np_yoy_q</code> +7.96%, TTM sales +9.47% with operating profit up just 1.75% and net profit 6.62% as the margin eased from <code>opm_prev</code> 57.85% to <code>opm_now</code> 53.77% — a -4.08pp step, just under the blocker threshold. <code>loan_book_cagr_3y</code> 16.48% is in the bottom third. <code>pe_ttm</code> 13.93x and <code>pb</code> 0.72x with <code>div_yield</code> 0.93%; the own-history band is refused because its 0.42x low is plainly a split-adjustment artefact. <code>earnings_yield_trend</code> -5.52%. " + TNS,
+  "<i>Hold, and the honest version is that this is a decade-old, well-behaved, structurally low-return lender. 0.72x book is the correct price for a 7.23% ROE — the discount is not an opportunity, it is arithmetic. There is no thesis here unless the balance sheet is levered up or the asset mix moves upmarket, and a ₹167cr NBFC with 0.18% FII holding has limited ability to do the first. Own it only if a sub-book, inflation-beating, ten-year-consistent micro-cap is itself the objective.</i>",
+ ],
+ "trigger": "equity_to_assets falling toward 30% with roa_3y holding near 3% -> the return finally reaches double digits and 0.72x book re-rates. sales_yoy_q staying negative for another two quarters -> the book is shrinking at a lender that was only ever consistent, and consistency without growth is not worth owning.",
+ "evidence": ["np_consistency_10y", "book_value_cagr_10y", "roe_3y", "roe_excess_13_10y", "roa_3y", "equity_to_assets", "sales_yoy_q", "opm_now", "opm_prev", "pe_ttm", "pb", "div_yield"],
+},
+
+"DCCL": {
+ "confidence": "medium",
+ "verdict": "HOLD — 5.83x earnings, 0.58x book and a 2.39% dividend, with no shareholding data of any kind to check who owns it",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> DCCL, ₹60cr, credit to low-income individuals and small-scale entrepreneurs — the smallest of " + PEERS + " and the only one with no business summary beyond that line. Composite 53 inside bfsi_nbfc: quality 44, valuation 93, momentum 40.",
+  "<b>Name the data gap first, because it is unusual.</b> This is the only name of the 27 with no shareholding data at all — <code>promoter_pct</code>, <code>fii_pct</code>, <code>dii_pct</code> and <code>shareholders</code> are each absent rather than low. So the promoter stake is unknown, any pledge is unknown, and whether institutions hold it is unknown. On a ₹60cr lender those are not cosmetic gaps: they are most of what you would want to know about governance, and no verdict here can speak to it.",
+  "<b>What is measurable is good on a three-year window.</b> <code>np_cagr_3y</code> 65.69% is the fastest of the four names scored on three years, <code>book_value_cagr_3y</code> 24.53%, <code>np_consistency_3y</code> 1.73, <code>roe_3y</code> 8.28% on <code>roa_3y</code> 2.72% and <code>equity_to_assets</code> 32.18% — about 3.11x gearing. There is no five- or seven-year ROE, no <code>roe_excess_13_Ny</code> and no <code>np_growth_above_inflation_Ny</code> reading, so the hurdle and inflation questions are unanswerable rather than failed. TTM sales +25.67%, operating profit +21.08%, net profit +37.90%, margin easing from <code>opm_prev</code> 69.73% to <code>opm_now</code> 67.18%.",
+  "<b>The valuation is the cheapest-looking in the batch after CSLFINANCE.</b> <code>pe_ttm</code> 5.83x is the second-lowest of the 23 names with a PE, <code>pb</code> 0.58x the second-lowest book multiple of the 27, <code>p_aum</code> 0.21x, and <code>div_yield</code> 2.39% is the second-highest of the nine payers here. There is no own-history PE band and no 200-EMA trend reading — 277 price bars against the ~450 needed, which means a short listing history rather than a weak trend. <code>loan_book_cagr_3y</code> 16.01%, <code>sales_yoy_q</code> +20.95% but <code>np_yoy_q</code> only +0.49%; <code>ret_12m_rel</code> -31.00%. " + TNS,
+  "<i>Hold, and the reason is the missing register rather than the multiple. At 5.83x earnings with a 2.39% yield and 0.58x book this is statistically the cheapest thing in the segment after CSLFINANCE — but on a ₹60cr NBFC the questions that decide whether that is cheap or a trap are all questions about who owns it and what is pledged, and this is the one name of the 27 where the pack cannot answer any of them. Do not buy a micro-cap lender whose shareholding you cannot see, however low the multiple.</i>",
+ ],
+ "trigger": "shareholding data appearing with a clean promoter holding and no pledge, while np_cagr_3y stays above 30% -> the only objection was the blind spot and 5.83x is then indefensible. np_yoy_q staying near zero for another two quarters -> the 65.69% three-year CAGR has ended and a ₹60cr lender with no visible register has nothing left to recommend it.",
+ "evidence": ["np_cagr_3y", "book_value_cagr_3y", "roe_3y", "roa_3y", "equity_to_assets", "pe_ttm", "pb", "p_aum", "div_yield", "opm_now", "opm_prev", "np_yoy_q"],
+},
+
+"AYE": {
+ "confidence": "medium",
+ "verdict": "HOLD — a ₹4,030cr micro-MSME lender with only 7 quarters of history, priced at 16.96x and 1.59x book on a 10.47% ROE",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> Aye Finance, ₹4,030cr, secured and unsecured working-capital loans to micro-scale MSMEs. Composite 82 inside bfsi_nbfc: quality 55, valuation 69, momentum 66.",
+  "<b>The history is too short for most of this batch's tests, and that is the central fact.</b> Only 7 quarters exist, so there is no TTM-versus-prior-TTM comparison at all — the trailing growth, margin-step and profit-quality readings that every other row leans on are simply absent here, including <code>opm_now</code> and <code>opm_prev</code>, which is why there is no earnings-quality blocker rather than a clean one. There is also no <code>roe_5y</code>, no <code>roe_excess_13_Ny</code> and no <code>np_growth_above_inflation_Ny</code>: the hurdle and inflation questions are unanswerable.",
+  "<b>What exists reads well.</b> <code>roe_3y</code> 10.47% on <code>roa_3y</code> 2.83% and <code>equity_to_assets</code> 27.79% — about 3.60x gearing — with <code>np_consistency_3y</code> 1.93, the highest of the four names scored on a three-year window, and <code>book_value_cagr_3y</code> 45.25%. <code>loan_book_cagr_3y</code> 35.28% is the fifth-fastest of the 26 names with a reading, and the latest quarter holds it: <code>sales_yoy_q</code> +17.74%, <code>np_yoy_q</code> +143.54%. <code>np_cagr_3y</code> 9.62% is the laggard of that group, so the book has grown much faster than the profit.",
+  "<b>Priced for the growth, and two pillars are partial.</b> <code>pe_ttm</code> 16.96x, <code>pb</code> 1.59x, <code>p_aum</code> 0.53x, no dividend and no own-history PE band. There is no 200-EMA trend reading — 173 price bars, the shortest series of " + PEERS + ", against the ~450 the metric needs, so the absence is listing history rather than a weak trend. The momentum pillar's 66 was scored on 65% of its declared weight, renormalised around <code>ret_12m_rel</code> and <code>pct_above_200ema_252d</code>, both absent, and the valuation pillar's 69 on 75% with <code>earnings_yield_trend</code> and <code>div_yield</code> absent — so neither percentile answers the question the scorecard asks. <code>ret_6m_rel</code> +55.75% is the third-highest of the 27. " + TNS,
+  "<i>Hold, and the reason is that there is not enough data to do anything else responsibly. A 10.47% ROE growing its book 35% a year at 1.59x book is a reasonable price for a micro-enterprise lender — but with 7 quarters of history, no cycle reading, no trailing comparison and two pillars scored on partial weight, the composite of 82 is a narrower claim than it appears. The specific thing to watch is the gap between 35.28% book growth and 9.62% profit growth: that is either investment ahead of scale or an asset yield that cannot cover the cost of the book, and four more quarters will say which.</i>",
+ ],
+ "trigger": "np_cagr_3y converging toward the 35% book growth rate once eight quarters exist -> the gap was investment and 1.59x book is cheap. the first full-year comparison showing the operating margin under 55% -> the asset yield does not cover a micro-enterprise book's cost and the growth was bought.",
+ "evidence": ["roe_3y", "roa_3y", "equity_to_assets", "np_consistency_3y", "book_value_cagr_3y", "loan_book_cagr_3y", "np_cagr_3y", "pe_ttm", "pb", "p_aum", "sales_yoy_q", "ret_6m_rel"],
+},
+
+"SAHLIBHFI": {
+ "confidence": "medium",
+ "verdict": "HOLD — a 4-of-4 and 6-of-6 inflation record at 12.27x earnings, but equity_to_assets of 71.40% means the 8.05% asset return is not a lender's",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> Shalibhadra Finance, ₹243cr, an asset-finance company lending against new and used two-, three- and four-wheelers and consumer durables to the salaried, agricultural and self-employed, promoter stake 58.10%. <code>shareholders</code> 4,329 is the smallest register of " + PEERS + ". Composite 88 inside bfsi_nbfc: quality 73, valuation 46, momentum 42.",
+  "<b>Name the balance sheet first, because it changes how everything else reads.</b> <code>equity_to_assets</code> is 71.40%, about 1.40x assets to equity — one of only two names here that is effectively unlevered. So <code>roa_3y</code> 8.05%, nominally the second-highest of the 27, is not comparable with a geared lender's: it converts to a <code>roe_3y</code> of 11.35%, where MUTHOOTFIN turns a 4.64% asset yield into 20.82%. Read this as a conservatively funded small lender, not a high-return one.",
+  "<b>The inflation record is near the best in the batch.</b> Net profit beat inflation in 4 of the last 4 years, 5 of 6 and 7 of 9, second only to CSLFINANCE, with <code>np_consistency_10y</code> 1.63, <code>np_cagr_5y</code> 34.12%, <code>np_cagr_7y</code> 22.34% and <code>book_value_cagr_10y</code> 23.81%. The 13% hurdle is a different story: <code>roe_excess_13_5y</code> -1.96pp, <code>roe_excess_13_7y</code> -2.01pp and <code>roe_excess_13_10y</code> -0.01pp — it has been within a hair of 13% over ten years and under it on five and seven.",
+  "<b>The current year is steady and the momentum reading barely exists.</b> TTM sales +14.97%, operating profit +20.45%, net profit +15.50%, margin up from <code>opm_prev</code> 72.16% to <code>opm_now</code> 75.60%, a +3.44pp step below the blocker threshold. <code>sales_yoy_q</code> +15.73% and <code>np_yoy_q</code> +7.44%. <code>pe_ttm</code> 12.27x, <code>pb</code> 1.41x, <code>p_aum</code> 1.08x — the second-highest price to AUM of the 27, which is what an equity-funded book does to that ratio — and <code>div_yield</code> 0.63%. The own-history band is refused: a 1.09x low is a split artefact. There is no 200-EMA trend reading (134 price bars, the shortest in the set, against ~450 needed) and no <code>ret_12m_rel</code> reading at all, so the momentum pillar's 42 was scored on 65% of its declared weight. " + TNS,
+  "<i>Hold. A ten-year, 4-of-4 inflation-beating record on a two-wheeler book is genuinely rare in this segment, and at 1.41x book it is not expensive. What stops it being a buy is that the return is low by construction — at 1.40x gearing there is no mechanism for an 8.05% asset yield to become a 15% equity return — and that 4,329 shareholders on a ₹243cr lender means you are buying an illiquid position in a company that will stay small. This is a hold for its consistency, not a candidate for capital.</i>",
+ ],
+ "trigger": "equity_to_assets falling toward 45% while roa_3y holds above 7% -> the return becomes a lender's and 1.41x book is cheap. roe_3y falling under 9%, or the inflation record breaking in a year the segment is otherwise fine -> an unlevered small lender with a shrinking return has no case at all.",
+ "evidence": ["equity_to_assets", "roa_3y", "roe_3y", "np_growth_above_inflation_5y", "np_consistency_10y", "np_cagr_5y", "roe_excess_13_10y", "pe_ttm", "pb", "p_aum", "opm_now", "opm_prev"],
+},
+
+# ---------------------------------------------------------------------- avoid
+
+"MUFIN": {
+ "confidence": "medium",
+ "verdict": "AVOID — the richest book multiple of the 27 at 4.50x and the highest price to AUM at 1.39x, on a 6.26% ROE",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> Mufin Green Finance, ₹2,588cr, lending against electric vehicles, charging infrastructure and swappable batteries plus fleet leasing, promoter stake 47.30%. Composite 41 inside bfsi_nbfc: quality 48, valuation 28, momentum 82.",
+  "<b>Nothing here is priced higher and the return does not support it.</b> <code>pb</code> 4.50x is the richest book multiple of " + PEERS + " and <code>p_aum</code> 1.39x the highest — the market is paying ₹1.39 for a rupee of managed assets — on <code>pe_ttm</code> 68.35x, the second-highest of the 23 names with a PE. Against that, <code>roe_3y</code> 6.26% is twentieth of the 27 and <code>roa_3y</code> 1.68% is twentieth, on <code>equity_to_assets</code> 26.93% (about 3.71x gearing). There is no <code>roe_5y</code> or <code>roe_7y</code>, no <code>roe_excess_13_Ny</code> and no <code>np_growth_above_inflation_Ny</code>, so a 68x multiple is being paid on a company with no cycle record at all.",
+  "<b>The trailing year is a margin step, and the margin step is most of the profit.</b> The operating margin went from <code>opm_prev</code> 62.84% to <code>opm_now</code> 76.27%, +13.43pp in a single year, which the pack flags as a mix change, an acquisition or a one-off rather than an operating trend — so the earnings under the 68.35x are not a base. TTM sales +28.27% against operating profit +55.68% and net profit +103.33% is the arithmetic of that step, not of volume. <code>sales_yoy_q</code> +57.13% and <code>np_yoy_q</code> +302.59%.",
+  "<b>And two pillars are partial, which flatters the composite.</b> <code>loan_book_cagr_3y</code> is absent — the one growth metric that matters most for a lender is the one metric this name does not carry — so the quality pillar's 48 was scored on 82% of its declared weight, renormalised around a missing 18-point <code>loan_book_cagr_3y</code>, and the valuation pillar's 28 on 75% with <code>earnings_yield_trend</code> and <code>div_yield</code> absent. What is left is <code>np_cagr_3y</code> 32.65% and <code>book_value_cagr_3y</code> 53.44%. Momentum is the one strong reading: <code>ret_12m_rel</code> +39.49% and the close above its 200-day EMA on 92.1% of the last 252 sessions, the highest of the 21 names with a reading. There is no own-history PE band. " + TNS,
+  "<i>Avoid. EV financing may well be the right place to be for a decade, but you would be paying 4.50x book and 68x earnings for a 6.26% return, on an earnings base created by a +13.43pp one-year margin step, in a company with no five-year ROE and no measurable loan-book growth rate. The momentum is real and it is the only thing underneath the price. If the thesis is Indian EV credit, the honest way to express it is not at 1.39x AUM.</i>",
+ ],
+ "trigger": "roe_3y rising past 12% with a loan_book_cagr_3y reading appearing above 30% -> the growth is measurable and profitable and the multiple has something behind it. opm_now falling back toward 63%, or ret_12m_rel turning negative -> a 68x multiple held up by momentum and a one-year margin step unwinds fast.",
+ "evidence": ["pb", "p_aum", "pe_ttm", "roe_3y", "roa_3y", "equity_to_assets", "opm_now", "opm_prev", "ttm_np_pct", "np_cagr_3y", "ret_12m_rel", "pct_above_200ema_252d"],
+},
+
+"MUTHOOTMF": {
+ "confidence": "medium",
+ "verdict": "AVOID — a 4.51% ROE and a 1.06% asset return, with a +29.42pp one-year margin step doing all of the work",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> Muthoot Microfin, ₹2,968cr, micro loans to women entrepreneurs in rural India, promoter stake 55.47% with <code>fii_pct</code> 23.11%, the second-highest foreign holding of " + PEERS + ". Composite 50 inside bfsi_nbfc: quality 42, valuation 65, momentum 63.",
+  "<b>The returns are among the worst here that are still positive.</b> <code>roe_3y</code> 4.51% is twenty-first of the 27, <code>roe_5y</code> 5.47% and <code>roe_7y</code> 4.31% confirm it is not a one-year problem, and <code>roa_3y</code> 1.06% is twenty-second — on <code>equity_to_assets</code> 23.65%, about 4.23x gearing, so even leverage cannot lift it. As a mature-tier name it carries neither <code>roe_excess_13_Ny</code> nor <code>np_growth_above_inflation_Ny</code>, so the hurdle and inflation questions are unmeasured rather than passed.",
+  "<b>The blocker is the largest favourable margin step in the batch.</b> <code>opm_prev</code> 21.05% to <code>opm_now</code> 50.47% is +29.42pp in one year — bigger than any other name here except the two that moved out of outright losses — and the pack flags a step that size as a mix change, an acquisition or a one-off rather than an operating trend. The lines around it say the same: TTM sales +0.93% with operating profit +141.98%, and <code>np_yoy_q</code> +1,216.18%, the highest of the 27, against <code>sales_yoy_q</code> of +19.69%. There is no <code>ttm_np_pct</code> reading at all.",
+  "<b>Priced as a recovery that has not yet shown in the returns.</b> <code>pe_ttm</code> 12.09x and <code>pb</code> 1.04x with <code>p_aum</code> 0.25x and no dividend, and no own-history PE band — insufficient usable annual history, so there is no company-specific test of the multiple. The valuation pillar's 65 was scored on 75% of its declared weight, renormalised around <code>earnings_yield_trend</code> and <code>div_yield</code>, both absent. <code>np_cagr_5y</code> 37.67% and <code>np_cagr_7y</code> 45.15% are strong but measured off a small base, and <code>loan_book_cagr_3y</code> 14.15% is slow. <code>ret_12m_rel</code> +6.37%, above the 200-day EMA on 81.0% of the last 252 sessions. " + TNS,
+  "<i>Avoid, and the reason is that the only good number is the one the pack says not to trust. Strip the +29.42pp margin step and this is a microfinance lender earning 4.51% on equity with a 1.06% asset yield and a 14% book growth rate, at book value. Book value is the right price for that. CREDITACC is the same business run considerably better and ARMANFIN is the same business with a seven-year hurdle clearance — there is no reason to own this one instead of either.</i>",
+ ],
+ "trigger": "opm_now holding above 45% for a full year while roe_3y rises past 10% -> the step was structural and 1.04x book was cheap. opm_now reverting toward 30%, or np_yoy_q turning negative -> the one-off has unwound and a 4.5% ROE at book value still has downside.",
+ "evidence": ["roe_3y", "roe_5y", "roa_3y", "equity_to_assets", "opm_now", "opm_prev", "ttm_op_pct", "pe_ttm", "pb", "p_aum", "loan_book_cagr_3y", "np_yoy_q"],
+},
+
+"MONEYBOXX": {
+ "confidence": "medium",
+ "verdict": "AVOID — 287.76x earnings, the highest of the 27, on a 2.11% ROE and the weakest ten-year profit consistency in the set",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> Moneyboxx Finance, ₹377cr, small-ticket business loans and mortgage lending to micro-enterprises, promoter stake 46.80% with <code>fii_pct</code> and <code>dii_pct</code> both 0.00% — no institutional holder at all. Composite 13 inside bfsi_nbfc: quality 42, valuation 36, momentum 19.",
+  "<b>The multiple is the highest in the segment by a wide margin.</b> <code>pe_ttm</code> 287.76x against the next-highest of the 27 at 68.35x, on <code>pb</code> 1.27x and <code>p_aum</code> 0.41x. That is not a growth premium — it is what happens when the price is unchanged and the profit goes to almost nothing: <code>roe_3y</code> 2.11%, <code>roa_3y</code> 0.54%, <code>roe_5y</code> -2.67% and <code>roe_7y</code> -5.53% on <code>equity_to_assets</code> 27.59%.",
+  "<b>Through ten years it has neither cleared the hurdle nor been consistent.</b> <code>roe_excess_13_5y</code> -15.67pp, <code>roe_excess_13_7y</code> -18.53pp and <code>roe_excess_13_10y</code> -16.93pp, with <code>np_consistency_10y</code> 0.52 — the lowest of the 16 names with a ten-year series — and net profit beat inflation in only 2 of the last 4 years, 3 of 6 and 4 of 9. <code>book_value_cagr_10y</code> 35.66% looks strong and is equity raised, not earned, at these return levels.",
+  "<b>The current year is going backwards and three readings are missing.</b> <code>sales_yoy_q</code> -11.86% and <code>np_yoy_q</code> -12.50% are both negative — one of only two names of the 27 negative on both — with TTM sales +5.86% and the margin stepping +6.44pp from <code>opm_prev</code> 35.82% to <code>opm_now</code> 42.26%, flagged as a mix change rather than a trend. <code>loan_book_cagr_3y</code> 44.35% is the second-fastest here, which at a 0.54% asset return is the problem rather than the comfort. There is no delivery row, so accumulation cannot be distinguished from churn; no 200-EMA trend reading (260 price bars against ~450 needed, so listing history rather than a weak trend); and the own-history band is refused outright at 34.29-308.05x on 4 years. <code>ret_12m_rel</code> -37.65% is the second-worst of the 25 with a reading. " + TNS,
+  "<i>Avoid. A lender growing its book 44% a year while earning 0.54% on assets is manufacturing risk, not returns, and at 287.76x earnings there is no price support if the credit cost rises — which is exactly what a negative quarterly sales and profit print suggests is starting. The ten-year record is the clincher: 0.52 profit consistency and a hurdle shortfall of 16.93pp over a decade is not a company that has been unlucky recently.</i>",
+ ],
+ "trigger": "roe_3y rising past 8% while loan_book_cagr_3y stays above 30% -> the scale has finally produced a return and the multiple collapses on earnings rather than price. sales_yoy_q staying negative with opm_now falling back under 36% -> a 44%-growing book at a 0.5% asset yield in a worsening quarter is the setup for an equity raise at a discount.",
+ "evidence": ["pe_ttm", "pb", "roe_3y", "roa_3y", "roe_excess_13_10y", "np_consistency_10y", "equity_to_assets", "opm_now", "opm_prev", "loan_book_cagr_3y", "sales_yoy_q", "ret_12m_rel"],
+},
+
+"INDOSTAR": {
+ "confidence": "medium",
+ "verdict": "AVOID — trailing net profit down 161.40% and quarterly profit down 97.90%, both the worst of the 27, on a loan book that has stopped growing",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> IndoStar Capital Finance, ₹3,336cr, vehicle finance and micro loans against property, promoter stake 70.36%. Composite 12 inside bfsi_nbfc — the third-lowest of " + PEERS + " — on quality 23, valuation 69, momentum 29.",
+  "<b>The trailing year is the worst in the segment on both profit lines.</b> <code>ttm_np_pct</code> -161.40% and <code>np_yoy_q</code> -97.90% are each the worst of the 27, with TTM operating profit -40.87% and the operating margin stepping down from <code>opm_prev</code> 24.77% to <code>opm_now</code> 14.93%, a -9.84pp fall the pack flags as a mix change or one-off rather than a trend. There is no <code>pe_ttm</code> at all because the trailing year is a loss, so the valuation pillar's 69 was scored on 60% of its declared weight, renormalised around a missing 30-point <code>pe_ttm</code> and a missing <code>div_yield</code> — that 69 is close to meaningless as a cheapness reading.",
+  "<b>And the book is not growing to grow out of it.</b> <code>loan_book_cagr_3y</code> 1.44% is the slowest positive reading of the 27, <code>sales_yoy_q</code> +5.93% and TTM sales -1.92%. <code>book_value_cagr_10y</code> 7.93% is the third-lowest of the 16 ten-year series. So over a decade the equity has barely compounded and over three years the book has barely moved.",
+  "<b>The long-run return record is poor and the hurdle has never been in sight.</b> <code>roe_5y</code> -1.46% and <code>roe_7y</code> -3.60% are negative, <code>roe_3y</code> 3.54% is the recovery, and <code>roe_excess_13_5y</code> -14.46pp, <code>roe_excess_13_7y</code> -16.60pp and <code>roe_excess_13_10y</code> -12.65pp. <code>roa_3y</code> 1.14% on <code>equity_to_assets</code> 32.10%, with <code>np_consistency_10y</code> 0.71 and net profit beating inflation in only 2 of the last 4 years, 3 of 6 and 4 of 9. <code>pb</code> 0.88x and <code>p_aum</code> 0.41x are the whole of the bull case; <code>earnings_yield_trend</code> +7.42% is the second-highest here and rests on the same loss-affected base. <code>ret_12m_rel</code> -14.41%. " + TNS,
+  "<i>Avoid. Below book is the right price for a vehicle financier whose trailing profit fell 161%, whose quarterly profit fell 98%, whose book has grown 1.44% a year for three years and which has not earned its cost of equity in a decade. The temptation is the 0.88x book — but there is no mechanism visible in the pack by which that book value gets earned on, and a 9.84pp margin step down while the book is flat is the opposite of a turnaround. If the vehicle-finance cycle is the thesis, there are names in this set earning money through it.</i>",
+ ],
+ "trigger": "ttm_np_pct turning positive while loan_book_cagr_3y re-accelerates past 10% -> the book is being rebuilt profitably and 0.88x is cheap. the loan book staying flat for another year, or opm_now falling under 12% -> a shrinking-spread lender with no growth is a run-off, and 0.88x book is not a floor in a run-off.",
+ "evidence": ["ttm_np_pct", "np_yoy_q", "opm_now", "opm_prev", "loan_book_cagr_3y", "roe_5y", "roe_excess_13_10y", "roa_3y", "equity_to_assets", "pb", "p_aum", "np_consistency_10y"],
+},
+
+"FUSION": {
+ "confidence": "medium",
+ "verdict": "AVOID — a -18.74% three-year ROE and a shrinking loan book, with a +55.60pp margin step that moves it from loss to profit on paper",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> Fusion Finance, ₹2,775cr, microfinance to women entrepreneurs in rural and semi-urban India plus MSME lending, promoter stake 53.97%. Composite 18 inside bfsi_nbfc: quality 20, valuation 52, momentum 52.",
+  "<b>The three-year record is one of the four worst of the 27.</b> <code>roe_3y</code> -18.74% and <code>roa_3y</code> -3.44% — only SPANDANA, CAPTRUST and TRU are worse — with <code>roe_5y</code> -7.58% and <code>roe_7y</code> -4.08% also negative, so this is the second serious loss cycle, not the first. <code>np_cagr_5y</code> -10.68% and <code>np_cagr_7y</code> -23.59% say the same over longer windows. As a mature-tier name it carries neither <code>roe_excess_13_Ny</code> nor <code>np_growth_above_inflation_Ny</code>, so the hurdle question is unmeasured — though at a negative ROE the answer is not in doubt.",
+  "<b>The book is shrinking, which is what separates this from a recovery.</b> <code>loan_book_cagr_3y</code> -3.96% and TTM sales -18.05%, with <code>sales_yoy_q</code> of just +3.59%. A microfinance lender that stops disbursing to protect its balance sheet is doing the right thing and also removing the only source of the earnings that would justify owning it.",
+  "<b>The blocker is a margin step out of a loss, and the multiple rests on it.</b> <code>opm_prev</code> -20.62% to <code>opm_now</code> 34.98% is +55.60pp in one year — the second-largest step in the batch — and the pack flags it as a mix change or one-off rather than an operating trend. <code>np_yoy_q</code> +167.65% is off that loss base, and <code>pe_ttm</code> 16.47x is therefore a multiple on one quarter's worth of normalised credit cost, not on a settled earnings base. <code>pb</code> 1.13x and <code>p_aum</code> 0.34x, with no dividend and no own-history PE band. <code>earnings_yield_trend</code> -12.83% and <code>np_consistency_5y</code> 0.89. <code>ret_12m_rel</code> -7.54%, above the 200-day EMA on 38.9% of the last 252 sessions. " + TNS,
+  "<i>Avoid. Above book for a microfinance lender with a -18.74% three-year ROE, a shrinking book and two loss cycles in seven years is the wrong side of every comparison in this segment — SATIN is the same recovery trade at 0.88x book and 6.13x earnings with a loan book still growing 22%. The +55.60pp margin step makes the current 16.47x look survivable; it is the pack telling you the earnings are not yet real. Revisit only once the book is growing again.</i>",
+ ],
+ "trigger": "loan_book_cagr_3y turning positive while opm_now holds above 33% -> disbursement has restarted on a normalised credit cost and 1.13x book is early. opm_now falling back toward zero, or sales_yoy_q turning negative -> the step was provisioning timing and a shrinking unsecured book at 1.13x book has substantial downside.",
+ "evidence": ["roe_3y", "roa_3y", "roe_5y", "np_cagr_7y", "loan_book_cagr_3y", "ttm_sales_pct", "opm_now", "opm_prev", "pe_ttm", "pb", "p_aum", "np_consistency_5y"],
+},
+
+"SPANDANA": {
+ "confidence": "medium",
+ "verdict": "AVOID — a -19.47% three-year ROE, sales down 48.30% and a book shrinking 12.68% a year, with the margin only just back above zero at 1.61%",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> Spandana Sphoorty Financial, ₹1,918cr, joint-liability microfinance for women entrepreneurs plus loans against property and nano-enterprise loans, promoter stake 48.16% with <code>fii_pct</code> 19.29%. Composite 23 inside bfsi_nbfc: quality 17, valuation 74, momentum 42.",
+  "<b>This is the second-worst three-year return of the 27 among names still operating at scale.</b> <code>roe_3y</code> -19.47% and <code>roa_3y</code> -6.55%, with <code>roe_5y</code> -11.15% and <code>roe_7y</code> -5.30% both negative — the losses span the full measured history, not one year. <code>book_value_cagr_5y</code> -8.87% means equity has been destroyed over five years. As a mature-tier name it carries neither <code>roe_excess_13_Ny</code> nor <code>np_growth_above_inflation_Ny</code>.",
+  "<b>The business is contracting, hard.</b> TTM sales -48.30% — the third-steepest fall of the 26 names with a reading — <code>loan_book_cagr_3y</code> -12.68% and <code>sales_yoy_q</code> -5.51%. Revenue halving at a lender is not a margin problem, it is a disbursement stop, and <code>np_consistency_5y</code> 0.89 says the profit stream was unreliable before it arrived.",
+  "<b>The margin step is the largest in the batch and it only reaches 1.61%.</b> <code>opm_prev</code> -58.05% to <code>opm_now</code> 1.61% is +59.66pp in one year, flagged by the pack as a mix change or one-off rather than a trend — and the destination is barely above break-even, so <code>np_yoy_q</code> +103.30% is arithmetic on a loss. There is no <code>pe_ttm</code> because the trailing year is a loss, so the valuation pillar's 74 was scored on 60% of its declared weight, renormalised around a missing 30-point <code>pe_ttm</code> and a missing <code>div_yield</code> — a 74 that does not mean cheap. What is left is <code>pb</code> 0.90x and <code>p_aum</code> 0.31x. The own-history band is refused: 10.22-292.20x on 5 years is arithmetic. <code>earnings_yield_trend</code> -15.73%, <code>ret_12m_rel</code> -9.51%. " + TNS,
+  "<i>Avoid. Below book is not protection when the book itself is falling 8.87% a year and revenue has halved — the asset being discounted is shrinking faster than the discount. A 1.61% operating margin after a 59.66pp improvement is the honest measure of where this business is: not recovered, merely no longer collapsing. If microfinance is the view, SATIN is cheaper on earnings with a growing book and ARMANFIN has actually earned 13% through a cycle.</i>",
+ ],
+ "trigger": "loan_book_cagr_3y turning positive with opm_now rising past 20% -> disbursement has restarted and 0.90x book is early in a real recovery. ttm_sales_pct staying below -20% for another year -> the franchise is in run-off and book value will follow the revenue down.",
+ "evidence": ["roe_3y", "roa_3y", "roe_5y", "ttm_sales_pct", "loan_book_cagr_3y", "opm_now", "opm_prev", "pb", "p_aum", "book_value_cagr_5y", "np_consistency_5y", "earnings_yield_trend"],
+},
+
+"CAPTRUST": {
+ "confidence": "medium",
+ "verdict": "AVOID — the lowest composite of the 27 at 4, with an operating margin of -39.90% and a ten-year hurdle shortfall of 26.33pp",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> Capital Trust, ₹65cr, structured business loans to shopkeepers and traders plus MSME and gold lending, promoter stake 54.13%. Composite 4 inside bfsi_nbfc — the lowest of " + PEERS + " — on quality 8, valuation 48, momentum 56.",
+  "<b>The operating margin is negative and that is the figure to distrust everything else through.</b> <code>opm_now</code> is -39.90% against <code>opm_prev</code> 9.56%, a -49.46pp step in one year, which the pack flags as a mix change, acquisition or one-off rather than a trend. TTM operating profit -308.23% and TTM sales -50.11%: revenue halved and the cost base did not. At a negative operating margin there is no earnings base at all, so <code>np_yoy_q</code> +102.40% is a number about a loss shrinking, not about profit.",
+  "<b>The ten-year record is the worst in the segment on every return measure.</b> <code>roe_excess_13_5y</code> -41.37pp, <code>roe_excess_13_7y</code> -35.45pp and <code>roe_excess_13_10y</code> -26.33pp are each the worst of the 27, with <code>roe_3y</code> -24.02%, <code>roe_5y</code> -28.37%, <code>roe_7y</code> -22.45% and <code>roa_3y</code> -13.40%. <code>book_value_cagr_10y</code> -13.22% is the only negative ten-year book compounding in the set — a decade of destroying equity — and net profit beat inflation in just 1 of the last 4 years, 2 of 6 and 3 of 9 — the weakest four-year record of the 16 names that carry the test.",
+  "<b>The book is shrinking and the recent price action is the only positive.</b> <code>loan_book_cagr_3y</code> -15.98% and <code>sales_yoy_q</code> -2.66%. There is no <code>pe_ttm</code> — the trailing year is a loss — so the valuation pillar's 48 rests on 60% of its declared weight, renormalised around a missing 30-point <code>pe_ttm</code> and a missing <code>div_yield</code>. <code>pb</code> 1.06x and <code>p_aum</code> 0.64x, with <code>equity_to_assets</code> 46.69% — the balance sheet is nearly half equity and still losing money. There is no delivery row, so accumulation cannot be distinguished from churn. <code>ret_3m_rel</code> +83.16% and <code>ret_6m_rel</code> +70.13% are the highest of the 27, against <code>ret_12m_rel</code> -23.38% and only 1.6% of the last 252 sessions closing above the 200-day EMA. " + TNS,
+  "<i>Avoid, and the three-month 83% relative move is the reason to say so plainly rather than quietly. A ₹65cr lender with a -39.90% operating margin, a decade of negative book compounding, a shrinking loan book and no delivery data to show who is buying is a trading vehicle, not an investment — the recent strength is the kind that reverses without a reason. Above book value for that is indefensible.</i>",
+ ],
+ "trigger": "opm_now returning to positive with loan_book_cagr_3y turning up -> there is an operating business again and 1.06x book can be reassessed. ret_3m_rel giving back the 83% move, or equity_to_assets falling as losses eat the capital -> the move was speculative and the equity base is still eroding.",
+ "evidence": ["opm_now", "opm_prev", "ttm_op_pct", "ttm_sales_pct", "roe_excess_13_10y", "roe_3y", "roa_3y", "book_value_cagr_10y", "loan_book_cagr_3y", "pb", "p_aum", "equity_to_assets"],
+},
+
+"TRU": {
+ "confidence": "medium",
+ "verdict": "AVOID — an operating margin of -118.45%, a -84.09% three-year ROE and sales down 62.53% in the quarter, each the worst of the 27",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> TruCap Finance, ₹51cr, micro-enterprise, SME, structured business and personal lending plus an advisory segment, promoter stake 30.97%. The smallest of " + PEERS + ", and second-lowest on quality behind CAPTRUST: composite 5 on quality 9, valuation 72, momentum 10.",
+  "<b>Name the untrustworthy figures first, because there are three and they are extreme.</b> <code>opm_now</code> is -118.45% against <code>opm_prev</code> 9.28% — a -127.73pp step in one year — and <code>ttm_op_pct</code> is -565.70%. An operating margin below -100% means the cost base now exceeds total revenue, so there is no margin to read and no earnings base to value: any multiple built on this year's profit is meaningless. <code>roe_3y</code> -84.09% is the worst of the 27 by a factor of three.",
+  "<b>The business is contracting faster than anything else here.</b> <code>sales_yoy_q</code> -62.53% and TTM sales -63.51% are both the steepest falls of the 27, <code>loan_book_cagr_3y</code> -16.45% is the fastest-shrinking book, and <code>book_value_cagr_5y</code> -26.22% is the worst equity destruction in the set. <code>roe_5y</code> -49.93% and <code>roe_7y</code> -33.62% confirm it is structural: this has not earned money on any window measured.",
+  "<b>Everything that looks cheap is an artefact of the losses.</b> There is no <code>pe_ttm</code> — the trailing year is a loss — so the valuation pillar's 72 was scored on 60% of its declared weight, renormalised around a missing 30-point <code>pe_ttm</code> and a missing <code>div_yield</code>; it is not a cheapness signal. <code>pb</code> 0.99x and <code>p_aum</code> 0.14x look low, and <code>equity_to_assets</code> 19.74% is the thinnest capital of the 27, so the book value underneath that 0.99x is the most leveraged and least able to absorb another loss year. The own-history band is refused outright: 4.07-981.37x with a 313.79x average is arithmetic on near-zero earnings. <code>ret_12m_rel</code> -57.06% and <code>earnings_yield_trend</code> -48.15% are the worst of the 27, and the close did not finish above its 200-day EMA once in 252 sessions. " + TNS,
+  "<i>Avoid without qualification — this is the clearest case in the batch. A lender whose costs exceed its revenue, whose loan book is shrinking 16% a year, whose equity has fallen 26% a year for five years and which is the most thinly capitalised of the 27 is a solvency question, not a valuation one. 0.99x book is not a floor when the book is being consumed. Nothing in the pack suggests a path back, and the 57% twelve-month underperformance is the market pricing that correctly rather than overreacting.</i>",
+ ],
+ "trigger": "opm_now returning above zero with sales_yoy_q turning positive -> there is a business again and the question becomes a valuation one. equity_to_assets falling under 15%, or another year of sales down more than 30% -> the capital base cannot absorb the losses and an equity raise at a deep discount or a run-off follows.",
+ "evidence": ["opm_now", "opm_prev", "ttm_op_pct", "roe_3y", "roe_5y", "sales_yoy_q", "ttm_sales_pct", "loan_book_cagr_3y", "book_value_cagr_5y", "equity_to_assets", "pb", "ret_12m_rel"],
+},
+
+}
+
+DERIVED_KEYS = {"pe_band_lo", "pe_band_hi", "pe_band_avg", "pe_vs_own_history",
+                "delivery_pct", "pledge_pct"}
+
+LABELS = ("BUY", "ACCUMULATE", "HOLD", "AVOID", "REDUCE", "SELL", "SPECULATIVE")
+
+# Choice 3: n >= 8 usable years AND a low at or above 4.0x. Quoting any other
+# band is a bug, so the guard checks the prose.
+BAND_QUOTABLE = {"MUTHOOTFIN", "MANAPPURAM", "ARMANFIN", "CREDITACC", "UYFINCORP"}
+
+WATCHLISTED = {"MANAPPURAM", "MUTHOOTFIN"}
+
+# Second blockers that must be named with their value (choice 1). Value is the
+# string the prose has to contain.
+BLOCKER_VALUE = {
+    "ARMANFIN": "17.21pp", "CAPTRUST": "-39.90", "CREDITACC": "17.88pp",
+    "FIVESTAR": "5.38pp", "FUSION": "55.60pp", "INDOSTAR": "9.84pp",
+    "MANAPPURAM": "13.14pp", "MONEYBOXX": "6.44pp", "MUFIN": "13.43pp",
+    "MUTHOOTFIN": "8.22pp", "MUTHOOTMF": "29.42pp", "SATIN": "9.03pp",
+    "SGFIN": "9.41pp", "SPANDANA": "59.66pp", "TRU": "-118.45",
+    "UYFINCORP": "20.23pp",
+}
+
+# Choice 2: the two unlevered balance sheets. Both rows must carry the value.
+UNLEVERED = {"UYFINCORP": "94.89", "SAHLIBHFI": "71.40"}
+
+
+def main():
+    pack = json.load(open(PACK))
+    rows = {r["symbol"]: r for r in pack["symbols"]}
+
+    if set(SPEC) != set(rows):
+        raise SystemExit(f"spec/pack mismatch: "
+                         f"spec-only={sorted(set(SPEC) - set(rows))} "
+                         f"pack-only={sorted(set(rows) - set(SPEC))}")
+
+    import importlib.util
+    spec_mod = importlib.util.spec_from_file_location(
+        "bfsi_segments", "build/verdicts/bfsi_segments.py")
+    seg = importlib.util.module_from_spec(spec_mod)
+    spec_mod.loader.exec_module(seg)
+    if set(seg.SEGMENTS["gold_micro_msme"]) != set(rows):
+        raise SystemExit("pack is not the gold_micro_msme segment — every "
+                         "'of the 27' superlative in this file is scoped wrong")
+
+    out = []
+    for sym, s in SPEC.items():
+        row = rows[sym]
+        cm = (row.get("metrics") or {}).get("cluster_metrics") or {}
+        blockers = row.get("blockers") or []
+        points, verdict, trig = s["points"], s["verdict"], s["trigger"]
+        conf = s["confidence"]
+
+        if len(points) != 5:
+            raise SystemExit(f"{sym}: {len(points)} points, a writable row takes 5")
+        if verdict.split(" —")[0] not in LABELS:
+            raise SystemExit(f"{sym}: label must open with one of {LABELS}, "
+                             f"got {verdict[:20]!r}")
+        if len(verdict.split("—", 1)[1].strip()) < 30:
+            raise SystemExit(f"{sym}: headline says nothing after the label")
+
+        if not any("balance-sheet lender" in b for b in blockers):
+            raise SystemExit(f"{sym}: lost the cluster-wide lender blocker — "
+                             f"the confidence ceiling needs re-deciding")
+        if conf != "medium":
+            raise SystemExit(f"{sym}: {conf} confidence, but this segment is "
+                             f"medium by construction")
+
+        if not points[-1].startswith("<i>"):
+            raise SystemExit(f"{sym}: the last point is not italicised")
+        for i, p in enumerate(points[:-1]):
+            if not p.startswith("<b>"):
+                raise SystemExit(f"{sym}: point {i+1} has no <b> lead sentence")
+        if "Not held" not in points[0]:
+            raise SystemExit(f"{sym}: point one does not state the holding status")
+        if sym in WATCHLISTED and "watchlist" not in points[0]:
+            raise SystemExit(f"{sym}: is watchlisted and point one does not say so")
+        if sym not in WATCHLISTED and "not on your watchlist" not in points[0]:
+            raise SystemExit(f"{sym}: point one must state it is not watchlisted")
+
+        if sum(p.count("<code>") for p in points) < 4:
+            raise SystemExit(f"{sym}: fewer than 4 <code> field names across the row")
+
+        body = " ".join(points)
+        for word in ("highest", "lowest", "cheapest", "best", "worst", "fastest",
+                     "slowest", "richest"):
+            if word in body.lower() and "of the 27" not in body \
+                    and "in the set" not in body and "in this segment" not in body \
+                    and "of " + PEERS not in body:
+                raise SystemExit(f"{sym}: uses '{word}' with no peer set named")
+
+        if trig.count("->") < 2:
+            raise SystemExit(f"{sym}: trigger is one-sided — a wish, not a trigger")
+
+        if "tech_net_score_scaled</code> is" in body and "NULL" not in body:
+            raise SystemExit(f"{sym}: tech_net_score_scaled mentioned without "
+                             f"saying it is NULL")
+
+        if " band of " in body and sym not in BAND_QUOTABLE:
+            band = row.get("pe_band") or {}
+            raise SystemExit(f"{sym}: quotes an own-history band, but it fails "
+                             f"the n>=8 and lo>=4.0 rule (n={band.get('n')}, "
+                             f"lo={band.get('lo')})")
+
+        extra = [b for b in blockers if "balance-sheet lender" not in b]
+        if extra and sym in BLOCKER_VALUE and BLOCKER_VALUE[sym] not in body:
+            raise SystemExit(f"{sym}: carries a second blocker but the prose does "
+                             f"not name it with its value "
+                             f"({BLOCKER_VALUE[sym]!r} is absent)")
+        if sym in UNLEVERED and UNLEVERED[sym] not in body:
+            raise SystemExit(f"{sym}: runs an effectively unlevered balance sheet "
+                             f"and the row does not name equity_to_assets "
+                             f"({UNLEVERED[sym]}%) — Deb's standing instruction")
+
+        evidence = {}
+        for k in s["evidence"]:
+            if k in DERIVED_KEYS:
+                evidence[k] = None
+                continue
+            if k not in cm:
+                raise SystemExit(f"{sym}: evidence key {k} is not a bfsi cluster metric")
+            v = cm[k]
+            if v is None:
+                raise SystemExit(f"{sym}: evidence key {k} is NULL — a verdict must "
+                                 f"anchor on fields that can be re-checked")
+            evidence[k] = v
+        if len(evidence) < 3:
+            raise SystemExit(f"{sym}: {len(evidence)} evidence keys, need 3+")
+
+        scores = row.get("scores") or {}
+        snap = scores.get("snapshot_date") or pack.get("generated_at", "")[:10]
+        out.append({
+            "symbol": sym,
+            "generated_at": GENERATED_AT,
+            "verdict": verdict,
+            "confidence": conf,
+            "points": points,
+            "trigger_text": trig,
+            "evidence": evidence,
+            "snapshot_date": snap,
+            "price_asof": snap,
+            "model": MODEL,
+            "source_report": SOURCE_REPORT,
+        })
+
+    json.dump(out, open(OUT, "w"), ensure_ascii=False, indent=1)
+    buckets = {}
+    for r in out:
+        b = r["verdict"].split(" —")[0].split(":")[0].strip()
+        buckets[b] = buckets.get(b, 0) + 1
+    print(f"-> {OUT}  {len(out)} rows  {buckets}")
+    for r in out:
+        print(f"   {r['symbol']:<12} {r['confidence']:<6} {r['verdict'][:84]}")
+
+
+if __name__ == "__main__":
+    main()

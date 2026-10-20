@@ -44,7 +44,14 @@ backlog_ideas/
 # Local working dirs. None of these was ever tracked, but none was ignored
 # either — one `git add -A` would have swept them into a PUBLIC repo.
 # Listed explicitly so that stays impossible.
-build/
+build/*
+# ...except the verdict generators and their payloads, tracked 2026-10-21. They
+# are the only record of how a verdict was derived, and they were found missing
+# for the first 76 verdicts (oil_refining 40, auto_oem 36): the verdict text had
+# survived in Neon, the ability to re-check or correct it had not. The rest of
+# build/ is 533M of dumps and decks and stays out of a PUBLIC repo.
+!build/verdicts/
+build/verdicts/__pycache__/
 logs/
 .claude/
 !.claude/launch.json

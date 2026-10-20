@@ -1,0 +1,386 @@
+"""bfsi_nbfc batch 2 — the 12 `housing_finance` names, written as verdicts.
+
+Peer set: `build/verdicts/bfsi_segments.py` -> SEGMENTS["housing_finance"].
+Every superlative here is scoped to those 12 and says so in the prose. A
+housing financier funded by NHB refinance at 12% equity-to-assets and an
+affordable-housing lender running 40% equity are not the same business, but
+they ARE comparable on the numbers that matter; the 185-name cluster is not.
+
+Deliberate choices, recorded so batch 3 does not re-litigate them:
+
+1. **Every row is `medium`, by construction.** All 12 carry the cluster-wide
+   blocker that cash-conversion and net-profit-vs-operating-profit are not
+   applied to a balance-sheet lender, so VERDICT_WRITING §5 puts the ceiling at
+   medium. Nothing here is data-blocked either — all 12 scored `full`, no
+   suppressed pillars, no stub annual rows, no impossible values — so nothing
+   drops to `low`. The segment is unusually clean; that is itself worth saying
+   once rather than per row.
+
+2. **ROA leads, ROE follows, `equity_to_assets` sits beside both.** Gearing in
+   this set runs from 2.5x assets-to-equity (APTUS, 39.67% equity) to 8.5x
+   (LICHSGFIN, 11.71%). CANFINHOME posts the highest three-year ROE of the 12
+   on the second-thinnest capital base in the 12; APTUS posts the highest ROA
+   on the thickest. Those two facts are the spine of the whole batch.
+
+3. **The own-history PE band is quoted for five names and refused for seven.**
+   Three have no band at all (BAJAJHFL, AADHARHFC, INDIASHLTR — too little
+   usable annual history, and that is a stated blocker). Four more carry a low
+   under 4x — PNBHOUSING 3.50, SRGHFL 3.60, GICHSGFIN 3.91, REPCOHOME 2.46 —
+   which is a split-adjustment artefact, not a price anyone paid. The five
+   quoted are LICHSGFIN, CANFINHOME, AAVAS, APTUS, HOMEFIRST.
+
+4. **`roe_excess_13_Ny` is an excess in percentage points, not a pass rate.**
+   CANFINHOME's 0.04746 is +4.75pp against the 13% hurdle on the ten-year
+   window. `np_growth_above_inflation_Ny` IS a pass rate, denominator N-1
+   (5y->4, 7y->6, 10y->9) — VERDICT_WRITING §3. Neither test exists for
+   AADHARHFC, BAJAJHFL, INDIASHLTR or PNBHOUSING: they are mature/mid tier and
+   the long windows are absent, so for those four the hurdle question is simply
+   unanswered and the prose says so instead of implying a pass.
+
+5. **Two names are watchlisted, none is held.** CANFINHOME (added 2026-09-01 at
+   ₹793.40) and PNBHOUSING (added 2026-10-02 at ₹1,092.00). Checked against
+   `app.portfolio_holding`: zero rows for all 12.
+
+6. **`np_cagr_3y` is NULL for all 12** and `book_value_cagr_3y` is NULL for all
+   but INDIASHLTR, which is on the platform-wide never-quotable list anyway.
+   The growth vocabulary for this segment is `loan_book_cagr_3y`,
+   `np_cagr_5y/7y` and `book_value_cagr_10y`.
+
+7. **BAJAJHFL's `pct_above_200ema_252d` is 0.0000** — it has not closed above
+   its 200-day EMA once in 252 sessions. That is a real reading, not a missing
+   one, and it is the single most informative number in its row.
+
+Run from the repo root:
+    etl/.venv/bin/python build/verdicts/mk_hf_12.py
+"""
+
+import json
+
+PACK = "/tmp/hf_pack.json"
+OUT = "build/verdicts/hf-12-verdicts.json"
+GENERATED_AT = "2026-10-13T16:00:00+00:00"
+SOURCE_REPORT = "bfsi-nbfc housing_finance v1"
+MODEL = "claude-opus-4-7"
+
+PEERS = "the 12 housing financiers in this peer set"
+TNS = ("<code>tech_net_score_scaled</code> is NULL for every scored company on "
+       "the platform, so the momentum pillar is computed on 95 of its 100 "
+       "declared points.")
+LENDER = ("the cash-conversion and profit-quality tests are not applied to a "
+          "balance-sheet lender, so nothing in this cluster can carry high "
+          "confidence")
+
+SPEC = {
+
+# ----------------------------------------------------------------- accumulate
+
+"APTUS": {
+ "confidence": "medium",
+ "verdict": "ACCUMULATE — 6.90% on assets, the best of the 12, earned on the thickest capital base of the 12, at 11.5x earnings",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> Aptus Value Housing Finance, ₹11,339cr, affordable home loans to self-employed, low-income households in semi-urban south India, with a small NBFC subsidiary alongside. Composite 93 inside bfsi_nbfc — the highest of " + PEERS + " — on quality 78, valuation 54, momentum 36.",
+  "<b>The return is earned on assets, not borrowed from the balance sheet.</b> <code>roa_3y</code> is 6.90%, the highest of the 12 and more than double the segment's middle (INDIASHLTR is second at 4.79%), and <code>equity_to_assets</code> is 39.67% — also the highest of the 12, roughly 2.5x assets to equity where LIC Housing runs 8.5x. That combination produces a 17.43% three-year ROE with no gearing in it at all; Can Fin Homes reaches 17.45% on 12.62% equity.",
+  "<b>It clears the hurdle on every window that exists.</b> <code>roe_excess_13_5y</code> +3.01pp, <code>roe_excess_13_7y</code> +2.12pp, <code>roe_excess_13_10y</code> +1.04pp — one of only two of the 12 positive on all three, the other being Can Fin Homes. Net profit beat inflation in 4 of the last 4 years, 6 of 6 and 9 of 9 — a clean sweep shared with Aavas and Home First. <code>loan_book_cagr_3y</code> 22.05%, <code>book_value_cagr_10y</code> 28.73%, TTM sales +21.1%, operating profit +18.2%, net profit +23.3%, operating margin 84.46% -> 82.40%.",
+  "<b>The price has not followed the quality.</b> 11.52x earnings against an own-history band of 10.33x to 45.72x averaging 24.98x — though over only five usable years, so read the band as weak evidence. 2.24x book and <code>p_aum</code> 0.89x, the highest price-to-loan-book of the 12, which is the one number arguing it is not cheap. <code>div_yield</code> 1.99%. Momentum is the weak pillar: <code>ret_12m_rel</code> -28.6%, second-worst of the 12, and the close sat above the 200-day EMA on only 13.9% of the last 252 sessions. " + TNS,
+  "<i>The uncomfortable part is the de-rating itself: a business this good falling 28.6% behind the market over a year usually means the market has seen something the ratios have not — most plausibly asset quality in self-employed lending, which no metric in this pack measures. Promoters hold 23.86%, FIIs 29.96%, DIIs 29.90%, so the register is almost entirely institutional and the exit is crowded. Buy it for the 6.9% ROA on unlevered capital; size it for the fact that you cannot see the loan book.</i>",
+ ],
+ "trigger": "roa_3y holding above 6% for two more quarters while loan_book_cagr_3y stays above 20% -> the de-rating was sentiment and 11.5x on this quality is a mistake by the market. np_yoy_q turning negative, or roa_3y slipping under 5% -> the price was early and the credit cost in self-employed lending is arriving.",
+ "evidence": ["roa_3y", "roe_3y", "equity_to_assets", "roe_excess_13_10y", "pe_ttm", "pb", "p_aum", "loan_book_cagr_3y", "ret_12m_rel"],
+},
+
+"CANFINHOME": {
+ "confidence": "medium",
+ "verdict": "ACCUMULATE — the most consistent hurdle-clearer of the 12, at 8.4x earnings against a decade average of 13.4x, but the ROE is gearing",
+ "points": [
+  "<b>On your watchlist since 1 September 2026 at ₹793.40 — now ₹735.00, down 7.4%. Not held.</b> Can Fin Homes, ₹9,467cr, a Canara Bank subsidiary (promoter stake 29.99%) running 84% housing loans and the rest non-housing mortgage. Composite 72 inside bfsi_nbfc: quality 59, valuation 63, momentum 41.",
+  "<b>Nothing in the set clears the 13% hurdle as reliably.</b> <code>roe_excess_13_5y</code> +3.95pp, <code>roe_excess_13_7y</code> +4.10pp and <code>roe_excess_13_10y</code> +4.75pp are each the highest of " + PEERS + ", and <code>roe_3y</code> 17.45%, <code>roe_5y</code> 16.95% and <code>roe_7y</code> 17.10% are each the highest too. Net profit beat inflation in 4 of the last 4 years, 5 of 6 and 7 of 9.",
+  "<b>But the equity return is leverage, and you should price it as such.</b> <code>roa_3y</code> is 2.20%, ninth of the 12, and <code>equity_to_assets</code> is 12.62% — the second-thinnest capital base of the 12 behind LIC Housing's 11.71%, so roughly 7.9x assets to equity. Aptus earns 6.90% on assets to reach the same ROE. Growth is slow to match: <code>loan_book_cagr_3y</code> 10.30% is fourth-slowest of the 12, TTM sales +8.2% and operating profit +8.4%, with the margin flat at 91.90% -> 92.09%. The TTM net profit figure of +28.2% is credit-cost normalisation, not revenue.",
+  "<b>Priced below its own decade.</b> 8.38x earnings against an own-history band of 4.80x to 22.54x averaging 13.35x over ten years — one of only five bands in this segment with a plausible low. 1.58x book, <code>p_aum</code> 0.22x, and <code>div_yield</code> 2.11%, second-highest of the 12 behind GIC Housing's 3.39%. <code>ret_12m_rel</code> -8.4% is the second-best of the 12 and the close held above the 200-day EMA on 60.3% of the last 252 sessions, second-highest. " + TNS,
+  "<i>This is the safest-looking thing in the segment and that is exactly where to be careful: a 7.9x-geared book earning 2.2% on assets is one credit cycle away from a 10% ROE, and the parent's funding advantage is what has prevented that so far. You are being paid 2.1% to wait at a 37% discount to the decade-average multiple, which is a fair bargain. Add on weakness; do not confuse the consistency record with a thick balance sheet.</i>",
+ ],
+ "trigger": "loan_book_cagr_3y accelerating past 15% while roe_3y holds above 17% -> the 8.4x multiple is wrong by half and the discount to its own average closes. roa_3y falling under 2.0%, or the operating margin stepping down from 92.09% -> the ROE was all funding cost and a 7.9x-geared lender re-rates downward fast.",
+ "evidence": ["roe_3y", "roe_excess_13_10y", "roa_3y", "equity_to_assets", "pe_ttm", "pb", "div_yield", "loan_book_cagr_3y", "pct_above_200ema_252d"],
+},
+
+"REPCOHOME": {
+ "confidence": "medium",
+ "verdict": "ACCUMULATE — a 12.87% ROE on unlevered capital priced at 0.52x book and 4.4x earnings, the cheapest earnings multiple of the 12, with no growth whatsoever",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> Repco Home Finance, ₹2,113cr, retail home loans and home-equity lending to individuals, largely in Tamil Nadu. Composite 78 inside bfsi_nbfc: quality 56, valuation 78, momentum 37.",
+  "<b>Start with what is wrong, because it is the whole argument against.</b> <code>np_cagr_7y</code> is 8.09%, the slowest of " + PEERS + ", <code>loan_book_cagr_3y</code> 9.29% is third-slowest, and TTM net profit +3.8% is the weakest of the 12. The operating margin went backwards: 91.80% -> 88.61%, a 3.19pp step down, which is the one genuinely bad sign in this row. Net profit beat inflation in 3 of the last 4 years, 3 of 6 and 6 of 9.",
+  "<b>What you are buying is the balance sheet, not the growth.</b> <code>roa_3y</code> 3.02% with <code>equity_to_assets</code> 23.53% gives <code>roe_3y</code> 12.87% — a return produced at roughly 4.2x assets to equity, where Can Fin Homes needs 7.9x and LIC Housing 8.5x for a similar number. The hurdle record is middling rather than bad: <code>roe_excess_13_5y</code> -1.14pp, <code>roe_excess_13_7y</code> -0.17pp, <code>roe_excess_13_10y</code> +0.73pp.",
+  "<b>The price is the thesis.</b> 4.38x earnings is the cheapest of the 12 and 0.52x book is the second-cheapest behind GIC Housing's 0.34x; <code>p_aum</code> 0.13x is third-lowest. An own-history PE band exists but its low is 2.46x, which is a split-adjustment artefact rather than a price anyone paid, so it is not quoted. <code>div_yield</code> 0.89%, DIIs 26.08%, FIIs 12.36%, promoters 37.13%. <code>ret_12m_rel</code> -13.3%. " + TNS,
+  "<i>Half of book value for a lender that earns nearly 13% on equity without gearing is an arithmetic discount, not a narrative one — and it has been available for years, which is the honest warning. The margin step down is the thing to watch, not the growth; slow growth at 0.52x book is tolerable, a falling spread is not. Buy it as an asset-value position with a 0.9% coupon, not as a compounder.</i>",
+ ],
+ "trigger": "the operating margin recovering above 91% while loan_book_cagr_3y crosses 12% -> 0.52x book on a recovering spread re-rates toward book value. The margin stepping down again, or roe_3y falling under 11% -> the discount is permanent and the capital is dead money at a 0.9% yield.",
+ "evidence": ["pe_ttm", "pb", "roa_3y", "roe_3y", "equity_to_assets", "np_cagr_7y", "opm_now", "opm_prev", "p_aum"],
+},
+
+"INDIASHLTR": {
+ "confidence": "medium",
+ "verdict": "ACCUMULATE — 4.79% on assets and 31% loan-book growth at 14x, but with six years of history and no own-history band to check it against",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> India Shelter Finance, ₹7,050cr, affordable home loans and loan-against-property to underserved borrowers. Composite 47 inside bfsi_nbfc: quality 56, valuation 68, momentum 39.",
+  "<b>Second-best asset return of the 12, on the second-thickest capital.</b> <code>roa_3y</code> 4.79% trails only Aptus's 6.90% among " + PEERS + ", and <code>equity_to_assets</code> 35.97% is second only to Aptus's 39.67% — so <code>roe_3y</code> 13.48% is earned at under 3x gearing, where most of this segment needs 4x to 8.5x for the same figure.",
+  "<b>Growing faster than almost anything here.</b> <code>loan_book_cagr_3y</code> 30.81% is third-highest of the 12, TTM sales +31.1% is the highest of the 12, operating profit +31.3% and net profit +33.2%, with the operating margin steady at 72.52% -> 72.64%. The latest quarter: <code>np_yoy_q</code> +27.2%, <code>sales_yoy_q</code> +24.7%. Growth is not slowing at the margin, which is the main thing a 30% book grower can get wrong.",
+  "<b>What cannot be checked is the point.</b> Six usable annual years, so there is no <code>roe_excess_13_5y</code>, no <code>np_growth_above_inflation_5y</code> and no <code>np_cagr_5y</code> for this company at all — the hurdle question is unanswered rather than passed — and the pack carries an explicit blocker for insufficient usable annual history to derive a PE band. So 14.01x earnings and 2.20x book have nothing historical to be measured against. <code>p_aum</code> 0.77x is third-highest of the 12, <code>div_yield</code> 1.54%. <code>ret_12m_rel</code> -26.6%, with the close above the 200-day EMA on 26.6% of the last 252 sessions. " + TNS,
+  "<i>Buy this for the 4.8% asset return on a 36%-equity balance sheet, and accept that you are underwriting a lender whose first full credit cycle has not happened. The -26.6% relative year against 31% revenue growth says the market is discounting the asset quality, not the growth. Promoters 46.05%, FIIs 6.86%, DIIs 21.92%. Smaller position than Aptus, same reasoning, less evidence.</i>",
+ ],
+ "trigger": "two more quarters of sales_yoy_q above 20% with roa_3y holding above 4.5% -> the short history stops being the binding constraint and 14x is cheap for the growth. roa_3y falling below 3.5% while the book keeps compounding at 30% -> growth is being bought with credit risk, which is the standard way affordable-housing lenders fail.",
+ "evidence": ["roa_3y", "roe_3y", "equity_to_assets", "loan_book_cagr_3y", "ttm_sales_pct", "pe_ttm", "pb", "p_aum", "np_yoy_q"],
+},
+
+# ----------------------------------------------------------------------- hold
+
+"HOMEFIRST": {
+ "confidence": "medium",
+ "verdict": "HOLD — the fastest book-value compounder of the 12 and a rising ROE, but 2.70x book, 43.90% foreign ownership and the worst ten-year hurdle record of the eight veterans",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> Home First Finance, ₹11,771cr, technology-led affordable housing finance and other mortgage lending. Composite 86 inside bfsi_nbfc: quality 73 — second-highest of " + PEERS + " behind Aptus's 78 — valuation 36, momentum 52.",
+  "<b>The compounding is genuine and it is improving.</b> <code>book_value_cagr_10y</code> 34.24% is the highest of the 12, <code>loan_book_cagr_3y</code> 31.05% is second-highest and <code>np_cagr_7y</code> 37.62% second-highest. The ROE is working upward through the windows — <code>roe_7y</code> 11.73%, <code>roe_5y</code> 13.27%, <code>roe_3y</code> 13.99% — on <code>roa_3y</code> 3.30% and <code>equity_to_assets</code> 23.87%, which is a mid-geared book at about 4.2x. Net profit beat inflation in 4 of the last 4 years, 6 of 6 and 9 of 9.",
+  "<b>That improving trajectory is why its long-window record looks worst.</b> <code>roe_excess_13_10y</code> is -2.87pp, the weakest ten-year figure of the eight veterans here, and <code>roe_excess_13_7y</code> -1.27pp; only <code>roe_excess_13_5y</code> is positive, at +0.27pp. Read as a trend that is the bull case, but it does mean the 13% hurdle has been cleared for about two years, not a decade.",
+  "<b>TTM growth is the strongest in the set, and so is the price.</b> <code>ttm_np_pct</code> +40.7% is the highest of the 12 on sales +21.4% and operating profit +19.6%, margin 79.76% -> 78.58%. Against that, 20.25x earnings is the second-highest multiple of the 12, 2.70x book the second-highest and <code>p_aum</code> 0.82x the second-highest. Its own-history band is 17.47x to 39.14x averaging 28.56x over six years, so it sits near the bottom of a short, bubble-era range. FIIs hold 43.90%, the highest of the 12, against promoters of just 6.98%, the lowest — this is an institutionally owned float with no anchor. " + TNS,
+  "<i>Everything about the business is working; the problem is that you pay 2.7x book for a 14% ROE while Aptus offers 17.4% at 2.24x. Hold rather than buy: the re-rating case needs the ROE to keep climbing, and the de-rating case needs only the 43.9% foreign holding to turn. If the ROE reaches 16% the multiple is defensible; until then there is a better version of this trade in the same segment.</i>",
+ ],
+ "trigger": "roe_3y crossing 15% with loan_book_cagr_3y holding above 28% -> the 2.70x book is earned and the gap to Aptus closes on quality rather than price. The 43.90% FII holding reversing, or ttm_np_pct normalising under 20% -> a 20x multiple with 7% promoter ownership has nothing underneath it.",
+ "evidence": ["book_value_cagr_10y", "loan_book_cagr_3y", "roe_3y", "roa_3y", "equity_to_assets", "roe_excess_13_10y", "pe_ttm", "pb", "fii_pct", "ttm_np_pct"],
+},
+
+"AAVAS": {
+ "confidence": "medium",
+ "verdict": "HOLD — a perfect inflation-beating record and 27.5% book compounding, but a 13.05% ROE that has sat on the 13% line for a decade",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> Aavas Financiers, ₹9,443cr, affordable housing finance plus MSME and other mortgage lending to low and middle-income customers. Composite 65 inside bfsi_nbfc: quality 63, valuation 49, momentum 38.",
+  "<b>Consistent, and consistently just at the hurdle.</b> Net profit beat inflation in 4 of the last 4 years, 6 of 6 and 9 of 9 — one of only three of " + PEERS + " with a clean sweep, alongside Aptus and Home First. But <code>roe_excess_13_5y</code> is -0.01pp, <code>roe_excess_13_7y</code> -0.31pp and <code>roe_excess_13_10y</code> -1.37pp: the ROE has been pinned to 13% across every window rather than exceeding it. <code>roe_3y</code> 13.05% on <code>roa_3y</code> 3.05% and <code>equity_to_assets</code> 23.36%.",
+  "<b>Book value has compounded faster than earnings.</b> <code>book_value_cagr_10y</code> 27.52% is third-highest of the 12 while <code>np_cagr_5y</code> 16.53% is third-slowest — equity has grown partly by raising it, not only by earning it, which is also why the ROE never breaks 13%. <code>loan_book_cagr_3y</code> 16.52%, TTM sales +13.3%, operating profit +11.7%, net profit +17.0%, margin 74.91% -> 73.82%.",
+  "<b>Cheap against its own history, and that history is not usable as a target.</b> 13.75x earnings against an own-history band of 13.05x to 65.78x averaging 38.02x over eight years — it is sitting at the bottom of its band, but the band's average belongs to the 2018–21 affordable-housing re-rating and is not a level to extrapolate to. 1.87x book, <code>p_aum</code> 0.45x, no dividend (<code>div_yield</code> NULL). <code>ret_12m_rel</code> -23.2% and the close was above the 200-day EMA on just 11.1% of the last 252 sessions, third-lowest of the 12. " + TNS,
+  "<i>A good lender with a structural ceiling: 3.05% on assets at 23% equity cannot produce more than mid-teens ROE, so the terminal multiple is modest no matter how clean the record is. Hold if you own it; the reason not to buy is that Aptus does the same job at 6.9% ROA and a lower price-to-book. Promoters 48.88%, FIIs 16.28%, DIIs 22.15%.</i>",
+ ],
+ "trigger": "roe_3y clearing 15% while loan_book_cagr_3y holds above 16% -> the ceiling was funding cost, not business model, and 1.87x book is cheap. np_cagr_5y staying under 17% with the ROE pinned at 13% -> there is nothing to re-rate and the capital belongs in Aptus or Can Fin Homes.",
+ "evidence": ["roe_3y", "roe_excess_13_10y", "roa_3y", "equity_to_assets", "book_value_cagr_10y", "np_cagr_5y", "pe_ttm", "pb", "pct_above_200ema_252d"],
+},
+
+"LICHSGFIN": {
+ "confidence": "medium",
+ "verdict": "HOLD — 0.68x book and 4.9x earnings at the bottom of its own decade band, on a loan book growing 5.3% a year and the thinnest capital of the 12",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> LIC Housing Finance, ₹27,998cr, LIC's mortgage arm — 83% individual home loans, the rest non-housing and project lending. Composite 67 inside bfsi_nbfc: quality 50, valuation 78, momentum 40.",
+  "<b>The business has stopped growing.</b> <code>ttm_sales_pct</code> +0.2% and <code>ttm_op_pct</code> +0.8% are the lowest of " + PEERS + ", <code>sales_yoy_q</code> -1.4% is the only negative quarterly revenue reading in the set, and <code>loan_book_cagr_3y</code> 5.30% is second-slowest of the 12 behind GIC Housing's 1.14%. Net profit beat inflation in 3 of the last 4 years, 4 of 6 and 5 of 9.",
+  "<b>And the ROE it does post is almost entirely gearing.</b> <code>roa_3y</code> 1.70% is eleventh of the 12, and <code>equity_to_assets</code> 11.71% is the thinnest capital base of the 12 — about 8.5x assets to equity — which is what turns that into <code>roe_3y</code> 14.54%. Against the 13% hurdle: <code>roe_excess_13_5y</code> -0.30pp, <code>roe_excess_13_7y</code> -0.15pp, <code>roe_excess_13_10y</code> +0.63pp, so it has tracked the hurdle, not beaten it. The <code>opm_now</code> of 94.82% is the highest of the 12, which for a lender reflects funding structure rather than pricing power.",
+  "<b>The price already says all of this.</b> 4.88x earnings against an own-history band of 4.86x to 16.08x averaging 8.59x over ten years — it is trading at its decade low, not merely below average. 0.68x book is third-cheapest of the 12 and <code>p_aum</code> 0.09x second-cheapest. <code>div_yield</code> 1.97% and <code>earnings_yield_trend</code> +1.95pp, the best of the 12. Promoters (LIC) 45.24%, FIIs 21.47%, DIIs 21.02%, with 337,873 shareholders. <code>ret_12m_rel</code> -9.2%, third-best of the 12. " + TNS,
+  "<i>At its own decade-low multiple this is a cheap option on nothing in particular: the capital is thin, the book is flat, and the ROE needs 8.5x gearing to look respectable. The yield plus the discount makes it defensible to hold, not to add — an 8.5x-geared lender trading at 0.68x book is priced for a credit event, and if one arrives the thin equity is exactly what hurts. Hold for the re-rating option; do not call it value.</i>",
+ ],
+ "trigger": "loan_book_cagr_3y recovering above 10% with roa_3y crossing 2.0% -> a flat book was the only thing wrong and 0.68x book at the decade-low multiple re-rates hard. equity_to_assets staying under 12% while sales_yoy_q remains negative -> the discount is the market pricing an 8.5x-geared book that cannot grow, and it is right.",
+ "evidence": ["roa_3y", "roe_3y", "equity_to_assets", "loan_book_cagr_3y", "ttm_sales_pct", "pe_ttm", "pb", "div_yield", "earnings_yield_trend"],
+},
+
+"AADHARHFC": {
+ "confidence": "medium",
+ "verdict": "HOLD — third-best asset return of the 12 and 18% book growth, but at 17.2x with no own-history band and a valuation pillar scored on 75 of 100 points",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> Aadhar Housing Finance, ₹19,658cr, low-income housing finance, listed May 2024, promoter stake 64.66% held by its private-equity sponsor. Composite 45 inside bfsi_nbfc: quality 69, valuation 19 — second-lowest of " + PEERS + " — momentum 49.",
+  "<b>The lending economics are near the top of the set.</b> <code>roa_3y</code> 3.95% is third-highest of the 12 and <code>equity_to_assets</code> 26.09% fourth-highest, giving <code>roe_3y</code> 15.23% — third-highest — at about 3.8x gearing. <code>loan_book_cagr_3y</code> 18.14%, <code>np_cagr_5y</code> 25.28%, <code>np_cagr_7y</code> 33.99% (third-highest), <code>book_value_cagr_5y</code> 24.42%. TTM sales +17.7%, operating profit +17.6%, net profit +20.2%, margin flat at 76.22% -> 76.17%.",
+  "<b>Two things cannot be measured here, and both are stated blockers.</b> Eight usable annual years and a 2024 listing mean there is no derived PE band at all, so 17.23x earnings and 2.61x book have no own history to sit against. Separately, the valuation pillar is scored on 75 of its 100 declared points — <code>earnings_yield_trend</code> (15 points) and <code>div_yield</code> (10 points) are both NULL and the percentile is renormalised around them. The valuation 19 therefore answers a narrower question than the scorecard asks, and this row does not lean on it.",
+  "<b>What is measurable on price.</b> 17.23x earnings is third-highest of the 12 and 2.61x book third-highest, with <code>p_aum</code> 0.74x fourth-highest — so it is priced in the expensive half on every measure available. Momentum is middling-to-good: <code>ret_12m_rel</code> -9.5%, fourth-best of the 12, and the close held above the 200-day EMA on 54.0% of the last 252 sessions, third-highest. FIIs 5.80%, DIIs 9.92% — thin institutional ownership against the 64.66% sponsor block. " + TNS,
+  "<i>Good lender, full price, and a sponsor holding two-thirds of the equity who will eventually sell — that overhang is the part no ratio captures. The hurdle tests that would tell you whether 15% ROE is durable do not exist for a company with eight years of data, so there is no long record to lean on either. Hold and wait for either a cheaper entry or the first real hurdle reading.</i>",
+ ],
+ "trigger": "roa_3y holding near 4% through a full year with loan_book_cagr_3y above 18% -> the quality is durable and 17x becomes reasonable rather than full. Sponsor selling pressure, or roa_3y under 3.3% -> you are paying the expensive third of the segment for a lender with no own-history band and no hurdle record.",
+ "evidence": ["roa_3y", "roe_3y", "equity_to_assets", "loan_book_cagr_3y", "np_cagr_7y", "book_value_cagr_5y", "pe_ttm", "pb", "p_aum", "pct_above_200ema_252d"],
+},
+
+"PNBHOUSING": {
+ "confidence": "medium",
+ "verdict": "HOLD — the only positive relative return of the 12 and the turnaround is real, but an 11.16% ROE is still below the hurdle and the re-rating has already happened",
+ "points": [
+  "<b>On your watchlist since 2 October 2026 at ₹1,092.00 — now ₹1,200.00, up 9.9%. Not held.</b> PNB Housing Finance, ₹28,480cr, Punjab National Bank's mortgage arm across Prime, Emerging Markets and the Roshni affordable book. Composite 64 inside bfsi_nbfc: quality 50, valuation 57, momentum 60 — the highest momentum of " + PEERS + ".",
+  "<b>It is the only thing in the segment that has worked.</b> <code>ret_12m_rel</code> +35.0%, <code>ret_6m_rel</code> +35.5% and <code>ret_3m_rel</code> +7.0% are each the best of the 12, and the only positive readings on any of the three windows; the close held above its 200-day EMA on 67.5% of the last 252 sessions, the highest of the 12. DIIs hold 45.71%, also the highest — the domestic institutional bid is the story.",
+  "<b>The profit recovery is genuine but it is a recovery, not a franchise.</b> <code>np_cagr_5y</code> 28.65% is third-highest of the 12 and measures the climb back from the loss years, not underlying compounding; <code>loan_book_cagr_3y</code> 11.82% is the honest growth rate. <code>roa_3y</code> 2.29% with <code>equity_to_assets</code> 20.56% produces <code>roe_3y</code> 11.16%, tenth of the 12 — below the scorecard's 13% hurdle, and being mature-tier there is no <code>roe_excess_13_5y</code> or <code>np_growth_above_inflation_5y</code> for it at all, so the long-run hurdle question is unanswered rather than passed.",
+  "<b>Growth is decelerating at the margin, which is what the price has not absorbed.</b> <code>np_yoy_q</code> +4.5% is the lowest of the 12 and <code>sales_yoy_q</code> +9.0% is eighth, against TTM figures of sales +9.8%, operating profit +11.4% and net profit +13.7% — so the latest quarter is weaker than the trailing year. <code>earnings_yield_trend</code> -1.46pp is the worst of the 12. 12.30x earnings and 1.48x book; the derived PE band is not quoted because its low of 3.50x is a split-adjustment artefact. <code>div_yield</code> 0.73%. " + TNS,
+  "<i>You added this eleven days ago and it is up 9.9% — the uncomfortable part is that the +35% relative year is the reason to be careful, not the reason to buy. An 11.2% ROE lender at 1.48x book has already been given credit for the turnaround, and the latest quarter's +4.5% profit growth is the slowest in the segment. Hold the watchlist position and wait for the ROE to cross 13% before committing capital.</i>",
+ ],
+ "trigger": "roe_3y crossing 13% while np_yoy_q recovers above 15% -> the turnaround becomes a franchise and 1.48x book is too cheap for it. np_yoy_q staying under 10% with the 45.71% DII holding unwinding -> the whole +35% relative move was institutional flow into an 11% ROE lender.",
+ "evidence": ["ret_12m_rel", "ret_6m_rel", "pct_above_200ema_252d", "dii_pct", "roa_3y", "roe_3y", "equity_to_assets", "loan_book_cagr_3y", "np_yoy_q", "pe_ttm", "pb"],
+},
+
+# ---------------------------------------------------------------- speculative
+
+"SRGHFL": {
+ "confidence": "medium",
+ "verdict": "SPECULATIVE — fastest loan-book growth of the 12 at 0.72x book, inside a ₹213cr company with 2,650 shareholders and no institutional holder at all",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> SRG Housing Finance, ₹213cr, rural and semi-urban home, plot and property-backed lending. Composite 86 inside bfsi_nbfc: quality 67, valuation 67, momentum 30 — the lowest momentum of " + PEERS + ".",
+  "<b>Size and liquidity are the verdict, not the ratios.</b> <code>shareholders</code> is 2,650 — the next-fewest of the 12 is Repco Home at 49,320 and LIC Housing has 337,873 — while <code>fii_pct</code> and <code>dii_pct</code> are both 0.00%, the only name in the set with no institutional holder of either kind. Promoters hold 59.02%. At ₹213cr of market capitalisation a position cannot be sized or exited the way the other eleven can, which is why this is labelled speculative regardless of what the numbers say.",
+  "<b>The numbers themselves are good.</b> <code>loan_book_cagr_3y</code> 32.27% is the highest of the 12, <code>ttm_op_pct</code> +31.9% is the highest and <code>sales_yoy_q</code> +26.6% the highest, with TTM sales +30.6% and net profit +35.0% both second-highest. <code>roa_3y</code> 2.90% on <code>equity_to_assets</code> 26.49% (third-highest) gives <code>roe_3y</code> 11.13%, and the longer windows are better than the recent one: <code>roe_excess_13_7y</code> +2.45pp and <code>roe_excess_13_10y</code> +3.12pp are each second-highest of the 12, while <code>roe_excess_13_5y</code> is -0.19pp. <code>roe_7y</code> 15.45% against <code>roe_3y</code> 11.13% says the ROE has been falling as equity has been raised.",
+  "<b>Cheap, with the weakest spread and the worst price action in the set.</b> 6.24x earnings, 0.72x book, <code>p_aum</code> 0.20x, no dividend. <code>opm_now</code> 62.63% is the lowest of the 12 by over ten points, so it funds itself worse than anything else here. <code>ret_12m_rel</code> -57.7%, <code>ret_6m_rel</code> -52.4% and <code>ret_3m_rel</code> -53.5% are each the worst of the 12 by at least 29 percentage points. Its derived band is not quoted — the 3.60x low is a split-adjustment artefact. " + TNS,
+  "<i>A 57.7% relative collapse in a microcap with no institutional holder and 2,650 shareholders is not a valuation opportunity you can verify from a scorecard — the price is telling you something these ratios do not contain, and with zero institutional ownership there is nobody doing the diligence you would be free-riding on. The growth and the ten-year hurdle record are real. Treat it as a position you can afford to be wrong about in full, or skip it.</i>",
+ ],
+ "trigger": "ret_3m_rel recovering above -10% while loan_book_cagr_3y holds above 30% and roe_3y turns up toward the 15.45% seven-year level -> the collapse was illiquidity and 0.72x book is wrong. opm_now falling under 60%, or roe_3y dropping below 10% -> the falling ROE and the worst funding spread in the segment are the same problem and the discount is earned.",
+ "evidence": ["shareholders", "fii_pct", "dii_pct", "loan_book_cagr_3y", "roa_3y", "roe_3y", "roe_7y", "roe_excess_13_10y", "opm_now", "pb", "ret_12m_rel"],
+},
+
+# ---------------------------------------------------------------------- avoid
+
+"BAJAJHFL": {
+ "confidence": "medium",
+ "verdict": "AVOID — the most expensive multiple and the richest price-to-book of the 12 for a 2.08% asset return, and it has not closed above its 200-day EMA once in 252 sessions",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> Bajaj Housing Finance, ₹69,083cr — the largest of " + PEERS + " — 86.70% owned by Bajaj Finance, funding its book through NCDs and portfolio assignments. Composite 32 inside bfsi_nbfc, the lowest of the 12: quality 66, valuation 5, momentum 43.",
+  "<b>You pay the most for the least asset return.</b> <code>pe_ttm</code> 25.66x and <code>pb</code> 3.07x are each the highest of the 12, while <code>roa_3y</code> 2.08% is tenth of the 12 and <code>roe_3y</code> 12.12% ninth, produced on <code>equity_to_assets</code> 17.36% — about 5.8x gearing. Aptus earns 6.90% on assets and trades at 2.24x book; this is the inverse of that trade.",
+  "<b>The growth is real and the base effects make it look better than it is.</b> <code>loan_book_cagr_3y</code> 25.29% is fourth-highest of the 12 and <code>np_cagr_5y</code> 37.82% the highest, but <code>np_cagr_7y</code> 98.28% is a base effect from a near-zero start, not a 98% compounding rate, and is not quotable as quality. TTM sales +16.3%, operating profit +16.1%, net profit +18.9%, margin 91.42% -> 91.31%. With seven usable annual years there is no <code>roe_excess_13_5y</code> and no <code>np_growth_above_inflation_5y</code> for it, so nothing tests whether a 12% ROE clears the hurdle over time — and there is no derived PE band either, which is a stated blocker.",
+  "<b>The price action is the clearest signal in the row.</b> <code>pct_above_200ema_252d</code> is 0.0000 — the close has not finished above its 200-day EMA on a single one of the last 252 sessions, the only zero reading of the 12 — and <code>ret_12m_rel</code> is -23.0%. The valuation pillar is additionally scored on 75 of its 100 declared points, with <code>earnings_yield_trend</code> (15 points) and <code>div_yield</code> (10 points) both NULL; the valuation 5 is a renormalised percentile, so the conclusion rests on the raw 25.66x and 3.07x instead. FIIs 0.90%, DIIs 1.00% against the 86.70% parent stake — the float is tiny and institutionally unloved. " + TNS,
+  "<i>This is a good lender at a venture-capital price: 3.07x book for 2.08% on assets only works if the book triples, and the 2024 listing valuation is what is being unwound. A full year without one close above the 200-day EMA is not noise. Avoid until either the multiple halves or the asset return moves toward 3%.</i>",
+ ],
+ "trigger": "roa_3y moving above 3% while loan_book_cagr_3y holds 25% -> the business grows into the multiple and the de-rating stops. pb staying above 3x with pct_above_200ema_252d still near zero -> the unwind of the listing price has further to run and there is no dividend to wait with.",
+ "evidence": ["pe_ttm", "pb", "roa_3y", "roe_3y", "equity_to_assets", "loan_book_cagr_3y", "pct_above_200ema_252d", "ret_12m_rel", "promoter_pct"],
+},
+
+"GICHSGFIN": {
+ "confidence": "medium",
+ "verdict": "AVOID — 0.34x book and a 3.39% yield, the cheapest of the 12 on both, for a 7.93% ROE and a loan book growing 1.14% a year",
+ "points": [
+  "<b>Not held, not on your watchlist.</b> GIC Housing Finance, ₹716cr, home loans and top-up loans, promoter stake 42.41%. Composite 46 inside bfsi_nbfc: quality 40 — the lowest of " + PEERS + " — valuation 81, the highest of the 12, momentum 35.",
+  "<b>Worst return of the segment on every window.</b> <code>roa_3y</code> 1.43%, <code>roe_3y</code> 7.93% and <code>roe_7y</code> 8.46% are each the lowest of the 12, on <code>equity_to_assets</code> 18.11% — so this is not a gearing problem that better funding would fix, the assets simply do not earn. Against the 13% hurdle: <code>roe_excess_13_5y</code> -3.44pp and <code>roe_excess_13_7y</code> -4.54pp are the worst of the 12, with <code>roe_excess_13_10y</code> -2.11pp.",
+  "<b>And the book is not growing.</b> <code>loan_book_cagr_3y</code> 1.14% is the lowest of the 12 — effectively flat — <code>np_cagr_5y</code> -2.81% is the only negative five-year profit CAGR in the set, and <code>book_value_cagr_10y</code> 10.78% is the lowest. Net profit beat inflation in 1 of the last 4 years, 3 of 6 and 4 of 9, the weakest record of the 12 on all three windows. <code>ttm_sales_pct</code> +1.2% and <code>sales_yoy_q</code> +0.5% confirm it at the margin; the <code>np_yoy_q</code> of +35.8%, the highest of the 12, is a provision swing on a tiny base, not growth.",
+  "<b>The cheapness is real and it is the whole of the bull case.</b> <code>pb</code> 0.34x and <code>p_aum</code> 0.07x are the cheapest of the 12, <code>pe_ttm</code> 5.61x is third-cheapest, and <code>div_yield</code> 3.39% is the highest of the 12. The derived band is not quoted because its 3.91x low is a split-adjustment artefact. <code>earnings_yield_trend</code> -1.32pp. FIIs 1.40%, DIIs 2.53%; the close was above the 200-day EMA on 4.0% of the last 252 sessions, second-lowest of the 12, and <code>ret_12m_rel</code> is -22.0%. " + TNS,
+  "<i>A third of book value is the correct price for a lender that earns 7.9% on equity and is not growing — the discount is not an error to be arbitraged, it is arithmetic. The 3.4% yield is the only thing you are actually paid, and it comes out of a shrinking earnings base. Avoid: the capital does the same job with less risk in Repco Home at 0.52x book and nearly 13% ROE.</i>",
+ ],
+ "trigger": "loan_book_cagr_3y crossing 8% with roe_3y moving above 11% -> the book has restarted and 0.34x book is a genuine mispricing. np_cagr_5y staying negative while loan_book_cagr_3y remains near 1% -> this is a run-off book and the dividend is funded by shrinkage.",
+ "evidence": ["roa_3y", "roe_3y", "roe_excess_13_7y", "loan_book_cagr_3y", "np_cagr_5y", "book_value_cagr_10y", "pb", "p_aum", "div_yield", "pct_above_200ema_252d"],
+},
+
+}
+
+DERIVED_KEYS = {"pe_band_lo", "pe_band_hi", "pe_band_avg", "pe_vs_own_history",
+                "delivery_pct", "pledge_pct"}
+
+LABELS = ("BUY", "ACCUMULATE", "HOLD", "AVOID", "REDUCE", "SELL", "SPECULATIVE")
+
+
+def main():
+    pack = json.load(open(PACK))
+    rows = {r["symbol"]: r for r in pack["symbols"]}
+
+    if set(SPEC) != set(rows):
+        raise SystemExit(f"spec/pack mismatch: "
+                         f"spec-only={sorted(set(SPEC) - set(rows))} "
+                         f"pack-only={sorted(set(rows) - set(SPEC))}")
+
+    # The peer set every "of the 12" is claimed against has to BE the pack.
+    import importlib.util
+    spec_mod = importlib.util.spec_from_file_location(
+        "bfsi_segments", "build/verdicts/bfsi_segments.py")
+    seg = importlib.util.module_from_spec(spec_mod)
+    spec_mod.loader.exec_module(seg)
+    if set(seg.SEGMENTS["housing_finance"]) != set(rows):
+        raise SystemExit("pack is not the housing_finance segment — every "
+                         "'of the 12' superlative in this file is scoped wrong")
+
+    out = []
+    for sym, s in SPEC.items():
+        row = rows[sym]
+        cm = (row.get("metrics") or {}).get("cluster_metrics") or {}
+        blockers = row.get("blockers") or []
+        points, verdict, trig = s["points"], s["verdict"], s["trigger"]
+        conf = s["confidence"]
+
+        # --- guards. Each one has to be able to fail; see CLAUDE.md §5.
+        if len(points) != 5:
+            raise SystemExit(f"{sym}: {len(points)} points, a writable row takes 5")
+        if verdict.split(" —")[0] not in LABELS:
+            raise SystemExit(f"{sym}: label must open with one of {LABELS}, "
+                             f"got {verdict[:20]!r}")
+        if len(verdict.split("—", 1)[1].strip()) < 30:
+            raise SystemExit(f"{sym}: headline says nothing after the label")
+
+        # Every name in this segment carries the balance-sheet-lender blocker,
+        # so medium is the ceiling and there is no data-blocked row to drop to
+        # low. If a future pack changes that, this fails rather than lying.
+        if not any("balance-sheet lender" in b for b in blockers):
+            raise SystemExit(f"{sym}: lost the cluster-wide lender blocker — "
+                             f"confidence ceiling needs re-deciding ({LENDER})")
+        if conf != "medium":
+            raise SystemExit(f"{sym}: {conf} confidence, but this segment is "
+                             f"medium by construction")
+
+        if not points[0].startswith("<b>"):
+            raise SystemExit(f"{sym}: point one has no <b> lead")
+        if not points[-1].startswith("<i>"):
+            raise SystemExit(f"{sym}: the last point is not italicised")
+        for i, p in enumerate(points[:-1]):
+            if not p.startswith("<b>"):
+                raise SystemExit(f"{sym}: point {i+1} has no <b> lead sentence")
+
+        # House style: point one always states whether the name is held.
+        if "Not held" not in points[0]:
+            raise SystemExit(f"{sym}: point one does not state the holding status")
+
+        # Deb's standing instruction: name the field, not just the defect.
+        if sum(p.count("<code>") for p in points) < 4:
+            raise SystemExit(f"{sym}: fewer than 4 <code> field names across the row — "
+                             f"the prose is asserting rather than citing")
+
+        body = " ".join(points)
+        for word in ("highest", "lowest", "cheapest", "best", "worst", "fastest",
+                     "slowest", "richest"):
+            if word in body.lower() and "of the 12" not in body \
+                    and "in the set" not in body and "of " + PEERS not in body:
+                raise SystemExit(f"{sym}: uses '{word}' with no peer set named")
+
+        if trig.count("->") < 2:
+            raise SystemExit(f"{sym}: trigger is one-sided — a wish, not a trigger")
+
+        if "tech_net_score_scaled</code> is" in body and "NULL" not in body:
+            raise SystemExit(f"{sym}: tech_net_score_scaled mentioned without "
+                             f"saying it is NULL")
+
+        # The three names without a PE band must say so rather than quote one,
+        # and the four with an implausible low must not quote theirs either.
+        band = row.get("pe_band") or {}
+        lo = band.get("lo")
+        if (lo is None or lo < 4.0) and "own-history band of" in body:
+            raise SystemExit(f"{sym}: quotes an own-history band whose low is "
+                             f"{lo} — split-adjustment artefact or absent")
+
+        evidence = {}
+        for k in s["evidence"]:
+            if k in DERIVED_KEYS:
+                evidence[k] = None
+                continue
+            if k not in cm:
+                raise SystemExit(f"{sym}: evidence key {k} is not a bfsi cluster metric")
+            v = cm[k]
+            if v is None:
+                raise SystemExit(f"{sym}: evidence key {k} is NULL — a verdict must "
+                                 f"anchor on fields that can be re-checked")
+            evidence[k] = v
+        if len(evidence) < 3:
+            raise SystemExit(f"{sym}: {len(evidence)} evidence keys, need 3+")
+
+        scores = row.get("scores") or {}
+        snap = scores.get("snapshot_date") or pack.get("generated_at", "")[:10]
+        out.append({
+            "symbol": sym,
+            "generated_at": GENERATED_AT,
+            "verdict": verdict,
+            "confidence": conf,
+            "points": points,
+            "trigger_text": trig,
+            "evidence": evidence,
+            "snapshot_date": snap,
+            "price_asof": snap,
+            "model": MODEL,
+            "source_report": SOURCE_REPORT,
+        })
+
+    json.dump(out, open(OUT, "w"), ensure_ascii=False, indent=1)
+    buckets = {}
+    for r in out:
+        b = r["verdict"].split(" —")[0].split(":")[0].strip()
+        buckets[b] = buckets.get(b, 0) + 1
+    print(f"-> {OUT}  {len(out)} rows  {buckets}")
+    for r in out:
+        print(f"   {r['symbol']:<12} {r['confidence']:<6} {r['verdict'][:92]}")
+
+
+if __name__ == "__main__":
+    main()
