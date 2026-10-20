@@ -97,7 +97,23 @@ def _client() -> httpx.Client:
                 "image/avif,image/webp,*/*;q=0.8"
             ),
             "Accept-Language": "en-US,en;q=0.9",
-            "Accept-Encoding": "gzip, deflate, br",
+            # NO `br` HERE. This header advertises what we can DECODE, not what
+            # looks most browser-like, and httpx decodes brotli only when
+            # `brotli`/`brotlicffi` is installed — neither is a dependency of
+            # this package. Screener began honouring `br` around 2026-10-10 and
+            # every company page came back as undecodable bytes; "Logout" was
+            # not in the binary, so discover_export raised AuthFailed and
+            # weekly-fetch halted with "screener cookies expired". The cookie
+            # was live the whole time (it probed authenticated from the GitHub
+            # runner on 2026-10-20), and the lie cost two weekly snapshots
+            # (2026-10-10, 2026-10-17) because the stated remedy — rotate the
+            # session — could not possibly work. scripts/bse_headers.py had
+            # already written this rule down for BSE: advertising an encoding
+            # you cannot decode trades a 403 for a decode error.
+            #
+            # If brotli is ever wanted, add the dependency FIRST and only then
+            # this token. Do not reorder those two steps.
+            "Accept-Encoding": "gzip, deflate",
             "Sec-Fetch-Dest": "document",
             "Sec-Fetch-Mode": "navigate",
             "Sec-Fetch-Site": "none",
@@ -111,6 +127,43 @@ def _client() -> httpx.Client:
 
 def _is_login_redirect(resp: httpx.Response) -> bool:
     return resp.status_code in (301, 302) and "/login" in resp.headers.get("location", "")
+
+
+def _assert_html(resp: httpx.Response, url: str) -> str:
+    """Return the decoded page, or raise ScrapeError if it is not HTML at all.
+
+    "WE COULD NOT DECODE THE BODY" AND "WE ARE LOGGED OUT" ARE DIFFERENT
+    FAILURES AND MUST NOT SHARE A MESSAGE. Every auth signal below is the
+    ABSENCE of a string ("Logout" missing, no export id), so any response whose
+    bytes are not text at all presents as a dead session. That is exactly what
+    happened on 2026-10-10 and 2026-10-17: Screener returned brotli, nothing in
+    the venv could decode it, and the run halted claiming the cookie had
+    expired. Rotating the cookie — the only remedy the message offered — could
+    not have fixed it, so the operator had no path forward from the log.
+
+    The check is deliberately crude: a Screener company page always carries a
+    `<` in its first bytes. We look for an opening angle bracket rather than
+    parsing, because the point is to separate "text we can reason about" from
+    "bytes we cannot", not to validate markup.
+
+    ScrapeError, not AuthFailed, so the run records an error and CONTINUES to
+    the next symbol instead of halting the whole fetch on stop_on_auth_fail.
+    An undecodable body is a client-side bug or a transport oddity; it is not
+    evidence about the session, and it should not be allowed to impersonate it.
+    """
+    enc = resp.headers.get("content-encoding", "")
+    head = resp.content[:512]
+    if b"<" not in head:
+        raise ScrapeError(
+            f"GET {url} returned {len(resp.content)} bytes that are not HTML "
+            f"(content-encoding={enc or 'none'!r}). This is NOT an auth "
+            f"failure and rotating the Screener session will not fix it. "
+            f"Most likely the response used a content-encoding we advertised "
+            f"but cannot decode — httpx decodes brotli only when the `brotli` "
+            f"package is installed, and this package does not depend on it. "
+            f"Check the Accept-Encoding header in _client()."
+        )
+    return resp.text
 
 
 def _maybe_raise_429(resp: httpx.Response, url: str) -> None:
@@ -220,7 +273,7 @@ def discover_export(
         if resp.status_code != 200:
             raise ScrapeError(f"GET {url} returned HTTP {resp.status_code}")
 
-        html = resp.text
+        html = _assert_html(resp, url)
         m_export = _RE_EXPORT_ID.search(html)
         m_csrf = _RE_CSRF.search(html)
         if not m_export:
