@@ -16,7 +16,7 @@ from .db import app_conn
 from .log import configure_logging, log
 from datetime import date as _date
 
-from .clusters.assigner import assign_all
+from .clusters.assigner import SCORED_TIERS, assign_all
 from .db import golden_conn
 from . import nse_equity_master
 from .screener.scraper import (
@@ -1654,16 +1654,16 @@ def compute_metrics_cmd(
                     SELECT u.symbol, ca.cluster_id, u.maturity_tier
                     FROM app.universe u
                     JOIN app.cluster_assignment ca USING (symbol)
-                    WHERE u.symbol = ANY(%s) AND u.maturity_tier IN ('veteran','mature','mid','new')
-                """, (syms,))
+                    WHERE u.symbol = ANY(%s) AND u.maturity_tier = ANY(%s)
+                """, (syms, list(SCORED_TIERS)))
             else:
                 cur.execute("""
                     SELECT u.symbol, ca.cluster_id, u.maturity_tier
                     FROM app.universe u
                     JOIN app.cluster_assignment ca USING (symbol)
-                    WHERE u.is_active AND u.maturity_tier IN ('veteran','mature','mid','new')
+                    WHERE u.is_active AND u.maturity_tier = ANY(%s)
                     ORDER BY u.symbol
-                """)
+                """, (list(SCORED_TIERS),))
             stocks = cur.fetchall()
 
             # Report what the plan LEFT OUT, not just what it took on.
@@ -1680,13 +1680,13 @@ def compute_metrics_cmd(
                       count(*) FILTER (WHERE ca.symbol IS NULL)       AS no_cluster,
                       count(*) FILTER (WHERE ca.symbol IS NOT NULL
                                          AND (u.maturity_tier IS NULL
-                                              OR u.maturity_tier NOT IN
-                                                 ('veteran','mature','mid','new'))) AS bad_tier,
+                                              OR NOT (u.maturity_tier
+                                                 = ANY(%(tiers)s)))) AS bad_tier,
                       count(*)                                        AS active_total
                     FROM app.universe u
                     LEFT JOIN app.cluster_assignment ca USING (symbol)
                     WHERE u.is_active
-                """)
+                """, {"tiers": list(SCORED_TIERS)})
                 r = cur.fetchone()
                 excl = {"excluded": r["active_total"] - len(stocks),
                         "no_cluster": r["no_cluster"],

@@ -13,6 +13,23 @@ import psycopg
 from .rules import StockMeta, assign
 
 
+# The tiers compute_metrics will actually score. Anything outside this set is
+# deliberately withheld — today that is only 'insufficient' (under one year of
+# annuals), but the set is the thing to read, not the exclusion.
+#
+# IT LIVES HERE BECAUSE TWO MODULES HAVE TO AGREE ON IT. cli.py's plan query
+# filters on it; coverage.py has to classify the symbols that filter drops. On
+# 2026-10-21 they did not agree, because coverage.py did not know the filter
+# existed: SIGNORIA (0 annuals, tier 'insufficient') was excluded from the plan
+# by design, had no metrics row as a result, and the ledger could only read that
+# as 'no_metrics' — a PROBLEM bucket. One deliberately-skipped microcap failed
+# `no_metrics_is_empty` and `problem_buckets_not_growing` and took the whole
+# weekly compute down with exit 1 after 2h07m of correct work.
+#
+# A copied literal is what made that possible. Import it.
+SCORED_TIERS = ("veteran", "mature", "mid", "new")
+
+
 def _years_since(d: Optional[date]) -> Optional[float]:
     if d is None:
         return None

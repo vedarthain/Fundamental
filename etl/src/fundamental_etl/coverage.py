@@ -52,6 +52,8 @@ from psycopg.rows import dict_row
 
 import structlog
 
+from .clusters.assigner import SCORED_TIERS
+
 log = structlog.get_logger()
 
 
@@ -112,11 +114,27 @@ SELECT
         --    that one just needs the queue to actually drain.
         WHEN sm.last_status IS DISTINCT FROM 'ok' THEN 'fetch_failing'
 
-        -- 5. Scraped clean but absent from this snapshot's metrics — typically
-        --    no cluster assignment, so peer-relative percentiles are undefined.
+        -- 5. Excluded from the metrics plan by maturity_tier, so there is no
+        --    metrics row to carry a score_status and arm 2 can never see it.
+        --    This is the SAME judgement as arm 2's 'insufficient_data' —
+        --    too little history to score — reached one step earlier, and it
+        --    gets the same bucket.
+        --
+        --    Tested AFTER never_attempted and fetch_failing on purpose. A
+        --    symbol has 0 annuals either because it is genuinely too young or
+        --    because we never successfully scraped it, and those must not be
+        --    allowed to wear the same label: the fetch holes are found first,
+        --    and only a symbol we scraped cleanly can land here.
+        WHEN u.maturity_tier IS NULL
+          OR NOT (u.maturity_tier = ANY(%(scored_tiers)s))
+            THEN 'gated_insufficient_history'
+
+        -- 6. Scraped clean, in a scored tier, and still absent from this
+        --    snapshot's metrics — typically no cluster assignment, so
+        --    peer-relative percentiles are undefined.
         WHEN m.symbol IS NULL THEN 'no_metrics'
 
-        -- 6. Residual. Asserted to be zero elsewhere in this module. If this
+        -- 7. Residual. Asserted to be zero elsewhere in this module. If this
         --    fires, the pipeline grew a path the classifier does not model.
         ELSE 'unclassified'
     END AS status,
@@ -129,7 +147,19 @@ SELECT
         WHEN sm.last_status IS DISTINCT FROM 'ok' THEN
             'last_status=' || COALESCE(sm.last_status, 'null')
             || ', failures=' || COALESCE(sm.consecutive_failures::text, '?')
-        WHEN m.symbol IS NULL THEN 'no metrics row at this snapshot'
+        WHEN u.maturity_tier IS NULL
+          OR NOT (u.maturity_tier = ANY(%(scored_tiers)s)) THEN
+            'maturity_tier=' || COALESCE(u.maturity_tier, 'null')
+            || ' — excluded from the metrics plan, '
+            || COALESCE((SELECT COUNT(DISTINCT period_end)::text
+                           FROM app.fundamentals_annual a WHERE a.symbol = u.symbol), '0')
+            || ' annual periods'
+        -- Name WHICH of the two no_metrics causes this is. They need different
+        -- remedies and the bucket cannot tell them apart on its own.
+        WHEN m.symbol IS NULL THEN
+            CASE WHEN ca.symbol IS NULL
+                 THEN 'no cluster assignment — percentiles undefined'
+                 ELSE 'no metrics row at this snapshot' END
         ELSE NULL
     END AS detail
 FROM app.universe u
@@ -139,6 +169,8 @@ LEFT JOIN app.metrics_snapshot m
        ON m.symbol = u.symbol AND m.snapshot_date = %(snap)s::date
 LEFT JOIN app.scores sc
        ON sc.symbol = u.symbol AND sc.snapshot_date = %(snap)s::date
+LEFT JOIN app.cluster_assignment ca
+       ON ca.symbol = u.symbol
 LEFT JOIN LATERAL (
     SELECT GREATEST(
              (SELECT MAX(period_end) FROM app.fundamentals_annual    a WHERE a.symbol = u.symbol),
@@ -188,7 +220,8 @@ def write_ledger(conn: psycopg.Connection, snapshot_date: date) -> dict[str, int
             log.info("coverage_ledger_evicted", n=evicted,
                      snapshot=snapshot_date.isoformat(),
                      reason="symbols no longer active")
-        cur.execute(_CLASSIFY_SQL, {"snap": snapshot_date})
+        cur.execute(_CLASSIFY_SQL,
+                    {"snap": snapshot_date, "scored_tiers": list(SCORED_TIERS)})
         cur.execute(
             """
             SELECT status, COUNT(*)::int AS n
