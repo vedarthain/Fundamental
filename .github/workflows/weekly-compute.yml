@@ -22,15 +22,28 @@
 #   4. build-market-snapshot rebuild app.market_snapshot_cache for /market
 #   5. /api/revalidate       purge Vercel's Data Cache for the changed tags
 #
-# Trigger: CHAINED to weekly-fetch.yml via `workflow_run` — this runs the moment
-# the fetch workflow COMPLETES SUCCESSFULLY (Sat, once the ≤180-min scrape ends),
-# and is SKIPPED if fetch failed. "Success" here is precise: the fetch job exits
-# non-zero ONLY on Screener cookie expiry (auth_failed>0, cli.py). A throttled or
-# partial scrape still exits 0 → still counts as success → compute still runs, so
-# a slow week doesn't block scoring (fundamentals are quarterly; a partial scrape
-# scores fine). Only a dead-cookie fetch (no fresh blobs) gates compute out.
-# After a manual fetch re-run (e.g. post cookie-rotation), its success re-triggers
-# this automatically; workflow_dispatch below still allows a standalone re-run.
+# Trigger: ITS OWN SATURDAY CRON, GATED ON COVERAGE (changed 2026-10-21).
+#
+# This used to be CHAINED to weekly-fetch via `workflow_run` + `conclusion ==
+# 'success'`. Both halves of that were wrong.
+#
+#   • It gated on the wrong signal. fetch-many exits 0 on a GRACEFUL
+#     truncation, so "success" was compatible with two thirds of the universe
+#     being weeks stale — measured 2026-10-21: 1,414 of 3,179 symbols last
+#     scraped 16-24 days earlier, every run green. compute-metrics reads market
+#     cap out of those blobs for the valuation pillar, so stale symbols get
+#     ranked against freshly-priced peers.
+#
+#   • It failed SILENTLY in the other direction. Any failing step in fetch —
+#     including a six-symbol InvIT scrape that nothing scores — made this run
+#     render as `skipped`, which is grey, not red. Three weekly snapshots
+#     (2026-10-10, -17, -20) were lost that way before anyone looked.
+#
+# So: fetch runs Mon-Fri and no longer decides anything here. Saturday this
+# wakes on its own and asks the database the question that actually matters —
+# is the universe fresh? — via scripts/check-fetch-coverage.py. Below the floor
+# the job FAILS, loudly and in red, instead of quietly scoring stale prices.
+# workflow_dispatch still allows a standalone re-run once coverage clears.
 #
 # Required secrets:
 #   NEON_APP_URL        — fundamental_app on Neon
@@ -42,16 +55,20 @@
 name: Weekly Compute + Score
 
 on:
-  # Run ONLY after weekly-fetch finishes. The job-level `if` below then gates on
-  # conclusion == 'success', so a failed fetch (cookie expiry) skips compute.
-  workflow_run:
-    workflows: ["Weekly Fetch (Screener)"]
-    types: [completed]
+  schedule:
+    # Sat 03:00 UTC = 08:30 IST. Friday's fetch finishes ~15:00 UTC, so this
+    # has a wide margin without waiting a whole extra day.
+    - cron: '0 3 * * 6'
   workflow_dispatch:
     inputs:
       snapshot_date:
         description: 'YYYY-MM-DD to snapshot (default: today UTC)'
         required: false
+      skip_coverage_gate:
+        description: 'Score even if fetch coverage is below the floor (say why in the run notes)'
+        required: false
+        type: boolean
+        default: false
 
 # Never run two compute/score passes at once — a manual run and the scheduled
 # run writing the same snapshot_date would race on app.scores. cancel-in-progress
@@ -66,12 +83,6 @@ env:
 jobs:
   compute:
     runs-on: ubuntu-latest
-    # Skip when the triggering fetch failed/was cancelled. Manual dispatch always
-    # runs (no upstream run attached). This is THE dependency gate: no successful
-    # fetch → no compute+score.
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
     # compute ~45 + score ~15 + rebuild ~3 on a warm Neon. A cold/throttled run
     # has pushed compute-metrics to ~75-80 min, which blew the old 90-min cap
     # and got the build/revalidate steps canceled mid-run (scores had already
@@ -99,6 +110,22 @@ jobs:
 
       - name: Install fundamental-etl
         run: pip install -e ./etl
+
+      # THE GATE. Exits 1 when fewer than 95% of active symbols were scraped in
+      # the last 10 days, which fails the job before a single score is written.
+      # This replaces "the fetch workflow exited 0", a condition a truncated
+      # fetch satisfies. See the script's docstring for what makes it able to
+      # fail — the denominator is app.universe, not the scraped rows.
+      #
+      # skip_coverage_gate exists for the one honest case: a deliberate re-score
+      # on known-partial data. It is a manual input only, so the Saturday cron
+      # can never take that path by itself.
+      - name: Gate on fetch coverage
+        if: ${{ github.event.inputs.skip_coverage_gate != 'true' }}
+        env:
+          APP_DB_URL: ${{ secrets.NEON_APP_URL }}
+          PYTHONUNBUFFERED: "1"
+        run: python scripts/check-fetch-coverage.py --within-days 10 --min-pct 95
 
       # compute-metrics reads the fresh blobs (from weekly-fetch), so valuation
       # populates correctly. No SCREENER_* needed — this path never scrapes.

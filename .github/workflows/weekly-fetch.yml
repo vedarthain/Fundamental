@@ -34,13 +34,37 @@
 
 name: Weekly Fetch (Screener)
 
+# WHY FIVE SMALL RUNS INSTEAD OF ONE BIG ONE (2026-10-21)
+#
+#   One Saturday run could never finish the universe and nobody noticed,
+#   because a truncated fetch exits 0. Measured on 2026-10-21: 1,414 of 3,179
+#   active symbols had not been scraped in 16-24 days, every run green. At the
+#   observed 6.7 symbols/min, 3,179 symbols need ~5 hours and the budget is
+#   180 minutes — so roughly 1,200 landed per week and the rest aged.
+#
+#   Spreading the same work over Mon-Fri fixes it with no extra load: Mon-Thu
+#   take --limit 700 (~105 min each), Friday takes whatever is left (~380 plus
+#   anything new or previously failed). Screener sees a smaller daily slice
+#   rather than a three-hour hammer once a week.
+#
+#   --skip-recent-hours 120 IS WHAT MAKES DAILY RUNS CHEAP. At the old 20h,
+#   Tuesday would re-queue everything Monday had just scraped and five runs
+#   would cost ~6,000 requests for a 3,179-symbol universe. At 120h a symbol
+#   scraped this week cannot re-enter the queue, so the week's total requests
+#   stay what they are today — just spread. Once the queue drains, the
+#   remaining runs log `nothing_to_do` and exit in seconds.
+#
+#   Scoring moved OFF this workflow's success (see weekly-compute.yml). It now
+#   runs on its own Saturday cron behind a coverage gate, because "the fetch
+#   exited 0" was never evidence that the universe was fresh.
 on:
   schedule:
-    - cron: '0 13 * * 6'   # Sat 13:00 UTC = 18:30 IST
+    - cron: '0 13 * * 1-4'   # Mon-Thu 13:00 UTC = 18:30 IST — capped slice
+    - cron: '0 13 * * 5'     # Fri    13:00 UTC = 18:30 IST — drain the rest
   workflow_dispatch:
     inputs:
       force_full_fetch:
-        description: 'Re-scrape ALL symbols, ignoring the 20h freshness skip'
+        description: 'Re-scrape ALL symbols, ignoring the 120h freshness skip'
         required: false
         type: boolean
         default: false
@@ -143,6 +167,16 @@ jobs:
       # run (rotate cue → freshness-check alerts). --max-runtime-min caps a
       # throttled week so it stops gracefully; unscraped symbols resume next
       # run. force_full_fetch=true re-scrapes EVERY symbol (--skip-recent-hours 0).
+      #
+      # THE --limit IS KEYED ON WHICH CRON FIRED. Mon-Thu ('0 13 * * 1-4') take
+      # 700; Friday ('0 13 * * 5') passes no limit and drains the remainder.
+      # github.event.schedule is EMPTY on workflow_dispatch, so a manual run is
+      # unlimited too — which is what you want when catching up by hand.
+      #
+      # --skip-recent-hours is set ONCE, as a single expression, rather than
+      # appended a second time for force_full_fetch. Passing the flag twice
+      # would leave the winner up to the option parser's last-wins behaviour;
+      # the override reads better and cannot be ambiguous.
       - name: Fetch fundamentals from Screener
         env:
           APP_DB_URL:           ${{ secrets.NEON_APP_URL }}
@@ -152,7 +186,8 @@ jobs:
           PYTHONUNBUFFERED:     "1"
         run: >
           python -m fundamental_etl.cli fetch-many --max-runtime-min 180
-          ${{ github.event.inputs.force_full_fetch == 'true' && '--skip-recent-hours 0' || '' }}
+          --skip-recent-hours ${{ github.event.inputs.force_full_fetch == 'true' && '0' || '120' }}
+          ${{ github.event.schedule == '0 13 * * 1-4' && '--limit 700' || '' }}
 
       # Dividend-only register (InvITs/REITs) — a tiny curated list scraped the
       # same way, but written to app.dividend_only[_annual] OUTSIDE the scored
