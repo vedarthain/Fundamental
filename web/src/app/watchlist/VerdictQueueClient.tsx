@@ -85,9 +85,19 @@ function shortDate(iso: string): string {
  * instructions to a person holding cash, and flattening them here would answer
  * the question this view was added to answer with a coarser one. The bucket is
  * still used — for the colour, which is all it was ever for.
+ *
+ * MATCH LETTERS, DO NOT SPLIT ON SEPARATORS. The first version split on
+ * whitespace and dashes, which quietly left trailing punctuation attached: of
+ * the 146 live verdicts in prod on 2026-10-21, five are headed "HOLD, do not
+ * add" or "HOLD, on watch" and two "ACCUMULATE, small", so the view rendered
+ * `HOLD,` and `ACCUMULATE,` as two extra headings — HOLD read 64 instead of
+ * 69 and ACCUMULATE 20 instead of 22, across 9 groups instead of 7. Nothing
+ * errored; the book simply looked different from what had been written. Taking
+ * the leading run of letters cannot reintroduce it, because every call in
+ * CALL_ORDER is one word and anything after that word is commentary.
  */
 function callOf(verdict: string): string {
-  return verdict.split(/[\s—–-]+/)[0].toUpperCase().slice(0, 12);
+  return (verdict.trim().match(/^[A-Za-z]+/)?.[0] ?? "").toUpperCase().slice(0, 12);
 }
 
 /** Strongest conviction first, in both directions from HOLD. Anything the
@@ -239,7 +249,7 @@ export function VerdictQueueClient() {
       </div>
 
       {axis === "call" ? (
-        <ByCall groups={byCall} onOpen={setOpen} />
+        <ByCall groups={byCall} counts={counts} onOpen={setOpen} />
       ) : (
       <>
       {/* Bucket switcher. Counts live on the control so the shape of the
@@ -268,7 +278,21 @@ export function VerdictQueueClient() {
         })}
       </div>
 
+      {/* The total, stated. The two axes count different populations and the
+          difference is the whole point of the status axis: by-status sums all
+          four buckets, so it counts every tracked symbol INCLUDING the ones
+          with no verdict yet, plus dormant rows that are verdicts about
+          symbols no longer tracked. By-call counts only live verdicts on
+          tracked symbols. Without both totals on screen the reader sees two
+          numbers that disagree and has no way to learn why. */}
       <p className="text-[12px] muted-text max-w-[760px] leading-relaxed -mt-2">
+        <b className="ink-text tabular-nums">
+          {counts.missing + counts.due + counts.current + counts.dormant} rows
+        </b>{" "}
+        on this axis — {trackedCount} tracked symbols ({counts.missing} with no verdict yet) plus{" "}
+        {counts.dormant} dormant verdicts about symbols no longer tracked. The By-call axis counts
+        only the {counts.due + counts.current} live verdicts, which is why its total is smaller.
+        <br />
         {BUCKET_META[show].blurb}
       </p>
 
@@ -405,9 +429,11 @@ function EntryRow({
 
 function ByCall({
   groups,
+  counts,
   onOpen,
 }: {
   groups: { call: string; rows: QueueEntry[] }[];
+  counts: Record<QueueBucket, number>;
   onOpen: (s: string) => void;
 }) {
   // The selected call, as a NAME rather than an index. Indices break the
@@ -442,10 +468,19 @@ function ByCall({
 
   const active = groups.find((g) => g.call === sel) ?? groups[0];
 
+  // The total, and why it differs from the status axis. Same reasoning as the
+  // status-axis line: a reader comparing the two axes sees two different
+  // totals, and the gap IS the backlog rather than a bug.
+  const shown = groups.reduce((n, g) => n + g.rows.length, 0);
+
   return (
     <div className="space-y-4">
       <p className="text-[12px] muted-text max-w-[760px] leading-relaxed -mt-2">
-        Every live verdict, one call at a time.{" "}
+        <b className="ink-text tabular-nums">{shown} live verdicts</b> across {groups.length}{" "}
+        calls, one call at a time. The By-status axis shows{" "}
+        {counts.missing + counts.due + counts.current + counts.dormant} rows because it also counts
+        the {counts.missing} tracked symbols with no verdict yet and {counts.dormant} dormant
+        verdicts about symbols no longer tracked; neither has a call to group under.{" "}
         {drifted > 0 ? (
           <>
             <b style={{ color: "var(--color-delta-down)" }}>{drifted}</b> of them were written
