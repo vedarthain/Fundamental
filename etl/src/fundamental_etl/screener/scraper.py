@@ -10,6 +10,7 @@ companies without consolidated financials (no subsidiaries).
 from __future__ import annotations
 
 import re
+import socket
 from dataclasses import dataclass
 from typing import Optional
 
@@ -59,16 +60,11 @@ class CompanyExportInfo:
 
 
 def _client() -> httpx.Client:
-    # Force IPv4 + add connection-level retries.
+    # Transport prefers IPv4 and survives a resolver that won't serve it — see
+    # _IPv4FirstTransport below for why both halves are needed. `retries` adds
+    # transport-level retry on connect errors, on top of the @retry decorators
+    # that already cover TransportError mid-request.
     #
-    # GitHub Actions runners have NO IPv6 route. If a host resolves to an AAAA
-    # (IPv6) record, httpcore connects to it and fails with
-    # "[Errno 101] Network is unreachable" *without* falling back to the IPv4
-    # address — so the whole scrape errors out. Binding the socket to the IPv4
-    # wildcard (0.0.0.0) makes every connection use IPv4 (an IPv4 source can't
-    # bind to an IPv6 target, so httpcore moves on to the A record). `retries`
-    # adds transport-level retry on connect errors, on top of the @retry
-    # decorators that already cover TransportError mid-request.
     # Cookies come from app.screener_session first and the environment second —
     # see screener/cookies.py for why that order and not the reverse. They are
     # optional at config load (so unrelated commands can import freely) but
@@ -83,7 +79,7 @@ def _client() -> httpx.Client:
             "SCREENER_CSRFTOKEN for a one-off override."
         )
     log.debug("screener_cookie_source", source=source)
-    transport = httpx.HTTPTransport(local_address="0.0.0.0", retries=3)
+    transport = _IPv4FirstTransport(retries=3)
     # Browser-like default headers. Bot detectors usually look at the full
     # combination (UA + Accept + Accept-Language), not just User-Agent —
     # so we mirror what a real Chrome request would send.
@@ -123,6 +119,67 @@ def _client() -> httpx.Client:
         timeout=30.0,
         follow_redirects=False,
     )
+
+
+def _is_eai_family(exc: BaseException) -> bool:
+    """Is this the resolver refusing the IPv4-only bind, rather than a real
+    network failure? Walks __cause__/__context__ because httpx wraps the
+    original socket.gaierror in a ConnectError."""
+    seen = 0
+    cur: BaseException | None = exc
+    while cur is not None and seen < 6:
+        if isinstance(cur, socket.gaierror) and cur.errno == socket.EAI_FAMILY:
+            return True
+        if "Address family for hostname not supported" in str(cur):
+            return True
+        cur = cur.__cause__ or cur.__context__
+        seen += 1
+    return False
+
+
+class _IPv4FirstTransport(httpx.BaseTransport):
+    """Prefer an IPv4-bound socket, but do not die when the resolver won't serve one.
+
+    WHY THE BIND EXISTS. GitHub runners have no IPv6 route, and httpcore does
+    not fall back from an AAAA record to the A record — it just raises
+    "Network is unreachable". Binding the source socket to 0.0.0.0 forces the
+    IPv4 path and fixed that.
+
+    WHY THE BIND ALONE IS NOT ENOUGH. The bind makes getaddrinfo ask for
+    AF_INET only, so a resolver hiccup that returns no A record raises
+    gaierror(-9, 'Address family for hostname not supported') instead of
+    retrying. Observed 2026-10-20/21 on the runner: ~1% of symbols per run died
+    this way (14 of 1,650) and recorded as status_unknown, and the six-symbol
+    dividend step — which has no tolerance for losing one — failed the whole
+    job, which under the old workflow_run chain silently skipped the weekly
+    snapshot. One transient DNS answer, three weeks of lost snapshots.
+
+    Retrying the bound transport cannot help: for the length of the hiccup
+    every attempt asks the same impossible question. So on EAI_FAMILY only —
+    never on a genuine connect failure — the request is replayed through an
+    UNBOUND transport, which is free to use whatever family resolves. On a
+    dual-stack host that may be IPv6; that is strictly better than failing,
+    and on the runner the unbound path still finds IPv4 once the resolver
+    recovers. Everything else propagates untouched, so a real outage still
+    looks like a real outage.
+    """
+
+    def __init__(self, retries: int = 3) -> None:
+        self._bound = httpx.HTTPTransport(local_address="0.0.0.0", retries=retries)
+        self._unbound = httpx.HTTPTransport(retries=retries)
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        try:
+            return self._bound.handle_request(request)
+        except httpx.ConnectError as exc:
+            if not _is_eai_family(exc):
+                raise
+            log.warning("ipv4_bind_unavailable_retrying_unbound", url=str(request.url))
+            return self._unbound.handle_request(request)
+
+    def close(self) -> None:
+        self._bound.close()
+        self._unbound.close()
 
 
 def _is_login_redirect(resp: httpx.Response) -> bool:
