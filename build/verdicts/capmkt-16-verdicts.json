@@ -1,0 +1,458 @@
+[
+ {
+  "symbol": "CRISIL",
+  "generated_at": "2026-10-21T12:00:00+00:00",
+  "verdict": "ACCUMULATE — a regulated ratings franchise at 36.62x against its own ten-year average of 45.43x, on the best seven-year return of any fee business here",
+  "confidence": "medium",
+  "points": [
+   "<b>Not held, not on your watchlist.</b> CRISIL Ltd, ₹32,386cr, credit ratings and research plus analytics delivered to S&P Global, which holds the 66.64% promoter stake. The largest of the 16 capital-markets names in this peer set by a factor of two. Scored inside <code>bfsi_nbfc</code> against 182 balance-sheet lenders on a scorecard built for loan books, so the percentiles below are direction, not rank. Quality 74, valuation 22, momentum 60, composite 81.",
+   "<b>The returns are the best of the six fee-and-advisory names, and they are earned without gearing.</b> <code>roe_7y</code> 28.49% and <code>roe_5y</code> 28.60% are the highest of the 13 names here that carry a seven-year reading, on <code>roa_3y</code> 18.01% and <code>equity_to_assets</code> 65.89% — about 1.52x assets to equity, which is a fee business with a cash pile, not a balance sheet. <code>roe_excess_13_7y</code> +15.49pp and <code>roe_excess_13_10y</code> +16.03pp; with WEALTH it is one of exactly two names in the batch clearing the 13% hurdle on all three windows. <code>np_consistency_10y</code> 1.74 is second of the 12 names with the index, behind AKCAPIT's 1.82 — and that is an index from 0 to 2, not a pass rate.",
+   "<b>Nothing in the trailing year is strained.</b> TTM sales +22.03%, operating profit +25.22%, net profit +21.53%, with <code>opm_now</code> 29.79% against <code>opm_prev</code> 29.04% — a +0.76pp step, small enough that the pack flags no second blocker on this row. Net profit beat inflation in 3 of the last 4 years, 4 of 6 and 5 of 9: respectable rather than spotless, and the ten-year record is the weakest of the three windows.",
+   "<b>The valuation is the argument.</b> <code>pe_ttm</code> 36.62x sits inside an own ten-year band of 32.05-71.11x whose average is 45.43x — 19% below that average and within 14% of the decade low. On the cluster's lender metrics it looks expensive and those are the ones to discard: <code>pb</code> 10.68x is the second-highest of the 16 and <code>p_aum</code> 16.76x the highest, both meaningless for a company whose asset is a rating licence rather than a book. <code>div_yield</code> 1.35%, <code>ret_12m_rel</code> -2.99%, close above its 200-day EMA on 23.41% of the last 252 sessions, <code>shareholders</code> 88,482 with <code>fii_pct</code> 6.38% and <code>dii_pct</code> 12.95%. <code>tech_net_score_scaled</code> is NULL for every scored company on the platform; the momentum pillar renormalises around the components that do exist, so the percentile is a narrower question than the scorecard asks rather than a lost weight.",
+   "<i>The uncomfortable part is that you are paying 36.62x for a business whose Indian ratings revenue tracks corporate bond issuance, and bond issuance is cyclical even if the licence is not. What makes it ownable is that the analytics half is contracted work for a 66.64% parent, which is the least cyclical revenue in this entire segment, and that 36.62x is the cheapest this stock has been relative to its own history in a decade. Accumulate on weakness rather than at market. The thing that would break the thesis is a change in the S&P relationship, which the pack cannot see at all.</i>"
+  ],
+  "trigger_text": "pe_ttm holding under 40x while ttm_np_pct stays above 18% -> the discount to a 45.43x own average is being handed to you on unbroken earnings. roe_7y slipping under 24%, or the analytics revenue share falling in the annual report -> the franchise premium is what you bought and it is eroding.",
+  "evidence": {
+   "roe_7y": 0.2848519926817072,
+   "roe_5y": 0.2860117165833062,
+   "roa_3y": 0.18013265404855683,
+   "equity_to_assets": 0.6588707299352907,
+   "roe_excess_13_10y": 0.16025526189033457,
+   "pe_ttm": 36.62289668898137,
+   "pb": 10.676446542539164,
+   "div_yield": 0.013542738362693431,
+   "opm_now": 29.793546072818756,
+   "opm_prev": 29.035330306570646,
+   "ttm_np_pct": 21.530955816670104,
+   "np_consistency_10y": 1.742929782693225
+  },
+  "snapshot_date": "2026-10-08",
+  "price_asof": "2026-10-08",
+  "model": "claude-opus-4-7",
+  "source_report": "bfsi-nbfc capital_markets v1"
+ },
+ {
+  "symbol": "WEALTH",
+  "generated_at": "2026-10-21T12:00:00+00:00",
+  "verdict": "HOLD — the highest asset return of the 16 on a near-unlevered book, but revenue fell 42% in the quarter and the margin dropped 12.03pp while the stock trades at 1.73x its own average PE",
+  "confidence": "medium",
+  "points": [
+   "<b>Not held, not on your watchlist.</b> Wealth First Portfolio Managers, ₹948cr, a capital-markets advisory and distribution business — one of the six fee-and-advisory names. Scored inside <code>bfsi_nbfc</code> against 182 balance-sheet lenders on a scorecard built for loan books, so the percentiles below are direction, not rank. Composite 73.",
+   "<b>On returns it is near the top of the batch, and the balance sheet explains why that is less impressive than it looks.</b> <code>roa_3y</code> 26.92% is the highest of the 16 and <code>roe_3y</code> 29.45% the second-highest, behind ALGOQUANT's 30.70%, but <code>equity_to_assets</code> 90.91% means about 1.10x assets to equity: there is no leverage, so the ROE is almost the ROA. That is a genuinely high return on capital employed, and it is a different achievement from a lender earning the same number at four times the gearing. <code>roe_excess_13_5y</code> and the seven- and ten-year excesses all clear the 13% hurdle, making it one of exactly two names here to do so on every window. Net profit beat inflation in 2 of 4 years, 4 of 6 and 5 of 9.",
+   "<b>The trailing year is where the hold comes from.</b> TTM sales +1.01% but operating profit -14.91% and net profit -8.48%, and <code>opm_now</code> 64.26% against <code>opm_prev</code> 76.29% is a -12.03pp step — the pack's second blocker on this row. The quarter is worse than the year: <code>sales_yoy_q</code> -42.28%. A 76% operating margin on advisory fees was never a steady state, and the direction of travel is now established over both a year and a quarter.",
+   "<b>And the price has not adjusted.</b> <code>pe_ttm</code> 28.70x against an own-history band of 4.04-37.16x whose average is 16.62x — 1.73x its own average, on earnings that are falling. <code>ret_12m_rel</code> -28.72% says the market has started to mark it down but from a long way up. <code>pb</code> and <code>p_aum</code> are both distorted by the all-equity balance sheet and are not the right lens here; the right lens is the fee line, and the fee line halved. <code>tech_net_score_scaled</code> is NULL for every scored company on the platform; the momentum pillar renormalises around the components that do exist, so the percentile is a narrower question than the scorecard asks rather than a lost weight.",
+   "<i>The honest read: this is the highest asset return in the batch attached to the fastest-deteriorating revenue line, at nearly twice its own average multiple. Those three facts cannot all be priced correctly. Hold rather than sell because the balance sheet is 91% equity — there is no funding risk and no forced seller — and hold rather than add because a -42.28% quarter at 28.70x is the market still giving the benefit of the doubt. If the next two quarters confirm the margin step, this becomes a reduce.</i>"
+  ],
+  "trigger_text": "sales_yoy_q returning to growth with opm_now stabilising above 64% -> the fall was deal timing in a lumpy advisory book and a 29% unlevered ROE at 28.70x is defensible. A third consecutive quarter of falling revenue, or opm_now under 55% -> the 76% margin was the cycle and the multiple has to halve to meet it.",
+  "evidence": {
+   "roe_3y": 0.29448341057335803,
+   "roa_3y": 0.26915074650534027,
+   "equity_to_assets": 0.9091309357179518,
+   "pe_ttm": 28.699757869249396,
+   "opm_now": 64.25980307479703,
+   "opm_prev": 76.28686093177456,
+   "ttm_np_pct": -8.47645429362881,
+   "ttm_sales_pct": 1.0120397836328676,
+   "sales_yoy_q": -0.422813381700927,
+   "ret_12m_rel": -0.2871920775959528
+  },
+  "snapshot_date": "2026-10-08",
+  "price_asof": "2026-10-08",
+  "model": "claude-opus-4-7",
+  "source_report": "bfsi-nbfc capital_markets v1"
+ },
+ {
+  "symbol": "AKCAPIT",
+  "generated_at": "2026-10-21T12:00:00+00:00",
+  "verdict": "HOLD — the most consistent profit record of the 16 and the highest yield here, but a 9.88x PE above its own ten-year high of 9.01x and an ROE that has never cleared 13%",
+  "confidence": "medium",
+  "points": [
+   "<b>Not held, not on your watchlist.</b> A K Capital Services, ₹1,131cr, debt syndication and merchant banking — one of the six fee-and-advisory names. Scored inside <code>bfsi_nbfc</code> against 182 balance-sheet lenders on a scorecard built for loan books, so the percentiles below are direction, not rank. Composite 49.",
+   "<b>Its record is the steadiest in the batch, and also the most modest.</b> <code>np_consistency_10y</code> 1.82 is the highest of the 12 names carrying the index — an index from 0 to 2 combining positive-profit years with the inverse of profit variability, not a pass rate. But <code>roe_3y</code> 9.75%, <code>roe_5y</code> 10.10% and <code>roe_7y</code> 9.96% have never reached the 13% hurdle on any window: <code>roe_excess_13_5y</code> -2.90pp, <code>_7y</code> -3.04pp, <code>_10y</code> -2.41pp. Consistently fine is the whole profile.",
+   "<b>The trailing year is good and the balance sheet is the thinnest of the fee names.</b> TTM net profit +34.44% with <code>opm_now</code> 70.35% against <code>opm_prev</code> 70.25% — a flat margin, so the profit growth is volume rather than a mix step, and the pack flags no second blocker. <code>equity_to_assets</code> 23.82% is about 4.20x assets to equity, the second-thinnest of the 16 and odd for a syndication business: it means the returns above are earned on borrowed money, which is what makes a sub-13% ROE on 4.2x gearing the weak number it is.",
+   "<b>The valuation has already caught up and then some.</b> <code>pe_ttm</code> 9.88x is above its own ten-year high of 9.01x — this stock has not been this expensive relative to its own earnings in a decade, and the band average is 4.72x. The full band is not quoted because its 2.36x low cannot be told apart from a split adjustment, but a high built on ten years of data is a usable ceiling and this price is through it. Against that, <code>div_yield</code> 3.50% is the highest of the seven payers in the batch. <code>shareholders</code> 2,825 is the second-lowest of the 16, and with 132 price bars there is no 200-EMA trend reading, so the momentum pillar scored on 50% of its declared weight — thin, not weak. <code>tech_net_score_scaled</code> is NULL for every scored company on the platform; the momentum pillar renormalises around the components that do exist, so the percentile is a narrower question than the scorecard asks rather than a lost weight.",
+   "<i>The uncomfortable read: you are being asked to pay a decade-high multiple for a 10% ROE, and the only thing making it palatable is a 3.50% dividend. Hold if you own it for the yield and the consistency; there is no case for adding at a price above every print in the stock's own ten-year history. The real risk is liquidity rather than the business — 2,825 shareholders on a ₹1,131cr company means the exit is worse than the entry.</i>"
+  ],
+  "trigger_text": "roe_3y clearing 13% while opm_now holds near 70% -> the gearing finally translates and the decade-high multiple is justified by a step change, not a cycle. pe_ttm staying above 9x while roe_3y stays under 10% -> you are paying a record price for a sub-hurdle return and the dividend is the only return you will get.",
+  "evidence": {
+   "np_consistency_10y": 1.8215967826230959,
+   "roe_3y": 0.09751685350551342,
+   "roe_5y": 0.10104465286911257,
+   "roe_excess_13_5y": -0.028955347130887425,
+   "equity_to_assets": 0.23824624166445985,
+   "pe_ttm": 9.884753167321973,
+   "div_yield": 0.0350036683137248,
+   "opm_now": 70.34636910228198,
+   "opm_prev": 70.25214110319217,
+   "ttm_np_pct": 34.44144249970633,
+   "shareholders": 2825.0
+  },
+  "snapshot_date": "2026-10-08",
+  "price_asof": "2026-10-08",
+  "model": "claude-opus-4-7",
+  "source_report": "bfsi-nbfc capital_markets v1"
+ },
+ {
+  "symbol": "ARYAMAN",
+  "generated_at": "2026-10-21T12:00:00+00:00",
+  "verdict": "HOLD — 12% below its own average PE with the best seven-year profit CAGR of the 16, but revenue halved in the trailing year and the margin rose 14.87pp as it did",
+  "confidence": "medium",
+  "points": [
+   "<b>Not held, not on your watchlist.</b> Aryaman Financial Services, ₹764cr, SME merchant banking and IPO advisory — one of the six fee-and-advisory names, and the smallest-held: <code>shareholders</code> 2,215 is the lowest of the 16. Scored inside <code>bfsi_nbfc</code> against 182 balance-sheet lenders on a scorecard built for loan books, so the percentiles below are direction, not rank. Composite 51.",
+   "<b>The long record is the best growth record in the batch.</b> <code>np_cagr_7y</code> 78.64% is the highest of the 11 names with a seven-year series, and <code>roe_3y</code> 22.39% is fourth of the 16. An SME merchant bank compounding profit at that rate through a period that contained the 2021-2024 small-cap issuance boom is a cycle statement as much as a franchise one, and the next point is why that matters.",
+   "<b>The trailing year reverses it.</b> TTM sales -46.94% is the worst of the 13 names with a trailing comparison, and <code>opm_now</code> 61.29% against <code>opm_prev</code> 46.43% is a +14.87pp step — the pack's second blocker here, and it runs the wrong way for the right reason: the margin went up because the revenue that disappeared was the low-margin half. Revenue halving is the fact; the margin improvement is an arithmetic consequence of it, not an offset.",
+   "<b>Valuation reads cheap against its own history and the history is of a different business.</b> <code>pe_ttm</code> 25.96x against an own band of 12.90-65.09x whose average is 29.36x — 12% below that average. But with 46 price bars there is no 200-EMA reading and no EMA stack at all, so the momentum pillar scored on 35% of its declared weight; that is a listing-history fact about this price series, not a weak trend. Read the valuation percentile as direction only: the cluster is pricing it against lenders. <code>tech_net_score_scaled</code> is NULL for every scored company on the platform; the momentum pillar renormalises around the components that do exist, so the percentile is a narrower question than the scorecard asks rather than a lost weight.",
+   "<i>The honest read: a 78.64% seven-year profit CAGR and a -46.94% trailing year are the same business telling you that SME issuance volumes, not skill, set its earnings. At 25.96x on halved revenue you are paying a normal multiple for a trough year, which is either the right time or far too early — and with 2,215 shareholders you cannot change your mind quickly. Hold a position; do not build one here. The decision point is whether issuance recovers, which is a market-cycle call, not a company call.</i>"
+  ],
+  "trigger_text": "ttm_sales_pct returning to growth with opm_now holding above 55% -> the trough was issuance timing and 25.96x on a recovering fee line is cheap against a 29.36x own average. A second year of falling revenue, or roe_3y under 12% -> the seven-year CAGR was one boom and the earnings base is far below where the multiple assumes.",
+  "evidence": {
+   "np_cagr_7y": 0.7863572710356226,
+   "roe_3y": 0.22386302008545747,
+   "pe_ttm": 25.958220108695652,
+   "opm_now": 61.29218344389962,
+   "opm_prev": 46.4263850627487,
+   "ttm_sales_pct": -46.939087848178765,
+   "shareholders": 2215.0
+  },
+  "snapshot_date": "2026-10-08",
+  "price_asof": "2026-10-08",
+  "model": "claude-opus-4-7",
+  "source_report": "bfsi-nbfc capital_markets v1"
+ },
+ {
+  "symbol": "PRIMESECU",
+  "generated_at": "2026-10-21T12:00:00+00:00",
+  "verdict": "WATCH — the largest margin collapse in the batch, -31.63pp, with the price at its highs: no PE at all because trailing profit fell 87.29%",
+  "confidence": "medium",
+  "points": [
+   "<b>Not held — PRIMESECU is on your watchlist.</b> Prime Securities, ₹1,024cr, investment banking and advisory — one of the six fee-and-advisory names. Scored inside <code>bfsi_nbfc</code> against 182 balance-sheet lenders on a scorecard built for loan books, so the percentiles below are direction, not rank. Composite 61.",
+   "<b>Start with what broke, because it is the largest single-year break in the batch.</b> <code>opm_now</code> 10.22% against <code>opm_prev</code> 41.85% is a -31.63pp step, the biggest negative margin move of the 16 and the pack's second blocker on this row. TTM net profit -87.29% is the worst of the 13 names with a trailing comparison, and <code>np_yoy_q</code> -80.82% is the worst of the 15 with a quarterly one — so the quarter confirms the year rather than softening it. There is no <code>pe_ttm</code> to quote: the earnings base has effectively gone.",
+   "<b>The long record is genuinely good, which is the whole tension.</b> <code>roe_excess_13_10y</code> +17.11pp is the highest of the 12 names carrying the test — a decade averaging 30% ROE against the 13% hurdle — on <code>equity_to_assets</code> 89.20%, about 1.12x assets to equity, so none of it came from gearing. Net profit beat inflation across the windows. An advisory firm with that history and one catastrophic year is a different proposition from one that was always marginal.",
+   "<b>But the price is behaving as though nothing happened.</b> The close held above its 200-day EMA on 74.60% of the last 252 sessions — the highest of the 10 names with the reading — and <code>ret_12m_rel</code> +4.96% is positive. The stock is near its highs while earnings fell 87.29%. Its own PE band of 7.00-59.23x, average 21.04x, is quotable but cannot be applied: there is no current E to compare. With no valuation anchor the pillar scored on 60% of its declared weight. <code>tech_net_score_scaled</code> is NULL for every scored company on the platform; the momentum pillar renormalises around the components that do exist, so the percentile is a narrower question than the scorecard asks rather than a lost weight.",
+   "<i>The uncomfortable answer first: this is the one name in the batch where the market's price and the company's accounts are telling opposite stories, and no number in the pack resolves which is right. A deal-driven advisory book can lose 87% of its profit to timing and get it all back in one mandate — or the fee pipeline is gone and the price has not found out. Watch rather than act, because a position taken now is a bet on which of the two it is, at no discount. The thing to look for is the next quarter's revenue line, not its profit line.</i>"
+  ],
+  "trigger_text": "opm_now recovering above 30% with np_yoy_q turning positive -> the collapse was mandate timing, the ten-year +17.11pp hurdle excess is the real business, and the price was right to ignore it. A second quarter near 10% margins while the price stays above its 200-day EMA -> the gap between accounts and price closes downward and 74.60% above-EMA becomes the risk rather than the comfort.",
+  "evidence": {
+   "opm_now": 10.21629818820337,
+   "opm_prev": 41.84921504198613,
+   "ttm_np_pct": -87.28512960436564,
+   "np_yoy_q": -0.8082061068702291,
+   "roe_excess_13_10y": 0.17114114341450085,
+   "equity_to_assets": 0.8919625129218454,
+   "pct_above_200ema_252d": 0.746031746031746,
+   "ret_12m_rel": 0.04958586784071292
+  },
+  "snapshot_date": "2026-10-08",
+  "price_asof": "2026-10-08",
+  "model": "claude-opus-4-7",
+  "source_report": "bfsi-nbfc capital_markets v1"
+ },
+ {
+  "symbol": "AFSL",
+  "generated_at": "2026-10-21T12:00:00+00:00",
+  "verdict": "HOLD — the highest composite of the batch at 91 and 8.86x earnings, but the +427.79% revenue line is bullion turnover at a 0.80% margin, not fee growth",
+  "confidence": "medium",
+  "points": [
+   "<b>Not held, not on your watchlist.</b> Abans Financial Services, ₹1,029cr, commodity and bullion trading alongside broking and financial services — one of the six fee-and-advisory names, and the least fee-like of them. Scored inside <code>bfsi_nbfc</code> against 182 balance-sheet lenders on a scorecard built for loan books, so the percentiles below are direction, not rank. Composite 91 is the highest of the 15 names here that carry one, with <code>valuation_pct</code> 84 the highest too.",
+   "<b>The composite is built on a revenue line that should be discounted almost entirely.</b> <code>ttm_sales_pct</code> +427.79% is the highest of the 13 names with a trailing comparison, and <code>opm_now</code> 0.80% is the lowest of those 13, against <code>opm_prev</code> 4.04%. That combination is the signature of gross bullion and commodity turnover being booked as revenue: a five-fold sales increase that moves the margin to under one percent is volume passing through the books, not business being won. Read the revenue growth as a reporting artefact and the margin step as its consequence.",
+   "<b>Underneath it, the valuation is real.</b> <code>pe_ttm</code> 8.86x, <code>pb</code> 0.82x and <code>p_aum</code> 0.66x — priced below book while the rest of the fee group trades at multiples of it. <code>fii_pct</code> 20.71% is the highest of the 16, which is unusual at this size and says someone institutional has done the work. The own-history band is not quoted: 4 usable years is below the 8 this batch requires. This is also the mature-tier anomaly of the batch — it carries no <code>roe_excess_13_*</code> and no <code>np_growth_above_inflation_*</code> reading at all, so the hurdle and inflation questions are unanswered here rather than passed.",
+   "<b>And the price has done nothing whatsoever.</b> <code>ret_12m_rel</code> is exactly 0.00% and the close held above its 200-day EMA on 3.17% of the last 252 sessions — a stock that has been flat for a year and below its own trend for essentially all of it, while carrying the highest composite in the batch. One of those two readings is wrong, and the composite is the one computed against a lender scorecard. <code>tech_net_score_scaled</code> is NULL for every scored company on the platform; the momentum pillar renormalises around the components that do exist, so the percentile is a narrower question than the scorecard asks rather than a lost weight.",
+   "<i>The honest read: the top composite in this batch belongs to the name whose numbers I trust least, which is a statement about the scorecard rather than about Abans. Strip the pass-through revenue and you have a sub-book-value financial trading firm at 8.86x with 20.71% foreign ownership and a price that has not moved in twelve months. That is interesting and it is not a buy, because a 0.80% operating margin means a single bad trading year takes the earnings to zero and there is no fee annuity underneath. Hold, and treat the composite as noise.</i>"
+  ],
+  "trigger_text": "opm_now recovering toward 4% while sales growth normalises -> the mix is turning back toward fee and agency income, and 0.82x book at 8.86x is then plainly cheap. opm_now staying under 1% with pb under 0.8x -> the market is pricing a trading book that can lose a year's earnings in a quarter, and it is right to.",
+  "evidence": {
+   "ttm_sales_pct": 427.78551032414526,
+   "opm_now": 0.8019083920546325,
+   "opm_prev": 4.040898906806987,
+   "pe_ttm": 8.862086776859504,
+   "pb": 0.8235491767868286,
+   "p_aum": 0.6627949650709848,
+   "fii_pct": 20.71,
+   "ret_12m_rel": 1.9997770431547882e-06,
+   "pct_above_200ema_252d": 0.031746031746031744
+  },
+  "snapshot_date": "2026-10-08",
+  "price_asof": "2026-10-08",
+  "model": "claude-opus-4-7",
+  "source_report": "bfsi-nbfc capital_markets v1"
+ },
+ {
+  "symbol": "CHOICEIN",
+  "generated_at": "2026-10-21T12:00:00+00:00",
+  "verdict": "HOLD — the best inflation record of the 16 on all three windows and a genuinely compounding book, at 70.30x earnings and 9.59x book",
+  "confidence": "medium",
+  "points": [
+   "<b>Not held — CHOICEIN is on your watchlist.</b> Choice International, ₹16,027cr, retail broking and wealth management with an attached NBFC and advisory arm — the largest of the five broker-NBFCs. Scored inside <code>bfsi_nbfc</code> against 182 balance-sheet lenders on a scorecard built for loan books, so the percentiles below are direction, not rank. Composite 83.",
+   "<b>Its compounding record is the best in the batch and it is not close.</b> Net profit beat inflation in 4 of the last 4 years, 6 of 6 and 8 of 9 — the best reading on every one of the three windows among the 12 names here that carry the test. <code>book_value_cagr_10y</code> 40.22% is the highest of the 11 names with a ten-year series. <code>loan_book_cagr_3y</code> 47.64% is the fastest genuine book growth of the 16 once ASHIKAG's 370.51% reorganisation artefact is set aside. <code>roe_3y</code> 16.33% on <code>equity_to_assets</code> 40.39% — about 2.48x assets to equity, modest gearing for a business with a lending arm.",
+   "<b>The trailing year holds up, which is what separates it from the rest of the broker group.</b> <code>opm_now</code> 35.28% against <code>opm_prev</code> 33.37% — a +1.91pp step, small enough that the pack flags no second blocker on this row. That is the smallest margin move of the five broker-NBFCs — the next-smallest is THEINVEST at -7.60pp — and in a group where every other margin story is a one-year artefact it is the most informative single fact.",
+   "<b>Everything cheap about it has already been paid for.</b> <code>pe_ttm</code> 70.30x and <code>pb</code> 9.59x: the market has fully priced the compounding record. The own-history band is not quoted — its 1.82x low cannot be told apart from a split adjustment — so there is no historical anchor to say whether 70x is high or normal for this stock. The close held above its 200-day EMA on 67.06% of the last 252 sessions, second of the 10 names with the reading. <code>tech_net_score_scaled</code> is NULL for every scored company on the platform; the momentum pillar renormalises around the components that do exist, so the percentile is a narrower question than the scorecard asks rather than a lost weight.",
+   "<i>The uncomfortable part: this is the best business in the batch after CRISIL and it is the second-most expensive thing in it. A 4-of-4, 6-of-6, 8-of-9 inflation record genuinely deserves a premium — but 70.30x earnings and 9.59x book on retail broking revenue means two years of lower market turnover takes a third off the earnings and the multiple at the same time. Hold if you own it. Adding at 70x requires believing Indian retail participation only goes one way, which is the single assumption this entire segment is built on and the one nobody here has tested through a bear market.</i>"
+  ],
+  "trigger_text": "ttm earnings growth holding above 25% with opm_now steady near 35% -> the compounding is structural, the 70.30x is a growth multiple rather than a cycle multiple, and the record supports it. Market turnover falling with opm_now under 28% -> a 9.59x book on a broking business de-rates far faster than the earnings fall, which is how every broker in this segment has previously broken.",
+  "evidence": {
+   "np_growth_above_inflation_10y": 0.8888888888888888,
+   "book_value_cagr_10y": 0.4021927254758413,
+   "loan_book_cagr_3y": 0.4764205374664803,
+   "roe_3y": 0.16327142460588823,
+   "equity_to_assets": 0.4039153973544539,
+   "opm_now": 35.2837250584029,
+   "opm_prev": 33.370042886641606,
+   "pe_ttm": 70.30109224898014,
+   "pb": 9.588061094459501,
+   "pct_above_200ema_252d": 0.6706349206349206
+  },
+  "snapshot_date": "2026-10-08",
+  "price_asof": "2026-10-08",
+  "model": "claude-opus-4-7",
+  "source_report": "bfsi-nbfc capital_markets v1"
+ },
+ {
+  "symbol": "ASHIKAG",
+  "generated_at": "2026-10-21T12:00:00+00:00",
+  "verdict": "WATCH — a 72 quality pillar resting entirely on reorganisation arithmetic: a 370.51% three-year book growth that is identical to its own dead predecessor ticker",
+  "confidence": "medium",
+  "points": [
+   "<b>Not held, not on your watchlist.</b> Ashika Global Securities, ₹2,898cr, broking and investment services — one of the five broker-NBFCs, and formerly Ashika Credit Capital Ltd. Scored inside <code>bfsi_nbfc</code> against 182 balance-sheet lenders on a scorecard built for loan books, so the percentiles below are direction, not rank. Composite 76.",
+   "<b>The growth metrics are artefacts of that renaming and must not be read as performance.</b> <code>loan_book_cagr_3y</code> 370.51%, <code>book_value_cagr_3y</code> 314.40% and <code>np_cagr_3y</code> 137.35% are identical, to four decimal places, to the figures carried by the now-dead ASHIKA ticker — the same accounts read twice through a corporate reorganisation. <code>quality_pct</code> 72 is built on them, so the quality pillar here is measuring a restructuring, not a business. This is the single most important thing about the row: there is no three-year growth claim in this name that survives inspection.",
+   "<b>Almost nothing else is measurable yet either.</b> Six completed quarters and 129 price bars mean the momentum pillar scored on half its declared weight; the momentum pillar scored on 50% of its declared weight; there are no delivery-volume rows at all; and there is no own-history PE band, so <code>pe_ttm</code> 38.60x has no anchor of any kind — not against its own past, and not against the 16, because the cluster's comparison is to lenders. <code>tech_net_score_scaled</code> is NULL for every scored company on the platform; the momentum pillar renormalises around the components that do exist, so the percentile is a narrower question than the scorecard asks rather than a lost weight.",
+   "<b>The ownership change is the one hard fact worth watching.</b> The promoter stake moved from 58.00% at 2026-03-31 to 74.32% at 2026-06-30 — a 16.32pp increase in a single quarter. Promoters buying a sixth of the company at these levels is a real signal in a name where no other signal is yet trustworthy, and it is the reason this row is a watch rather than an avoid.",
+   "<i>The honest answer is that this company has not existed in its current form long enough to be valued, and the scorecard does not know that — it has read a reorganisation as 370% book growth and awarded a 72 quality pillar for it. At 38.60x with no own-history band, no delivery data and six quarters of accounts, any verdict here would be a guess dressed as analysis. Watch it for four more quarters; the promoter move to 74.32% is what makes it worth the wait rather than worth skipping.</i>"
+  ],
+  "trigger_text": "Four more quarters of clean accounts with the growth rates normalising toward the broker group -> the reorganisation washes out, the metrics start measuring the business, and 38.60x can actually be assessed. The promoter stake falling back toward 58% -> the one trustworthy signal in the name reverses and there is nothing left to wait for.",
+  "evidence": {
+   "loan_book_cagr_3y": 3.7050959338573843,
+   "book_value_cagr_3y": 3.143964790308159,
+   "np_cagr_3y": 1.3735300419023737,
+   "pe_ttm": 38.59701691303769,
+   "promoter_pct": 74.32
+  },
+  "snapshot_date": "2026-10-08",
+  "price_asof": "2026-10-08",
+  "model": "claude-opus-4-7",
+  "source_report": "bfsi-nbfc capital_markets v1"
+ },
+ {
+  "symbol": "ALGOQUANT",
+  "generated_at": "2026-10-21T12:00:00+00:00",
+  "verdict": "SPECULATIVE — the highest book multiple of the 16 at 14.11x, where the entire +102.77% profit growth is a 10.98pp margin step on 15.77% revenue growth",
+  "confidence": "medium",
+  "points": [
+   "<b>Not held, not on your watchlist.</b> AlgoQuant Fintech, ₹1,898cr, algorithmic trading and fintech services — one of the five broker-NBFCs, and formerly Hindustan Everest Tools, renamed in November 2021. A tool manufacturer that became an algorithmic trading firm four years ago. Scored inside <code>bfsi_nbfc</code> against 182 balance-sheet lenders on a scorecard built for loan books, so the percentiles below are direction, not rank. Composite 88.",
+   "<b>The headline growth is margin, not revenue, and the distinction decides the row.</b> <code>ttm_np_pct</code> +102.77% is the highest of the 13 names with a trailing comparison — on <code>ttm_sales_pct</code> of only +15.77%. The gap is <code>opm_now</code> 26.89% against <code>opm_prev</code> 15.91%, a +10.98pp step and the pack's second blocker on this row. Doubling profit on 16% more revenue means the margin did the work, and an 11pp margin move in one year at a proprietary trading operation is a result, not a trend.",
+   "<b>On returns it leads the batch, on price it leads it by more.</b> <code>roe_3y</code> 30.70% is the highest of the 16 — above WEALTH's 29.45% — and <code>pb</code> 14.11x is also the highest of the 16. You are paying fourteen times book for a 31% return on that book, which prices roughly a decade of the current ROE continuing. There is no own-history PE band to check it against, and with 206 price bars the quality, valuation and momentum pillars scored on 82%, 75% and 65% of their declared weight respectively — so composite 88 is assembled from partial inputs on top of the wrong scorecard.",
+   "<b>What the row cannot tell you is where the trading profit comes from.</b> An algorithmic trading book earns from strategies whose edge decays, and the pack has no visibility into strategy concentration, leverage within the book, or whether a single year's volatility produced the margin step. That is not a gap in the data collection; it is a gap no fundamental pack can close for this business model. <code>tech_net_score_scaled</code> is NULL for every scored company on the platform; the momentum pillar renormalises around the components that do exist, so the percentile is a narrower question than the scorecard asks rather than a lost weight.",
+   "<i>Uncomfortable first: a four-year-old business identity, a one-year 11pp margin step, the highest book multiple in the batch and no own-history band to anchor any of it. Those are the conditions under which a verdict should be labelled speculative rather than dressed as a hold. The 30.70% ROE is real and the 14.11x book has priced it as permanent, which for an algorithmic trading edge is the one assumption least likely to hold. Position size is the only risk control available here.</i>"
+  ],
+  "trigger_text": "opm_now holding near 27% for four more quarters with sales growth above 20% -> the margin step was operating leverage in a scaling platform rather than one good volatility year, and the ROE is repeatable. opm_now reverting toward 16%, or roe_3y under 20% -> 14.11x book has nothing underneath it and the de-rating is multiplicative with the earnings fall.",
+  "evidence": {
+   "ttm_np_pct": 102.76662204373048,
+   "ttm_sales_pct": 15.77064138116111,
+   "opm_now": 26.885334569618298,
+   "opm_prev": 15.909294212362465,
+   "roe_3y": 0.30701013673442407,
+   "pb": 14.112292704692496
+  },
+  "snapshot_date": "2026-10-08",
+  "price_asof": "2026-10-08",
+  "model": "claude-opus-4-7",
+  "source_report": "bfsi-nbfc capital_markets v1"
+ },
+ {
+  "symbol": "THEINVEST",
+  "generated_at": "2026-10-21T12:00:00+00:00",
+  "verdict": "AVOID — the lowest returns on every window of the 16 and the worst price trend in the batch, at 0.64x book which is the only thing in its favour",
+  "confidence": "medium",
+  "points": [
+   "<b>Not held, not on your watchlist.</b> The Investment Trust of India, ₹472cr, broking, lending and investment banking — one of the five broker-NBFCs. Scored inside <code>bfsi_nbfc</code> against 182 balance-sheet lenders on a scorecard built for loan books, so the percentiles below are direction, not rank. Composite 24.",
+   "<b>The returns are the worst in the batch on every window, and they get worse the further back you look.</b> <code>roe_3y</code> 4.31%, <code>roe_5y</code> 3.00% and <code>roe_7y</code> 2.37% are each the lowest of their cohorts here, and <code>roe_excess_13_5y</code> -10.00pp and <code>roe_excess_13_7y</code> -10.63pp are the lowest of the 12 names carrying the test. Seven years of earning under 3% on equity is not a cycle; it is the business.",
+   "<b>The price has agreed for a year.</b> <code>ret_12m_rel</code> -35.38% and the close above its 200-day EMA on only 1.98% of the last 252 sessions — both the worst of the 10 names with those readings. A stock below its own trend for 98% of a year while returning 2-4% on equity is not being overlooked. The pack's second blocker here is a margin step: <code>opm_now</code> 17.47% against <code>opm_prev</code> 25.07%, -7.60pp in one year, so the latest year made the record worse rather than better.",
+   "<b>Cheapness is the entire counter-argument and it is not enough.</b> <code>pb</code> 0.64x prices the equity at a 36% discount to stated book. The own-history PE band is not quoted: its 365.21x high is built on a near-zero earnings base and is arithmetic rather than information. A note on scope: <code>p_aum</code> 0.7486x here and BLBLIMITED's 0.7485x are indistinguishable, so neither row claims to be cheaper than the other on that measure. <code>tech_net_score_scaled</code> is NULL for every scored company on the platform; the momentum pillar renormalises around the components that do exist, so the percentile is a narrower question than the scorecard asks rather than a lost weight.",
+   "<i>The uncomfortable answer: 0.64x book on a business earning 2.37% over seven years is not a discount, it is the market correctly valuing capital that is being destroyed slowly. A sub-book financial holding company only re-rates on a sale, a demerger or a change of control, none of which this pack can see and none of which has happened in seven years. Avoid, and note that the one thing that would change the call is a corporate action rather than a good quarter.</i>"
+  ],
+  "trigger_text": "roe_3y clearing 10% with the price reclaiming its 200-day EMA -> the operating businesses have finally started earning and 0.64x book is then a genuine discount rather than a verdict. roe_5y staying under 4% while pb holds near 0.64x -> the discount is permanent, the book is not being converted into returns, and the holding is dead money.",
+  "evidence": {
+   "roe_3y": 0.043093289726151396,
+   "roe_5y": 0.029995992148719435,
+   "roe_7y": 0.023737210515563666,
+   "roe_excess_13_5y": -0.10000400785128057,
+   "pb": 0.6415171288743882,
+   "p_aum": 0.7485842097749013,
+   "ret_12m_rel": -0.35381456640753894,
+   "pct_above_200ema_252d": 0.01984126984126984
+  },
+  "snapshot_date": "2026-10-08",
+  "price_asof": "2026-10-08",
+  "model": "claude-opus-4-7",
+  "source_report": "bfsi-nbfc capital_markets v1"
+ },
+ {
+  "symbol": "AVONMORE",
+  "generated_at": "2026-10-21T12:00:00+00:00",
+  "verdict": "AVOID — 97.02x earnings, the most expensive of the 16, on returns that fell from 13.49% over seven years to 4.64% over three",
+  "confidence": "medium",
+  "points": [
+   "<b>Not held, not on your watchlist.</b> Avonmore Capital & Management Services, ₹361cr, broking and financial services — one of the five broker-NBFCs and the second-smallest name in the batch. Scored inside <code>bfsi_nbfc</code> against 182 balance-sheet lenders on a scorecard built for loan books, so the percentiles below are direction, not rank. Composite 28.",
+   "<b>The returns have collapsed, and the seven-year figure is what shows it.</b> <code>roe_7y</code> 13.49% against <code>roe_3y</code> 4.64%: this business used to clear the 13% hurdle and now earns a third of it. <code>np_cagr_7y</code> -11.31% is the worst of the 11 names here with a seven-year series — seven years of profit shrinking at double digits annually. <code>opm_now</code> 11.58% against <code>opm_prev</code> 21.55% is a -9.97pp step, the pack's second blocker on this row, so the most recent year continued the direction rather than arresting it.",
+   "<b>And the price has gone the other way.</b> <code>pe_ttm</code> 97.02x is the highest of the 14 names with a PE — the most expensive thing in the batch, on the worst long-run profit record in it. <code>earnings_yield_trend</code> -102.23pp is out of family with every other name here, where the next-worst reading is -6.53pp: the earnings yield has not drifted down, it has fallen off a cliff, which is what a near-zero earnings base does to the measure.",
+   "<b>Nothing in the recent prints rescues it.</b> <code>np_yoy_q</code> +196.35% looks like a recovery and is not: a near-tripling off a base that had already collapsed leaves the absolute profit far below where the 97.02x multiple assumes. The own-history band is unusable — its low of 0.13x is not a possible price-to-earnings ratio, and that single impossible number is the clearest evidence in this batch that the low end of these computed bands cannot be trusted. On the 200-day EMA measure it reads exactly 0.1111, tied with WEALTH, so neither row ranks against the other there. <code>tech_net_score_scaled</code> is NULL for every scored company on the platform; the momentum pillar renormalises around the components that do exist, so the percentile is a narrower question than the scorecard asks rather than a lost weight.",
+   "<i>The uncomfortable read: there is no version of these numbers in which 97.02x is defensible. A seven-year profit CAGR of -11.31%, a margin down 9.97pp, and a return on equity that has fallen by two-thirds, priced at the highest multiple in the segment — the multiple is high because the earnings are nearly zero, not because anyone is paying for growth. That is the most dangerous kind of expensive, because a single further bad quarter makes the PE infinite rather than high. Avoid.</i>"
+  ],
+  "trigger_text": "opm_now recovering above 20% with roe_3y clearing 10% -> the collapse was cyclical, the seven-year base is the real business, and the earnings base can grow into the multiple. np_cagr_3y staying negative while pe_ttm holds near 97x -> the earnings base keeps shrinking, the multiple keeps rising mechanically, and the equity is being revalued downward on every print.",
+  "evidence": {
+   "roe_7y": 0.13492655582386232,
+   "roe_3y": 0.0463686261428629,
+   "np_cagr_7y": -0.11308929922403554,
+   "opm_now": 11.57838571982926,
+   "opm_prev": 21.547593116967985,
+   "pe_ttm": 97.01881720430102,
+   "earnings_yield_trend": -1.0222946200699063,
+   "np_yoy_q": 1.963541666666667
+  },
+  "snapshot_date": "2026-10-08",
+  "price_asof": "2026-10-08",
+  "model": "claude-opus-4-7",
+  "source_report": "bfsi-nbfc capital_markets v1"
+ },
+ {
+  "symbol": "BLBLIMITED",
+  "generated_at": "2026-10-21T12:00:00+00:00",
+  "verdict": "SPECULATIVE — the cheapest earnings of the 16 at 4.47x on a 94.16% equity balance sheet, and the worst profit consistency in the batch at 0.58",
+  "confidence": "medium",
+  "points": [
+   "<b>Not held, not on your watchlist.</b> BLB Ltd, ₹88cr, proprietary trading and investment — one of the three proprietary-book names and the smallest company of the 16. Scored inside <code>bfsi_nbfc</code> against 182 balance-sheet lenders on a scorecard built for loan books, so the percentiles below are direction, not rank. Composite 87.",
+   "<b>It is the cheapest and the most erratic thing here, and those are the same fact.</b> <code>pe_ttm</code> 4.47x is the cheapest of the 14 names with a PE, while <code>np_consistency_10y</code> 0.58 is the worst of the 12 names carrying the index by a wide margin — the next-worst is 1.38 — on an index that runs from 0 to 2 and is not a pass rate. <code>roe_excess_13_10y</code> -12.29pp is also the worst of those 12: a decade averaging roughly 0.7% ROE against a 13% hurdle. A proprietary trading book with no consistent earnings is priced at four times whatever the last year happened to produce.",
+   "<b>There is no leverage and almost no balance-sheet risk.</b> <code>equity_to_assets</code> 94.16% is the highest of the 16 — about 1.06x assets to equity — so the company is its own capital, with no funding structure that can fail. <code>loan_book_cagr_3y</code> -10.53% is the lowest of the 16 and should be read as a shrinking investment book rather than a lending failure; <code>book_value_cagr_10y</code> 0.44% is the lowest of the 11 names with a ten-year series, which is the real indictment: a decade of trading that compounded book value by essentially nothing.",
+   "<b>The recent prints are extreme in both directions.</b> <code>np_yoy_q</code> +283.11% is the highest of the 15 names with a quarterly comparison and <code>earnings_yield_trend</code> +7.22pp the highest of the batch — both off a base near zero, so both are arithmetic. Only 5 completed quarters are available, so there is no TTM-versus-prior reading at all. <code>promoter_pct</code> 45.77% is the lowest of the 16 and <code>fii_pct</code> is 0.00%. The own band is refused on 4 usable years. A scope note: its <code>p_aum</code> 0.7485x and THEINVEST's 0.7486x are indistinguishable and neither row ranks against the other. <code>tech_net_score_scaled</code> is NULL for every scored company on the platform; the momentum pillar renormalises around the components that do exist, so the percentile is a narrower question than the scorecard asks rather than a lost weight.",
+   "<i>Uncomfortable first: composite 87 on a ₹88cr proprietary trading book whose ten-year book-value growth is 0.44% is the clearest single demonstration that this scorecard is measuring the wrong thing. Strip it away and what remains is a tiny, unlevered, wholly promoter-independent pool of capital at 4.47x trailing earnings that has created no value in ten years. That is cheap for a reason and it is not uninvestable — it is unanalysable, which is why the label is speculative. If you take it, take it as a closed-end discount play and size it accordingly.</i>"
+  ],
+  "trigger_text": "Two or three consecutive years of positive profit lifting np_consistency above 1.2 -> the trading book has found a repeatable process and 4.47x on improving consistency is a genuine discount. book_value_cagr turning negative, or the equity base shrinking -> a decade of going nowhere becomes a decade of slow losses and there is no multiple low enough for that.",
+  "evidence": {
+   "pe_ttm": 4.470020325203252,
+   "np_consistency_10y": 0.5783160666029461,
+   "roe_excess_13_10y": -0.12292383205972418,
+   "equity_to_assets": 0.9416012831407939,
+   "loan_book_cagr_3y": -0.10531029495310196,
+   "book_value_cagr_10y": 0.004391687014407841,
+   "np_yoy_q": 2.83112582781457,
+   "earnings_yield_trend": 0.07216856005942521,
+   "promoter_pct": 45.77,
+   "p_aum": 0.7484897472985621
+  },
+  "snapshot_date": "2026-10-08",
+  "price_asof": "2026-10-08",
+  "model": "claude-opus-4-7",
+  "source_report": "bfsi-nbfc capital_markets v1"
+ },
+ {
+  "symbol": "VLSFINANCE",
+  "generated_at": "2026-10-21T12:00:00+00:00",
+  "verdict": "HOLD — the cheapest book of the 16 at 0.34x, where book value compounded 25.07% over ten years while five-year profit fell 43.28% a year",
+  "confidence": "medium",
+  "points": [
+   "<b>Not held, not on your watchlist.</b> VLS Finance, ₹724cr, an investment and proprietary trading company — one of the three proprietary-book names. Scored inside <code>bfsi_nbfc</code> against 182 balance-sheet lenders on a scorecard built for loan books, so the percentiles below are direction, not rank. Composite 43.",
+   "<b>The whole row is one contradiction, and it is the most instructive number pair in the batch.</b> <code>book_value_cagr_10y</code> 25.07% is third of the 11 names with a ten-year series, while <code>np_cagr_5y</code> -43.28% is the worst of the 13 names with a five-year series. Both are true because they measure different things: the book compounds on unrealised marks as the portfolio appreciates, while the P&L only records what was sold. An investment company that is not realising gains looks like a failing business and a compounding balance sheet at the same time.",
+   "<b>Priced at a third of that book.</b> <code>pb</code> 0.34x is the cheapest of the 16 — a 66% discount to stated book — on <code>equity_to_assets</code> 90.33%, about 1.11x assets to equity, so the book is real capital and not a geared position. The own-history PE band is not quoted: its 1.43x low cannot be told apart from a split adjustment. <code>ret_12m_rel</code> +8.66% is the highest of the 10 names here with the reading, so the discount has begun to narrow rather than widen.",
+   "<b>The operating record is the reason the discount exists.</b> Net profit beat inflation in 1 of the last 4 years, 2 of 6 and 3 of 9 — the worst reading on all three windows of the 12 names carrying the test. <code>opm_now</code> 64.51% against <code>opm_prev</code> 39.53% is a +24.98pp step and the pack's second blocker here, and for a company whose revenue is realisations that step says only that it sold different things this year, not that anything improved. <code>tech_net_score_scaled</code> is NULL for every scored company on the platform; the momentum pillar renormalises around the components that do exist, so the percentile is a narrower question than the scorecard asks rather than a lost weight.",
+   "<i>The honest read: 0.34x book is the kind of discount that is either the best value in the batch or a permanent feature, and the deciding variable is capital allocation rather than performance. Ten years of 25% book growth with nothing distributed and nothing realised is management choosing to hold the portfolio, and a minority holder has no way to force that. Hold it as a discounted basket of assets and expect the discount to persist; the worst inflation record in the segment is the price of admission, not an anomaly to be fixed.</i>"
+  ],
+  "trigger_text": "Realisations lifting np_cagr back toward positive while pb stays under 0.5x -> the gap between book and P&L starts closing and a 66% discount is being handed to you on real assets. pb falling under 0.3x with the inflation record unchanged -> the discount is structural, the portfolio is not being converted into shareholder returns, and the book value is a number rather than a claim.",
+  "evidence": {
+   "book_value_cagr_10y": 0.25074831327820646,
+   "np_cagr_5y": -0.43284538247382887,
+   "pb": 0.3427987375254932,
+   "equity_to_assets": 0.9033039136530606,
+   "ret_12m_rel": 0.08661795636658728,
+   "np_growth_above_inflation_10y": 0.3333333333333333,
+   "opm_now": 64.50962135319679,
+   "opm_prev": 39.52574715869228
+  },
+  "snapshot_date": "2026-10-08",
+  "price_asof": "2026-10-08",
+  "model": "claude-opus-4-7",
+  "source_report": "bfsi-nbfc capital_markets v1"
+ },
+ {
+  "symbol": "PIONRINV",
+  "generated_at": "2026-10-21T12:00:00+00:00",
+  "verdict": "AVOID — the lowest momentum pillar of the 16 at 11, with quarterly revenue down 56.24% and the trailing profit growth coming from outside operations",
+  "confidence": "medium",
+  "points": [
+   "<b>Not held, not on your watchlist.</b> Pioneer Investcorp, ₹90cr, investment banking and a proprietary book — one of the three proprietary-book names, and the second-smallest of the 16. Scored inside <code>bfsi_nbfc</code> against 182 balance-sheet lenders on a scorecard built for loan books, so the percentiles below are direction, not rank. Composite 33.",
+   "<b>The revenue is falling faster than anything else in the batch.</b> <code>sales_yoy_q</code> -56.24% is the worst of the 15 names with a quarterly comparison. And the profit line does not offset it: <code>ttm_np_pct</code> +73.72% sits against <code>ttm_op_pct</code> -2.09%, which means the trailing profit growth came from below the operating line — investment gains or other income, not the business — while operations went slightly backwards.",
+   "<b>The price trend is the worst-scored in the batch.</b> <code>momentum_pct</code> 11 is the lowest of the 15 names here carrying a momentum reading, with technical three-month and one-month returns of -45.90% and -32.68%. There are 130 price bars despite a 2016 listing — the series begins 2026-04-20 — so the longer trend metrics are thin rather than adverse: there is no 200-EMA reading and the momentum pillar scored on 50% of its declared weight, and there are no delivery-volume rows at all. The own-history band is refused: its 151.71x high is built on a near-zero earnings base.",
+   "<b>Cheap on the balance-sheet measures, and the balance sheet is geared.</b> <code>p_aum</code> 0.32x is the cheapest of the 16 and <code>pb</code> 0.52x the second-cheapest, but <code>equity_to_assets</code> 37.46% means about 2.67x assets to equity — this is a proprietary book with borrowed money behind it, unlike BLBLIMITED at 1.06x or VLSFINANCE at 1.11x. The same 0.5x book discount means something materially different at 2.67x gearing than at 1.1x. <code>tech_net_score_scaled</code> is NULL for every scored company on the platform; the momentum pillar renormalises around the components that do exist, so the percentile is a narrower question than the scorecard asks rather than a lost weight.",
+   "<i>Uncomfortable first: of the three proprietary-book names this is the only one where a bad year can impair the equity rather than just shrink it, because it is the only one that is geared. Revenue down 56%, operating profit slightly negative, the profit growth sourced from non-operating items and the worst price trend in the segment — a 0.52x book does not compensate for that combination. Avoid. The small size compounds it: at ₹90cr the exit is as poor as the entry.</i>"
+  ],
+  "trigger_text": "sales_yoy_q returning to growth with ttm_op_pct positive -> the operating business is intact, the fall was deal timing, and 0.32x AUM on a working investment bank is a real discount. Another quarter of falling revenue with operating profit negative -> the 2.67x gearing turns a shrinking fee book into a balance-sheet problem rather than an earnings one.",
+  "evidence": {
+   "sales_yoy_q": -0.5623775310254735,
+   "ttm_np_pct": 73.72262773722629,
+   "ttm_op_pct": -2.09235209235209,
+   "p_aum": 0.31806264172335597,
+   "pb": 0.5226783114992721,
+   "equity_to_assets": 0.3745822226202101
+  },
+  "snapshot_date": "2026-10-08",
+  "price_asof": "2026-10-08",
+  "model": "claude-opus-4-7",
+  "source_report": "bfsi-nbfc capital_markets v1"
+ },
+ {
+  "symbol": "PNBGILTS",
+  "generated_at": "2026-10-21T12:00:00+00:00",
+  "verdict": "HOLD — the most levered balance sheet of the 16 at 16.67x assets to equity, correct for a G-sec primary dealer, with the lowest composite in the batch and a 2.79% yield",
+  "confidence": "medium",
+  "points": [
+   "<b>Not held, not on your watchlist.</b> PNB Gilts, ₹1,289cr, a primary dealer in government securities, 74.07% owned by Punjab National Bank — one of the two debt-principal names, where the risk taken is principal risk in bonds rather than fees. Scored inside <code>bfsi_nbfc</code> against 182 balance-sheet lenders on a scorecard built for loan books, so the percentiles below are direction, not rank. Composite 19 is the lowest of the 15 names here that carry one.",
+   "<b>The gearing is the business model, and the scorecard reads it as a defect.</b> <code>equity_to_assets</code> 6.00% means about 16.67x assets to equity, by far the most levered of the 16 — the next-thinnest is 4.20x. <code>roa_3y</code> 0.63% is the lowest of the 16, and multiplied by that gearing it produces <code>roe_3y</code> 10.31%, which is mid-pack. A primary dealer is required to bid at government auctions and carries inventory to do it; running a 6% equity ratio on a sovereign-debt book is the mandate, not recklessness. The low composite is substantially the cluster applying lender metrics to a dealer.",
+   "<b>The trailing year is genuinely bad, and it is rate-driven.</b> <code>ttm_np_pct</code> -69.90% and <code>np_yoy_q</code> -49.58%, with <code>opm_now</code> 83.38% against <code>opm_prev</code> 94.08% — a -10.70pp step and the pack's second blocker on this row. <code>opm_now</code> 83.38% is still the highest of the 13 names with the reading, which is what a bond book looks like: almost no operating cost, all of the volatility in the carry and the mark. Profit at a primary dealer falls when yields rise, and that is a market input rather than a management failure.",
+   "<b>Priced below book with a real dividend.</b> <code>pb</code> 0.75x and <code>p_aum</code> 0.34x, with <code>div_yield</code> 2.79% — the second-highest of the seven payers in the batch. The own-history band is refused outright: a 1.91x low and a 441.73x high describe arithmetic on a near-zero earnings year, not a valuation range. <code>shareholders</code> 84,279, which for this size is unusually wide and reflects the PNB parentage. <code>tech_net_score_scaled</code> is NULL for every scored company on the platform; the momentum pillar renormalises around the components that do exist, so the percentile is a narrower question than the scorecard asks rather than a lost weight.",
+   "<i>The honest read: the lowest composite in the batch belongs to the one name here whose business is the easiest to understand, and the gap is the scorecard's, not the company's. What you actually own is a leveraged, state-bank-sponsored bet on Indian bond yields falling, at 0.75x book with a 2.79% yield while you wait. That is a legitimate position and it is not an equity investment in the ordinary sense — the earnings will not compound, they will oscillate with the rate cycle. Hold it only if you want that exposure deliberately; there is no quality story underneath to fall back on.</i>"
+  ],
+  "trigger_text": "Falling bond yields lifting ttm_np_pct back to positive while pb stays near 0.75x -> the rate cycle turns, a 16.67x-levered book is where that gain lands first, and you were paid 2.79% to wait. Yields rising further with opm_now under 75% -> the mark-to-market runs the other way and 6.00% equity to assets leaves very little room before the book itself is impaired.",
+  "evidence": {
+   "equity_to_assets": 0.05997212731670747,
+   "roa_3y": 0.006324524226752906,
+   "roe_3y": 0.10308119557183537,
+   "ttm_np_pct": -69.89636695519049,
+   "np_yoy_q": -0.4958455675641906,
+   "opm_now": 83.37541147846001,
+   "opm_prev": 94.077478375859,
+   "pb": 0.754230595997824,
+   "p_aum": 0.34472977127808896,
+   "div_yield": 0.027919746240528613,
+   "shareholders": 84279.0
+  },
+  "snapshot_date": "2026-10-08",
+  "price_asof": "2026-10-08",
+  "model": "claude-opus-4-7",
+  "source_report": "bfsi-nbfc capital_markets v1"
+ },
+ {
+  "symbol": "ARCIL",
+  "generated_at": "2026-10-21T12:00:00+00:00",
+  "verdict": "WATCH — no verdict: listed 2026-09-17, so there are zero completed quarters to compare and the momentum pillar scored on 0 of 100 points, which suppresses the composite entirely",
+  "confidence": "low",
+  "points": [
+   "<b>Not held, not on your watchlist.</b> Asset Reconstruction Company (India) Ltd, ₹4,546cr, acquisition and resolution of distressed bank loans — one of the two debt-principal names. Scored inside <code>bfsi_nbfc</code> against 182 balance-sheet lenders on a scorecard built for loan books, so the percentiles below are direction, not rank. It listed on 2026-09-17, three weeks before the 2026-10-08 snapshot, and that single fact disqualifies most of this pack.",
+   "<b>What is absent, by name.</b> <code>pe_ttm</code> is NULL and there is no own-history PE band at all (n is NULL), because <code>ttm_vs_prior</code> is empty — zero completed quarters since listing, so there is no trailing-year comparison of sales, operating profit or net profit. <code>pct_above_200ema_252d</code> and <code>ema_stack_bull</code> are both NULL — no 200-EMA reading and no 9/20/50 EMA stack — on 24 price bars against the roughly 450 those metrics require. The consequence is specific: the **momentum pillar scored on 0 of its 100 declared points**, so <code>momentum_pct</code> is NULL and <code>composite_pct</code> is suppressed — this is the only name of the 16 with no composite. The valuation pillar scored on 55% of its declared weight for the same reason. There is also no company overview in the pack, so the business description above is from the identity record alone. Nothing here can be unblocked by a better query; it needs four quarters of filings and about eighteen months of price history. <code>tech_net_score_scaled</code> is NULL for every scored company on the platform; the momentum pillar renormalises around the components that do exist, so the percentile is a narrower question than the scorecard asks rather than a lost weight.",
+   "<i>What does read cleanly is the balance sheet, and it is worth recording for when the rest arrives: <code>pb</code> 1.20x and <code>p_aum</code> 1.10x, <code>roa_3y</code> 7.56% on <code>equity_to_assets</code> 75.97% — about 1.32x assets to equity — giving <code>roe_3y</code> 9.89%, with <code>loan_book_cagr_3y</code> 27.09%, <code>book_value_cagr_3y</code> 10.87%, <code>np_cagr_3y</code> 3.16% and <code>np_consistency_3y</code> 1.97 — an index from 0 to 2, not a pass rate. <code>promoter_pct</code> 77.46% is the highest of the 15 names with the reading and <code>shareholders</code> 177,845 the highest of the 16, which is an IPO allotment register rather than a settled holder base. A distressed-asset buyer earning 7.56% on assets with almost no gearing is an interesting starting point, and that is the most that can honestly be said. No verdict until the first full year of filings; the label is a watch rather than a hold because an unlabelled row would render as an endorsement.</i>"
+  ],
+  "trigger_text": "Four completed quarters published, giving a real pe_ttm and a ttm_vs_prior comparison -> the valuation and earnings questions become answerable and this gets a proper verdict. The price history reaching roughly 450 bars without the resolution book growing -> the momentum pillar unblocks but the only clean metric left, a 27.09% three-year book growth, would be stale.",
+  "evidence": {
+   "pb": 1.2022468938596538,
+   "p_aum": 1.095206202207778,
+   "roa_3y": 0.07558219330523847,
+   "roe_3y": 0.09894793415844173,
+   "equity_to_assets": 0.7596929671025286,
+   "loan_book_cagr_3y": 0.2709085071979658,
+   "np_consistency_3y": 1.970537691415521,
+   "promoter_pct": 77.46,
+   "shareholders": 177845.0
+  },
+  "snapshot_date": "2026-10-08",
+  "price_asof": "2026-10-08",
+  "model": "claude-opus-4-7",
+  "source_report": "bfsi-nbfc capital_markets v1"
+ }
+]
