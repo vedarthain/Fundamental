@@ -9,7 +9,7 @@
  *
  * A date badge does not stop a reader trusting an old opinion. "Written 7 Oct"
  * reads as provenance, not as a warning, and a verdict written against PE 40
- * is not wrong because 45 days elapsed — it is wrong because the PE is now 47.
+ * is not wrong because STALE_DAYS elapsed — it is wrong because the PE is now 47.
  * So this module re-reads the same metric keys live and compares, and the panel
  * reports the comparison in the reader's own terms: "written against PE 40.0 —
  * now 47.2". Age is kept as a secondary signal, not the primary one.
@@ -32,6 +32,7 @@
  * that file's header for why one panel rather than two.
  */
 
+import { latestCloseBySymbol } from "@/lib/calls";
 import { sql } from "@/lib/db";
 import {
   DERIVED_KEYS,
@@ -281,6 +282,20 @@ export type QueueEntry = {
   movedKeys: string[];
   /** When the symbol entered the watchlist, where that is known. */
   addedAt: string | null;
+  /** The close on the verdict's own `price_asof`, frozen at load time by
+   *  scripts/verdict-load.py. NOT recomputed here: golden.price_history is
+   *  split-back-adjusted, so a derived anchor would silently rewrite
+   *  `pctMove` months later. See db/migrations/0087. */
+  anchorPrice: number | null;
+  /** The date `anchorPrice` is the close for — shown, because "₹1,178" with no
+   *  date is not a verifiable claim. */
+  priceAsof: string | null;
+  /** Latest close, from `latestCloseBySymbol()` — the same reader the calls
+   *  feature uses, so the two features cannot disagree about what LTP means. */
+  ltp: number | null;
+  /** Move from anchor to LTP, in percent. null when either end is missing;
+   *  never 0, because a zero move is a claim and an absent one is not. */
+  pctMove: number | null;
 };
 
 export type TimelineWeek = {
@@ -291,7 +306,7 @@ export type TimelineWeek = {
   written: string[];
   /** Verdicts whose evidence first broke during this week. */
   broke: string[];
-  /** Verdicts that crossed the 45-day mark during this week. */
+  /** Verdicts that crossed the STALE_DAYS mark during this week. */
   wentStale: string[];
   /** Symbols added to the watchlist during this week. */
   added: string[];
@@ -364,10 +379,12 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
   let vrows: {
     symbol: string; generated_at: Date; verdict: string;
     confidence: "high" | "medium" | "low"; evidence: unknown;
+    price_asof: Date | null; anchor_price: number | null;
   }[] = [];
   try {
     vrows = await sql`
-      SELECT symbol, generated_at, verdict, confidence, evidence
+      SELECT symbol, generated_at, verdict, confidence, evidence,
+             price_asof, anchor_price::float AS anchor_price
         FROM app.stock_verdict
        ORDER BY generated_at DESC
     `;
@@ -404,6 +421,24 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
   const live = new Map<string, Record<string, EvidenceValue>>();
   for (const h of hist) live.set(h.symbol, h.cluster_metrics ?? {}); // last wins = newest
 
+  // One batched golden read for every symbol on the page — tracked ones and
+  // dormant ones alike, since both render a move. `latestCloseBySymbol` already
+  // swallows a golden outage and returns an empty map, which degrades to "no
+  // LTP" rather than to a failed queue.
+  const ltps = await latestCloseBySymbol([...new Set([...trackedSet, ...verdictSymbols])]);
+  const priceOf = (
+    sym: string,
+    anchor: number | null,
+  ): { anchorPrice: number | null; ltp: number | null; pctMove: number | null } => {
+    const ltp = ltps.get(sym) ?? null;
+    return {
+      anchorPrice: anchor,
+      ltp,
+      pctMove:
+        anchor != null && anchor > 0 && ltp != null ? ((ltp - anchor) / anchor) * 100 : null,
+    };
+  };
+
   /* ---- entries -------------------------------------------------------- */
 
   const entries: QueueEntry[] = [];
@@ -417,6 +452,9 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
         verdict: null, confidence: null, generated_at: null, ageDays: null,
         movedCount: 0, comparableCount: 0, unverifiableCount: 0, movedKeys: [],
         addedAt: t.added_at ? t.added_at.toISOString() : null,
+        // No verdict means no anchor to move from. LTP is still carried so the
+        // row is not blank, and pctMove stays null rather than 0.
+        ...priceOf(t.symbol, null), priceAsof: null,
       });
       counts.missing++;
       continue;
@@ -436,6 +474,8 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
       unverifiableCount: drift.filter((d) => d.comparable && d.liveMissing).length,
       movedKeys,
       addedAt: t.added_at ? t.added_at.toISOString() : null,
+      ...priceOf(t.symbol, v.anchor_price),
+      priceAsof: v.price_asof ? v.price_asof.toISOString().slice(0, 10) : null,
     });
     counts[bucket]++;
   }
@@ -451,6 +491,8 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
       verdict: v.verdict, confidence: v.confidence, generated_at,
       ageDays: daysSince(generated_at),
       movedCount: 0, comparableCount: 0, unverifiableCount: 0, movedKeys: [], addedAt: null,
+      ...priceOf(symbol, v.anchor_price),
+      priceAsof: v.price_asof ? v.price_asof.toISOString().slice(0, 10) : null,
     });
     counts.dormant++;
   }

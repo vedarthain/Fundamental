@@ -112,6 +112,55 @@ def env_url(name: str, required: bool = True) -> Optional[str]:
     return None
 
 
+def anchor_prices(symbols: list[str], asof: dict[str, date]) -> dict[str, Optional[float]]:
+    """Close on each verdict's own `price_asof`, read from golden.
+
+    WHY THIS IS HERE AND NOT IN THE MIGRATION. The anchor has to come from
+    golden_db and the verdicts live in app_db, so no single SQL file can do it;
+    and it has to run on every load, not once, or `anchor_price` becomes the
+    next column that was seeded and then fed by nothing (CLAUDE.md §5 — which
+    is exactly what happened to `price_asof` itself, see 0087).
+
+    The query shape is copied from `latestCloseBySymbol()` in
+    web/src/lib/calls.ts rather than written fresh, because that function
+    already carries the four things ad-hoc SQL here would get wrong: the `.NS`
+    suffix golden keys symbols by, the `interval = '1d'` filter, the
+    `close IS NOT NULL` guard and a positive-close check. The one difference is
+    deliberate: that function wants the NEWEST close, this one wants the close
+    as of a past date, so the window is `date <= asof` rather than a trailing
+    45 days.
+
+    Returns None for a symbol golden cannot price. That is not an error — see
+    0087 on why the column is nullable — so a missing bar must never stop the
+    prose from loading.
+    """
+    url = env_url("GOLDEN_DB_URL", required=False)
+    if not url or not symbols:
+        return {}
+    out: dict[str, Optional[float]] = {}
+    try:
+        with psycopg.connect(url, row_factory=dict_row) as g, g.cursor() as cur:
+            for sym in symbols:
+                d = asof.get(sym)
+                if d is None:
+                    continue
+                cur.execute(
+                    """SELECT close::float AS close
+                         FROM golden.price_history
+                        WHERE interval = '1d' AND symbol = %s
+                          AND date <= %s AND close IS NOT NULL AND close > 0
+                        ORDER BY date DESC
+                        LIMIT 1""",
+                    (f"{sym}.NS", d),
+                )
+                r = cur.fetchone()
+                out[sym] = r["close"] if r else None
+    except Exception as exc:  # golden unreachable — load the prose anyway
+        print(f"  ~  golden unreachable, anchor prices left NULL: {exc}", file=sys.stderr)
+        return {}
+    return out
+
+
 def validate(v: dict, known_keys: set[str], allow_no_evidence: bool) -> tuple[list[str], list[str]]:
     """Return (errors, warnings) for one verdict object."""
     errs, warns = [], []
@@ -202,6 +251,24 @@ def main() -> int:
               file=sys.stderr)
         return 0
 
+    # price_asof DEFAULTS TO THE SNAPSHOT DATE. It used to be a bare
+    # `v.get("price_asof")`, so the two oil-refining batches — whose generators
+    # never set the key — wrote NULL, and nothing complained. The snapshot date
+    # is the date the evidence pack was cut, which is the correct fallback: it
+    # is the data the verdict was reasoned from.
+    asof: dict[str, date] = {}
+    for v in verdicts:
+        d = v.get("price_asof") or v.get("snapshot_date") or default_snap
+        if isinstance(d, str):
+            d = date.fromisoformat(d)
+        if d is not None:
+            asof[str(v["symbol"]).upper()] = d
+    anchors = anchor_prices(list(asof), asof)
+    unpriced = [s for s in asof if anchors.get(s) is None]
+    if unpriced:
+        print(f"  ~  no anchor price for {len(unpriced)}: {', '.join(sorted(unpriced)[:12])}",
+              file=sys.stderr)
+
     written, conflicts = 0, []
     with conn.cursor() as cur:
         for v in verdicts:
@@ -211,13 +278,15 @@ def main() -> int:
                 cur.execute(
                     """INSERT INTO app.stock_verdict
                          (symbol, generated_at, verdict, confidence, points, trigger_text,
-                          evidence, snapshot_date, price_asof, model, source_report)
-                       VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s::jsonb, %s, %s, %s, %s)""",
+                          evidence, snapshot_date, price_asof, anchor_price,
+                          model, source_report)
+                       VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s::jsonb, %s, %s, %s, %s, %s)""",
                     (sym, gen, v["verdict"], v["confidence"],
                      json.dumps(v["points"]), v.get("trigger_text"),
                      json.dumps(v.get("evidence") or {}),
                      v.get("snapshot_date") or default_snap,
-                     v.get("price_asof"), v.get("model"), v.get("source_report")),
+                     asof.get(sym), anchors.get(sym),
+                     v.get("model"), v.get("source_report")),
                 )
                 written += 1
             except psycopg.errors.UniqueViolation:

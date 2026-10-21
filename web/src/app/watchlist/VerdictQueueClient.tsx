@@ -38,7 +38,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { VerdictSheet } from "@/components/VerdictSheet";
-import { BUCKET_COLOR, verdictBucket, type QueueBucket } from "@/lib/verdictTypes";
+import { BUCKET_COLOR, STALE_DAYS, verdictBucket, type QueueBucket } from "@/lib/verdictTypes";
 import type { QueueEntry, TimelineWeek, VerdictQueue } from "@/lib/verdict";
 
 const BUCKET_META: Record<QueueBucket, { label: string; color: string; blurb: string }> = {
@@ -46,7 +46,7 @@ const BUCKET_META: Record<QueueBucket, { label: string; color: string; blurb: st
     label: "Needs revisiting",
     color: "var(--color-delta-down)",
     blurb:
-      "The figures these were written against have moved, or they are past the 45-day review mark. Drift is the stronger signal of the two.",
+      "The figures these were written against have moved, or they are past the review mark. Drift is the stronger signal of the two.",
   },
   missing: {
     label: "No verdict yet",
@@ -72,6 +72,15 @@ const ORDER: QueueBucket[] = ["due", "missing", "current", "dormant"];
 
 function shortDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+}
+
+/** Rupees, two decimals, grouped Indian-style. No ₹ symbol in the cell — the
+ *  column header carries the unit once and three prices per row with a glyph
+ *  each is noise. Two decimals rather than zero because several names in this
+ *  book trade under ₹20, where rounding to the rupee makes a real move look
+ *  like none. */
+function inr(n: number): string {
+  return n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 /* ------------------------------------------------------------- by call */
@@ -111,7 +120,7 @@ const CALL_ORDER = [
  *  the row in this view most likely to be acted on wrongly, so it goes on top
  *  of its own group rather than wherever the alphabet puts it. */
 function byUrgency(a: QueueEntry, b: QueueEntry): number {
-  const d = (e: QueueEntry) => (e.movedCount > 0 ? 0 : (e.ageDays ?? 0) > 45 ? 1 : 2);
+  const d = (e: QueueEntry) => (e.movedCount > 0 ? 0 : (e.ageDays ?? 0) > STALE_DAYS ? 1 : 2);
   return d(a) - d(b) || (b.ageDays ?? 0) - (a.ageDays ?? 0) || a.symbol.localeCompare(b.symbol);
 }
 
@@ -207,6 +216,10 @@ export function VerdictQueueClient() {
 
   const { counts, trackedCount, timeline } = state.q;
   const rows = grouped.get(show) ?? [];
+  // What is owed: tracked symbols with no verdict, plus verdicts that have
+  // drifted or aged out. Deliberately excludes `dormant` — those are verdicts
+  // about symbols no longer tracked, so no work is owed on them.
+  const pending = counts.missing + counts.due;
 
   return (
     <div className="space-y-5">
@@ -214,11 +227,39 @@ export function VerdictQueueClient() {
         className="rounded-lg border px-4 py-3 text-[12.5px] leading-relaxed max-w-[860px]"
         style={{ borderColor: "var(--color-border-default)", background: "var(--color-paper)" }}
       >
+        {/* PENDING, FIRST AND IN COLOUR, ON BOTH AXES. The tab's whole premise
+            (see the file header) is that it reports what is owed, but the
+            outstanding figure was only legible by adding two bucket chips
+            together after choosing the status axis — so on the by-call axis it
+            was not on screen at all. Pending is missing + due, which is the one
+            number that decides whether this month's batch is finished. It is
+            rendered here, above the axis toggle, so it survives whichever axis
+            is selected. */}
         <span className="font-semibold ink-text">Private.</span>{" "}
         <span className="muted-text">
-          {trackedCount} symbols tracked across the watchlist and portfolio. Verdicts are
-          hand-written, nothing generates them on a schedule, and this tab exists to say what is
-          owed rather than to celebrate what was written.
+          {trackedCount} symbols tracked across the watchlist and portfolio.{" "}
+        </span>
+        {pending > 0 ? (
+          <span className="font-semibold" style={{ color: "var(--color-delta-down)" }}>
+            {pending} pending a verdict
+          </span>
+        ) : (
+          <span className="font-semibold" style={{ color: "var(--color-delta-up)" }}>
+            Nothing pending
+          </span>
+        )}
+        <span className="muted-text">
+          {pending > 0 ? (
+            <>
+              {" "}
+              — {counts.missing} never written, {counts.due} to revisit (drifted, or older than the{" "}
+              {STALE_DAYS}-day review mark).{" "}
+            </>
+          ) : (
+            <> — every tracked symbol has a verdict inside the review window. </>
+          )}
+          Verdicts are hand-written, nothing generates them on a schedule, and this tab exists to
+          say what is owed rather than to celebrate what was written.
         </span>
       </div>
 
@@ -307,13 +348,18 @@ export function VerdictQueueClient() {
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-[12.5px] min-w-[680px]">
+          <table className="w-full text-[12.5px] min-w-[880px]">
             <thead>
               <tr className="muted-text">
                 <th className="text-left py-1.5 pr-3 font-medium">Symbol</th>
                 <th className="text-left py-1.5 px-3 font-medium">Verdict</th>
                 <th className="text-right py-1.5 px-3 font-medium">Written</th>
                 <th className="text-right py-1.5 px-3 font-medium">Age</th>
+                <th className="text-right py-1.5 px-3 font-medium" title="Close on the verdict's price_asof date, frozen at load time">
+                  At verdict
+                </th>
+                <th className="text-right py-1.5 px-3 font-medium">LTP</th>
+                <th className="text-right py-1.5 px-3 font-medium">Move</th>
                 <th className="text-left py-1.5 pl-3 font-medium">
                   {show === "missing" ? "Tracked since" : "What moved"}
                 </th>
@@ -388,12 +434,51 @@ function EntryRow({
       <td
         className="py-1.5 px-3 text-right tabular-nums"
         style={
-          e.ageDays != null && e.ageDays > 45
+          e.ageDays != null && e.ageDays > STALE_DAYS
             ? { color: "var(--color-score-mid, #d4951a)" }
             : { color: "var(--color-muted)" }
         }
       >
         {e.ageDays != null ? `${e.ageDays}d` : "—"}
+      </td>
+      {/* PRICE SINCE THE VERDICT. Three cells, not one: the anchor, today, and
+          the move. The move alone would be the only number a reader needs and
+          the only one they could not check — "+18%" with nothing to divide
+          tells you whether to feel good, not whether it is true. The anchor
+          carries its own date for the same reason the evidence column names
+          the keys that moved.
+          The anchor is NOT recomputed client-side from a price series: it is
+          app.stock_verdict.anchor_price, frozen when the verdict loaded,
+          because golden.price_history is split-back-adjusted and a derived
+          anchor would quietly restate this move after a bonus issue. See
+          db/migrations/0087. */}
+      <td className="py-1.5 px-3 text-right tabular-nums muted-text whitespace-nowrap">
+        {e.anchorPrice != null ? (
+          <>
+            {inr(e.anchorPrice)}
+            {e.priceAsof && (
+              <div className="text-[10.5px] opacity-70">{shortDate(e.priceAsof)}</div>
+            )}
+          </>
+        ) : (
+          <span title="No close in golden on or before the verdict's price_asof date">—</span>
+        )}
+      </td>
+      <td className="py-1.5 px-3 text-right tabular-nums muted-text">
+        {e.ltp != null ? inr(e.ltp) : "—"}
+      </td>
+      <td
+        className="py-1.5 px-3 text-right tabular-nums font-medium"
+        style={{
+          color:
+            e.pctMove == null
+              ? "var(--color-muted)"
+              : e.pctMove >= 0
+                ? "var(--color-delta-up)"
+                : "var(--color-delta-down)",
+        }}
+      >
+        {e.pctMove != null ? `${e.pctMove >= 0 ? "+" : ""}${e.pctMove.toFixed(1)}%` : "—"}
       </td>
       <td className="py-1.5 pl-3">
         {lastCol === "added" ? (
@@ -462,7 +547,7 @@ function ByCall({
   }
 
   const drifted = groups.reduce(
-    (n, g) => n + g.rows.filter((r) => r.movedCount > 0 || (r.ageDays ?? 0) > 45).length,
+    (n, g) => n + g.rows.filter((r) => r.movedCount > 0 || (r.ageDays ?? 0) > STALE_DAYS).length,
     0,
   );
 
@@ -532,13 +617,18 @@ function ByCall({
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full text-[12.5px] min-w-[680px]">
+        <table className="w-full text-[12.5px] min-w-[880px]">
           <thead>
             <tr className="muted-text">
               <th className="text-left py-1.5 pr-3 font-medium">Symbol</th>
               <th className="text-left py-1.5 px-3 font-medium">Verdict</th>
               <th className="text-right py-1.5 px-3 font-medium">Written</th>
               <th className="text-right py-1.5 px-3 font-medium">Age</th>
+              <th className="text-right py-1.5 px-3 font-medium" title="Close on the verdict's price_asof date, frozen at load time">
+                At verdict
+              </th>
+              <th className="text-right py-1.5 px-3 font-medium">LTP</th>
+              <th className="text-right py-1.5 px-3 font-medium">Move</th>
               <th className="text-left py-1.5 pl-3 font-medium">What moved</th>
             </tr>
           </thead>

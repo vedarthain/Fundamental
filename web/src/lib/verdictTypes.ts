@@ -111,8 +111,18 @@ export type VerdictBucket = "buy" | "hold" | "watch" | "sell";
 
 /** Past this, the panel says so even if nothing has drifted. Secondary to
  *  drift: a 60-day-old verdict whose every figure is unchanged is mostly fine,
- *  and a 10-day-old one whose PE moved 20% is not. */
-export const STALE_DAYS = 45;
+ *  and a 10-day-old one whose PE moved 20% is not.
+ *
+ *  THIRTY, BECAUSE THE WRITING CADENCE IS MONTHLY. This was 45 from the tab's
+ *  first commit with no recorded reason, and 45 is longer than the cycle that
+ *  refills the queue: verdicts are written in monthly batches, so a batch
+ *  written on the 1st is a month old on the 1st of the next month and still
+ *  reads "Still standing" for another fifteen days. The queue would say
+ *  nothing is owed through the exact window in which a whole batch had become
+ *  owed — CLAUDE.md §5's check that cannot fail, in date arithmetic. The
+ *  threshold has to be the cadence or shorter, never longer. If the cadence
+ *  changes, this number changes with it. */
+export const STALE_DAYS = 30;
 
 /** A numeric figure counts as moved past 10% relative change. Chosen because
  *  it is roughly the point at which a sentence of prose quoting the old number
