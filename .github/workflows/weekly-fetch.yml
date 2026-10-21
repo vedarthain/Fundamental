@@ -158,7 +158,25 @@ jobs:
       # same way, but written to app.dividend_only[_annual] OUTSIDE the scored
       # universe. Kept separate from fetch-many so a Screener hiccup on these
       # never eats into the main fetch's runtime budget.
+      #
+      # continue-on-error BECAUSE THIS STEP MUST NOT DECIDE WHETHER THE WEEK
+      # GETS A SNAPSHOT. weekly-compute.yml chains off this workflow with
+      # `if: workflow_run.conclusion == 'success'`, so ANY failing step here
+      # skips the snapshot — and it skips it SILENTLY, as a grey run rather
+      # than a red one, which is why the loss went unnoticed for two weeks.
+      # On 2026-10-20 the main fetch succeeded (1,161 symbols, auth_failed=0)
+      # and then these SIX trusts died on a transport error
+      # (ConnectError [Errno -9]), failing the job and skipping compute for a
+      # third week.
+      #
+      # These names are outside app.universe by construction; nothing in
+      # scoring, ranking or the panel caches reads app.dividend_only[_annual].
+      # A stale week of distributions on six trusts is cosmetic. A missing
+      # weekly snapshot across ~3,100 scored companies is not. The step still
+      # shows a red X when it fails, so this hides nothing — it only stops a
+      # six-symbol side quest from holding the snapshot hostage.
       - name: Fetch dividend-only names (InvITs/REITs)
+        continue-on-error: true
         env:
           APP_DB_URL:           ${{ secrets.NEON_APP_URL }}
           # The ETL refuses a remote APP_DB_URL by default (etl/src/fundamental_etl/db.py) so a local run cannot drift onto prod. CI writes to prod on purpose, so it says so out loud.
