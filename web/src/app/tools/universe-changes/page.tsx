@@ -10,8 +10,45 @@ import Link from "next/link";
 import {
   loadUniverseChanges,
   loadUniverseChangeTotals,
+  type CoverageStatus,
   type UniverseEvent,
 } from "@/lib/universeEvents";
+
+/**
+ * How the ETL's coverage verdict reads to a human. Phrased as the stock's
+ * state, not the pipeline's: "too new to score" is a fact about the company,
+ * while 'gated_insufficient_history' is a fact about our SQL.
+ *
+ * `scored` gets no chip at all — it is the expected case, and labelling it
+ * would make the exceptions harder to spot, not easier.
+ */
+const COVERAGE_LABEL: Record<CoverageStatus, { text: string; hint: string } | null> = {
+  scored: null,
+  gated_insufficient_history: {
+    text: "too new to score",
+    hint: "Under a year of reported annual history, so the scorecard is withheld rather than computed on thin data. It fills in as results accrue.",
+  },
+  gated_stale_financials: {
+    text: "financials stale",
+    hint: "The most recent annual report is too old to score against — usually a company that has stopped filing on time.",
+  },
+  no_metrics: {
+    text: "not yet computed",
+    hint: "Onboarded, but the weekly compute has not produced a scorecard for it yet.",
+  },
+  never_attempted: {
+    text: "not yet fetched",
+    hint: "Onboarded, but we have not successfully pulled its financials yet.",
+  },
+  fetch_failing: {
+    text: "fetch failing",
+    hint: "Our data pull for this symbol is erroring — we are aware of it.",
+  },
+  unclassified: {
+    text: "unclassified",
+    hint: "No sector assigned yet, so it has no peer group to be scored against.",
+  },
+};
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Universe changes · EquityRoots" };
@@ -30,16 +67,30 @@ function fmtWeek(weekStart: string): string {
   return `${startStr} – ${endStr}, ${end.getFullYear()}`;
 }
 
+function fmtDate(d: string): string {
+  return new Date(d + "T00:00:00").toLocaleDateString("en-IN", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
 function EventPill({ e }: { e: UniverseEvent }) {
   const added = e.event === "added";
+  const cov = e.coverageStatus ? COVERAGE_LABEL[e.coverageStatus] : null;
   return (
     <Link
       href={`/stock/${e.symbol}`}
       className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border hairline text-[13px] hover:opacity-80 transition-opacity"
       style={{ backgroundColor: "var(--color-card)" }}
-      title={`${e.companyName ?? e.symbol} · ${new Date(e.eventAt).toLocaleString("en-IN")}${
-        e.source === "backfill" ? " · reconstructed from initial state" : ""
-      }`}
+      title={[
+        e.companyName ?? e.symbol,
+        e.listingDate ? `listed ${fmtDate(e.listingDate)}` : null,
+        `tracked from ${new Date(e.eventAt).toLocaleDateString("en-IN")}`,
+        e.source === "backfill" ? "reconstructed from initial state" : null,
+      ]
+        .filter(Boolean)
+        .join(" · ")}
     >
       <span
         aria-hidden
@@ -56,6 +107,18 @@ function EventPill({ e }: { e: UniverseEvent }) {
       </span>
       {e.companyName && e.companyName !== e.symbol && (
         <span className="muted-text truncate max-w-[180px]">{e.companyName}</span>
+      )}
+      {cov && (
+        <span
+          className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded"
+          style={{
+            color: "var(--color-ink-muted, #6b7280)",
+            backgroundColor: "var(--color-bg-subtle, rgba(0,0,0,0.04))",
+          }}
+          title={cov.hint}
+        >
+          {cov.text}
+        </span>
       )}
       {e.source === "backfill" && (
         <span
@@ -99,7 +162,9 @@ export default async function UniverseChangesPage() {
         Every week the fetch job reconciles our roster against NSE&apos;s live
         listing master — onboarding fresh listings and retiring names that have
         gone dark. This is the append-only record of those changes; no week is
-        ever overwritten.
+        ever overwritten. Genuinely new listings are kept separate from older
+        companies we simply started tracking, and each name carries whether we
+        can score it yet.
       </p>
 
       <div className="mt-4 flex flex-wrap gap-4 text-[13px] muted-text">
@@ -127,7 +192,14 @@ export default async function UniverseChangesPage() {
           </p>
         )}
 
-        {weeks.map((w) => (
+        {weeks.map((w) => {
+          // The split that makes this page honest. Both halves are 'added'
+          // events a week apart in our log; only one half is news about the
+          // market. See universeEvents.ts — MHHL listed in 2018 and was
+          // onboarded in October 2026.
+          const fresh = w.added.filter((e) => e.isNewListing);
+          const backfilled = w.added.filter((e) => !e.isNewListing);
+          return (
           <section key={w.weekStart}>
             <div className="flex items-baseline gap-3 mb-3">
               <h2 className="font-display text-[18px]" style={{ color: "var(--color-ink)" }}>
@@ -138,11 +210,29 @@ export default async function UniverseChangesPage() {
               </span>
             </div>
 
-            {w.added.length > 0 && (
+            {fresh.length > 0 && (
               <div className="mb-3">
-                <div className="eyebrow mb-2">Added</div>
+                <div className="eyebrow mb-2">
+                  New listings ({fresh.length})
+                </div>
                 <div className="flex flex-wrap gap-2">
-                  {w.added.map((e) => (
+                  {fresh.map((e) => (
+                    <EventPill key={e.id} e={e} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {backfilled.length > 0 && (
+              <div className="mb-3">
+                <div
+                  className="eyebrow mb-2"
+                  title="Companies that were already listed — sometimes for years — and that we started tracking this week. The date is ours, not the market's."
+                >
+                  Newly tracked, already listed ({backfilled.length})
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {backfilled.map((e) => (
                     <EventPill key={e.id} e={e} />
                   ))}
                 </div>
@@ -160,7 +250,8 @@ export default async function UniverseChangesPage() {
               </div>
             )}
           </section>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

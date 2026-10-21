@@ -11,8 +11,36 @@
  * is a natural read. source='backfill' rows are the one-time seed reconstructed
  * from synced_at when the log was created — flagged so the UI can mark them as
  * approximate rather than live-recorded.
+ *
+ * TWO THINGS THIS LOG DOES NOT KNOW, both joined in below.
+ *
+ * 1. WHEN THE STOCK LISTED. event_at is when OUR sync ran, which for a backfilled
+ *    coverage gap has nothing to do with the market. MHHL listed on 2018-02-16
+ *    and was onboarded on 2026-10-20, so the bare log renders a seven-year-old
+ *    company as a new listing — a 3,168-day error, presented to users as news.
+ *    app.universe.listing_date is populated for every active symbol (3,179 of
+ *    3,179 on 2026-10-21), so `isNewListing` is a join, not a migration.
+ *
+ * 2. WHETHER WE CAN ACTUALLY SCORE IT YET. A day-1 IPO is admitted to the
+ *    universe immediately and has no annual history, so compute_metrics
+ *    deliberately withholds it (maturity_tier outside SCORED_TIERS). Without
+ *    this, HD FIRE PROTECT — scoreable, five years of Screener history — and
+ *    SIGNORIA — zero annuals, nothing to score — appear identical.
+ *    `coverageStatus` is read from app.coverage_ledger rather than re-derived,
+ *    so the page shows the ETL's own verdict instead of a second opinion that
+ *    can drift from it.
  */
 import { sql } from "@/lib/db";
+
+/** The ETL's own coverage verdict (app.coverage_ledger.status, migration 0068). */
+export type CoverageStatus =
+  | "scored"
+  | "gated_stale_financials"
+  | "gated_insufficient_history"
+  | "fetch_failing"
+  | "never_attempted"
+  | "no_metrics"
+  | "unclassified";
 
 export type UniverseEvent = {
   id: number;
@@ -21,6 +49,16 @@ export type UniverseEvent = {
   companyName: string | null;
   eventAt: string; // ISO timestamp
   source: "sync" | "backfill";
+  /** app.universe.listing_date — when NSE listed it, not when we noticed. */
+  listingDate: string | null;
+  /**
+   * Listed within 90 days of the moment we onboarded it. False means this row
+   * is a coverage backfill of an existing company, not a new listing. NULL
+   * listing_date → false: unknown is not news.
+   */
+  isNewListing: boolean;
+  /** NULL for 'removed' events and for symbols not in the latest snapshot. */
+  coverageStatus: CoverageStatus | null;
 };
 
 export type UniverseWeek = {
@@ -39,16 +77,30 @@ export type UniverseWeek = {
  */
 export async function loadUniverseChanges(weeks = 12): Promise<UniverseWeek[]> {
   const rows = await sql<UniverseEvent[]>`
-    SELECT id,
-           symbol,
-           event,
-           company_name AS "companyName",
-           event_at     AS "eventAt",
-           source
-      FROM app.universe_event
-     WHERE event_at >= (date_trunc('week', now() AT TIME ZONE 'Asia/Kolkata')
+    WITH latest AS (
+      -- One snapshot only. coverage_ledger keeps every weekly snapshot, so an
+      -- unqualified join would multiply each event by the number of weeks run.
+      SELECT max(snapshot_date) AS d FROM app.coverage_ledger
+    )
+    SELECT e.id,
+           e.symbol,
+           e.event,
+           e.company_name AS "companyName",
+           e.event_at     AS "eventAt",
+           e.source,
+           u.listing_date AS "listingDate",
+           (u.listing_date IS NOT NULL
+            AND u.listing_date >= (e.event_at AT TIME ZONE 'Asia/Kolkata')::date
+                                  - 90) AS "isNewListing",
+           CASE WHEN e.event = 'added' THEN c.status END AS "coverageStatus"
+      FROM app.universe_event e
+      LEFT JOIN app.universe u ON u.symbol = e.symbol
+      LEFT JOIN latest ON true
+      LEFT JOIN app.coverage_ledger c
+             ON c.symbol = e.symbol AND c.snapshot_date = latest.d
+     WHERE e.event_at >= (date_trunc('week', now() AT TIME ZONE 'Asia/Kolkata')
                         - make_interval(weeks => ${weeks - 1}))
-     ORDER BY event_at DESC, symbol ASC
+     ORDER BY e.event_at DESC, e.symbol ASC
   `;
 
   // Group into ISO weeks (Monday start) in IST. Doing the bucketing in JS keeps

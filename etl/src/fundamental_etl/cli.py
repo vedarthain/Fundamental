@@ -1104,7 +1104,98 @@ def sync_universe_cmd(
                 drop = set(excluded_non_equity)
                 new_syms = [s for s in new_syms if s not in drop]
 
+        # ── 2c-ipo. The SECOND discovery source: app.ipo ─────────────────────
+        #
+        # Everything above discovers a new listing by finding a .NS daily bar in
+        # golden, which means we cannot see a company until the bhavcopy for its
+        # first trading day has been ingested. HD FIRE PROTECT listed on
+        # 2026-10-21 and was absent from app.universe that evening for exactly
+        # that reason: app.ipo already knew its symbol, ISIN and listing date
+        # from the Upstox IPO feed (refreshed daily at 12:45Z), while golden had
+        # nothing. The IPO feed knows on listing day; the price lake knows a day
+        # later. Read the one that knows first.
+        #
+        # THE FEED IS DISCOVERY, NOT ADMISSION. app.ipo carries BSE-only SME
+        # listings (165 of the 173 'listed' rows absent from our universe on
+        # 2026-10-21 were BSE-only) and non-equity instruments — LEAP and
+        # CUBEINVIT are InvITs, and the row with symbol 'NSE' is the exchange's
+        # own BSE listing. So a candidate has to clear BOTH:
+        #   (a) 'NSE' in listing_exchange — this is an NSE universe, and
+        #       listing_exchange is a comma list ('BSE,NSE'), not a single value;
+        #   (b) presence in NSE's own listed-equity master, which is where the
+        #       identity is then taken from.
+        # (b) is the same decisive test §2c uses for retirement, and it is what
+        # rejects the two InvITs: nse_equity_master.parse() already drops
+        # non-INE ISINs, so master membership means "NSE says this is a listed
+        # equity". Of the 4 NSE-listed candidates on 2026-10-21, it admitted
+        # HDFIRE and LOANFRONT and refused LEAP and CUBEINVIT.
+        #
+        # Requires master_ok. With no master there is no (b), and an
+        # unevaluated clause in a conjunction is not a pass (§2c) — we would be
+        # onboarding on the IPO feed's word alone, which is the one thing this
+        # block is built not to do. Skipping costs a day; golden's bar arrives
+        # and §1 onboards it anyway.
+        ipo_new: list[str] = []
+        ipo_ident: dict[str, dict] = {}
+        if master_ok:
+            with conn.cursor() as c5:
+                c5.execute("""
+                    SELECT symbol, name, isin, listing_date, issue_type
+                      FROM app.ipo
+                     WHERE status = 'listed'
+                       AND coalesce(symbol, '') <> ''
+                       AND 'NSE' = ANY(
+                             string_to_array(coalesce(listing_exchange, ''), ','))
+                """)
+                for r in c5.fetchall():
+                    ipo_ident[r["symbol"].strip().upper()] = r
+            ipo_new = sorted(
+                s for s in ipo_ident
+                if s not in existing and s not in new_syms and s in master)
+            if ipo_new:
+                new_syms = sorted(set(new_syms) | set(ipo_new))
+
+        def _identity(s: str) -> dict:
+            """symbol → the identity fields app.universe is inserted with.
+
+            Three sources, in order of how much they know: golden.stocks (the
+            only one carrying sector/industry), NSE's listed-equity master, the
+            IPO feed. A symbol discovered via §2c-ipo has NO golden row at all,
+            so this cannot index `live` directly — doing so is what the old
+            payload did, and it would KeyError on the first IPO-sourced name.
+            `or` rather than a source priority per field: any of them may hold
+            a blank.
+
+            sector/industry are deliberately golden-only. app.ipo carries the
+            Upstox feed's own industry string, which is not our taxonomy, and
+            classification.py's COALESCE-on-SET write would then never replace
+            it. A NULL here is a hole fetch-classification fills; a wrong value
+            is permanent.
+            """
+            g = live.get(s) or {}
+            m = master.get(s) or {}
+            p = ipo_ident.get(s) or {}
+            # golden.stocks SEEDS company_name WITH THE SYMBOL for a scrip it
+            # has only price bars for — HDFIRE/LOANFRONT/TIRUPATI all read
+            # company_name='HDFIRE' etc. on 2026-10-21. Taken at face value that
+            # is a company called "HDFIRE" on the stock page, and nothing later
+            # overwrites it. A name identical to the symbol is a placeholder, so
+            # it loses to NSE's master ("HD Fire Protect Limited").
+            g_name = (g.get("company_name") or "").strip()
+            if g_name.upper() == s:
+                g_name = ""
+            return {
+                "company_name": g_name or m.get("name") or p.get("name") or s,
+                "sector": g.get("sector"),
+                "industry": g.get("industry"),
+                "isin": g.get("isin") or m.get("isin") or p.get("isin"),
+                "listing_date": (g.get("listing_date") or m.get("listing_date")
+                                 or p.get("listing_date")),
+            }
+
         print(f"golden live NSE symbols (≤{min_price_days}d): {len(live_onboard)}")
+        print(f"from app.ipo (no bar yet): {len(ipo_new)}"
+              f"{'  ' + ', '.join(ipo_new[:10]) if ipo_new else ''}")
         print(f"app.universe rows:       {len(existing)}")
         print(f"ETF/fund excluded (INF): {len(excluded_funds)}"
               f"{'  (use --include-funds to keep)' if excluded_funds else ''}")
@@ -1117,8 +1208,8 @@ def sync_universe_cmd(
         print(f"gone-dark (>{deactivate_days}d) AND delisted per EQUITY_L: {len(gone)}"
               f"{'  (use --deactivate to retire)' if gone and not deactivate else ''}")
         for s in new_syms[:40]:
-            nm = (live[s]["company_name"] or s)
-            print(f"  + {s:16} {nm}")
+            print(f"  + {s:16} {_identity(s)['company_name']}"
+                  f"{'   [ipo feed]' if s in ipo_new else ''}")
         if len(new_syms) > 40:
             print(f"  … and {len(new_syms) - 40} more")
 
@@ -1164,7 +1255,8 @@ def sync_universe_cmd(
 
         if dry_run:
             print("\n--dry-run: no rows written.")
-            log.info("sync_universe_dry_run", new=len(new_syms), gone=len(gone),
+            log.info("sync_universe_dry_run", new=len(new_syms),
+                     from_ipo_feed=ipo_new, gone=len(gone),
                      non_equity=len(non_equity_syms), delisted=len(delisted),
                      listing_gap=listing_gap)
             return
@@ -1172,11 +1264,12 @@ def sync_universe_cmd(
         # ── 3. INSERT new rows (identity from golden; name falls back to symbol) ──
         inserted = 0
         if new_syms:
+            ident = {s: _identity(s) for s in new_syms}
             payload = [(
                 s,
-                (live[s]["company_name"] or s),
-                live[s]["sector"], live[s]["industry"],
-                live[s]["isin"], live[s]["listing_date"],
+                ident[s]["company_name"],
+                ident[s]["sector"], ident[s]["industry"],
+                ident[s]["isin"], ident[s]["listing_date"],
                 first_bar.get(s),
                 s in sme_syms,
             ) for s in new_syms]
@@ -1197,7 +1290,7 @@ def sync_universe_cmd(
                 cur.executemany(
                     "INSERT INTO app.universe_event (symbol, event, company_name, source) "
                     "VALUES (%s, 'added', %s, 'sync')",
-                    [(s, (live[s]["company_name"] or s)) for s in new_syms],
+                    [(s, ident[s]["company_name"]) for s in new_syms],
                 )
             conn.commit()
 
