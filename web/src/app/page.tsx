@@ -110,13 +110,13 @@ function Hero({ snap }: { snap: Snapshot }) {
 
   return (
     <section className="grain relative overflow-hidden">
-      <div className="relative max-w-[1200px] mx-auto px-4 sm:px-6 pt-6 pb-8 md:pt-14 md:pb-16">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
+      <div className="relative max-w-[1200px] mx-auto px-3.5 sm:px-6 pt-5 pb-8 sm:pt-8 md:pt-14 md:pb-16">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-12 items-center">
           
           {/* Left Column: Core Value Pitch */}
           <div className="lg:col-span-7">
             <div
-              className="inline-flex items-center gap-2 px-3 py-1 rounded-full border hairline mb-4 text-[11.5px] muted-text shadow-2xs"
+              className="inline-flex items-center gap-2 px-3 py-1 rounded-full border hairline mb-3 sm:mb-4 text-[11px] sm:text-[11.5px] muted-text shadow-2xs"
               style={{ backgroundColor: "var(--color-card)" }}
             >
               <span
@@ -127,10 +127,9 @@ function Hero({ snap }: { snap: Snapshot }) {
             </div>
 
             <h1
-              className="font-display"
+              className="font-display text-[27px] sm:text-[38px] md:text-[52px]"
               style={{
-                fontSize: "clamp(30px, 4.4vw, 56px)",
-                lineHeight: 1.04,
+                lineHeight: 1.06,
                 letterSpacing: "-0.022em",
                 maxWidth: 680,
                 textWrap: "balance",
@@ -140,13 +139,13 @@ function Hero({ snap }: { snap: Snapshot }) {
               <em className="accent">real peers.</em>
             </h1>
 
-            <p className="muted-text mt-3.5 text-[15px] sm:text-[15.5px] leading-[1.55] max-w-[540px]">
+            <p className="muted-text mt-3 text-[13.5px] sm:text-[15.5px] leading-[1.55] max-w-[540px]">
               Quality, Valuation, and Momentum percentiles recomputed weekly across {clusterCount} custom
               industry recipes. Stop comparing a high-growth small-cap to a mega conglomerate.
             </p>
 
             {/* Benefit Pills */}
-            <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-2 max-w-[620px]">
+            <div className="mt-4 sm:mt-5 grid grid-cols-1 sm:grid-cols-3 gap-2 max-w-[620px]">
               <BenefitPill
                 icon="🔍"
                 label="Compounders"
@@ -168,12 +167,12 @@ function Hero({ snap }: { snap: Snapshot }) {
             </div>
 
             {/* CTAs */}
-            <div className="mt-6 flex gap-3 items-center flex-wrap">
-              <Link href="/sectors" className="btn-primary text-[13.5px]">
+            <div className="mt-5 sm:mt-6 flex gap-2.5 sm:gap-3 items-center flex-wrap">
+              <Link href="/sectors" className="btn-primary text-[13px] sm:text-[13.5px]">
                 Browse all sectors
                 <ArrowRight size={14} />
               </Link>
-              <Link href="/signup" className="btn-ghost text-[13.5px]">
+              <Link href="/signup" className="btn-ghost text-[13px] sm:text-[13.5px]">
                 Create free account
               </Link>
             </div>
@@ -227,61 +226,61 @@ function BenefitPill({
 function MethodologyComparison() {
   return (
     <section className="border-t hairline" style={{ backgroundColor: "var(--color-card)" }}>
-      <div className="max-w-[1100px] mx-auto px-4 sm:px-6 py-10 sm:py-12 md:py-16">
-        <div className="text-center max-w-[640px] mx-auto mb-9">
-          <div className="eyebrow mb-2.5">The Core Philosophy</div>
-          <h2 className="font-display" style={{ fontSize: "clamp(26px, 3.2vw, 38px)", lineHeight: 1.08 }}>
+      <div className="max-w-[1100px] mx-auto px-3.5 sm:px-6 py-8 sm:py-12 md:py-16">
+        <div className="text-center max-w-[640px] mx-auto mb-6 sm:mb-9">
+          <div className="eyebrow mb-2">The Core Philosophy</div>
+          <h2 className="font-display text-[23px] sm:text-[30px] md:text-[38px]" style={{ lineHeight: 1.08 }}>
             Why generic screeners <em className="accent">fail you.</em>
           </h2>
-          <p className="muted-text mt-3 text-[14px] leading-[1.55] max-w-[520px] mx-auto">
+          <p className="muted-text mt-2 sm:mt-3 text-[13px] sm:text-[14px] leading-[1.55] max-w-[520px] mx-auto">
             Traditional screeners rank every stock on one flat scale. A 20× P/E is cheap for an IT
             giant, but expensive for a commodity cement mill.
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-[840px] mx-auto">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4 max-w-[840px] mx-auto">
           {/* Without EquityRoots */}
           <div
-            className="card p-4 sm:p-5 border hairline flex flex-col justify-between break-words"
+            className="card p-3.5 sm:p-5 border hairline flex flex-col justify-between break-words"
             style={{ backgroundColor: "rgba(198, 63, 35, 0.04)", borderColor: "rgba(198, 63, 35, 0.2)" }}
           >
             <div>
-              <div className="flex items-center gap-2 mb-2 font-semibold text-[13px] text-[var(--color-score-poor)]">
+              <div className="flex items-center gap-1.5 mb-1.5 font-semibold text-[12.5px] sm:text-[13px] text-[var(--color-score-poor)]">
                 <span>❌</span> Standard Stock Screeners
               </div>
-              <p className="text-[13px] text-[var(--color-ink)] leading-[1.55]">
+              <p className="text-[12.5px] sm:text-[13px] text-[var(--color-ink)] leading-[1.5]">
                 Compares <strong>AU Small Finance Bank</strong> directly against mega conglomerates like{" "}
                 <strong>HDFC Bank</strong> and <strong>ICICI</strong>.
               </p>
-              <p className="text-[12px] muted-text mt-2 leading-[1.5]">
+              <p className="text-[11.5px] sm:text-[12px] muted-text mt-1.5 leading-[1.45]">
                 Smaller, high-growth compounders look perpetually distorted on raw scale and branch
                 metrics.
               </p>
             </div>
-            <div className="mt-4 pt-3 border-t hairline text-[11.5px] muted-text font-mono">
+            <div className="mt-3 pt-2.5 border-t hairline text-[10.5px] sm:text-[11.5px] muted-text font-mono">
               Result: Misleading valuations &amp; missed multibaggers
             </div>
           </div>
 
           {/* With EquityRoots */}
           <div
-            className="card p-4 sm:p-5 border hairline flex flex-col justify-between break-words"
+            className="card p-3.5 sm:p-5 border hairline flex flex-col justify-between break-words"
             style={{ backgroundColor: "rgba(46, 154, 71, 0.04)", borderColor: "rgba(46, 154, 71, 0.2)" }}
           >
             <div>
-              <div className="flex items-center gap-2 mb-2 font-semibold text-[13px] text-[var(--color-score-excellent)]">
+              <div className="flex items-center gap-1.5 mb-1.5 font-semibold text-[12.5px] sm:text-[13px] text-[var(--color-score-excellent)]">
                 <span>✅</span> EquityRoots True Peer Clusters
               </div>
-              <p className="text-[13px] text-[var(--color-ink)] leading-[1.55]">
+              <p className="text-[12.5px] sm:text-[13px] text-[var(--color-ink)] leading-[1.5]">
                 Ranks AU against true equals: <strong>Equitas</strong>, <strong>Ujjivan</strong>, and{" "}
                 <strong>Suryoday</strong>.
               </p>
-              <p className="text-[12px] text-[var(--color-ink)] opacity-80 mt-2 leading-[1.5]">
+              <p className="text-[11.5px] sm:text-[12px] text-[var(--color-ink)] opacity-80 mt-1.5 leading-[1.45]">
                 Loan book CAGR, Return on Assets, and capital cushion are evaluated strictly within its
                 actual business peer group.
               </p>
             </div>
-            <div className="mt-4 pt-3 border-t hairline text-[11.5px] font-semibold font-mono text-[var(--color-score-excellent)]">
+            <div className="mt-3 pt-2.5 border-t hairline text-[10.5px] sm:text-[11.5px] font-semibold font-mono text-[var(--color-score-excellent)]">
               Result: True percentiles &amp; institutional clarity
             </div>
           </div>
@@ -299,11 +298,10 @@ function FooterCTA() {
       className="border-t hairline"
       style={{ backgroundColor: "var(--color-accent-50)" }}
     >
-      <div className="max-w-[1200px] mx-auto px-4 sm:px-6 py-10 sm:py-12 md:py-16 text-center">
+      <div className="max-w-[1200px] mx-auto px-3.5 sm:px-6 py-8 sm:py-12 md:py-16 text-center">
         <h2
-          className="font-display mx-auto"
+          className="font-display mx-auto text-[26px] sm:text-[38px] md:text-[54px]"
           style={{
-            fontSize: "clamp(30px, 4.5vw, 54px)",
             lineHeight: 1.06,
             maxWidth: 680,
             textWrap: "balance",
@@ -314,15 +312,15 @@ function FooterCTA() {
             you care about.
           </em>
         </h2>
-        <p className="muted-text mt-3 text-[14.5px] max-w-[500px] mx-auto">
+        <p className="muted-text mt-2.5 sm:mt-3 text-[13.5px] sm:text-[14.5px] max-w-[500px] mx-auto">
           Explore 2,122 NSE stocks, diagnose your personal portfolio, and track true peer percentiles.
         </p>
-        <div className="mt-7 flex gap-3 justify-center flex-wrap">
-          <Link href="/sectors" className="btn-primary text-[13.5px]">
+        <div className="mt-5 sm:mt-7 flex gap-2.5 sm:gap-3 justify-center flex-wrap">
+          <Link href="/sectors" className="btn-primary text-[13px] sm:text-[13.5px]">
             Open all 46 sectors
             <ArrowRight size={14} />
           </Link>
-          <Link href="/signup" className="btn-ghost text-[13.5px]">
+          <Link href="/signup" className="btn-ghost text-[13px] sm:text-[13.5px]">
             Create free account
           </Link>
         </div>

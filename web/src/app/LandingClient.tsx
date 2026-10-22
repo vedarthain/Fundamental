@@ -55,17 +55,17 @@ export function SampleScorecard() {
   const s = SAMPLE_STOCKS[active] ?? SAMPLE_STOCKS.TRENT;
 
   return (
-    <div className="card p-4 sm:p-6 shadow-sm border border-[var(--color-border-default)]">
+    <div className="card p-3.5 sm:p-5 md:p-6 shadow-sm border border-[var(--color-border-default)]">
       {/* Switcher Buttons */}
-      <div className="flex flex-wrap items-center justify-between gap-2 pb-3 mb-3 border-b hairline">
-        <span className="kbd-label text-[10px]">Sample Peer Scorecard:</span>
-        <div className="flex gap-1.5 shrink-0">
+      <div className="flex flex-wrap items-center justify-between gap-1.5 pb-2.5 mb-2.5 border-b hairline">
+        <span className="kbd-label text-[9.5px] sm:text-[10px]">Sample Peer Scorecard:</span>
+        <div className="flex gap-1 shrink-0">
           {Object.keys(SAMPLE_STOCKS).map((sym) => (
             <button
               key={sym}
               type="button"
               onClick={() => setActive(sym)}
-              className={`px-2.5 py-1 rounded-md text-[11px] font-mono transition-colors ${
+              className={`px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-md text-[10.5px] sm:text-[11px] font-mono transition-colors ${
                 active === sym
                   ? "bg-[var(--color-accent-600)] text-white font-semibold"
                   : "bg-[var(--color-paper)] text-[var(--color-muted)] hover:text-[var(--color-ink)]"
@@ -78,28 +78,28 @@ export function SampleScorecard() {
       </div>
 
       {/* Stock Header */}
-      <div className="flex items-start justify-between gap-3 mb-3">
-        <div className="min-w-0">
-          <div className="flex items-baseline gap-2 flex-wrap">
-            <span className="font-display font-semibold text-[20px] text-[var(--color-ink)]">
+      <div className="flex items-start justify-between gap-2.5 mb-2.5">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline gap-1.5 flex-wrap">
+            <span className="font-display font-semibold text-[18px] sm:text-[20px] text-[var(--color-ink)]">
               {s.symbol}
             </span>
-            <span className="text-[12px] muted-text truncate">{s.sector}</span>
+            <span className="text-[11.5px] sm:text-[12px] muted-text truncate">{s.sector}</span>
           </div>
-          <div className="text-[11px] muted-text mt-0.5 break-words">{s.highlights}</div>
+          <div className="text-[10.5px] sm:text-[11px] muted-text mt-0.5 break-words">{s.highlights}</div>
         </div>
         <div
-          className="shrink-0 text-center px-3 py-1 rounded-xl border hairline"
+          className="shrink-0 text-center px-2.5 py-1 rounded-xl border hairline"
           style={{ backgroundColor: "var(--color-paper)" }}
         >
           <div
-            className="text-[20px] font-display font-bold leading-none"
+            className="text-[18px] sm:text-[20px] font-display font-bold leading-none"
             style={{ color: "var(--color-score-excellent)" }}
           >
             {s.score}
           </div>
           <div
-            className="text-[9px] font-semibold uppercase mt-0.5"
+            className="text-[8.5px] sm:text-[9px] font-semibold uppercase mt-0.5"
             style={{ color: "var(--color-score-good)" }}
           >
             {s.tier}
@@ -108,12 +108,12 @@ export function SampleScorecard() {
       </div>
 
       {/* 3 Pillar Bars */}
-      <div className="space-y-2 pt-2 border-t hairline text-[11.5px]">
+      <div className="space-y-1.5 pt-2 border-t hairline text-[11px] sm:text-[11.5px]">
         <div>
           <div className="flex justify-between items-center gap-2 mb-0.5">
-            <span className="muted-text text-[11px] sm:text-[11.5px] truncate">Quality Percentile</span>
+            <span className="muted-text text-[10.5px] sm:text-[11.5px] truncate">Quality Percentile</span>
             <span
-              className="num num-sm font-semibold shrink-0 text-[11px] sm:text-[11.5px]"
+              className="num num-sm font-semibold shrink-0 text-[10.5px] sm:text-[11.5px]"
               style={{ color: "var(--color-score-excellent)" }}
             >
               {s.quality}th in Peer Group
@@ -132,9 +132,9 @@ export function SampleScorecard() {
 
         <div>
           <div className="flex justify-between items-center gap-2 mb-0.5">
-            <span className="muted-text text-[11px] sm:text-[11.5px] truncate">Momentum Percentile</span>
+            <span className="muted-text text-[10.5px] sm:text-[11.5px] truncate">Momentum Percentile</span>
             <span
-              className="num num-sm font-semibold shrink-0 text-[11px] sm:text-[11.5px]"
+              className="num num-sm font-semibold shrink-0 text-[10.5px] sm:text-[11.5px]"
               style={{ color: "var(--color-score-excellent)" }}
             >
               {s.momentum}th in Peer Group
@@ -153,9 +153,9 @@ export function SampleScorecard() {
 
         <div>
           <div className="flex justify-between items-center gap-2 mb-0.5">
-            <span className="muted-text text-[11px] sm:text-[11.5px] truncate">Valuation Percentile</span>
+            <span className="muted-text text-[10.5px] sm:text-[11.5px] truncate">Valuation Percentile</span>
             <span
-              className="num num-sm font-semibold shrink-0 text-[11px] sm:text-[11.5px]"
+              className="num num-sm font-semibold shrink-0 text-[10.5px] sm:text-[11.5px]"
               style={{ color: "var(--color-score-neutral)" }}
             >
               {s.valuation}th in Peer Group
@@ -173,7 +173,7 @@ export function SampleScorecard() {
         </div>
       </div>
 
-      <div className="mt-3.5 pt-2.5 border-t hairline flex flex-wrap items-center justify-between gap-2 text-[11px] text-[var(--color-accent-600)] font-medium">
+      <div className="mt-3 pt-2 border-t hairline flex flex-wrap items-center justify-between gap-1.5 text-[10.5px] sm:text-[11px] text-[var(--color-accent-600)] font-medium">
         <span>Recomputed weekly · Append-only ledger</span>
         <Link href="/sectors" className="hover:underline flex items-center gap-1 shrink-0">
           Peer Percentiles <ArrowRight size={11} />
@@ -190,13 +190,13 @@ export function WorkspacePreview() {
 
   return (
     <section className="border-t hairline" style={{ backgroundColor: "var(--color-paper)" }}>
-      <div className="max-w-[1200px] mx-auto px-4 sm:px-6 py-10 sm:py-12 md:py-16">
-        <div className="text-center max-w-[640px] mx-auto mb-10">
-          <div className="eyebrow mb-2.5">Your Personal Workspace</div>
-          <h2 className="font-display" style={{ fontSize: "clamp(28px, 3.5vw, 42px)", lineHeight: 1.05 }}>
+      <div className="max-w-[1200px] mx-auto px-3.5 sm:px-6 py-8 sm:py-12 md:py-16">
+        <div className="text-center max-w-[640px] mx-auto mb-6 sm:mb-10">
+          <div className="eyebrow mb-2">Your Personal Workspace</div>
+          <h2 className="font-display text-[24px] sm:text-[32px] md:text-[42px]" style={{ lineHeight: 1.05 }}>
             Diagnose your holdings, <em className="accent">not just tickers.</em>
           </h2>
-          <p className="muted-text mt-3 text-[14.5px] leading-[1.55] max-w-[540px] mx-auto">
+          <p className="muted-text mt-2 sm:mt-3 text-[13px] sm:text-[14.5px] leading-[1.55] max-w-[540px] mx-auto">
             Import your Zerodha, Upstox, or CSV tradebook to evaluate your personal portfolio on
             true sector percentiles, with automated risk alerts.
           </p>
@@ -205,13 +205,13 @@ export function WorkspacePreview() {
         {/* Mobile View: Segmented Switcher (<lg) */}
         <div className="lg:hidden max-w-[480px] mx-auto">
           <div
-            className="p-1 rounded-xl flex gap-1 mb-3 border hairline"
+            className="p-1 rounded-xl flex gap-1 mb-2.5 border hairline"
             style={{ backgroundColor: "var(--color-card)" }}
           >
             <button
               type="button"
               onClick={() => setMobileTab("portfolio")}
-              className={`flex-1 py-1.5 rounded-lg text-[12px] font-medium transition-colors ${
+              className={`flex-1 py-1.5 rounded-lg text-[11.5px] sm:text-[12px] font-medium transition-colors ${
                 mobileTab === "portfolio"
                   ? "bg-[var(--color-accent-600)] text-white font-semibold shadow-xs"
                   : "muted-text hover:text-[var(--color-ink)]"
@@ -222,7 +222,7 @@ export function WorkspacePreview() {
             <button
               type="button"
               onClick={() => setMobileTab("watchlist")}
-              className={`flex-1 py-1.5 rounded-lg text-[12px] font-medium transition-colors ${
+              className={`flex-1 py-1.5 rounded-lg text-[11.5px] sm:text-[12px] font-medium transition-colors ${
                 mobileTab === "watchlist"
                   ? "bg-[var(--color-accent-600)] text-white font-semibold shadow-xs"
                   : "muted-text hover:text-[var(--color-ink)]"
@@ -243,18 +243,18 @@ export function WorkspacePreview() {
 
         {/* What You Unlock Banner */}
         <div
-          className="mt-8 max-w-[960px] mx-auto card p-4 sm:p-5 md:p-6 border border-[var(--color-border-default)] shadow-xs"
+          className="mt-6 sm:mt-8 max-w-[960px] mx-auto card p-3.5 sm:p-5 md:p-6 border border-[var(--color-border-default)] shadow-xs"
           style={{ backgroundColor: "var(--color-card)" }}
         >
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
             <div>
-              <div className="flex items-center gap-2 mb-1.5">
+              <div className="flex items-center gap-2 mb-1">
                 <span className="w-5 h-5 rounded-full bg-[var(--color-accent-50)] text-[var(--color-accent-600)] flex items-center justify-center text-[11px] font-bold">
                   ✓
                 </span>
-                <h4 className="font-semibold text-[14px]">What You Unlock With A Free Account</h4>
+                <h4 className="font-semibold text-[13px] sm:text-[14px]">What You Unlock With A Free Account</h4>
               </div>
-              <div className="flex flex-wrap gap-x-5 gap-y-1 text-[12.5px] muted-text mt-1">
+              <div className="flex flex-wrap gap-x-4 sm:gap-x-5 gap-y-1 text-[11.5px] sm:text-[12.5px] muted-text mt-1">
                 <span>• 1-Click tradebook sync (Zerodha, Upstox, CSV)</span>
                 <span>• Automated holding risk &amp; margin alerts</span>
                 <span>• Custom watchlists &amp; thesis notes</span>
@@ -262,7 +262,7 @@ export function WorkspacePreview() {
             </div>
             <Link
               href="/signup"
-              className="btn-primary shrink-0 text-center whitespace-nowrap text-[13px]"
+              className="btn-primary shrink-0 text-center whitespace-nowrap text-[12.5px] sm:text-[13px]"
             >
               Create Free Account
               <ArrowRight size={13} />
@@ -276,17 +276,17 @@ export function WorkspacePreview() {
 
 function PortfolioCard() {
   return (
-    <article className="card p-4 sm:p-5 flex flex-col justify-between shadow-xs border hairline">
+    <article className="card p-3.5 sm:p-5 flex flex-col justify-between shadow-xs border hairline">
       <div>
-        <div className="flex items-start justify-between gap-2 mb-3 pb-3 border-b hairline">
+        <div className="flex items-start justify-between gap-2 mb-2.5 pb-2.5 border-b hairline">
           <div>
-            <div className="kbd-label text-[10px]">Portfolio Health Score</div>
-            <div className="flex items-baseline gap-2 mt-1 flex-wrap">
-              <span className="text-[26px] font-display font-bold num text-[var(--color-ink)]">
-                82 <span className="text-[14px] font-normal muted-text">/ 100</span>
+            <div className="kbd-label text-[9.5px] sm:text-[10px]">Portfolio Health Score</div>
+            <div className="flex items-baseline gap-1.5 mt-0.5 flex-wrap">
+              <span className="text-[22px] sm:text-[26px] font-display font-bold num text-[var(--color-ink)]">
+                82 <span className="text-[13px] font-normal muted-text">/ 100</span>
               </span>
               <span
-                className="text-[11px] font-semibold px-2 py-0.5 rounded-full border hairline shrink-0"
+                className="text-[10.5px] sm:text-[11px] font-semibold px-2 py-0.5 rounded-full border hairline shrink-0"
                 style={{
                   backgroundColor: "var(--color-paper)",
                   color: "var(--color-score-excellent)",
@@ -297,20 +297,20 @@ function PortfolioCard() {
             </div>
           </div>
           <div className="text-right shrink-0">
-            <div className="kbd-label text-[10px]">Holdings</div>
-            <div className="text-[13px] font-semibold mt-1">14 Stocks</div>
+            <div className="kbd-label text-[9.5px] sm:text-[10px]">Holdings</div>
+            <div className="text-[12.5px] sm:text-[13px] font-semibold mt-0.5">14 Stocks</div>
           </div>
         </div>
 
-        <div className="space-y-2.5 mb-4 text-[12px]">
+        <div className="space-y-2 mb-3 text-[11px] sm:text-[12px]">
           <div>
-            <div className="flex justify-between items-center gap-2 mb-1">
+            <div className="flex justify-between items-center gap-2 mb-0.5">
               <span className="muted-text truncate">Weighted Quality</span>
               <span className="num font-semibold shrink-0" style={{ color: "var(--color-score-excellent)" }}>
                 88th percentile
               </span>
             </div>
-            <div className="h-2 rounded-full overflow-hidden bg-[var(--color-paper)]">
+            <div className="h-1.5 sm:h-2 rounded-full overflow-hidden bg-[var(--color-paper)]">
               <div
                 className="h-full rounded-full"
                 style={{ width: "88%", backgroundColor: "var(--color-score-excellent)" }}
@@ -318,13 +318,13 @@ function PortfolioCard() {
             </div>
           </div>
           <div>
-            <div className="flex justify-between items-center gap-2 mb-1">
+            <div className="flex justify-between items-center gap-2 mb-0.5">
               <span className="muted-text truncate">Weighted Momentum</span>
               <span className="num font-semibold shrink-0" style={{ color: "var(--color-score-excellent)" }}>
                 74th percentile
               </span>
             </div>
-            <div className="h-2 rounded-full overflow-hidden bg-[var(--color-paper)]">
+            <div className="h-1.5 sm:h-2 rounded-full overflow-hidden bg-[var(--color-paper)]">
               <div
                 className="h-full rounded-full"
                 style={{ width: "74%", backgroundColor: "var(--color-score-good)" }}
@@ -334,32 +334,32 @@ function PortfolioCard() {
         </div>
 
         <div
-          className="rounded-xl p-3 divide-y hairline text-[12px]"
+          className="rounded-xl p-2.5 sm:p-3 divide-y hairline text-[11.5px] sm:text-[12px]"
           style={{ backgroundColor: "var(--color-paper)" }}
         >
           <div className="py-1.5 flex justify-between items-center gap-2">
-            <div className="flex items-center gap-2 min-w-0">
+            <div className="flex items-center gap-1.5 min-w-0">
               <span className="font-semibold shrink-0">TRENT</span>
-              <span className="text-[11px] muted-text truncate">Retail &amp; Apparel (18% wt)</span>
+              <span className="text-[10.5px] sm:text-[11px] muted-text truncate">18% weight</span>
             </div>
-            <span className="num font-semibold shrink-0 text-right" style={{ color: "var(--color-score-excellent)" }}>
+            <span className="num font-semibold shrink-0 text-right text-[11px] sm:text-[12px]" style={{ color: "var(--color-score-excellent)" }}>
               Score: 88 ★
             </span>
           </div>
           <div className="py-1.5 flex justify-between items-center gap-2">
-            <div className="flex items-center gap-2 min-w-0">
+            <div className="flex items-center gap-1.5 min-w-0">
               <span className="font-semibold shrink-0">HDFCBANK</span>
-              <span className="text-[11px] muted-text truncate">Private Bank (14% wt)</span>
+              <span className="text-[10.5px] sm:text-[11px] muted-text truncate">14% weight</span>
             </div>
-            <span className="num font-semibold shrink-0 text-right" style={{ color: "var(--color-score-good)" }}>
+            <span className="num font-semibold shrink-0 text-right text-[11px] sm:text-[12px]" style={{ color: "var(--color-score-good)" }}>
               Score: 78 ★
             </span>
           </div>
         </div>
       </div>
 
-      <div className="mt-4 pt-3 border-t hairline flex flex-wrap items-center justify-between gap-2 text-[11.5px] text-[var(--color-accent-600)] font-medium">
-        <span className="text-[11px] leading-tight">1-Click tradebook sync via Zerodha, Upstox &amp; CSV</span>
+      <div className="mt-3 pt-2.5 border-t hairline flex flex-wrap items-center justify-between gap-1.5 text-[11px] text-[var(--color-accent-600)] font-medium">
+        <span className="leading-tight">1-Click tradebook sync via Zerodha, Upstox &amp; CSV</span>
         <Link href="/signup" className="hover:underline flex items-center gap-1 shrink-0">
           Sync Book <ArrowRight size={11} />
         </Link>
@@ -370,15 +370,15 @@ function PortfolioCard() {
 
 function WatchlistCard() {
   return (
-    <article className="card p-4 sm:p-5 flex flex-col justify-between shadow-xs border hairline">
+    <article className="card p-3.5 sm:p-5 flex flex-col justify-between shadow-xs border hairline">
       <div>
-        <div className="flex items-start justify-between gap-2 mb-3 pb-3 border-b hairline">
+        <div className="flex items-start justify-between gap-2 mb-2.5 pb-2.5 border-b hairline">
           <div>
-            <div className="kbd-label text-[10px]">Saved Watchlist &amp; Alerts</div>
-            <div className="text-[16px] font-display font-semibold mt-1">Core Compounders (8)</div>
+            <div className="kbd-label text-[9.5px] sm:text-[10px]">Saved Watchlist &amp; Alerts</div>
+            <div className="text-[15px] sm:text-[16px] font-display font-semibold mt-0.5">Core Compounders (8)</div>
           </div>
           <span
-            className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full border hairline shrink-0"
+            className="text-[9.5px] sm:text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full border hairline shrink-0"
             style={{
               backgroundColor: "var(--color-paper)",
               color: "var(--color-score-excellent)",
@@ -388,13 +388,13 @@ function WatchlistCard() {
           </span>
         </div>
 
-        <div className="divide-y hairline text-[12px] mb-4">
-          <div className="py-2.5 flex justify-between items-center gap-2">
-            <div className="min-w-0">
-              <div className="font-semibold flex items-center gap-2 flex-wrap">
+        <div className="divide-y hairline text-[11.5px] sm:text-[12px] mb-3">
+          <div className="py-2 flex justify-between items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <div className="font-semibold flex items-center gap-1.5 flex-wrap">
                 <span>NORTHARC</span>
                 <span
-                  className="kbd-label px-1.5 py-0.5 rounded"
+                  className="kbd-label px-1.5 py-0.5 rounded text-[8.5px] sm:text-[9px]"
                   style={{
                     backgroundColor: "var(--color-accent-50)",
                     color: "var(--color-accent-600)",
@@ -403,24 +403,24 @@ function WatchlistCard() {
                   ALERT
                 </span>
               </div>
-              <div className="text-[11px] muted-text mt-0.5 line-clamp-1">
+              <div className="text-[10.5px] sm:text-[11px] muted-text mt-0.5 truncate">
                 Promoter accumulating shares in latest quarter
               </div>
             </div>
             <div className="text-right shrink-0">
-              <div className="num font-semibold" style={{ color: "var(--color-score-excellent)" }}>
-                83 <span className="text-[10px]">(+12)</span>
+              <div className="num font-semibold text-[11px] sm:text-[12px]" style={{ color: "var(--color-score-excellent)" }}>
+                83 <span className="text-[9.5px]">(+12)</span>
               </div>
-              <div className="text-[10px] muted-text num">Top 17% in NBFC</div>
+              <div className="text-[9.5px] sm:text-[10px] muted-text num">Top 17% in NBFC</div>
             </div>
           </div>
 
-          <div className="py-2.5 flex justify-between items-center gap-2">
-            <div className="min-w-0">
-              <div className="font-semibold flex items-center gap-2 flex-wrap">
+          <div className="py-2 flex justify-between items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <div className="font-semibold flex items-center gap-1.5 flex-wrap">
                 <span>APTUS</span>
                 <span
-                  className="kbd-label px-1.5 py-0.5 rounded"
+                  className="kbd-label px-1.5 py-0.5 rounded text-[8.5px] sm:text-[9px]"
                   style={{
                     backgroundColor: "var(--color-accent-50)",
                     color: "var(--color-accent-600)",
@@ -429,33 +429,33 @@ function WatchlistCard() {
                   SUPPORT
                 </span>
               </div>
-              <div className="text-[11px] muted-text mt-0.5 line-clamp-1">
+              <div className="text-[10.5px] sm:text-[11px] muted-text mt-0.5 truncate">
                 High RoE business trading near 52W support floor
               </div>
             </div>
             <div className="text-right shrink-0">
-              <div className="num font-semibold" style={{ color: "var(--color-score-excellent)" }}>
-                76 <span className="text-[10px]">(+5)</span>
+              <div className="num font-semibold text-[11px] sm:text-[12px]" style={{ color: "var(--color-score-excellent)" }}>
+                76 <span className="text-[9.5px]">(+5)</span>
               </div>
-              <div className="text-[10px] muted-text num">Top 24% in Housing</div>
+              <div className="text-[9.5px] sm:text-[10px] muted-text num">Top 24% in Housing</div>
             </div>
           </div>
         </div>
 
         <div
-          className="p-3 rounded-xl flex items-center justify-between text-[11.5px] border hairline"
+          className="p-2.5 sm:p-3 rounded-xl flex items-center justify-between text-[11px] sm:text-[11.5px] border hairline"
           style={{ backgroundColor: "var(--color-paper)" }}
         >
           <div className="flex items-center gap-2">
             <Bell size={13} className="shrink-0" style={{ color: "var(--color-accent-600)" }} />
-            <span className="muted-text text-[11px] sm:text-[11.5px]">
+            <span className="muted-text text-[10.5px] sm:text-[11.5px]">
               Automated price, promoter, and earnings alerts for all saved names.
             </span>
           </div>
         </div>
       </div>
 
-      <div className="mt-4 pt-3 border-t hairline flex flex-wrap items-center justify-between gap-2 text-[11.5px] text-[var(--color-accent-600)] font-medium">
+      <div className="mt-3 pt-2.5 border-t hairline flex flex-wrap items-center justify-between gap-1.5 text-[11px] text-[var(--color-accent-600)] font-medium">
         <span>Never miss an inflection point</span>
         <Link href="/signup" className="hover:underline flex items-center gap-1 shrink-0">
           Save Watchlists <ArrowRight size={11} />
@@ -513,13 +513,13 @@ export function ThreePillarsSegmented() {
 
   return (
     <section className="border-t hairline" style={{ backgroundColor: "var(--color-paper)" }}>
-      <div className="max-w-[1200px] mx-auto px-4 sm:px-6 py-10 sm:py-12 md:py-16">
-        <div className="text-center max-w-[640px] mx-auto mb-10">
-          <div className="eyebrow mb-2.5">How We Evaluate</div>
-          <h2 className="font-display" style={{ fontSize: "clamp(28px, 3.5vw, 42px)", lineHeight: 1.05 }}>
+      <div className="max-w-[1200px] mx-auto px-3.5 sm:px-6 py-8 sm:py-12 md:py-16">
+        <div className="text-center max-w-[640px] mx-auto mb-6 sm:mb-10">
+          <div className="eyebrow mb-2">How We Evaluate</div>
+          <h2 className="font-display text-[24px] sm:text-[32px] md:text-[42px]" style={{ lineHeight: 1.05 }}>
             Three pillars. <em className="accent">One ranking.</em>
           </h2>
-          <p className="muted-text mt-3 text-[14.5px] leading-[1.55] max-w-[540px] mx-auto">
+          <p className="muted-text mt-2 sm:mt-3 text-[13px] sm:text-[14.5px] leading-[1.55] max-w-[540px] mx-auto">
             The way an analyst would actually think about a business — not a dump of every ratio in the book.
           </p>
         </div>
@@ -527,7 +527,7 @@ export function ThreePillarsSegmented() {
         {/* Mobile View: Segmented Pill (<md) */}
         <div className="md:hidden max-w-[480px] mx-auto">
           <div
-            className="p-1 rounded-xl flex gap-1 mb-3 border hairline"
+            className="p-1 rounded-xl flex gap-1 mb-2.5 border hairline"
             style={{ backgroundColor: "var(--color-card)" }}
           >
             {(["quality", "valuation", "momentum"] as const).map((k) => (
@@ -535,7 +535,7 @@ export function ThreePillarsSegmented() {
                 key={k}
                 type="button"
                 onClick={() => setPillar(k)}
-                className={`flex-1 py-1.5 rounded-lg text-[12px] font-medium capitalize transition-colors ${
+                className={`flex-1 py-1.5 rounded-lg text-[11.5px] sm:text-[12px] font-medium capitalize transition-colors ${
                   pillar === k
                     ? "bg-[var(--color-accent-600)] text-white font-semibold shadow-xs"
                     : "muted-text hover:text-[var(--color-ink)]"
@@ -547,27 +547,27 @@ export function ThreePillarsSegmented() {
           </div>
 
           <article
-            className="card p-4 sm:p-5 flex flex-col"
+            className="card p-3.5 sm:p-5 flex flex-col"
             style={{ borderTop: `3px solid ${curr.color}` }}
           >
-            <div className="flex items-center justify-between mb-1">
-              <span className="ntag text-[24px]">{curr.n}</span>
-              <span className="font-display text-[19px]" style={{ color: curr.color }}>
+            <div className="flex items-center justify-between mb-0.5">
+              <span className="ntag text-[22px] sm:text-[24px]">{curr.n}</span>
+              <span className="font-display text-[17px] sm:text-[19px]" style={{ color: curr.color }}>
                 {curr.name}
               </span>
             </div>
-            <div className="muted-text italic text-[12px] mt-0.5">{curr.tagline}</div>
-            <p className="muted-text mt-2.5 text-[13px] leading-[1.55]">{curr.body}</p>
+            <div className="muted-text italic text-[11px] sm:text-[12px] mt-0.5">{curr.tagline}</div>
+            <p className="muted-text mt-2 text-[12px] sm:text-[13px] leading-[1.5]">{curr.body}</p>
 
             <div
-              className="mt-4 p-3 rounded-xl grid grid-cols-3 text-center border hairline gap-1"
+              className="mt-3 p-2.5 sm:p-3 rounded-xl grid grid-cols-3 text-center border hairline gap-1"
               style={{ backgroundColor: "var(--color-paper)" }}
             >
               {curr.metrics.map((m) => (
                 <div key={m.label} className="min-w-0">
-                  <div className="kbd-label text-[8.5px] sm:text-[9px] truncate">{m.label}</div>
+                  <div className="kbd-label text-[8px] sm:text-[9px] truncate">{m.label}</div>
                   <div
-                    className="num num-sm font-semibold mt-0.5 text-[11.5px] sm:text-[13px]"
+                    className="num num-sm font-semibold mt-0.5 text-[11px] sm:text-[13px]"
                     style={{ color: "var(--color-ink)" }}
                   >
                     {m.val}
@@ -636,25 +636,25 @@ export function ResponsiveSectorHeatmap({ tiles }: { tiles: IndustryTile[] }) {
 
   return (
     <section className="relative overflow-hidden border-t hairline" style={{ backgroundColor: "var(--color-paper)" }}>
-      <div className="max-w-[1200px] mx-auto px-4 sm:px-6 py-10 sm:py-12 md:py-16">
+      <div className="max-w-[1200px] mx-auto px-3.5 sm:px-6 py-8 sm:py-12 md:py-16">
         {/* Mobile View: Horizontal Swipe Rail (<lg) */}
         <div className="lg:hidden">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between mb-2.5">
             <div>
-              <div className="eyebrow mb-1">46 Peer Groups</div>
-              <h3 className="font-display text-[22px] font-semibold text-[var(--color-ink)]">
+              <div className="eyebrow mb-0.5">46 Peer Groups</div>
+              <h3 className="font-display text-[20px] sm:text-[22px] font-semibold text-[var(--color-ink)]">
                 Sector Heatmap
               </h3>
             </div>
             <Link
               href="/sectors"
-              className="text-[12px] font-medium text-[var(--color-accent-600)] flex items-center gap-1 hover:underline"
+              className="text-[11.5px] sm:text-[12px] font-medium text-[var(--color-accent-600)] flex items-center gap-1 hover:underline"
             >
               All 46 <ArrowRight size={12} />
             </Link>
           </div>
 
-          <div className="flex gap-2.5 overflow-x-auto pb-2 -mx-4 sm:-mx-6 px-4 sm:px-6">
+          <div className="flex gap-2 overflow-x-auto pb-2 -mx-3.5 sm:-mx-6 px-3.5 sm:px-6">
             {visible.slice(0, 8).map((t) => {
               const v = Math.round(t.avg_composite ?? 50);
               const scoreBg =
@@ -669,18 +669,18 @@ export function ResponsiveSectorHeatmap({ tiles }: { tiles: IndustryTile[] }) {
                 <Link
                   key={t.industry_id}
                   href={`/industry/${t.industry_id}`}
-                  className="shrink-0 w-36 card p-3 flex flex-col justify-between shadow-2xs hover:border-[var(--color-accent-400)] transition-colors"
+                  className="shrink-0 w-32 sm:w-36 card p-2.5 sm:p-3 flex flex-col justify-between shadow-2xs hover:border-[var(--color-accent-400)] transition-colors"
                 >
                   <div className="flex justify-between items-center mb-1">
-                    <span className="kbd-label text-[9px]">PEER GROUP</span>
+                    <span className="kbd-label text-[8.5px] sm:text-[9px]">PEER GROUP</span>
                     <span
-                      className="num num-sm font-bold px-1.5 py-0.5 rounded text-white"
+                      className="num num-sm font-bold px-1.5 py-0.5 rounded text-white text-[10px] sm:text-[11px]"
                       style={{ backgroundColor: scoreBg }}
                     >
                       {v}
                     </span>
                   </div>
-                  <div className="text-[12.5px] font-semibold text-[var(--color-ink)] leading-snug line-clamp-2 mt-1">
+                  <div className="text-[11.5px] sm:text-[12.5px] font-semibold text-[var(--color-ink)] leading-snug line-clamp-2 mt-0.5">
                     {t.industry_name}
                   </div>
                 </Link>
