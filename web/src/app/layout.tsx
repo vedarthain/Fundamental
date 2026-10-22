@@ -53,10 +53,10 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" className={`${inter.variable} ${sourceSerif.variable} ${plexMono.variable}`}>
-      <body className="min-h-screen flex flex-col">
+      <body className="min-h-screen flex flex-col w-full max-w-full overflow-x-hidden">
         <SnapshotRibbon />
         <SiteHeader />
-        <main className="flex-1">{children}</main>
+        <main className="flex-1 w-full max-w-full min-w-0">{children}</main>
         <SiteFooter />
         <QuickAddTradeFab />
         <Analytics />
@@ -70,7 +70,7 @@ export default function RootLayout({
 function SiteHeader() {
   return (
     <header
-      className="border-b hairline sticky top-7 z-30 backdrop-blur-md"
+      className="border-b hairline sticky top-7 z-30 backdrop-blur-md w-full overflow-hidden"
       style={{ backgroundColor: "color-mix(in srgb, var(--color-paper) 90%, transparent)" }}
     >
       {/* ─────────────────── Desktop (lg+) — single row ───────────────── */}
@@ -111,11 +111,11 @@ function SiteHeader() {
       </div>
 
       {/* ─────────────────── Mobile + tablet (<lg) — stacked rows ─────── */}
-      <div className="lg:hidden mx-auto max-w-[1300px] px-4">
+      <div className="lg:hidden mx-auto max-w-[1300px] px-3.5 sm:px-4">
         {/* Row 1: logo on the left, optional user chip on the right.
             UserMenu lives inside TopNavLinks; we render it via a small
             mobile-only slot rather than duplicating the auth logic here. */}
-        <div className="h-12 flex items-center justify-between">
+        <div className="h-11 sm:h-12 flex items-center justify-between">
           <BrandLink className="flex items-center gap-2 shrink-0">
             <BanyanLogo />
             <div className="flex items-baseline gap-2">
@@ -136,7 +136,7 @@ function SiteHeader() {
         {/* Row 3: persistent tab bar — Market / Sector / Pages / Tools /
             Account. TopNavLinks renders the mobile-specific variant here.
             No hamburger; tabs are always visible. */}
-        <div className="-mx-4">
+        <div className="-mx-3.5 sm:-mx-4">
           <TopNavLinks />
         </div>
       </div>
@@ -174,9 +174,9 @@ function SiteFooter() {
   // pre-filtered Ideas buckets — saves the user a click and exposes that the
   // platform has multiple analytical lenses on the same data.
   return (
-    <footer className="mt-20 border-t hairline" style={{ backgroundColor: "var(--color-paper)" }}>
-      <div className="mx-auto max-w-[1300px] px-6 py-10">
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-8">
+    <footer className="mt-12 sm:mt-20 border-t hairline" style={{ backgroundColor: "var(--color-paper)" }}>
+      <div className="mx-auto max-w-[1300px] px-3.5 sm:px-6 py-8 sm:py-10">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-6 sm:gap-8">
           {/* Brand */}
           <div className="col-span-2 md:col-span-1">
             <a href="/" className="flex items-center gap-2.5 mb-4">
