@@ -110,7 +110,7 @@ function Hero({ snap }: { snap: Snapshot }) {
 
   return (
     <section className="grain relative overflow-hidden">
-      <div className="relative max-w-[1200px] mx-auto px-6 pt-8 pb-10 md:pt-14 md:pb-16">
+      <div className="relative max-w-[1200px] mx-auto px-4 sm:px-6 pt-6 pb-8 md:pt-14 md:pb-16">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
           
           {/* Left Column: Core Value Pitch */}
@@ -227,7 +227,7 @@ function BenefitPill({
 function MethodologyComparison() {
   return (
     <section className="border-t hairline" style={{ backgroundColor: "var(--color-card)" }}>
-      <div className="max-w-[1100px] mx-auto px-6 py-12 md:py-16">
+      <div className="max-w-[1100px] mx-auto px-4 sm:px-6 py-10 sm:py-12 md:py-16">
         <div className="text-center max-w-[640px] mx-auto mb-9">
           <div className="eyebrow mb-2.5">The Core Philosophy</div>
           <h2 className="font-display" style={{ fontSize: "clamp(26px, 3.2vw, 38px)", lineHeight: 1.08 }}>
@@ -242,7 +242,7 @@ function MethodologyComparison() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-[840px] mx-auto">
           {/* Without EquityRoots */}
           <div
-            className="card p-5 border hairline flex flex-col justify-between"
+            className="card p-4 sm:p-5 border hairline flex flex-col justify-between break-words"
             style={{ backgroundColor: "rgba(198, 63, 35, 0.04)", borderColor: "rgba(198, 63, 35, 0.2)" }}
           >
             <div>
@@ -265,7 +265,7 @@ function MethodologyComparison() {
 
           {/* With EquityRoots */}
           <div
-            className="card p-5 border hairline flex flex-col justify-between"
+            className="card p-4 sm:p-5 border hairline flex flex-col justify-between break-words"
             style={{ backgroundColor: "rgba(46, 154, 71, 0.04)", borderColor: "rgba(46, 154, 71, 0.2)" }}
           >
             <div>
@@ -299,7 +299,7 @@ function FooterCTA() {
       className="border-t hairline"
       style={{ backgroundColor: "var(--color-accent-50)" }}
     >
-      <div className="max-w-[1200px] mx-auto px-6 py-12 md:py-16 text-center">
+      <div className="max-w-[1200px] mx-auto px-4 sm:px-6 py-10 sm:py-12 md:py-16 text-center">
         <h2
           className="font-display mx-auto"
           style={{
