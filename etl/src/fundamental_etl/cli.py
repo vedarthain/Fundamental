@@ -35,6 +35,94 @@ from .scoring.scorer import score_snapshot
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 
+
+def _checkout_root(start: str) -> Optional[str]:
+    """Nearest ancestor of `start` containing a `.git` entry, or None.
+
+    Works for both checkout shapes in this repo: `main` has `.git` as a
+    directory, the three worktrees have it as a *file* holding a gitdir
+    pointer. Presence is what marks the root, not its type.
+    """
+    p = os.path.abspath(start)
+    while True:
+        if os.path.exists(os.path.join(p, ".git")):
+            return p
+        parent = os.path.dirname(p)
+        if parent == p:
+            return None
+        p = parent
+
+
+@app.callback()
+def _guard_checkout() -> None:
+    """Refuse to run worktree-A's command against worktree-B's code.
+
+    THE FAILURE THIS EXISTS FOR  (CLAUDE.md §4, §5)
+
+    `etl/.venv` in each worktree is a **symlink** to the `main` checkout's venv,
+    and that venv holds an *editable* install of `fundamental_etl` pointing at
+    `/Users/debasissahoo/Documents/Fundamental/etl/src`. So
+
+        cd ~/Documents/fundamental-feature
+        etl/.venv/bin/python -m fundamental_etl.cli assign-clusters
+
+    imports **main's** source tree, not the one you just edited. On 2026-10-22
+    that ran a five-minute `assign-clusters` against production, logged
+    `assign_done assigned=3179 unclassified=0`, printed a cluster histogram and
+    exited 0 — having applied the *old* routing rules. The edit under test was
+    invisible. Nothing in the output hinted at it; the run looked like a
+    success, and the only reason it was caught is that a separate assertion
+    counted the rows that were supposed to have moved and found zero.
+
+    That is the §5 shape exactly: a command that cannot report this particular
+    failure, because from inside the process everything was consistent. So the
+    check is here, it runs before every subcommand, and it **aborts** rather
+    than warning — the first run already proved a log line gets missed.
+
+    WHAT MAKES IT FIRE
+
+    The directory the code was imported from and the directory the command was
+    invoked from resolve to different checkouts of this repo. Both halves
+    matter: a cwd outside any checkout (CI, `/tmp`, a cron working dir) is not
+    this mistake and is left alone, and the `main` session — where the two
+    always agree — never sees this at all.
+
+    THE WAY OUT
+
+    Prefix the worktree's source onto PYTHONPATH; it takes precedence over the
+    editable install's path entry:
+
+        PYTHONPATH=$PWD/etl/src etl/.venv/bin/python -m fundamental_etl.cli ...
+
+    `FUNDAMENTAL_ALLOW_FOREIGN_CODE=1` suppresses the check for the rare case
+    where running main's code from elsewhere is genuinely what you want. It is
+    a deliberate act, like `FUNDAMENTAL_ALLOW_REMOTE_DB`.
+    """
+    if os.environ.get("FUNDAMENTAL_ALLOW_FOREIGN_CODE") == "1":
+        return
+
+    code_root = _checkout_root(os.path.dirname(os.path.abspath(__file__)))
+    cwd_root = _checkout_root(os.getcwd())
+
+    # cwd is not inside any checkout — not the mistake this guards. Say nothing.
+    if cwd_root is None or code_root is None or code_root == cwd_root:
+        return
+
+    raise SystemExit(
+        f"\nRefusing to run: this command would execute a different "
+        f"checkout's code.\n\n"
+        f"  code imported from : {code_root}\n"
+        f"  invoked from       : {cwd_root}\n\n"
+        f"etl/.venv is a symlink into the main checkout and its editable "
+        f"install\npoints at main's etl/src, so edits in this worktree are "
+        f"invisible.\n\n"
+        f"Run it as:\n"
+        f"  PYTHONPATH={cwd_root}/etl/src etl/.venv/bin/python "
+        f"-m fundamental_etl.cli ...\n\n"
+        f"or set FUNDAMENTAL_ALLOW_FOREIGN_CODE=1 if main's code is what you "
+        f"want.\n"
+    )
+
 # (dvr_symbol, ordinary_symbol) — DVR share classes that duplicate a company
 # already in the universe under its ordinary symbol. Retired by sync-universe
 # §7 only while the parent is still active. See the long note there for why
