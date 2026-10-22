@@ -168,13 +168,16 @@ export async function SnapshotRibbon() {
 
   return (
     <div
-      className="border-b sticky top-0 z-40"
+      className="border-b sticky top-0 z-40 w-full overflow-hidden"
       style={{
         backgroundColor: "var(--color-strip-bg)",
         borderColor: "var(--color-strip-rule)",
       }}
     >
-      <div className="mx-auto max-w-[1300px] px-4 md:px-6 h-7 flex items-center gap-4 overflow-x-auto">
+      <div
+        className="mx-auto max-w-[1300px] px-3.5 sm:px-6 h-7 flex items-center gap-3 sm:gap-4 overflow-x-auto"
+        style={{ scrollbarWidth: "none" }}
+      >
         {/* TODAY — current calendar date (IST). Leads the strip so users always
             see the current day at a glance. */}
         <Cell label="TODAY"><TodayCell initial={todayIstSeed} /></Cell>
