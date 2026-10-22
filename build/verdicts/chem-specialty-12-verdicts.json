@@ -33,7 +33,7 @@
  },
  {
   "symbol": "CHEMBONDCH",
-  "verdict": "WATCH — composite 93, third of the 28 mid-tier names with a score, against <code>cfo_pat_3y</code> 0.184 that ranks 30th of 34",
+  "verdict": "WATCH — composite 93, third of the 28 mid-tier names with a score, against three-year cash conversion of 0.184 that ranks 30th of 34",
   "confidence": "medium",
   "points": [
    "<b>Not held — CHEMBONDCH is on your watchlist.</b> Chembond Chemicals, ₹593cr, specialty chemicals across water technologies, construction chemicals, cleaning and hygiene and distribution, with plants at Dudhwada, Baddi and Ranipet; promoter and promoter group hold 67.98%. Listed on the NSE on 2025-07-23. Peered against 36 mid-tier peers inside <code>chemicals_specialty</code> — the scorer's bucket is (cluster, maturity tier) and this one clears the 10-peer floor, so every rank below is against those mid-tier names rather than the whole cluster, and the row is badged <code>full</code> with no mixed-tier caveat. Quality 55, valuation 70, momentum 73, composite 93.",
@@ -140,7 +140,7 @@
  },
  {
   "symbol": "SOLARINDS",
-  "verdict": "WATCH — quality 78, second of 103 veterans, bought at <code>pb</code> 27.88x which is second of 102, and 87.88x earnings against its own decade average of 53.95x",
+  "verdict": "WATCH — quality 78, second of 103 veterans, bought at 27.88x book, second of 102, and 87.88x earnings against its own decade average of 53.95x",
   "confidence": "medium",
   "points": [
    "<b>Not held — SOLARINDS is on your watchlist.</b> Solar Industries India, ₹1,75,007cr, industrial explosives and initiating systems with a defence and advanced-technologies arm, operating across India, Africa, the Balkans, Central Asia and South America. Peered against 104 veteran-tier peers inside <code>chemicals_specialty</code> — the scorer's bucket is (cluster, maturity tier) and this one clears the 10-peer floor, so every rank below is against those veterans rather than the whole cluster, and the row is badged <code>full</code> with no mixed-tier caveat. Quality 78, valuation 19, momentum 84, composite 82. At ₹1,75,007cr it is the largest of 104, and quality 78 is second of the 103 veterans scored on it, behind PIDILITIND.",
@@ -232,7 +232,7 @@
  },
  {
   "symbol": "NAVINFLUOR",
-  "verdict": "WATCH — <code>fii_pct</code> 23.73% the highest of 90 and <code>dii_pct</code> 28.46% the highest of 87, against a 27.08% promoter stake and <code>roce_3y</code> of 13.67%",
+  "verdict": "WATCH — foreign institutions hold 23.73%, the highest of 90, and domestic institutions 28.46%, the highest of 87, against a 27.08% promoter stake and a three-year return on capital of 13.67%",
   "confidence": "medium",
   "points": [
    "<b>Not held — NAVINFLUOR is on your watchlist.</b> Navin Fluorine International, ₹41,165cr, specialty fluorochemicals in three segments — specialty chemicals, high-performance products and CDMO — in the Padmanabh Mafatlal group. Peered against 104 veteran-tier peers inside <code>chemicals_specialty</code> — the scorer's bucket is (cluster, maturity tier) and this one clears the 10-peer floor, so every rank below is against those veterans rather than the whole cluster, and the row is badged <code>full</code> with no mixed-tier caveat. Quality 68, valuation 27, momentum 82, composite 70.",
@@ -347,7 +347,7 @@
  },
  {
   "symbol": "PRIVISCL",
-  "verdict": "WATCH — <code>cfo_pat_3y</code> 2.061, 13th of 93, and <code>np_cagr_5y</code> +35.42% five-year profit growth, ninth of 88, bought at 8.91x book with 88 days of working capital",
+  "verdict": "WATCH — three-year cash conversion of 2.061, 13th of 93, and five-year profit growth of +35.42%, ninth of 88, bought at 8.91x book with 88 days of working capital",
   "confidence": "medium",
   "points": [
    "<b>Not held — PRIVISCL is on your watchlist.</b> Privi Speciality Chemicals, ₹12,584cr, aroma and fragrance chemicals — pinene derivatives, musk, phenol and citral — selling into fragrance and FMCG, which together were 67% of FY26 revenue, across North America, Europe, Asia and the Middle East. Peered against 104 veteran-tier peers inside <code>chemicals_specialty</code> — the scorer's bucket is (cluster, maturity tier) and this one clears the 10-peer floor, so every rank below is against those veterans rather than the whole cluster, and the row is badged <code>full</code> with no mixed-tier caveat. Quality 66, valuation 40, momentum 62, composite 65.",
@@ -383,7 +383,7 @@
  },
  {
   "symbol": "VISHNU",
-  "verdict": "WATCH — <code>np_growth_above_inflation_7y</code> tied first of 104, and <code>cfo_pat_3y</code> 0.758 78th of 93, with the quarter now flat",
+  "verdict": "WATCH — seven-year profit growth above inflation, tied first of 104, and three-year cash conversion of 0.758, 78th of 93, with the quarter now flat",
   "confidence": "medium",
   "points": [
    "<b>Not held — VISHNU is on your watchlist.</b> Vishnu Chemicals, ₹4,067cr, speciality inorganic chemicals from minerals in three segments — chromium, barium and strontium — sold into pharmaceuticals, pigments, ceramics, leather, refractories and water treatment. Peered against 104 veteran-tier peers inside <code>chemicals_specialty</code> — the scorer's bucket is (cluster, maturity tier) and this one clears the 10-peer floor, so every rank below is against those veterans rather than the whole cluster, and the row is badged <code>full</code> with no mixed-tier caveat. Quality 57, valuation 40, momentum 65, composite 48 — 53rd of the 100 veterans with a composite.",
@@ -424,7 +424,7 @@
  },
  {
   "symbol": "SHREEPUSHK",
-  "verdict": "WATCH — <code>np_consistency_10y</code> 1.769, seventh of 104, and zero of the last five and seven years cleared the ROE hurdle",
+  "verdict": "WATCH — ten-year profit consistency of 1.769, seventh of 104, and zero of the last five and seven years cleared the ROE hurdle",
   "confidence": "medium",
   "points": [
    "<b>Not held — SHREEPUSHK is on your watchlist.</b> Shree Pushkar Chemicals &amp; Fertilisers, ₹1,612cr, an integrated dyes, dye-intermediates, fertiliser and animal-health producer — the chemicals division was 54.4% of FY26 segment revenue — with sites across Maharashtra, Madhya Pradesh and Haryana. Peered against 104 veteran-tier peers inside <code>chemicals_specialty</code> — the scorer's bucket is (cluster, maturity tier) and this one clears the 10-peer floor, so every rank below is against those veterans rather than the whole cluster, and the row is badged <code>full</code> with no mixed-tier caveat. Quality 51, valuation 40, momentum 67, composite 41 — 60th of the 100 veterans with a composite.",

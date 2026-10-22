@@ -128,7 +128,7 @@ SPEC = {
 
 "CHEMBONDCH": {
  "confidence": "medium",
- "verdict": "WATCH — composite 93, third of the 28 mid-tier names with a score, against <code>cfo_pat_3y</code> 0.184 that ranks 30th of 34",
+ "verdict": "WATCH — composite 93, third of the 28 mid-tier names with a score, against three-year cash conversion of 0.184 that ranks 30th of 34",
  "points": [
   "<b>Not held — CHEMBONDCH is on your watchlist.</b> Chembond Chemicals, ₹593cr, specialty chemicals across water technologies, construction chemicals, cleaning and hygiene and distribution, with plants at Dudhwada, Baddi and Ranipet; promoter and promoter group hold 67.98%. Listed on the NSE on 2025-07-23. " + MID + "Quality 55, valuation 70, momentum 73, composite 93.",
   "<b>The return on capital is genuinely good and the cash behind it is not there.</b> <code>roce_3y</code> 25.65% is eighth of 34 and <code>np_consistency_3y</code> 1.938 is third of 34 — a steady, capital-efficient formulator. Against that, <code>cfo_pat_3y</code> 0.184 is 30th of 34 and cash conversion was 0.17 in FY2026. The prior-years mean is -0.41, so this is not a deterioration from a good level; it is a business that has not converted profit into operating cash in any year the platform can see. That single fact should decide this row.",
@@ -172,7 +172,7 @@ SPEC = {
 
 "SOLARINDS": {
  "confidence": "medium",
- "verdict": "WATCH — quality 78, second of 103 veterans, bought at <code>pb</code> 27.88x which is second of 102, and 87.88x earnings against its own decade average of 53.95x",
+ "verdict": "WATCH — quality 78, second of 103 veterans, bought at 27.88x book, second of 102, and 87.88x earnings against its own decade average of 53.95x",
  "points": [
   "<b>Not held — SOLARINDS is on your watchlist.</b> Solar Industries India, ₹1,75,007cr, industrial explosives and initiating systems with a defence and advanced-technologies arm, operating across India, Africa, the Balkans, Central Asia and South America. " + VET + "Quality 78, valuation 19, momentum 84, composite 82. At ₹1,75,007cr it is the largest of 104, and quality 78 is second of the 103 veterans scored on it, behind PIDILITIND.",
   "<b>The quality record is the real thing: quality 78 is second of 103 veterans scored on it.</b> <code>roe_avg_above_threshold_5y</code>, <code>_7y</code> and <code>_10y</code> are each 1.000 — every year of the last five, seven and ten above the hurdle — and each is tied first of 104. <code>np_growth_above_inflation_5y</code> 1.000 is tied first of 104 and <code>_7y</code> 0.833 is tied first of 104, while <code>_10y</code> 0.778 is tied third of 104. <code>roce_3y</code> 31.69% is fourth of 103, <code>op_margin_3y</code> 26.30% sixth of 102, <code>np_cagr_5y</code> +39.63% sixth of 88 and <code>rev_cagr_5y</code> +25.64% eighth of 102. There is no argument to make about the business.",
@@ -212,7 +212,7 @@ SPEC = {
 
 "NAVINFLUOR": {
  "confidence": "medium",
- "verdict": "WATCH — <code>fii_pct</code> 23.73% the highest of 90 and <code>dii_pct</code> 28.46% the highest of 87, against a 27.08% promoter stake and <code>roce_3y</code> of 13.67%",
+ "verdict": "WATCH — foreign institutions hold 23.73%, the highest of 90, and domestic institutions 28.46%, the highest of 87, against a 27.08% promoter stake and a three-year return on capital of 13.67%",
  "points": [
   "<b>Not held — NAVINFLUOR is on your watchlist.</b> Navin Fluorine International, ₹41,165cr, specialty fluorochemicals in three segments — specialty chemicals, high-performance products and CDMO — in the Padmanabh Mafatlal group. " + VET + "Quality 68, valuation 27, momentum 82, composite 70.",
   "<b>It is the most institutionally owned name in the cluster, and the promoter is barely in it.</b> <code>fii_pct</code> 23.73% is the highest of the 90 veterans with a reading and <code>dii_pct</code> 28.46% is the highest of 87 — over half the company held by professional money, which is unusual at ₹41,165cr. <code>promoter_pct</code> 27.08% is 98th of 100. That ownership structure is the single most important fact on this row and it cuts both ways: the fluorine franchise has been validated by everyone whose job is to validate it, and there is no promoter block to absorb a disappointment.",
@@ -262,7 +262,7 @@ SPEC = {
 
 "PRIVISCL": {
  "confidence": "medium",
- "verdict": "WATCH — <code>cfo_pat_3y</code> 2.061, 13th of 93, and <code>np_cagr_5y</code> +35.42% five-year profit growth, ninth of 88, bought at 8.91x book with 88 days of working capital",
+ "verdict": "WATCH — three-year cash conversion of 2.061, 13th of 93, and five-year profit growth of +35.42%, ninth of 88, bought at 8.91x book with 88 days of working capital",
  "points": [
   "<b>Not held — PRIVISCL is on your watchlist.</b> Privi Speciality Chemicals, ₹12,584cr, aroma and fragrance chemicals — pinene derivatives, musk, phenol and citral — selling into fragrance and FMCG, which together were 67% of FY26 revenue, across North America, Europe, Asia and the Middle East. " + VET + "Quality 66, valuation 40, momentum 62, composite 65.",
   "<b>It converts and it compounds, which is a rarer pair in this batch than it sounds.</b> <code>cfo_pat_3y</code> 2.061 is 13th of 93 with cash conversion 0.84 in FY2026 against a prior-years mean of 0.49 — improving, not just adequate. <code>np_cagr_5y</code> +35.42% is ninth of 88 and <code>rev_cagr_5y</code> +16.25% 18th of 102. <code>op_margin_3y</code> 21.99% is 15th of 102 and <code>opm_now</code> 24.93% seventh of 97 against <code>opm_prev</code> 22.21%. <code>np_growth_above_inflation_5y</code> 0.750 is three year-steps of four, tied third of 104.",
@@ -276,7 +276,7 @@ SPEC = {
 
 "VISHNU": {
  "confidence": "medium",
- "verdict": "WATCH — <code>np_growth_above_inflation_7y</code> tied first of 104, and <code>cfo_pat_3y</code> 0.758 78th of 93, with the quarter now flat",
+ "verdict": "WATCH — seven-year profit growth above inflation, tied first of 104, and three-year cash conversion of 0.758, 78th of 93, with the quarter now flat",
  "points": [
   "<b>Not held — VISHNU is on your watchlist.</b> Vishnu Chemicals, ₹4,067cr, speciality inorganic chemicals from minerals in three segments — chromium, barium and strontium — sold into pharmaceuticals, pigments, ceramics, leather, refractories and water treatment. " + VET + "Quality 57, valuation 40, momentum 65, composite 48 — 53rd of the 100 veterans with a composite.",
   "<b>The inflation record is the strongest claim on the row.</b> <code>np_growth_above_inflation_7y</code> 0.833 is five year-steps of six and tied first of 104; <code>_10y</code> 0.778 is seven of nine, tied third of 104; <code>_5y</code> 0.750 is three of four, tied third of 104. The denominators are N-1 because each step needs two points. <code>np_cagr_5y</code> +14.98% is 19th of 88 and <code>rev_cagr_5y</code> +10.77% 32nd of 102. That is a small inorganic-chemicals business that has out-compounded inflation for most of a decade — which the composite of 48 does not convey.",
@@ -290,7 +290,7 @@ SPEC = {
 
 "SHREEPUSHK": {
  "confidence": "medium",
- "verdict": "WATCH — <code>np_consistency_10y</code> 1.769, seventh of 104, and zero of the last five and seven years cleared the ROE hurdle",
+ "verdict": "WATCH — ten-year profit consistency of 1.769, seventh of 104, and zero of the last five and seven years cleared the ROE hurdle",
  "points": [
   "<b>Not held — SHREEPUSHK is on your watchlist.</b> Shree Pushkar Chemicals &amp; Fertilisers, ₹1,612cr, an integrated dyes, dye-intermediates, fertiliser and animal-health producer — the chemicals division was 54.4% of FY26 segment revenue — with sites across Maharashtra, Madhya Pradesh and Haryana. " + VET + "Quality 51, valuation 40, momentum 67, composite 41 — 60th of the 100 veterans with a composite.",
   "<b>It is one of the most consistent earners in the cluster and it consistently earns too little.</b> <code>np_consistency_10y</code> 1.769 is seventh of 104 — the index runs 0 to 2 and this is a decade of steady profit, not a pass rate. But <code>roe_avg_above_threshold_5y</code> 0.000 and <code>roe_avg_above_threshold_7y</code> 0.000 mean not one of the last five or seven years cleared the return-on-equity hurdle, and <code>roe_avg_above_threshold_10y</code> 0.200 is two years of ten, tied 64th of 104. Steadiness and adequacy are different tests and this row passes the first while failing the second — which is the clearest statement of what Shree Pushkar is: a reliable, low-return commodity chemicals business.",

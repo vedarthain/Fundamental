@@ -185,7 +185,43 @@ WORD_DIMS = [
     # far, and the cheap-on-dividend-yield line is one of the few claims that
     # routinely appears with no key beside it.
     (re.compile(r"\bdividend(?: yield)?\b", re.I), "div_yield"),
+
+    # --- the headline vocabulary -------------------------------------------
+    # The one-line `verdict` field is rendered as a JSX text child
+    # (VerdictQueueClient.tsx:485, VerdictPanel.tsx:236), so React ESCAPES it:
+    # a <code> tag written there reaches the reader as literal angle brackets.
+    # Six rows shipped that way on 2026-10-22 before anyone looked at the page.
+    # The headline therefore has to name its metrics in English — and English
+    # without an entry here is an unattributable claim, which is a FAIL by
+    # design. So the names the headline actually uses live below.
+    #
+    # Teaching a name is also what REMOVES a hijack rather than creating one.
+    # "composite 93 … against three-year cash conversion of 0.184, 30th of 34"
+    # attributed to `composite_pct` while "cash conversion" meant nothing here:
+    # the nearest subject won, and the nearest subject was the only one the
+    # script could see. Every addition below moves a claim closer to its real
+    # owner.
+    (re.compile(r"cash conversion", re.I), "cfo_pat_3y"),
+    (re.compile(r"x book\b|book value|price[-\s]to[-\s]book", re.I), "pb"),
+    (re.compile(r"foreign institutions?|\bFIIs?\b", re.I), "fii_pct"),
+    (re.compile(r"domestic institutions?|\bDIIs?\b", re.I), "dii_pct"),
+    (re.compile(r"return on capital|\bROCE\b", re.I), "roce_3y"),
+    # Horizon-bearing names. The metric family is the same and only the
+    # suffix differs, so the year is READ FROM THE PROSE rather than assumed —
+    # `np_consistency_3y` and `np_consistency_10y` are different claims with
+    # different denominators, and defaulting to either one would silently
+    # check the wrong column. `{y}` is filled by attribute().
+    (re.compile(r"(?P<yr>three|five|seven|ten)-year profit growth above "
+                r"inflation|profit growth above inflation", re.I),
+     "np_growth_above_inflation_{y}"),
+    (re.compile(r"(?P<yr>three|five|seven|ten)-year profit consistency|"
+                r"profit consistency", re.I), "np_consistency_{y}"),
+    (re.compile(r"(?P<yr>three|five|ten)-year profit growth", re.I),
+     "np_cagr_{y}"),
 ]
+
+# Spelled horizons, for the `{y}` keys above.
+_YEAR_WORD = {"three": "3y", "five": "5y", "seven": "7y", "ten": "10y"}
 
 
 # <code> is used for things that are not metrics: the cluster id, the
@@ -257,7 +293,19 @@ def attribute(text: str, at: int) -> Optional[str]:
     for rx, key in WORD_DIMS:
         for m in rx.finditer(window):
             if best is None or m.start() > best[0]:
-                best = (m.start(), key)
+                k = key
+                if "{y}" in k:
+                    # No spelled horizon beside a horizon-bearing name means
+                    # the claim is ambiguous between siblings. Leave `best`
+                    # alone rather than guess: unattributable is a loud FAIL
+                    # that the writer fixes by naming the year, which is the
+                    # outcome wanted. Guessing a suffix checks a column the
+                    # sentence never mentioned and can pass a wrong rank.
+                    yr = (m.groupdict().get("yr") or "").lower()
+                    if yr not in _YEAR_WORD:
+                        continue
+                    k = k.replace("{y}", _YEAR_WORD[yr])
+                best = (m.start(), k)
     if best is None:
         return None
     key = best[1]
