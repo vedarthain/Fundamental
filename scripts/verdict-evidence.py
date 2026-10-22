@@ -444,6 +444,316 @@ def scorecard_coverage(cluster_id: Optional[str], tier: Optional[str],
     return out
 
 
+# ------------------------------------------------------------- peer ranks
+#
+# WHY THIS BLOCK EXISTS — 2026-10-22
+#
+# Verdict verification is two passes. Pass 1 (scripts/verdict-check.py) traces
+# every numeric token in the prose back to this symbol's own pack. It is
+# generic, permanent and cheap, and it structurally CANNOT see a claim about
+# the peer set: "#2 of 37", "the largest of the 14", "bottom nine of 42". Every
+# individual number in such a sentence is present and correct in the pack; only
+# the ordering BETWEEN symbols is wrong, and the ordering was nowhere.
+#
+# So each batch grew a hand-written build/verdicts/check_<batch>.py — 200-330
+# lines, run once, never again. On 2026-10-22, across just TWO verdicts, that
+# file caught three false claims:
+#
+#   "the largest of the 14"        CRISIL 33,243cr > CHOICEIN 16,186cr -> 2nd
+#   "nine of the fourteen carry a  twelve do
+#    margin-step blocker"
+#   "cfo_pat_3y 0.000 is 37th      nine names tie at exactly 0.0, spanning
+#    of 42"                        positions 34-42; 37 was fake precision that
+#                                  the sort merely happened to return
+#
+# Three errors per two verdicts, in prose that read as entirely plausible. The
+# pair for the first 76 verdicts is already gone, so those claims are now
+# unverifiable forever.
+#
+# This block moves the sort into the pack. The prose then QUOTES a rank instead
+# of deriving one, and pass 2 collapses to a string-diff that is identical for
+# every batch. Nothing maintains it, deliberately: it is recomputed from
+# app.scores and app.metrics_snapshot on every run, so a cluster re-peering
+# (capital-markets out of bfsi_nbfc, 2026-10-22) updates every rank with no
+# file to remember to edit. CLAUDE.md §5 is a list of things that were seeded
+# once and then rotted; this is built so there is nothing to seed.
+
+
+def fetch_peer_rows(app: psycopg.Connection, cluster_id: str,
+                    snapshot_date: Any) -> list[dict]:
+    """Every member of `cluster_id` at `snapshot_date`, metrics included.
+
+    `snapshot_date` is PINNED to the subject symbol's own app.scores row by the
+    caller. Taking MAX(snapshot_date) per symbol independently would rank a
+    freshly-scored symbol against whatever date each peer last happened to be
+    scored on, and the block would then be quietly wrong rather than loudly
+    empty — the worst of the two failure modes.
+
+    market_cap lives on app.metrics_snapshot (in crore), not on app.universe;
+    app.universe carries only market_cap_category. Checked, not assumed.
+
+    Shareholding is pulled too, by LATERAL on the newest period_end per
+    symbol. It is not in cluster_metrics and nothing scores it, so it was
+    missing from the first version of this — at which point the prose claims
+    "fii_pct fifth of 36" and "fourth of 32" in the shipped CHOICEIN verdict
+    were unverifiable rather than wrong. An unverifiable claim in published
+    prose is the failure this whole block exists to stop, so the pull was
+    widened rather than the claims waived.
+
+    The periods are NOT aligned across symbols: each peer's newest filing may
+    be a different quarter. `as_of` is carried per row and the spread is
+    reported in the cohort, because a promoter-stake rank across three
+    different quarters is a weaker claim than one across a single quarter and
+    the reader has to be able to see which they are getting.
+    """
+    with app.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            """SELECT s.symbol, s.quality_pct, s.valuation_pct, s.momentum_pct,
+                      s.composite_pct, s.score_status, s.maturity_tier,
+                      m.cluster_metrics, m.market_cap,
+                      sh.period_end AS sh_as_of, sh.promoter_pct, sh.fii_pct,
+                      sh.dii_pct, sh.public_pct, sh.pledge_pct
+                 FROM app.scores s
+                 JOIN app.metrics_snapshot m
+                   ON m.symbol = s.symbol AND m.snapshot_date = s.snapshot_date
+                 LEFT JOIN LATERAL (
+                      SELECT period_end, promoter_pct, fii_pct, dii_pct,
+                             public_pct, pledge_pct
+                        FROM app.shareholding_pattern p
+                       WHERE p.symbol = s.symbol
+                       ORDER BY p.period_end DESC LIMIT 1
+                 ) sh ON TRUE
+                WHERE s.cluster_id = %s AND s.snapshot_date = %s""",
+            (cluster_id, snapshot_date))
+        return cur.fetchall()
+
+
+# A metric with fewer than this many readings is not rankable. "#2 of 2" is a
+# sentence that should never ship, and a percentile over three points implies a
+# resolution the cohort does not have.
+_MIN_RANKABLE = 3
+
+# The scorer's own peer-bucket rule: at or above this many names the bucket is
+# (cluster, tier); below it the scorer falls back to (cluster, all-tiers) and
+# badges the row 'partial-cluster-mixed-tiers'. Imported rather than retyped —
+# a rank computed on a different cohort than the percentile printed beside it
+# is a new bug wearing the costume of a check.
+from fundamental_etl.scoring.scorer import MIN_PEERS  # noqa: E402
+from fundamental_etl.scoring import formulas as _formulas  # noqa: E402
+
+# How many names ahead to list. Uncapped, a 43-name cluster puts ~40 tickers
+# per metric into the pack and the pack stops being readable, which is the only
+# thing that earns its tokens. Five is enough to write "behind CRISIL at
+# ₹33,243cr", which is what the corrected CHOICEIN line actually needed.
+_AHEAD_CAP = 5
+
+# Dimensions that are not cluster_metrics keys but carry most of the prose's
+# comparative claims. Namespaced under "scores" in the output so a cluster
+# metric called composite_pct could never collide with the pillar percentile.
+_SCORE_DIMS = ("market_cap", "quality_pct", "valuation_pct",
+               "momentum_pct", "composite_pct")
+
+# Shareholding. Nothing scores these, so they are in neither cluster_metrics
+# nor any scorecard — but the prose ranks them ("fii_pct fifth of 36"), which
+# is reason enough. Direction is deliberately NOT asserted: a high promoter
+# stake is neither good nor bad on its own, and pledge is bad while FII
+# interest is read either way depending on the argument. The prose says which
+# end it means; the block only says where the symbol sits.
+_SH_DIMS = ("promoter_pct", "fii_pct", "dii_pct", "public_pct", "pledge_pct")
+
+
+def _rank_one(symbol: str, values: dict[str, float]) -> Optional[dict]:
+    """Rank `symbol` among `values` (symbol -> reading), ties handled honestly.
+
+    Returns both rank_high (1 = largest) and rank_low (1 = smallest). NEVER one
+    rank plus a direction flag: on 2026-10-22 a hand-written checker asserted
+    position 16 against an ASCENDING sort, where "lowest" is position 1, and
+    reported four false failures against prose that was correct. Both numbers
+    cost nothing and there is then no argument to get backwards.
+
+    `higher_is_better` is reported separately, read off the scorer's own
+    formula registry — it is advisory for the prose, not used to pick a rank.
+
+    Ties use competition ranking: every member of a tied group gets the group's
+    FIRST position, and `tied`/`tie_span` state the group. The nine-way zero
+    tie above is why. Values are rounded before the tie test, because two
+    readings differing in the 15th decimal are a tie to any reader and an
+    un-rounded `==` manufactures an ordering that is not there.
+    """
+    if symbol not in values:
+        return None
+    of = len(values)
+    me = values[symbol]
+    desc = sorted(values.items(), key=lambda kv: -kv[1])
+    ahead = [s for s, v in desc if v > me]
+    behind_or_eq = of - len(ahead)
+    tied = sum(1 for v in values.values() if v == me)
+    rank_high = len(ahead) + 1
+    # rank_low is the mirror, computed from the tie group's far edge so that
+    # rank_high + rank_low == of + 1 holds for an untied value.
+    rank_low = of - (rank_high + tied - 1) + 1
+    out: dict[str, Any] = {
+        "value": me,
+        "of": of,
+        "rank_high": rank_high,
+        "rank_low": rank_low,
+        "tied": tied,
+        "tie_span": [rank_high, rank_high + tied - 1],
+        "ahead": ahead[:_AHEAD_CAP],
+        "ahead_n": len(ahead),
+        "rankable": of >= _MIN_RANKABLE,
+    }
+    # A percentile below ten readings implies precision the cohort lacks; the
+    # prose should say "#2 of 7" there, which is falsifiable by eye.
+    if of >= 10:
+        out["pctile"] = round(100.0 * (of - rank_high) / (of - 1), 1)
+    assert behind_or_eq >= 1  # `me` is in `values`, so this cannot be 0.
+    return out
+
+
+def peer_ranks(cluster_id: Optional[str], tier: Optional[str], symbol: str,
+               peer_rows: Optional[list[dict]],
+               audited: Optional[list[str]] = None) -> Optional[dict]:
+    """Where `symbol` sits inside its own cluster, metric by metric.
+
+    Returns None only when the inputs are missing. A cluster of one returns a
+    real block with of == 1 everywhere, NOT None: "there is nobody to rank
+    against" is a finding the prose must be able to state, and a silent None
+    reads to the next reader as "I forgot to check".
+
+    THE DENOMINATOR IS THE TRAP. `of` is the number of peers carrying a
+    non-NULL reading for THAT METRIC — not the cluster size. The two differ
+    constantly, because cluster_metrics is a bag of whatever a (cluster, tier)
+    needed and coverage is per metric. This is the same trap
+    scorecard_coverage() above was built around after 2026-10-08: the only
+    honest denominator is the one actually measured. A right rank on a wrong
+    denominator still misleads, so the block states both and the prose checker
+    asserts both.
+    """
+    if not cluster_id or not peer_rows:
+        return None
+
+    # Reproduce the scorer's bucket choice exactly (scorer.py:247). Thin
+    # (cluster, tier) buckets are scored against all tiers, so ranking against
+    # the tier here would print a rank from one cohort next to a percentile
+    # from another.
+    same_tier = [r for r in peer_rows if r.get("maturity_tier") == tier]
+    if tier and len(same_tier) >= MIN_PEERS:
+        rows, basis = same_tier, "cluster_tier"
+    else:
+        rows, basis = peer_rows, "cluster_all_tiers"
+
+    status_counts: dict[str, int] = {}
+    for r in rows:
+        k = r.get("score_status") or "unknown"
+        status_counts[k] = status_counts.get(k, 0) + 1
+
+    out: dict[str, Any] = {
+        "cohort": {
+            "cluster_id": cluster_id,
+            "tier": tier,
+            # 'cluster_all_tiers' means the scorer mixed tiers to reach a
+            # usable pool — which is also what score_status
+            # 'partial-cluster-mixed-tiers' records. It does NOT mean "too few
+            # peers to trust"; do not render it as a warning.
+            "basis": basis,
+            "n": len(rows),
+            "status_counts": status_counts,
+            "min_peers": MIN_PEERS,
+        },
+        "metrics": {},
+        "scores": {},
+        "shareholding": {},
+        "warnings": [],
+    }
+    sh_dates = sorted({str(r["sh_as_of"]) for r in rows if r.get("sh_as_of")})
+    out["cohort"]["shareholding_as_of"] = (
+        {"periods": sh_dates, "aligned": len(sh_dates) <= 1,
+         "rows_with_filing": sum(1 for r in rows if r.get("sh_as_of"))}
+        if sh_dates else None)
+
+    # EVERY key present in the cohort's cluster_metrics, not just
+    # AUDITED_METRICS. The first version ranked only the audited list — which
+    # is derived from the scorecards — and so silently had no rank for
+    # `opm_now`, `ttm_np_pct` and `ttm_op_pct`, which are computed inputs
+    # rather than scored formulas. Those three are exactly what the shipped
+    # PRIMESECU verdict called "the lowest of all 16", three times. A block
+    # that cannot see the metric the prose ranks hardest is CLAUDE.md §5's
+    # check-that-cannot-fail: it returns clean because it looked nowhere.
+    keys = sorted(audited) if audited else sorted(
+        {k for r in rows for k in (r.get("cluster_metrics") or {})})
+    for key in keys:
+        vals: dict[str, float] = {}
+        for r in rows:
+            cm = r.get("cluster_metrics") or {}
+            v = cm.get(key)
+            if isinstance(v, bool) or v is None:
+                continue
+            try:
+                vals[r["symbol"]] = round(float(v), 6)
+            except (TypeError, ValueError):
+                continue
+        got = _rank_one(symbol, vals)
+        if got is None:
+            continue
+        fn = _formulas.REGISTRY.get(key)
+        if fn is not None:
+            got["higher_is_better"] = bool(getattr(fn, "higher_is_better", True))
+        out["metrics"][key] = got
+
+    for dim in _SCORE_DIMS:
+        vals = {}
+        for r in rows:
+            v = r.get(dim)
+            if v is None:
+                continue
+            try:
+                vals[r["symbol"]] = round(float(v), 6)
+            except (TypeError, ValueError):
+                continue
+        got = _rank_one(symbol, vals)
+        if got is not None:
+            got["higher_is_better"] = True
+            out["scores"][dim] = got
+
+    for dim in _SH_DIMS:
+        vals = {}
+        for r in rows:
+            v = r.get(dim)
+            if v is None:
+                continue
+            try:
+                vals[r["symbol"]] = round(float(v), 6)
+            except (TypeError, ValueError):
+                continue
+        got = _rank_one(symbol, vals)
+        if got is not None:
+            if not (out["cohort"].get("shareholding_as_of") or {}).get("aligned", True):
+                got["periods_mixed"] = True
+            out["shareholding"][dim] = got
+
+    # --- sanity. Each of these can fail on a real defect; see CLAUDE.md §5 on
+    # checks that cannot. They are warnings in the block AND surface as
+    # blockers on the symbol, because a wrong rank reads as confidently as a
+    # right one.
+    if symbol not in {r["symbol"] for r in rows}:
+        out["warnings"].append(
+            f"{symbol} is absent from its own peer cohort ({cluster_id}, {basis}) — "
+            "the cluster or the snapshot pin is mismatched and EVERY rank in this "
+            "block is off by one. Do not quote any of them.")
+    for scope in ("metrics", "scores", "shareholding"):
+        for key, d in out[scope].items():
+            if d["of"] > len(rows):
+                out["warnings"].append(
+                    f"{key}: denominator {d['of']} exceeds cohort {len(rows)} — "
+                    "the peer join duplicated rows.")
+            if d["tied"] == 1 and d["rank_high"] + d["rank_low"] != d["of"] + 1:
+                out["warnings"].append(
+                    f"{key}: rank_high {d['rank_high']} + rank_low {d['rank_low']} "
+                    f"!= of+1 ({d['of'] + 1}) — the sort is inverted.")
+    return out
+
+
 # A pillar below this share of its declared weight is not a percentile of the
 # scorecard any more — it is a percentile of the subset that survived. 0.85 is
 # set so the healthcare cases that motivated it FIRE: LUPIN/STAR/INDSWFTLAB
@@ -738,6 +1048,10 @@ def stub_annual_rows(annual: list[dict]) -> list[str]:
     return bad
 
 
+# (cluster_id, snapshot_date) -> peer rows. One query per cluster per run.
+_PEER_CACHE: dict[tuple[str, str], list[dict]] = {}
+
+
 def build_symbol(app: psycopg.Connection, golden: psycopg.Connection,
                  symbol: str, snapshot: Optional[str]) -> dict:
     pack: dict[str, Any] = {"symbol": symbol, "blockers": []}
@@ -830,6 +1144,29 @@ def build_symbol(app: psycopg.Connection, golden: psycopg.Connection,
         (pack["scores"] or {}).get("maturity_tier") or (pack["metrics"] or {}).get("maturity_tier"),
         (pack["metrics"] or {}).get("cluster_metrics"),
     )
+
+    # Peer ranks. The cohort pull is memoised per (cluster, snapshot) because
+    # batches are built one cluster at a time — a 43-name broker batch must
+    # issue ONE peer query, not 43 identical ones. The pin is the subject's own
+    # scores.snapshot_date; see fetch_peer_rows on why MAX() per symbol is
+    # wrong here.
+    _sc = pack["scores"] or {}
+    cl, snap = _sc.get("cluster_id"), _sc.get("snapshot_date")
+    if cl and snap:
+        ck = (cl, str(snap))
+        if ck not in _PEER_CACHE:
+            _PEER_CACHE[ck] = fetch_peer_rows(app, cl, snap)
+        pack["peer_ranks"] = peer_ranks(
+            cl, _sc.get("maturity_tier") or (pack["metrics"] or {}).get("maturity_tier"),
+            symbol, _PEER_CACHE[ck])
+        for w in (pack["peer_ranks"] or {}).get("warnings", []):
+            pack["blockers"].append(w)
+    else:
+        pack["peer_ranks"] = None
+        pack["blockers"].append(
+            "no cluster or no scores snapshot: there are no peer ranks in this "
+            "pack, so every comparative claim about this symbol is unverifiable. "
+            "Write none.")
 
     # Technicals, via the scorer's own functions.
     prices = load_price_history(golden, symbol, limit=700)

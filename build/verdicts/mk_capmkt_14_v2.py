@@ -198,10 +198,17 @@ THIN_AMC = ("Re-peered out of <code>bfsi_nbfc</code> into "
             "lenders — but the pool is 16 names whose largest maturity bucket "
             "is 9, one short of the 10-peer floor, so all 16 mix tiers.")
 
+# 32, not 42/43. The cluster holds 43 names, but the scorer's peer bucket is
+# (cluster, maturity_tier) whenever that bucket clears MIN_PEERS = 10 — and
+# bfsi_broker VETERAN is 32 (mid 6, mature 5). So the percentile beside every
+# rank in these rows was computed against 32, and quoting 42 put the rank and
+# the percentile on different populations. Caught by the peer_ranks block on
+# 2026-10-22, after this batch had already shipped; see
+# scripts/verdict-ranks-check.py.
 THIN_BROKER = ("Re-peered out of <code>bfsi_nbfc</code> into "
                "<code>bfsi_broker</code> on 2026-10-22, so the percentiles "
-               "below rank it against 42 broking and securities-dealing peers "
-               "rather than against lenders.")
+               "below rank it against 32 veteran broking and "
+               "securities-dealing peers rather than against lenders.")
 
 MIXED = (" Its own maturity bucket is under the 10-peer floor, so this row "
          "mixes tiers to reach a usable pool.")
@@ -292,13 +299,25 @@ SPEC = {
 
 "CHOICEIN": {
  "confidence": "medium",
- "verdict": "HOLD — the only broker in the cluster to beat inflation in every one of the last four and six years, at 71.00x earnings, 9.68x book and zero cash conversion",
+ "verdict": "HOLD — tied first of 32 peers for beating inflation in every one of the last four and six years, at 71.00x earnings, 9.68x book and zero cash conversion",
  "points": [
-  "<b>Not held — CHOICEIN is on your watchlist.</b> Choice International, ₹16,186cr, retail broking and wealth management with an attached NBFC, investment bank, AMC and government-advisory arm — at ₹16,186cr the second-largest of the 14 capital-markets names re-peered out of <code>bfsi_nbfc</code> on 2026-10-22, behind CRISIL at ₹33,243cr. " + THIN_BROKER + " Quality 59, valuation 19, momentum 57, composite 32.",
-  "<b>Its compounding record is the best in the cluster and the re-peering makes that claim stronger, not weaker.</b> <code>np_growth_above_inflation_5y</code> 1.000 and <code>_7y</code> 1.000 are each <i>first of the 32 brokers carrying the tests</i> — net profit beat inflation in 4 of the last 4 year-steps and 6 of 6, the denominators being N-1 because each step needs two points — and <code>_10y</code> 0.889 is 8 of 9, second of 32. It shares the 5y and 7y top spot with " + SBI + ", so among actual brokers it is alone. <code>np_cagr_5y</code> 41.97% is fourth of 33. v1 could only say this was the best of a hand-picked 16; it is the best of 32 peers.",
-  "<b>The trailing year holds up, which is what separates it from the rest of the re-peered group.</b> TTM sales +26.47%, operating profit +33.72%, net profit +32.48%, with <code>opm_now</code> 35.28% against <code>opm_prev</code> 33.37% — a +1.91pp step. Twelve of those 14 rows carry a margin-step or earnings-quality blocker of some kind — CHOICEIN's own is a cash-conversion flag rather than a margin break — so a business whose margin barely moved while profit grew a third is the most informative single fact here. <code>roe_3y</code> 16.33% and <code>roce_3y</code> 17.65% are both 16th of 43 — unremarkable, and earned without the balance-sheet distortion the old scorecard was reading.",
-  "<b>Everything good about it has been paid for, and the cash is not arriving.</b> <code>pe_ttm</code> 71.00x is the second-highest of the 37 brokers with a PE, behind only AVONMORE's 95.58x, and <code>pb</code> 9.68x is fifth of 43. There is no own-history anchor: its ten-year band low of 1.82x cannot be told apart from a split adjustment, so there is no way to say whether 71x is high or normal for this stock. Against that, <code>cfo_pat_3y</code> 0.000 puts it in the bottom nine of 42, all nine tied at the floor, and cash conversion was -0.64 in FY2026 — three years in which operating cash did not arrive at all, in a business with a lending arm that consumes it. <code>fii_pct</code> 10.10% is fifth of 36 and the close held above its 200-day EMA on 63.10% of the last 252 sessions, fourth of 32. " + TNS,
-  "<i>The uncomfortable part: the best compounding record of 32 brokers belongs to the second-most-expensive one, whose three-year cash conversion is zero. A perfect 4-of-4 and 6-of-6 inflation record deserves a premium — but 71.00x earnings and 9.68x book on retail broking means two years of lower market turnover takes a third off the earnings and the multiple at once, and a business that reports profit without collecting it has no cushion when that happens. Hold if you own it. Adding at 71x requires believing Indian retail participation only goes one way, which is the assumption this entire cluster is built on and which none of its 43 members has been tested through a bear market.</i>",
+  "<b>Not held — CHOICEIN is on your watchlist.</b> Choice International, ₹16,186cr, retail broking and wealth management with an attached NBFC, investment bank, AMC and government-advisory arm — at ₹16,186cr the fourth-largest of the 32 it is scored against, behind SBIFUNDS, MOTILALOFS and ANGELONE. " + THIN_BROKER + " Quality 59, valuation 19, momentum 57, composite 32.",
+  "<b>Its compounding record is the best in the cluster and the re-peering makes that claim stronger, not weaker.</b> <code>np_growth_above_inflation_5y</code> 1.000 and <code>_7y</code> 1.000 are each <i>tied first of the 32 brokers carrying the tests</i> — net profit beat inflation in 4 of the last 4 year-steps and 6 of 6, the denominators being N-1 because each step needs two points — and <code>_10y</code> 0.889 is 8 of 9 steps, second of 32. The tie is with " + SBI + ", so among actual brokers it is alone. <code>np_cagr_5y</code> 41.97% is third of 28. v1 could only make this claim against a hand-picked batch; it now stands against the whole veteran bucket.",
+  "<b>The trailing year holds up, which is what separates it from the rest of the re-peered group.</b> TTM sales +26.47%, operating profit +33.72%, net profit +32.48%, with <code>opm_now</code> 35.28% against <code>opm_prev</code> 33.37% — a +1.91pp step. Its own blocker is a cash-conversion flag rather than a margin break, so a business whose margin barely moved while profit grew a third is the most informative single fact here. <code>roe_3y</code> 16.33% is 11th of 32 and <code>roce_3y</code> 17.65% is 10th of 32 — unremarkable, and earned without the balance-sheet distortion the old scorecard was reading.",
+  "<b>Everything good about it has been paid for, and the cash is not arriving.</b> <code>pe_ttm</code> 71.00x is the second-highest of the 28 brokers with a PE, behind only AVONMORE's 95.58x, and <code>pb</code> 9.68x is second of 32. There is no own-history anchor: its ten-year band low of 1.82x cannot be told apart from a split adjustment, so there is no way to say whether 71x is high or normal for this stock. Against that, <code>cfo_pat_3y</code> 0.000 puts it in the bottom six of 31, all six tied at the floor, and cash conversion was -0.64 in FY2026 — three years in which operating cash did not arrive at all, in a business with a lending arm that consumes it. <code>fii_pct</code> 10.10% is third of 27 and the close held above its 200-day EMA on 63.10% of the last 252 sessions, <code>pct_above_200ema_252d</code> second of 28. " + TNS,
+  "<i>The uncomfortable part: the best compounding record of 32 brokers belongs to the second-most-expensive one, whose three-year cash conversion is zero. A perfect 4-of-4 and 6-of-6 inflation record deserves a premium — but 71.00x earnings and 9.68x book on retail broking means two years of lower market turnover takes a third off the earnings and the multiple at once, and a business that reports profit without collecting it has no cushion when that happens. Hold if you own it. Adding at 71x requires believing Indian retail participation only goes one way, which is the assumption this entire cluster is built on and which none of these 32 peers has been tested through a bear market.</i>",
+ ],
+ # Multi-metric summary claims: true, but no single metric carries them, so
+ # verdict-ranks-check.py cannot resolve them and must be told why rather
+ # than left to guess. Each one is backed by a rank asserted elsewhere in the
+ # same verdict.
+ "rank_waivers": [
+   {"quote": "tied first of 32 peers",
+    "reason": "summarises np_growth_above_inflation_5y and _7y, both asserted "
+              "as tied first of 32 in point 2"},
+   {"quote": "the best compounding record of 32 brokers",
+    "reason": "summarises the three np_growth_above_inflation ranks in point "
+              "2 (tied 1st of 32, tied 1st of 32, 2nd of 32)"},
  ],
  "trigger": "cfo_pat_3y turning positive while opm_now holds near 35% -> the profit is real cash, the inflation record is structural, and 71.00x is a growth multiple rather than a cycle multiple. Market turnover falling with opm_now under 28%, or cash conversion staying negative -> a 9.68x book on broking revenue de-rates far faster than the earnings fall, which is how every broker in this cluster has previously broken.",
  "evidence": ["np_growth_above_inflation_5y", "np_growth_above_inflation_7y", "np_growth_above_inflation_10y", "np_cagr_5y", "opm_now", "opm_prev", "ttm_np_pct", "roe_3y", "roce_3y", "pe_ttm", "pb", "cfo_pat_3y", "fii_pct", "pct_above_200ema_252d"],
@@ -324,12 +343,29 @@ SPEC = {
  "confidence": "medium",
  "verdict": "WATCH — worst of all 16 wealth names on four separate measures at once, composite down 61 to 15, with the price still above its 200-day EMA on three-quarters of the year",
  "points": [
-  "<b>Not held — PRIMESECU is on your watchlist.</b> Prime Securities, ₹952cr, investment banking, corporate advisory and wealth management. " + THIN_AMC + MIXED + " Quality 27, valuation 55, momentum 41, composite 15 — the lowest of the 14 capital-markets names re-peered out of <code>bfsi_nbfc</code> on 2026-10-22, and down from 61 before the re-peering.",
-  "<b>It is the worst row in its pool on four measures, and they are the four that matter.</b> <code>opm_now</code> 10.22% is the lowest of all 16, <code>ttm_np_pct</code> -87.29% the lowest, <code>ttm_op_pct</code> -72.08% the lowest, and <code>np_yoy_q</code> -80.82% the lowest. Not bottom-quartile — last, four times. <code>opm_now</code> 10.22% against <code>opm_prev</code> 41.85% is a -31.63pp step, the largest single-year margin break of the 14 re-peered names and the pack's first blocker here. The quarter confirms the year rather than softening it, and cash conversion was -0.10 in FY2026 against a prior mean of +0.23. There is no <code>pe_ttm</code> at all: the earnings base has effectively gone, so the valuation pillar scored on 45% of its declared weight.",
-  "<b>The long record is genuinely respectable, which is the whole tension.</b> <code>roe_avg_above_threshold_10y</code> 0.500 — five of ten years above the hurdle — is fourth of the nine names with the test, and <code>np_consistency_10y</code> 1.657 is sixth of nine. That is a middling-to-decent decade, not a chronic underperformer. An advisory firm with that history and one catastrophic year is a different proposition from one that was always marginal, and the re-peering sharpened this rather than changing it: against asset and wealth managers the decade reads ordinary where against lenders it read strong.",
+  "<b>Not held — PRIMESECU is on your watchlist.</b> Prime Securities, ₹952cr, investment banking, corporate advisory and wealth management. " + THIN_AMC + MIXED + " Quality 27, valuation 55, momentum 41, composite 15 — the lowest of all 16 in the pool, and down from 61 before the re-peering.",
+  "<b>It is the worst row of all 16 in its pool on four measures, and they are the four that matter.</b> <code>opm_now</code> 10.22% is the lowest of all 16, <code>ttm_np_pct</code> -87.29% the lowest, <code>ttm_op_pct</code> -72.08% the lowest, and <code>np_yoy_q</code> -80.82% the lowest. Not bottom-quartile — last, four times. <code>opm_now</code> 10.22% against <code>opm_prev</code> 41.85% is a -31.63pp step and the pack's first blocker here. The quarter confirms the year rather than softening it, and cash conversion was -0.10 in FY2026 against a prior mean of +0.23. There is no <code>pe_ttm</code> at all: the earnings base has effectively gone, so the valuation pillar scored on 45% of its declared weight.",
+  "<b>The long record is genuinely respectable, which is the whole tension.</b> <code>roe_avg_above_threshold_10y</code> 0.500 — five of ten years above the hurdle — is tied fourth of the nine names with the test, and <code>np_consistency_10y</code> 1.657 is sixth of nine. That is a middling-to-decent decade, not a chronic underperformer. An advisory firm with that history and one catastrophic year is a different proposition from one that was always marginal, and the re-peering sharpened this rather than changing it: against asset and wealth managers the decade reads ordinary where against lenders it read strong.",
   "<b>But the price is behaving as though nothing happened.</b> The close held above its 200-day EMA on 74.21% of the last 252 sessions — fifth of the 11 with the reading — and <code>ret_12m_rel</code> +2.80% is positive and sixth of 12. The stock is near its highs while operating profit fell 72% and the margin fell 32 points. Its own ten-year PE band of 7.00-59.23x averaging 21.04x is quotable and cannot be applied: there is no current E to compare it to. " + TNS,
   "<i>The uncomfortable answer first: this is the one row in the batch where the market's price and the company's accounts are telling opposite stories, and no number in the pack resolves which is right. A deal-driven advisory book can lose 87% of its profit to mandate timing and get it back in one transaction — or the fee pipeline is gone and the price has not found out. Watch rather than act, because a position taken now is a bet on which of those it is, taken at no discount whatsoever. Look at the next quarter's revenue line, not its profit line. The composite falling 61 to 15 on re-peering is not new information about the company; it is the old number having been flattering.</i>",
  ],
+ # As CHOICEIN: a four-measure "worst of all 16" is not one metric's rank.
+ # Each of the four IS asserted individually in point 2 and passes.
+ "rank_waivers": [
+   {"quote": "the worst row of all 16",
+    "reason": "opm_now, ttm_np_pct, ttm_op_pct and np_yoy_q are each asserted "
+              "as last of 16 in the same point"},
+   {"quote": "worst of all 16 wealth names",
+    "reason": "same four measures; see point 2"},
+ ],
+ # "down from 61" is a PRIOR snapshot: in neither the pack nor the cohort, so
+ # pass 1 reports it unmatched and pass 2 cannot see it. Measured, not recalled.
+ "prior": {
+   "snapshot_date": "2026-10-08",
+   "query": "SELECT symbol, snapshot_date, cluster_id, composite_pct FROM "
+            "app.scores WHERE symbol='PRIMESECU' ORDER BY snapshot_date DESC",
+   "values": {"cluster_id": "bfsi_nbfc", "composite_pct": 61},
+ },
  "trigger": "opm_now recovering above 30% with np_yoy_q turning positive -> the collapse was mandate timing, the five-of-ten hurdle decade is the real business, and the price was right to ignore it. A second quarter near 10% margins while the close stays above its 200-day EMA -> the gap between accounts and price closes downward, and 74.21% above-EMA becomes the risk rather than the comfort.",
  "evidence": ["opm_now", "opm_prev", "ttm_np_pct", "ttm_op_pct", "np_yoy_q", "roe_avg_above_threshold_10y", "np_consistency_10y", "pct_above_200ema_252d", "ret_12m_rel", "sales_yoy_q"],
 },
@@ -616,6 +652,11 @@ def main() -> None:
             "price_asof": PRICE_ASOF,
             "model": MODEL,
             "source_report": SOURCE_REPORT,
+            # Read by scripts/verdict-ranks-check.py; verdict-load.py ignores
+            # keys it does not require, so this travels with the batch rather
+            # than in a second file that could drift from it.
+            "rank_waivers": v.get("rank_waivers", []),
+            **({"prior": v["prior"]} if "prior" in v else {}),
         })
 
     with open(OUT, "w") as f:
