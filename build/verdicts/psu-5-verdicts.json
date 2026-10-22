@@ -1,0 +1,172 @@
+[
+ {
+  "symbol": "BANKBARODA",
+  "generated_at": "2026-10-22T13:30:00+00:00",
+  "verdict": "WATCH — the top composite of the twelve on a quality and valuation record that is five to ten years old, and the only one of the twelve whose trailing profit is actually falling: -6.67% on the year and -48.6% in the latest quarter",
+  "confidence": "high",
+  "points": [
+   "<b>Not held; on the watchlist.</b> Scored inside <code>bfsi_psu_banks</code> as a balance-sheet lender: the cash-conversion and net-profit-against-operating-profit tests are deliberately not applied here, because a bank's operating cash flow is deposit and loan movement and <code>operating_profit</code> is not a comparable line between lenders. The pack still prints those figures unflagged — read them as balance-sheet growth, not as earnings quality. The cluster has twelve members, above the ten-peer floor the scorer needs, so every percentile below is a real rank among twelve rather than a direction — but the steps are about nine points wide, so no claim here separates two banks by one notch. Seven of the twelve are untracked and unwritten; the counts below say which population they mean.",
+   "<b>It scores 100 on composite and is the only one of the twelve losing money year on year.</b> <code>ttm_np_pct</code> is -6.67%, the only negative of the twelve, and <code>np_yoy_q</code> is -48.6%, the worst of the twelve; <code>sales_yoy_q</code> at 6.84% is the lowest of the twelve as well. The composite is not wrong, it is just slow: this cluster weights quality 55 and valuation 30 against momentum 15, and the quality pillar is built from five-, seven- and ten-year histories that a single bad trailing year cannot move. <code>tech_net_score_scaled</code> is NULL for every scored company on the platform, so the momentum pillar scored on 95 of its 100 declared points and renormalised around the components that do exist.",
+   "<b>What the long window sees is genuinely good.</b> <code>np_cagr_5y</code> of 26.10%, <code>book_value_cagr_10y</code> of 16.16% — fourth of the twelve — and profit growth beat inflation in 3 of 4 five-year steps, 5 of 6 seven-year steps and 6 of 9 ten-year steps. <code>roe_excess_13_10y</code> is negative for all twelve members of the cluster — not one listed Indian public-sector bank has averaged a 13% return on equity across the last decade; Bank of Baroda's shortfall of -6.02pp is the third-smallest of the twelve, which is the useful way to read it.",
+   "<b>It is priced as the market's third-cheapest large PSU bank on book and it pays for waiting.</b> <code>pb</code> of 0.74 is tenth of twelve on expensiveness, <code>pe_ttm</code> is 8.13 against an own-history band of 5.72x to 31.10x averaging 15.28x across nine years, and <code>div_yield</code> of 3.57% is the second-highest of the eleven in the cluster that have one. Foreign holding has gone 8.98% to 10.14% across five quarters while the shareholder count fell from 1,689,797 to 1,460,575 — institutions buying what retail is leaving.",
+   "<i>The disagreement in this row is the whole point, and it is why the label is WATCH and not ACCUMULATE on a composite of 100. A decade of compounding and a 0.74x book say buy; a 48.6% quarterly profit collapse says find out why first, and the pack does not tell you — it reports the fall without decomposing it into provisions, treasury or net interest margin. Nor is it only a quarter: full-year net profit went 20,716 crore in FY2025 to 19,846 crore in FY2026, the first annual decline after five years of increases. One more quarter resolves this in either direction, and it is the only thing worth waiting for.</i>"
+  ],
+  "trigger_text": "np_yoy_q back above zero with opm_now holding 63% -> ACCUMULATE; a second consecutive quarter of falling profit, or pb above 1.0 before profit recovers -> AVOID",
+  "evidence": {
+   "ttm_np_pct": -6.666416551202414,
+   "np_yoy_q": -0.4859591370821755,
+   "sales_yoy_q": 0.06840469769803788,
+   "np_cagr_5y": 0.2609778928437081,
+   "book_value_cagr_10y": 0.16163061632459952,
+   "roe_excess_13_10y": -0.06022501178275913,
+   "pb": 0.743117120545436,
+   "pe_ttm": 8.126204663195356,
+   "div_yield": 0.03570518469948866,
+   "fii_pct": 10.14,
+   "shareholders": 1460575.0
+  },
+  "snapshot_date": "2026-10-21",
+  "price_asof": "2026-10-21",
+  "model": "claude-opus-4-7",
+  "source_report": "bfsi-psu-banks v1"
+ },
+ {
+  "symbol": "MAHABANK",
+  "generated_at": "2026-10-22T13:30:00+00:00",
+  "verdict": "ACCUMULATE — first of the twelve on return on equity over three, five and seven years, on assets, on loan growth and on twelve-month relative return, and the most expensive of the twelve on book at 1.85x; the decade record is the eighth-worst of the twelve and that gap is the investment case",
+  "confidence": "high",
+  "points": [
+   "<b>Not held; on the watchlist.</b> Scored inside <code>bfsi_psu_banks</code> as a balance-sheet lender: the cash-conversion and net-profit-against-operating-profit tests are deliberately not applied here, because a bank's operating cash flow is deposit and loan movement and <code>operating_profit</code> is not a comparable line between lenders. The pack still prints those figures unflagged — read them as balance-sheet growth, not as earnings quality. The cluster has twelve members, above the ten-peer floor, so the percentiles are real ranks among twelve; seven of the twelve are untracked and unwritten, and the counts below say which population they mean. Note before any of the figures: the pack prints this bank's latest cash conversion at -0.559, which under the exemption above is deposit and loan movement and is not read here as a quality signal at all.",
+   "<b>On every recent measure of profitability it is first of the twelve.</b> <code>roe_3y</code> 20.30%, <code>roe_5y</code> 17.12%, <code>roe_7y</code> 13.42%, <code>roa_3y</code> 1.49%, <code>loan_book_cagr_3y</code> 16.86%, <code>np_cagr_5y</code> 57.05% and <code>ttm_sales_pct</code> 15.83% — the top of the cluster on all seven. Profit growth beat inflation in 4 of 4 five-year steps and 6 of 6 seven-year steps. Counted across the 28 cluster metrics where a higher reading is the better one, it ranks first of the twelve on eleven of them; the next bank in the cluster leads on six, and no other name in this batch leads on more than four.",
+   "<b>The decade undoes most of it.</b> <code>roe_excess_13_10y</code> is negative for all twelve members of the cluster — not one listed Indian public-sector bank has averaged a 13% return on equity across the last decade, and Bank of Maharashtra's shortfall of -14.63pp is the eighth-worst of the twelve — worse than six of its peers, including three it now beats on every recent horizon. Over five years its <code>roe_excess_13_5y</code> is +4.12pp, the best of the twelve and one of only three positive readings in the cluster. So the correct description is a repaired bank, not a good one, and the annual record says exactly when the repair happened: losses in FY2017, FY2018 and FY2019 — the last of them 4,763 crore — then profitable every year since FY2020, with net profit going from 399 crore in FY2020 to 7,017 crore in FY2026. A single 4,763 crore loss three years into a ten-year window is enough to swamp the decade average on its own.",
+   "<b>You are paying the cluster's highest price for that repair.</b> <code>pb</code> of 1.85 is the most expensive of the twelve, <code>pe_ttm</code> of 8.15 only mid-cluster, and <code>div_yield</code> of 1.50% is the lowest of the eleven in the cluster that pay one. Its own PE band is not quotable — seven years of history against the eight this platform requires — so no cheap-or-dear-against-itself claim is made here. The government cut its stake from 79.60% to 73.60% in the December 2025 quarter and foreign holding went 1.72% to 5.82% across five quarters, better than tripling into the float that sale created. <code>tech_net_score_scaled</code> is NULL for every scored company on the platform, so the momentum pillar scored on 95 of its 100 declared points and renormalised around the components that do exist.",
+   "<i>The price is the risk and the operating record is the reason to pay it anyway. <code>ret_12m_rel</code> of +47.06% is the best of the twelve and <code>pct_above_200ema_252d</code> is 1.00 — it closed above its 200-day average on every session of the last year, the only bank of the twelve to do so. That is not a cheap entry and nothing here pretends otherwise; it is a bank whose three-year return on equity is 20% in a cluster averaging low teens, and the 1.85x book is what that costs. ACCUMULATE means in pieces, not at once.</i>"
+  ],
+  "trigger_text": "roe_3y holding above 18% through two more quarters -> add; pb above 2.2x, or roe_3y back under 15% -> HOLD and stop adding",
+  "evidence": {
+   "roe_3y": 0.203049586913267,
+   "roe_5y": 0.17122987851281601,
+   "roe_7y": 0.1341626139459689,
+   "roa_3y": 0.014889240667641093,
+   "loan_book_cagr_3y": 0.1686491452061829,
+   "np_cagr_5y": 0.5704998243476234,
+   "ttm_sales_pct": 15.828596514931558,
+   "roe_excess_13_10y": -0.14625420030810443,
+   "roe_excess_13_5y": 0.04122987851281601,
+   "pb": 1.84761339776744,
+   "pe_ttm": 8.145955306669498,
+   "div_yield": 0.015035767758566286,
+   "ret_12m_rel": 0.47057600842607217,
+   "pct_above_200ema_252d": 1.0,
+   "promoter_pct": 73.6,
+   "fii_pct": 5.82,
+   "np_growth_above_inflation_5y": 1.0,
+   "np_growth_above_inflation_7y": 1.0
+  },
+  "snapshot_date": "2026-10-21",
+  "price_asof": "2026-10-21",
+  "model": "claude-opus-4-7",
+  "source_report": "bfsi-psu-banks v1"
+ },
+ {
+  "symbol": "BANKINDIA",
+  "generated_at": "2026-10-22T13:30:00+00:00",
+  "verdict": "WATCH — the cheapest of the twelve on both earnings and book, 5.33x and 0.70x, and eighth or ninth of the twelve on every measure of what it earns on that book; the cheapness is a price for the returns, not a discount to them",
+  "confidence": "medium",
+  "points": [
+   "<b>Not held; on the watchlist.</b> Scored inside <code>bfsi_psu_banks</code> as a balance-sheet lender: the cash-conversion and net-profit-against-operating-profit tests are deliberately not applied here, because a bank's operating cash flow is deposit and loan movement and <code>operating_profit</code> is not a comparable line between lenders. The pack still prints those figures unflagged — read them as balance-sheet growth, not as earnings quality. The cluster has twelve members, above the ten-peer floor, so the percentiles are real ranks among twelve; seven of the twelve are untracked and unwritten. This row is medium confidence rather than high for a specific reason given in point four: one of its quality inputs is missing and the pillar was renormalised to cover it.",
+   "<b>It is the cheapest bank in the cluster on both multiples at once.</b> <code>pe_ttm</code> of 5.33 and <code>pb</code> of 0.70 are both the lowest of the twelve, and the valuation pillar scores it 90. The trailing quarter looks like a turn, too: <code>np_yoy_q</code> of +80.51% is the highest of the twelve and <code>ttm_np_pct</code> of +24.13% is fifth. <code>opm_now</code> of 72.26% is the third-highest of the twelve. <code>tech_net_score_scaled</code> is NULL for every scored company on the platform, so the momentum pillar scored on 95 of its 100 declared points and renormalised around the components that do exist.",
+   "<b>And it earns less on that book than almost anyone in the cluster.</b> <code>roe_3y</code> 10.86% is ninth of the twelve, <code>roe_5y</code> 9.02% is eighth, <code>roe_7y</code> 6.07% is eighth and <code>roa_3y</code> 0.83% is eighth. <code>np_consistency_10y</code> of 0.864 is eighth of the twelve on an index that runs 0.545 to 1.543 across this cluster — a wide enough spread to rank on, unlike the compressed readings this platform refuses to quote elsewhere. <code>roe_excess_13_10y</code> is negative for all twelve members of the cluster — not one listed Indian public-sector bank has averaged a 13% return on equity across the last decade, and this one's -11.95pp is sixth-worst.",
+   "<b>One quality input is missing and the pillar was renormalised.</b> <code>np_cagr_7y</code> is NULL here, so the quality pillar scored on 95.68% of its declared weight — the only row of the five that is not at 100% — and seven of the twelve cluster members lack the same field, which is why it is never ranked cluster-wide in this batch. Its own PE band is not quotable either: six years of history against the eight required, so no comparison against its own past is offered. Foreign holding rose 3.88% to 6.87% across five quarters while the shareholder count fell from 726,167 to 595,832.",
+   "<i>Cheap and bad is a real category and this is in it. Nothing in the pack says the 0.70x book is wrong — a bank earning 10.9% on equity over three years and 6.1% over seven arguably should trade below book, and the +80% quarter is one quarter. The thing that would change this is not a lower price, it is two or three quarters of double-digit return on equity; at that point the 0.70x becomes the opportunity it currently only resembles.</i>"
+  ],
+  "trigger_text": "roe_3y above 13% with np_yoy_q staying positive for two more quarters -> ACCUMULATE; pb above 1.0x without roe_3y improving -> AVOID",
+  "evidence": {
+   "pe_ttm": 5.333655083655084,
+   "pb": 0.6983975397558098,
+   "np_yoy_q": 0.805122543125123,
+   "ttm_np_pct": 24.129646041479404,
+   "opm_now": 72.25769442586684,
+   "roe_3y": 0.10861779195318139,
+   "roe_5y": 0.09023052110792046,
+   "roe_7y": 0.060733318399412074,
+   "roa_3y": 0.008292701930029314,
+   "np_consistency_10y": 0.8640008123693095,
+   "roe_excess_13_10y": -0.1194644586422506,
+   "fii_pct": 6.87,
+   "shareholders": 595832.0
+  },
+  "snapshot_date": "2026-10-21",
+  "price_asof": "2026-10-21",
+  "model": "claude-opus-4-7",
+  "source_report": "bfsi-psu-banks v1"
+ },
+ {
+  "symbol": "INDIANB",
+  "generated_at": "2026-10-22T13:30:00+00:00",
+  "verdict": "ACCUMULATE — the most consistent ten-year profit record of the twelve and the smallest decade shortfall against a 13% return on equity, and the only one of the five whose earnings yield is now moving the wrong way",
+  "confidence": "medium",
+  "points": [
+   "<b>Not held; on the watchlist.</b> Scored inside <code>bfsi_psu_banks</code> as a balance-sheet lender: the cash-conversion and net-profit-against-operating-profit tests are deliberately not applied here, because a bank's operating cash flow is deposit and loan movement and <code>operating_profit</code> is not a comparable line between lenders. The pack still prints those figures unflagged — read them as balance-sheet growth, not as earnings quality. The cluster has twelve members, above the ten-peer floor, so the percentiles are real ranks among twelve; seven of the twelve are untracked and unwritten. This row is medium rather than high confidence because its trailing year does not line up with the rest of the batch — point four.",
+   "<b>Across the decade it is the steadiest bank in the cluster.</b> <code>np_consistency_10y</code> of 1.543 is the highest of the twelve on an index spanning 0.545 to 1.543 here, and <code>roe_excess_13_10y</code> of -3.62pp is the smallest shortfall of the twelve. <code>roe_excess_13_10y</code> is negative for all twelve members of the cluster — not one listed Indian public-sector bank has averaged a 13% return on equity across the last decade — Indian Bank is simply the one that came closest. <code>book_value_cagr_10y</code> of 18.45% is second of the twelve and <code>roa_3y</code> of 1.17% is second as well; <code>roe_7y</code> of 10.94% is third. <code>tech_net_score_scaled</code> is NULL for every scored company on the platform, so the momentum pillar scored on 95 of its 100 declared points and renormalised around the components that do exist.",
+   "<b>The recent record is good without being exceptional.</b> <code>roe_3y</code> of 14.78% is fifth of the twelve, <code>np_cagr_5y</code> of 29.65% is ninth, and profit growth beat inflation in 3 of 4 five-year steps, 5 of 6 seven-year steps and 6 of 9 ten-year steps — the same pass rates as Bank of Baroda and weaker than the three other banks in this batch. <code>sales_yoy_q</code> of 15.16% is third of the twelve, so the growth is present now.",
+   "<b>Two things qualify all of the above.</b> First, its trailing year ends 2026-09-30 while the other four in this batch end 2026-06-30, so every TTM figure here is compared against four trailing years that stop a quarter earlier — the one genuinely non-comparable number in the batch, and the reason for medium confidence. Second, <code>earnings_yield_trend</code> of -0.0227 is eleventh of the twelve and the only negative of the five: the price has been rising faster than the earnings behind it. Its own PE band is not quotable — the low of 3.05x is a loss-year artefact below the 4.0x floor this platform requires — so there is no against-its-own-history check available to settle that.",
+   "<i>What you are buying here is the absence of a disaster rather than the presence of a boom, and in this cluster that is the scarcer thing: the decade is the window in which eleven of these twelve banks destroyed capital, and this is the one that nearly did not. <code>pb</code> of 1.46 is fourth-highest of the twelve, so it is not cheap, and the negative earnings-yield trend says the market has already noticed. ACCUMULATE on the consistency, slowly, and watch the earnings yield rather than the price.</i>"
+  ],
+  "trigger_text": "earnings_yield_trend back above zero with roe_3y holding 14% -> add; np_consistency_10y falling below 1.3, or pb above 1.8x -> HOLD",
+  "evidence": {
+   "np_consistency_10y": 1.543174263246363,
+   "roe_excess_13_10y": -0.03615654109369499,
+   "book_value_cagr_10y": 0.1845345674321308,
+   "roa_3y": 0.011741781752390995,
+   "roe_7y": 0.10939744935028148,
+   "roe_3y": 0.14781506216787774,
+   "np_cagr_5y": 0.2965480986205382,
+   "sales_yoy_q": 0.1515917461096399,
+   "earnings_yield_trend": -0.02272803524161652,
+   "pb": 1.454698531587069,
+   "np_growth_above_inflation_5y": 0.75,
+   "np_growth_above_inflation_7y": 0.8333333333333334,
+   "np_growth_above_inflation_10y": 0.6666666666666666
+  },
+  "snapshot_date": "2026-10-21",
+  "price_asof": "2026-10-21",
+  "model": "claude-opus-4-7",
+  "source_report": "bfsi-psu-banks v1"
+ },
+ {
+  "symbol": "SBIN",
+  "generated_at": "2026-10-22T13:30:00+00:00",
+  "verdict": "HOLD — second of the twelve on return on equity over five, seven and ten years, and scored 33rd percentile because it is the most expensive of the twelve on earnings at 10.45x and eleventh of the twelve on five-year profit growth; the low composite is a verdict on the price, not on the bank",
+  "confidence": "high",
+  "points": [
+   "<b>Not held; on the watchlist.</b> Scored inside <code>bfsi_psu_banks</code> as a balance-sheet lender: the cash-conversion and net-profit-against-operating-profit tests are deliberately not applied here, because a bank's operating cash flow is deposit and loan movement and <code>operating_profit</code> is not a comparable line between lenders. The pack still prints those figures unflagged — read them as balance-sheet growth, not as earnings quality. The cluster has twelve members, above the ten-peer floor, so the percentiles are real ranks among twelve; seven of the twelve are untracked and unwritten. One figure in this row is reported without an explanation on purpose — point four.",
+   "<b>Its composite of 33 is ninth of the twelve and that number will mislead you if you read it as a quality judgement.</b> On quality the pillar scores it 64; on valuation 21. <code>roe_5y</code> of 14.63%, <code>roe_7y</code> of 12.74%, <code>roe_excess_13_5y</code> of +1.63pp, <code>roe_excess_13_7y</code> of -0.26pp and <code>roe_excess_13_10y</code> of -4.17pp are each second of the twelve — the same rank on five separate horizons, behind Bank of Maharashtra every time. <code>roe_excess_13_10y</code> is negative for all twelve members of the cluster — not one listed Indian public-sector bank has averaged a 13% return on equity across the last decade, and State Bank is the second-closest to clearing it.",
+   "<b>What the scorer is objecting to is the price and the growth.</b> <code>pe_ttm</code> of 10.45 is the highest of the twelve, <code>pb</code> of 1.51 is third-highest, and <code>div_yield</code> of 1.78% is tenth of the eleven in the cluster that pay one. On growth <code>np_cagr_5y</code> of 23.88% is eleventh of the twelve and <code>ttm_op_pct</code> of -0.01% is the only non-positive operating profit change of the twelve — flat, not falling, but flat while ten peers grew. <code>equity_to_assets</code> of 6.66% is the second-thinnest of the twelve. <code>tech_net_score_scaled</code> is NULL for every scored company on the platform, so the momentum pillar scored on 95 of its 100 declared points and renormalised around the components that do exist.",
+   "<b>One number here is not comparable and is reported anyway.</b> <code>opm_now</code> of 45.02% is the lowest of the twelve by a wide margin — the next lowest is 60.29% and the cluster runs to 75.53%. State Bank's reported revenue spans mutual funds, insurance and equity trading alongside lending, so this ratio is probably not measuring the same thing it measures for a pure lender, but the pack does not segment the revenue and this row will not guess at the cause. Treat the figure as unusable for cross-bank comparison rather than as a margin problem. Its own PE band is not quotable either, and for a related reason: the band runs to 969.79x with an average of 129.81x, a near-zero-earnings year divided into a normal price, and quoting that average would make the cluster's most expensive bank look like a historic bargain.",
+   "<i>This is the one row in the batch where the platform's own score and the sensible answer diverge, and the honest resolution is HOLD rather than either. It is the most widely held bank of the twelve — 3,898,366 shareholders, the most of the cluster, and one of only two of the five whose holder count rose across the last five quarters: up 71,817 here against Indian Bank's 750, while the other three lost retail holders outright — the least government-owned at 55.47% promoter holding, and the most domestically institutionally owned at 26.52%. None of that is a reason to buy it at the cluster's highest earnings multiple. It is a reason not to sell a position you already have, which is what HOLD means here.</i>"
+  ],
+  "trigger_text": "pe_ttm back under 9x with roe_5y holding above 14% -> ACCUMULATE; roe_excess_13_5y turning negative, or ttm_op_pct negative for a second year -> REDUCE",
+  "evidence": {
+   "roe_5y": 0.14629052662649497,
+   "roe_7y": 0.12735690206857794,
+   "roe_excess_13_5y": 0.016290526626494956,
+   "roe_excess_13_7y": -0.0026430979314220537,
+   "roe_excess_13_10y": -0.04173665270071284,
+   "pe_ttm": 10.44814987905739,
+   "pb": 1.5109739913318023,
+   "div_yield": 0.017779960135810378,
+   "np_cagr_5y": 0.23876516916702917,
+   "ttm_op_pct": -0.012980879709112436,
+   "equity_to_assets": 0.06661770044030281,
+   "opm_now": 45.02204348988657,
+   "shareholders": 3898366.0,
+   "promoter_pct": 55.47,
+   "dii_pct": 26.52
+  },
+  "snapshot_date": "2026-10-21",
+  "price_asof": "2026-10-21",
+  "model": "claude-opus-4-7",
+  "source_report": "bfsi-psu-banks v1"
+ }
+]
