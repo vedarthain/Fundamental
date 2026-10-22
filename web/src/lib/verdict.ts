@@ -358,15 +358,25 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
   };
 
   let tracked: { symbol: string; company_name: string | null; added_at: Date | null }[] = [];
+  // `symbol IS NOT NULL` below is load-bearing, not defensive. A broker import
+  // keeps every row it was given, mapped or not: on 2026-10-22 prod held 27
+  // app.portfolio_holding rows with is_mapped = false and a NULL symbol
+  // (OILIETF, MIDCAP, TATSILV — ETFs with no NSE equity match). UNION collapsed
+  // those 27 into ONE tracked entry whose symbol was null, which inflated
+  // trackedCount by 1 and, because every sort in this feature falls through to
+  // a.symbol.localeCompare(b.symbol), threw "can't access property
+  // localeCompare, e.symbol is null" in the browser and took the whole Verdict
+  // tab down. An unmapped holding is not a symbol anything can have a verdict
+  // about, so it never belonged in the tracked set.
   try {
     tracked = await sql`
       SELECT t.symbol,
              s.company_name,
              MIN(w.added_at) AS added_at
         FROM (
-          SELECT symbol FROM app.user_watchlist
+          SELECT symbol FROM app.user_watchlist WHERE symbol IS NOT NULL
           UNION
-          SELECT symbol FROM app.portfolio_holding
+          SELECT symbol FROM app.portfolio_holding WHERE symbol IS NOT NULL
         ) t
         LEFT JOIN app.user_watchlist w ON w.symbol = t.symbol
         LEFT JOIN app.universe s ON s.symbol = t.symbol
