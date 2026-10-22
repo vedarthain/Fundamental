@@ -1,0 +1,602 @@
+"""textiles — the 11 tracked names, written against the real peer set.
+
+WHY THIS FILE IS SHAPED THIS WAY
+
+Third batch written with `peer_ranks` in the pack and the generic pass-2
+checker, so the rules the chemicals and fmcg batches established hold here
+unchanged: every denominator is a per-metric READING COUNT rather than the
+cohort size, the cohort sentence names the bucket the scorer actually used,
+and the guards below cover the structural claims neither pass can see.
+
+What is specific to this batch:
+
+CHOICE 1 — THREE BUCKETS AGAIN, AND THE VETERAN ONE IS THE BIGGEST SO FAR.
+
+`scoring/scorer.py` peers on `(cluster_id, maturity_tier)` when the bucket
+clears `MIN_PEERS = 10`. Here veteran holds 118, mid 38 and mature 15 — all
+three clear it, so all 11 rows are `score_status = 'full'` and none needs the
+mixed-tier caveat. Three cohort sentences; guard 2 fails any row whose
+sentence does not match its own bucket.
+
+A 118-name veteran cohort does NOT mean 118 readings per metric. `pe_ttm` has
+88, `ema_stack_bull` 91, `roce_3y` 117, `div_yield` 47. Every denominator in
+the prose below is the metric's own count, read off `peer_ranks`.
+
+CHOICE 2 — SBC IS NOT A TEXTILE COMPANY AND THE ROW SAYS SO.
+
+SBC's own overview describes three segments: readymade garments, an
+e-governance IT arm, and a travel and tour business. It is scored against 38
+textile mid-tier peers. The garment line is real, so the cluster is not
+absurd, but a percentile against textile peers is not a statement about a
+company whose growth is coming from e-governance contracts.
+
+The consequence is the same shape as NESTLEIND's in the fmcg batch: this row
+quotes NO pillar percentile. Not momentum 89, not valuation 21, not composite
+62. What it quotes instead is the company's own absolute numbers, because the
+cluster error corrupts percentiles and leaves absolutes untouched — 37.92x
+book, 68.52x EV/EBITDA, 79.49x earnings, `debt_equity` 2.832, three-year cash
+conversion of exactly 0.000, and operating cash flow negative two years
+running. Those are facts about SBC whatever bucket it sits in, and they are
+the reason this row exists at all: it is the most expensive, least
+cash-generative name in the tracked set, and saying nothing about it because
+the cluster is wrong would be the larger error. Guard 11 enforces both halves.
+
+CHOICE 3 — DOLLAR'S MATURE BUCKET IS 15 NAMES AND ITS METRICS ARE THINNER.
+
+The cohort is 15, but the per-metric reading counts underneath it are far
+worse than that: `div_yield` 3, `ttm_np_pct` 3, `ttm_op_pct` 5, `pe_ttm` 6,
+`ev_ebitda_ttm` 6, `opm_now` 6, `promoter_pct` 7, `ev_sales_ttm` 8. A rank out
+of 3 is not a rank. Guard 12 rejects any stated denominator below 14 on this
+row, so the prose is forced onto the company's own figures and the handful of
+metrics that most of the cohort actually reports.
+
+CHOICE 4 — THE DEAD METRICS, AGAIN, PLUS DELIVERY.
+
+The sanity block reports `roe_latest` and `tech_net_score_scaled` NULL for
+100% of the universe, `p_premium` 99.6% and `book_value_cagr_3y` 99.5%. No row
+argues from one. `delivery_data` is a handful of sessions, so a delivery
+percentage is one day's print; guard 6 fails any row that quotes one.
+
+CHOICE 5 — FOUR ROWS CARRY AN EARNINGS-QUALITY GAP AND MUST SAY SO.
+
+SANGAMIND is the extreme: TTM net profit +518.27% against operating profit
++56.83%, a 294-point gap, which makes its 24.33x multiple a multiple on
+something other than operations. INDORAMA, RUBYMILLS and SBC carry smaller
+versions of the same. Guard 10 requires each flagged row to say where the gap
+sits.
+
+CHOICE 6 — INDORAMA HAS NO USABLE PE BAND.
+
+Its band is four years wide and runs 5.23-635.62x with an average of 164.03x.
+That is not a band, it is a loss-year artefact. The row says the band is
+unusable rather than quoting it, which is the only honest use of four
+observations spanning two orders of magnitude.
+"""
+
+import json
+import re
+
+PACK = "/tmp/tex11.json"
+OUT = "build/verdicts/textiles-11-verdicts.json"
+SOURCE_REPORT = "textiles — 11 tracked names"
+MODEL = "claude-opus-4-7"
+SNAPSHOT = "2026-10-21"
+PRICE_ASOF = "2026-10-21"
+
+# Measured against app.portfolio_holding on 2026-10-22, not recalled. The pack
+# carries no membership flag, so point one's held/not-held line is a claim
+# like any other and this is what checks it.
+HELD = {"DOLLAR", "ICIL"}
+
+EMIT = {"ARVIND", "DOLLAR", "FILATEX", "ICIL", "INDORAMA", "NITINSPIN",
+        "PGIL", "RUBYMILLS", "SANGAMIND", "SBC", "WELSPUNLIV"}
+
+VET = ("Peered against 118 veteran-tier peers inside <code>textiles</code> — "
+       "the scorer's bucket is (cluster, maturity tier) and this one clears "
+       "the 10-peer floor, so every rank below is against those veterans "
+       "rather than the whole cluster, and the row is badged <code>full</code> "
+       "with no mixed-tier caveat. Denominators differ metric by metric "
+       "because they count readings, not peers. ")
+
+MID = ("Peered against 38 mid-tier peers inside <code>textiles</code> — "
+       "the scorer's bucket is (cluster, maturity tier) and this one clears "
+       "the 10-peer floor, so every rank below is against those mid-tier "
+       "names rather than the whole cluster, and the row is badged "
+       "<code>full</code> with no mixed-tier caveat. ")
+
+MAT = ("Peered against 15 mature-tier peers inside <code>textiles</code> — "
+       "the scorer's bucket is (cluster, maturity tier) and this one clears "
+       "the 10-peer floor, so every rank below is against those mature names "
+       "rather than the whole cluster, and the row is badged <code>full</code> "
+       "with no mixed-tier caveat. ")
+
+TNS = ("<code>tech_net_score_scaled</code> is NULL for every scored company "
+       "on the platform; the momentum pillar renormalises around the "
+       "components that do exist, so the percentile is a narrower question "
+       "than the scorecard asks rather than a lost weight.")
+
+# The sentence SBC's row is required to carry, and the reason it may quote no
+# pillar percentile at all.
+MISFILED = ("The bucket is wrong and that matters more than the rank: SBC's "
+            "own filing describes three segments — readymade garments, an "
+            "e-governance IT arm, and a travel and tour business — and it is "
+            "scored against textile mid-tier peers. The garment line is real, "
+            "so the cluster is not absurd, but a percentile against spinners "
+            "and weavers is not a statement about a company growing on "
+            "government IT contracts. No pillar percentile is quoted on this "
+            "row for that reason. What follows is its own absolute figures, "
+            "which the misfiling cannot touch. ")
+
+# The sentence DOLLAR's row carries, because its cohort is 15 names and most
+# of its metrics are read by fewer than half of them.
+THIN = ("The mature bucket is 15 names and most metrics here are read by far "
+        "fewer — 3 peers report a dividend yield, 6 an earnings multiple, 6 an "
+        "operating margin. A rank out of 6 is not a rank, so no denominator "
+        "below 14 appears below and the argument runs on the company's own "
+        "figures. ")
+
+# Metrics NULL for >=95% of the universe. Naming one is a claim about a number
+# the platform does not hold.
+DEAD = ("book_value_cagr_3y", "p_premium", "roe_latest")
+
+# Rows the pack flagged for an earnings-quality gap, and the phrase each one's
+# prose must carry. A dict rather than a set because the four flags are not the
+# same defect — two are a below-EBIT gap, one is a margin step, one is a cash
+# failure — and requiring "below EBIT" on all four would pass a row that named
+# the wrong problem. Read off pack[sym]["earnings_quality"]["flags"], and
+# guard 10 asserts the pack still carries a flag for every symbol listed here,
+# so a rerun that clears a flag fails the build instead of shipping a stale
+# caveat.
+EQ_FLAGGED = {
+    "INDORAMA": "the difference sits below EBIT",
+    "SANGAMIND": "the difference sits below EBIT",
+    "RUBYMILLS": "stepped 7.3 points",
+    "SBC": "operating cash flow was negative",
+}
+
+
+SPEC = {
+
+# ---------------------------------------------------------------- veterans
+
+"ARVIND": {
+ "confidence": "medium",
+ "verdict": "WATCH — quality 65, 15th of 118 veterans, with foreign institutions at 15.88%, second of 92, but zero of the last ten years cleared the ROE hurdle and 33.44x against an own nine-year band topping out at 23.34x",
+ "points": [
+  "<b>Not held — ARVIND is on your watchlist.</b> Arvind, ₹13,850cr and fifth of 118 by market cap in this bucket — denim, woven fabrics and knits alongside an Advanced Materials arm selling human-protection, industrial and composite textiles, with a US footprint from the Dalco-GFT acquisition; <code>promoter_pct</code> is 38.09%, 105th of 118. " + VET + "Quality 65, valuation 37, momentum 69, composite 74.",
+  "<b>The returns are mid-pack and the ten-year record is the weak point, not the margin.</b> <code>roce_3y</code> 13.51% is 26th of 117 and <code>roce_5y</code> 13.33% is 36th of 117 — the same answer over two windows, so the return is real but it is not a cluster-beating one. <code>op_margin_3y</code> 11.17% is 37th of 116 and <code>cfo_pat_3y</code> 2.107 is 19th of 91, which says the profit converts to cash. Against that, <code>roe_avg_above_threshold_10y</code> 0.000: zero of the last ten years cleared the ROE hurdle, tied 78th of 118, a 41-way tie spanning positions 78 to 118. <code>np_consistency_10y</code> 1.573 is 40th of 117. <code>debt_equity</code> 0.410 is 61st of 104.",
+  "<b>The price is the problem, and it is a problem against its own history rather than against the cluster.</b> <code>pe_ttm</code> 33.44x is 30th of 88 and <code>pb</code> 3.425x is 18th of 111 — expensive, but not extravagantly so beside the peers. The own nine-year band runs 5.32-23.34x with an average of 13.49x, so the multiple is above every PE this company has traded on in nine years and roughly two and a half times its own mean. <code>ev_ebitda_ttm</code> 11.31x is 34th of 94 and <code>ev_sales_ttm</code> 1.566x is 41st of 111, so the enterprise measures are calmer than the equity ones — the gap is the balance sheet. <code>fcf_yield</code> 4.14% is 58th of 117 and the 0.85% dividend is 19th of 47.",
+  "<b>Momentum is institutional and trend-led, with the short-term stack flat.</b> The close held above its 200-day EMA on 81.35% of the last 252 sessions, third of 101 — only two veterans here spent more of the year above trend. <code>ret_12m_rel</code> +64.23% is tenth of 103 and <code>ret_6m_rel</code> +36.20% is 13th of 108, but <code>ret_3m_rel</code> +5.26% is 44th of 109 and <code>ema_stack_bull</code> 0.0 puts it in an 88-way tie spanning positions 22 to 109, so the recent leg has stalled. The register explains the move: foreign institutions hold 15.88%, second of 92, domestic institutions 22.78%, third of 82, and <code>shareholders</code> 181,024 is fifth of 118. " + TNS,
+  "<i>A genuine turnaround that the price has already collected. Operating margin stepped up — <code>opm_now</code> 10.88% against <code>opm_prev</code> 10.34% — and TTM operating profit grew 21.3% against sales 15.2%, so the mix is improving. But net profit grew only 12.7%, the ten-year ROE record is blank, and the multiple sits above a nine-year band it has never visited. Quality 65 is honest; 33.44x is not the price for it.</i>",
+ ],
+ "trigger": "roce_3y moving through 16% with opm_now holding above 11% -> the Advanced Materials mix is finally repricing the whole business and a 33x multiple has a reason. pe_ttm above 33x while ttm_np_pct decelerates under 10% -> a decade-high price on a slowing bottom line, and the fii_pct 15.88% position is the exit that makes it move fast.",
+ "evidence": ["roce_3y", "roce_5y", "op_margin_3y", "cfo_pat_3y", "roe_avg_above_threshold_10y", "np_consistency_10y", "debt_equity", "pe_ttm", "pb", "ev_ebitda_ttm", "ev_sales_ttm", "fcf_yield", "div_yield", "pct_above_200ema_252d", "ret_12m_rel", "ret_6m_rel", "ret_3m_rel", "ema_stack_bull", "fii_pct", "dii_pct", "shareholders", "promoter_pct", "opm_now", "opm_prev", "ttm_sales_pct", "ttm_op_pct", "ttm_np_pct"],
+},
+
+"FILATEX": {
+ "confidence": "medium",
+ "verdict": "WATCH — ten-year profit growth above inflation, tied first of 118 veterans, and quality 75, fifth of 118, against a 24.63x multiple above an own ten-year band topping out at 23.48x",
+ "points": [
+  "<b>Not held — FILATEX is on your watchlist.</b> Filatex India, ₹4,365cr and 12th of 118 by market cap here — polyester filament yarn (POY, FDY, DTY), PET chips, polypropylene yarn and narrow woven fabrics, with a textile-to-textile chemical recycling arm in Ecosis, out of Dahej and Dadra & Nagar Haveli; <code>promoter_pct</code> is 65.47%, 57th of 118. " + VET + "Quality 75, valuation 32, momentum 72, composite 85.",
+  "<b>The ten-year growth record is the best thing on this row and it is a record, not a year.</b> <code>np_growth_above_inflation_10y</code> 0.889 is tied first of 118, a two-way tie spanning positions 1 to 2 — eight of the last nine years beat inflation on profit, and one other veteran matches it. <code>np_growth_above_inflation_7y</code> 0.833 is tied third of 118, a seven-way tie spanning positions 3 to 9, so the result survives shortening the window. <code>roce_5y</code> 18.30% is 17th of 117 and <code>roce_3y</code> 14.81% is 21st of 117 — the five-year number is the higher one, which means the recent return is softer than the decade's. <code>np_consistency_10y</code> 1.644 is 29th of 117.",
+  "<b>The balance sheet is close to debt-free and the working capital is negative, which is the quiet half of quality 75.</b> <code>debt_equity</code> 0.100 is 88th of 104 by size — all but sixteen veterans here carry more. <code>wc_days</code> -24.80 is 105th of 118 and <code>inv_days</code> 37.32 is 102nd of 118: the business is funded by its own suppliers and holds barely five weeks of stock. What it does not have is margin — <code>op_margin_3y</code> 7.19% is 59th of 116 and <code>opm_now</code> 7.60% against <code>opm_prev</code> 6.10% is a commodity yarn spread that moves with polyester, not a franchise. <code>cfo_pat_3y</code> 1.732 is 34th of 91.",
+  "<b>Momentum is the strongest configuration in the batch and the price has gone with it.</b> <code>ema_stack_bull</code> 1.0 is tied first of 109, a 21-way tie spanning positions 1 to 21 — the full short-term stack is aligned. <code>ret_6m_rel</code> +146.75% is first of 108, <code>ret_3m_rel</code> +49.35% is fifth of 109 and <code>ret_12m_rel</code> +71.22% is eighth of 103. The close was above its 200-day EMA on only 45.24% of the last 252 sessions, 31st of 101, so this is a recent re-rating rather than a year above trend. <code>pe_ttm</code> 24.63x is 39th of 88 and the own ten-year band runs 1.19-23.48x with an average of 8.07x, so the multiple has just cleared a decade high on a business whose operating margin is 7.60%. " + TNS,
+  "<i>The ten-year record earns the quality pillar; the last six months took the valuation away. TTM sales grew 0.2% while operating profit grew 25.0% and net profit 34.4% — all of the gain is spread, not volume, and polyester spreads mean-revert. Paying three times the ten-year average PE for a commodity spread at the good end of its cycle is the specific risk here. <code>shareholders</code> 96,555 is 14th of 118 and falling through nine quarters while the price tripled, which is distribution into the move.</i>",
+ ],
+ "trigger": "ttm_sales_pct turning positive into double digits with opm_now holding 7.6% -> volume joins the spread and the 24.63x has an earnings base that grows into it. opm_now falling back toward the 6.10% prior level -> the spread normalises, and at 24.63x against an 8.07x ten-year average there is no valuation support underneath.",
+ "evidence": ["np_growth_above_inflation_10y", "np_growth_above_inflation_7y", "roce_5y", "roce_3y", "np_consistency_10y", "debt_equity", "wc_days", "inv_days", "op_margin_3y", "opm_now", "opm_prev", "cfo_pat_3y", "ema_stack_bull", "ret_6m_rel", "ret_3m_rel", "ret_12m_rel", "pct_above_200ema_252d", "pe_ttm", "pb", "ev_ebitda_ttm", "shareholders", "promoter_pct", "ttm_sales_pct", "ttm_op_pct", "ttm_np_pct"],
+},
+
+"ICIL": {
+ "confidence": "medium",
+ "verdict": "HOLD — valuation 21, 107th of 116 veterans, at 53.65x against an own ten-year band topping out at 39.02x, on a TTM where operating profit fell 15.7% and net profit 28.6%",
+ "points": [
+  "<b>Held — ICIL is in your portfolio.</b> Indo Count Industries, ₹8,095cr and eighth of 118 by market cap in this bucket — bed linen, sheets, fashion and institutional bedding, utility bedding and bath textiles, sold into the United States, the UK, Europe, Australia and Japan out of Mumbai; <code>promoter_pct</code> is 58.74%, 72nd of 118. " + VET + "Quality 64, valuation 21, momentum 77, composite 58.",
+  "<b>The ten-year record is the reason to hold it and it is the better half of this row.</b> <code>roe_avg_above_threshold_10y</code> 0.500 is tied eighth of 118, a four-way tie spanning positions 8 to 11 — half of the last ten years cleared the ROE hurdle, and on the five-year window <code>roe_avg_above_threshold_5y</code> 0.600 is tied ninth of 118, a five-way tie spanning positions 9 to 13. <code>np_consistency_10y</code> 1.675 is 24th of 117. <code>roce_5y</code> 14.34% is 28th of 117 and <code>roce_3y</code> 12.54% is 30th of 117, <code>op_margin_3y</code> 12.76% is 31st of 116 — a consistent, unspectacular exporter.",
+  "<b>The TTM broke, and it broke on margin rather than on demand.</b> <code>ttm_sales_pct</code> +5.3% is 48th of 110, while <code>ttm_op_pct</code> -15.7% is 75th of 93 and <code>ttm_np_pct</code> -28.6% is 68th of 93. <code>opm_now</code> 9.67% against <code>opm_prev</code> 12.07% is the whole gap: a 240 basis-point compression on a business selling into US retail, which is freight, cotton and tariff, not orders. Cash held up — <code>cfo_pat_3y</code> 1.669 is 36th of 91 and operating cash was 1.452 times operating profit in FY2026 against a prior-years mean of 0.641 — so working capital released as volumes softened. <code>inv_days</code> 110.25 is 44th of 118 and <code>debt_equity</code> 0.570 is 49th of 104.",
+  "<b>The multiple has not acknowledged any of it.</b> <code>pe_ttm</code> 53.65x is 13th of 88 and the own ten-year band runs 6.37-39.02x with an average of 15.94x — the price is above a decade high on earnings that just fell 28.6%, which is how a derating happens without new information. <code>ev_ebitda_ttm</code> 15.96x is 21st of 94, <code>pb</code> 3.437x is 17th of 111, <code>ev_sales_ttm</code> 2.122x is 29th of 111. <code>fcf_yield</code> 1.31% is 74th of 117 and the 0.37% dividend is 39th of 47. Momentum has stayed strong regardless: the close held above its 200-day EMA on 64.29% of the last 252 sessions, 12th of 101, <code>ret_6m_rel</code> +61.40% is seventh of 108 and <code>ret_12m_rel</code> +55.46% is 12th of 103, though <code>ema_stack_bull</code> 0.0 puts it in an 88-way tie spanning positions 22 to 109. Foreign institutions hold 10.14%, seventh of 92. " + TNS,
+  "<i>You own a good exporter at a price that assumes the margin comes back. Valuation 21 and momentum 77 on the same row is the uncomfortable part: the price is behaving as though the 240 basis points of compression were a quarter, and the earnings base says otherwise. Nothing here argues for selling a franchise that clears its ROE hurdle in half the years it reports — it argues against adding at 53.65x.</i>",
+ ],
+ "trigger": "opm_now recovering through 11% with ttm_np_pct back to positive -> the compression was cyclical and 53.65x is a forward multiple rather than a trailing one. opm_now under 9% for another two quarters while pe_ttm holds above the 39.02x band high -> a decade-high price on a second year of falling profit, which is the configuration that resets to the 15.94x average.",
+ "evidence": ["roe_avg_above_threshold_10y", "roe_avg_above_threshold_5y", "np_consistency_10y", "roce_5y", "roce_3y", "op_margin_3y", "ttm_sales_pct", "ttm_op_pct", "ttm_np_pct", "opm_now", "opm_prev", "cfo_pat_3y", "inv_days", "debt_equity", "pe_ttm", "ev_ebitda_ttm", "pb", "ev_sales_ttm", "fcf_yield", "div_yield", "pct_above_200ema_252d", "ret_6m_rel", "ret_12m_rel", "ema_stack_bull", "fii_pct", "promoter_pct"],
+},
+
+"INDORAMA": {
+ "confidence": "low",
+ "verdict": "WATCH — momentum 79, fourth of 117 veterans, on a 10.59x multiple, but TTM net profit outran operating profit by 24 points below EBIT and cash conversion fell to 0.43 from a prior-years mean of 0.74",
+ "points": [
+  "<b>Not held — INDORAMA is on your watchlist.</b> Indo Rama Synthetics, ₹2,233cr and 23rd of 118 by market cap here — polyester staple fibre, POY, DTY, FDY and chips, plus a power line, run out of Gurugram with group operations across Indonesia, Thailand, the United States, Nepal and Sri Lanka; <code>promoter_pct</code> is 74.84%, 14th of 118. " + VET + "Quality 51, valuation 47, momentum 79, composite 78.",
+  "<b>The earnings the 10.59x is quoted on are not operating earnings.</b> <code>ttm_np_pct</code> +48.4% is 21st of 93 while <code>ttm_op_pct</code> +20.1% is 34th of 93 — a 24-point gap, and the difference sits below EBIT: other income, a one-off, tax or interest, not trading. At the same time <code>ttm_sales_pct</code> -4.7% is 87th of 110. Profit rising 48% on sales falling 5% is arithmetic, not a business improving. The second flag is cash: operating cash fell to 0.43 times operating profit in FY2026 against a prior-years mean of 0.74, a deterioration rather than a level, which points at receivables and inventory.",
+  "<b>The balance sheet is the real constraint and the margin has no cushion.</b> <code>debt_equity</code> 2.196 is eighth of 104 by size — seven veterans here carry more leverage and 96 carry less. <code>op_margin_3y</code> 3.20% is 86th of 116: a three-year operating margin near 3% means a 100 basis-point move in polyester spread is the difference between profit and loss. <code>np_consistency_10y</code> 0.600 is 104th of 117, the record of a business that does not compound. <code>roce_3y</code> 7.75% is 61st of 117 against <code>roce_5y</code> 11.03% is 46th of 117. <code>wc_days</code> -50.17 is 108th of 118 and <code>inv_days</code> 49.57 is 95th of 118, so the supplier float is doing the financing the equity cannot.",
+  "<b>Momentum is near the strongest in the cohort, and the valuation anchor does not exist.</b> <code>ema_stack_bull</code> 1.0 is tied first of 109, a 21-way tie spanning positions 1 to 21; <code>ret_6m_rel</code> +135.13% is second of 108, <code>ret_3m_rel</code> +99.57% is third of 109 and <code>ret_12m_rel</code> +37.81% is 14th of 103. The close was above its 200-day EMA on 48.41% of the last 252 sessions, tied 27th of 101, a two-way tie spanning positions 27 to 28 — a three-month move, not a year. <code>pe_ttm</code> 10.59x is 71st of 88, which reads cheap, but <code>pb</code> 4.300x is 11th of 111: the market is paying over four times book for a 3% margin. The own four-year band runs 5.23-635.62x averaging 164.03x, which is a loss-year artefact and not a band — there is no own-history multiple to judge this against. " + TNS,
+  "<i>The cheapest-looking multiple in the batch sits on the least trustworthy earnings base in it. Two earnings-quality flags, a 3.20% three-year operating margin, 2.196 debt-to-equity and ten-year profit consistency 104th of 117 — momentum 79 is the only pillar arguing for this, and momentum is the one that reverses without notice. Confidence is low because the PE is uninterpretable and the band gives no help.</i>",
+ ],
+ "trigger": "ttm_sales_pct turning positive with op_margin_3y rebuilding through 5% and cash conversion recovering toward 0.74 -> the polyester cycle turns and the leverage works in your favour. ttm_op_pct going negative while debt_equity stays above 2.0 -> a 3% margin business with twice its equity in debt, and nothing in the own-history band to say what it is worth.",
+ "evidence": ["ttm_np_pct", "ttm_op_pct", "ttm_sales_pct", "debt_equity", "op_margin_3y", "np_consistency_10y", "roce_3y", "roce_5y", "wc_days", "inv_days", "ema_stack_bull", "ret_6m_rel", "ret_3m_rel", "ret_12m_rel", "pct_above_200ema_252d", "pe_ttm", "pb", "ev_ebitda_ttm", "cfo_pat_3y", "promoter_pct"],
+},
+
+"NITINSPIN": {
+ "confidence": "medium",
+ "verdict": "WATCH — composite 89, 14th of 115 veterans, with an operating margin of 15.08% rising and 16.58x earnings above an own ten-year band topping out at 13.89x",
+ "points": [
+  "<b>Not held — NITINSPIN is on your watchlist.</b> Nitin Spinners, ₹3,513cr and 15th of 118 by market cap here — ring-spun, open-end, compact, slub and core-spun cotton and blended yarns, knitted fabrics and finished woven fabrics from Bhilwara and Chittorgarh, shipping to customers in more than 55 countries; <code>promoter_pct</code> is 56.71%, 78th of 118. " + VET + "Quality 61, valuation 49, momentum 78, composite 89.",
+  "<b>The margin is the case, and it is rising from an already strong level.</b> <code>opm_now</code> 15.08% is 16th of 111 and <code>opm_prev</code> 14.07% is 21st of 113 — a spinner holding 15% operating margin is not what this cluster normally looks like, and it improved year on year. <code>op_margin_3y</code> 13.80% is 23rd of 116, so the current level is not a single good year. <code>roce_5y</code> 16.43% is 23rd of 117 against <code>roce_3y</code> 11.88% is 33rd of 117 — the recent return is below the five-year, which is the capex cycle showing up. <code>cfo_pat_3y</code> 1.769 is 32nd of 91 and operating cash was 0.907 times operating profit in FY2026 against a prior-years mean of 0.600.",
+  "<b>What the composite does not price is that the growth is all margin and the leverage is real.</b> <code>ttm_sales_pct</code> was flat at -0.0%, 71st of 110, while <code>ttm_op_pct</code> +7.2% is 47th of 93 and <code>ttm_np_pct</code> +21.5% is 36th of 93 — no volume in it at all. <code>debt_equity</code> 0.765 is 29th of 104, so this is a capital-intensive expansion funded with debt into a year with no top-line growth. <code>np_consistency_10y</code> 1.590 is 37th of 117 and <code>roe_avg_above_threshold_10y</code> 0.300 is tied 17th of 118, a 16-way tie spanning positions 17 to 32: three of the last ten years cleared the ROE hurdle. <code>wc_days</code> 81.93 is 55th of 118 and <code>inv_days</code> 69.13 is 81st of 118.",
+  "<b>Momentum has already repriced it past its own decade.</b> <code>ret_12m_rel</code> +105.25% is fifth of 103, the close held above its 200-day EMA on 70.63% of the last 252 sessions, eighth of 101, <code>ema_stack_bull</code> 1.0 is tied first of 109, a 21-way tie spanning positions 1 to 21, and <code>ret_6m_rel</code> +49.38% is 11th of 108. Against that <code>pe_ttm</code> 16.58x is 50th of 88 — mid-pack beside the peers — but the own ten-year band runs 3.90-13.89x with an average of 8.78x, so the multiple is above a decade high and near twice its own mean. <code>pb</code> 2.388x is 31st of 111, <code>ev_ebitda_ttm</code> 7.17x is 61st of 94 and <code>fcf_yield</code> 6.08% is 49th of 117, so the enterprise view is far calmer than the equity one. Domestic institutions hold 14.68%, ninth of 82. " + TNS,
+  "<i>The best-run spinner on this list, bought at a price its own history has never carried. Composite 89 is earned — 15.08% margin, rising, with cash conversion to match. The risk is that flat sales plus 0.765 debt-to-equity plus a multiple at twice its decade average leaves the entire return depending on the margin holding, and cotton spreads are not a moat. Mid-pack on the cohort PE, expensive against itself.</i>",
+ ],
+ "trigger": "ttm_sales_pct turning positive into high single digits with opm_now holding 15% -> the capex produces volume and a 16.58x multiple is justified by growth rather than by spread. opm_now slipping under 14% while sales stay flat -> the margin was the cycle, and at twice its own ten-year average PE there is a long way down to 8.78x.",
+ "evidence": ["opm_now", "opm_prev", "op_margin_3y", "roce_5y", "roce_3y", "cfo_pat_3y", "ttm_sales_pct", "ttm_op_pct", "ttm_np_pct", "debt_equity", "np_consistency_10y", "roe_avg_above_threshold_10y", "wc_days", "inv_days", "ret_12m_rel", "pct_above_200ema_252d", "ema_stack_bull", "ret_6m_rel", "pe_ttm", "pb", "ev_ebitda_ttm", "fcf_yield", "dii_pct", "promoter_pct"],
+},
+
+"PGIL": {
+ "confidence": "medium",
+ "verdict": "WATCH — five-year profit growth above inflation, tied first of 118 veterans, and quality 69, tied 11th of 118, against 7.63x book, sixth of 111, and a quarter down 28.4% relative",
+ "points": [
+  "<b>Not held — PGIL is on your watchlist.</b> Pearl Global Industries, ₹11,143cr and sixth of 118 by market cap in this bucket — end-to-end apparel manufacturing and supply-chain services for fashion brands, with plants in India, Bangladesh, Vietnam, Indonesia and Guatemala and design offices in Hong Kong, Spain, the UK, the US and the UAE; <code>promoter_pct</code> is 59.91%, 70th of 118. " + VET + "Quality 69, valuation 25, momentum 53, composite 43.",
+  "<b>The growth record is the strongest thing on this row across every window that exists.</b> <code>np_growth_above_inflation_5y</code> 1.000 is tied first of 118, a three-way tie spanning positions 1 to 3 — every one of the last five years beat inflation on profit. <code>np_growth_above_inflation_7y</code> 0.833 is tied third of 118, a seven-way tie spanning positions 3 to 9, and <code>np_growth_above_inflation_10y</code> 0.667 is tied seventh of 118, a 14-way tie spanning positions 7 to 20: the result holds as the window lengthens, which is what separates a record from a run. <code>roce_3y</code> 19.56% is 12th of 117 against <code>roce_5y</code> 18.13% is 18th of 117 — the recent return is the higher one. <code>rev_cagr_5y</code> 16.65% is 12th of 115 and <code>roe_avg_above_threshold_5y</code> 0.800 is tied sixth of 118, a three-way tie spanning positions 6 to 8.",
+  "<b>What you pay for it is the entire argument against it.</b> <code>pb</code> 7.633x is sixth of 111 and <code>ev_ebitda_ttm</code> 18.82x is 14th of 94 — two independent measures both inside the most expensive fifteen names of a 111-name and a 94-name reading. <code>pe_ttm</code> 35.90x is 25th of 88, and the own ten-year band runs 1.44-12.19x with an average of 4.87x: the multiple is roughly three times the highest PE this company has carried in a decade and seven times its own mean. <code>ev_sales_ttm</code> 2.129x is 28th of 111 for a contract manufacturer, which is an asset-light valuation on an asset-heavy business. <code>fcf_yield</code> 1.58% is 72nd of 117 and <code>cfo_pat_3y</code> 1.386 is 44th of 91.",
+  "<b>The price has already started to go, and the float is thin enough to make it fast.</b> <code>ret_3m_rel</code> -28.36% is 107th of 109 and <code>ret_6m_rel</code> -12.48% is 87th of 108, while <code>ret_12m_rel</code> +3.72% is 35th of 103 — the de-rating is three to six months old, not a year. <code>ema_stack_bull</code> 0.0 puts it in an 88-way tie spanning positions 22 to 109, yet the close still held above its 200-day EMA on 83.73% of the last 252 sessions, second of 101: the long trend has not broken, the short one has. Operations are fine — <code>ttm_sales_pct</code> +13.7% is 31st of 110, <code>ttm_op_pct</code> +23.4% is 29th of 93, <code>ttm_np_pct</code> +23.7% is 34th of 93, and <code>opm_now</code> 9.68% against <code>opm_prev</code> 8.92% is a margin that improved. Domestic institutions hold 20.12%, fourth of 82, foreign institutions 6.76%, 12th of 92, and <code>public_pct</code> 13.19% is 113th of 118 — there is almost no retail float to absorb an institutional exit. " + TNS,
+  "<i>A growth record tied first in the cluster on the five-year window, at a price three times its own ten-year ceiling, already falling. Nothing in the operating numbers is broken: margin up, sales up 13.7%, profit up 23.7%, returns near the better tenth of the cohort. The quarter down 28.4% relative is the market repricing the multiple rather than the business — which is exactly the situation where waiting costs nothing and catching it early costs a lot. Momentum 53 with quality 69 is the shape of a good company mid-derating.</i>",
+ ],
+ "trigger": "ret_3m_rel stabilising with pe_ttm back toward the 12.19x band high -> the multiple resets to something its own history supports and the growth record is worth buying. ttm_op_pct decelerating under 10% while pb stays above 7x -> a contract manufacturer priced like a brand, with 13.19% public float and no cushion underneath.",
+ "evidence": ["np_growth_above_inflation_5y", "np_growth_above_inflation_7y", "np_growth_above_inflation_10y", "roce_3y", "roce_5y", "rev_cagr_5y", "roe_avg_above_threshold_5y", "pb", "ev_ebitda_ttm", "pe_ttm", "ev_sales_ttm", "fcf_yield", "cfo_pat_3y", "ret_3m_rel", "ret_6m_rel", "ret_12m_rel", "ema_stack_bull", "pct_above_200ema_252d", "ttm_sales_pct", "ttm_op_pct", "ttm_np_pct", "opm_now", "opm_prev", "dii_pct", "fii_pct", "promoter_pct"],
+},
+
+"RUBYMILLS": {
+ "confidence": "low",
+ "verdict": "WATCH — ten-year profit consistency of 1.807, first of 117 veterans, on zero of the last ten years clearing the ROE hurdle and an operating margin that stepped seven points in one year",
+ "points": [
+  "<b>Not held — RUBYMILLS is on your watchlist.</b> The Ruby Mills, ₹1,676cr and 26th of 118 by market cap here — textile manufacturing from the Dhamni and Kharsundi plants in Raigad, with a registered office in Mumbai and a property estate on the old mill land that the platform's data does not separate from the textile line; <code>promoter_pct</code> is 74.91%, 12th of 118. " + VET + "Quality 58, valuation 24, momentum 77, composite 51.",
+  "<b>The consistency is real and it is consistency around a low return, which is not the same as quality.</b> <code>np_consistency_10y</code> 1.807 is first of 117 — no veteran in this bucket has produced a steadier decade of profit. But <code>roce_3y</code> 6.66% is 71st of 117 and <code>roce_5y</code> 6.34% is 81st of 117, and <code>roe_avg_above_threshold_10y</code> 0.000 is tied 78th of 118, a 41-way tie spanning positions 78 to 118: zero of the last ten years cleared the ROE hurdle. Steady at 6% is still 6%. <code>cfo_pat_3y</code> 0.855 is 69th of 91 and <code>fcf_yield</code> -13.52% is 106th of 117, so free cash flow is negative — the capital is going out, not coming back.",
+  "<b>The current earnings base is a step, and the pack flagged it.</b> <code>opm_now</code> 23.65% is sixth of 111 against <code>opm_prev</code> 16.30% is 17th of 113 — the operating margin stepped 7.3 points in a single year. A move that size is a mix change, a disposal or a one-off rather than an operating trend, and the platform holds no <code>op_margin_3y</code> for this company at all, so there is no three-year level to test it against. The TTM confirms the suspicion: <code>ttm_sales_pct</code> +42.2% is seventh of 110 and <code>ttm_op_pct</code> +106.3% is seventh of 93 — while <code>ttm_np_pct</code> -5.2% is 58th of 93. Operating profit doubled while the bottom line went backwards, which means the step did not reach the shareholder.",
+  "<b>Momentum has priced the step as permanent.</b> <code>ret_12m_rel</code> +134.20% is third of 103 and <code>ret_6m_rel</code> +128.74% is third of 108; <code>ema_stack_bull</code> 1.0 is tied first of 109, a 21-way tie spanning positions 1 to 21, and the close held above its 200-day EMA on 63.10% of the last 252 sessions, 13th of 101. <code>pe_ttm</code> 38.79x is 23rd of 88 while the own ten-year band runs 3.79-15.53x with an average of 10.37x — nearly four times its own mean. <code>ev_sales_ttm</code> 5.355x is 11th of 111 and <code>ev_ebitda_ttm</code> 17.80x is 16th of 94, both on a business with a 6% three-year return on capital. <code>shareholders</code> 10,544 is 81st of 118: a register this small moves on very little volume, in either direction. " + TNS,
+  "<i>A 7.3-point margin step nobody can explain from this data, repriced as though it were an operating improvement, on a company that has not cleared its ROE hurdle once in ten years. Confidence is low and the reason is specific: with <code>op_margin_3y</code> absent and net profit falling while operating profit doubled, the earnings this 38.79x is quoted on cannot be tested here. The property estate may well be the real asset — but that is a thesis the platform's data does not hold, and buying it at four times the ten-year average PE on a flagged margin is not the way to express it.</i>",
+ ],
+ "trigger": "opm_now holding above 20% for a second year with ttm_np_pct turning positive -> the step was structural and the 23.65% margin is the business. net profit staying negative year on year while pe_ttm holds above the 15.53x band high -> a one-off priced as a trend, and a 10,544-name register with no institutional floor underneath.",
+ "evidence": ["np_consistency_10y", "roce_3y", "roce_5y", "roe_avg_above_threshold_10y", "cfo_pat_3y", "fcf_yield", "opm_now", "opm_prev", "ttm_sales_pct", "ttm_op_pct", "ttm_np_pct", "ret_12m_rel", "ret_6m_rel", "ema_stack_bull", "pct_above_200ema_252d", "pe_ttm", "ev_sales_ttm", "ev_ebitda_ttm", "pb", "shareholders", "promoter_pct", "debt_equity"],
+},
+
+"SANGAMIND": {
+ "confidence": "low",
+ "verdict": "WATCH — the close above its 200-day EMA on 90.48% of sessions, first of 101 veterans, but TTM net profit outran operating profit by 294 points below EBIT, so the 24.33x multiple is not a multiple on operations",
+ "points": [
+  "<b>Not held — SANGAMIND is on your watchlist.</b> Sangam India, ₹2,956cr and 16th of 118 by market cap here — an integrated textile business spanning PV yarn, cotton yarn, denim fabric, processed woven fabric and a small garment line, from six plants in Rajasthan into more than 52 countries; <code>promoter_pct</code> is 70.52%, 33rd of 118. " + VET + "Quality 57, valuation 35, momentum 75, composite 66.",
+  "<b>Start with what the earnings are, because every multiple on this row depends on it.</b> <code>ttm_np_pct</code> +518.27% is first of 93 while <code>ttm_op_pct</code> +56.83% is 15th of 93 — a 294-point gap, and the difference sits below EBIT: other income, a one-off, tax or interest, not trading. <code>ttm_sales_pct</code> +11.9% is 34th of 110. So <code>pe_ttm</code> 24.33x is 40th of 88 on a denominator that operations did not produce, and the own ten-year band runs 7.42-76.84x with an average of 30.85x — a band that wide on a cyclical yarn business tells you the earnings line swings, not what the company is worth. <code>np_yoy_q</code> 18.258 is fourth of 118, which is the same one-off seen quarterly.",
+  "<b>Underneath the accounting, the operating improvement is real but small and the leverage is not.</b> <code>opm_now</code> 11.15% is 34th of 111 against <code>opm_prev</code> 7.95% is 58th of 113 — a genuine 320 basis-point margin gain, and <code>cfo_pat_3y</code> 3.000 is tied first of 91, an eight-way tie spanning positions 1 to 8, which is the metric's ceiling shared with seven others rather than a distinction. Against that <code>debt_equity</code> 1.188 is 17th of 104 — only sixteen veterans that report it carry more — and <code>roce_3y</code> 7.40% is 65th of 117 against <code>roce_5y</code> 10.44% is 53rd of 117, so the return on capital is falling as the debt builds.",
+  "<b>The long-run record is the part the momentum pillar cannot see.</b> <code>np_growth_above_inflation_10y</code> 0.222 is tied 110th of 118, a nine-way tie spanning positions 110 to 118: two of the last nine years beat inflation on profit. <code>roe_avg_above_threshold_10y</code> 0.100 is tied 52nd of 118, a 26-way tie spanning positions 52 to 77, and <code>np_consistency_10y</code> 1.539 is 47th of 117. Momentum says the opposite: the close held above its 200-day EMA on 90.48% of the last 252 sessions, first of 101 — no veteran here spent more of the year above trend — <code>ema_stack_bull</code> 1.0 is tied first of 109, a 21-way tie spanning positions 1 to 21, and <code>ret_12m_rel</code> +38.34% is 13th of 103. But <code>ret_3m_rel</code> +3.21% is 49th of 109, so the leg has flattened. <code>shareholders</code> 9,684 is 88th of 118. " + TNS,
+  "<i>A year above trend on earnings that came from below the operating line. The margin gain is real and the debt is real; what is not real is the 518% profit growth, and that number is what the 24.33x and the momentum pillar are both resting on. Two of the last nine years beat inflation on profit — that is the record, and one accounting year does not change it. Confidence is low because the earnings base cannot be tested from this data.</i>",
+ ],
+ "trigger": "opm_now holding above 11% with ttm_op_pct staying positive into the next two quarters -> the operating gain outlasts the one-off and 24.33x is a fair multiple on a recovering spinner. debt_equity rising past 1.3 while roce_3y stays under 8% -> capital going in at a return below its cost, with the reported profit flattering what is underneath it.",
+ "evidence": ["ttm_np_pct", "ttm_op_pct", "ttm_sales_pct", "pe_ttm", "np_yoy_q", "opm_now", "opm_prev", "cfo_pat_3y", "debt_equity", "roce_3y", "roce_5y", "np_growth_above_inflation_10y", "roe_avg_above_threshold_10y", "np_consistency_10y", "pct_above_200ema_252d", "ema_stack_bull", "ret_12m_rel", "ret_3m_rel", "shareholders", "promoter_pct"],
+},
+
+"WELSPUNLIV": {
+ "confidence": "medium",
+ "verdict": "WATCH — momentum 83, first of 117 veterans, on a TTM where net profit halved, at 72.16x against an own ten-year band topping out at 50.82x",
+ "points": [
+  "<b>Not held — WELSPUNLIV is on your watchlist.</b> Welspun Living, ₹20,034cr and third of 118 by market cap in this bucket — towels, rugs and bed sheets made at Anjar in Gujarat and sold largely into United States retail; <code>promoter_pct</code> is 66.36%, 51st of 118, and <code>shareholders</code> 223,860 is third of 118, so this is a widely held name. " + VET + "Quality 64, valuation 17, momentum 83, composite 57.",
+  "<b>The TTM is the whole story and it is bad.</b> <code>ttm_sales_pct</code> -3.3% is 85th of 110, <code>ttm_op_pct</code> -25.0% is 79th of 93 and <code>ttm_np_pct</code> -48.70% is 76th of 93. <code>opm_now</code> 8.90% against <code>opm_prev</code> 11.48% is a 258 basis-point compression — for a US-facing home-textiles exporter that is tariff, freight and retailer destocking rather than lost share. Cash is the one thing that held: operating cash was 1.48 times operating profit in FY2026 against a prior-years mean of 0.589, and <code>cfo_pat_3y</code> 1.620 is 38th of 91. A working-capital release during a downturn is normal and it is not earnings.",
+  "<b>The underlying record is respectable, which is why this is a watch and not a pass.</b> <code>np_consistency_10y</code> 1.709 is 17th of 117 and <code>np_growth_above_inflation_10y</code> 0.556 is tied 21st of 118, a 38-way tie spanning positions 21 to 58. <code>roe_avg_above_threshold_7y</code> 0.429 is tied 11th of 118, an 11-way tie spanning positions 11 to 21. <code>roce_3y</code> 12.03% is 31st of 117 and <code>op_margin_3y</code> 11.64% is 35th of 116, with <code>debt_equity</code> 0.471 at 57th of 104 — mid-pack leverage, not a stressed balance sheet. The weak number is growth: <code>rev_cagr_5y</code> 0.23% is 61st of 115, so revenue has gone nowhere in five years.",
+  "<b>The price has moved the opposite way to the earnings, which is the entire problem.</b> <code>pe_ttm</code> 72.16x is eighth of 88 and the own ten-year band runs 4.28-50.82x with an average of 22.50x — a decade high plus 42%, on profit that just halved. <code>pb</code> 4.074x is 14th of 111, <code>ev_ebitda_ttm</code> 17.37x is 17th of 94 and <code>ev_sales_ttm</code> 2.235x is 24th of 111. The 0.05% dividend is 47th of 47 and <code>fcf_yield</code> 2.71% is 64th of 117. Momentum has been relentless regardless: <code>ret_6m_rel</code> +67.72% is fifth of 108, <code>ret_3m_rel</code> +37.83% is seventh of 109, <code>ret_12m_rel</code> +70.57% is ninth of 103, <code>ema_stack_bull</code> 1.0 is tied first of 109, a 21-way tie spanning positions 1 to 21, and the close held above its 200-day EMA on 71.43% of the last 252 sessions, seventh of 101. Domestic institutions hold 11.38%, tenth of 82. " + TNS,
+  "<i>Momentum 83 and valuation 17 on the same row, with net profit down 48.70% — the market is paying 72.16x for a recovery it has not seen yet. The business is sound: <code>np_consistency_10y</code> is 17th of 117, mid-pack leverage, cash conversion intact through the downturn. What is not sound is the arithmetic of a decade-high multiple on a halved earnings base and five years of flat revenue. If the margin returns to 11.5% the PE halves on its own; if it does not, there is nothing holding 72x.</i>",
+ ],
+ "trigger": "opm_now rebuilding toward 11.5% with ttm_sales_pct back positive -> the US destocking ends, earnings normalise and 72.16x collapses into something sensible without the price moving. opm_now under 9% for two more quarters while pe_ttm stays above the 50.82x band high -> a decade-high multiple on a second year of falling profit, and 223,860 holders all looking at the same chart.",
+ "evidence": ["ttm_sales_pct", "ttm_op_pct", "ttm_np_pct", "opm_now", "opm_prev", "cfo_pat_3y", "np_consistency_10y", "np_growth_above_inflation_10y", "roe_avg_above_threshold_7y", "roce_3y", "op_margin_3y", "debt_equity", "rev_cagr_5y", "pe_ttm", "pb", "ev_ebitda_ttm", "ev_sales_ttm", "div_yield", "fcf_yield", "ret_6m_rel", "ret_3m_rel", "ret_12m_rel", "ema_stack_bull", "pct_above_200ema_252d", "dii_pct", "shareholders", "promoter_pct"],
+},
+
+# ------------------------------------------------------------------ mid tier
+
+"SBC": {
+ "confidence": "low",
+ "verdict": "WATCH — the most expensive name in its bucket at 37.92x book, first of 37, while three-year cash conversion sits at zero and operating cash has been negative two years running",
+ "points": [
+  "<b>Not held — SBC is on your watchlist.</b> SBC Exports, ₹3,041cr and fourth of 38 by market cap in this bucket — T-shirts, athleisure, loungewear, innerwear and denim alongside handmade wool and silk carpets, an IT support arm selling e-governance services, web and software development and document digitisation, and a travel and tour operation; promoters hold 50.28%. " + MID + MISFILED,
+  "<b>The reported profit is not being collected, and that is not a one-year observation.</b> <code>cfo_pat_3y</code> 0.000 is tied 32nd of 35, a four-way tie spanning positions 32 to 35 — over three years, none of the reported profit reached operating cash. In FY2026 operating cash flow was negative at -2.132 times operating profit, against a prior-years mean of -1.104: negative in the latest year and negative on average before it. <code>fcf_yield</code> -1.96% is 13th of 32. <code>wc_days</code> 102.44 is 20th of 38 and <code>inv_days</code> 96.61 is 18th of 38, so the cash is sitting in receivables and stock. For a business whose growth is coming from government IT contracts, receivables that do not convert is the specific risk, not a generic one.",
+  "<b>The price is extreme on every measure the platform holds.</b> <code>pb</code> 37.92x is first of 37 and <code>ev_ebitda_ttm</code> 68.52x is first of 20 — no name in this bucket is dearer on either. <code>pe_ttm</code> 79.49x is fourth of 19 and <code>ev_sales_ttm</code> 6.116x is second of 24. The own five-year band runs 14.99-56.93x with an average of 37.49x, so the multiple is 40% above its own five-year ceiling and more than double its own mean. And it is levered: <code>debt_equity</code> 2.832 is second of 37. Thirty-eight times book on a balance sheet carrying nearly three times its equity in debt, with no cash coming in, is the part of this row that does not survive a bad quarter.",
+  "<b>The growth and the price action are both genuine, and neither is a textile result.</b> <code>ttm_sales_pct</code> +63.3% is second of 18, <code>ttm_op_pct</code> +106.6% is second of 17 and <code>ttm_np_pct</code> +105.9% is second of 17; <code>rev_cagr_3y</code> 37.60% is eighth of 37 and <code>roce_3y</code> 16.21% is 12th of 37. <code>opm_now</code> 8.59% is eighth of 18 against <code>opm_prev</code> 6.79% at 13th of 18, so the margin improved as it scaled. The price followed: <code>ret_12m_rel</code> +177.29% is first of 20, <code>ret_6m_rel</code> +98.79% is first of 24, <code>ret_3m_rel</code> +59.14% is third of 27, <code>ema_stack_bull</code> 1.0 is tied first of 27, a nine-way tie spanning positions 1 to 9, and the close held above its 200-day EMA on every one of the last 252 sessions, first of 16. <code>shareholders</code> 121,469 is fourth of 21 and <code>public_pct</code> 46.86% is fifth of 21 — a large retail register in a name with a 50.28% promoter holding. " + TNS,
+  "<i>The uncomfortable part is not the price, it is that the price has no cash underneath it. Three years of zero cash conversion, operating cash negative in both the latest year and the prior average, 37.92x book, 2.832 debt-to-equity — and a 177% twelve-month relative return. Confidence is low for two reasons: the cluster is wrong, so the pillar percentiles are not statements about this company and none is quoted above; and the growth is coming from an e-governance IT business whose contract pipeline this platform holds no data on. Everything above is SBC's own absolute arithmetic, which the misfiling does not touch. Treat the 46.86% public float as the risk, not the opportunity.</i>",
+ ],
+ "trigger": "cfo_pat_3y lifting off zero with operating cash turning positive for a full year -> the receivables convert, and the growth is worth a premium multiple of some size. ttm_sales_pct decelerating under 20% while debt_equity stays near 2.8 -> a 37.92x book multiple with no cash and three times equity in debt, and a 46.86% retail float with nothing institutional to catch it.",
+ "evidence": ["cfo_pat_3y", "fcf_yield", "wc_days", "inv_days", "pb", "ev_ebitda_ttm", "pe_ttm", "ev_sales_ttm", "debt_equity", "ttm_sales_pct", "ttm_op_pct", "ttm_np_pct", "rev_cagr_3y", "roce_3y", "opm_now", "opm_prev", "ret_12m_rel", "ret_6m_rel", "ret_3m_rel", "ema_stack_bull", "pct_above_200ema_252d", "shareholders", "promoter_pct"],
+},
+
+# --------------------------------------------------------------- mature tier
+
+"DOLLAR": {
+ "confidence": "medium",
+ "verdict": "HOLD — composite 80, fourth of 15 mature peers, at 1.54x book, eighth of 15, and 13.02x against an own nine-year band averaging 23.36x",
+ "points": [
+  "<b>Held — DOLLAR is in your portfolio.</b> Dollar Industries, ₹1,460cr and second of 15 by market cap in this bucket — a backward-integrated hosiery and all-wear apparel business: men's 81%, women's 14% and kids' 5% of FY2025-26 revenue, sold mostly in North India at 47% and East India at 24%, with exports at 3%; promoters hold 72.58%. " + MAT + THIN + "Quality 61, valuation 72, momentum 37, composite 80.",
+  "<b>The operating record is steady and the return is ordinary.</b> <code>np_consistency_5y</code> 1.762 is third of 15 — a five-year profit line with little scatter in it. <code>op_margin_3y</code> 10.48% is fourth of 15 and <code>opm_now</code> 10.84% against <code>opm_prev</code> 10.70% says the margin is flat rather than improving. <code>roce_5y</code> 14.40% is sixth of 15 and <code>roce_3y</code> 13.02% is eighth of 15, so the recent return is below the five-year — ordinary, not deteriorating. <code>debt_equity</code> 0.307 is tenth of 15 by size, so five peers here carry more.",
+  "<b>What this business consumes is working capital, and that is the thing to watch.</b> <code>wc_days</code> 161.08 is sixth of 15 and <code>inv_days</code> 98.32 is seventh of 15 — more than five months of working capital and over three months of stock, which is what a multi-brand hosiery distribution network costs. <code>cfo_pat_3y</code> 0.701 is eighth of 14: under three-quarters of reported profit reached operating cash over three years. FY2026 was better than the run rate — operating cash was 0.691 times operating profit against a prior-years mean of 0.424 — but the direction of travel over three years is the number that matters, and it is below one.",
+  "<b>The price is undemanding and the chart is the reason you are being paid to wait.</b> <code>pb</code> 1.539x is eighth of 15 and the earnings multiple is 13.02x, while the own nine-year band runs 10.84-37.54x with an average of 23.36x — the stock is near its own nine-year low on PE and a little over half its decade mean. The 1.17% dividend is being paid and <code>fcf_yield</code> 2.24% is sixth of 15. The chart is the other side: the close held above its 200-day EMA on 0.79% of the last 252 sessions — effectively the entire year below trend — <code>ret_12m_rel</code> -19.76% is 11th of 14, <code>ret_6m_rel</code> -11.39% is 12th of 15, and <code>ema_stack_bull</code> 0.0 puts it in a 12-way tie spanning positions 4 to 15. <code>ret_3m_rel</code> +11.04% is seventh of 15, so the very recent leg has turned. " + TNS,
+  "<i>A fairly priced, dull, cash-hungry business that the market has spent a year ignoring. Composite 80 is the honest read: nothing is broken, the margin is flat at 10.84%, TTM sales grew 6.2% and profit 15.5%, and the multiple is near a nine-year low. The reason to hold rather than add is <code>cfo_pat_3y</code> 0.701 and <code>wc_days</code> 161.08 — growth in this model is funded by inventory, so every incremental rupee of sales costs cash before it earns any. A year below trend on an undemanding multiple is not a thesis breaking; it is the market finding nothing to get excited about, which is also true.</i>",
+ ],
+ "trigger": "cfo_pat_3y moving back above 1.0 with wc_days falling under 140 -> the distribution model starts self-funding and a 13.02x multiple on flat margins is cheap. opm_now slipping under 10% while wc_days keeps extending -> working capital absorbing the growth, and a mature bucket this thin gives no peer signal to warn you early.",
+ "evidence": ["np_consistency_5y", "op_margin_3y", "opm_now", "opm_prev", "roce_5y", "roce_3y", "debt_equity", "wc_days", "inv_days", "cfo_pat_3y", "pb", "pe_ttm", "div_yield", "fcf_yield", "pct_above_200ema_252d", "ret_12m_rel", "ret_6m_rel", "ret_3m_rel", "ema_stack_bull", "ttm_sales_pct", "ttm_np_pct", "promoter_pct"],
+},
+}
+
+
+# --------------------------------------------------------------------- guards
+
+# The cohort sentence each bucket is required to carry, and the adjective its
+# stated count must be written against.
+TIER_SENTENCE = {"veteran": VET, "mid": MID, "mature": MAT}
+
+# Spelled band widths, for guard 9. The prose says "own nine-year band"; the
+# pack says n=9. A band quoted with the wrong width is a claim about how much
+# history exists, and on INDORAMA the width is the entire reason the band is
+# unusable.
+_YEAR_WORD = {"four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
+              "nine": 9, "ten": 10}
+
+# Guard 11: anything that reads as a pillar score. SBC may quote none.
+PILLAR_RX = re.compile(r"\b(quality|valuation|momentum|composite)\s+"
+                       r"(?:of\s+)?\d+", re.I)
+
+# Guard 12: every "<something> of N" denominator in DOLLAR's prose. The floor
+# is 14 because its mature cohort is 15 and the metrics most of that cohort
+# actually reports are read by 14 or 15 of them; everything else is read by 3
+# to 8, and a rank out of 6 is not a rank.
+#
+# It matches a RANK, not every "of N": the first draft was `\w+\s+of\s+(\d+)`
+# and it fired twice on correct prose — on "a rank out of 6 is not a rank",
+# which is THIN explaining the very problem, and on "a prior-years mean of
+# 0.424", where `\d+` took the leading zero of a decimal. So the left side
+# must be an ordinal and the right side must not be a decimal's integer part.
+_ORDINAL = (r"first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|"
+            r"tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|"
+            r"\d+(?:st|nd|rd|th)")
+# The lookahead is `(?!\.\d)` and not `(?!\.)` for a reason the mutation
+# harness found: `(?!\.)` also rejects a rank at the END of a sentence, so
+# "is first of 6." sailed straight through the guard that exists to catch it.
+DENOM_RX = re.compile(rf"\b(?:{_ORDINAL})\s+of\s+(?:the\s+)?(\d+)(?!\.\d)\b")
+DOLLAR_DENOM_FLOOR = 14
+
+
+def guards(spec: dict, pack: dict) -> list[str]:
+    """Checks that can fail. Each one has a wrong input it would reject.
+
+    Pass 1 (`verdict-check.py`) traces numeric tokens to the pack; pass 2
+    (`verdict-ranks-check.py`) asserts every rank and denominator. These guards
+    cover the third category — structural claims neither pass can see, like
+    whether the cohort sentence agrees with the cohort, whether a flagged row
+    names the right defect, or whether a row scored in the wrong bucket has
+    stopped quoting percentiles.
+    """
+    errs: list[str] = []
+    for sym, v in spec.items():
+        p = pack[sym]
+        pts = v["points"]
+        p0 = pts[0]
+        pr = p["peer_ranks"]
+        tier = pr["cohort"]["tier"]
+        n = pr["cohort"]["n"]
+        allprose = pts + [v["trigger"], v["verdict"]]
+
+        # 1. Shape.
+        if len(pts) != 5:
+            errs.append(f"{sym}: {len(pts)} points, expected 5")
+        if not pts[-1].startswith("<i>"):
+            errs.append(f"{sym}: last point is not the italic summary")
+
+        # 2. The cohort sentence must match the bucket the scorer actually
+        #    used, in BOTH the tier and the count. This cluster spans three
+        #    buckets, so a copied VET block on a mature row would quote 118
+        #    against a 15-name cohort — the defect the checker found in the
+        #    published capital-markets prose.
+        want = TIER_SENTENCE.get(tier)
+        if want is None:
+            errs.append(f"{sym}: tier={tier} has no cohort sentence")
+        elif want not in p0:
+            errs.append(f"{sym}: tier={tier} but point one does not carry the "
+                        f"{tier} cohort sentence")
+        stated = re.search(r"against (\d+) (?:veteran|mid|mature)-tier peers",
+                           p0)
+        if not stated:
+            errs.append(f"{sym}: point one states no cohort size")
+        elif int(stated.group(1)) != n:
+            errs.append(f"{sym}: point one says {stated.group(1)} peers, "
+                        f"peer_ranks says {n}")
+
+        # 3. Every row in this cluster is `full`. If the scorer's bucketing
+        #    changes this stops building rather than shipping a stale claim.
+        st = p["scores"]["score_status"]
+        if st != "full":
+            errs.append(f"{sym}: score_status={st}, but the cohort sentence "
+                        f"asserts `full` with no mixed-tier caveat")
+
+        # 4. Held vs watchlist, measured not recalled.
+        held = sym in HELD
+        says_held = p0.startswith("<b>Held —")
+        if held != says_held:
+            errs.append(f"{sym}: in HELD={held} but point one says "
+                        f"{'held' if says_held else 'not held'}")
+
+        # 5. Dead metrics may not be argued from. tech_net_score_scaled is
+        #    exempted only inside the TNS sentence, which exists to say it is
+        #    missing.
+        for pt in pts:
+            for d in DEAD:
+                if d in pt:
+                    errs.append(f"{sym}: prose names dead metric '{d}'")
+            if "tech_net_score_scaled" in pt and TNS not in pt:
+                errs.append(f"{sym}: names tech_net_score_scaled outside TNS")
+        for d in DEAD + ("tech_net_score_scaled",):
+            if d in v["trigger"] or d in v["verdict"]:
+                errs.append(f"{sym}: verdict/trigger names dead '{d}'")
+
+        # 6. delivery_data holds a handful of distinct sessions, so a delivery
+        #    percentage is one day's print. No row may quote one.
+        for pt in allprose:
+            if re.search(r"deliver", pt, re.I):
+                errs.append(f"{sym}: quotes delivery off "
+                            f"{(p.get('delivery') or {}).get('sessions')} "
+                            f"sessions — a single-day print")
+
+        # 7. np_consistency is an index 0-2, never a pass rate.
+        for pt in pts:
+            if re.search(r"np_consistency\w*</code>\s*[\d.]+\s*(?:of|in)\s",
+                         pt):
+                errs.append(f"{sym}: np_consistency written as a pass rate")
+
+        # 8. Every evidence key must resolve in the live cluster_metrics or
+        #    verdict-load.py rejects the whole row. Catching it here names the
+        #    symbol and the key; the loader only names the key. The NULL test
+        #    is the second half: RUBYMILLS has no `op_margin_3y` at all, and
+        #    an evidence key whose value is None renders as an empty chip.
+        live = (p.get("metrics") or {}).get("cluster_metrics") or {}
+        for k in v["evidence"]:
+            if k not in live:
+                errs.append(f"{sym}: evidence key '{k}' not in cluster_metrics")
+            elif live[k] is None:
+                errs.append(f"{sym}: evidence key '{k}' is NULL in the pack")
+
+        # 9. Any own-history PE band quoted in prose must match the pack in
+        #    every number it states — width, low, high, average. A band is
+        #    four numbers transcribed by hand, which is how the oil batch
+        #    shipped a wrong one, and the width is itself a claim about how
+        #    much usable history exists. Three forms, because the headline is
+        #    plain text and has to say it in fewer words.
+        band = p.get("pe_band") or {}
+
+        def _width(yr: str, where: str) -> None:
+            if _YEAR_WORD.get(yr.lower()) != band.get("n"):
+                errs.append(f"{sym}: says {yr}-year band in {where}, pack "
+                            f"n={band.get('n')}")
+
+        for pt in allprose:
+            for yr, lo, hi, avg in re.findall(
+                    r"own (\w+)-year band (?:runs|of) ([\d.]+)-([\d.]+)x"
+                    r"(?: with an average of | averaging )([\d.]+)x", pt):
+                if not band:
+                    errs.append(f"{sym}: quotes a PE band; pack has none")
+                    continue
+                _width(yr, "the full form")
+                if (abs(float(lo) - band["lo"]) > 0.005
+                        or abs(float(hi) - band["hi"]) > 0.005):
+                    errs.append(f"{sym}: band {lo}-{hi} vs pack "
+                                f"{band['lo']}-{band['hi']}")
+                if abs(float(avg) - band["avg"]) > 0.005:
+                    errs.append(f"{sym}: band average {avg} vs pack "
+                                f"{band['avg']}")
+            # Headline shorthands. The verdict field is plain text, so these
+            # are the only form a band can take there. Both check the WIDTH as
+            # well as the number — the fmcg version checked only the number,
+            # which would have passed "own four-year band topping out at
+            # 23.34x" on a nine-year band.
+            for yr, hi in re.findall(
+                    r"own (\w+)-year band topping out at ([\d.]+)x", pt):
+                if not band:
+                    errs.append(f"{sym}: quotes a band high; pack has none")
+                    continue
+                _width(yr, "the topping-out form")
+                if abs(float(hi) - band["hi"]) > 0.005:
+                    errs.append(f"{sym}: band high {hi} vs pack {band['hi']}")
+            for yr, avg in re.findall(
+                    r"own (\w+)-year band averaging ([\d.]+)x", pt):
+                if not band:
+                    errs.append(f"{sym}: quotes a band average; pack has none")
+                    continue
+                _width(yr, "the averaging form")
+                if abs(float(avg) - band["avg"]) > 0.005:
+                    errs.append(f"{sym}: band average {avg} vs pack "
+                                f"{band['avg']}")
+
+        # 10. A row the pack flagged for an earnings-quality gap must name the
+        #     defect the pack actually flagged — not a generic caveat. The
+        #     second half is what keeps this from going stale: if a rerun
+        #     clears the flag, the build fails rather than shipping a caveat
+        #     about a problem that no longer exists.
+        flags = ((p.get("earnings_quality") or {}).get("flags") or [])
+        if sym in EQ_FLAGGED:
+            if not flags:
+                errs.append(f"{sym}: in EQ_FLAGGED but the pack now carries "
+                            f"no earnings-quality flag")
+            phrase = EQ_FLAGGED[sym]
+            if not any(phrase in pt for pt in pts):
+                errs.append(f"{sym}: flagged by the pack but no point says "
+                            f"'{phrase}'")
+        elif flags:
+            errs.append(f"{sym}: pack carries {len(flags)} earnings-quality "
+                        f"flag(s) but the symbol is not in EQ_FLAGGED")
+
+        # 11. SBC is scored against a cluster it does not belong to
+        #     (CHOICE 2) — garments plus e-governance IT plus travel, peered
+        #     against spinners and weavers — so its pillar percentiles are not
+        #     statements about the company. The row must carry the explanation
+        #     and quote no pillar figure anywhere.
+        if sym == "SBC":
+            if MISFILED not in p0:
+                errs.append(f"{sym}: point one does not carry MISFILED")
+            for pt in allprose:
+                m = PILLAR_RX.search(pt)
+                if m:
+                    errs.append(f"{sym}: quotes a pillar figure "
+                                f"'{m.group(0)}' against a cluster it does "
+                                f"not belong to")
+
+        # 12. DOLLAR's cohort is 15 but most of its metrics are read by 3 to 8
+        #     peers (CHOICE 3). Every denominator it states must be a real one.
+        if sym == "DOLLAR":
+            if THIN not in p0:
+                errs.append(f"{sym}: point one does not carry THIN")
+            for pt in allprose:
+                for d in DENOM_RX.findall(re.sub(r"</?[a-z]+>", "", pt)):
+                    if int(d) < DOLLAR_DENOM_FLOOR:
+                        errs.append(f"{sym}: states a denominator of {d}, "
+                                    f"under the {DOLLAR_DENOM_FLOOR}-reading "
+                                    f"floor this row is held to")
+
+    return errs
+
+
+def main() -> None:
+    pack_raw = json.load(open(PACK))
+    pack = {d["symbol"]: d for d in pack_raw["symbols"]}
+
+    missing = set(SPEC) - set(pack)
+    if missing:
+        raise SystemExit(f"pack is missing {sorted(missing)} — rebuild {PACK}")
+    if set(SPEC) != EMIT:
+        raise SystemExit(f"SPEC/EMIT disagree: {set(SPEC) ^ EMIT}")
+
+    errs = guards(SPEC, pack)
+    if errs:
+        print(f"GUARD FAILED ({len(errs)}):")
+        for e in errs:
+            print("  " + e)
+        raise SystemExit(1)
+
+    out = []
+    for sym, v in SPEC.items():
+        out.append({
+            "symbol": sym,
+            "verdict": v["verdict"],
+            "confidence": v["confidence"],
+            "points": v["points"],
+            "trigger_text": v["trigger"],
+            "evidence": {k: pack[sym]["metrics"]["cluster_metrics"][k]
+                         for k in v["evidence"]},
+            "snapshot_date": SNAPSHOT,
+            "price_asof": PRICE_ASOF,
+            "model": MODEL,
+            "source_report": SOURCE_REPORT,
+            # Read by scripts/verdict-ranks-check.py; verdict-load.py ignores
+            # top-level keys it does not require, so the waivers travel with
+            # the batch rather than in a second file that could drift from it.
+            "rank_waivers": v.get("rank_waivers", []),
+            **({"prior": v["prior"]} if "prior" in v else {}),
+        })
+
+    with open(OUT, "w") as f:
+        json.dump(out, f, indent=1, ensure_ascii=False)
+    print(f"guards passed -> {OUT} ({len(out)} verdicts)")
+    for o in out:
+        print(f"  {o['symbol']:<12}{o['verdict'][:84]}")
+
+
+if __name__ == "__main__":
+    main()
