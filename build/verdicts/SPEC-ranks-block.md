@@ -120,10 +120,19 @@ Field rules, each one load-bearing:
   ~40 tickers per metric into the pack and the pack stops being readable,
   which is the only reason it earns its tokens. Five is enough to write
   "behind CRISIL at ₹33,243cr" — which is what the fixed CHOICEIN line needed.
-- **`pctile`** — `100 * (of - rank_high) / (of - 1)` rounded to 1dp, omitted
-  when `of == 1`. Convenience only; the prose should prefer "#2 of 37", which
-  is falsifiable by eye. Never print a percentile when `of < 10` — it implies
-  a resolution the cohort does not have.
+- **`pctile_desc`** — `100 * (of - rank_high) / (of - 1)` rounded to 1dp.
+  Convenience only; the prose should prefer "#2 of 37", which is falsifiable
+  by eye. Never print a percentile when `of < 10` — it implies a resolution
+  the cohort does not have.
+  **The name carries the warning.** It is a position in a plain descending
+  sort, so on a lower-is-better metric it reads inverted: OCCLLTD's `pe_ttm`
+  11.11x is the cheapest of 19 readings and `pctile_desc` is 0.0. Called
+  `pctile` it would reach prose as "bottom of the cluster on valuation",
+  which is the opposite of true.
+- **`pctile_good`** — the same number read in the direction the registry says
+  is good, emitted **only** where `higher_is_better` is known. Absent on
+  shareholding dims on purpose: a high `promoter_pct` is neither good nor bad,
+  and giving it a direction would be the error this pair exists to prevent.
 - **Float comparison:** round to the metric's stored precision **before**
   sorting and before the tie test. Two values differing in the 15th decimal
   are a tie to any reader, and an un-rounded `==` manufactures a false

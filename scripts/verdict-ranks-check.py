@@ -181,7 +181,27 @@ WORD_DIMS = [
     # Every batch writes this one in words — "the close held above its 200-day
     # EMA on 63.10% of the last 252 sessions, second of 28".
     (re.compile(r"200-day EMA|200ema", re.I), "pct_above_200ema_252d"),
+    # "the 3.96% dividend, third of 79" — written in words in every batch so
+    # far, and the cheap-on-dividend-yield line is one of the few claims that
+    # routinely appears with no key beside it.
+    (re.compile(r"\bdividend(?: yield)?\b", re.I), "div_yield"),
 ]
+
+
+# <code> is used for things that are not metrics: the cluster id, the
+# score_status badge, a column name. The attributor takes the NEAREST code tag,
+# so a cohort sentence ending "...the row is badged <code>full</code>" made the
+# next rank claim in that block attribute to `full` — eight FAILs in the
+# chemicals batch reading "ranks <code>full</code>, which carries no rank",
+# every one of them a correctly-written claim.
+#
+# The skip is an ALLOWLIST, not "skip anything the pack does not rank". A
+# mistyped key must still fail loudly — that is most of this script's value —
+# so only names known not to be metrics are passed over. Cluster ids are added
+# at load from the pack itself, because they are indistinguishable from metric
+# keys by shape (both are lowercase_with_underscores).
+NOT_A_METRIC = {"full", "partial-cluster-mixed-tiers", "partial-no-peers",
+                "cluster_metrics", "score_status", "maturity_tier"}
 
 
 def strip_tags(s: str) -> str:
@@ -210,32 +230,48 @@ def sentence_of(plain: str, quote: str) -> str:
 def attribute(text: str, at: int) -> Optional[str]:
     """Which metric is the claim at offset `at` about?
 
-    The nearest <code>key</code> or worded dimension BEFORE the claim, within
-    200 characters. Prose puts the subject first ("`pe_ttm` 71.00 is #2 of
-    28"), so backwards is the right direction; 200 is about one clause.
+    The nearest subject BEFORE the claim, within 200 characters, whether it is
+    written as <code>key</code> or in words. Prose puts the subject first
+    ("`pe_ttm` 71.00 is #2 of 28"), so backwards is the right direction; 200 is
+    about one clause.
+
+    NEAREST, not "tag first then fall back to words". Tag-first was wrong the
+    moment a point chained two claims with different subjects, which is most of
+    them: "`fcf_yield` +0.28% is 68th of 103. The close held above its 200-day
+    EMA on 73.41% of 252 sessions, eighth of 87" attributed the EMA rank to
+    `fcf_yield` and failed a correct sentence on the denominator. Four of the
+    twelve chemicals rows failed that way, all on the same construction.
+
+    The cost is that a worded dimension is a common noun — "quality", "valuation"
+    — so one standing in a clause it does not own can hijack a claim. That
+    direction is safe: it manufactures a loud FAIL on good prose, never a silent
+    pass on bad.
     """
     window = text[max(0, at - 200):at]
-    codes = _CODE.findall(window)
-    if codes:
-        key = codes[-1]
-        # Prose abbreviates a sibling horizon: "`np_growth_above_inflation_5y`
-        # 1.000 and `_7y` 1.000 … and `_10y` 0.889". Resolve the stub against
-        # the last full key seen anywhere earlier in this point, otherwise
-        # every abbreviated claim reads as a metric that does not exist.
-        if key.startswith("_"):
-            earlier = [c for c in _CODE.findall(text[:at]) if not c.startswith("_")]
-            for full in reversed(earlier):
-                base = re.sub(r"_\d+y$", "", full)
-                if base != full:
-                    return base + key
-            return key
-        return key
     best: Optional[tuple[int, str]] = None
+    for m in _CODE.finditer(window):
+        if m.group(1) in NOT_A_METRIC:
+            continue
+        if best is None or m.start() > best[0]:
+            best = (m.start(), m.group(1))
     for rx, key in WORD_DIMS:
         for m in rx.finditer(window):
             if best is None or m.start() > best[0]:
                 best = (m.start(), key)
-    return best[1] if best else None
+    if best is None:
+        return None
+    key = best[1]
+    # Prose abbreviates a sibling horizon: "`np_growth_above_inflation_5y`
+    # 1.000 and `_7y` 1.000 … and `_10y` 0.889". Resolve the stub against
+    # the last full key seen anywhere earlier in this point, otherwise
+    # every abbreviated claim reads as a metric that does not exist.
+    if key.startswith("_"):
+        earlier = [c for c in _CODE.findall(text[:at]) if not c.startswith("_")]
+        for full in reversed(earlier):
+            base = re.sub(r"_\d+y$", "", full)
+            if base != full:
+                return base + key
+    return key
 
 
 def lookup(pr: dict, key: str) -> Optional[dict]:
@@ -451,6 +487,14 @@ def main() -> int:
         batch = batch.get("verdicts", [])
     pack = json.loads(Path(args.pack).read_text())
     packs = {s["symbol"]: s for s in pack["symbols"]}
+
+    # Cluster ids look exactly like metric keys, so they cannot be filtered by
+    # shape; take them from the pack. Prose names the cluster in <code> in
+    # nearly every cohort sentence.
+    NOT_A_METRIC.update(
+        cid for s in packs.values()
+        if (cid := ((s.get("peer_ranks") or {}).get("cohort") or {}).get("cluster_id"))
+    )
 
     for v in batch:
         sym = v["symbol"]

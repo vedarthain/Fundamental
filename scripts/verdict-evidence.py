@@ -605,10 +605,32 @@ def _rank_one(symbol: str, values: dict[str, float]) -> Optional[dict]:
     }
     # A percentile below ten readings implies precision the cohort lacks; the
     # prose should say "#2 of 7" there, which is falsifiable by eye.
+    #
+    # NAMED `pctile_desc` BECAUSE IT IS NOT A SCORE. It is the position in a
+    # plain descending sort, so for a lower-is-better metric it reads inverted:
+    # OCCLLTD's pe_ttm 11.11x is the CHEAPEST of 19 and scores 0.0 here. Called
+    # `pctile`, that number goes into prose as "bottom of the cluster on
+    # valuation" and means the opposite. `pctile_good` is the direction-adjusted
+    # one and exists only where the registry states a direction — quote that, or
+    # quote the rank, never this.
     if of >= 10:
-        out["pctile"] = round(100.0 * (of - rank_high) / (of - 1), 1)
+        out["pctile_desc"] = round(100.0 * (of - rank_high) / (of - 1), 1)
     assert behind_or_eq >= 1  # `me` is in `values`, so this cannot be 0.
     return out
+
+
+def _good_pctile(got: dict) -> None:
+    """Add `pctile_good` — the percentile read in the direction that is GOOD.
+
+    Called only after `higher_is_better` has been set, because without a
+    direction there is no such thing. Shareholding dims never get one: a high
+    `promoter_pct` is neither good nor bad, and inventing a direction for it
+    would be the same error this function exists to prevent.
+    """
+    if "pctile_desc" not in got:
+        return
+    p = got["pctile_desc"]
+    got["pctile_good"] = p if got.get("higher_is_better", True) else round(100.0 - p, 1)
 
 
 def peer_ranks(cluster_id: Optional[str], tier: Optional[str], symbol: str,
@@ -699,6 +721,7 @@ def peer_ranks(cluster_id: Optional[str], tier: Optional[str], symbol: str,
         fn = _formulas.REGISTRY.get(key)
         if fn is not None:
             got["higher_is_better"] = bool(getattr(fn, "higher_is_better", True))
+            _good_pctile(got)
         out["metrics"][key] = got
 
     for dim in _SCORE_DIMS:
@@ -714,6 +737,7 @@ def peer_ranks(cluster_id: Optional[str], tier: Optional[str], symbol: str,
         got = _rank_one(symbol, vals)
         if got is not None:
             got["higher_is_better"] = True
+            _good_pctile(got)
             out["scores"][dim] = got
 
     for dim in _SH_DIMS:
