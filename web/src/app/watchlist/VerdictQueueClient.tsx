@@ -24,16 +24,34 @@
  * week and is worth reading. The writing batches sit on the same line so a
  * quiet stretch is visibly a quiet stretch rather than missing data.
  *
- * WHY "BY CALL" CARRIES THE DRIFT MARKER TOO
+ * WHY ONE ROW OF CHIPS AND NOT TWO AXES
+ *
+ * This tab used to open on a "By status" / "By call" toggle. It was two
+ * controls over one set of rows, and it did not survive being explained: the
+ * call groups and the status buckets are the SAME 146 live verdicts cut two
+ * ways, plus two populations only the status cut could show (160 tracked
+ * symbols never written about, 133 dormant verdicts). The two totals therefore
+ * disagreed by design — 439 against 146 — and the reader had to choose an axis
+ * before seeing any count at all.
+ *
+ * So the toggle is gone and the chips are concatenated: the calls, a thin
+ * rule, then "Needs revisiting", "Never written" and "Dormant". Nothing was
+ * dropped. What this deliberately refuses is the obvious simplification —
+ * keeping ONLY the calls. A list of what was written, with no row for the 160
+ * never written, is CLAUDE.md §5 as a feature: a monument to the work that
+ * happened, silent about the work that is owed. The owed buckets stay on the
+ * row precisely because they are the ones that generate an action.
+ *
+ * WHY EVERY GROUP CARRIES THE DRIFT MARKER
  *
  * A list grouped under a BUY heading is the single easiest place in this whole
  * feature to misread a stale call as a current one — the heading asserts a
  * position and the row says nothing about whether the argument behind it still
  * holds. That is precisely the failure the drift machinery exists to catch, so
- * the by-call view is the same rows with the same "what moved" column, and
- * drifted rows sort to the top of their own group rather than sitting in
- * symbol order among the ones that still stand. Without that it would be a
- * view that quietly argues with the rest of the tab.
+ * a call group is the same rows and the same "what moved" column as a status
+ * bucket, and drifted rows sort to the top of their own group rather than
+ * sitting in symbol order among the ones that still stand. One EntryRow serves
+ * both, so neither can drift from the other.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -67,8 +85,6 @@ const BUCKET_META: Record<QueueBucket, { label: string; color: string; blurb: st
       "A verdict exists but the symbol is no longer tracked. The row is kept as history and dropped from the queue — this is the eviction the old coverage ledger never had.",
   },
 };
-
-const ORDER: QueueBucket[] = ["due", "missing", "current", "dormant"];
 
 function shortDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
@@ -129,8 +145,20 @@ export function VerdictQueueClient() {
     { kind: "loading" } | { kind: "ok"; q: VerdictQueue } | { kind: "error"; msg: string }
   >({ kind: "loading" });
   const [open, setOpen] = useState<string | null>(null);
-  const [show, setShow] = useState<QueueBucket>("due");
-  const [axis, setAxis] = useState<"status" | "call">("status");
+  // ONE selection, not an axis plus a bucket. The tab used to have a "By
+  // status" / "By call" toggle, which was two controls over one set of rows:
+  // the call groups and the status buckets are the same 146 live verdicts cut
+  // two ways, plus two populations (never-written, dormant) that only one cut
+  // could show. A reader had to pick an axis before they could see a count,
+  // and the two totals disagreed by design — 439 against 146 — with nothing on
+  // screen explaining why. Collapsing to a single row of chips removes the
+  // choice without removing a row: the calls are chips, and "Needs revisiting",
+  // "Never written" and "Dormant" are three more chips beside them.
+  //
+  // `sel` is a call name (from CALL_ORDER or anything a report invents) OR a
+  // QueueBucket. They cannot collide: buckets are lowercase, calls are
+  // upper-cased by callOf().
+  const [sel, setSel] = useState<string>("due");
 
   useEffect(() => {
     let live = true;
@@ -177,7 +205,8 @@ export function VerdictQueueClient() {
    * listing it under "BUY" would be this tab asserting a position on something
    * that is not being tracked — the same stale-row-presented-as-current
    * failure the dormant bucket was added to prevent. They remain reachable
-   * under Dormant on the status axis.
+   * under the Dormant chip, which is beside the calls rather than behind a
+   * toggle, so nothing here is unreachable.
    */
   const byCall = useMemo(() => {
     const m = new Map<string, QueueEntry[]>();
@@ -215,7 +244,59 @@ export function VerdictQueueClient() {
   }
 
   const { counts, trackedCount, timeline } = state.q;
-  const rows = grouped.get(show) ?? [];
+
+  // THE ACTION CHIPS, in one row and one order: what you have said, then what
+  // you owe. Calls first because they are the reason to open the tab; the two
+  // work buckets last because they are where the tab sends you next. Dormant
+  // sits at the end, muted — it is history, not work, and dropping it would
+  // make 133 verdicts unreachable from this page.
+  const callChips = byCall.map((g) => ({
+    key: g.call,
+    label: g.call,
+    count: g.rows.length,
+    color: BUCKET_COLOR[verdictBucket(g.call)],
+    rows: g.rows,
+  }));
+  const workChips = (["due", "missing", "dormant"] as QueueBucket[]).map((b) => ({
+    key: b,
+    label: BUCKET_META[b].label,
+    count: counts[b],
+    color: BUCKET_META[b].color,
+    rows: (grouped.get(b) ?? []).slice().sort(byUrgency),
+  }));
+  const chips = [...callChips, ...workChips];
+
+  // Re-resolve the selection against the live chip list every render. A call
+  // group empties out the moment the last verdict under it is rewritten, and a
+  // stale `sel` would leave a blank panel with a chip still highlighted.
+  const active = chips.find((c) => c.key === sel) ?? chips[0];
+  const rows = active?.rows ?? [];
+  const isMissing = active?.key === "missing";
+  // The whole book, counted once: every live verdict plus everything owed.
+  const liveVerdicts = counts.due + counts.current;
+
+  // THIS MONTH'S PROGRESS, against the tracked universe and nothing else.
+  //
+  // Counted from the entries on screen rather than with a COUNT(*) over
+  // app.stock_verdict, because the obvious query overstates the work in two
+  // ways at once and both are invisible in the total: on 2026-10-22 the table
+  // held 283 rows written this month, but 4 of those were rewrites of a symbol
+  // already covered and 133 were about symbols no longer tracked. "283 done"
+  // would have been a number that only ever goes up — the celebratory count
+  // this tab exists not to produce. 146 of 306 is the one that decides whether
+  // the month is finished.
+  //
+  // Only tracked buckets are summed; `dormant` is deliberately absent.
+  const monthStart = new Date();
+  monthStart.setDate(1);
+  monthStart.setHours(0, 0, 0, 0);
+  const writtenThisMonth = state.q.entries.filter(
+    (e) =>
+      e.bucket !== "dormant" &&
+      e.generated_at != null &&
+      new Date(e.generated_at) >= monthStart,
+  ).length;
+  const monthLabel = monthStart.toLocaleDateString("en-IN", { month: "long" });
   // What is owed: tracked symbols with no verdict, plus verdicts that have
   // drifted or aged out. Deliberately excludes `dormant` — those are verdicts
   // about symbols no longer tracked, so no work is owed on them.
@@ -227,17 +308,19 @@ export function VerdictQueueClient() {
         className="rounded-lg border px-4 py-3 text-[12.5px] leading-relaxed max-w-[860px]"
         style={{ borderColor: "var(--color-border-default)", background: "var(--color-paper)" }}
       >
-        {/* PENDING, FIRST AND IN COLOUR, ON BOTH AXES. The tab's whole premise
-            (see the file header) is that it reports what is owed, but the
-            outstanding figure was only legible by adding two bucket chips
-            together after choosing the status axis — so on the by-call axis it
-            was not on screen at all. Pending is missing + due, which is the one
-            number that decides whether this month's batch is finished. It is
-            rendered here, above the axis toggle, so it survives whichever axis
-            is selected. */}
+        {/* PENDING, FIRST AND IN COLOUR. The tab's whole premise (see the file
+            header) is that it reports what is owed, but the outstanding figure
+            was only ever legible by adding two chips together. Pending is
+            missing + due — the one number that decides whether this month's
+            batch is finished — so it is stated here, above the chips, where it
+            is true regardless of which chip is selected. */}
         <span className="font-semibold ink-text">Private.</span>{" "}
         <span className="muted-text">
           {trackedCount} symbols tracked across the watchlist and portfolio.{" "}
+          <b className="ink-text tabular-nums">
+            {writtenThisMonth} of {trackedCount}
+          </b>{" "}
+          written this {monthLabel}.{" "}
         </span>
         {pending > 0 ? (
           <span className="font-semibold" style={{ color: "var(--color-delta-down)" }}>
@@ -263,78 +346,54 @@ export function VerdictQueueClient() {
         </span>
       </div>
 
-      {/* Axis toggle. Two ways of cutting the same rows: what is owed, and
-          what has been called. The queue stays the default — this tab is a
-          work list before it is a report, and opening on "By call" would put
-          the celebratory view first, which is how §5's monument gets built. */}
-      <div className="flex gap-1.5 text-[12px]">
-        {(["status", "call"] as const).map((a) => (
-          <button
-            key={a}
-            type="button"
-            onClick={() => setAxis(a)}
-            aria-pressed={axis === a}
-            className="px-2.5 py-1 rounded-md font-medium border transition-colors"
-            style={{
-              borderColor: axis === a ? "var(--color-accent-600)" : "var(--color-border-default)",
-              color: axis === a ? "var(--color-accent-600)" : "var(--color-muted)",
-              background:
-                axis === a
-                  ? "color-mix(in srgb, var(--color-accent-600) 10%, transparent)"
-                  : "transparent",
-            }}
-          >
-            {a === "status" ? "By status" : "By call"}
-          </button>
-        ))}
-      </div>
-
-      {axis === "call" ? (
-        <ByCall groups={byCall} counts={counts} onOpen={setOpen} />
-      ) : (
-      <>
-      {/* Bucket switcher. Counts live on the control so the shape of the
-          backlog is visible without selecting each one in turn. */}
+      {/* One row of chips. Calls, then work. See `sel` above for why there is
+          no longer an axis toggle in front of this. */}
       <div className="flex flex-wrap gap-1.5">
-        {ORDER.map((b) => {
-          const meta = BUCKET_META[b];
-          const active = show === b;
+        {chips.map((c, i) => {
+          const on = active?.key === c.key;
+          const muted = c.key === "dormant";
           return (
-            <button
-              key={b}
-              type="button"
-              onClick={() => setShow(b)}
-              aria-pressed={active}
-              className="px-2.5 py-1 rounded-md text-[12px] font-medium border transition-colors"
-              style={{
-                borderColor: active ? meta.color : "var(--color-border-default)",
-                color: active ? "#fff" : "var(--color-muted)",
-                background: active ? meta.color : "transparent",
-              }}
-            >
-              {meta.label}
-              <span className="ml-1.5 tabular-nums opacity-80">{counts[b]}</span>
-            </button>
+            <span key={c.key} className="contents">
+              {/* A thin rule where the calls end and the work begins, so the
+                  row reads as two things rather than eleven equal buttons. */}
+              {i === callChips.length && (
+                <span
+                  aria-hidden
+                  className="self-stretch w-px mx-1"
+                  style={{ background: "var(--color-border-default)" }}
+                />
+              )}
+              <button
+                type="button"
+                onClick={() => setSel(c.key)}
+                aria-pressed={on}
+                className="px-2.5 py-1 rounded-md text-[12px] font-medium border transition-colors"
+                style={{
+                  borderColor: on ? c.color : "var(--color-border-default)",
+                  color: on ? "#fff" : "var(--color-muted)",
+                  background: on ? c.color : "transparent",
+                  opacity: muted && !on ? 0.65 : 1,
+                }}
+              >
+                {c.label}
+                <span className="ml-1.5 tabular-nums opacity-80">{c.count}</span>
+              </button>
+            </span>
           );
         })}
       </div>
 
-      {/* The total, stated. The two axes count different populations and the
-          difference is the whole point of the status axis: by-status sums all
-          four buckets, so it counts every tracked symbol INCLUDING the ones
-          with no verdict yet, plus dormant rows that are verdicts about
-          symbols no longer tracked. By-call counts only live verdicts on
-          tracked symbols. Without both totals on screen the reader sees two
-          numbers that disagree and has no way to learn why. */}
-      <p className="text-[12px] muted-text max-w-[760px] leading-relaxed -mt-2">
-        <b className="ink-text tabular-nums">
-          {counts.missing + counts.due + counts.current + counts.dormant} rows
-        </b>{" "}
-        on this axis — {trackedCount} tracked symbols ({counts.missing} with no verdict yet) plus{" "}
-        {counts.dormant} dormant verdicts about symbols no longer tracked. The By-call axis counts
-        only the {counts.due + counts.current} live verdicts, which is why its total is smaller.
+      {/* What the row adds up to, and what the selected chip means. Both
+          sentences exist because a chip count on its own is ambiguous: 69 HOLD
+          is a share of something, and the reader cannot see of what. */}
+      <p className="text-[12px] muted-text max-w-[800px] leading-relaxed -mt-2">
+        <b className="ink-text tabular-nums">{liveVerdicts} live verdicts</b> across{" "}
+        {callChips.length} calls, and <b className="ink-text tabular-nums">{counts.missing}</b>{" "}
+        tracked symbols never written about. The {counts.dormant} dormant rows are verdicts on
+        symbols you no longer track — kept as history, not counted as work.
         <br />
-        {BUCKET_META[show].blurb}
+        {BUCKET_META[active?.key as QueueBucket]?.blurb ??
+          "Every verdict making this call. Drifted and stale rows sort to the top — a heading is not evidence, so read the Move and What-moved columns before acting on one."}
       </p>
 
       {rows.length === 0 ? (
@@ -344,7 +403,7 @@ export function VerdictQueueClient() {
           className="rounded-lg border px-4 py-6 text-center text-[13px] muted-text"
           style={{ borderColor: "var(--color-border-default)" }}
         >
-          Nothing in {BUCKET_META[show].label.toLowerCase()}.
+          Nothing in {(active?.label ?? "this group").toLowerCase()}.
         </div>
       ) : (
         <div className="overflow-x-auto">
@@ -361,7 +420,7 @@ export function VerdictQueueClient() {
                 <th className="text-right py-1.5 px-3 font-medium">LTP</th>
                 <th className="text-right py-1.5 px-3 font-medium">Move</th>
                 <th className="text-left py-1.5 pl-3 font-medium">
-                  {show === "missing" ? "Tracked since" : "What moved"}
+                  {isMissing ? "Tracked since" : "What moved"}
                 </th>
               </tr>
             </thead>
@@ -370,15 +429,13 @@ export function VerdictQueueClient() {
                 <EntryRow
                   key={e.symbol}
                   e={e}
-                  lastCol={show === "missing" ? "added" : "moved"}
+                  lastCol={isMissing ? "added" : "moved"}
                   onOpen={setOpen}
                 />
               ))}
             </tbody>
           </table>
         </div>
-      )}
-      </>
       )}
 
       <Timeline weeks={timeline} onOpen={setOpen} />
@@ -507,139 +564,6 @@ function EntryRow({
         )}
       </td>
     </tr>
-  );
-}
-
-/* ------------------------------------------------------------- by call */
-
-function ByCall({
-  groups,
-  counts,
-  onOpen,
-}: {
-  groups: { call: string; rows: QueueEntry[] }[];
-  counts: Record<QueueBucket, number>;
-  onOpen: (s: string) => void;
-}) {
-  // The selected call, as a NAME rather than an index. Indices break the
-  // moment a group empties out — write one more AVOID and index 2 silently
-  // becomes a different call under a tab the reader already had open. The
-  // fallback below re-resolves against the live group list every render, so a
-  // call that disappears lands on the strongest remaining one instead of a
-  // blank panel.
-  //
-  // Declared ABOVE the empty-state return, not next to the code that uses it:
-  // the queue arrives asynchronously, so `groups` really does go 0 -> n on a
-  // normal load. A hook after that early return would be skipped on the first
-  // render and present on the second, which is the "rendered more hooks than
-  // during the previous render" crash, not a style nit.
-  const [sel, setSel] = useState<string | null>(null);
-
-  if (groups.length === 0) {
-    return (
-      <div
-        className="rounded-lg border px-4 py-6 text-center text-[13px] muted-text"
-        style={{ borderColor: "var(--color-border-default)" }}
-      >
-        No verdicts have been written yet, so there are no calls to group.
-      </div>
-    );
-  }
-
-  const drifted = groups.reduce(
-    (n, g) => n + g.rows.filter((r) => r.movedCount > 0 || (r.ageDays ?? 0) > STALE_DAYS).length,
-    0,
-  );
-
-  const active = groups.find((g) => g.call === sel) ?? groups[0];
-
-  // The total, and why it differs from the status axis. Same reasoning as the
-  // status-axis line: a reader comparing the two axes sees two different
-  // totals, and the gap IS the backlog rather than a bug.
-  const shown = groups.reduce((n, g) => n + g.rows.length, 0);
-
-  return (
-    <div className="space-y-4">
-      <p className="text-[12px] muted-text max-w-[760px] leading-relaxed -mt-2">
-        <b className="ink-text tabular-nums">{shown} live verdicts</b> across {groups.length}{" "}
-        calls, one call at a time. The By-status axis shows{" "}
-        {counts.missing + counts.due + counts.current + counts.dormant} rows because it also counts
-        the {counts.missing} tracked symbols with no verdict yet and {counts.dormant} dormant
-        verdicts about symbols no longer tracked; neither has a call to group under.{" "}
-        {drifted > 0 ? (
-          <>
-            <b style={{ color: "var(--color-delta-down)" }}>{drifted}</b> of them were written
-            against figures that have since moved or are past the review mark; those sit at the top
-            of their tab. A heading is not evidence — read the last column before acting on one.
-          </>
-        ) : (
-          <>
-            Nothing here has drifted or aged past the review mark, so every call still rests on the
-            figures it was written against.
-          </>
-        )}{" "}
-        Dormant verdicts — symbols no longer tracked — are left out; they are under By status.
-      </p>
-
-      {/* One tab per call, strongest conviction leftmost (CALL_ORDER). The
-          count stays ON the tab: separating the calls hides the shape of the
-          book, and a BUY tab of 1 next to a HOLD tab of 18 is the single most
-          useful thing this view says. Each tab is tinted with its own bucket
-          colour so the direction of a call is readable before it is selected —
-          an unselected grey "AVOID" next to a grey "BUY" is a strip of words. */}
-      <div className="flex flex-wrap gap-1.5">
-        {groups.map((g) => {
-          const color = BUCKET_COLOR[verdictBucket(g.call)];
-          const on = g.call === active.call;
-          return (
-            <button
-              key={g.call}
-              type="button"
-              onClick={() => setSel(g.call)}
-              aria-pressed={on}
-              className="px-2.5 py-1 rounded-md text-[11.5px] font-semibold tracking-wide border transition-colors"
-              style={{
-                color,
-                borderColor: on
-                  ? color
-                  : `color-mix(in srgb, ${color} 30%, transparent)`,
-                background: on
-                  ? `color-mix(in srgb, ${color} 16%, transparent)`
-                  : "transparent",
-                opacity: on ? 1 : 0.72,
-              }}
-            >
-              {g.call}
-              <span className="ml-1.5 tabular-nums font-medium opacity-80">{g.rows.length}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="overflow-x-auto">
-        <table className="w-full text-[12.5px] min-w-[880px]">
-          <thead>
-            <tr className="muted-text">
-              <th className="text-left py-1.5 pr-3 font-medium">Symbol</th>
-              <th className="text-left py-1.5 px-3 font-medium">Verdict</th>
-              <th className="text-right py-1.5 px-3 font-medium">Written</th>
-              <th className="text-right py-1.5 px-3 font-medium">Age</th>
-              <th className="text-right py-1.5 px-3 font-medium" title="Close on the verdict's price_asof date, frozen at load time">
-                At verdict
-              </th>
-              <th className="text-right py-1.5 px-3 font-medium">LTP</th>
-              <th className="text-right py-1.5 px-3 font-medium">Move</th>
-              <th className="text-left py-1.5 pl-3 font-medium">What moved</th>
-            </tr>
-          </thead>
-          <tbody>
-            {active.rows.map((e) => (
-              <EntryRow key={e.symbol} e={e} lastCol="moved" onOpen={onOpen} />
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
   );
 }
 
