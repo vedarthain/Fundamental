@@ -18,7 +18,7 @@ import { NextResponse } from "next/server";
 import { sql, golden } from "@/lib/db";
 
 export const runtime = "nodejs";
-export const revalidate = 86400;
+export const dynamic = "force-dynamic";
 
 // Boilerplate-filing title patterns (POSIX regex, case-insensitive via !~*).
 // These are procedural compliance filings every company makes every quarter —
