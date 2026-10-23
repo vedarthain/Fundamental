@@ -1,5 +1,22 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "//git": [
+    "feature, bugfix and verdict are permanent worktree branches (CLAUDE.md §4),",
+    "not pull-request branches. `mm` pushes them purely as a BACKUP and `zz`",
+    "fast-forwards them after every merge, so one deploy was costing four builds",
+    "— three of them Preview deployments nobody opens. Only main deploys now.",
+    "Pushing a topic branch still backs it up; it just no longer builds.",
+    "A NEW branch is NOT covered: this is an explicit per-branch list because",
+    "Vercel's deploymentEnabled takes no wildcard. Add the branch here when a",
+    "fifth checkout appears, or it will start building Previews silently."
+  ],
+  "git": {
+    "deploymentEnabled": {
+      "feature": false,
+      "bugfix": false,
+      "verdict": false
+    }
+  },
   "crons": [
     {
       "path": "/api/admin/recommendations/generate?mode=latest",
