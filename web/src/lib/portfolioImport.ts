@@ -378,25 +378,88 @@ function parseFivepaisa(rows: string[][]): ParsedHolding[] {
 }
 
 function parseUpstox(rows: string[][]): ParsedHolding[] {
-  // header: r[0].startsWith("Symbol") && r[1]==="Category". Cols: Symbol,
-  // Category,Net Qty,Avg. Price,LTP,Current Value,Day P&L,Day %,Overall P&L,
-  // Overall %.
-  const h = findRow(rows, (r) => (r[0] ?? "").startsWith("Symbol") && r[1] === "Category");
+  // Upstox's Portfolio → Holdings download. The header row always STARTS with
+  // "Symbol" (decorated with the row count: "Symbol (17)"), but the columns
+  // after it have changed, so this reads BY HEADER NAME, not by index:
+  //
+  //   2026-09: Symbol,Category,Net Qty,Avg. Price,LTP,Current Value,Day P&L,
+  //            Day %,Overall P&L,Overall %
+  //   2026-10: Symbol,Qty.,Pledged,Avg. price,LTP,Day P&L,Day %,Overall P&L,
+  //            Overall %,Current,Invested
+  //
+  // "Category" is gone, "Pledged" was inserted at position 2, and "Current"
+  // moved from index 5 to index 9. The old positional parser matched on
+  // r[1]==="Category", so the new file fell through to a bare `return []` and
+  // the route reported "this doesn't look like a Upstox holdings export" — the
+  // one message guaranteed to send you looking at the wrong thing. Had the
+  // header check been laxer, it would have been worse: quantity would have
+  // been read from "Pledged" and current value from "Day P&L", silently.
+  //
+  // Name matching is case- and punctuation-insensitive because "Avg. Price"
+  // and "Avg. price" are the same column on two different days.
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z%]/g, "");
+
+  // Upstox also offers a DP/demat HOLDING STATEMENT (Reports → Holdings):
+  // ISIN, Scrip Name, Current Qty, Free/Freeze/Locked/Pledge/Remat Qty, Value
+  // Date, Rate, Valuation. "Rate" is the market price on the value date, NOT
+  // cost basis — there is no average cost anywhere in it. Importing it would
+  // REPLACE this broker's rows (delete-then-insert) with cost-less ones and
+  // destroy the avg_cost the real export carries, so reject it by name rather
+  // than accept a lossy version. Same call as 5paisa's Holding Statement.
+  const isDpStatement =
+    rows.some((r) => norm(r[0] ?? "") === "isin" && norm(r[1] ?? "") === "scripname") &&
+    !rows.some((r) => r.some((c) => norm(c).startsWith("avgprice")));
+  if (isDpStatement) {
+    throw new PortfolioImportError(
+      "That's the Upstox demat holding statement (Reports → Holdings) — it has no average cost, so importing it would wipe the cost basis on your existing Upstox rows. Use Portfolio → Holdings → download instead.",
+    );
+  }
+
+  const h = findRow(
+    rows,
+    (r) => (r[0] ?? "").startsWith("Symbol") && r.some((c) => norm(c).startsWith("avgprice")),
+  );
   if (h < 0) return [];
+  const hdr = rows[h].map(norm);
+  // Each entry lists the aliases seen across export vintages, newest first.
+  const col = (...aliases: string[]) => {
+    for (const a of aliases) {
+      const i = hdr.indexOf(a);
+      if (i >= 0) return i;
+    }
+    return -1;
+  };
+  const iQty = col("qty", "netqty", "quantity");
+  const iPledged = col("pledged");
+  const iAvg = col("avgprice");
+  const iLtp = col("ltp");
+  const iCur = col("current", "currentvalue");
+  const iDayPct = col("day%", "daychg%");
+  if (iQty < 0) return [];
+
   const out: ParsedHolding[] = [];
   for (let i = h + 1; i < rows.length; i++) {
     const r = rows[i];
     if (!r[0]) continue;
-    const qty = n(r[2]);
-    if (qty == null) continue;
+    const free = n(r[iQty]);
+    if (free == null) continue;
+    // "Qty." in the 2026-10 export is the FREE quantity, with pledged broken
+    // out beside it ("--" when none, which n() reads as null). Total held is
+    // the sum — the same correction Zerodha's XLSX path already makes.
+    const qty = free + (iPledged >= 0 ? n(r[iPledged]) ?? 0 : 0);
+    if (qty <= 0) continue;
+    const ltp = iLtp >= 0 ? n(r[iLtp]) : null;
+    const cur = iCur >= 0 ? n(r[iCur]) : null;
     out.push({
       rawSymbol: r[0],
       isin: null,
       quantity: qty,
-      avgCost: n(r[3]),
-      brokerLtp: n(r[4]),
-      brokerCurValue: n(r[5]),
-      brokerDayPct: n(r[7]),
+      avgCost: iAvg >= 0 ? n(r[iAvg]) : null,
+      brokerLtp: ltp,
+      // The 2026-10 export has no "Current Value" per row under that name; if
+      // the alias misses, derive it rather than blanking the dashboard column.
+      brokerCurValue: cur ?? (ltp != null ? Math.round(ltp * qty * 100) / 100 : null),
+      brokerDayPct: iDayPct >= 0 ? n(r[iDayPct]) : null,
     });
   }
   return out;
