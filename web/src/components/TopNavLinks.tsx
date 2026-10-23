@@ -40,6 +40,12 @@ const LINKS: NavLink[] = [
     submenu: [
       { href: "/indices", label: "Indices", description: "Official NSE benchmarks + their constituents" },
       { href: "/sectors", label: "Sectors", description: "Our full-universe scoring view — every stock" },
+      // Sectors is a browse; this is the lookup. The sectors page scopes its
+      // industry sidebar to whichever sector tab is active, so finding
+      // "Media & Entertainment" without already knowing which sector holds it
+      // meant opening all nine tabs in turn. Same peer groups, one filter box,
+      // no hierarchy to guess at first.
+      { href: "/industries", label: "Industries", description: "Every peer group in one filterable list — find one without knowing its sector" },
       // A real route, not a Scanner deep-link. It briefly pointed at
       // /tools/scanner?tab=all, and because isActive() below matches on pathname
       // only, opening it lit up Tools instead of Segments. The table is a
@@ -48,6 +54,10 @@ const LINKS: NavLink[] = [
       // aliased. /tools/scanner?tab=all now redirects here.
       { href: "/stocks", label: "All Stocks", description: "The full scored universe in one sortable table — price, returns, composite, peer rank" },
       { href: "/themes",  label: "Themes",  description: "Defence, Drone, Data Center, Green Hydrogen — groupings no industry tree can express" },
+      // Moved out of /ideas?view=ipo. A listing calendar is market structure,
+      // not an opinion — it has no score and no history, so every control on
+      // the Ideas page meant nothing on it. /ideas?view=ipo redirects here.
+      { href: "/ipo",     label: "IPO Tracker", description: "Mainboard and SME issues — open, upcoming, closed and recently listed" },
     ],
   },
   { href: "/news",    label: "News"    },

@@ -51,7 +51,7 @@ export async function IpoZone() {
   return (
     <Zone
       title="IPO"
-      href="/ideas?view=ipo"
+      href="/ipo"
       count={rows.length || undefined}
       meta={
         ageH == null

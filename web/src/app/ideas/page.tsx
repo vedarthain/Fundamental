@@ -13,6 +13,7 @@
  * Sections ordered: Building strength → Losing ground → Breakouts → Breakdowns.
  */
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { sql } from "@/lib/db";
 import {
   ArrowUpRight, ArrowDownRight,
@@ -24,15 +25,7 @@ import { band, bandColor, tierLabel, hasScoreableHistory } from "@/lib/score";
 import { getOIAlerts } from "@/lib/oi-alerts";
 import { Sparkline, type SparkPoint } from "@/components/Sparkline";
 import { WatchlistButton } from "@/components/WatchlistButton";
-import {
-  loadIpos,
-  IpoTracker,
-  IPO_STATUSES,
-  isIpoStatus,
-  ipoCounts,
-  defaultIpoStatus,
-  type IpoStatus,
-} from "./IpoTracker";
+import { isIpoStatus } from "./IpoTracker";
 import { IdeasNav, type NavItem } from "./IdeasNav";
 
 // Score data changes weekly. 6h ISR cache avoids waking Neon on every visit.
@@ -446,44 +439,34 @@ function ideasHref(
   return qs ? `/ideas?${qs}` : "/ideas";
 }
 
-/** Top-level view. Sits above `?bucket`, which only means anything in "trends". */
-type IdeasView = "trends" | "ipo";
-
-/** The two view-switch entries, shared by both branches so the first nav column
- *  is identical whichever view is rendering it.
+/**
+ * The view rail. Trends is this page; IPO tracker is a LINK OUT to /ipo.
  *
- *  Switching to IPO drops `bucket` and `cal`; switching back drops `ipo`. They
- *  are per-view keys, and carrying them across would make a shared link restore
- *  a tab the sender was not on. */
-function viewItems(view: IdeasView, sp: Record<string, string | undefined>): NavItem[] {
+ * The rail kept its second entry on purpose after the tracker moved to
+ * Segments. Everyone who used it knew it as a view of this page, and a move
+ * that silently deletes the only control that led there teaches them the
+ * feature was removed, not relocated. `active` is permanently false because
+ * /ipo is a different page and the rail is never rendered there — a rail item
+ * that can never light up is the honest shape of a link out.
+ */
+function viewItems(sp: Record<string, string | undefined>): NavItem[] {
   return [
     {
       key: "trends",
       label: "Trends",
       sub: "Scored ideas",
-      active: view === "trends",
+      active: true,
       href: ideasHref(sp, { view: null, ipo: null }),
     },
     {
       key: "ipo",
       label: "IPO tracker",
-      sub: "New issues",
-      active: view === "ipo",
-      href: ideasHref(sp, { view: "ipo", bucket: null, cal: null }),
+      sub: "In Segments",
+      active: false,
+      href: "/ipo",
     },
   ];
 }
-
-/** Nav labels and dots for the IPO statuses. Kept in step with IpoTracker's
- *  STATUS_STYLE by using the same CSS variables — the colours are the one thing
- *  the nav and the section heading must agree on, since the dot is how the
- *  reader knows which heading they are looking at. */
-const IPO_NAV: Record<IpoStatus, { label: string; dot: string }> = {
-  open: { label: "Open now", dot: "var(--color-score-good)" },
-  upcoming: { label: "Upcoming", dot: "var(--color-accent-700)" },
-  closed: { label: "Closed", dot: "var(--color-score-weak)" },
-  listed: { label: "Listed", dot: "var(--color-muted)" },
-};
 
 /**
  * Three-column page frame: view switch, view's own tabs, then the data.
@@ -856,50 +839,22 @@ export default async function IdeasPage({
 }) {
   const sp = await searchParams;
 
-  // Top-level view, ABOVE the bucket tabs. "trends" is the scored-stock feed
-  // this page has always been; "ipo" is the IPO tracker, which shares nothing
-  // with it but the header. See IpoTracker.tsx for why it is not a ninth bucket.
+  // THE IPO TRACKER MOVED TO /ipo, under Segments.
   //
-  // The two branches return early from each other rather than both rendering,
-  // so ?view=ipo does NOT pay for loadIdeas/loadResultWinners/loadUpcomingEvents
-  // — three queries over the whole scored universe that the IPO table has no
-  // use for. A single shared render that hid one half with CSS would have cost
-  // them on every visit.
-  const view: IdeasView = sp.view === "ipo" ? "ipo" : "trends";
-  if (view === "ipo") {
-    const ipos = await loadIpos();
-    // ?ipo=open|upcoming|closed|listed. Falls back to the first status that has
-    // rows rather than to a hardcoded "open": for most of the year nothing is
-    // open, and landing on an empty table makes the tracker look broken on
-    // exactly the days there is nothing to apply for. See defaultIpoStatus.
-    const ipoStatus: IpoStatus = isIpoStatus(sp.ipo) ? sp.ipo : defaultIpoStatus(ipos.rows);
-    const ipoN = ipoCounts(ipos.rows);
-    return (
-      <IdeasShell
-        nav={
-          <IdeasNav
-            views={viewItems("ipo", sp)}
-            contextLabel="Status"
-            universe={null}
-            groups={[
-              {
-                eyebrow: "Status",
-                items: IPO_STATUSES.map((s) => ({
-                  key: s,
-                  label: IPO_NAV[s].label,
-                  n: ipoN[s],
-                  dot: IPO_NAV[s].dot,
-                  active: s === ipoStatus,
-                  href: ideasHref(sp, { view: "ipo", ipo: s, bucket: null, cal: null }),
-                })),
-              },
-            ]}
-          />
-        }
-      >
-        <IpoTracker data={ipos} active={ipoStatus} />
-      </IdeasShell>
-    );
+  // It used to be a second top-level view on this page (?view=ipo), rendered by
+  // an early-return branch right here. IpoTracker.tsx's own header explains why
+  // it was never a ninth bucket — "an IPO has no score, no history" — and that
+  // argument holds one level up too: every control this page owns (eight
+  // buckets, four trend boards, the index-tier pills, the results calendar)
+  // means nothing on a listing calendar. Segments is where the site answers
+  // "what is out there", so that is where it went.
+  //
+  // The redirect is not a courtesy. ?view=ipo is in bookmarks, in the
+  // dashboard's IPO tile history, and in every link shared since the view
+  // shipped; `?ipo=` is carried through so a shared link still lands on the
+  // status it was sent for.
+  if (sp.view === "ipo") {
+    redirect(isIpoStatus(sp.ipo) ? `/ipo?ipo=${sp.ipo}` : "/ipo");
   }
 
   // Single page-wide universe control: one index tier drives everything —
@@ -1070,7 +1025,7 @@ export default async function IdeasPage({
     <IdeasShell
       nav={
         <IdeasNav
-          views={viewItems("trends", sp)}
+          views={viewItems(sp)}
           contextLabel="Bucket"
           universe={idxItems}
           groups={[

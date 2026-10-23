@@ -1,14 +1,16 @@
 /**
- * /ideas?view=ipo — the IPO tracker.
+ * /ipo — the IPO tracker. (Was /ideas?view=ipo until 2026-10-23; that URL redirects.)
  *
- * WHY IT LIVES BEHIND A TOP-LEVEL VIEW SWITCH AND NOT AS A NINTH BUCKET TAB
+ * WHY IT IS ITS OWN ROUTE AND NEVER WAS AN /ideas BUCKET TAB
  *
- * The eight existing tabs are all the same shape: a scored stock, a composite
+ * The eight Ideas tabs are all the same shape: a scored stock, a composite
  * delta, a 12-week trail. An IPO has none of those — it has no score, no
  * history, and frequently no price band yet. Dropping it in that strip would
  * put a row with eight empty columns next to rows that fill them, which reads
- * as a data bug rather than a different kind of object. So `?view` sits ABOVE
- * `?bucket`, and the two never render at once.
+ * as a data bug rather than a different kind of object. The same argument
+ * pushed it one level further out in Oct 2026: a listing calendar is market
+ * structure, not a scored opinion, so it lives under Segments at /ipo and
+ * shares nothing with the Ideas feed but this component.
  *
  * THE FRESHNESS STAMP IS NOT DECORATION
  *
