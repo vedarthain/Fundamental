@@ -140,6 +140,41 @@ function byUrgency(a: QueueEntry, b: QueueEntry): number {
   return d(a) - d(b) || (b.ageDays ?? 0) - (a.ageDays ?? 0) || a.symbol.localeCompare(b.symbol);
 }
 
+/* ------------------------------------------------------------- sorting */
+
+type SortKey = "urgency" | "pctMove" | "ltp";
+
+/**
+ * Sorting the visible rows by price — with urgency as the default and as a
+ * state the reader can always get back to.
+ *
+ * WHY URGENCY REMAINS THE DEFAULT. The file header's premise is that a call
+ * group is "the same rows and the same what-moved column as a status bucket,
+ * and drifted rows sort to the top of their own group". A price sort breaks
+ * precisely that: the largest move and the broken argument are different
+ * facts, and a BUY whose evidence has moved can land anywhere in a price
+ * ranking, including off the bottom of a long group. So the price sorts are
+ * opt-in, the active one is named in the header, and a third click on the
+ * same column returns to urgency rather than cycling between two price orders
+ * forever. The order that reflects the work is never more than one click away.
+ *
+ * NULLS SINK IN BOTH DIRECTIONS. A missing LTP is golden having no bar; a
+ * missing pctMove is a verdict with no anchor (migration 0087 — "render it as
+ * absent, never as zero"). Coercing either to 0 would file a stock we cannot
+ * price among the flat ones, which is the one place a reader would not think
+ * to look for it. They go last ascending and last descending alike.
+ */
+function bySort(key: Exclude<SortKey, "urgency">, dir: 1 | -1) {
+  return (a: QueueEntry, b: QueueEntry): number => {
+    const av = a[key];
+    const bv = b[key];
+    if (av == null && bv == null) return a.symbol.localeCompare(b.symbol);
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    return dir * (av - bv) || a.symbol.localeCompare(b.symbol);
+  };
+}
+
 export function VerdictQueueClient() {
   const [state, setState] = useState<
     { kind: "loading" } | { kind: "ok"; q: VerdictQueue } | { kind: "error"; msg: string }
@@ -159,6 +194,10 @@ export function VerdictQueueClient() {
   // QueueBucket. They cannot collide: buckets are lowercase, calls are
   // upper-cased by callOf().
   const [sel, setSel] = useState<string>("due");
+  // Default descending because the question a price sort is opened to answer
+  // is "what has run the hardest since I wrote this", not "what has fallen".
+  // One click on the other column, or a third on this one, gets the rest.
+  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "urgency", dir: -1 });
 
   useEffect(() => {
     let live = true;
@@ -270,7 +309,24 @@ export function VerdictQueueClient() {
   // group empties out the moment the last verdict under it is rewritten, and a
   // stale `sel` would leave a blank panel with a chip still highlighted.
   const active = chips.find((c) => c.key === sel) ?? chips[0];
-  const rows = active?.rows ?? [];
+  // `active.rows` is already urgency-sorted; a price sort replaces that order
+  // rather than layering on it, and copies first so the chip's own array is
+  // not mutated under React.
+  const rows =
+    sort.key === "urgency"
+      ? (active?.rows ?? [])
+      : (active?.rows ?? []).slice().sort(bySort(sort.key, sort.dir));
+  /** Click: new column → descending. Same column → flip, then back to urgency. */
+  const onSort = (key: Exclude<SortKey, "urgency">) =>
+    setSort((s) =>
+      s.key !== key
+        ? { key, dir: -1 }
+        : s.dir === -1
+          ? { key, dir: 1 }
+          : { key: "urgency", dir: -1 },
+    );
+  const sortArrow = (key: SortKey) =>
+    sort.key !== key ? "" : sort.dir === -1 ? " ↓" : " ↑";
   const isMissing = active?.key === "missing";
   // The whole book, counted once: every live verdict plus everything owed.
   const liveVerdicts = counts.due + counts.current;
@@ -394,6 +450,26 @@ export function VerdictQueueClient() {
         <br />
         {BUCKET_META[active?.key as QueueBucket]?.blurb ??
           "Every verdict making this call. Drifted and stale rows sort to the top — a heading is not evidence, so read the Move and What-moved columns before acting on one."}
+        {/* Said out loud, because a price sort silently suspends the one
+            ordering this tab's premise rests on: drifted rows no longer sit at
+            the top, and nothing else on screen would tell you that. */}
+        {sort.key !== "urgency" && (
+          <>
+            {" "}
+            <span style={{ color: "var(--color-score-mid, #d4951a)" }}>
+              Sorted by {sort.key === "ltp" ? "LTP" : "move"},{" "}
+              {sort.dir === -1 ? "high to low" : "low to high"} — drifted rows are no longer on
+              top.
+            </span>{" "}
+            <button
+              type="button"
+              onClick={() => setSort({ key: "urgency", dir: -1 })}
+              className="underline underline-offset-2"
+            >
+              Back to urgency
+            </button>
+          </>
+        )}
       </p>
 
       {rows.length === 0 ? (
@@ -417,8 +493,28 @@ export function VerdictQueueClient() {
                 <th className="text-right py-1.5 px-3 font-medium" title="Close on the verdict's price_asof date, frozen at load time">
                   At verdict
                 </th>
-                <th className="text-right py-1.5 px-3 font-medium">LTP</th>
-                <th className="text-right py-1.5 px-3 font-medium">Move</th>
+                <th className="text-right py-1.5 px-3 font-medium">
+                  <button
+                    type="button"
+                    onClick={() => onSort("ltp")}
+                    className="hover:underline underline-offset-2"
+                    style={sort.key === "ltp" ? { color: "var(--color-ink)" } : undefined}
+                    title="Sort by last traded price. Click again to reverse, a third time to return to urgency order."
+                  >
+                    LTP{sortArrow("ltp")}
+                  </button>
+                </th>
+                <th className="text-right py-1.5 px-3 font-medium">
+                  <button
+                    type="button"
+                    onClick={() => onSort("pctMove")}
+                    className="hover:underline underline-offset-2"
+                    style={sort.key === "pctMove" ? { color: "var(--color-ink)" } : undefined}
+                    title="Sort by move since the verdict's anchor price. Click again to reverse, a third time to return to urgency order."
+                  >
+                    Move{sortArrow("pctMove")}
+                  </button>
+                </th>
                 <th className="text-left py-1.5 pl-3 font-medium">
                   {isMissing ? "Tracked since" : "What moved"}
                 </th>
