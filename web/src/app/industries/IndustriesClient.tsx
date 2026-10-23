@@ -666,8 +666,20 @@ export function IndustriesClient({
                       {pageRows.map((s) => (
                         <tr key={s.symbol} className="border-b hairline">
                           <td className="px-2 py-1.5">
+                            {/* New tab, deliberately. Everything else on this
+                                page is a same-tab move because it changes what
+                                the three columns show; a stock page leaves the
+                                tree entirely, and the reader walking a 40-name
+                                peer group is comparing names — sending them
+                                back and forth loses the sector, the industry,
+                                the sort and the page they were on. rel is
+                                noopener for the usual reason: target=_blank
+                                without it hands window.opener to the new
+                                document. */}
                             <Link
                               href={`/stock/${s.symbol}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
                               className="hover:underline"
                               style={{ color: "var(--color-ink)" }}
                             >
