@@ -411,7 +411,7 @@ function PopupSheet({
   return (
     <div
       role="menu"
-      className="absolute left-0 right-0 top-full z-[55] border-b hairline shadow-lg"
+      className="absolute left-0 right-0 top-full z-[55] border-b hairline shadow-lg max-h-[calc(100dvh-130px)] overflow-y-auto"
       style={{ backgroundColor: "var(--color-card, #ffffff)" }}
     >
       {which === "segments" && (

@@ -70,7 +70,7 @@ export default function RootLayout({
 function SiteHeader() {
   return (
     <header
-      className="border-b hairline sticky top-7 z-30 backdrop-blur-md w-full overflow-hidden"
+      className="border-b hairline sticky top-7 z-30 backdrop-blur-md"
       style={{ backgroundColor: "color-mix(in srgb, var(--color-paper) 90%, transparent)" }}
     >
       {/* ─────────────────── Desktop (lg+) — single row ───────────────── */}
