@@ -14,6 +14,8 @@
 #   - app.shareholding_pattern   (full active universe)
 #   - app.scores                 (all snapshots — for score history chart)
 #   - app.metrics_snapshot       (latest snapshot only — base for recompute)
+#   - app.company_overview       (active universe — plus the app.announcement
+#                                 rows it references, which are its FK parent)
 #   - app.cluster_*              (cluster assignments, scorecards, caches)
 #   - golden.price_history       (incremental: only rows newer than local max)
 #
@@ -206,6 +208,52 @@ if [[ -n "$LATEST_LEDGER" ]]; then
     "snapshot_date = '$LATEST_LEDGER'" \
     "snapshot_date = '$LATEST_LEDGER'"
 fi
+
+# ----- company overview (+ its FK parent in app.announcement) ------------
+#
+# The /stock About section reads app.company_overview, and this script never
+# pulled it. Local therefore held a 2026-10-08 fragment — 1,391 rows — while
+# prod held 3,040, and on 2026-10-24 that fragment was measured and reported as
+# "1,805 symbols have no overview". The real gap was 156. A stale local table
+# read as a production finding is the same failure mode as the coverage ledger
+# above; the fix is the same: pull it.
+#
+# TWO STEPS, IN THIS ORDER, because of a constraint pair that makes the obvious
+# single-step version fail:
+#   • company_overview.source_filing_id is an FK to app.announcement(id), and
+#     3,006 of the 3,040 rows carry one. 818 of those announcement ids are not
+#     in the local table (local announcements are fetched independently), so a
+#     bare overview pull aborts on the FK — the same way the whole price_history
+#     load aborted on golden.stocks before that parent was pulled first.
+#   • It is not fixable by nulling the column: CHECK
+#     company_overview_filing_has_provenance requires source='filing' rows to
+#     have both source_filing_id and source_filing_date. A sourced overview
+#     without its filing is not a representable state, by design.
+# So the referenced announcements come first, DO NOTHING on conflict (local may
+# hold a newer fetched_at for the same id and there is no reason to clobber it).
+echo ""
+echo "=== Company overview ==="
+OV_FIDS="SELECT source_filing_id FROM app.company_overview WHERE source_filing_id IS NOT NULL"
+psql "$NEON_APP_URL" -c "\COPY (SELECT * FROM app.announcement WHERE id IN ($OV_FIDS)) TO STDOUT" \
+  > "$TMP_DIR/overview_announcements.tsv"
+row_count=$(wc -l < "$TMP_DIR/overview_announcements.tsv" | tr -d ' ')
+echo "▶ pulling app.announcement FK parents (${row_count} rows referenced by overviews)..."
+if [[ -s "$TMP_DIR/overview_announcements.tsv" ]]; then
+  psql "$LOCAL_APP" -v ON_ERROR_STOP=1 <<SQL
+DROP TABLE IF EXISTS _pull;
+CREATE TEMP TABLE _pull (LIKE app.announcement INCLUDING ALL);
+\COPY _pull FROM '$TMP_DIR/overview_announcements.tsv';
+INSERT INTO app.announcement SELECT * FROM _pull ON CONFLICT (id) DO NOTHING;
+SQL
+  echo "    ✓ inserted (existing ids left alone)"
+fi
+
+# Active symbols only — company_overview.symbol is an FK to app.universe, and
+# this script pulls only the active universe, so an inactive symbol's overview
+# would have no parent row to attach to.
+pull_replace app.company_overview "$NEON_APP_URL" "$LOCAL_APP" \
+  "$ACTIVE_FILTER" \
+  "$ACTIVE_FILTER"
 
 # ----- cluster tables -----------------------------------------------------
 echo ""
