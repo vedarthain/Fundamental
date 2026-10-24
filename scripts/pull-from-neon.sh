@@ -186,6 +186,27 @@ if [[ -n "$LATEST_NEON_SNAP" ]]; then
     "$ACTIVE_FILTER"
 fi
 
+# ----- coverage ledger ----------------------------------------------------
+#
+# Two DQ assertions read this table and nothing else —
+# coverage.ledger_accounts_for_universe and coverage.scored_not_shrinking. Left
+# unpulled, local held a 2026-10-08 ledger against 2026-10-24 scores and both
+# went red: "0 ledger rows vs 3196 active symbols" and "scored 3061 -> 0".
+# Neither was a real finding; they were this script's omission reported as a
+# data failure, which is the worst kind of red because it trains the eye to
+# ignore the check.
+#
+# Latest snapshot only: the ledger is per-snapshot and the assertions read the
+# newest one. Pulling every snapshot would move ~17k rows for no reader.
+LATEST_LEDGER=$(psql "$NEON_APP_URL" -tAc "SELECT MAX(snapshot_date) FROM app.coverage_ledger" 2>/dev/null || echo "")
+if [[ -n "$LATEST_LEDGER" ]]; then
+  echo ""
+  echo "=== Coverage ledger (${LATEST_LEDGER}) ==="
+  pull_replace app.coverage_ledger "$NEON_APP_URL" "$LOCAL_APP" \
+    "snapshot_date = '$LATEST_LEDGER'" \
+    "snapshot_date = '$LATEST_LEDGER'"
+fi
+
 # ----- cluster tables -----------------------------------------------------
 echo ""
 echo "=== Cluster data ==="
@@ -203,6 +224,53 @@ if [[ -n "$LATEST_CLUSTER_CACHE" ]]; then
   pull_replace app.cluster_stocks_panel_cache "$NEON_APP_URL" "$LOCAL_APP" \
     "snapshot_date = '$LATEST_CLUSTER_CACHE'" \
     "snapshot_date = '$LATEST_CLUSTER_CACHE'"
+fi
+
+# ----- golden.stocks (the FK parent of price_history) ---------------------
+#
+# golden.price_history has an FK to golden.stocks, so a symbol onboarded on
+# prod since the last pull makes the whole price insert fail — measured
+# 2026-10-24: 30,498 staged rows rejected on ACCORD.NS, with local holding
+# 3,540 stocks against prod's 3,577. Every earlier table had already loaded, so
+# the run looked two-thirds successful and left local prices 15 days stale.
+#
+# This is CLAUDE.md §5 in its usual shape: golden.stocks was seeded once and
+# nothing refreshed it. Pulled here, before the child table, using the shared
+# column set so either side may gain a column without breaking the other.
+echo ""
+echo "=== Golden stocks (FK parent — new symbols onboarded on prod) ==="
+NEON_ST_COLS=$(psql "$NEON_GOLDEN_URL" -tAc "
+  SELECT column_name FROM information_schema.columns
+  WHERE table_schema='golden' AND table_name='stocks'
+  ORDER BY ordinal_position")
+LOCAL_ST_COLS=$(psql "$LOCAL_GOLDEN" -tAc "
+  SELECT column_name FROM information_schema.columns
+  WHERE table_schema='golden' AND table_name='stocks'
+  ORDER BY ordinal_position")
+ST_COLS=""
+while IFS= read -r col; do
+  [[ -z "$col" ]] && continue
+  if grep -qx "$col" <<< "$NEON_ST_COLS"; then
+    ST_COLS="${ST_COLS:+$ST_COLS,}$col"
+  fi
+done <<< "$LOCAL_ST_COLS"
+
+psql "$NEON_GOLDEN_URL" -c "\COPY (SELECT $ST_COLS FROM golden.stocks) TO STDOUT" > "$TMP_DIR/stocks.tsv"
+row_count=$(wc -l < "$TMP_DIR/stocks.tsv" | tr -d ' ')
+echo "  ${row_count} stock rows staged"
+if [[ -s "$TMP_DIR/stocks.tsv" ]]; then
+  # DO NOTHING, not DO UPDATE: local golden.stocks carries sector/industry
+  # enrichment that prod does not always have, and overwriting it with a
+  # thinner prod row would undo the classification work that depends on it.
+  # The only thing missing locally is the ROW, not its contents.
+  psql "$LOCAL_GOLDEN" -v ON_ERROR_STOP=1 <<SQL
+DROP TABLE IF EXISTS _st;
+CREATE TEMP TABLE _st (LIKE golden.stocks INCLUDING ALL);
+\COPY _st ($ST_COLS) FROM '$TMP_DIR/stocks.tsv';
+INSERT INTO golden.stocks ($ST_COLS) SELECT $ST_COLS FROM _st
+  ON CONFLICT (symbol) DO NOTHING;
+SQL
+  echo "    ✓ new symbols inserted (existing rows left alone)"
 fi
 
 # ----- golden price history (incremental) --------------------------------
