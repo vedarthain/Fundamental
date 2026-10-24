@@ -719,3 +719,146 @@ def check_portfolio(conn: psycopg.Connection) -> list[CoverageResult]:
         ),
     ))
     return out
+
+
+def check_evidence_sheets(
+    conn: psycopg.Connection,
+    snapshot_date: date,
+) -> list[CoverageResult]:
+    """Invariants over app.stock_evidence_sheet (migration 0088).
+
+    A sheet is not maintained, it is REBUILT — that is the only thing it has
+    that a hand-written verdict does not, and these two assertions are what
+    turn that sentence from an intention into a property. Both are phrased so
+    they CAN fail; §5's "checks that cannot fail" is the specific trap here,
+    because the obvious phrasings of both are vacuous.
+
+    1. STALENESS, ON THE NEWEST SHEET PER SYMBOL.
+
+       The table is append-only, so older rows legitimately carry older
+       snapshot dates — that history is the point. "Every row behind the newest
+       snapshot" would therefore be red by the table's own design, growing
+       monotonically with every rebuild, which is the alert you learn to
+       silence. The newest sheet per symbol is the one that renders, so it is
+       the one that has to be current.
+
+       Counted, never sampled. One fresh row proves nothing about the other
+       2,772, and a sampled staleness check is how 379 drifting verdicts went
+       unnoticed.
+
+    2. COVERAGE, WITH A DENOMINATOR THAT CAN BE SHORT.
+
+       The vacuous phrasing is "of the symbols that have a sheet, how many have
+       a current sheet" — always 100%, the same mistake as a DQ assertion that
+       starts FROM app.scores. The denominator here is every SCORED symbol with
+       no hand-written verdict: the population a sheet exists for.
+
+       SCOPED TO THE CLUSTER x MATURITY_TIER PAIRS THE BACKFILL HAS REACHED, which is a deliberate
+       departure from PLAN-sheet-main-session.md. The plan wanted the whole
+       universe in the denominator so the check stays red until the backfill
+       finishes. That is a check that is red on day one for correct data, and
+       this file already records what that costs — the first duplicate-trade
+       check reported 40 surplus rows on a clean table and the lesson was that
+       such an alert gets silenced along with the one that matters. Scoping to
+       started clusters keeps the teeth where they bite: the day a cluster is
+       backfilled and a NEWLY SCORED symbol in it never gets a sheet, this goes
+       red, which is the §5 failure (seeded once, maintained by nothing) in its
+       exact form. The unstarted backlog is still reported — as a number to
+       work through, not as a failure.
+
+    Both SKIP, visibly, while the table is empty. A green tick over zero rows
+    is the comfortable untruth CoverageResult.skipped exists for.
+    """
+    out: list[CoverageResult] = []
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) AS n FROM app.stock_evidence_sheet")
+        total = cur.fetchone()["n"]
+
+    if total == 0:
+        return [CoverageResult(
+            name="coverage.evidence_sheets",
+            passed=True,
+            skipped=True,
+            message="SKIPPED — no sheets loaded yet; both assertions arm with "
+                    "the first cluster backfilled",
+        )]
+
+    with conn.cursor() as cur:
+        # Newest sheet per symbol, and whether its snapshot is the current one.
+        cur.execute(
+            """WITH newest AS (
+                 SELECT DISTINCT ON (symbol) symbol, snapshot_date
+                   FROM app.stock_evidence_sheet
+                  ORDER BY symbol, generated_at DESC
+               )
+               SELECT count(*) AS n,
+                      count(*) FILTER (WHERE snapshot_date < %s) AS stale,
+                      min(snapshot_date) AS oldest
+                 FROM newest""",
+            (snapshot_date,),
+        )
+        r = cur.fetchone()
+        n_sheets, stale, oldest = r["n"], r["stale"], r["oldest"]
+
+        # The population a sheet is FOR: scored at this snapshot, no verdict.
+        # The verdict side is EXISTS on the symbol rather than on a date — one
+        # verdict ever written means the stock page renders prose, so a sheet
+        # for it would never be seen.
+        cur.execute(
+            """WITH eligible AS (
+                 SELECT s.symbol, s.cluster_id, s.maturity_tier
+                   FROM app.scores s
+                  WHERE s.snapshot_date = %s
+                    AND NOT EXISTS (SELECT 1 FROM app.stock_verdict v
+                                     WHERE v.symbol = s.symbol)
+               ),
+               newest AS (
+                 SELECT DISTINCT ON (symbol) symbol, snapshot_date
+                   FROM app.stock_evidence_sheet
+                  ORDER BY symbol, generated_at DESC
+               ),
+               started AS (
+                 SELECT DISTINCT e.cluster_id, e.maturity_tier
+                   FROM eligible e JOIN newest sh ON sh.symbol = e.symbol
+               ),
+               scoped AS (
+                 SELECT e.symbol, sh.symbol AS sheet,
+                        (st.cluster_id IS NOT NULL) AS in_scope
+                   FROM eligible e
+                   LEFT JOIN newest sh ON sh.symbol = e.symbol
+                   LEFT JOIN started st
+                          ON st.cluster_id = e.cluster_id
+                         AND st.maturity_tier IS NOT DISTINCT FROM e.maturity_tier
+               )
+               SELECT count(*) FILTER (WHERE in_scope) AS in_scope,
+                      count(*) FILTER (WHERE in_scope AND sheet IS NULL)
+                        AS missing_in_scope,
+                      count(*) FILTER (WHERE sheet IS NULL) AS missing_total,
+                      (SELECT count(*) FROM started) AS n_started
+                 FROM scoped""",
+            (snapshot_date,),
+        )
+        c = cur.fetchone()
+
+    out.append(CoverageResult(
+        name="coverage.evidence_sheets_current",
+        passed=(stale == 0),
+        message=(f"{n_sheets} symbol(s) with a sheet, all on {snapshot_date}"
+                 if stale == 0 else
+                 f"{stale} of {n_sheets} newest sheet(s) behind {snapshot_date} "
+                 f"(oldest {oldest}) — nothing rebuilt them, so the figures "
+                 f"shown are from a prior snapshot"),
+    ))
+    out.append(CoverageResult(
+        name="coverage.evidence_sheets_complete",
+        passed=(c["missing_in_scope"] == 0),
+        message=(f"{c['in_scope'] - c['missing_in_scope']}/{c['in_scope']} "
+                 f"eligible symbol(s) covered across {c['n_started']} started "
+                 f"cluster-tier(s); {c['missing_total']} eligible symbol(s) not "
+                 f"yet reached"
+                 + ("" if c["missing_in_scope"] == 0 else
+                    f" — {c['missing_in_scope']} symbol(s) in a cluster-tier "
+                    f"that WAS backfilled have no sheet, so the backfill is no "
+                    f"longer keeping up with the universe")),
+    ))
+    return out

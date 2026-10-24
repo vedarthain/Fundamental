@@ -2649,7 +2649,8 @@ def coverage_cmd(
     """
     from .coverage import (
         write_ledger, check_partition, check_no_problems,
-        check_no_regression, check_portfolio, delta_report, format_report,
+        check_no_regression, check_portfolio, check_evidence_sheets,
+        delta_report, format_report,
     )
     configure_logging()
 
@@ -2680,7 +2681,10 @@ def coverage_cmd(
                    # A check that lives in its own script is a check nobody
                    # runs; this one already runs weekly and already exits
                    # non-zero, which is the only property that matters.
-                   + check_portfolio(conn))
+                   + check_portfolio(conn)
+                   # Same reasoning as the portfolio block above: the sheets
+                   # are rebuilt, and a rebuild nothing audits is a seeding.
+                   + check_evidence_sheets(conn, snap))
         for r in results:
             print(r.short())
 
