@@ -28,7 +28,9 @@ import { ScoreHistoryChart, type ScoreHistoryPoint } from "@/components/ScoreHis
 import { loadPersistenceForSymbol } from "@/lib/persistence";
 import { getOIAlertForSymbol, type OIAlert } from "@/lib/oi-alerts";
 import { getSession, isAdminRequest } from "@/lib/auth";
+import { loadEvidenceSheet } from "@/lib/evidenceSheet";
 import { loadVerdict } from "@/lib/verdict";
+import { EvidenceSheetPanel } from "@/components/EvidenceSheetPanel";
 import { VerdictPanel, VerdictEmpty } from "@/components/VerdictPanel";
 import { loadPriceAlertsForSymbol, type PriceAlert } from "@/lib/price-alerts";
 import { loadHoldingEntryMarks, type TradeMark } from "@/lib/portfolio";
@@ -632,12 +634,25 @@ export default async function StockPage({
   // touches the table and `verdictNode` stays undefined, so StockPageTabs omits
   // the tab entirely and no part of the opinion is serialised into the page.
   // Rendering it hidden would have shipped it to every reader.
+  //
+  // Precedence is verdict > sheet > empty, and the sheet is NOT shown when a
+  // verdict exists — not even below it. A hand-written opinion printed above a
+  // templated measurement invites the reader to average the two, which is the
+  // one reading neither artefact supports. So the sheet query only runs when
+  // loadVerdict came back null; that also means a verdicted symbol costs the
+  // same one query it costs today.
   const verdictData = isAdmin ? await loadVerdict(symbol).catch(() => null) : null;
+  const sheetData =
+    isAdmin && !verdictData
+      ? await loadEvidenceSheet(symbol).catch(() => null)
+      : null;
   const verdictNode = !isAdmin
     ? undefined
     : verdictData
       ? <VerdictPanel symbol={symbol.toUpperCase()} data={verdictData} />
-      : <VerdictEmpty symbol={symbol.toUpperCase()} />;
+      : sheetData
+        ? <EvidenceSheetPanel data={sheetData} />
+        : <VerdictEmpty symbol={symbol.toUpperCase()} />;
 
   // Signed-in users can set price alerts on the chart; load their live lines.
   const priceAlerts: PriceAlert[] = session
