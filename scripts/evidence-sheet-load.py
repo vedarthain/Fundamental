@@ -6,7 +6,7 @@ verdict generator reads. Output is one row per symbol in app.stock_evidence_shee
 (migration 0088).
 
     APP_DB_URL="$NEON_APP_URL" FUNDAMENTAL_ALLOW_REMOTE_DB=1 \\
-      etl/.venv/bin/python scripts/evidence-sheet-load.py /tmp/pack.json --floor 27
+      etl/.venv/bin/python scripts/evidence-sheet-load.py /tmp/pack.json
 
 HOW THIS DIFFERS FROM scripts/verdict-load.py, AND WHY
 
@@ -28,11 +28,29 @@ completely rather than as a ratio. Four consequences:
      it for five months. 100% is the only acceptable number here, because
      unlike hand-written prose a template has no legitimate untraced figure.
 
-  3. **--floor is required and has no default.** It is the cohort's thinnest
-     anchored reading and it was measured per cohort — 27 in leisure, 28/17 in
-     cement, 19 in textiles. A default bakes one cluster's measurement into
-     every cluster, and nothing in the rendered output looks wrong when the
-     floor is wrong. That is the single most likely way to ship a wrong sheet.
+  3. **The floor is DERIVED PER COHORT, from the pack's own cohort size.**
+     This reverses what PLAN-sheet-main-session.md asked for, and the reason is
+     that the plan's premise did not survive measurement.
+
+     The plan said: required argument, no default, because the floor was
+     measured per cohort — 27 in leisure, 17 in constr's mid tier. That is true
+     of how the 384 verdicts were written, but it does not scale to ~150
+     cluster-tiers, and the plan itself names a carried-forward floor as the
+     single most likely way to ship a wrong sheet. A required scalar on a
+     backfill command is not protection: it is one number, typed once, applied
+     to every cohort in the file.
+
+     Worse, the hand floors turn out to be mutually inconsistent — ranking
+     28-of-69 and withholding 26-of-62 cannot both come from one fraction, so
+     the floor was never the measurement it was presented as. See the comment
+     above `FLOOR_FRACTION` in build/verdicts/lib/refusals.py for the four
+     published outcomes and why 0.42 is the conservative resolution.
+
+     So `refusals.row_floor(row)` reads each row's own cohort and this script
+     reports the floor it used per cohort, every run. `--floor` still exists and
+     still overrides, for a single-cohort load where a human has read the
+     denominators — but it is no longer the only way to run, because the only
+     way to run cannot be the way that does not scale.
 
   4. **A symbol that already has a hand-written verdict is SKIPPED, not
      loaded.** The render precedence on the stock page shows the verdict and
@@ -89,6 +107,7 @@ LIB = ROOT / "build" / "verdicts" / "lib"
 # directory has to be on the path rather than the package root.
 sys.path.insert(0, str(LIB))
 import check_sheet as CS  # noqa: E402
+import refusals as R  # noqa: E402
 import sheet as S  # noqa: E402
 
 
@@ -161,9 +180,10 @@ def stored_blocks(out: dict, table: dict) -> list[dict]:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("path", help="pack JSON from scripts/verdict-evidence.py")
-    ap.add_argument("--floor", type=int, required=True,
-                    help="the cohort's thinnest anchored reading, MEASURED for "
-                         "this cohort. No default by design — see docstring.")
+    ap.add_argument("--floor", type=int, default=None,
+                    help="override the derived floor for EVERY cohort in the "
+                         "pack. Only correct for a single-cohort pack whose "
+                         "denominators a human has read — see docstring.")
     ap.add_argument("--dry-run", action="store_true",
                     help="render, check and report; write nothing")
     ap.add_argument("--include-verdicted", action="store_true",
@@ -217,15 +237,25 @@ def main() -> int:
     errors: list[str] = []
     blocked_but_loaded: list[str] = []
     skipped_verdicted: list[str] = []
+    # (cluster, tier, n) -> floor used. Reported at the end, because a floor
+    # applied to a cohort nobody saw is the failure the required argument was
+    # meant to prevent and a derived one can reproduce just as quietly.
+    floors_used: dict[tuple[str, str, int], int] = {}
 
     for row in rows:
         sym = str(row["symbol"]).upper()
         if sym in verdicted and not args.include_verdicted:
             skipped_verdicted.append(sym)
             continue
+        cohort = ((row.get("peer_ranks") or {}).get("cohort") or {})
+        # Per ROW, not per pack: a pack can span tiers, and one tier's floor
+        # applied to another is a wrong number that renders cleanly.
+        floor = args.floor if args.floor is not None else R.row_floor(row)
+        floors_used[(str(cohort.get("cluster_id")), str(cohort.get("tier")),
+                     int(cohort.get("n") or 0))] = floor
         try:
-            errs, out = CS.check(row, args.floor)
-            table = S.render_table(row, args.floor)
+            errs, out = CS.check(row, floor)
+            table = S.render_table(row, floor)
         except Exception as exc:  # a template that raises is a failed load
             errors.append(f"{sym}: render raised {type(exc).__name__}: {exc}")
             continue
@@ -255,6 +285,11 @@ def main() -> int:
     if skipped_verdicted:
         print(f"  ~  skipped, hand-written verdict exists ({len(skipped_verdicted)}): "
               f"{', '.join(sorted(skipped_verdicted))}", file=sys.stderr)
+    src = "OVERRIDDEN by --floor" if args.floor is not None \
+        else f"derived at {R.FLOOR_FRACTION:.2f} of the cohort"
+    for (cl, tier, n), fl in sorted(floors_used.items()):
+        print(f"  ..  floor {fl} for {cl}/{tier} (n={n}) — {src}",
+              file=sys.stderr)
 
     if args.show:
         for sym, out in rendered:
@@ -284,7 +319,7 @@ def main() -> int:
         return 0
 
     if args.dry_run:
-        print(f"  .. {len(rendered)} sheet(s) valid, floor={args.floor}, "
+        print(f"  .. {len(rendered)} sheet(s) valid, {len(floors_used)} cohort(s), "
               f"snapshot={snapshot_date}, generator={generator} "
               f"(dry run, nothing written)", file=sys.stderr)
         return 0
@@ -311,7 +346,7 @@ def main() -> int:
     conn.commit()
 
     print(f"  -> {written} sheet(s) written, snapshot={snapshot_date}, "
-          f"floor={args.floor}", file=sys.stderr)
+          f"{len(floors_used)} cohort(s)", file=sys.stderr)
     for c in conflicts:
         print(f"  !! already present, not overwritten: {c}", file=sys.stderr)
     return 1 if conflicts and written == 0 else 0

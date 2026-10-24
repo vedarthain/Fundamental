@@ -97,6 +97,72 @@ def band_figures(row: dict) -> tuple | None:
 
 
 # --------------------------------------------------------------------------
+# the floor: a CONVENTION, and said so
+# --------------------------------------------------------------------------
+# This file's header draws a line between a rule (universal) and a measurement
+# (per batch), and puts the floor firmly on the measured side. For 384
+# hand-written verdicts that was right. For the 2,868-symbol backfill it is not
+# available: ~150 cluster-tiers cannot each get a human reading, and the plan
+# for the sheet names a carried-forward floor as the single most likely way to
+# ship a wrong sheet, because nothing in the output looks wrong when the floor
+# is.
+#
+# So the floor becomes a third thing — a stated convention — and this comment
+# exists so nobody later mistakes it for either of the other two.
+#
+# WHAT THE HAND MEASUREMENTS ACTUALLY SAY (measured 2026-10-24, off the mk_*
+# constants that published verdicts stand on):
+#
+#   leisure veteran   n=62  WITHHELD at 25 and 26 of 62, RANKED at 41
+#   constr  veteran   n=69  RANKED div_yield at 28 of 69
+#   constr  mid       n=36  RANKED the multiples at 17 of 36
+#   constr  mid       n=36  WITHHELD pct_above_200ema at 15 of 36
+#
+# Those four cannot all hold. Ranking 28/69 needs f <= 0.406; withholding
+# 26/62 needs f > 0.419. **No single fraction reproduces the hand floors**, so
+# the floor was judgment wearing the clothes of a measurement — outcome 2 in
+# replay_refusals.py's own list, admitted here rather than hidden.
+#
+# 0.42 is chosen because it is the ONLY value that satisfies three of the four
+# and fails the fourth conservatively:
+#
+#   n=62 -> 27  reproduces the leisure floor exactly (withholds 25 and 26)
+#   n=36 -> 16  ranks the multiples at 17, withholds pct_above at 15
+#   n=69 -> 29  withholds constr veteran's div_yield at 28, which that verdict
+#               ranked beside a thin-reading note. The one disagreement.
+#
+# The direction matters more than the count. 0.40 would have satisfied the
+# constr veteran call but then RANKED the two readings leisure explicitly
+# refused — i.e. a sheet stating a position a published verdict said was not a
+# position. Withholding one rank a verdict stated is a sheet saying less than a
+# human did, which is the error this artefact is allowed to make.
+FLOOR_FRACTION = 0.42
+
+
+def cohort_floor(cohort_n: int, fraction: float = FLOOR_FRACTION) -> int:
+    """The denominator below which a reading carries no ordinal in a cohort of
+    `cohort_n`. A CONVENTION, not a measurement — see the comment above.
+
+    Returns 0 for an empty cohort, which withholds nothing: with no cohort
+    there is no position to withhold, and inventing a floor there would refuse
+    ranks for a reason that has nothing to do with thinness.
+    """
+    if cohort_n <= 0:
+        return 0
+    # ceil, so a small cohort cannot land on a floor of 0 and rank everything.
+    return -(-int(cohort_n) * int(round(fraction * 100)) // 100)
+
+
+def row_floor(row: dict, fraction: float = FLOOR_FRACTION) -> int:
+    """`cohort_floor` read off a pack row's own cohort, so a caller backfilling
+    many cluster-tiers cannot apply one tier's floor to another — which is the
+    failure mode a required `--floor` argument was protecting against.
+    """
+    pr = row.get("peer_ranks") or {}
+    return cohort_floor((pr.get("cohort") or {}).get("n") or 0, fraction)
+
+
+# --------------------------------------------------------------------------
 # ranks: which readings may carry a position at all
 # --------------------------------------------------------------------------
 def withheld_metrics(row: dict, floor: int,
