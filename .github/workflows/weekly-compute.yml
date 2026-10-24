@@ -145,6 +145,42 @@ jobs:
           python -m fundamental_etl.cli compute-metrics $SNAP_ARG
           python -m fundamental_etl.cli score $SNAP_ARG
 
+      # Every evidence sheet is a page of figures from ONE app.scores snapshot,
+      # so the `score` step above just made all of them a week old. They still
+      # render perfectly, which is the problem — a stale sheet looks exactly
+      # like a current one. This step re-renders every sheet that is behind the
+      # new snapshot; it refuses to run if the snapshot it would rebuild onto is
+      # itself stale, because restamping old figures with a fresh timestamp
+      # would turn a loud staleness failure into a green tick.
+      #
+      # It lives HERE rather than in its own workflow for a reason the header of
+      # this file already records: chaining on `workflow_run` renders a missed
+      # run as grey `skipped`, and three weekly snapshots were lost that way
+      # before anyone noticed. A step inside the job that writes the snapshot
+      # cannot be skipped without the job going red.
+      #
+      # continue-on-error is deliberately NOT set. A sheet left on last week's
+      # numbers is admin-only today, but it is still a wrong number on a page,
+      # and coverage.evidence_sheets_current will stay red until it is fixed.
+      #
+      # COST, measured 2026-10-24: 31 sheets rebuilt in ~2 min against Neon,
+      # pack build dominating. That extrapolates to roughly 2-3 hours at the
+      # full ~2,800-symbol backlog, which does NOT fit beside a compute pass
+      # under the 240-minute cap. Before the backfill passes a few hundred
+      # symbols this has to either move to its own scheduled job (accepting the
+      # `skipped`-is-grey problem the header describes, and gating on snapshot
+      # age instead) or rebuild only the cluster-tiers whose scores actually
+      # moved. Written down here because the step that quietly runs out of time
+      # is the one nobody budgets for.
+      - name: Re-render evidence sheets onto the new snapshot
+        env:
+          APP_DB_URL:    ${{ secrets.NEON_APP_URL }}
+          # The ETL refuses a remote APP_DB_URL by default (etl/src/fundamental_etl/db.py) so a local run cannot drift onto prod. CI writes to prod on purpose, so it says so out loud.
+          FUNDAMENTAL_ALLOW_REMOTE_DB: "1"
+          GOLDEN_DB_URL: ${{ secrets.NEON_GOLDEN_URL }}
+          PYTHONUNBUFFERED: "1"
+        run: python scripts/evidence-sheet-rebuild.py
+
       - name: Rebuild /market snapshot cache
         env:
           APP_DB_URL:    ${{ secrets.NEON_APP_URL }}
