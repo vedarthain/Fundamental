@@ -22,7 +22,7 @@ export const revalidate = 86400;
 export const metadata = {
   title: "About — how we score NSE stocks & the score archive · EquityRoots",
   description:
-    "How EquityRoots scores every NSE stock: 46 industry peer groups, each with its own scorecard, plus a weekly append-only score archive you can audit.",
+    "How EquityRoots scores every NSE stock: 54 industry peer groups, each with its own scorecard, plus a weekly append-only score archive you can audit.",
 };
 
 export default function AboutPage() {

@@ -266,8 +266,12 @@ async function loadLiveMetrics(
 export type QueueEntry = {
   symbol: string;
   company_name: string | null;
+  sector: string | null;
+  industry: string | null;
   bucket: QueueBucket;
   verdict: string | null;
+  action: string | null;
+  thesis: string | null;
   confidence: "high" | "medium" | "low" | null;
   generated_at: string | null;
   ageDays: number | null;
@@ -357,21 +361,13 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
     trackedCount: 0,
   };
 
-  let tracked: { symbol: string; company_name: string | null; added_at: Date | null }[] = [];
-  // `symbol IS NOT NULL` below is load-bearing, not defensive. A broker import
-  // keeps every row it was given, mapped or not: on 2026-10-22 prod held 27
-  // app.portfolio_holding rows with is_mapped = false and a NULL symbol
-  // (OILIETF, MIDCAP, TATSILV — ETFs with no NSE equity match). UNION collapsed
-  // those 27 into ONE tracked entry whose symbol was null, which inflated
-  // trackedCount by 1 and, because every sort in this feature falls through to
-  // a.symbol.localeCompare(b.symbol), threw "can't access property
-  // localeCompare, e.symbol is null" in the browser and took the whole Verdict
-  // tab down. An unmapped holding is not a symbol anything can have a verdict
-  // about, so it never belonged in the tracked set.
+  let tracked: { symbol: string; company_name: string | null; sector: string | null; industry: string | null; added_at: Date | null }[] = [];
   try {
     tracked = await sql`
       SELECT t.symbol,
              s.company_name,
+             s.sector,
+             s.industry,
              MIN(w.added_at) AS added_at
         FROM (
           SELECT symbol FROM app.user_watchlist WHERE symbol IS NOT NULL
@@ -380,7 +376,7 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
         ) t
         LEFT JOIN app.user_watchlist w ON w.symbol = t.symbol
         LEFT JOIN app.universe s ON s.symbol = t.symbol
-       GROUP BY t.symbol, s.company_name
+       GROUP BY t.symbol, s.company_name, s.sector, s.industry
     `;
   } catch {
     return empty;
@@ -407,6 +403,23 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
 
   const trackedSet = new Set(tracked.map((t) => t.symbol));
   const verdictSymbols = [...newest.keys()];
+  const allSymbols = [...new Set([...trackedSet, ...verdictSymbols])];
+
+  const universeInfo = new Map<string, { company_name: string | null; sector: string | null; industry: string | null }>();
+  if (allSymbols.length > 0) {
+    try {
+      const urows = await sql<{ symbol: string; company_name: string | null; sector: string | null; industry: string | null }[]>`
+        SELECT symbol, company_name, sector, industry
+          FROM app.universe
+         WHERE symbol = ANY(${allSymbols})
+      `;
+      for (const u of urows) {
+        universeInfo.set(u.symbol, { company_name: u.company_name, sector: u.sector, industry: u.industry });
+      }
+    } catch {
+      // fallback
+    }
+  }
 
   // Weekly cluster_metrics for the symbols that have a verdict, so drift can be
   // asked of the past and not only of today. Scoped to those symbols because
@@ -435,7 +448,7 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
   // dormant ones alike, since both render a move. `latestCloseBySymbol` already
   // swallows a golden outage and returns an empty map, which degrades to "no
   // LTP" rather than to a failed queue.
-  const ltps = await latestCloseBySymbol([...new Set([...trackedSet, ...verdictSymbols])]);
+  const ltps = await latestCloseBySymbol(allSymbols);
   const priceOf = (
     sym: string,
     anchor: number | null,
@@ -449,6 +462,22 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
     };
   };
 
+  const parseActionAndThesis = (verdictText: string | null): { action: string | null; thesis: string | null } => {
+    if (!verdictText) return { action: null, thesis: null };
+    const clean = verdictText.trim();
+    const sepIdx = clean.indexOf("—");
+    if (sepIdx !== -1) {
+      const rawAction = clean.slice(0, sepIdx).trim().toUpperCase();
+      const action = rawAction.split(/[\s,]+/)[0];
+      const thesis = clean.slice(sepIdx + 1).trim();
+      return { action, thesis };
+    }
+    const match = clean.match(/^([A-Za-z]+)\b/);
+    const action = match ? match[1].toUpperCase() : clean.slice(0, 10);
+    const thesis = clean.replace(/^[A-Za-z]+[,\s—–-]+/, "").trim();
+    return { action, thesis: thesis || null };
+  };
+
   /* ---- entries -------------------------------------------------------- */
 
   const entries: QueueEntry[] = [];
@@ -456,15 +485,29 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
 
   for (const t of tracked) {
     const v = newest.get(t.symbol);
+    const u = universeInfo.get(t.symbol);
     if (!v) {
       entries.push({
-        symbol: t.symbol, company_name: t.company_name, bucket: "missing",
-        verdict: null, confidence: null, generated_at: null, ageDays: null,
-        movedCount: 0, comparableCount: 0, unverifiableCount: 0, movedKeys: [],
+        symbol: t.symbol,
+        company_name: u?.company_name ?? t.company_name,
+        sector: u?.sector ?? t.sector ?? null,
+        industry: u?.industry ?? t.industry ?? null,
+        bucket: "missing",
+        verdict: null,
+        action: null,
+        thesis: null,
+        confidence: null,
+        generated_at: null,
+        ageDays: null,
+        movedCount: 0,
+        comparableCount: 0,
+        unverifiableCount: 0,
+        movedKeys: [],
         addedAt: t.added_at ? t.added_at.toISOString() : null,
         // No verdict means no anchor to move from. LTP is still carried so the
         // row is not blank, and pctMove stays null rather than 0.
-        ...priceOf(t.symbol, null), priceAsof: null,
+        ...priceOf(t.symbol, null),
+        priceAsof: null,
       });
       counts.missing++;
       continue;
@@ -476,9 +519,20 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
     const generated_at = v.generated_at.toISOString();
     const ageDays = daysSince(generated_at);
     const bucket: QueueBucket = movedKeys.length > 0 || ageDays > STALE_DAYS ? "due" : "current";
+    const parsed = parseActionAndThesis(v.verdict);
+
     entries.push({
-      symbol: t.symbol, company_name: t.company_name, bucket,
-      verdict: v.verdict, confidence: v.confidence, generated_at, ageDays,
+      symbol: t.symbol,
+      company_name: u?.company_name ?? t.company_name,
+      sector: u?.sector ?? t.sector ?? null,
+      industry: u?.industry ?? t.industry ?? null,
+      bucket,
+      verdict: v.verdict,
+      action: parsed.action,
+      thesis: parsed.thesis,
+      confidence: v.confidence,
+      generated_at,
+      ageDays,
       movedCount: movedKeys.length,
       comparableCount: drift.filter((d) => d.comparable && !d.liveMissing).length,
       unverifiableCount: drift.filter((d) => d.comparable && d.liveMissing).length,
@@ -496,11 +550,26 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
   for (const [symbol, v] of newest) {
     if (trackedSet.has(symbol)) continue;
     const generated_at = v.generated_at.toISOString();
+    const u = universeInfo.get(symbol);
+    const parsed = parseActionAndThesis(v.verdict);
+
     entries.push({
-      symbol, company_name: null, bucket: "dormant",
-      verdict: v.verdict, confidence: v.confidence, generated_at,
+      symbol,
+      company_name: u?.company_name ?? null,
+      sector: u?.sector ?? null,
+      industry: u?.industry ?? null,
+      bucket: "dormant",
+      verdict: v.verdict,
+      action: parsed.action,
+      thesis: parsed.thesis,
+      confidence: v.confidence,
+      generated_at,
       ageDays: daysSince(generated_at),
-      movedCount: 0, comparableCount: 0, unverifiableCount: 0, movedKeys: [], addedAt: null,
+      movedCount: 0,
+      comparableCount: 0,
+      unverifiableCount: 0,
+      movedKeys: [],
+      addedAt: null,
       ...priceOf(symbol, v.anchor_price),
       priceAsof: v.price_asof ? v.price_asof.toISOString().slice(0, 10) : null,
     });

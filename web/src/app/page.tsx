@@ -27,9 +27,9 @@ type IndustryTile = {
 };
 
 const DEFAULT_SNAPSHOT: Snapshot = {
-  stocks: 2122,
-  clusters: 46,
-  veterans: 1650,
+  stocks: 3174,
+  clusters: 54,
+  veterans: 1927,
   weeks: 48,
   snapshot_date: null,
 };
@@ -105,8 +105,8 @@ export default async function Landing() {
 /* =============================================================== HERO === */
 
 function Hero({ snap }: { snap: Snapshot }) {
-  const stockCount = snap?.stocks ? snap.stocks.toLocaleString("en-IN") : "2,122";
-  const clusterCount = snap?.clusters ? String(snap.clusters) : "46";
+  const stockCount = snap?.stocks ? snap.stocks.toLocaleString("en-IN") : "3,174";
+  const clusterCount = snap?.clusters ? String(snap.clusters) : "54";
 
   return (
     <section className="grain relative overflow-hidden">
@@ -317,7 +317,7 @@ function FooterCTA() {
         </p>
         <div className="mt-5 sm:mt-7 flex gap-2.5 sm:gap-3 justify-center flex-wrap">
           <Link href="/sectors" className="btn-primary text-[13px] sm:text-[13.5px]">
-            Open all 46 sectors
+            Open all sectors
             <ArrowRight size={14} />
           </Link>
           <Link href="/signup" className="btn-ghost text-[13px] sm:text-[13.5px]">

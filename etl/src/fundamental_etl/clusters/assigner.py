@@ -63,7 +63,7 @@ def assign_all(conn: psycopg.Connection) -> dict[str, int]:
     """Assign clusters + tiers for the entire active universe. Returns counts."""
     with conn.cursor() as cur:
         cur.execute("""
-            SELECT u.symbol, u.sector, u.industry, u.market_cap_category, u.listing_date,
+            SELECT u.symbol, u.company_name, u.business_summary, u.sector, u.industry, u.market_cap_category, u.listing_date,
                    COALESCE(c.years, 0) AS years
             FROM app.universe u
             LEFT JOIN (
@@ -85,6 +85,8 @@ def assign_all(conn: psycopg.Connection) -> dict[str, int]:
                 sector=r["sector"],
                 industry=r["industry"],
                 market_cap_category=r["market_cap_category"],
+                company_name=r.get("company_name"),
+                business_summary=r.get("business_summary"),
             )
             cluster_id, _ = assign(stock)
             tier = _maturity_tier(int(r["years"]), r.get("listing_date"))

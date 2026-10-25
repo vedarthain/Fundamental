@@ -490,6 +490,316 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
     ),
 
     # ===== E. PROJECT-LED ===================================================
+    "cap_goods_machinery_equipment": Scorecard(
+        pillar_weights={"q": 40, "v": 30, "m": 30},
+        quality={
+            "roce_3y": 14, "roce_5y": 6, "op_margin_3y": 14, "op_margin_trend": 8, "wc_days": 14,
+            "inv_days": 8, "cfo_pat_3y": 10, "rev_cagr_5y": 10, "np_cagr_5y": 8,
+            "np_consistency_5y": 4, "debt_equity": 4,
+        },
+        valuation={"pe_ttm": 30, "ev_ebitda_ttm": 25, "peg": 22, "pb": 10, "fcf_yield": 8, "div_yield": 5},
+        momentum={
+            "ret_12m_rel": 20, "ret_6m_rel": 15, "ret_3m_rel": 10,
+            "pct_above_200ema_252d": 10, "ema_stack_bull": 5, "tech_net_score_scaled": 6,
+            "sales_yoy_q": 22, "np_yoy_q": 12,
+        },
+        loss_maker_val_fallback=_val_fallback_industrials(),
+    ),
+    "cap_goods_pipes_building": Scorecard(
+        pillar_weights={"q": 40, "v": 30, "m": 30},
+        quality={
+            "roce_3y": 14, "roce_5y": 6, "op_margin_3y": 14, "asset_turnover": 10, "wc_days": 12,
+            "inv_days": 8, "cfo_pat_3y": 10, "rev_cagr_5y": 10, "np_cagr_5y": 8,
+            "np_consistency_5y": 4, "debt_equity": 4,
+        },
+        valuation={"pe_ttm": 30, "ev_ebitda_ttm": 25, "peg": 20, "pb": 12, "fcf_yield": 8, "div_yield": 5},
+        momentum=UNIVERSAL_MOMENTUM,
+        loss_maker_val_fallback=_val_fallback_industrials(),
+    ),
+    "cap_goods_precision_eng": Scorecard(
+        pillar_weights={"q": 45, "v": 25, "m": 30},
+        quality={
+            "roce_3y": 16, "roce_5y": 8, "op_margin_3y": 14, "op_margin_trend": 10, "wc_days": 10,
+            "inv_days": 8, "cfo_pat_3y": 10, "rev_cagr_5y": 10, "np_cagr_5y": 8, "debt_equity": 6,
+        },
+        valuation={"pe_ttm": 30, "ev_ebitda_ttm": 25, "peg": 22, "pb": 10, "fcf_yield": 8, "div_yield": 5},
+        momentum=UNIVERSAL_MOMENTUM,
+        loss_maker_val_fallback=_val_fallback_industrials(),
+    ),
+    "cap_goods_ems": Scorecard(
+        pillar_weights={"q": 40, "v": 25, "m": 35},
+        quality={
+            "asset_turnover": 14, "wc_days": 14, "roce_3y": 12, "roce_5y": 6, "op_margin_3y": 10,
+            "cfo_pat_3y": 10, "rev_cagr_5y": 14, "np_cagr_5y": 10, "debt_equity": 10,
+        },
+        valuation={"pe_ttm": 25, "ev_ebitda_ttm": 25, "peg": 30, "pb": 10, "fcf_yield": 10},
+        momentum={
+            "ret_12m_rel": 22, "ret_6m_rel": 15, "ret_3m_rel": 10,
+            "pct_above_200ema_252d": 10, "ema_stack_bull": 5, "tech_net_score_scaled": 1,
+            "sales_yoy_q": 22, "np_yoy_q": 15,
+        },
+        loss_maker_val_fallback=_val_fallback_industrials(),
+    ),
+    "packaging_containers": Scorecard(
+        pillar_weights={"q": 40, "v": 30, "m": 30},
+        quality={
+            "roce_3y": 14, "roce_5y": 6, "op_margin_3y": 14, "asset_turnover": 12, "wc_days": 10,
+            "cfo_pat_3y": 10, "rev_cagr_5y": 10, "np_cagr_5y": 8, "debt_equity": 8, "np_consistency_5y": 8,
+        },
+        valuation={"pe_ttm": 30, "ev_ebitda_ttm": 25, "peg": 18, "pb": 12, "fcf_yield": 10, "div_yield": 5},
+        momentum=UNIVERSAL_MOMENTUM,
+        loss_maker_val_fallback=_val_fallback_industrials(),
+    ),
+    "consumer_appliances": Scorecard(
+        pillar_weights={"q": 40, "v": 30, "m": 30},
+        quality={
+            "roce_3y": 13, "roce_5y": 5, "op_margin_3y": 14, "op_margin_trend": 10, "wc_days": 12,
+            "inv_days": 8, "rev_cagr_5y": 12, "np_cagr_5y": 10, "cfo_pat_3y": 8, "debt_equity": 8,
+        },
+        valuation={"pe_ttm": 30, "ev_ebitda_ttm": 22, "peg": 23, "pb": 10, "fcf_yield": 10, "div_yield": 5},
+        momentum={
+            "ret_12m_rel": 20, "ret_6m_rel": 15, "ret_3m_rel": 10,
+            "pct_above_200ema_252d": 10, "ema_stack_bull": 5, "tech_net_score_scaled": 5,
+            "sales_yoy_q": 20, "np_yoy_q": 15,
+        },
+        loss_maker_val_fallback=_val_fallback_ev_sales(),
+    ),
+    "consumer_jewellery": Scorecard(
+        pillar_weights={"q": 45, "v": 25, "m": 30},
+        quality={
+            "roce_3y": 14, "roce_5y": 6, "inv_days": 18, "wc_days": 12, "cfo_pat_3y": 12,
+            "rev_cagr_5y": 12, "debt_equity": 10, "np_consistency_5y": 8, "op_margin_3y": 8,
+        },
+        valuation={"pe_ttm": 30, "peg": 25, "pb": 15, "ev_ebitda_ttm": 15, "fcf_yield": 15},
+        momentum=UNIVERSAL_MOMENTUM,
+        loss_maker_val_fallback=_val_fallback_ev_sales(),
+    ),
+    "consumer_footwear": Scorecard(
+        pillar_weights={"q": 40, "v": 30, "m": 30},
+        quality={
+            "roce_3y": 14, "roce_5y": 6, "op_margin_3y": 14, "inv_days": 12, "asset_turnover": 10,
+            "cfo_pat_3y": 10, "rev_cagr_5y": 12, "np_cagr_5y": 10, "debt_equity": 6, "np_consistency_5y": 6,
+        },
+        valuation={"pe_ttm": 30, "ev_ebitda_ttm": 25, "peg": 20, "pb": 12, "fcf_yield": 8, "div_yield": 5},
+        momentum=UNIVERSAL_MOMENTUM,
+        loss_maker_val_fallback=_val_fallback_ev_sales(),
+    ),
+    "consumer_building_home": Scorecard(
+        pillar_weights={"q": 40, "v": 30, "m": 30},
+        quality={
+            "roce_3y": 14, "roce_5y": 6, "op_margin_3y": 14, "op_margin_trend": 10, "cfo_pat_3y": 12,
+            "rev_cagr_5y": 12, "wc_days": 10, "np_cagr_5y": 8, "debt_equity": 8, "np_consistency_5y": 6,
+        },
+        valuation={"pe_ttm": 30, "ev_ebitda_ttm": 25, "peg": 20, "pb": 12, "fcf_yield": 8, "div_yield": 5},
+        momentum=UNIVERSAL_MOMENTUM,
+        loss_maker_val_fallback=_val_fallback_ev_sales(),
+    ),
+    "textiles_apparel_retail": Scorecard(
+        pillar_weights={"q": 40, "v": 30, "m": 30},
+        quality={
+            "roce_3y": 14, "roce_5y": 6, "op_margin_3y": 14, "op_margin_trend": 10, "inv_days": 10,
+            "rev_cagr_5y": 12, "np_cagr_5y": 10, "cfo_pat_3y": 12, "debt_equity": 6, "np_consistency_5y": 6,
+        },
+        valuation={"pe_ttm": 30, "peg": 25, "ev_ebitda_ttm": 20, "pb": 15, "fcf_yield": 10},
+        momentum=UNIVERSAL_MOMENTUM,
+        loss_maker_val_fallback=_val_fallback_ev_sales(),
+    ),
+    "textiles_spinning_yarn": Scorecard(
+        pillar_weights={"q": 35, "v": 35, "m": 30},
+        quality={
+            "roce_3y": 11, "roce_5y": 5, "op_margin_3y": 14, "wc_days": 12, "inv_days": 10,
+            "debt_equity": 14, "cfo_pat_3y": 10, "rev_cagr_5y": 12, "np_consistency_5y": 12,
+        },
+        valuation={"pe_ttm": 25, "ev_ebitda_ttm": 25, "pb": 20, "fcf_yield": 15, "peg": 10, "div_yield": 5},
+        momentum=UNIVERSAL_MOMENTUM,
+        loss_maker_val_fallback=_val_fallback_industrials(),
+    ),
+    "services_staffing_facilities": Scorecard(
+        pillar_weights={"q": 45, "v": 30, "m": 25},
+        quality={
+            "roce_3y": 15, "roce_5y": 7, "op_margin_3y": 14, "op_margin_trend": 8, "cfo_pat_3y": 14,
+            "wc_days": 10, "rev_cagr_5y": 12, "np_cagr_5y": 10, "np_consistency_5y": 10,
+        },
+        valuation={"pe_ttm": 32, "ev_ebitda_ttm": 25, "peg": 18, "pb": 10, "fcf_yield": 10, "div_yield": 5},
+        momentum=UNIVERSAL_MOMENTUM,
+        loss_maker_val_fallback=_val_fallback_ev_sales(),
+    ),
+
+    # ===== Subdivided Large Clusters (Migration 0090 & 0091) ==================
+    "bfsi_holding_companies": Scorecard(
+        pillar_weights={"q": 50, "v": 30, "m": 20},
+        quality={
+            "book_value_cagr_5y": 25, "roe_3y": 20, "roe_5y": 10, "np_cagr_5y": 15,
+            "np_consistency_5y": 10, "rev_cagr_5y": 10, "debt_equity": 10,
+        },
+        valuation={"pb": 55, "pe_ttm": 25, "div_yield": 20},
+        momentum=UNIVERSAL_MOMENTUM,
+        loss_maker_val_fallback=[("pb", 1.0)],
+    ),
+    "cap_goods_pumps_valves": Scorecard(
+        pillar_weights={"q": 45, "v": 30, "m": 25},
+        quality={
+            "roce_3y": 16, "roce_5y": 8, "op_margin_3y": 14, "op_margin_trend": 10,
+            "cfo_pat_3y": 12, "wc_days": 12, "rev_cagr_5y": 14, "np_cagr_5y": 14,
+        },
+        valuation={"pe_ttm": 32, "ev_ebitda_ttm": 25, "peg": 20, "pb": 13, "fcf_yield": 10},
+        momentum=UNIVERSAL_MOMENTUM,
+        loss_maker_val_fallback=_val_fallback_industrials(),
+    ),
+    "bfsi_housing_finance": Scorecard(
+        pillar_weights={"q": 50, "v": 25, "m": 25},
+        quality=_lender_quality(roa=22, roe=20, bvc=16, lbg=18, npc=10, nps=6, e2a=8),
+        valuation={"pb": 50, "pe_ttm": 25, "earnings_yield_trend": 15, "div_yield": 10},
+        momentum=UNIVERSAL_MOMENTUM,
+        loss_maker_val_fallback=[("pb", 1.0)],
+    ),
+    "bfsi_gold_microfinance": Scorecard(
+        pillar_weights={"q": 50, "v": 25, "m": 25},
+        quality=_lender_quality(roa=24, roe=20, bvc=14, lbg=18, npc=12, nps=6, e2a=6),
+        valuation={"pb": 45, "pe_ttm": 30, "earnings_yield_trend": 15, "div_yield": 10},
+        momentum=UNIVERSAL_MOMENTUM,
+        loss_maker_val_fallback=[("pb", 1.0)],
+    ),
+    "pharma_cdmo_apis": Scorecard(
+        pillar_weights={"q": 45, "v": 30, "m": 25},
+        quality={
+            "roce_3y": 14, "roce_5y": 6, "op_margin_3y": 14, "op_margin_trend": 8, "cfo_pat_3y": 12,
+            "capex_intensity_3y": 10, "asset_turnover": 8, "rev_cagr_5y": 12, "np_cagr_5y": 10, "wc_days": 6,
+        },
+        valuation={"pe_ttm": 28, "ev_ebitda_ttm": 25, "peg": 22, "pb": 10, "fcf_yield": 10, "div_yield": 5},
+        momentum=UNIVERSAL_MOMENTUM,
+        loss_maker_val_fallback=_val_fallback_ev_sales(),
+    ),
+    "it_erd_engineering": Scorecard(
+        pillar_weights={"q": 45, "v": 30, "m": 25},
+        quality={
+            "roce_3y": 18, "roce_5y": 8, "op_margin_3y": 16, "op_margin_trend": 10, "cfo_pat_3y": 14,
+            "rev_cagr_5y": 14, "np_cagr_5y": 10, "np_consistency_5y": 10,
+        },
+        valuation={"pe_ttm": 35, "peg": 30, "ev_ebitda_ttm": 15, "fcf_yield": 15, "div_yield": 5},
+        momentum=UNIVERSAL_MOMENTUM,
+        loss_maker_val_fallback=_val_fallback_ev_sales(),
+    ),
+    "it_software_products_saas": Scorecard(
+        pillar_weights={"q": 40, "v": 30, "m": 30},
+        quality={
+            "rev_cagr_5y": 18, "np_cagr_5y": 12, "op_margin_3y": 14, "op_margin_trend": 10,
+            "roce_3y": 14, "roce_5y": 6, "cfo_pat_3y": 14, "asset_turnover": 12,
+        },
+        valuation={"pe_ttm": 30, "ev_ebitda_ttm": 20, "peg": 25, "fcf_yield": 15, "pb": 10},
+        momentum=UNIVERSAL_MOMENTUM,
+        loss_maker_val_fallback=_val_fallback_ev_sales(),
+    ),
+    "agri_sugar_biofuels": Scorecard(
+        pillar_weights={"q": 40, "v": 30, "m": 30},
+        quality={
+            "roce_3y": 15, "roce_5y": 7, "op_margin_3y": 14, "cfo_pat_3y": 12, "debt_equity": 12,
+            "inv_days": 12, "rev_cagr_5y": 10, "np_cagr_5y": 10, "np_consistency_5y": 8,
+        },
+        valuation={"pe_ttm": 28, "ev_ebitda_ttm": 25, "pb": 20, "fcf_yield": 15, "div_yield": 12},
+        momentum=UNIVERSAL_MOMENTUM,
+        loss_maker_val_fallback=_val_fallback_industrials(),
+    ),
+    "fmcg_packaged_foods": Scorecard(
+        pillar_weights={"q": 45, "v": 30, "m": 25},
+        quality={
+            "roce_3y": 20, "roce_5y": 10, "op_margin_3y": 14, "op_margin_trend": 8, "cfo_pat_3y": 14,
+            "rev_cagr_5y": 12, "np_cagr_5y": 12, "wc_days": 10,
+        },
+        valuation={"pe_ttm": 35, "ev_ebitda_ttm": 25, "peg": 20, "pb": 10, "fcf_yield": 10},
+        momentum=UNIVERSAL_MOMENTUM,
+        loss_maker_val_fallback=_val_fallback_ev_sales(),
+    ),
+    "electrical_wires_cables": Scorecard(
+        pillar_weights={"q": 40, "v": 30, "m": 30},
+        quality={
+            "roce_3y": 16, "roce_5y": 8, "op_margin_3y": 12, "asset_turnover": 16, "wc_days": 14,
+            "cfo_pat_3y": 10, "rev_cagr_5y": 12, "np_cagr_5y": 12,
+        },
+        valuation={"pe_ttm": 30, "ev_ebitda_ttm": 25, "peg": 22, "pb": 10, "fcf_yield": 8, "div_yield": 5},
+        momentum=UNIVERSAL_MOMENTUM,
+        loss_maker_val_fallback=_val_fallback_industrials(),
+    ),
+    "electrical_transformers_grid": Scorecard(
+        pillar_weights={"q": 40, "v": 30, "m": 30},
+        quality={
+            "roce_3y": 15, "roce_5y": 7, "op_margin_3y": 14, "op_margin_trend": 10, "cfo_pat_3y": 12,
+            "wc_days": 12, "rev_cagr_5y": 12, "np_cagr_5y": 10, "debt_equity": 8,
+        },
+        valuation={"pe_ttm": 30, "ev_ebitda_ttm": 25, "peg": 20, "pb": 12, "fcf_yield": 8, "div_yield": 5},
+        momentum=UNIVERSAL_MOMENTUM,
+        loss_maker_val_fallback=_val_fallback_industrials(),
+    ),
+    "hospitality_hotels": Scorecard(
+        pillar_weights={"q": 40, "v": 30, "m": 30},
+        quality={
+            "roce_3y": 14, "roce_5y": 6, "op_margin_3y": 16, "op_margin_trend": 12, "cfo_pat_3y": 14,
+            "debt_equity": 12, "rev_cagr_5y": 14, "np_cagr_5y": 12,
+        },
+        valuation={"ev_ebitda_ttm": 35, "pe_ttm": 25, "pb": 20, "fcf_yield": 12, "peg": 8},
+        momentum=UNIVERSAL_MOMENTUM,
+        loss_maker_val_fallback=_val_fallback_ev_sales(),
+    ),
+    "education_training_services": Scorecard(
+        pillar_weights={"q": 45, "v": 30, "m": 25},
+        quality={
+            "roce_3y": 18, "roce_5y": 8, "op_margin_3y": 16, "cfo_pat_3y": 16, "wc_days": 10,
+            "rev_cagr_5y": 12, "np_cagr_5y": 10, "debt_equity": 10,
+        },
+        valuation={"pe_ttm": 32, "ev_ebitda_ttm": 25, "peg": 20, "pb": 13, "fcf_yield": 10},
+        momentum=UNIVERSAL_MOMENTUM,
+        loss_maker_val_fallback=_val_fallback_ev_sales(),
+    ),
+    "auto_tyres_rubber": Scorecard(
+        pillar_weights={"q": 40, "v": 30, "m": 30},
+        quality={
+            "roce_3y": 14, "roce_5y": 6, "op_margin_3y": 14, "asset_turnover": 14, "cfo_pat_3y": 12,
+            "debt_equity": 10, "rev_cagr_5y": 10, "np_cagr_5y": 10, "wc_days": 10,
+        },
+        valuation={"pe_ttm": 30, "ev_ebitda_ttm": 25, "pb": 15, "fcf_yield": 15, "div_yield": 10, "peg": 5},
+        momentum=UNIVERSAL_MOMENTUM,
+        loss_maker_val_fallback=_val_fallback_industrials(),
+    ),
+    "construction_railways_infra": Scorecard(
+        pillar_weights={"q": 40, "v": 30, "m": 30},
+        quality={
+            "roce_3y": 15, "roce_5y": 7, "op_margin_3y": 14, "cfo_pat_3y": 12, "wc_days": 14,
+            "debt_equity": 10, "rev_cagr_5y": 14, "np_cagr_5y": 14,
+        },
+        valuation={"pe_ttm": 32, "ev_ebitda_ttm": 25, "peg": 20, "pb": 13, "fcf_yield": 10},
+        momentum=UNIVERSAL_MOMENTUM,
+        loss_maker_val_fallback=_val_fallback_industrials(),
+    ),
+    "realty_commercial_coworking": Scorecard(
+        pillar_weights={"q": 40, "v": 30, "m": 30},
+        quality={
+            "op_margin_3y": 18, "op_margin_trend": 12, "cfo_pat_3y": 16, "rev_cagr_5y": 16,
+            "np_cagr_5y": 12, "asset_turnover": 12, "roce_3y": 14,
+        },
+        valuation={"ev_ebitda_ttm": 35, "pe_ttm": 25, "pb": 20, "fcf_yield": 12, "peg": 8},
+        momentum=UNIVERSAL_MOMENTUM,
+        loss_maker_val_fallback=_val_fallback_ev_sales(),
+    ),
+    "chemicals_dyes_pigments": Scorecard(
+        pillar_weights={"q": 40, "v": 30, "m": 30},
+        quality={
+            "roce_3y": 14, "roce_5y": 6, "op_margin_3y": 14, "cfo_pat_3y": 12, "asset_turnover": 12,
+            "wc_days": 12, "rev_cagr_5y": 10, "np_cagr_5y": 10, "debt_equity": 10,
+        },
+        valuation={"pe_ttm": 30, "ev_ebitda_ttm": 25, "peg": 20, "pb": 12, "fcf_yield": 8, "div_yield": 5},
+        momentum=UNIVERSAL_MOMENTUM,
+        loss_maker_val_fallback=_val_fallback_industrials(),
+    ),
+    "services_hr_staffing": Scorecard(
+        pillar_weights={"q": 45, "v": 30, "m": 25},
+        quality={
+            "roce_3y": 18, "roce_5y": 8, "op_margin_3y": 12, "cfo_pat_3y": 16, "wc_days": 14,
+            "rev_cagr_5y": 14, "np_cagr_5y": 10, "asset_turnover": 8,
+        },
+        valuation={"pe_ttm": 32, "ev_ebitda_ttm": 25, "peg": 20, "pb": 13, "fcf_yield": 10},
+        momentum=UNIVERSAL_MOMENTUM,
+        loss_maker_val_fallback=_val_fallback_ev_sales(),
+    ),
     "cap_goods_industrial": Scorecard(
         pillar_weights={"q": 40, "v": 30, "m": 30},
         quality={
@@ -758,6 +1068,7 @@ _BANK_CLUSTERS = {
     "bfsi_pvt_banks",
     "bfsi_pvt_banks_large", "bfsi_pvt_banks_mid_small", "bfsi_sfb",
     "bfsi_psu_banks", "bfsi_nbfc",
+    "bfsi_housing_finance", "bfsi_gold_microfinance",
 }
 
 

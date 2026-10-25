@@ -144,6 +144,199 @@ BFSI_SFB = {
     "SURYODAY", "UTKARSHBNK", "CAPITALSFB", "FINOPB",
 }
 
+# ---------------------------------------------------------------------------
+# Whitelists & heuristics for subdivided clusters (Industrials, Consumer, Materials, Services)
+# ---------------------------------------------------------------------------
+
+WIRES_CABLES = {
+    "POLYCAB", "KEI", "RRKABEL", "FINCABLES", "DYNAMIC", "CORDO", "PARACABLES", "BBL",
+    "UNIVERSAL", "SURANAT&P", "CMI", "RELICAB", "CYBERTECH"
+}
+
+DEFENSE_SHIPBUILDERS = {
+    "MAZDOCK", "COCHINSHIP", "SWANDEF", "TONBO", "GRSE"
+}
+
+FERROUS_CG = {
+    "SHYAMMETL", "GALLANTT", "GPIL", "MSPSTEEL", "PRAKASH", "SALASAR"
+}
+
+CAP_GOODS_EMS = {
+    "SYRMA", "KAYNES", "AVALON", "CYIENTDLM", "DCXINDIA", "CPPLUS", "INDOMIM", "IKIO",
+    "CENTUM", "ZETWERK", "PGEL", "AMBER", "DIXON", "SGS", "VINDHYATEL"
+}
+
+CAP_GOODS_PIPES = {
+    "WELCORP", "APLAPOLLO", "ASTRAL", "SUPREMEIND", "JINDALSAW", "RATNAMANI", "FINPIPE",
+    "PRINCEPIPE", "SURANI", "MANINDS", "VENUSPIPES", "HITECH", "MAHSEAMLES", "SURYA",
+    "JTLIND", "GOODLUCK", "RAMASTEEL", "BHARATWIRE", "ELECTCAST", "TIIL", "PRAKASHSTL"
+}
+
+CAP_GOODS_PRECISION = {
+    "TIMKEN", "SKFINDIA", "AIAENG", "GRINDWELL", "CARBORUNIV", "HAPPYFORGE", "PTCIL",
+    "SCHAEFFLER", "ROLEXFORG", "MMFL", "SANSERA", "CRAFTSMAN", "RAMKRISNA", "BALUFORGE",
+    "WENDT", "HARSHA", "MENONBE", "NRBBEARING"
+}
+
+PACKAGING_CONTAINERS = {
+    "MOLDTEK", "AGI", "TIMETECHNO", "POLYPLEX", "TCPLPACK", "HUHTAMAKI", "EPL", "MANAKSIA",
+    "JINDALPOLY", "UFLEX", "COSMOFIRST", "ESTER", "BIL", "HINDTIN", "TINPLATE", "CANPACK"
+}
+
+CONSUMER_JEWELLERY = {
+    "TITAN", "KALYANKJIL", "LALITHAA", "PCJEWELLER", "SKYGOLD", "THANGAMAYL", "BLUESTONE",
+    "PNGJL", "SENCO", "TBZ", "GOLDIAM", "VAIBHAVGBL", "DPABHUSHAN", "MOTISONS", "RBZJEWEL",
+    "RADHIKAJWE", "KANANIIND", "MOHITIND"
+}
+
+CONSUMER_FOOTWEAR = {
+    "METROBRAND", "BATAINDIA", "RELAXO", "CAMPUS", "REDTAPE", "MIRZAINT", "KHADIM", "LIBERTSHOE"
+}
+
+CONSUMER_BUILDING_HOME = {
+    "ASIANPAINT", "BERGEPAINT", "KANSAINER", "JSWDULUX", "AKZOINDIA", "INDIGOPNTS", "SIRCA",
+    "KAJARIACER", "CENTURYPLY", "CERA", "STYLAMIND", "GREENPLY", "GREENPANEL", "GREENLAM",
+    "SOMANYCERA", "ORIENTBELL", "NITCO", "EXXARO", "AEROFLEX", "HINDWAREAP"
+}
+
+TEXTILES_APPAREL = {
+    "PAGEIND", "RAYMONDLSL", "LUXIND", "DOLLAR", "KKCL", "GOKEX", "PGIL", "KITEX", "SPAL",
+    "CANTABIL", "VIPIND", "RUPA", "ZODIACLOTH", "SPLIND", "SCANDENT", "MUFTI", "VEDANTFASH"
+}
+
+SERVICES_IT_BPO = {
+    "FSL", "ECLERX", "HGS", "ONEPOINT", "FUSIONCX", "REDINGTON", "CNL"
+}
+
+SERVICES_COWORKING_REALTY = {
+    "WEWORK", "SMARTWORKS", "AWFIS", "INDIQUBE", "NIRLON", "NESCO", "HEMIPROP", "EFCIL"
+}
+
+SERVICES_PORTS_LOGISTICS = {
+    "DREDGECORP", "KMEW"
+}
+
+SERVICES_BEVERAGES = {
+    "VINCOFE", "BNAGROCHEM"
+}
+
+MEDTECH_EXTRA = {
+    "SMT"
+}
+
+MACHINERY_EXTRA = {
+    "BONFIG", "RAVITA"
+}
+
+# Subdivided cluster whitelists (Migration 0090)
+BFSI_HOUSING_FINANCE = {
+    "AADHARHFC", "AAVAS", "APTUS", "BAJAJHFL", "CANFINHOME", "GICHSGFIN", "HOMEFIRST", 
+    "HUDCO", "IBULHSGFIN", "INDIAHOME", "LICHSGFIN", "PNBHOUSING", "REPCOHOME", 
+    "SRGHFL", "STARHFC", "CORPHFL", "INDHFL", "SAHARAHOUS", "MANRAJ", "VARDHMAN",
+    "SAMMAANCAP", "RHFL", "CORALFINAC"
+}
+
+BFSI_GOLD_MFI = {
+    "MUTHOOTFIN", "MANAPPURAM", "CREDITACC", "FUSION", "SPANDANA", "SATIN", 
+    "MUTHOOTMF", "ARMANFIN", "FEDFINA", "MUTHOOTCAP", "ASCOM"
+}
+
+PHARMA_CDMO_APIS = {
+    "DIVISLAB", "SYNGENE", "SUVENPHAR", "LAURUSLABS", "GRANULES", "GLAND", 
+    "NEULANDLAB", "SIGACHI", "AARTIPHARM", "AARTIDRUGS", "INNOVA", "SMSPHARMA", 
+    "SUPRIYA", "HIKAL", "SOLARA", "MOREPENLAB", "GUJTHEM", "KOPRAN", "BLISSGVS", 
+    "MEDICAMEQ", "SYNCOMF", "CHEMBOND", "FERMENTA", "BALPHARMA", "ANCHOR",
+    "AMRUTANJAN", "BACPHAR", "VENUSREM", "PANACEABIO", "COROMANDEL", "WOCKPHARMA",
+    "DISHMAN", "DCAL", "SEQUENT", "ANUHPHR", "SUVEN", "NACLIND"
+}
+
+IT_ERD = {
+    "TATAELXSI", "KPITTECH", "LTTS", "CYIENT", "TATATECH", "AXISCADES", 
+    "EXPLEOSOL", "SASKEN", "CYIENTDLM", "VALIANTORG", "CIGNITITEC", "RSYSTEMS"
+}
+
+IT_SAAS_PRODUCTS = {
+    "RATEGAIN", "INTELLECT", "TANLA", "ROUTE", "NEWGEN", "QUICKHEAL", "RAMCOSYS", 
+    "SUBEXLTD", "NUCLEUS", "CEINFO", "ZAGGLE", "AFFLE", "NAZARA", "OFSS", "AURIONPRO", 
+    "BLACKBOX", "GENESYS", "KSOLVES", "PROTEAN", "TRACXN", "YATRA", "EASEMYTRIP",
+    "63MOONS", "ACCELYA", "AIRAN", "MOSCHIP", "NELCO", "SAKSOFT", "FIVESTAR"
+}
+
+AGRI_SUGAR = {
+    "BALRAMCHIN", "SHREERENUK", "EIDPARRY", "TRIVENI", "DHAMPURSUG", "DWARIKESH", 
+    "DALMIASUG", "AVADHSUGAR", "MAGADSUGAR", "UGARSUGAR", "UTTAMSUGAR", "BAJAJHIND", 
+    "KCP", "KMCSUGAR", "PONNIERODE", "SAKTHISUG", "VISHWARAJ", "KOTHARISUG", 
+    "RAJSREESUG", "MAWANA", "DCMSRIND", "BANARISUG", "PARASUGAR", "SIMBHAOLI"
+}
+
+FMCG_PACKAGED_FOODS = {
+    "BRITANNIA", "NESTLEIND", "VBL", "TATACONSUM", "BIKAJI", "BECTORFOOD", "PRATAAP", 
+    "ZYDUSWELL", "TASTYBITE", "LTFOODS", "KRBL", "VADILALIND", "HERITGFOOD", "DODLA", 
+    "HATSUN", "PARAGMILK", "CCL", "GOKUL", "AVANTIFEED", "APEX", "WATERBASE", 
+    "ADFFOODS", "ANNAPURNA", "BBTC", "BOPPANA", "SHEETAL", "POKARNA"
+}
+
+TRANSFORMERS_GRID = {
+    "VOLTAMP", "TRIL", "APARINDS", "SHILCHAR", "SCHNEIDER", "KEC", "KALPATPOWR", 
+    "TECHNOE", "GET&D", "POWERINDIA", "HITACHI", "TARAPUR", "MARSONS", "INDOTECH",
+    "GVT&D", "CTRAN", "BBL", "JYOTISTRUC"
+}
+
+HOTELS_RESORTS = {
+    "INDHOTEL", "EIHOTEL", "CHALET", "LEMONTREE", "SAMHI", "MHRIL", "ROHLTD", 
+    "PARK", "ADVANIHOTR", "ORIENTHOT", "SINCLAIRS", "TAJGVK", "BENARAS", 
+    "ASIANHOTNR", "AHLEAST", "AHLWEST", "BLUECOAST", "BRIGHOTEL", "BYKE", "ITDC",
+    "ADVENTHTL", "APOLSINHOT", "KAMATHOTEL", "PRAVEG", "PALRED"
+}
+
+EDUCATION_SERVICES = {
+    "APTECHT", "NIITLTD", "NIITMTS", "MPSLTD", "CLEDUCATE", "CAREERP", "NAVNETEDUL", 
+    "ZEELEARN", "ARIHANTACA", "ADDICTIVE", "TREEHOUSE", "VAKRANGEE", "CCHHL", 
+    "GLOBAL", "GTECJAINX", "DRONE", "DUGLOBAL", "EDUCOMP"
+}
+
+AUTO_TYRES = {
+    "MRF", "APOLLOTYRE", "CEATLTD", "BALKRISIND", "JKTYRE", "TVSSRICHAK", 
+    "GOODYEAR", "GOVIND", "DINDIGUL", "TIRUPATI", "RUBFILA", "GRP", "PIXTRANS",
+    "ETML", "ITTL", "MODIRUBBER", "TOLINS", "VIAZ"
+}
+
+RAILWAY_INFRA = {
+    "RVNL", "IRCON", "RAILTEL", "RITES", "TITAGARH", "JWL", "TEXRAIL", 
+    "BCPL", "KERNEX", "COSMIC", "MICEL", "BEML", "DHARARAIL", "GPTINFRA"
+}
+
+REALTY_COMMERCIAL = {
+    "AWFIS", "DEVX", "EFCIL", "INDIQUBE", "SMARTWORKS", "WEWORK", "NESCO", 
+    "PHOENIXLTD", "PROZONER", "SBGLP"
+}
+
+DYES_PIGMENTS = {
+    "BODALCHEM", "BHAGERIA", "KIRIINDUS", "ASAHISONG", "SUDARSCHEM", "VIDHIING", 
+    "PODDARMENT", "DYNPRO", "CHEMCRUX", "AKSHARCHEM", "MAHICKRA", "VIPULLTD", 
+    "MEGH", "VISHNU", "SHREERAMA"
+}
+
+SERVICES_STAFFING = {
+    "AARVI", "ACEINTEG", "ALANKIT", "BLUSPRING", "CMSINFO", "KRYSTAL", 
+    "QUESS", "RADIANTCMS", "SFML", "UDS", "COREIN", "CSSL", "DTL", "EMAPARTNER",
+    "TEAMLEASE", "SIS", "FIRSTMERIT"
+}
+
+HOLDING_COMPANIES = {
+    "BAJAJHLDNG", "AIIL", "TATAINVEST", "TVSHLTD", "CHOLAHLDNG", "JSWHL", "TSFINV", 
+    "KAMAHOLD", "PILANIINVS", "NSIL", "RANEHOLDIN", "KICL", "ELCIDIN", "BFINVEST", 
+    "BLIL", "VHL", "FEDDERSHOL", "INDPRUD", "STEL", "JPOLYINVST", "CONSOFINVT", 
+    "WELINV", "DHUNINV", "SILINV", "NDGL", "MAHSCOOTER", "BENGALASM", "EASTRED", 
+    "HBSTOCK", "MAXVIL", "KIRLOSIND"
+}
+
+CAP_GOODS_PUMPS_VALVES = {
+    "ELGIEQUIP", "KIRLOSBROS", "KSB", "SHAKTIPUMP", "WPIL", "JASH", "OSWALPUMPS", 
+    "HONDAPOWER", "YUKEN", "ROTO", "VELJAN", "MAZDA", "TRITONV", "LATTEYS", 
+    "RAPPID", "ATAM", "DELTAMAGNT"
+}
+
 
 @dataclass(frozen=True)
 class StockMeta:
@@ -151,6 +344,8 @@ class StockMeta:
     sector: Optional[str]
     industry: Optional[str]
     market_cap_category: Optional[str]
+    company_name: Optional[str] = None
+    business_summary: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -174,6 +369,10 @@ def _industry(s: StockMeta) -> str:
     return _norm(s.industry)
 
 
+def _text(s: StockMeta) -> str:
+    return f"{s.symbol} {s.company_name or ''} {s.business_summary or ''}".lower()
+
+
 def _is_large_cap(s: StockMeta) -> bool:
     return (s.market_cap_category or "").lower() == "large_cap"
 
@@ -190,7 +389,6 @@ RULES: list[Rule] = [
     Rule("bfsi_psu_banks",
          lambda s: _industry(s) == "banks" and s.symbol in PSU_BANKS,
          "Banks industry AND symbol in PSU list"),
-    # Private banks split: top-tier large-cap > SFBs > mid/small fallback.
     Rule("bfsi_pvt_banks_large",
          lambda s: _industry(s) == "banks" and s.symbol in BFSI_PVT_BANKS_LARGE,
          "Banks industry AND symbol in large private banks list"),
@@ -200,9 +398,6 @@ RULES: list[Rule] = [
     Rule("bfsi_pvt_banks_mid_small",
          lambda s: _industry(s) == "banks",
          "Banks industry (fallback — mid/small private banks)"),
-    # Capital-markets businesses NSE files as "Finance". These MUST precede
-    # the bfsi_nbfc fallback — that is the whole fix. See the long note on
-    # BFSI_RTA_RATING_FIN above for why the industry string cannot do this.
     Rule("bfsi_rta_rating",
          lambda s: _industry(s) == "finance" and s.symbol in BFSI_RTA_RATING_FIN,
          "Finance industry AND symbol in ratings/analytics list"),
@@ -212,15 +407,31 @@ RULES: list[Rule] = [
     Rule("bfsi_broker",
          lambda s: _industry(s) == "finance" and s.symbol in BFSI_BROKER_FIN,
          "Finance industry AND symbol in broking/securities-dealing list"),
+    Rule("bfsi_holding_companies",
+         lambda s: s.symbol in HOLDING_COMPANIES or (
+             (_industry(s) == "finance" or _sector(s) in ("financial services", "diversified"))
+             and (
+                 any(k in (s.company_name or "").lower() for k in ["holding company", "holdings company", "core investment company", "investment corporation", "investments and commercials", "investments and industries", "poly investment", "group holding"])
+                 or any(k in (s.business_summary or "").lower() for k in ["core investment company", "unregistered cic", "holding company that holds", "promoter holding company", "holds strategic stake"])
+             )
+             and s.symbol not in ("CHOLAFIN", "BAJFINANCE", "SHRIRAMFIN", "M&MFIN", "SUNDARMFIN")
+         ),
+         "Holding Companies, CICs & Equity Investment Vehicles"),
+    Rule("bfsi_nbfc",
+         lambda s: s.symbol == "CHOLAFIN",
+         "Cholamandalam Investment & Finance -> Diversified NBFC"),
+    Rule("bfsi_housing_finance",
+         lambda s: _industry(s) == "finance" and (s.symbol in BFSI_HOUSING_FINANCE or any(k in _text(s) for k in ["housing finance", "home finance", "housing fin", "home loan"])),
+         "Housing Finance Companies (HFCs)"),
+    Rule("bfsi_gold_microfinance",
+         lambda s: _industry(s) == "finance" and (s.symbol in BFSI_GOLD_MFI or any(k in _text(s) for k in ["microfinance", "micro finance", "gold loan", "gold finance"])),
+         "Gold Loan & Microfinance NBFCs"),
     Rule("bfsi_nbfc",
          lambda s: _industry(s) == "finance",
          "Finance industry (fallback — lenders)"),
     Rule("bfsi_insurance",
          lambda s: _industry(s) == "insurance",
          "Insurance industry"),
-    # Capital Markets is split via symbol whitelists, in priority order.
-    # The broker rule is the fallback — anything in the industry that didn't
-    # match a more specific bucket lands here.
     Rule("bfsi_amc_wealth",
          lambda s: _industry(s) == "capital markets" and s.symbol in BFSI_AMC_WEALTH,
          "Capital Markets AND symbol in AMC/wealth list"),
@@ -241,6 +452,12 @@ RULES: list[Rule] = [
     Rule("it_services_large",
          lambda s: _it_services_industry(s) and _is_large_cap(s),
          "IT Software/Services AND large_cap"),
+    Rule("it_erd_engineering",
+         lambda s: _it_services_industry(s) and (s.symbol in IT_ERD or any(k in _text(s) for k in ["er&d", "engineering research", "product engineering", "embedded software", "automotive software", "aerospace engineering"])),
+         "Engineering R&D & Embedded Systems"),
+    Rule("it_software_products_saas",
+         lambda s: _it_services_industry(s) and (s.symbol in IT_SAAS_PRODUCTS or any(k in _text(s) for k in ["saas", "software product", "fintech platform", "cloud platform", "cpaas"])),
+         "Software Products, SaaS & Platforms"),
     Rule("it_services_midsmall",
          lambda s: _it_services_industry(s),
          "IT Software/Services AND not large_cap"),
@@ -252,76 +469,149 @@ RULES: list[Rule] = [
          "Telecommunication sector"),
 
     # ---- Healthcare ----
+    Rule("pharma_cdmo_apis",
+         lambda s: _industry(s) == "pharmaceuticals & biotechnology" and (s.symbol in PHARMA_CDMO_APIS or any(k in _text(s) for k in ["cdmo", "crams", "contract research", "active pharmaceutical ingredient", "api manufacturer", "bulk drug"])),
+         "Pharma CDMO, CRAMS & Bulk APIs"),
     Rule("pharma",
          lambda s: _industry(s) == "pharmaceuticals & biotechnology",
-         "Pharma & Biotech industry"),
+         "Pharma & Biotech Formulations & Generics fallback"),
     Rule("health_services",
          lambda s: _industry(s) == "healthcare services",
          "Healthcare Services industry"),
     Rule("medtech",
-         lambda s: _industry(s) == "healthcare equipment & supplies",
-         "Healthcare Equipment industry"),
+         lambda s: _industry(s) == "healthcare equipment & supplies" or s.symbol in MEDTECH_EXTRA,
+         "Healthcare Equipment industry + MedTech extra"),
 
-    # ---- Consumer (FMCG sub-buckets first because Consumer has many industries) ----
+    # ---- Tech / Services cross-overs ----
+    Rule("it_services_midsmall",
+         lambda s: s.symbol in SERVICES_IT_BPO or any(k in _text(s) for k in ["business process management", "bpm", "bpo", "technology products distribution"]) and _sector(s) in ("services", "capital goods"),
+         "BPM / IT-enabled services from commercial services"),
+
+    # ---- Real Estate & Infra ----
+    Rule("realty_commercial_coworking",
+         lambda s: (s.symbol in REALTY_COMMERCIAL or s.symbol in SERVICES_COWORKING_REALTY or any(k in _text(s) for k in ["co-working", "coworking", "it park", "office buildings", "exhibition center", "rental yield", "mall management", "retail mall"])) and _sector(s) in ("services", "realty"),
+         "Commercial real estate & flexible co-working spaces"),
+    Rule("transport_logistics",
+         lambda s: s.symbol in SERVICES_PORTS_LOGISTICS,
+         "Marine dredging & port logistics from services"),
+
+    # ---- Consumer ----
     Rule("fmcg_diversified",
          lambda s: _industry(s) in ("diversified fmcg", "cigarettes & tobacco products"),
          "Diversified FMCG / Tobacco"),
+    Rule("agri_sugar_biofuels",
+         lambda s: _industry(s) in ("food products", "agricultural food & other products") and (s.symbol in AGRI_SUGAR or any(k in _text(s) for k in ["sugar", "distillery", "distilleries", "ethanol blending", "sugarcane"])),
+         "Sugar Mills, Distilleries & Biofuels"),
+    Rule("fmcg_packaged_foods",
+         lambda s: _industry(s) in ("food products", "agricultural food & other products") and (s.symbol in FMCG_PACKAGED_FOODS or any(k in _text(s) for k in ["packaged food", "biscuit", "confectionery", "dairy", "milk", "ice cream", "beverage", "tea", "coffee", "snacks", "namkeen", "bakery", "ready to eat", "spices", "noodles", "pasta"])),
+         "Branded Packaged Foods, Snacks, Dairy & Beverages"),
     Rule("fmcg_food_agri",
          lambda s: _industry(s) in ("food products", "agricultural food & other products"),
-         "Food + Agri Food"),
+         "Agri Commodities, Edible Oils, Seeds & Feeds fallback"),
     Rule("fmcg_personal",
          lambda s: _industry(s) in ("personal products", "household products"),
          "Personal Care + Household"),
     Rule("fmcg_beverages",
-         lambda s: _industry(s) == "beverages",
+         lambda s: _industry(s) == "beverages" or s.symbol in SERVICES_BEVERAGES,
          "Beverages"),
 
-    # Consumer durables / retail / leisure
-    Rule("consumer_durables",
+    # Consumer sub-clusters (Jewellery, Footwear, Building/Home, Appliances)
+    Rule("consumer_jewellery",
+         lambda s: _sector(s) == "consumer durables" and (s.symbol in CONSUMER_JEWELLERY or any(k in _text(s) for k in ["jewel", "gold", "diamond", "gem", "silver", "ornaments"])),
+         "Consumer Durables -> Jewellery & Gems"),
+    Rule("consumer_footwear",
+         lambda s: _sector(s) == "consumer durables" and (s.symbol in CONSUMER_FOOTWEAR or any(k in _text(s) for k in ["footwear", "shoes", "sandals", "slippers", "boots"])),
+         "Consumer Durables -> Footwear & Athleisure"),
+    Rule("consumer_building_home",
+         lambda s: _sector(s) == "consumer durables" and (s.symbol in CONSUMER_BUILDING_HOME or any(k in _text(s) for k in ["paint", "coating", "varnish", "ceramic", "tile", "sanitaryware", "plywood", "laminate", "veneer"])),
+         "Consumer Durables -> Paints, Tiles, Ceramics & Interior Home Panels"),
+    Rule("consumer_appliances",
          lambda s: _sector(s) == "consumer durables",
-         "Consumer Durables sector"),
+         "Consumer Durables -> Appliances & White Goods fallback"),
+
     Rule("retail",
          lambda s: _industry(s) == "retailing",
          "Retailing industry"),
+    Rule("hospitality_hotels",
+         lambda s: _industry(s) in ("leisure services", "other consumer services") and (s.symbol in HOTELS_RESORTS or any(k in _text(s) for k in ["hotel", "resort", "palace", "lodging", "hospitality chain"])),
+         "Hotels, Luxury Resorts & Lodging"),
+    Rule("education_training_services",
+         lambda s: _industry(s) in ("leisure services", "other consumer services") and (s.symbol in EDUCATION_SERVICES or any(k in _text(s) for k in ["education", "learning", "training", "school", "coaching", "skill development", "edtech"])),
+         "Education, EdTech & Skill Development"),
     Rule("leisure_hospitality",
          lambda s: _industry(s) in ("leisure services", "other consumer services"),
-         "Leisure / Other Consumer Services"),
+         "Dining, QSR, Tourism & Leisure fallback"),
     Rule("media_entertainment",
          lambda s: _sector(s) in ("media entertainment & publication", "media entertainment and publication"),
          "Media sector"),
 
-    # ---- Industrials ----
+    # ---- Industrials & Subdivided Capital Goods ----
     Rule("defense_aero",
-         lambda s: _industry(s) == "aerospace & defense",
-         "Aerospace & Defense industry"),
+         lambda s: _industry(s) == "aerospace & defense" or s.symbol in DEFENSE_SHIPBUILDERS or any(k in _text(s) for k in ["shipyard", "dock shipbuilders", "naval", "warship", "submarine", "military electro-optics"]),
+         "Aerospace & Defense industry + Naval Shipbuilders"),
     Rule("auto_oem",
          lambda s: _industry(s) in ("automobiles",
                                     "agricultural commercial & construction vehicles"),
          "Auto OEMs + Agri/Construction Vehicles"),
+    Rule("auto_tyres_rubber",
+         lambda s: _industry(s) in ("auto components", "auto ancillaries") and (s.symbol in AUTO_TYRES or any(k in _text(s) for k in ["tyre", "tire", "rubber compound", "tread", "automotive rubber"])),
+         "Tyres, Tubes & Automotive Rubber"),
     Rule("auto_components",
          lambda s: _industry(s) in ("auto components", "auto ancillaries"),
-         "Auto Components industry (incl. legacy 'AUTO ANCILLARIES')"),
+         "Auto Components (Powertrain, Transmission, Chassis, Lighting, Castings)"),
+
+    Rule("electrical_wires_cables",
+         lambda s: (_industry(s) == "electrical equipment" or _sector(s) == "capital goods") and (s.symbol in WIRES_CABLES or (any(k in _text(s) for k in ["wire", "cable", "conductor"]) and not any(k in _text(s) for k in ["wire rope", "strands", "tyre bead"]))),
+         "Wires, Cables & Conductors"),
+    Rule("electrical_transformers_grid",
+         lambda s: (_industry(s) == "electrical equipment" or _sector(s) == "capital goods") and (s.symbol in TRANSFORMERS_GRID or any(k in _text(s) for k in ["transformer", "power transmission", "substation", "switchyard", "power grid"])),
+         "Power Transformers, Transmission & Grid Equipment"),
     Rule("cap_goods_electrical",
          lambda s: _industry(s) == "electrical equipment",
-         "Electrical Equipment industry"),
-    Rule("cap_goods_industrial",
-         lambda s: _sector(s) == "capital goods",
-         "Capital Goods (rest)"),
+         "Electrical Equipment, Switchgear & Motors fallback"),
+    Rule("metals_ferrous",
+         lambda s: s.symbol in FERROUS_CG or (any(k in _text(s) for k in ["sponge iron", "pellet", "billets", "tmt bars", "ingots"]) and _sector(s) == "capital goods"),
+         "Ferrous metals & steel mills from capital goods"),
+
+    Rule("cap_goods_pumps_valves",
+         lambda s: s.symbol in CAP_GOODS_PUMPS_VALVES or (
+             _sector(s) in ("capital goods", "industrials") and any(k in _text(s) for k in ["submersible pump", "centrifugal pump", "slurry pump", "industrial valve", "air compressor", "fluid handling"])
+             and not any(k in _text(s) for k in ["tyre bead", "valve automation", "printed circuit"])
+         ),
+         "Industrial Pumps, Valves & Compressors"),
+    Rule("packaging_containers",
+         lambda s: _sector(s) == "capital goods" and (s.symbol in PACKAGING_CONTAINERS or any(k in _text(s) for k in ["packaging", "containers", "bottles", "tinplate", "flexible packaging", "cartons", "drums", "pails", "polyester film", "bopp film", "bopet film"])),
+         "Capital Goods -> Packaging & Industrial Containers"),
+    Rule("cap_goods_ems",
+         lambda s: (_sector(s) == "capital goods" or s.symbol in CAP_GOODS_EMS) and (s.symbol in CAP_GOODS_EMS or any(k in _text(s) for k in ["electronic manufacturing services", "ems", "pcba", "contract manufacturing", "surveillance equipment", "iot solutions", "cctv"])),
+         "Capital Goods -> EMS & Advanced Electronics"),
+    Rule("cap_goods_pipes_building",
+         lambda s: _sector(s) == "capital goods" and (s.symbol in CAP_GOODS_PIPES or any(k in _text(s) for k in ["pipe", "tube", "tubing", "fittings", "ductile iron", "plumbing"])),
+         "Capital Goods -> Pipes, Tubes & Building Fittings"),
+    Rule("cap_goods_precision_eng",
+         lambda s: _sector(s) == "capital goods" and (s.symbol in CAP_GOODS_PRECISION or any(k in _text(s) for k in ["bearing", "abrasive", "grinding media", "grinding wheel", "forging", "casting", "foundry", "precision component"])),
+         "Capital Goods -> Precision Bearings, Abrasives & Castings/Forgings"),
+    Rule("cap_goods_machinery_equipment",
+         lambda s: _sector(s) == "capital goods" or s.symbol in MACHINERY_EXTRA,
+         "Capital Goods -> Machinery, Engines, Turbines, Compressors & Tools fallback"),
+
     Rule("transport_logistics",
          lambda s: _industry(s) in ("transport services", "transport infrastructure"),
          "Transport Services + Infra"),
-    Rule("services_commercial",
-         lambda s: _industry(s) in ("commercial services & supplies", "engineering services"),
-         "Commercial Services + Engineering Services"),
-    # Catch-all SERVICES sector (legacy uppercase rows)
-    Rule("services_commercial",
-         lambda s: _sector(s) == "services",
-         "Services sector fallback"),
+    Rule("services_hr_staffing",
+         lambda s: (_industry(s) in ("commercial services & supplies", "engineering services") or _sector(s) == "services") and (s.symbol in SERVICES_STAFFING or any(k in _text(s) for k in ["staffing", "manpower", "human resource", "recruitment", "payroll", "security service", "facility management", "cash management", "cash logistics"])),
+         "Staffing, Security & Facility Management"),
+    Rule("services_staffing_facilities",
+         lambda s: _industry(s) in ("commercial services & supplies", "engineering services") or _sector(s) == "services",
+         "Commercial B2B Services, Technical Consultancy & Supplies fallback"),
 
     # ---- Materials ----
     Rule("chemicals_agro",
          lambda s: _industry(s) == "fertilizers & agrochemicals",
          "Fertilizers & Agrochemicals"),
+    Rule("chemicals_dyes_pigments",
+         lambda s: _sector(s) == "chemicals" and (s.symbol in DYES_PIGMENTS or any(k in _text(s) for k in ["dye", "dyes", "pigment", "pigments", "colorant", "colorants", "colourant"])),
+         "Dyes, Pigments & Colorants"),
     Rule("chemicals_specialty",
          lambda s: _sector(s) == "chemicals",
          "Chemicals (rest)"),
@@ -338,11 +628,19 @@ RULES: list[Rule] = [
     Rule("paper_forest",
          lambda s: _sector(s) == "forest materials",
          "Forest Materials sector"),
-    Rule("textiles",
+
+    # Textiles subdivisions (Apparel/Retail vs Spinning/Commodity)
+    Rule("textiles_apparel_retail",
+         lambda s: _sector(s) == "textiles" and (s.symbol in TEXTILES_APPAREL or any(k in _text(s) for k in ["apparel", "garment", "readymade", "clothing", "innerwear", "hosiery", "knitwear", "brand", "fashion", "jeans", "shirts"])),
+         "Textiles -> Apparel, Innerwear & Garment Exports"),
+    Rule("textiles_spinning_yarn",
          lambda s: _sector(s) == "textiles",
-         "Textiles sector"),
+         "Textiles -> Spinning Mills, Yarn & Commodity Fabric fallback"),
 
     # ---- Real Estate & Infra ----
+    Rule("construction_railways_infra",
+         lambda s: _sector(s) == "construction" and (s.symbol in RAILWAY_INFRA or any(k in _text(s) for k in ["railway", "railways", "rail infra", "rolling stock", "locomotive", "rail track", "metro rail"])),
+         "Railway EPC, Metro Systems & Rolling Stock Infra"),
     Rule("realty",
          lambda s: _sector(s) == "realty",
          "Realty sector"),

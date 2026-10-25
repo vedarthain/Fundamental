@@ -649,7 +649,13 @@ export default async function StockPage({
   const verdictNode = !isAdmin
     ? undefined
     : verdictData
-      ? <VerdictPanel symbol={symbol.toUpperCase()} data={verdictData} />
+      ? <VerdictPanel
+          symbol={symbol.toUpperCase()}
+          data={verdictData}
+          latestAnnual={annual && annual.length > 0 ? annual[0] : undefined}
+          stock={stock}
+          shareholding={shareholding && shareholding.length > 0 ? shareholding[0] : undefined}
+        />
       : sheetData
         ? <EvidenceSheetPanel data={sheetData} />
         : <VerdictEmpty symbol={symbol.toUpperCase()} />;

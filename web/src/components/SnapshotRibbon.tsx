@@ -73,7 +73,8 @@ async function fetchSnapshot(): Promise<SnapshotStats> {
       coverage: Number(r?.coverage ?? 0),
       clusters: Number(r?.clusters ?? 0),
     };
-  } catch {
+  } catch (err) {
+    console.error("SnapshotRibbon fetchSnapshot failed:", err);
     // DB unreachable at render time — show a neutral ribbon rather than
     // taking the whole page down.
     return { latest: null, coverage: 0, clusters: 0 };
@@ -153,7 +154,10 @@ function Sep() {
 }
 
 export async function SnapshotRibbon() {
-  const s = await getCachedSnapshot();
+  const s =
+    process.env.NODE_ENV === "development"
+      ? await fetchSnapshot()
+      : await getCachedSnapshot();
 
   // Today's date in IST — seed value for SSR/static HTML. The ribbon is baked
   // into every ISR page, so this server value can freeze at revalidation time

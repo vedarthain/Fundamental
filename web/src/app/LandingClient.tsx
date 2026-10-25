@@ -641,7 +641,7 @@ export function ResponsiveSectorHeatmap({ tiles }: { tiles: IndustryTile[] }) {
         <div className="lg:hidden">
           <div className="flex items-center justify-between mb-2.5">
             <div>
-              <div className="eyebrow mb-0.5">46 Peer Groups</div>
+              <div className="eyebrow mb-0.5">{tiles.length > 0 ? `${tiles.length} Peer Groups` : "Peer Groups"}</div>
               <h3 className="font-display text-[20px] sm:text-[22px] font-semibold text-[var(--color-ink)]">
                 Sector Heatmap
               </h3>
@@ -650,7 +650,7 @@ export function ResponsiveSectorHeatmap({ tiles }: { tiles: IndustryTile[] }) {
               href="/sectors"
               className="text-[11.5px] sm:text-[12px] font-medium text-[var(--color-accent-600)] flex items-center gap-1 hover:underline"
             >
-              All 46 <ArrowRight size={12} />
+              All {tiles.length || "Sectors"} <ArrowRight size={12} />
             </Link>
           </div>
 
@@ -692,7 +692,7 @@ export function ResponsiveSectorHeatmap({ tiles }: { tiles: IndustryTile[] }) {
         {/* Desktop View: Full 2-Column Split (lg+) */}
         <div className="hidden lg:grid grid-cols-12 gap-10 items-center">
           <div className="col-span-6">
-            <div className="eyebrow mb-3">46 Peer Groups</div>
+            <div className="eyebrow mb-3">{tiles.length > 0 ? `${tiles.length} Peer Groups` : "Peer Groups"}</div>
             <h2
               className="font-display"
               style={{ fontSize: "clamp(28px, 3.5vw, 42px)", lineHeight: 1.05 }}
