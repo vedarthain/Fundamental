@@ -14,7 +14,27 @@ import { PortfolioClient } from "./PortfolioClient";
 
 export const dynamic = "force-dynamic";
 
-export default async function PortfolioPage() {
+export default async function PortfolioPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ tab?: string }>;
+}) {
+  const sp = searchParams ? await searchParams : undefined;
+  const initialTab =
+    sp?.tab === "dividends" || sp?.tab === "dividend"
+      ? ("dividends" as const)
+      : sp?.tab === "performance"
+      ? ("performance" as const)
+      : sp?.tab === "transactions"
+      ? ("transactions" as const)
+      : sp?.tab === "booked"
+      ? ("booked" as const)
+      : sp?.tab === "scorecard"
+      ? ("scorecard" as const)
+      : sp?.tab === "returns"
+      ? ("returns" as const)
+      : ("holdings" as const);
+
   const session = await getSession();
 
   if (!session) {
@@ -64,6 +84,7 @@ export default async function PortfolioPage() {
         portfolio={portfolio}
         owner={owner}
         extrasEpoch={Date.now()}
+        initialTab={initialTab}
       />
     </div>
   );

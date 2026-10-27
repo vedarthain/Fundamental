@@ -26,13 +26,14 @@ function inr(n: number): string {
   return n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-type ConvictionCategory = "all" | "buy" | "hold" | "watch" | "avoid" | "missing" | "dormant";
+type ConvictionCategory = "all" | "buy" | "accumulate" | "hold" | "watch" | "avoid" | "missing" | "dormant";
 
-function categorize(e: QueueEntry): "buy" | "hold" | "watch" | "avoid" | "missing" | "dormant" {
+function categorize(e: QueueEntry): "buy" | "accumulate" | "hold" | "watch" | "avoid" | "missing" | "dormant" {
   if (e.bucket === "dormant") return "dormant";
   if (e.bucket === "missing" || !e.action) return "missing";
   const act = e.action.toUpperCase();
-  if (act.includes("BUY") || act.includes("ACCUMULATE")) return "buy";
+  if (act.includes("ACCUMULATE")) return "accumulate";
+  if (act.includes("BUY")) return "buy";
   if (act.includes("HOLD")) return "hold";
   if (act.includes("WATCH") || act.includes("SPECULATIVE")) return "watch";
   if (act.includes("AVOID") || act.includes("REDUCE") || act.includes("SELL")) return "avoid";
@@ -41,7 +42,7 @@ function categorize(e: QueueEntry): "buy" | "hold" | "watch" | "avoid" | "missin
 
 const ACTION_THEMES: Record<string, { dot: string; pill: string }> = {
   BUY: { dot: "bg-emerald-500", pill: "bg-emerald-50/70 text-emerald-800 border-emerald-200/70" },
-  ACCUMULATE: { dot: "bg-emerald-500", pill: "bg-emerald-50/70 text-emerald-800 border-emerald-200/70" },
+  ACCUMULATE: { dot: "bg-teal-500", pill: "bg-teal-50/70 text-teal-800 border-teal-200/70" },
   HOLD: { dot: "bg-slate-400", pill: "bg-slate-100 text-slate-700 border-slate-200" },
   WATCH: { dot: "bg-amber-500", pill: "bg-amber-50/80 text-amber-800 border-amber-200/70" },
   SPECULATIVE: { dot: "bg-amber-500", pill: "bg-amber-50/80 text-amber-800 border-amber-200/70" },
@@ -67,6 +68,10 @@ export function VerdictQueueClient() {
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("freshness");
   const [showTimeline, setShowTimeline] = useState(false);
+  const [selectedCluster, setSelectedCluster] = useState<string | null>(null);
+  const [showClusterTracker, setShowClusterTracker] = useState(false);
+  const [clusterSearch, setClusterSearch] = useState("");
+  const [copiedCmd, setCopiedCmd] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -96,7 +101,7 @@ export function VerdictQueueClient() {
 
   // Category counts across live entries
   const counts = useMemo(() => {
-    const res = { buy: 0, hold: 0, watch: 0, avoid: 0, missing: 0, dormant: 0, total: 0 };
+    const res = { buy: 0, accumulate: 0, hold: 0, watch: 0, avoid: 0, missing: 0, dormant: 0, total: 0 };
     if (state.kind !== "ok") return res;
     for (const e of state.q.entries) {
       const cat = categorize(e);
@@ -110,6 +115,11 @@ export function VerdictQueueClient() {
   const filtered = useMemo(() => {
     if (state.kind !== "ok") return [];
     let list = state.q.entries;
+
+    // Filter by cluster
+    if (selectedCluster) {
+      list = list.filter((e) => e.cluster_id === selectedCluster);
+    }
 
     // Filter by conviction category
     if (category !== "all") {
@@ -150,7 +160,7 @@ export function VerdictQueueClient() {
       }
       return a.symbol.localeCompare(b.symbol);
     });
-  }, [state, category, search, sortKey]);
+  }, [state, category, search, sortKey, selectedCluster]);
 
   if (state.kind === "loading") {
     return (
@@ -169,13 +179,207 @@ export function VerdictQueueClient() {
     );
   }
 
-  const { trackedCount, timeline } = state.q;
+  const { trackedCount, timeline, summary, clusterProgress } = state.q;
+
+  const summaryData = summary || {
+    totalUniverse: trackedCount,
+    completedCount: counts.total - counts.missing,
+    completedPercent:
+      trackedCount > 0
+        ? Math.round(((counts.total - counts.missing) / trackedCount) * 1000) / 10
+        : 0,
+    pendingCount: counts.missing,
+    refreshedTodayCount: 0,
+    actionCounts: {
+      buy: counts.buy,
+      accumulate: counts.accumulate,
+      hold: counts.hold,
+      watch: counts.watch,
+      avoid: counts.avoid,
+      sell: 0,
+    },
+  };
+
+  const clusters = clusterProgress || [];
+  const completedClustersCount = clusters.filter((c) => c.percent >= 90).length;
+  const inProgressClustersCount = clusters.filter(
+    (c) => c.percent > 0 && c.percent < 90
+  ).length;
+  const totalClustersCount = clusters.length;
+
+  const filteredClusters = clusterSearch.trim()
+    ? clusters.filter(
+        (c) =>
+          c.clusterName.toLowerCase().includes(clusterSearch.trim().toLowerCase()) ||
+          c.clusterId.toLowerCase().includes(clusterSearch.trim().toLowerCase())
+      )
+    : clusters;
+
+  const activeClusterObj = clusters.find((c) => c.clusterId === selectedCluster);
+
+  const nextBatchCommand =
+    "etl/.venv/bin/python scripts/ollama-verdict.py --clusters 28-32 --load --delay 5.0";
+
+  const handleCopyCommand = () => {
+    navigator.clipboard.writeText(nextBatchCommand);
+    setCopiedCmd(true);
+    setTimeout(() => setCopiedCmd(false), 2000);
+  };
 
   return (
     <div className="space-y-4 w-full">
+      {/* 0. Verdict Completion Summary Strip (Compact Light Theme) */}
+      <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-2xs">
+        <div className="flex flex-wrap items-center justify-between gap-3 text-[12px]">
+          {/* Main Completion Stats */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-slate-600">
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-slate-900 flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />
+                Completion:
+              </span>
+              <span className="font-mono font-medium text-slate-900">
+                {summaryData.completedCount.toLocaleString()} / {summaryData.totalUniverse.toLocaleString()}
+              </span>
+              <span className="font-mono text-emerald-700 font-semibold">
+                ({summaryData.completedPercent.toFixed(1)}%)
+              </span>
+              <div className="w-24 sm:w-32 bg-slate-100 rounded-full h-1.5 overflow-hidden ml-1 border border-slate-200/80">
+                <div
+                  className="bg-emerald-500 h-full rounded-full transition-all"
+                  style={{ width: `${Math.min(100, summaryData.completedPercent)}%` }}
+                />
+              </div>
+            </div>
+
+            <span className="text-slate-300 hidden sm:inline">•</span>
+
+            <div className="flex items-center gap-1.5">
+              <span className="text-slate-500">Refreshed Today:</span>
+              <span className="font-mono font-medium text-emerald-700">
+                +{summaryData.refreshedTodayCount.toLocaleString()}
+              </span>
+            </div>
+
+            <span className="text-slate-300 hidden sm:inline">•</span>
+
+            <div className="flex items-center gap-1.5">
+              <span className="text-slate-500">Pending:</span>
+              <span className="font-mono font-medium text-amber-700">
+                {summaryData.pendingCount.toLocaleString()}
+              </span>
+            </div>
+
+            <span className="text-slate-300 hidden sm:inline">•</span>
+
+            <div className="flex items-center gap-1.5">
+              <span className="text-slate-500">Clusters:</span>
+              <span className="font-mono font-medium text-slate-800">
+                {completedClustersCount} / {totalClustersCount}
+              </span>
+            </div>
+          </div>
+
+          {/* Quick Actions (Cluster matrix toggle & CLI copy) */}
+          <div className="flex items-center gap-2 text-[11.5px]">
+            <button
+              type="button"
+              onClick={handleCopyCommand}
+              title={nextBatchCommand}
+              className="px-2 py-1 rounded border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 font-mono transition-colors flex items-center gap-1"
+            >
+              <span>Batch #28–32</span>
+              <span className="text-slate-400 font-sans">
+                {copiedCmd ? "✓ Copied" : "Copy"}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowClusterTracker(!showClusterTracker)}
+              className={`px-2.5 py-1 rounded border font-medium transition-colors flex items-center gap-1.5 ${
+                showClusterTracker
+                  ? "border-slate-400 bg-slate-100 text-slate-900"
+                  : "border-slate-200 bg-white hover:bg-slate-50 text-slate-700"
+              }`}
+            >
+              <span>Clusters ({clusters.length})</span>
+              <span className="text-[9px] text-slate-500">{showClusterTracker ? "▲" : "▼"}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Compact Light Cluster Drawer */}
+        {showClusterTracker && (
+          <div className="mt-3 pt-3 border-t border-slate-100">
+            <div className="flex items-center justify-between gap-2 mb-2.5">
+              <span className="text-[11.5px] font-medium text-slate-600">
+                72 Clusters Breakdown
+              </span>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={clusterSearch}
+                  onChange={(e) => setClusterSearch(e.target.value)}
+                  placeholder="Filter clusters..."
+                  className="text-[11px] bg-slate-50 border border-slate-200 rounded px-2 py-0.5 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-slate-400 w-44"
+                />
+                {selectedCluster && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCluster(null)}
+                    className="text-[10.5px] text-rose-600 hover:text-rose-800 font-medium"
+                  >
+                    Clear Filter
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-1.5 max-h-[220px] overflow-y-auto pr-1">
+              {filteredClusters.map((c) => {
+                const isSelected = selectedCluster === c.clusterId;
+                const isComplete = c.percent >= 90;
+                return (
+                  <button
+                    key={c.clusterId}
+                    type="button"
+                    onClick={() =>
+                      setSelectedCluster(isSelected ? null : c.clusterId)
+                    }
+                    className={`text-left p-1.5 rounded border text-[11px] transition-all ${
+                      isSelected
+                        ? "bg-emerald-50 border-emerald-400 text-emerald-950 ring-1 ring-emerald-400"
+                        : "bg-white border-slate-200 hover:border-slate-300 text-slate-700"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="truncate font-medium">{c.clusterName}</span>
+                      <span
+                        className={`font-mono text-[10px] shrink-0 ${
+                          isComplete ? "text-emerald-700 font-semibold" : "text-slate-500"
+                        }`}
+                      >
+                        {c.completedStocks}/{c.totalStocks}
+                      </span>
+                    </div>
+                    <div className="w-full bg-slate-100 rounded-full h-1 mt-1 overflow-hidden">
+                      <div
+                        className={`h-full ${isComplete ? "bg-emerald-500" : "bg-teal-500"}`}
+                        style={{ width: `${Math.min(100, c.percent)}%` }}
+                      />
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* 1. Conviction Overview Cards Ribbon */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-        {/* BUY & ACCUMULATE */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        {/* BUY */}
         <button
           type="button"
           onClick={() => setCategory(category === "buy" ? "all" : "buy")}
@@ -188,7 +392,7 @@ export function VerdictQueueClient() {
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-              Buy &amp; Accumulate
+              Buy
             </span>
           </div>
           <div className="text-[20px] font-mono font-medium text-slate-900 mt-1">
@@ -196,6 +400,30 @@ export function VerdictQueueClient() {
           </div>
           <div className="text-[10.5px] text-emerald-700 font-normal mt-0.5">
             Top conviction entry
+          </div>
+        </button>
+
+        {/* ACCUMULATE */}
+        <button
+          type="button"
+          onClick={() => setCategory(category === "accumulate" ? "all" : "accumulate")}
+          className={`p-3 rounded-lg border text-left transition-all relative ${
+            category === "accumulate"
+              ? "border-teal-500 bg-teal-50/30 ring-1 ring-teal-500 shadow-2xs"
+              : "border-slate-200/90 bg-white hover:border-slate-300 shadow-2xs"
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-teal-500" />
+              Accumulate
+            </span>
+          </div>
+          <div className="text-[20px] font-mono font-medium text-slate-900 mt-1">
+            {counts.accumulate}
+          </div>
+          <div className="text-[10.5px] text-teal-700 font-normal mt-0.5">
+            Stagger on dips
           </div>
         </button>
 
@@ -324,6 +552,17 @@ export function VerdictQueueClient() {
           </button>
           <button
             type="button"
+            onClick={() => setCategory("accumulate")}
+            className={`px-2.5 py-1 rounded-md font-medium transition-all ${
+              category === "accumulate"
+                ? "bg-teal-600 text-white shadow-xs"
+                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+            }`}
+          >
+            Accumulate ({counts.accumulate})
+          </button>
+          <button
+            type="button"
             onClick={() => setCategory("hold")}
             className={`px-2.5 py-1 rounded-md font-medium transition-all ${
               category === "hold"
@@ -378,6 +617,22 @@ export function VerdictQueueClient() {
             >
               Archived ({counts.dormant})
             </button>
+          )}
+
+          {/* Active Cluster Filter Indicator */}
+          {activeClusterObj && (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-300 text-[11.5px] font-medium shadow-2xs shrink-0">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+              <span>Cluster: {activeClusterObj.clusterName}</span>
+              <button
+                type="button"
+                onClick={() => setSelectedCluster(null)}
+                className="ml-1 text-emerald-600 hover:text-emerald-950 font-bold"
+                title="Clear cluster filter"
+              >
+                ✕
+              </button>
+            </div>
           )}
         </div>
 
@@ -457,7 +712,7 @@ export function VerdictQueueClient() {
 
                   return (
                     <tr
-                      key={e.symbol}
+                      key={`${e.symbol}-${e.bucket}`}
                       className="hover:bg-slate-50/70 transition-colors group"
                     >
                       {/* Symbol & Company */}

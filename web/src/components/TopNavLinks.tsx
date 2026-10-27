@@ -555,6 +555,14 @@ function PopupSheet({
                     active={isActive(pathname, "/admin/reports")}
                     onClose={onClose}
                   />
+                  <PopupLink
+                    href="/admin/verdicts"
+                    label="Verdicts"
+                    sublabel="Institutional Conviction Board & Verdicts"
+                    badge="ADMIN"
+                    active={isActive(pathname, "/admin/verdicts")}
+                    onClose={onClose}
+                  />
                   <button
                     type="button"
                     onClick={onPurgeCache}

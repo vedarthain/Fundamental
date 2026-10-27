@@ -163,13 +163,11 @@ export async function loadVerdict(symbol: string): Promise<VerdictData | null> {
   }
   try {
     const t = await sql<{ n: number }[]>`
-      SELECT COUNT(*)::int AS n FROM (
-        SELECT symbol FROM app.user_watchlist WHERE symbol = ${upper}
-        UNION
-        SELECT symbol FROM app.portfolio_holding WHERE symbol = ${upper}
-      ) x
+      WITH latest AS (SELECT MAX(snapshot_date) AS d FROM app.scores)
+      SELECT 1 FROM app.scores WHERE symbol = ${upper} AND snapshot_date = (SELECT d FROM latest)
+      LIMIT 1
     `;
-    tracked = (t[0]?.n ?? 0) > 0;
+    tracked = t.length > 0;
   } catch {
     tracked = true;
   }
@@ -268,6 +266,8 @@ export type QueueEntry = {
   company_name: string | null;
   sector: string | null;
   industry: string | null;
+  cluster_id: string | null;
+  cluster_name: string | null;
   bucket: QueueBucket;
   verdict: string | null;
   action: string | null;
@@ -277,42 +277,46 @@ export type QueueEntry = {
   ageDays: number | null;
   movedCount: number;
   comparableCount: number;
-  /** Figures whose live counterpart is not computed this snapshot. A verdict
-   *  is not "due" for these — nothing has contradicted it, the check simply
-   *  could not be run. */
   unverifiableCount: number;
-  /** Which stored figures have moved — named, because "3 figures moved" does
-   *  not tell you whether to bother re-reading it. */
   movedKeys: string[];
-  /** When the symbol entered the watchlist, where that is known. */
   addedAt: string | null;
-  /** The close on the verdict's own `price_asof`, frozen at load time by
-   *  scripts/verdict-load.py. NOT recomputed here: golden.price_history is
-   *  split-back-adjusted, so a derived anchor would silently rewrite
-   *  `pctMove` months later. See db/migrations/0087. */
   anchorPrice: number | null;
-  /** The date `anchorPrice` is the close for — shown, because "₹1,178" with no
-   *  date is not a verifiable claim. */
   priceAsof: string | null;
-  /** Latest close, from `latestCloseBySymbol()` — the same reader the calls
-   *  feature uses, so the two features cannot disagree about what LTP means. */
   ltp: number | null;
-  /** Move from anchor to LTP, in percent. null when either end is missing;
-   *  never 0, because a zero move is a claim and an absent one is not. */
   pctMove: number | null;
 };
 
+export type ClusterQueueProgress = {
+  clusterId: string;
+  clusterName: string;
+  totalStocks: number;
+  completedStocks: number;
+  todayStocks: number;
+  percent: number;
+};
+
+export type VerdictQueueSummary = {
+  totalUniverse: number;
+  completedCount: number;
+  completedPercent: number;
+  pendingCount: number;
+  refreshedTodayCount: number;
+  actionCounts: {
+    buy: number;
+    accumulate: number;
+    hold: number;
+    watch: number;
+    avoid: number;
+    sell: number;
+  };
+};
+
 export type TimelineWeek = {
-  /** Monday of the week, ISO date. */
   weekStart: string;
-  /** The metrics snapshot this week's drift was measured against. */
   snapshotDate: string | null;
   written: string[];
-  /** Verdicts whose evidence first broke during this week. */
   broke: string[];
-  /** Verdicts that crossed the STALE_DAYS mark during this week. */
   wentStale: string[];
-  /** Symbols added to the watchlist during this week. */
   added: string[];
 };
 
@@ -321,6 +325,8 @@ export type VerdictQueue = {
   timeline: TimelineWeek[];
   counts: Record<QueueBucket, number>;
   trackedCount: number;
+  summary: VerdictQueueSummary;
+  clusterProgress: ClusterQueueProgress[];
 };
 
 function weekStartOf(d: Date): string {
@@ -355,28 +361,57 @@ function weekStartOf(d: Date): string {
  * and the writing batches are marked on the same line for context.
  */
 export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
+  const defaultSummary: VerdictQueueSummary = {
+    totalUniverse: 0,
+    completedCount: 0,
+    completedPercent: 0,
+    pendingCount: 0,
+    refreshedTodayCount: 0,
+    actionCounts: {
+      buy: 0,
+      accumulate: 0,
+      hold: 0,
+      watch: 0,
+      avoid: 0,
+      sell: 0,
+    },
+  };
+
   const empty: VerdictQueue = {
     entries: [], timeline: [],
     counts: { missing: 0, due: 0, dormant: 0, current: 0 },
     trackedCount: 0,
+    summary: defaultSummary,
+    clusterProgress: [],
   };
 
-  let tracked: { symbol: string; company_name: string | null; sector: string | null; industry: string | null; added_at: Date | null }[] = [];
+  let tracked: {
+    symbol: string;
+    company_name: string | null;
+    sector: string | null;
+    industry: string | null;
+    cluster_id: string | null;
+    cluster_name: string | null;
+    added_at: Date | null;
+  }[] = [];
   try {
     tracked = await sql`
-      SELECT t.symbol,
-             s.company_name,
-             s.sector,
-             s.industry,
+      WITH latest AS (SELECT MAX(snapshot_date) AS d FROM app.scores)
+      SELECT s.symbol,
+             u.company_name,
+             u.sector,
+             u.industry,
+             ca.cluster_id,
+             COALESCE(c.name, ca.cluster_id) as cluster_name,
              MIN(w.added_at) AS added_at
-        FROM (
-          SELECT symbol FROM app.user_watchlist WHERE symbol IS NOT NULL
-          UNION
-          SELECT symbol FROM app.portfolio_holding WHERE symbol IS NOT NULL
-        ) t
-        LEFT JOIN app.user_watchlist w ON w.symbol = t.symbol
-        LEFT JOIN app.universe s ON s.symbol = t.symbol
-       GROUP BY t.symbol, s.company_name, s.sector, s.industry
+        FROM app.scores s
+        LEFT JOIN app.universe u ON u.symbol = s.symbol
+        LEFT JOIN app.cluster_assignment ca ON ca.symbol = s.symbol
+        LEFT JOIN app.cluster c ON c.id = ca.cluster_id
+        LEFT JOIN app.user_watchlist w ON w.symbol = s.symbol
+       WHERE s.snapshot_date = (SELECT d FROM latest)
+       GROUP BY s.symbol, u.company_name, u.sector, u.industry, ca.cluster_id, c.name
+       ORDER BY s.symbol
     `;
   } catch {
     return empty;
@@ -465,11 +500,14 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
   const parseActionAndThesis = (verdictText: string | null): { action: string | null; thesis: string | null } => {
     if (!verdictText) return { action: null, thesis: null };
     const clean = verdictText.trim();
-    const sepIdx = clean.indexOf("—");
+    const cleanNorm = clean
+      .replace(/&mdash;/gi, "—")
+      .replace(/--/g, "—");
+    const sepIdx = cleanNorm.indexOf("—");
     if (sepIdx !== -1) {
-      const rawAction = clean.slice(0, sepIdx).trim().toUpperCase();
-      const action = rawAction.split(/[\s,]+/)[0];
-      const thesis = clean.slice(sepIdx + 1).trim();
+      const rawAction = cleanNorm.slice(0, sepIdx).trim().toUpperCase();
+      const action = rawAction.split(/[\s,:]+/)[0];
+      const thesis = cleanNorm.slice(sepIdx + 1).trim();
       return { action, thesis };
     }
     const match = clean.match(/^([A-Za-z]+)\b/);
@@ -492,6 +530,8 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
         company_name: u?.company_name ?? t.company_name,
         sector: u?.sector ?? t.sector ?? null,
         industry: u?.industry ?? t.industry ?? null,
+        cluster_id: t.cluster_id,
+        cluster_name: t.cluster_name,
         bucket: "missing",
         verdict: null,
         action: null,
@@ -526,6 +566,8 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
       company_name: u?.company_name ?? t.company_name,
       sector: u?.sector ?? t.sector ?? null,
       industry: u?.industry ?? t.industry ?? null,
+      cluster_id: t.cluster_id,
+      cluster_name: t.cluster_name,
       bucket,
       verdict: v.verdict,
       action: parsed.action,
@@ -558,6 +600,8 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
       company_name: u?.company_name ?? null,
       sector: u?.sector ?? null,
       industry: u?.industry ?? null,
+      cluster_id: null,
+      cluster_name: null,
       bucket: "dormant",
       verdict: v.verdict,
       action: parsed.action,
@@ -658,5 +702,91 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
       a.symbol.localeCompare(b.symbol),
   );
 
-  return { entries, timeline, counts, trackedCount: tracked.length };
+  let clusterProgress: ClusterQueueProgress[] = [];
+  try {
+    const cRows = await sql<{
+      cluster_id: string;
+      cluster_name: string;
+      total_stocks: number;
+      completed_stocks: number;
+      today_stocks: number;
+    }[]>`
+      WITH latest AS (
+          SELECT DISTINCT ON (symbol) symbol, generated_at
+          FROM app.stock_verdict
+          ORDER BY symbol, generated_at DESC
+      )
+      SELECT 
+          ca.cluster_id,
+          COALESCE(c.name, ca.cluster_id) as cluster_name,
+          COUNT(DISTINCT ca.symbol)::int as total_stocks,
+          COUNT(DISTINCT l.symbol)::int as completed_stocks,
+          COUNT(DISTINCT CASE WHEN l.generated_at >= CURRENT_DATE THEN l.symbol END)::int as today_stocks
+      FROM app.cluster_assignment ca
+      LEFT JOIN app.cluster c ON c.id = ca.cluster_id
+      LEFT JOIN latest l ON l.symbol = ca.symbol
+      GROUP BY ca.cluster_id, c.name
+      ORDER BY completed_stocks DESC, total_stocks DESC
+    `;
+    clusterProgress = cRows.map((r) => ({
+      clusterId: r.cluster_id,
+      clusterName: r.cluster_name,
+      totalStocks: r.total_stocks,
+      completedStocks: r.completed_stocks,
+      todayStocks: r.today_stocks,
+      percent: r.total_stocks > 0 ? Math.round((r.completed_stocks / r.total_stocks) * 100) : 0,
+    }));
+  } catch {
+    clusterProgress = [];
+  }
+
+  const completedCount = verdictSymbols.filter((s) => trackedSet.has(s)).length;
+  const totalUniverse = tracked.length;
+  const pendingCount = Math.max(0, totalUniverse - completedCount);
+  const completedPercent = totalUniverse > 0 ? Math.round((completedCount / totalUniverse) * 1000) / 10 : 0;
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  let refreshedTodayCount = 0;
+  for (const v of newest.values()) {
+    if (v.generated_at && v.generated_at.toISOString().slice(0, 10) === todayStr) {
+      refreshedTodayCount++;
+    }
+  }
+
+  const actionCounts = {
+    buy: 0,
+    accumulate: 0,
+    hold: 0,
+    watch: 0,
+    avoid: 0,
+    sell: 0,
+  };
+  for (const e of entries) {
+    if (e.bucket === "dormant" || e.bucket === "missing" || !e.action) continue;
+    const act = e.action.toUpperCase();
+    if (act.includes("ACCUMULATE")) actionCounts.accumulate++;
+    else if (act.includes("BUY")) actionCounts.buy++;
+    else if (act.includes("HOLD")) actionCounts.hold++;
+    else if (act.includes("WATCH") || act.includes("SPECULATIVE")) actionCounts.watch++;
+    else if (act.includes("SELL")) actionCounts.sell++;
+    else if (act.includes("AVOID") || act.includes("REDUCE")) actionCounts.avoid++;
+  }
+
+  const summary: VerdictQueueSummary = {
+    totalUniverse,
+    completedCount,
+    completedPercent,
+    pendingCount,
+    refreshedTodayCount,
+    actionCounts,
+  };
+
+  return {
+    entries,
+    timeline,
+    counts,
+    trackedCount: tracked.length,
+    summary,
+    clusterProgress,
+  };
 }

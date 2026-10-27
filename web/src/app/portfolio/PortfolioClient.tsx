@@ -38,6 +38,10 @@ const PortfolioReturnsTable = dynamic(() =>
 const TradeSheet = dynamic(() =>
   import("@/components/ManualTradeSheet").then((m) => m.TradeSheet),
 );
+const PortfolioDividends = dynamic(() =>
+  import("./PortfolioDividends").then((m) => m.PortfolioDividends),
+);
+import type { PortfolioDividendReport } from "@/lib/portfolioDividends";
 
 const BROKERS = [
   { value: "upstox", label: "Upstox" },
@@ -103,7 +107,7 @@ type ImportResult = {
   error?: string;
 };
 
-type PortfolioTab = "holdings" | "performance" | "transactions" | "booked" | "scorecard" | "returns";
+type PortfolioTab = "holdings" | "dividends" | "performance" | "transactions" | "booked" | "scorecard" | "returns";
 
 const EMPTY_REALIZED: RealizedPnl = {
   rows: [],
@@ -115,20 +119,43 @@ export function PortfolioClient({
   portfolio,
   owner = false,
   extrasEpoch,
+  initialTab = "holdings",
 }: {
   portfolio: Portfolio;
   owner?: boolean; // gates the (personal, owner-only) Performance analysis tab
   /** Changes on every RSC render so a router.refresh() refetches deferred tabs. */
   extrasEpoch: number;
+  initialTab?: PortfolioTab;
 }) {
   const router = useRouter();
-  const [tab, setTab] = useState<PortfolioTab>("holdings");
+  const [tab, setTab] = useState<PortfolioTab>(initialTab);
   const [realized, setRealized] = useState<RealizedPnl>(EMPTY_REALIZED);
   const [tradeLog, setTradeLog] = useState<TradeLog>(EMPTY_TRADE_LOG);
   const [importLog, setImportLog] = useState<ImportLogRow[]>([]);
   const [perf, setPerf] = useState<PerformanceStats | null>(null);
   const [timeline, setTimeline] = useState<RealizedTimeline | null>(null);
   const [extrasStatus, setExtrasStatus] = useState<"loading" | "ok" | "error">("loading");
+
+  const [divReport, setDivReport] = useState<PortfolioDividendReport | null>(null);
+  const [divStatus, setDivStatus] = useState<"idle" | "loading" | "ok" | "error">("idle");
+
+  useEffect(() => {
+    if (tab === "dividends" && !divReport && divStatus !== "loading") {
+      setDivStatus("loading");
+      fetch("/api/portfolio/dividends", { credentials: "include" })
+        .then(async (r) => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json() as Promise<PortfolioDividendReport>;
+        })
+        .then((data) => {
+          setDivReport(data);
+          setDivStatus("ok");
+        })
+        .catch(() => {
+          setDivStatus("error");
+        });
+    }
+  }, [tab, divReport, divStatus]);
 
   useEffect(() => {
     let alive = true;
@@ -218,6 +245,7 @@ export function PortfolioClient({
       <div className="flex items-center gap-1 border-b hairline mb-5">
         {([
           { v: "holdings", label: "Holdings" },
+          { v: "dividends", label: "Dividends" },
           { v: "performance", label: "Performance" },
           { v: "transactions", label: "Transactions" },
           { v: "booked", label: "P&L" },
@@ -239,6 +267,11 @@ export function PortfolioClient({
                 {portfolio.instruments.length}
               </span>
             )}
+            {o.v === "dividends" && divReport && divReport.totalAnnualPayout > 0 && (
+              <span className="ml-1.5 text-[11px] tabular-nums font-mono text-emerald-700 font-semibold">
+                ₹{(divReport.totalAnnualPayout / 1000).toFixed(1)}k
+              </span>
+            )}
             {o.v === "booked" && extrasStatus === "ok" && realized.rows.length > 0 && (
               <span className="ml-1.5 text-[11px] tabular-nums" style={{ color: up(realized.totals.realized) ? GREEN : RED }}>
                 {signed(realized.totals.realized)}
@@ -251,7 +284,20 @@ export function PortfolioClient({
         ))}
       </div>
 
-      {tab === "booked" ? (
+      {tab === "dividends" ? (
+        divStatus === "loading" ? (
+          <div className="py-16 text-center text-[13px] text-slate-500">
+            <div className="inline-block w-5 h-5 border-2 border-slate-300 border-t-emerald-600 rounded-full animate-spin mb-2" />
+            <div>Calculating portfolio dividend income &amp; cash flows…</div>
+          </div>
+        ) : divStatus === "error" || !divReport ? (
+          <div className="card p-8 text-center text-rose-700 text-[13px]">
+            Could not calculate dividends. Please refresh or try again.
+          </div>
+        ) : (
+          <PortfolioDividends report={divReport} />
+        )
+      ) : tab === "booked" ? (
         extrasStatus === "loading" ? (
           <p className="muted-text text-[13px] py-8">Loading booked P&amp;L…</p>
         ) : extrasStatus === "error" ? (

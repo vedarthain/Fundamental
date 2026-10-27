@@ -62,3 +62,4 @@ web/scripts/
 # P&L — personal financial data that must never reach a PUBLIC repo. Reproducible
 # from the DB at any time, so there is nothing to preserve here.
 reports/
+clusters_queue.*

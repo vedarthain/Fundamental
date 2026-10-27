@@ -265,14 +265,25 @@ def call_gemini(model: str, prompt: str, system_prompt: str = SYSTEM_PROMPT) -> 
     if not key:
         raise ValueError("GEMINI_API_KEY not found in environment or .env.local")
 
-    candidates = [model]
-    if model in ("default", "gemini", "gemini-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-flash-lite"):
+    norm_model = model.strip()
+    if norm_model in ("gemini-3.1-flash-lite-latest", "gemini-3.1", "3.1"):
+        norm_model = "gemini-3.1-flash-lite"
+
+    candidates = [norm_model]
+    if norm_model in ("default", "gemini", "gemini-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-flash-lite"):
         candidates = [
             "models/gemini-3.5-flash-lite",
             "models/gemini-flash-lite-latest",
             "models/gemini-3.1-flash-lite",
             "models/gemini-3-flash-preview",
             "models/gemini-3.5-flash",
+        ]
+    elif norm_model in ("gemini-3.1-flash-lite", "models/gemini-3.1-flash-lite"):
+        candidates = [
+            "models/gemini-3.1-flash-lite",
+            "models/gemini-3-flash-preview",
+            "models/gemini-flash-lite-latest",
+            "models/gemini-3.5-flash-lite",
         ]
 
     payload = {
@@ -505,9 +516,15 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--symbol", help="Single stock symbol (e.g. MCX)")
     ap.add_argument("--symbols", help="Comma-separated stock symbols (e.g. CAMS,CRISIL,ICRA)")
-    ap.add_argument("--cluster", help="Cluster ID to process all its symbols (e.g. bfsi_rta_rating)")
+    ap.add_argument("--cluster", help="Cluster ID or integer index from clusters_queue.txt (e.g. 3 or cap_goods_precision_eng)")
+    ap.add_argument("--clusters", help="Multiple cluster IDs, indices, or ranges (e.g. '1,2,3', '1-5', '1-5,11,12')")
+    ap.add_argument("--next-cluster", action="store_true", help="Automatically pick the next cluster that has un-refreshed stocks")
+    ap.add_argument("--list-clusters", action="store_true", help="Display all clusters with queue indices and exit")
     ap.add_argument("--portfolio", action="store_true", help="Process un-verdicted portfolio stocks")
     ap.add_argument("--claude-stocks", action="store_true", help="Process stocks that have Claude verdicts but lack Gemini verdicts")
+    ap.add_argument("--since", help="Process symbols that had verdicts generated on or after this date (e.g. 2026-10-25)")
+    ap.add_argument("--unverdicted", action="store_true", help="Process active universe symbols that do not yet have a verdict")
+    ap.add_argument("--delay", type=float, default=3.0, help="Delay in seconds between LLM calls to go easy on Gemini (default: 3.0s)")
     ap.add_argument("--limit", type=int, default=None, help="Limit number of symbols to process")
     ap.add_argument("--engine", choices=["gemini", "ollama"], default="gemini", help="Inference engine: gemini or ollama (default: gemini)")
     ap.add_argument("--model", default=None, help="Model name (default: gemini-3.8-flash for gemini, qwen2.5:14b for ollama)")
@@ -517,8 +534,89 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true", help="Print verdicts to stdout without loading")
     args = ap.parse_args()
 
+    if args.list_clusters:
+        qtxt = ROOT / "clusters_queue.txt"
+        if qtxt.exists():
+            print(qtxt.read_text())
+        else:
+            print("clusters_queue.txt not found. Run: etl/.venv/bin/python scripts/build_clusters_queue.py")
+        return 0
+
     if not args.model:
         args.model = "gemini-3.5-flash-lite" if args.engine == "gemini" else DEFAULT_MODEL
+
+    target_clusters: list[dict] = []
+    cluster_spec = (args.clusters or args.cluster or "").strip()
+
+    if args.next_cluster:
+        qpath = ROOT / "clusters_queue.json"
+        if not qpath.exists():
+            print("✗ clusters_queue.json not found. Run: etl/.venv/bin/python scripts/build_clusters_queue.py")
+            return 1
+        cq = json.loads(qpath.read_text())
+        import psycopg
+        url = os.environ.get("APP_DB_URL", "postgres:///fundamental_app")
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                for c in cq:
+                    cid = c["cluster_id"]
+                    cur.execute("""
+                        SELECT 1
+                        FROM app.cluster_assignment ca
+                        JOIN app.stock_verdict v ON v.symbol = ca.symbol
+                        WHERE ca.cluster_id = %s
+                          AND v.generated_at >= '2026-10-25' AND v.generated_at < CURRENT_DATE
+                          AND NOT EXISTS (
+                              SELECT 1 FROM app.stock_verdict v2
+                              WHERE v2.symbol = ca.symbol AND v2.generated_at >= CURRENT_DATE
+                          )
+                        LIMIT 1;
+                    """, (cid,))
+                    if cur.fetchone():
+                        target_clusters = [c]
+                        print(f"🎯 Auto-picked Next Cluster #{c['index']}: '{cid}' ({c['cluster_name']})\n")
+                        break
+        if not target_clusters:
+            print("✓ All clusters from yesterday have already been refreshed today!")
+            return 0
+    elif cluster_spec:
+        qpath = ROOT / "clusters_queue.json"
+        cq = []
+        if qpath.exists():
+            cq = json.loads(qpath.read_text())
+        idx_map = {c["index"]: c for c in cq}
+        id_map = {c["cluster_id"]: c for c in cq}
+
+        seen_cids = set()
+        parts = [p.strip() for p in cluster_spec.split(",") if p.strip()]
+        for p in parts:
+            if "-" in p and all(sub.strip().isdigit() for sub in p.split("-", 1)):
+                lo, hi = map(int, [sub.strip() for sub in p.split("-", 1)])
+                for i in range(lo, hi + 1):
+                    if i in idx_map and idx_map[i]["cluster_id"] not in seen_cids:
+                        target_clusters.append(idx_map[i])
+                        seen_cids.add(idx_map[i]["cluster_id"])
+                    elif i not in idx_map:
+                        print(f"Warning: Cluster index #{i} not found in queue (1..{len(cq)})", file=sys.stderr)
+            elif p.isdigit():
+                i = int(p)
+                if i in idx_map and idx_map[i]["cluster_id"] not in seen_cids:
+                    target_clusters.append(idx_map[i])
+                    seen_cids.add(idx_map[i]["cluster_id"])
+                elif i not in idx_map:
+                    print(f"Warning: Cluster index #{i} not found in queue (1..{len(cq)})", file=sys.stderr)
+            elif p in id_map:
+                if p not in seen_cids:
+                    target_clusters.append(id_map[p])
+                    seen_cids.add(p)
+            else:
+                if p not in seen_cids:
+                    target_clusters.append({"index": -1, "cluster_id": p, "cluster_name": p})
+                    seen_cids.add(p)
+
+        if not target_clusters:
+            print(f"✗ Could not resolve any valid clusters from spec '{cluster_spec}'")
+            return 1
 
     import time
     start_total_time = time.time()
@@ -527,16 +625,25 @@ def main() -> int:
     print("🏛️  EQUITYROOTS FUNDAMENTAL VERDICT ENGINE")
     print("=" * 80)
     print(f"Engine:         {args.engine.upper()} (Model: {args.model})")
-    target_desc = (
-        f"Symbol: {args.symbol}" if args.symbol else
-        f"Symbols: {args.symbols}" if args.symbols else
-        f"Cluster: {args.cluster}" if args.cluster else
-        "Claude-verdicted stocks needing Gemini" if args.claude_stocks else
-        "Un-verdicted portfolio holdings"
-    )
+    if target_clusters:
+        if len(target_clusters) == 1:
+            c = target_clusters[0]
+            target_desc = f"Cluster #{c['index']}: {c['cluster_id']} ({c['cluster_name']})" if c['index'] > 0 else f"Cluster: {c['cluster_id']}"
+        else:
+            target_desc = f"{len(target_clusters)} Clusters: " + ", ".join([f"#{c['index']}" if c['index'] > 0 else c['cluster_id'] for c in target_clusters])
+    else:
+        target_desc = (
+            f"Symbol: {args.symbol}" if args.symbol else
+            f"Symbols: {args.symbols}" if args.symbols else
+            f"Verdicts generated on or after {args.since}" if args.since else
+            "Active universe stocks needing verdicts" if args.unverdicted else
+            "Claude-verdicted stocks needing Gemini" if args.claude_stocks else
+            "Un-verdicted portfolio holdings"
+        )
     print(f"Target Mode:    {target_desc}")
     print(f"Auto-Load DB:   {'ENABLED (direct upsert to app.stock_verdict)' if args.load else 'DISABLED'}")
     print(f"Skip Existing:  {'ENABLED' if args.skip_existing else 'DISABLED'}")
+    print(f"Request Delay:  {args.delay:.1f}s per stock")
     print("=" * 80 + "\n")
 
     symbols = []
@@ -544,16 +651,87 @@ def main() -> int:
         symbols = [args.symbol.strip().upper()]
     elif args.symbols:
         symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
-    elif args.cluster:
+    elif target_clusters:
+        import psycopg
+        url = os.environ.get("APP_DB_URL", "postgres:///fundamental_app")
+        print("🎯 Selected Clusters & Stock Breakdown:")
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                for c in target_clusters:
+                    cid = c["cluster_id"]
+                    cname = c.get("cluster_name", cid)
+                    cidx = c.get("index", -1)
+                    if args.since:
+                        cur.execute("""
+                            SELECT DISTINCT ca.symbol 
+                            FROM app.cluster_assignment ca
+                            JOIN app.stock_verdict v ON v.symbol = ca.symbol
+                            WHERE ca.cluster_id = %s
+                              AND v.generated_at >= %s::timestamptz AND v.generated_at < CURRENT_DATE
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM app.stock_verdict v2
+                                  WHERE v2.symbol = ca.symbol AND v2.generated_at >= CURRENT_DATE
+                              )
+                            ORDER BY ca.symbol;
+                        """, (cid, args.since))
+                    else:
+                        cur.execute("SELECT symbol FROM app.cluster_assignment WHERE cluster_id = %s ORDER BY symbol;", (cid,))
+                    c_syms = [r[0] for r in cur.fetchall()]
+                    tag = f"[#{cidx:>2}]" if cidx != -1 else "[-]"
+                    status_text = f"{len(c_syms)} stock(s) to process" if c_syms else "already up to date ✓"
+                    print(f"  • {tag} {cid:<32} ({cname}): {status_text}")
+                    symbols.extend(c_syms)
+        if not symbols:
+            print(f"\n✓ All requested symbols across selected cluster(s) are already up to date.")
+            return 0
+    elif args.since:
         import psycopg
         url = os.environ.get("APP_DB_URL", "postgres:///fundamental_app")
         with psycopg.connect(url) as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT symbol FROM app.cluster_assignment WHERE cluster_id = %s ORDER BY symbol;", (args.cluster,))
+                since_str = str(args.since).strip().split()[0]
+                today_str = str(date.today())
+                if since_str < today_str:
+                    cur.execute("""
+                        SELECT DISTINCT v.symbol
+                        FROM app.stock_verdict v
+                        WHERE v.generated_at >= %s::timestamptz AND v.generated_at < CURRENT_DATE
+                          AND NOT EXISTS (
+                              SELECT 1 FROM app.stock_verdict v2 
+                              WHERE v2.symbol = v.symbol AND v2.generated_at >= CURRENT_DATE
+                          )
+                        ORDER BY v.symbol;
+                    """, (args.since,))
+                else:
+                    cur.execute("""
+                        SELECT DISTINCT symbol
+                        FROM app.stock_verdict
+                        WHERE generated_at >= %s::timestamptz
+                        ORDER BY symbol;
+                    """, (args.since,))
                 symbols = [r[0] for r in cur.fetchall()]
         if not symbols:
-            print(f"✗ No symbols found in database for cluster '{args.cluster}'")
-            return 1
+            print(f"✓ All stocks generated on or after {args.since} have already been refreshed today.")
+            return 0
+    elif args.unverdicted:
+        import psycopg
+        url = os.environ.get("APP_DB_URL", "postgres:///fundamental_app")
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT DISTINCT u.symbol
+                    FROM app.universe u
+                    JOIN app.cluster_assignment ca ON ca.symbol = u.symbol
+                    LEFT JOIN (
+                        SELECT DISTINCT symbol FROM app.stock_verdict
+                    ) v ON v.symbol = u.symbol
+                    WHERE u.is_active = true AND v.symbol IS NULL
+                    ORDER BY u.symbol;
+                """)
+                symbols = [r[0] for r in cur.fetchall()]
+        if not symbols:
+            print("✓ All active stocks already have verdicts in app.stock_verdict.")
+            return 0
     elif args.claude_stocks:
         import psycopg
         url = os.environ.get("APP_DB_URL", "postgres:///fundamental_app")
@@ -587,7 +765,10 @@ def main() -> int:
             print("✓ No un-verdicted portfolio stocks found.")
             return 0
     else:
-        ap.error("Must specify --symbol, --symbols, --cluster, --portfolio, or --claude-stocks")
+        ap.error("Must specify --symbol, --symbols, --cluster, --since, --unverdicted, --portfolio, or --claude-stocks")
+
+    if args.limit and len(symbols) > args.limit:
+        symbols = symbols[:args.limit]
 
     total_target_count = len(symbols)
 
@@ -775,8 +956,8 @@ def main() -> int:
                     print(f"    • {clean_p}")
                 print(f"    Trigger: {verdict_obj.get('trigger_text')}")
 
-            if args.engine == "gemini":
-                time.sleep(2.0)
+            if args.delay and args.delay > 0:
+                time.sleep(args.delay)
 
         except Exception as e:
             stock_dur = time.time() - t_stock_start

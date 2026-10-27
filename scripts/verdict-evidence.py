@@ -241,13 +241,14 @@ def resolve_symbols(conn: psycopg.Connection, args) -> tuple[list[str], str]:
     # 54 of 95 holdings are not on the watchlist, carrying 53% of cost basis —
     # the half with real money in it would have had no verdict.
     where = {
-        "tracked": "SELECT symbol FROM app.user_watchlist UNION "
-                   "SELECT symbol FROM app.portfolio_holding WHERE symbol IS NOT NULL",
+        "tracked": "SELECT symbol FROM app.scores WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)",
+        "universe": "SELECT symbol FROM app.scores WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)",
         "watchlist": "SELECT symbol FROM app.user_watchlist",
         "portfolio": "SELECT symbol FROM app.portfolio_holding WHERE symbol IS NOT NULL",
     }
-    base = where["tracked" if args.tracked else
-                 "watchlist" if args.watchlist else "portfolio"]
+    base = where["universe" if getattr(args, "universe", False) else
+                 "watchlist" if args.watchlist else
+                 "portfolio" if args.portfolio else "tracked"]
 
     if args.missing:
         sql = (f"SELECT DISTINCT t.symbol FROM ({base}) t "
@@ -1297,7 +1298,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Evidence pack for hand-written verdicts.")
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--symbols", help="Comma-separated, e.g. TITAN,HAVELLS")
-    g.add_argument("--tracked", action="store_true", help="watchlist UNION portfolio (default)")
+    g.add_argument("--tracked", action="store_true", help="full website universe + verdicts (default)")
+    g.add_argument("--universe", action="store_true", help="all active stocks in app.universe")
     g.add_argument("--watchlist", action="store_true")
     g.add_argument("--portfolio", action="store_true")
     ap.add_argument("--missing", action="store_true", help="only symbols with no verdict yet")
