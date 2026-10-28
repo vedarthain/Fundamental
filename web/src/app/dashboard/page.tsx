@@ -11,14 +11,19 @@
  * Layout: a DENSE GRID of fixed-height widget boxes, not a stack of cards. One
  * column on a phone, 2-up from `sm`, 3-up from `lg`. Every tile is the same
  * height (`ui.tsx`'s BODY_H) and scrolls inside itself, so the grid never goes
- * ragged and the page does not grow with the data. "Needs action" spans two
- * columns on desktop because its rows are sentences, not numbers.
+ * ragged and the page does not grow with the data.
  *
- * Eleven tiles. Every one of them is a different QUESTION, which is the only
- * admission test: "what moved", "what needs a decision", "what do I own", "how
- * concentrated is it", "what is due", "what did they file", "what is listing".
- * A twelfth tile that re-answers one of those belongs inside the tile that
- * already owns the question, not beside it.
+ * Ten tiles. Every one of them is a different QUESTION, which is the only
+ * admission test: "what moved", "what do I own", "how is it split and what is
+ * moving against me", "how concentrated is it", "what is due", "what did they
+ * file", "what is listing". An eleventh tile that re-answers one of those
+ * belongs inside the tile that already owns the question, not beside it.
+ *
+ * REMOVED 2026-10-24, by request: "Needs action" (NeedsAction.tsx) and
+ * "Research calls" (CallsZone.tsx, admin-only). The components still exist and
+ * are now unreferenced — re-adding either is an import plus a <Suspense> block.
+ * Note the layout detail if "Needs action" returns: it spanned two columns on
+ * desktop (`sm:col-span-2`) because its rows are sentences, not numbers.
  *
  * The market strip is the one non-widget: four index levels and the FII/DII net
  * on a single line above the grid. Boxing it wasted a whole row.
@@ -31,12 +36,13 @@
  */
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
-import { getSession, isAdminRequest } from "@/lib/auth";
+// isAdminRequest is gone with the admin-only "Research calls" tile — no zone
+// on this page branches on admin any more.
+import { getSession } from "@/lib/auth";
 import { ZoneSkeleton } from "./ui";
 import { MarketLine } from "./MarketLine";
-import { NeedsAction } from "./NeedsAction";
 import { BookZone } from "./BookZone";
-import { CallsZone } from "./CallsZone";
+import { WinnersLosers } from "./WinnersLosers";
 import { SignalsZone } from "./SignalsZone";
 import { SectorHeat } from "./SectorHeat";
 import { ResultsZone } from "./ResultsZone";
@@ -54,7 +60,6 @@ export default async function DashboardPage() {
   if (!session) {
     redirect(`/login?next=${encodeURIComponent("/dashboard")}`);
   }
-  const isAdmin = await isAdminRequest();
 
   return (
     <div className="mx-auto max-w-[1300px] px-3 md:px-5 py-3 md:py-4">
@@ -70,23 +75,17 @@ export default async function DashboardPage() {
       </Suspense>
 
       <DashboardTabs>
-        <div data-tab="book" className="sm:col-span-2">
-          <Suspense fallback={<ZoneSkeleton title="Needs action" />}>
-            <NeedsAction userId={session.userId} />
-          </Suspense>
-        </div>
-
-        {isAdmin && (
-          <div data-tab="book">
-            <Suspense fallback={<ZoneSkeleton title="Research calls" />}>
-              <CallsZone userId={session.userId} />
-            </Suspense>
-          </div>
-        )}
-
         <div data-tab="book">
           <Suspense fallback={<ZoneSkeleton title="Your book" />}>
             <BookZone userId={session.userId} />
+          </Suspense>
+        </div>
+
+        {/* Next to the book, not inside it: the book is ordered by size, this
+            is ordered by how far a name has moved against the side it is on. */}
+        <div data-tab="book">
+          <Suspense fallback={<ZoneSkeleton title="Winners & losers" />}>
+            <WinnersLosers userId={session.userId} />
           </Suspense>
         </div>
 
