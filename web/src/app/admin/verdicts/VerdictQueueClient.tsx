@@ -26,7 +26,21 @@ function inr(n: number): string {
   return n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-type ConvictionCategory = "all" | "buy" | "accumulate" | "hold" | "watch" | "avoid" | "missing" | "dormant";
+type ConvictionCategory =
+  | "all"
+  | "watchlist"
+  | "portfolio"
+  | "holding"
+  | "inspected"
+  | "buy"
+  | "accumulate"
+  | "hold"
+  | "watch"
+  | "avoid"
+  | "missing"
+  | "needs_review"
+  | "changed"
+  | "dormant";
 
 function categorize(e: QueueEntry): "buy" | "accumulate" | "hold" | "watch" | "avoid" | "missing" | "dormant" {
   if (e.bucket === "dormant") return "dormant";
@@ -64,6 +78,7 @@ export function VerdictQueueClient() {
     { kind: "loading" } | { kind: "ok"; q: VerdictQueue } | { kind: "error"; msg: string }
   >({ kind: "loading" });
   const [open, setOpen] = useState<string | null>(null);
+  const [inspectedSymbols, setInspectedSymbols] = useState<Set<string>>(new Set());
   const [category, setCategory] = useState<ConvictionCategory>("all");
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("freshness");
@@ -71,7 +86,38 @@ export function VerdictQueueClient() {
   const [selectedCluster, setSelectedCluster] = useState<string | null>(null);
   const [showClusterTracker, setShowClusterTracker] = useState(false);
   const [clusterSearch, setClusterSearch] = useState("");
-  const [copiedCmd, setCopiedCmd] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(20);
+
+  // Restore inspected stocks from localStorage across sessions
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("fundamental_verdict_inspected_stocks");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          setInspectedSymbols(new Set(parsed));
+        }
+      }
+    } catch {
+      // non-fatal
+    }
+  }, []);
+
+  const openSymbol = (symbol: string) => {
+    setInspectedSymbols((prev) => {
+      if (prev.has(symbol)) return prev;
+      const next = new Set(prev);
+      next.add(symbol);
+      try {
+        localStorage.setItem("fundamental_verdict_inspected_stocks", JSON.stringify([...next]));
+      } catch {
+        // non-fatal
+      }
+      return next;
+    });
+    setOpen(symbol);
+  };
 
   useEffect(() => {
     let live = true;
@@ -101,15 +147,38 @@ export function VerdictQueueClient() {
 
   // Category counts across live entries
   const counts = useMemo(() => {
-    const res = { buy: 0, accumulate: 0, hold: 0, watch: 0, avoid: 0, missing: 0, dormant: 0, total: 0 };
+    const res = {
+      buy: 0,
+      accumulate: 0,
+      hold: 0,
+      watch: 0,
+      avoid: 0,
+      missing: 0,
+      dormant: 0,
+      changed: 0,
+      needsReview: 0,
+      holding: 0,
+      portfolio: 0,
+      watchlist: 0,
+      inspected: 0,
+      total: 0,
+    };
     if (state.kind !== "ok") return res;
     for (const e of state.q.entries) {
       const cat = categorize(e);
       if (cat !== "dormant") res.total++;
       res[cat]++;
+      if (e.hasActionChanged) res.changed++;
+      if (e.bucket === "due") res.needsReview++;
+      if (e.isPortfolio || e.isHolding) {
+        res.portfolio++;
+        res.holding++;
+      }
+      if (e.isWatchlist) res.watchlist++;
+      if (inspectedSymbols.has(e.symbol)) res.inspected++;
     }
     return res;
-  }, [state]);
+  }, [state, inspectedSymbols]);
 
   // Filtered & Sorted list
   const filtered = useMemo(() => {
@@ -122,7 +191,17 @@ export function VerdictQueueClient() {
     }
 
     // Filter by conviction category
-    if (category !== "all") {
+    if (category === "portfolio" || category === "holding") {
+      list = list.filter((e) => e.isPortfolio || e.isHolding);
+    } else if (category === "watchlist") {
+      list = list.filter((e) => e.isWatchlist);
+    } else if (category === "inspected") {
+      list = list.filter((e) => inspectedSymbols.has(e.symbol));
+    } else if (category === "changed") {
+      list = list.filter((e) => e.hasActionChanged);
+    } else if (category === "needs_review") {
+      list = list.filter((e) => e.bucket === "due");
+    } else if (category !== "all") {
       list = list.filter((e) => categorize(e) === category);
     } else {
       // By default in 'all', show active tracked stocks (exclude dormant unless explicitly picked)
@@ -160,7 +239,20 @@ export function VerdictQueueClient() {
       }
       return a.symbol.localeCompare(b.symbol);
     });
-  }, [state, category, search, sortKey, selectedCluster]);
+  }, [state, category, search, sortKey, selectedCluster, inspectedSymbols]);
+
+  // Reset to page 1 whenever any filter, search, sort, or pageSize changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [category, search, sortKey, selectedCluster, pageSize]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(Math.max(1, currentPage), totalPages);
+  const startIndex = (safePage - 1) * pageSize;
+  const endIndex = Math.min(startIndex + pageSize, filtered.length);
+  const paginated = useMemo(() => {
+    return filtered.slice(startIndex, endIndex);
+  }, [filtered, startIndex, endIndex]);
 
   if (state.kind === "loading") {
     return (
@@ -217,25 +309,17 @@ export function VerdictQueueClient() {
 
   const activeClusterObj = clusters.find((c) => c.clusterId === selectedCluster);
 
-  const nextBatchCommand =
-    "etl/.venv/bin/python scripts/ollama-verdict.py --clusters 28-32 --load --delay 5.0";
-
-  const handleCopyCommand = () => {
-    navigator.clipboard.writeText(nextBatchCommand);
-    setCopiedCmd(true);
-    setTimeout(() => setCopiedCmd(false), 2000);
-  };
 
   return (
-    <div className="space-y-4 w-full">
-      {/* 0. Verdict Completion Summary Strip (Compact Light Theme) */}
-      <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-2xs">
-        <div className="flex flex-wrap items-center justify-between gap-3 text-[12px]">
+    <div className="space-y-2.5 w-full">
+      {/* 0. Verdict Completion Summary Strip (Ultra-Compact) */}
+      <div className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 shadow-2xs">
+        <div className="flex flex-wrap items-center justify-between gap-2.5 text-[11.5px]">
           {/* Main Completion Stats */}
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-slate-600">
-            <div className="flex items-center gap-2">
-              <span className="font-semibold text-slate-900 flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-slate-600">
+            <div className="flex items-center gap-1.5">
+              <span className="font-semibold text-slate-900 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
                 Completion:
               </span>
               <span className="font-mono font-medium text-slate-900">
@@ -244,7 +328,7 @@ export function VerdictQueueClient() {
               <span className="font-mono text-emerald-700 font-semibold">
                 ({summaryData.completedPercent.toFixed(1)}%)
               </span>
-              <div className="w-24 sm:w-32 bg-slate-100 rounded-full h-1.5 overflow-hidden ml-1 border border-slate-200/80">
+              <div className="w-20 sm:w-28 bg-slate-100 rounded-full h-1 overflow-hidden ml-1 border border-slate-200/80">
                 <div
                   className="bg-emerald-500 h-full rounded-full transition-all"
                   style={{ width: `${Math.min(100, summaryData.completedPercent)}%` }}
@@ -254,8 +338,8 @@ export function VerdictQueueClient() {
 
             <span className="text-slate-300 hidden sm:inline">•</span>
 
-            <div className="flex items-center gap-1.5">
-              <span className="text-slate-500">Refreshed Today:</span>
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500">Refreshed:</span>
               <span className="font-mono font-medium text-emerald-700">
                 +{summaryData.refreshedTodayCount.toLocaleString()}
               </span>
@@ -263,7 +347,7 @@ export function VerdictQueueClient() {
 
             <span className="text-slate-300 hidden sm:inline">•</span>
 
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1">
               <span className="text-slate-500">Pending:</span>
               <span className="font-mono font-medium text-amber-700">
                 {summaryData.pendingCount.toLocaleString()}
@@ -272,7 +356,16 @@ export function VerdictQueueClient() {
 
             <span className="text-slate-300 hidden sm:inline">•</span>
 
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500">Needs Review:</span>
+              <span className="font-mono font-medium text-amber-700">
+                {counts.needsReview.toLocaleString()}
+              </span>
+            </div>
+
+            <span className="text-slate-300 hidden sm:inline">•</span>
+
+            <div className="flex items-center gap-1">
               <span className="text-slate-500">Clusters:</span>
               <span className="font-mono font-medium text-slate-800">
                 {completedClustersCount} / {totalClustersCount}
@@ -280,24 +373,12 @@ export function VerdictQueueClient() {
             </div>
           </div>
 
-          {/* Quick Actions (Cluster matrix toggle & CLI copy) */}
-          <div className="flex items-center gap-2 text-[11.5px]">
-            <button
-              type="button"
-              onClick={handleCopyCommand}
-              title={nextBatchCommand}
-              className="px-2 py-1 rounded border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 font-mono transition-colors flex items-center gap-1"
-            >
-              <span>Batch #28–32</span>
-              <span className="text-slate-400 font-sans">
-                {copiedCmd ? "✓ Copied" : "Copy"}
-              </span>
-            </button>
-
+          {/* Quick Actions (Cluster matrix toggle) */}
+          <div className="flex items-center gap-2 text-[11px]">
             <button
               type="button"
               onClick={() => setShowClusterTracker(!showClusterTracker)}
-              className={`px-2.5 py-1 rounded border font-medium transition-colors flex items-center gap-1.5 ${
+              className={`px-2 py-0.5 rounded border font-medium transition-colors flex items-center gap-1 ${
                 showClusterTracker
                   ? "border-slate-400 bg-slate-100 text-slate-900"
                   : "border-slate-200 bg-white hover:bg-slate-50 text-slate-700"
@@ -311,17 +392,18 @@ export function VerdictQueueClient() {
 
         {/* Compact Light Cluster Drawer */}
         {showClusterTracker && (
-          <div className="mt-3 pt-3 border-t border-slate-100">
-            <div className="flex items-center justify-between gap-2 mb-2.5">
-              <span className="text-[11.5px] font-medium text-slate-600">
-                72 Clusters Breakdown
+          <div className="mt-2.5 pt-2.5 border-t border-slate-100">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <span className="text-[11px] font-medium text-slate-700 flex items-center gap-1.5">
+                <span>72 Clusters Breakdown</span>
+                <span className="text-[9.5px] text-slate-400 font-normal font-mono">(Numbered #1 to #72)</span>
               </span>
               <div className="flex items-center gap-2">
                 <input
                   type="text"
                   value={clusterSearch}
                   onChange={(e) => setClusterSearch(e.target.value)}
-                  placeholder="Filter clusters..."
+                  placeholder="Filter clusters or #number..."
                   className="text-[11px] bg-slate-50 border border-slate-200 rounded px-2 py-0.5 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-slate-400 w-44"
                 />
                 {selectedCluster && (
@@ -336,7 +418,7 @@ export function VerdictQueueClient() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-1.5 max-h-[220px] overflow-y-auto pr-1">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-1.5 max-h-[200px] overflow-y-auto pr-1">
               {filteredClusters.map((c) => {
                 const isSelected = selectedCluster === c.clusterId;
                 const isComplete = c.percent >= 90;
@@ -354,7 +436,12 @@ export function VerdictQueueClient() {
                     }`}
                   >
                     <div className="flex items-center justify-between gap-1">
-                      <span className="truncate font-medium">{c.clusterName}</span>
+                      <div className="truncate font-medium flex items-center gap-1 min-w-0">
+                        <span className="text-[9.5px] font-mono text-slate-400 bg-slate-100 px-1 py-0.2 rounded shrink-0">
+                          #{c.clusterIndex}
+                        </span>
+                        <span className="truncate">{c.clusterName}</span>
+                      </div>
                       <span
                         className={`font-mono text-[10px] shrink-0 ${
                           isComplete ? "text-emerald-700 font-semibold" : "text-slate-500"
@@ -377,29 +464,26 @@ export function VerdictQueueClient() {
         )}
       </div>
 
-      {/* 1. Conviction Overview Cards Ribbon */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+      {/* 1. Conviction Overview Cards Ribbon (Super Compact Tiles) */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-1.5">
         {/* BUY */}
         <button
           type="button"
           onClick={() => setCategory(category === "buy" ? "all" : "buy")}
-          className={`p-3 rounded-lg border text-left transition-all relative ${
+          className={`px-2.5 py-1.5 rounded-md border text-left transition-all relative ${
             category === "buy"
-              ? "border-emerald-500 bg-emerald-50/30 ring-1 ring-emerald-500 shadow-2xs"
+              ? "border-emerald-500 bg-emerald-50/50 ring-1 ring-emerald-500 shadow-2xs"
               : "border-slate-200/90 bg-white hover:border-slate-300 shadow-2xs"
           }`}
         >
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
               Buy
             </span>
           </div>
-          <div className="text-[20px] font-mono font-medium text-slate-900 mt-1">
+          <div className="text-[16px] font-mono font-semibold text-slate-900 mt-0.5 leading-tight">
             {counts.buy}
-          </div>
-          <div className="text-[10.5px] text-emerald-700 font-normal mt-0.5">
-            Top conviction entry
           </div>
         </button>
 
@@ -407,23 +491,20 @@ export function VerdictQueueClient() {
         <button
           type="button"
           onClick={() => setCategory(category === "accumulate" ? "all" : "accumulate")}
-          className={`p-3 rounded-lg border text-left transition-all relative ${
+          className={`px-2.5 py-1.5 rounded-md border text-left transition-all relative ${
             category === "accumulate"
-              ? "border-teal-500 bg-teal-50/30 ring-1 ring-teal-500 shadow-2xs"
+              ? "border-teal-500 bg-teal-50/50 ring-1 ring-teal-500 shadow-2xs"
               : "border-slate-200/90 bg-white hover:border-slate-300 shadow-2xs"
           }`}
         >
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-teal-500" />
               Accumulate
             </span>
           </div>
-          <div className="text-[20px] font-mono font-medium text-slate-900 mt-1">
+          <div className="text-[16px] font-mono font-semibold text-slate-900 mt-0.5 leading-tight">
             {counts.accumulate}
-          </div>
-          <div className="text-[10.5px] text-teal-700 font-normal mt-0.5">
-            Stagger on dips
           </div>
         </button>
 
@@ -431,23 +512,20 @@ export function VerdictQueueClient() {
         <button
           type="button"
           onClick={() => setCategory(category === "hold" ? "all" : "hold")}
-          className={`p-3 rounded-lg border text-left transition-all ${
+          className={`px-2.5 py-1.5 rounded-md border text-left transition-all ${
             category === "hold"
-              ? "border-slate-600 bg-slate-100/50 ring-1 ring-slate-600 shadow-2xs"
+              ? "border-slate-600 bg-slate-100/60 ring-1 ring-slate-600 shadow-2xs"
               : "border-slate-200/90 bg-white hover:border-slate-300 shadow-2xs"
           }`}
         >
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
               Hold
             </span>
           </div>
-          <div className="text-[20px] font-mono font-medium text-slate-900 mt-1">
+          <div className="text-[16px] font-mono font-semibold text-slate-900 mt-0.5 leading-tight">
             {counts.hold}
-          </div>
-          <div className="text-[10.5px] text-slate-500 font-normal mt-0.5">
-            Maintain standing
           </div>
         </button>
 
@@ -455,23 +533,20 @@ export function VerdictQueueClient() {
         <button
           type="button"
           onClick={() => setCategory(category === "watch" ? "all" : "watch")}
-          className={`p-3 rounded-lg border text-left transition-all ${
+          className={`px-2.5 py-1.5 rounded-md border text-left transition-all ${
             category === "watch"
-              ? "border-amber-500 bg-amber-50/30 ring-1 ring-amber-500 shadow-2xs"
+              ? "border-amber-500 bg-amber-50/50 ring-1 ring-amber-500 shadow-2xs"
               : "border-slate-200/90 bg-white hover:border-slate-300 shadow-2xs"
           }`}
         >
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
               Watch
             </span>
           </div>
-          <div className="text-[20px] font-mono font-medium text-slate-900 mt-1">
+          <div className="text-[16px] font-mono font-semibold text-slate-900 mt-0.5 leading-tight">
             {counts.watch}
-          </div>
-          <div className="text-[10.5px] text-amber-700 font-normal mt-0.5">
-            Catalyst corridor
           </div>
         </button>
 
@@ -479,23 +554,20 @@ export function VerdictQueueClient() {
         <button
           type="button"
           onClick={() => setCategory(category === "avoid" ? "all" : "avoid")}
-          className={`p-3 rounded-lg border text-left transition-all ${
+          className={`px-2.5 py-1.5 rounded-md border text-left transition-all ${
             category === "avoid"
-              ? "border-rose-400 bg-rose-50/30 ring-1 ring-rose-400 shadow-2xs"
+              ? "border-rose-400 bg-rose-50/50 ring-1 ring-rose-400 shadow-2xs"
               : "border-slate-200/90 bg-white hover:border-slate-300 shadow-2xs"
           }`}
         >
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
               Reduce &amp; Avoid
             </span>
           </div>
-          <div className="text-[20px] font-mono font-medium text-slate-900 mt-1">
+          <div className="text-[16px] font-mono font-semibold text-slate-900 mt-0.5 leading-tight">
             {counts.avoid}
-          </div>
-          <div className="text-[10.5px] text-rose-700 font-normal mt-0.5">
-            Capital preservation
           </div>
         </button>
 
@@ -503,116 +575,171 @@ export function VerdictQueueClient() {
         <button
           type="button"
           onClick={() => setCategory(category === "missing" ? "all" : "missing")}
-          className={`p-3 rounded-lg border text-left transition-all ${
+          className={`px-2.5 py-1.5 rounded-md border text-left transition-all ${
             category === "missing"
               ? "border-slate-400 bg-slate-50 ring-1 ring-slate-400 shadow-2xs"
               : "border-slate-200/90 bg-white hover:border-slate-300 shadow-2xs"
           }`}
         >
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-slate-300" />
               Pending
             </span>
           </div>
-          <div className="text-[20px] font-mono font-medium text-slate-900 mt-1">
+          <div className="text-[16px] font-mono font-semibold text-slate-900 mt-0.5 leading-tight">
             {counts.missing}
           </div>
-          <div className="text-[10.5px] text-slate-400 font-normal mt-0.5">
-            Awaiting analysis
+        </button>
+
+        {/* NEEDS REVIEW (DRIFT / STALE) */}
+        <button
+          type="button"
+          onClick={() => {
+            if (category === "needs_review") {
+              setCategory("all");
+            } else {
+              setCategory("needs_review");
+              setSortKey("urgency");
+            }
+          }}
+          className={`px-2.5 py-1.5 rounded-md border text-left transition-all ${
+            category === "needs_review"
+              ? "border-amber-500 bg-amber-50/60 ring-1 ring-amber-500 shadow-2xs"
+              : "border-slate-200/90 bg-white hover:border-slate-300 shadow-2xs"
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+              Needs Review
+            </span>
+          </div>
+          <div className="text-[16px] font-mono font-semibold text-slate-900 mt-0.5 leading-tight">
+            {counts.needsReview}
+          </div>
+        </button>
+
+        {/* CHANGED VERDICTS */}
+        <button
+          type="button"
+          onClick={() => setCategory(category === "changed" ? "all" : "changed")}
+          className={`px-2.5 py-1.5 rounded-md border text-left transition-all ${
+            category === "changed"
+              ? "border-indigo-500 bg-indigo-50/60 ring-1 ring-indigo-500 shadow-2xs"
+              : "border-slate-200/90 bg-white hover:border-slate-300 shadow-2xs"
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
+              Changed
+            </span>
+          </div>
+          <div className="text-[16px] font-mono font-semibold text-slate-900 mt-0.5 leading-tight">
+            {counts.changed}
           </div>
         </button>
       </div>
 
       {/* 2. Controls & Filter Bar */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1">
-        {/* Category Filter Pills */}
-        <div className="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0 text-[12px]">
+        {/* Active Filters & Reset */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 text-[12px]">
           <button
             type="button"
             onClick={() => setCategory("all")}
-            className={`px-2.5 py-1 rounded-md font-medium transition-all ${
+            className={`px-3 py-1 rounded-md font-medium transition-all ${
               category === "all"
                 ? "bg-slate-900 text-white shadow-xs"
-                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                : "bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900"
             }`}
           >
-            All Active ({counts.total})
+            All Active ({counts.total.toLocaleString()})
           </button>
-          <button
-            type="button"
-            onClick={() => setCategory("buy")}
-            className={`px-2.5 py-1 rounded-md font-medium transition-all ${
-              category === "buy"
-                ? "bg-emerald-600 text-white shadow-xs"
-                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-            }`}
-          >
-            Buy ({counts.buy})
-          </button>
-          <button
-            type="button"
-            onClick={() => setCategory("accumulate")}
-            className={`px-2.5 py-1 rounded-md font-medium transition-all ${
-              category === "accumulate"
-                ? "bg-teal-600 text-white shadow-xs"
-                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-            }`}
-          >
-            Accumulate ({counts.accumulate})
-          </button>
-          <button
-            type="button"
-            onClick={() => setCategory("hold")}
-            className={`px-2.5 py-1 rounded-md font-medium transition-all ${
-              category === "hold"
-                ? "bg-slate-700 text-white shadow-xs"
-                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-            }`}
-          >
-            Hold ({counts.hold})
-          </button>
-          <button
-            type="button"
-            onClick={() => setCategory("watch")}
-            className={`px-2.5 py-1 rounded-md font-medium transition-all ${
-              category === "watch"
-                ? "bg-amber-600 text-white shadow-xs"
-                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-            }`}
-          >
-            Watch ({counts.watch})
-          </button>
-          <button
-            type="button"
-            onClick={() => setCategory("avoid")}
-            className={`px-2.5 py-1 rounded-md font-medium transition-all ${
-              category === "avoid"
-                ? "bg-rose-600 text-white shadow-xs"
-                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-            }`}
-          >
-            Avoid ({counts.avoid})
-          </button>
-          <button
-            type="button"
-            onClick={() => setCategory("missing")}
-            className={`px-2.5 py-1 rounded-md font-medium transition-all ${
-              category === "missing"
-                ? "bg-slate-600 text-white shadow-xs"
-                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-            }`}
-          >
-            Pending ({counts.missing})
-          </button>
+
+          {/* Watchlist Filter Button */}
+          {counts.watchlist > 0 && (
+            <button
+              type="button"
+              onClick={() => setCategory(category === "watchlist" ? "all" : "watchlist")}
+              className={`px-2.5 py-1 rounded-md font-medium transition-all flex items-center gap-1.5 ${
+                category === "watchlist"
+                  ? "bg-amber-600 text-white shadow-xs"
+                  : "bg-amber-50/80 text-amber-900 border border-amber-200/90 hover:bg-amber-100"
+              }`}
+              title="Show stocks on your watchlist"
+            >
+              <span>⭐</span>
+              <span>Watchlist ({counts.watchlist})</span>
+            </button>
+          )}
+
+          {/* Portfolio Filter Button */}
+          {counts.portfolio > 0 && (
+            <button
+              type="button"
+              onClick={() => setCategory(category === "portfolio" ? "all" : "portfolio")}
+              className={`px-2.5 py-1 rounded-md font-medium transition-all flex items-center gap-1.5 ${
+                category === "portfolio" || category === "holding"
+                  ? "bg-emerald-700 text-white shadow-xs"
+                  : "bg-emerald-50/80 text-emerald-800 border border-emerald-200/90 hover:bg-emerald-100"
+              }`}
+              title="Show stocks currently in your portfolio"
+            >
+              <span>💼</span>
+              <span>Portfolio ({counts.portfolio})</span>
+            </button>
+          )}
+
+          {/* Inspected Stocks Filter Button */}
+          {counts.inspected > 0 && (
+            <button
+              type="button"
+              onClick={() => setCategory(category === "inspected" ? "all" : "inspected")}
+              className={`px-2.5 py-1 rounded-md font-medium transition-all flex items-center gap-1.5 ${
+                category === "inspected"
+                  ? "bg-indigo-700 text-white shadow-xs"
+                  : "bg-indigo-50/80 text-indigo-800 border border-indigo-200/90 hover:bg-indigo-100"
+              }`}
+              title="Show stocks you have inspected (persisted across sessions)"
+            >
+              <span>✓</span>
+              <span>Inspected ({counts.inspected})</span>
+            </button>
+          )}
+
+          {/* Active Category Filter Pill (shown only when a card above is selected, e.g. Buy, Accumulate, Hold) */}
+          {category !== "all" &&
+            category !== "dormant" &&
+            category !== "portfolio" &&
+            category !== "holding" &&
+            category !== "watchlist" &&
+            category !== "inspected" && (
+            <div className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-slate-900 text-white text-[11.5px] font-medium shadow-xs shrink-0">
+              <span className="capitalize">{category.replace("_", " ")}</span>
+              <span className="text-slate-300 font-mono text-[10.5px]">
+                ({filtered.length})
+              </span>
+              <button
+                type="button"
+                onClick={() => setCategory("all")}
+                className="ml-1 text-slate-400 hover:text-white font-bold text-[12px] leading-none"
+                title="Reset to All Active"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
           {counts.dormant > 0 && (
             <button
               type="button"
-              onClick={() => setCategory("dormant")}
+              onClick={() => setCategory(category === "dormant" ? "all" : "dormant")}
               className={`px-2.5 py-1 rounded-md font-medium transition-all ${
                 category === "dormant"
-                  ? "bg-slate-500 text-white shadow-xs"
-                  : "bg-slate-100 text-slate-400 hover:bg-slate-200"
+                  ? "bg-slate-600 text-white shadow-xs"
+                  : "bg-slate-100 text-slate-400 hover:bg-slate-200 hover:text-slate-600"
               }`}
             >
               Archived ({counts.dormant})
@@ -623,7 +750,7 @@ export function VerdictQueueClient() {
           {activeClusterObj && (
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-300 text-[11.5px] font-medium shadow-2xs shrink-0">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-              <span>Cluster: {activeClusterObj.clusterName}</span>
+              <span>Cluster #{activeClusterObj.clusterIndex}: {activeClusterObj.clusterName}</span>
               <button
                 type="button"
                 onClick={() => setSelectedCluster(null)}
@@ -668,6 +795,33 @@ export function VerdictQueueClient() {
             <option value="urgency">Sort: Needs Review (Drift)</option>
             <option value="symbol">Sort: Symbol (A-Z)</option>
           </select>
+
+          {/* Top Quick Page Stepper */}
+          {totalPages > 1 && (
+            <div className="flex items-center gap-1 text-[11.5px] bg-white border border-slate-200 rounded-md px-1.5 py-0.5 shadow-2xs">
+              <button
+                type="button"
+                disabled={safePage <= 1}
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                className="px-1 text-slate-500 hover:text-slate-900 disabled:opacity-30 disabled:hover:text-slate-500 font-bold"
+                title="Previous page"
+              >
+                ◀
+              </button>
+              <span className="font-mono text-slate-700 px-1 text-[11px]">
+                {safePage}/{totalPages}
+              </span>
+              <button
+                type="button"
+                disabled={safePage >= totalPages}
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                className="px-1 text-slate-500 hover:text-slate-900 disabled:opacity-30 disabled:hover:text-slate-500 font-bold"
+                title="Next page"
+              >
+                ▶
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -690,72 +844,138 @@ export function VerdictQueueClient() {
         </div>
       ) : (
         <div className="rounded-lg border border-slate-200/90 bg-white shadow-2xs overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-[12.5px] border-collapse min-w-[920px]">
-              <thead>
-                <tr className="border-b border-slate-100 bg-slate-50/70 text-[11px] font-medium uppercase tracking-wider text-slate-500">
-                  <th className="text-left py-2.5 px-3.5">Company &amp; Sector</th>
-                  <th className="text-left py-2.5 px-3">Conviction</th>
-                  <th className="text-left py-2.5 px-3 w-[40%]">1-Line Verdict Thesis</th>
-                  <th className="text-right py-2.5 px-3">At Verdict</th>
-                  <th className="text-right py-2.5 px-3">Current LTP</th>
-                  <th className="text-right py-2.5 px-3">Return</th>
-                  <th className="text-right py-2.5 px-3.5">Action</th>
+          <div className="overflow-auto max-h-[calc(100vh-270px)] min-h-[380px]">
+            <table className="w-full text-[12px] border-collapse min-w-[920px]">
+              <thead className="sticky top-0 z-20 bg-slate-50 shadow-xs">
+                <tr className="border-b border-slate-200 bg-slate-50 text-[10.5px] font-semibold uppercase tracking-wider text-slate-600">
+                  <th className="sticky top-0 left-0 z-30 bg-slate-50 text-left py-2 px-3 border-b border-slate-200 shadow-xs">
+                    Company &amp; Sector
+                  </th>
+                  <th className="sticky top-0 z-20 bg-slate-50 text-left py-2 px-3 border-b border-slate-200 shadow-xs">
+                    Conviction
+                  </th>
+                  <th className="sticky top-0 z-20 bg-slate-50 text-left py-2 px-3 w-[40%] border-b border-slate-200 shadow-xs">
+                    1-Line Verdict Thesis
+                  </th>
+                  <th className="sticky top-0 z-20 bg-slate-50 text-right py-2 px-3 border-b border-slate-200 shadow-xs">
+                    At Verdict
+                  </th>
+                  <th className="sticky top-0 z-20 bg-slate-50 text-right py-2 px-3 border-b border-slate-200 shadow-xs">
+                    Current LTP
+                  </th>
+                  <th className="sticky top-0 z-20 bg-slate-50 text-right py-2 px-3 border-b border-slate-200 shadow-xs">
+                    Return
+                  </th>
+                  <th className="sticky top-0 z-20 bg-slate-50 text-right py-2 px-3.5 border-b border-slate-200 shadow-xs">
+                    Action
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filtered.map((e) => {
+                {paginated.map((e) => {
                   const badge = getBadgeTheme(e.action);
                   const isMissing = !e.verdict;
                   const hasMoved = e.movedCount > 0;
                   const isStale = e.ageDays != null && e.ageDays > STALE_DAYS;
+                  const isInspected = inspectedSymbols.has(e.symbol);
 
                   return (
                     <tr
                       key={`${e.symbol}-${e.bucket}`}
-                      className="hover:bg-slate-50/70 transition-colors group"
+                      className={`transition-colors group ${
+                        isInspected
+                          ? "bg-indigo-50/25 hover:bg-indigo-50/50"
+                          : "hover:bg-slate-50/70"
+                      }`}
                     >
                       {/* Symbol & Company */}
-                      <td className="py-2.5 px-3.5">
+                      <td
+                        className={`py-1.5 px-3 sticky left-0 z-10 transition-colors border-r border-slate-100/60 ${
+                          isInspected
+                            ? "bg-[#f5f6ff] group-hover:bg-[#ebeeff]"
+                            : "bg-white group-hover:bg-slate-50"
+                        }`}
+                      >
                         <div className="flex items-center gap-1.5">
                           <Link
                             href={`/stock/${e.symbol}`}
-                            className="font-mono font-medium text-[13px] text-slate-900 group-hover:text-emerald-700 hover:underline"
+                            className={`font-mono font-semibold text-[11px] hover:underline ${
+                              isInspected
+                                ? "text-indigo-800 group-hover:text-indigo-950"
+                                : "text-slate-900 group-hover:text-emerald-700"
+                            }`}
                           >
                             {e.symbol}
                           </Link>
+                          {(e.isPortfolio || e.isHolding) && (
+                            <span
+                              className="inline-flex items-center gap-0.5 text-[8.5px] font-semibold uppercase tracking-wider px-1 py-0.2 rounded bg-emerald-50 text-emerald-800 border border-emerald-300 shadow-2xs"
+                              title="In your portfolio"
+                            >
+                              <span>💼</span>
+                              <span>Portfolio</span>
+                            </span>
+                          )}
+                          {e.isWatchlist && (
+                            <span
+                              className="inline-flex items-center gap-0.5 text-[8.5px] font-semibold uppercase tracking-wider px-1 py-0.2 rounded bg-amber-50 text-amber-800 border border-amber-300 shadow-2xs"
+                              title="On your watchlist"
+                            >
+                              <span>⭐</span>
+                              <span>Watchlist</span>
+                            </span>
+                          )}
+                          {isInspected && (
+                            <span
+                              className="inline-flex items-center gap-0.5 text-[8.5px] font-semibold uppercase tracking-wider px-1 py-0.2 rounded bg-indigo-100 text-indigo-700 border border-indigo-200 shadow-2xs"
+                              title="Inspected (persisted across sessions)"
+                            >
+                              <span>✓</span>
+                              <span>Inspected</span>
+                            </span>
+                          )}
                           {e.bucket === "dormant" && (
-                            <span className="text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.2 rounded font-normal">
+                            <span className="text-[8.5px] text-slate-400 bg-slate-100 px-1 py-0.2 rounded font-normal">
                               archived
                             </span>
                           )}
                         </div>
-                        <div className="text-[11.5px] text-slate-500 truncate max-w-[210px] mt-0.5">
+                        <div className="text-[10px] text-slate-500 truncate max-w-[210px] mt-0.5">
                           {e.company_name || e.industry || "—"}
                         </div>
                         {e.industry && (
-                          <div className="text-[10px] text-slate-400 mt-0.5 truncate max-w-[210px]">
+                          <div className="text-[9px] text-slate-400 mt-0.5 truncate max-w-[210px]">
                             {e.industry}
                           </div>
                         )}
                       </td>
 
                       {/* Conviction Action */}
-                      <td className="py-2.5 px-3 whitespace-nowrap">
+                      <td className="py-1.5 px-3 whitespace-nowrap">
                         {isMissing ? (
-                          <span className="inline-flex items-center gap-1.5 text-[10.5px] font-normal px-2 py-0.5 rounded-full border border-slate-200 bg-slate-50 text-slate-400">
+                          <span className="inline-flex items-center gap-1.5 text-[10px] font-normal px-2 py-0.5 rounded-full border border-slate-200 bg-slate-50 text-slate-400">
                             <span className="w-1.5 h-1.5 rounded-full bg-slate-300" />
                             Pending
                           </span>
                         ) : (
-                          <div className="space-y-1">
+                          <div className="space-y-0.5">
                             <span
-                              className={`inline-flex items-center gap-1.5 text-[10.5px] font-medium px-2 py-0.5 rounded-full border ${badge.pill}`}
+                              className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full border ${badge.pill}`}
                             >
                               <span className={`w-1.5 h-1.5 rounded-full ${badge.dot}`} />
                               {e.action || "HOLD"}
                             </span>
-                            <div className="text-[10px] text-slate-400">
+                            {e.hasActionChanged && e.prevAction && (
+                              <div
+                                className="flex items-center gap-1 text-[9px] font-mono font-medium text-indigo-700 bg-indigo-50/90 px-1.5 py-0.2 rounded border border-indigo-200/70 w-fit"
+                                title={`Previous run was ${e.prevAction}${e.prevGeneratedAt ? ` (${new Date(e.prevGeneratedAt).toLocaleDateString()})` : ""}`}
+                              >
+                                <span className="text-slate-400 line-through">{e.prevAction}</span>
+                                <span>➔</span>
+                                <span className="font-semibold text-indigo-900">{e.action}</span>
+                              </div>
+                            )}
+                            <div className="text-[9.5px] text-slate-400">
                               {e.ageDays != null ? `${e.ageDays}d ago` : ""}
                             </div>
                           </div>
@@ -763,16 +983,20 @@ export function VerdictQueueClient() {
                       </td>
 
                       {/* 1-Line Verdict Thesis */}
-                      <td className="py-2.5 px-3">
+                      <td className="py-1.5 px-3">
                         {isMissing ? (
-                          <span className="text-[11.5px] text-slate-400 italic">
+                          <span className="text-[12px] text-slate-400 italic">
                             Tracked on watchlist. Awaiting AI quantitative verdict generation.
                           </span>
                         ) : (
                           <button
                             type="button"
-                            onClick={() => setOpen(e.symbol)}
-                            className="text-left text-[12px] leading-relaxed text-slate-600 hover:text-slate-900 transition-colors line-clamp-2"
+                            onClick={() => openSymbol(e.symbol)}
+                            className={`text-left text-[13px] leading-snug hover:text-slate-950 transition-colors line-clamp-2 ${
+                              isInspected
+                                ? "text-indigo-950 font-normal"
+                                : "text-slate-800 font-normal"
+                            }`}
                             title="Click to view full verdict analysis"
                           >
                             {e.thesis || e.verdict}
@@ -780,25 +1004,25 @@ export function VerdictQueueClient() {
                         )}
                         {/* Evidence drift or warning indicator */}
                         {hasMoved && (
-                          <div className="text-[10.5px] text-rose-600 font-normal mt-1 flex items-center gap-1">
+                          <div className="text-[10px] text-rose-600 font-normal mt-0.5 flex items-center gap-1">
                             <span>⚠️</span>
                             <span>{e.movedCount} key metrics shifted since writing</span>
                           </div>
                         )}
                         {!hasMoved && isStale && (
-                          <div className="text-[10.5px] text-amber-700 font-normal mt-1">
+                          <div className="text-[10px] text-amber-700 font-normal mt-0.5">
                             Review window open ({e.ageDays}d old)
                           </div>
                         )}
                       </td>
 
                       {/* Price at Verdict */}
-                      <td className="py-2.5 px-3 text-right whitespace-nowrap font-mono text-[12px] text-slate-500">
+                      <td className="py-1.5 px-3 text-right whitespace-nowrap font-mono text-[11.5px] text-slate-500">
                         {e.anchorPrice != null ? (
                           <div>
                             <div>₹{inr(e.anchorPrice)}</div>
                             {e.priceAsof && (
-                              <div className="text-[10px] text-slate-400 font-sans">
+                              <div className="text-[9.5px] text-slate-400 font-sans">
                                 {shortDate(e.priceAsof)}
                               </div>
                             )}
@@ -809,15 +1033,15 @@ export function VerdictQueueClient() {
                       </td>
 
                       {/* Current LTP */}
-                      <td className="py-2.5 px-3 text-right whitespace-nowrap font-mono text-[12px] font-medium text-slate-800">
+                      <td className="py-1.5 px-3 text-right whitespace-nowrap font-mono text-[11.5px] font-medium text-slate-800">
                         {e.ltp != null ? `₹${inr(e.ltp)}` : <span className="text-slate-300 font-normal">—</span>}
                       </td>
 
                       {/* Return Since Verdict */}
-                      <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                      <td className="py-1.5 px-3 text-right whitespace-nowrap">
                         {e.pctMove != null ? (
                           <span
-                            className={`inline-block font-mono text-[11px] font-medium px-2 py-0.5 rounded-full border ${
+                            className={`inline-block font-mono text-[10.5px] font-medium px-2 py-0.2 rounded-full border ${
                               e.pctMove >= 0
                                 ? "bg-emerald-50 text-emerald-700 border-emerald-200/70"
                                 : "bg-rose-50 text-rose-700 border-rose-200/70"
@@ -827,18 +1051,22 @@ export function VerdictQueueClient() {
                             {e.pctMove.toFixed(1)}%
                           </span>
                         ) : (
-                          <span className="text-slate-300 font-mono text-[11px]">—</span>
+                          <span className="text-slate-300 font-mono text-[10.5px]">—</span>
                         )}
                       </td>
 
                       {/* Action Button */}
-                      <td className="py-2.5 px-3.5 text-right whitespace-nowrap">
+                      <td className="py-1.5 px-3.5 text-right whitespace-nowrap">
                         <button
                           type="button"
-                          onClick={() => setOpen(e.symbol)}
-                          className="px-2.5 py-1 text-[11.5px] font-medium rounded-md border border-slate-200/90 text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition-colors"
+                          onClick={() => openSymbol(e.symbol)}
+                          className={`px-2 py-0.5 text-[11px] font-medium rounded-md border transition-all ${
+                            isInspected
+                              ? "bg-indigo-600 text-white border-indigo-700 hover:bg-indigo-700 font-semibold shadow-xs"
+                              : "border-slate-200/90 text-slate-700 hover:bg-slate-100 hover:text-slate-900"
+                          }`}
                         >
-                          Inspect
+                          {isInspected ? "✓ Inspected" : "Inspect"}
                         </button>
                       </td>
                     </tr>
@@ -847,6 +1075,115 @@ export function VerdictQueueClient() {
               </tbody>
             </table>
           </div>
+
+          {/* Pagination Controls Footer */}
+          {filtered.length > 0 && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-3.5 py-2.5 bg-slate-50/80 border-t border-slate-200/80 text-[12px] text-slate-600 rounded-b-lg">
+              <div className="flex flex-wrap items-center gap-3">
+                <span>
+                  Showing <span className="font-semibold text-slate-900 font-mono">{filtered.length === 0 ? 0 : startIndex + 1}</span>–<span className="font-semibold text-slate-900 font-mono">{endIndex}</span> of <span className="font-semibold text-slate-900 font-mono">{filtered.length.toLocaleString()}</span> stocks
+                </span>
+                <span className="text-slate-300 hidden sm:inline">•</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-slate-500">Rows per page:</span>
+                  <select
+                    value={pageSize}
+                    onChange={(e) => setPageSize(Number(e.target.value))}
+                    aria-label="Rows per page"
+                    className="bg-white border border-slate-200 rounded px-2 py-0.5 text-[11.5px] text-slate-700 font-medium focus:outline-none focus:border-slate-400"
+                  >
+                    <option value={20}>20</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                    <option value={3500}>All ({filtered.length})</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  disabled={safePage <= 1}
+                  onClick={() => {
+                    setCurrentPage((p) => Math.max(1, p - 1));
+                    window.scrollTo({ top: 380, behavior: "smooth" });
+                  }}
+                  className="px-2.5 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed text-slate-700 font-medium transition-colors text-[11.5px]"
+                >
+                  ← Prev
+                </button>
+
+                <div className="flex items-center gap-1 px-1">
+                  {/* First page if far away */}
+                  {safePage > 3 && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCurrentPage(1);
+                          window.scrollTo({ top: 380, behavior: "smooth" });
+                        }}
+                        className="w-7 h-7 flex items-center justify-center rounded text-[11.5px] font-medium border border-slate-200 bg-white hover:bg-slate-50 text-slate-700"
+                      >
+                        1
+                      </button>
+                      {safePage > 4 && <span className="text-slate-400 px-0.5">…</span>}
+                    </>
+                  )}
+
+                  {/* Window of surrounding pages */}
+                  {Array.from({ length: totalPages }, (_, i) => i + 1)
+                    .filter((p) => p >= safePage - 2 && p <= safePage + 2)
+                    .map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => {
+                          setCurrentPage(p);
+                          window.scrollTo({ top: 380, behavior: "smooth" });
+                        }}
+                        className={`w-7 h-7 flex items-center justify-center rounded text-[11.5px] font-medium transition-all ${
+                          p === safePage
+                            ? "bg-slate-900 text-white font-semibold shadow-xs"
+                            : "border border-slate-200 bg-white hover:bg-slate-50 text-slate-700"
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    ))}
+
+                  {/* Last page if far away */}
+                  {safePage < totalPages - 2 && (
+                    <>
+                      {safePage < totalPages - 3 && <span className="text-slate-400 px-0.5">…</span>}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCurrentPage(totalPages);
+                          window.scrollTo({ top: 380, behavior: "smooth" });
+                        }}
+                        className="w-7 h-7 flex items-center justify-center rounded text-[11.5px] font-medium border border-slate-200 bg-white hover:bg-slate-50 text-slate-700"
+                      >
+                        {totalPages}
+                      </button>
+                    </>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  disabled={safePage >= totalPages}
+                  onClick={() => {
+                    setCurrentPage((p) => Math.min(totalPages, p + 1));
+                    window.scrollTo({ top: 380, behavior: "smooth" });
+                  }}
+                  className="px-2.5 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed text-slate-700 font-medium transition-colors text-[11.5px]"
+                >
+                  Next →
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -863,7 +1200,7 @@ export function VerdictQueueClient() {
 
         {showTimeline && (
           <div className="mt-3">
-            <Timeline weeks={timeline} onOpen={setOpen} />
+            <Timeline weeks={timeline} onOpen={openSymbol} />
           </div>
         )}
       </div>

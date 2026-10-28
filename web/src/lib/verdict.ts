@@ -284,9 +284,17 @@ export type QueueEntry = {
   priceAsof: string | null;
   ltp: number | null;
   pctMove: number | null;
+  prevVerdict?: string | null;
+  prevAction?: string | null;
+  prevGeneratedAt?: string | null;
+  hasActionChanged?: boolean;
+  isHolding?: boolean;
+  isPortfolio?: boolean;
+  isWatchlist?: boolean;
 };
 
 export type ClusterQueueProgress = {
+  clusterIndex: number;
   clusterId: string;
   clusterName: string;
   totalStocks: number;
@@ -300,6 +308,7 @@ export type VerdictQueueSummary = {
   completedCount: number;
   completedPercent: number;
   pendingCount: number;
+  changedCount: number;
   refreshedTodayCount: number;
   actionCounts: {
     buy: number;
@@ -360,12 +369,89 @@ function weekStartOf(d: Date): string {
  * argument first stopped matching the data. That is the column worth reading,
  * and the writing batches are marked on the same line for context.
  */
+export const CLUSTER_INDEX_MAP: Record<string, number> = {
+  bfsi_exchange: 1,
+  cap_goods_pumps_valves: 2,
+  cap_goods_precision_eng: 3,
+  electrical_transformers_grid: 4,
+  cap_goods_pipes_building: 5,
+  cap_goods_ems: 6,
+  defense_aero: 7,
+  metals_ferrous: 8,
+  auto_tyres_rubber: 9,
+  packaging_containers: 10,
+  bfsi_rta_rating: 11,
+  bfsi_pvt_banks_large: 12,
+  cap_goods_machinery_equipment: 13,
+  retail: 14,
+  consumer_jewellery: 15,
+  consumer_appliances: 16,
+  health_services: 17,
+  oil_refining: 18,
+  pharma_cdmo_apis: 19,
+  pharma: 20,
+  auto_components: 21,
+  it_services_midsmall: 22,
+  chemicals_specialty: 23,
+  construction: 24,
+  auto_oem: 25,
+  bfsi_housing_finance: 26,
+  consumer_building_home: 27,
+  it_services_large: 28,
+  diversified: 29,
+  bfsi_sfb: 30,
+  fmcg_diversified: 31,
+  bfsi_psu_banks: 32,
+  consumer_footwear: 33,
+  gas_distribution: 34,
+  bfsi_fintech: 35,
+  bfsi_insurance: 36,
+  bfsi_pvt_banks_mid_small: 37,
+  services_hr_staffing: 38,
+  bfsi_amc_wealth: 39,
+  bfsi_gold_microfinance: 40,
+  medtech: 41,
+  it_erd_engineering: 42,
+  it_hardware: 43,
+  realty_commercial_coworking: 44,
+  fmcg_beverages: 45,
+  education_training_services: 46,
+  fmcg_personal: 47,
+  bfsi_holding_companies: 48,
+  construction_railways_infra: 49,
+  paper_forest: 50,
+  leisure_hospitality: 51,
+  it_software_products_saas: 52,
+  telecom: 53,
+  agri_sugar_biofuels: 54,
+  metals_nonferrous_mining: 55,
+  cement: 56,
+  chemicals_dyes_pigments: 57,
+  chemicals_agro: 58,
+  hospitality_hotels: 59,
+  power: 60,
+  fmcg_packaged_foods: 61,
+  fmcg_food_agri: 62,
+  media_entertainment: 63,
+  cap_goods_electrical: 64,
+  electrical_wires_cables: 65,
+  textiles_apparel_retail: 66,
+  textiles_spinning_yarn: 67,
+  services_staffing_facilities: 68,
+  realty: 69,
+  transport_logistics: 70,
+  bfsi_broker: 71,
+  bfsi_nbfc: 72,
+  unclassified: 73,
+};
+
 export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
   const defaultSummary: VerdictQueueSummary = {
     totalUniverse: 0,
     completedCount: 0,
     completedPercent: 0,
     pendingCount: 0,
+    changedCount: 0,
     refreshedTodayCount: 0,
     actionCounts: {
       buy: 0,
@@ -434,7 +520,14 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
   }
 
   const newest = new Map<string, (typeof vrows)[number]>();
-  for (const r of vrows) if (!newest.has(r.symbol)) newest.set(r.symbol, r);
+  const previous = new Map<string, (typeof vrows)[number]>();
+  for (const r of vrows) {
+    if (!newest.has(r.symbol)) {
+      newest.set(r.symbol, r);
+    } else if (!previous.has(r.symbol)) {
+      previous.set(r.symbol, r);
+    }
+  }
 
   const trackedSet = new Set(tracked.map((t) => t.symbol));
   const verdictSymbols = [...newest.keys()];
@@ -454,6 +547,30 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
     } catch {
       // fallback
     }
+  }
+
+  const portfolioSymbols = new Set<string>();
+  try {
+    const pHoldings = await sql<{ symbol: string }[]>`
+      SELECT DISTINCT symbol
+        FROM app.portfolio_holding
+       WHERE symbol IS NOT NULL AND symbol != ''
+    `;
+    for (const r of pHoldings) portfolioSymbols.add(r.symbol);
+  } catch {
+    // non-fatal
+  }
+
+  const watchlistSymbols = new Set<string>();
+  try {
+    const wRows = await sql<{ symbol: string }[]>`
+      SELECT DISTINCT symbol
+        FROM app.user_watchlist
+       WHERE symbol IS NOT NULL AND symbol != ''
+    `;
+    for (const r of wRows) watchlistSymbols.add(r.symbol);
+  } catch {
+    // non-fatal
   }
 
   // Weekly cluster_metrics for the symbols that have a verdict, so drift can be
@@ -548,6 +665,9 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
         // row is not blank, and pctMove stays null rather than 0.
         ...priceOf(t.symbol, null),
         priceAsof: null,
+        isHolding: portfolioSymbols.has(t.symbol),
+        isPortfolio: portfolioSymbols.has(t.symbol),
+        isWatchlist: watchlistSymbols.has(t.symbol),
       });
       counts.missing++;
       continue;
@@ -560,6 +680,13 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
     const ageDays = daysSince(generated_at);
     const bucket: QueueBucket = movedKeys.length > 0 || ageDays > STALE_DAYS ? "due" : "current";
     const parsed = parseActionAndThesis(v.verdict);
+
+    const prev = previous.get(t.symbol);
+    const prevParsed = prev ? parseActionAndThesis(prev.verdict) : null;
+    const prevAction = prevParsed?.action ?? null;
+    const hasActionChanged = Boolean(
+      prevAction && parsed.action && prevAction.toUpperCase() !== parsed.action.toUpperCase()
+    );
 
     entries.push({
       symbol: t.symbol,
@@ -582,6 +709,13 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
       addedAt: t.added_at ? t.added_at.toISOString() : null,
       ...priceOf(t.symbol, v.anchor_price),
       priceAsof: v.price_asof ? v.price_asof.toISOString().slice(0, 10) : null,
+      prevVerdict: prev?.verdict ?? null,
+      prevAction,
+      prevGeneratedAt: prev?.generated_at ? prev.generated_at.toISOString() : null,
+      hasActionChanged,
+      isHolding: portfolioSymbols.has(t.symbol),
+      isPortfolio: portfolioSymbols.has(t.symbol),
+      isWatchlist: watchlistSymbols.has(t.symbol),
     });
     counts[bucket]++;
   }
@@ -594,6 +728,13 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
     const generated_at = v.generated_at.toISOString();
     const u = universeInfo.get(symbol);
     const parsed = parseActionAndThesis(v.verdict);
+
+    const prev = previous.get(symbol);
+    const prevParsed = prev ? parseActionAndThesis(prev.verdict) : null;
+    const prevAction = prevParsed?.action ?? null;
+    const hasActionChanged = Boolean(
+      prevAction && parsed.action && prevAction.toUpperCase() !== parsed.action.toUpperCase()
+    );
 
     entries.push({
       symbol,
@@ -616,6 +757,13 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
       addedAt: null,
       ...priceOf(symbol, v.anchor_price),
       priceAsof: v.price_asof ? v.price_asof.toISOString().slice(0, 10) : null,
+      prevVerdict: prev?.verdict ?? null,
+      prevAction,
+      prevGeneratedAt: prev?.generated_at ? prev.generated_at.toISOString() : null,
+      hasActionChanged,
+      isHolding: portfolioSymbols.has(symbol),
+      isPortfolio: portfolioSymbols.has(symbol),
+      isWatchlist: watchlistSymbols.has(symbol),
     });
     counts.dormant++;
   }
@@ -728,14 +876,19 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
       GROUP BY ca.cluster_id, c.name
       ORDER BY completed_stocks DESC, total_stocks DESC
     `;
-    clusterProgress = cRows.map((r) => ({
-      clusterId: r.cluster_id,
-      clusterName: r.cluster_name,
-      totalStocks: r.total_stocks,
-      completedStocks: r.completed_stocks,
-      todayStocks: r.today_stocks,
-      percent: r.total_stocks > 0 ? Math.round((r.completed_stocks / r.total_stocks) * 100) : 0,
-    }));
+    clusterProgress = cRows.map((r) => {
+      const idx = CLUSTER_INDEX_MAP[r.cluster_id] ?? 99;
+      return {
+        clusterIndex: idx,
+        clusterId: r.cluster_id,
+        clusterName: r.cluster_name,
+        totalStocks: r.total_stocks,
+        completedStocks: r.completed_stocks,
+        todayStocks: r.today_stocks,
+        percent: r.total_stocks > 0 ? Math.round((r.completed_stocks / r.total_stocks) * 100) : 0,
+      };
+    });
+    clusterProgress.sort((a, b) => a.clusterIndex - b.clusterIndex);
   } catch {
     clusterProgress = [];
   }
@@ -744,6 +897,11 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
   const totalUniverse = tracked.length;
   const pendingCount = Math.max(0, totalUniverse - completedCount);
   const completedPercent = totalUniverse > 0 ? Math.round((completedCount / totalUniverse) * 1000) / 10 : 0;
+
+  let changedCount = 0;
+  for (const e of entries) {
+    if (e.hasActionChanged) changedCount++;
+  }
 
   const todayStr = new Date().toISOString().slice(0, 10);
   let refreshedTodayCount = 0;
@@ -777,6 +935,7 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
     completedCount,
     completedPercent,
     pendingCount,
+    changedCount,
     refreshedTodayCount,
     actionCounts,
   };

@@ -41,7 +41,7 @@ import { Zone, Empty, SymbolLink, Delta } from "./ui";
 import { getPortfolio } from "./portfolioOnce";
 import { type Instrument } from "@/lib/portfolio";
 
-const ROWS_PER_SIDE = 5;
+const ROWS_PER_SIDE = 10;
 
 export async function WinnersLosers({ userId }: { userId: number }) {
   const portfolio = await getPortfolio(userId);

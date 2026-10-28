@@ -1437,8 +1437,8 @@ function DisciplineDesk({ instruments }: { instruments: Instrument[] }) {
 // the single largest absolute P&L so the bars are comparable across both sides.
 function WinnersLosers({ instruments }: { instruments: Instrument[] }) {
   const sorted = [...instruments].sort((a, b) => b.pnl - a.pnl);
-  const winners = sorted.filter((i) => i.pnl > 0).slice(0, 5);
-  const losers = sorted.filter((i) => i.pnl < 0).slice(-5).reverse();
+  const winners = sorted.filter((i) => i.pnl > 0).slice(0, 10);
+  const losers = sorted.filter((i) => i.pnl < 0).slice(-10).reverse();
   const rows = [...winners, ...losers];
   if (rows.length === 0) {
     return (

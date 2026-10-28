@@ -524,6 +524,7 @@ def main() -> int:
     ap.add_argument("--claude-stocks", action="store_true", help="Process stocks that have Claude verdicts but lack Gemini verdicts")
     ap.add_argument("--since", help="Process symbols that had verdicts generated on or after this date (e.g. 2026-10-25)")
     ap.add_argument("--unverdicted", action="store_true", help="Process active universe symbols that do not yet have a verdict")
+    ap.add_argument("--drift", action="store_true", help="Process stocks whose stored evidence has drifted from live cluster metrics")
     ap.add_argument("--delay", type=float, default=3.0, help="Delay in seconds between LLM calls to go easy on Gemini (default: 3.0s)")
     ap.add_argument("--limit", type=int, default=None, help="Limit number of symbols to process")
     ap.add_argument("--engine", choices=["gemini", "ollama"], default="gemini", help="Inference engine: gemini or ollama (default: gemini)")
@@ -759,13 +760,66 @@ def main() -> int:
         if not symbols:
             print("✓ No Claude-only stocks found needing Gemini verdicts.")
             return 0
+    elif args.drift:
+        import psycopg
+        url = os.environ.get("APP_DB_URL", "postgres:///fundamental_app")
+        rel_thresh = 0.1
+        abs_thresh = 0.05
+
+        def check_moved(stored, live):
+            if live is None or stored is None:
+                return False
+            if isinstance(stored, bool) or isinstance(live, bool):
+                return bool(stored) != bool(live)
+            try:
+                a = float(stored)
+                b = float(live)
+            except Exception:
+                return False
+            if a == 0:
+                return b != 0
+            rel = abs(b / a - 1.0)
+            is_rate = abs(a) <= 1.0 and abs(b) <= 1.0
+            return abs(b - a) >= abs_thresh if is_rate else rel >= rel_thresh
+
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    WITH latest_v AS (
+                        SELECT DISTINCT ON (symbol) symbol, evidence, generated_at
+                        FROM app.stock_verdict
+                        ORDER BY symbol, generated_at DESC
+                    ),
+                    latest_m AS (
+                        SELECT symbol, cluster_metrics
+                        FROM app.metrics_snapshot
+                        WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM app.metrics_snapshot)
+                    )
+                    SELECT v.symbol, v.evidence, m.cluster_metrics
+                    FROM latest_v v
+                    JOIN latest_m m ON m.symbol = v.symbol
+                    WHERE v.evidence IS NOT NULL AND v.evidence != '{}'::jsonb
+                    ORDER BY v.symbol;
+                """)
+                rows = cur.fetchall()
+                drifted_syms = []
+                for sym, ev, live in rows:
+                    if not ev or not live:
+                        continue
+                    if any(check_moved(ev[k], live.get(k)) for k in ev if k in live):
+                        drifted_syms.append(sym)
+                symbols = drifted_syms
+        if not symbols:
+            print("✓ No stocks found with drifted evidence against the latest snapshot.")
+            return 0
+        print(f"🎯 Found {len(symbols)} stock(s) with evidence drift needing re-verdict.")
     elif args.portfolio:
         symbols = get_unverdicted_portfolio_symbols(limit=args.limit)
         if not symbols:
             print("✓ No un-verdicted portfolio stocks found.")
             return 0
     else:
-        ap.error("Must specify --symbol, --symbols, --cluster, --since, --unverdicted, --portfolio, or --claude-stocks")
+        ap.error("Must specify --symbol, --symbols, --cluster, --since, --unverdicted, --drift, --portfolio, or --claude-stocks")
 
     if args.limit and len(symbols) > args.limit:
         symbols = symbols[:args.limit]

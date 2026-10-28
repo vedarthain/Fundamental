@@ -21,19 +21,11 @@ export default async function AdminVerdictsPage() {
   if (!(await isAdminRequest())) redirect("/");
 
   return (
-    <main className="mx-auto max-w-[1600px] px-4 md:px-6 py-4 md:py-6">
-      <div className="mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-200/80 pb-3">
-        <div>
-          <h1 className="text-[20px] font-semibold text-slate-900 tracking-tight flex items-center gap-2">
-            Institutional Verdicts & Conviction Board
-            <span className="text-[10px] uppercase font-mono font-bold tracking-wider px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200/60">
-              Admin
-            </span>
-          </h1>
-          <p className="text-[12.5px] text-slate-500 mt-0.5">
-            Full coverage monitoring across active stocks · Live drift tracking against audit snapshots
-          </p>
-        </div>
+    <main className="mx-auto max-w-[1600px] px-3 sm:px-4 py-2 sm:py-3">
+      <div className="mb-2 flex items-center justify-between border-b border-slate-200/80 pb-1.5">
+        <h1 className="text-[14px] font-semibold text-slate-800 tracking-tight">
+          Verdict - Admin
+        </h1>
       </div>
       <VerdictQueueClient />
     </main>

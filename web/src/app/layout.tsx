@@ -53,7 +53,7 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" className={`${inter.variable} ${sourceSerif.variable} ${plexMono.variable}`}>
-      <body className="min-h-screen flex flex-col w-full max-w-full overflow-x-hidden">
+      <body className="min-h-screen flex flex-col w-full max-w-full overflow-x-clip">
         <SnapshotRibbon />
         <SiteHeader />
         <main className="flex-1 w-full max-w-full min-w-0">{children}</main>
