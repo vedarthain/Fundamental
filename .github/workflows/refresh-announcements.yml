@@ -3,11 +3,26 @@
 # scripts/fetch-announcements.py maps each NSE symbol → BSE scrip code (ISIN)
 # and pulls the last 30 days of announcements (SEBI disclosures, newspaper
 # publications, investor presentations, board outcomes, …) into app.announcement.
-# BSE's API is FREE, so this runs daily for the whole universe and spends no
-# indianapi quota.
+# BSE's API is FREE, so this costs no indianapi quota.
 #
-# Cadence: once daily, after the market + late filings settle. 22:00 UTC =
-# 03:30 IST next morning — captures the full day's filings.
+# CADENCE: WEEKLY, Sunday 22:00 UTC = Monday 03:30 IST (changed 2026-10-28,
+# from daily).
+#
+# Daily was never required: every run asks for the last 30 days per symbol, not
+# for yesterday, so a missed run is backfilled by the next one. Thirty chances
+# per filing is more than the job needs, and BSE blocks GitHub's data-centre
+# addresses from time to time (403 on 2026-09-19, -09-24, -10-28 — the same
+# request succeeds from a residential IP), so a third of those chances get
+# spent on nothing.
+#
+# WEEKLY IS THE FLOOR, NOT A PREFERENCE. Do not take this to monthly. The
+# window is 30 days (FETCH_DAYS in scripts/fetch-announcements.py); at monthly
+# cadence a single failed run puts the filings it missed permanently out of
+# reach, because by the next run they are older than the window and nothing
+# ever asks for them again. That is not hypothetical — the script's own
+# docstring records 246 symbols left with no annual report on file for exactly
+# that reason, which in turn left them with no company overview. Weekly keeps
+# four runs inside every 30-day window, so one failure costs nothing.
 #
 # Required secret: NEON_APP_URL.
 
@@ -15,7 +30,7 @@ name: Refresh announcements
 
 on:
   schedule:
-    - cron: '0 22 * * *'   # 22:00 UTC = 03:30 IST
+    - cron: '0 22 * * 0'   # Sun 22:00 UTC = Mon 03:30 IST
   workflow_dispatch: {}
 
 permissions:
@@ -86,10 +101,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TITLE="🚨 Daily BSE announcements refresh FAILED"
+          # Title changed with the move to weekly, so this opens a fresh issue
+          # rather than commenting on the daily-era one (#16). That is the
+          # intent: the old thread is a log of a cadence that no longer exists.
+          TITLE="🚨 Weekly BSE announcements refresh FAILED"
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           BODY=$(printf '%s\n' \
-            "The daily announcements sweep did not complete cleanly at $(date -u '+%Y-%m-%d %H:%M UTC')." \
+            "The weekly announcements sweep did not complete cleanly at $(date -u '+%Y-%m-%d %H:%M UTC')." \
+            "" \
+            "ON WEEKLY CADENCE A FAILURE MATTERS MORE THAN IT USED TO. The fetch window is 30 days, so there are four runs per window instead of thirty. Two consecutive failures still lose nothing; four in a row start putting filings permanently out of reach. Re-run by hand rather than waiting for next Sunday." \
             "" \
             "Status: ${{ job.status }}. A 'cancelled' status means the 100-min job timeout fired." \
             "" \
