@@ -846,7 +846,7 @@ def main() -> int:
     # -------------------------------------------------------------------------
     print(f"[Stage 2/4] 🔍 Database Screening & Queue Planning...")
     done_set = set()
-    if args.skip_existing:
+    if args.skip_existing or args.load:
         import psycopg
         url = os.environ.get("APP_DB_URL", "postgres:///fundamental_app")
         with psycopg.connect(url) as conn:
