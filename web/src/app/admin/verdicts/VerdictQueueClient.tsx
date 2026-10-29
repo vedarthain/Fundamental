@@ -266,8 +266,8 @@ export function VerdictQueueClient() {
         const pb = b.anchorPrice ?? -999999;
         diff = pa - pb;
       } else if (sortKey === "ltp") {
-        const pa = a.currentLtp ?? -999999;
-        const pb = b.currentLtp ?? -999999;
+        const pa = a.ltp ?? -999999;
+        const pb = b.ltp ?? -999999;
         diff = pa - pb;
       } else if (sortKey === "move") {
         const ma = a.pctMove ?? -999999;
