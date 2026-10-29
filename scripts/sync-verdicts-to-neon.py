@@ -102,7 +102,8 @@ def main() -> int:
     # Step 1: Read from local
     query = """
         SELECT symbol, generated_at, verdict, confidence, points, trigger_text,
-               evidence, snapshot_date, price_asof, model, source_report, anchor_price
+               evidence, snapshot_date, price_asof, model, source_report, anchor_price,
+               target_price, buy_below, bear_floor, upside_pct, valuation_method
         FROM app.stock_verdict
     """
     params: list[Any] = []
@@ -130,10 +131,12 @@ def main() -> int:
     upsert_sql = """
         INSERT INTO app.stock_verdict (
             symbol, generated_at, verdict, confidence, points, trigger_text,
-            evidence, snapshot_date, price_asof, model, source_report, anchor_price
+            evidence, snapshot_date, price_asof, model, source_report, anchor_price,
+            target_price, buy_below, bear_floor, upside_pct, valuation_method
         ) VALUES (
             %(symbol)s, %(generated_at)s, %(verdict)s, %(confidence)s, %(points)s, %(trigger_text)s,
-            %(evidence)s, %(snapshot_date)s, %(price_asof)s, %(model)s, %(source_report)s, %(anchor_price)s
+            %(evidence)s, %(snapshot_date)s, %(price_asof)s, %(model)s, %(source_report)s, %(anchor_price)s,
+            %(target_price)s, %(buy_below)s, %(bear_floor)s, %(upside_pct)s, %(valuation_method)s
         )
         ON CONFLICT (symbol, generated_at) DO UPDATE SET
             verdict = EXCLUDED.verdict,
@@ -145,7 +148,12 @@ def main() -> int:
             price_asof = EXCLUDED.price_asof,
             model = EXCLUDED.model,
             source_report = EXCLUDED.source_report,
-            anchor_price = EXCLUDED.anchor_price;
+            anchor_price = EXCLUDED.anchor_price,
+            target_price = EXCLUDED.target_price,
+            buy_below = EXCLUDED.buy_below,
+            bear_floor = EXCLUDED.bear_floor,
+            upside_pct = EXCLUDED.upside_pct,
+            valuation_method = EXCLUDED.valuation_method;
     """
 
     with psycopg.connect(neon_url) as nconn:
@@ -166,6 +174,11 @@ def main() -> int:
                     "model": r["model"],
                     "source_report": r["source_report"],
                     "anchor_price": r["anchor_price"],
+                    "target_price": r.get("target_price"),
+                    "buy_below": r.get("buy_below"),
+                    "bear_floor": r.get("bear_floor"),
+                    "upside_pct": r.get("upside_pct"),
+                    "valuation_method": r.get("valuation_method"),
                 })
 
             ncur.executemany(upsert_sql, records)

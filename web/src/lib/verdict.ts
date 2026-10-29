@@ -60,6 +60,11 @@ type RawVerdict = {
   price_asof: Date | null;
   model: string | null;
   source_report: string | null;
+  target_price?: number | null;
+  buy_below?: number | null;
+  bear_floor?: number | null;
+  upside_pct?: number | null;
+  valuation_method?: string | null;
 };
 
 function normalise(r: RawVerdict): VerdictRow {
@@ -77,6 +82,11 @@ function normalise(r: RawVerdict): VerdictRow {
     price_asof: r.price_asof ? r.price_asof.toISOString().slice(0, 10) : null,
     model: r.model,
     source_report: r.source_report,
+    target_price: r.target_price ?? null,
+    buy_below: r.buy_below ?? null,
+    bear_floor: r.bear_floor ?? null,
+    upside_pct: r.upside_pct ?? null,
+    valuation_method: r.valuation_method ?? null,
   };
 }
 
@@ -129,7 +139,12 @@ export async function loadVerdict(symbol: string): Promise<VerdictData | null> {
   try {
     rows = await sql<RawVerdict[]>`
       SELECT generated_at, verdict, confidence, points, trigger_text, evidence,
-             snapshot_date, price_asof, model, source_report
+             snapshot_date, price_asof, model, source_report,
+             target_price::float AS target_price,
+             buy_below::float AS buy_below,
+             bear_floor::float AS bear_floor,
+             upside_pct::float AS upside_pct,
+             valuation_method
         FROM app.stock_verdict
        WHERE symbol = ${upper}
        ORDER BY generated_at DESC
@@ -284,6 +299,11 @@ export type QueueEntry = {
   priceAsof: string | null;
   ltp: number | null;
   pctMove: number | null;
+  targetPrice: number | null;
+  buyBelow: number | null;
+  bearFloor: number | null;
+  upsidePct: number | null;
+  valuationMethod: string | null;
   prevVerdict?: string | null;
   prevAction?: string | null;
   prevGeneratedAt?: string | null;
@@ -507,11 +527,19 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
     symbol: string; generated_at: Date; verdict: string;
     confidence: "high" | "medium" | "low"; evidence: unknown;
     price_asof: Date | null; anchor_price: number | null;
+    target_price: number | null; buy_below: number | null;
+    bear_floor: number | null; upside_pct: number | null;
+    valuation_method: string | null;
   }[] = [];
   try {
     vrows = await sql`
       SELECT symbol, generated_at, verdict, confidence, evidence,
-             price_asof, anchor_price::float AS anchor_price
+             price_asof, anchor_price::float AS anchor_price,
+             target_price::float AS target_price,
+             buy_below::float AS buy_below,
+             bear_floor::float AS bear_floor,
+             upside_pct::float AS upside_pct,
+             valuation_method
         FROM app.stock_verdict
        ORDER BY generated_at DESC
     `;
@@ -665,6 +693,11 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
         // row is not blank, and pctMove stays null rather than 0.
         ...priceOf(t.symbol, null),
         priceAsof: null,
+        targetPrice: null,
+        buyBelow: null,
+        bearFloor: null,
+        upsidePct: null,
+        valuationMethod: null,
         isHolding: portfolioSymbols.has(t.symbol),
         isPortfolio: portfolioSymbols.has(t.symbol),
         isWatchlist: watchlistSymbols.has(t.symbol),
@@ -709,6 +742,11 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
       addedAt: t.added_at ? t.added_at.toISOString() : null,
       ...priceOf(t.symbol, v.anchor_price),
       priceAsof: v.price_asof ? v.price_asof.toISOString().slice(0, 10) : null,
+      targetPrice: v.target_price ?? null,
+      buyBelow: v.buy_below ?? null,
+      bearFloor: v.bear_floor ?? null,
+      upsidePct: v.upside_pct ?? null,
+      valuationMethod: v.valuation_method ?? null,
       prevVerdict: prev?.verdict ?? null,
       prevAction,
       prevGeneratedAt: prev?.generated_at ? prev.generated_at.toISOString() : null,
@@ -757,6 +795,11 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
       addedAt: null,
       ...priceOf(symbol, v.anchor_price),
       priceAsof: v.price_asof ? v.price_asof.toISOString().slice(0, 10) : null,
+      targetPrice: v.target_price ?? null,
+      buyBelow: v.buy_below ?? null,
+      bearFloor: v.bear_floor ?? null,
+      upsidePct: v.upside_pct ?? null,
+      valuationMethod: v.valuation_method ?? null,
       prevVerdict: prev?.verdict ?? null,
       prevAction,
       prevGeneratedAt: prev?.generated_at ? prev.generated_at.toISOString() : null,

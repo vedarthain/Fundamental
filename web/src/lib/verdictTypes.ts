@@ -36,6 +36,11 @@ export type VerdictRow = {
   price_asof: string | null;
   model: string | null;
   source_report: string | null;
+  target_price?: number | null;
+  buy_below?: number | null;
+  bear_floor?: number | null;
+  upside_pct?: number | null;
+  valuation_method?: string | null;
 };
 
 export type DriftRow = {

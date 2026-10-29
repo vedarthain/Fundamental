@@ -59,6 +59,24 @@ function dateOnly(iso: string): string {
   });
 }
 
+function formatValuationMethod(method: string | null | undefined): string {
+  if (!method) return "Multi-Model Triangulation";
+  switch (method) {
+    case "gordon_pb_roe":
+      return "Gordon Growth P/B-ROE Multi-Stage";
+    case "normalized_ev_ebitda":
+      return "Normalized EV/EBITDA Cycle Multiple";
+    case "quality_pe":
+      return "Forward Quality P/E with Growth PEG";
+    case "owner_dcf":
+      return "2-Stage Owner Earnings Free Cash Flow DCF";
+    case "historical_bands":
+      return "10-Year Historical Valuation Multiple Bands";
+    default:
+      return method.replace(/_/g, " ").toUpperCase();
+  }
+}
+
 /* ------------------------------------------------------------------ empty */
 
 /**
@@ -668,6 +686,94 @@ function VerdictContentBlock({
           </div>
         )}
       </div>
+
+      {/* Institutional Valuation & Accumulation Targets */}
+      {verdict.target_price != null && (
+        <div
+          className="mt-3.5 rounded-lg border p-4 shadow-2xs"
+          style={{
+            borderColor: "var(--color-border-default)",
+            background: "linear-gradient(to right, rgba(248, 250, 252, 0.95), rgba(241, 245, 249, 0.75))",
+          }}
+        >
+          <div className="flex items-center justify-between pb-2.5 mb-3 border-b border-slate-200/70 flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-[14px]">🎯</span>
+              <span className="text-[12px] font-semibold tracking-wide uppercase text-slate-700">
+                Institutional Target &amp; Accumulation Framework
+              </span>
+            </div>
+            {verdict.valuation_method && (
+              <span className="text-[10px] font-medium font-mono px-2 py-0.5 rounded bg-slate-200/80 text-slate-700 border border-slate-300/60">
+                Model: {formatValuationMethod(verdict.valuation_method)}
+              </span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {/* Target Price */}
+            <div className="rounded-md border border-slate-200/90 bg-white p-2.5 shadow-2xs">
+              <div className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">
+                Base Target Price
+              </div>
+              <div className="text-[17px] font-mono font-bold text-slate-900 mt-0.5">
+                ₹{Math.round(verdict.target_price).toLocaleString("en-IN")}
+              </div>
+              <div className="text-[10px] text-slate-400 mt-0.5">
+                Fair Intrinsic Multi-Model Value
+              </div>
+            </div>
+
+            {/* Upside Potential */}
+            <div className="rounded-md border border-slate-200/90 bg-white p-2.5 shadow-2xs">
+              <div className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">
+                Valuation Upside
+              </div>
+              <div
+                className={`text-[17px] font-mono font-bold mt-0.5 ${
+                  (verdict.upside_pct ?? 0) >= 0 ? "text-emerald-700" : "text-slate-600"
+                }`}
+              >
+                {(verdict.upside_pct ?? 0) >= 0 ? "+" : ""}
+                {verdict.upside_pct != null ? verdict.upside_pct.toFixed(1) : "0.0"}%
+              </div>
+              <div className="text-[10px] text-slate-400 mt-0.5">
+                Expected compounder upside
+              </div>
+            </div>
+
+            {/* Accumulate Zone / Buy Below */}
+            <div className="rounded-md border border-emerald-200/80 bg-emerald-50/40 p-2.5 shadow-2xs">
+              <div className="text-[10px] font-medium text-emerald-800 uppercase tracking-wide">
+                Accumulate Below
+              </div>
+              <div className="text-[17px] font-mono font-bold text-emerald-800 mt-0.5">
+                {verdict.buy_below != null
+                  ? `≤ ₹${Math.round(verdict.buy_below).toLocaleString("en-IN")}`
+                  : "—"}
+              </div>
+              <div className="text-[10px] text-emerald-700/80 mt-0.5">
+                Margin of safety entry ceiling
+              </div>
+            </div>
+
+            {/* Bear Market Floor */}
+            <div className="rounded-md border border-slate-200/90 bg-white p-2.5 shadow-2xs">
+              <div className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">
+                Bear Market Floor
+              </div>
+              <div className="text-[17px] font-mono font-bold text-slate-700 mt-0.5">
+                {verdict.bear_floor != null
+                  ? `₹${Math.round(verdict.bear_floor).toLocaleString("en-IN")}`
+                  : "—"}
+              </div>
+              <div className="text-[10px] text-slate-400 mt-0.5">
+                Hard book value &amp; cycle support
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Content Layout */}
       {isTwoColumn ? (

@@ -279,14 +279,16 @@ def main() -> int:
                     """INSERT INTO app.stock_verdict
                          (symbol, generated_at, verdict, confidence, points, trigger_text,
                           evidence, snapshot_date, price_asof, anchor_price,
-                          model, source_report)
-                       VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s::jsonb, %s, %s, %s, %s, %s)""",
+                          model, source_report, target_price, buy_below, bear_floor, upside_pct, valuation_method)
+                       VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                     (sym, gen, v["verdict"], v["confidence"],
                      json.dumps(v["points"]), v.get("trigger_text"),
                      json.dumps(v.get("evidence") or {}),
                      v.get("snapshot_date") or default_snap,
                      asof.get(sym), anchors.get(sym),
-                     v.get("model"), v.get("source_report")),
+                     v.get("model"), v.get("source_report"),
+                     v.get("target_price"), v.get("buy_below"), v.get("bear_floor"),
+                     v.get("upside_pct"), v.get("valuation_method")),
                 )
                 written += 1
             except psycopg.errors.UniqueViolation:

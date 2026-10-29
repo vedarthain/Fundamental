@@ -71,8 +71,26 @@ function getBadgeTheme(action: string | null) {
   return ACTION_THEMES[firstWord] || { dot: "bg-slate-400", pill: "bg-slate-100 text-slate-700 border-slate-200" };
 }
 
-type SortKey = "symbol" | "company" | "conviction" | "thesis" | "anchor" | "ltp" | "move" | "freshness" | "urgency";
+type SortKey = "symbol" | "company" | "conviction" | "thesis" | "anchor" | "ltp" | "move" | "freshness" | "urgency" | "target" | "upside";
 type SortDirection = "asc" | "desc";
+
+function formatValuationMethod(method: string | null): string {
+  if (!method) return "Multi-Model Triangulation";
+  switch (method) {
+    case "gordon_pb_roe":
+      return "Gordon Growth P/B-ROE";
+    case "normalized_ev_ebitda":
+      return "Normalized EV/EBITDA";
+    case "quality_pe":
+      return "Forward Quality P/E";
+    case "owner_dcf":
+      return "Owner Earnings DCF";
+    case "historical_bands":
+      return "10Y Valuation Bands";
+    default:
+      return method.replace(/_/g, " ").toUpperCase();
+  }
+}
 
 const CONVICTION_RANK: Record<string, number> = {
   BUY: 1,
@@ -273,6 +291,14 @@ export function VerdictQueueClient() {
         const ma = a.pctMove ?? -999999;
         const mb = b.pctMove ?? -999999;
         diff = ma - mb;
+      } else if (sortKey === "target") {
+        const ta = a.targetPrice ?? -999999;
+        const tb = b.targetPrice ?? -999999;
+        diff = ta - tb;
+      } else if (sortKey === "upside") {
+        const ua = a.upsidePct ?? -999999;
+        const ub = b.upsidePct ?? -999999;
+        diff = ua - ub;
       } else if (sortKey === "freshness") {
         const ta = a.generated_at ? new Date(a.generated_at).getTime() : 0;
         const tb = b.generated_at ? new Date(b.generated_at).getTime() : 0;
@@ -848,6 +874,8 @@ export function VerdictQueueClient() {
             className="text-[12px] bg-white border border-slate-200 rounded-md px-2 py-1 text-slate-700 focus:outline-none focus:border-slate-400"
           >
             <option value="freshness">Sort: Recently Updated</option>
+            <option value="upside">Sort: Highest Valuation Upside (%)</option>
+            <option value="target">Sort: Target Price</option>
             <option value="move">Sort: Return Since Verdict</option>
             <option value="conviction">Sort: Conviction Tier</option>
             <option value="urgency">Sort: Needs Review (Drift)</option>
@@ -985,6 +1013,22 @@ export function VerdictQueueClient() {
                         {sortKey === "move" ? (sortDir === "asc" ? "▲" : "▼") : "↕"}
                       </span>
                     </button>
+                  </th>
+                  <th className="sticky top-0 z-20 bg-slate-50 text-right py-2 px-3 border-b border-slate-200 shadow-xs">
+                    <button
+                      type="button"
+                      onClick={() => toggleSort("target")}
+                      className="group inline-flex items-center gap-1 font-semibold hover:text-slate-900 transition-colors cursor-pointer ml-auto"
+                      title="Click to sort by Target Price / Upside"
+                    >
+                      <span>Target Price</span>
+                      <span className={`text-[10px] ${sortKey === "target" || sortKey === "upside" ? "text-slate-900 font-bold" : "text-slate-300 opacity-60 group-hover:opacity-100"}`}>
+                        {sortKey === "target" || sortKey === "upside" ? (sortDir === "asc" ? "▲" : "▼") : "↕"}
+                      </span>
+                    </button>
+                  </th>
+                  <th className="sticky top-0 z-20 bg-slate-50 text-right py-2 px-3 border-b border-slate-200 shadow-xs font-semibold text-slate-600">
+                    <span title="Suggested accumulation ceiling and safety floor">Accumulate Zone</span>
                   </th>
                   <th className="sticky top-0 z-20 bg-slate-50 text-right py-2 px-3.5 border-b border-slate-200 shadow-xs">
                     Action
@@ -1172,6 +1216,52 @@ export function VerdictQueueClient() {
                             {e.pctMove >= 0 ? "+" : ""}
                             {e.pctMove.toFixed(1)}%
                           </span>
+                        ) : (
+                          <span className="text-slate-300 font-mono text-[10.5px]">—</span>
+                        )}
+                      </td>
+
+                      {/* Target Price & Upside */}
+                      <td className="py-1.5 px-3 text-right whitespace-nowrap">
+                        {e.targetPrice != null ? (
+                          <div title={`Methodology: ${formatValuationMethod(e.valuationMethod)}`}>
+                            <div className="font-mono text-[12px] font-semibold text-slate-800">
+                              ₹{inr(e.targetPrice)}
+                            </div>
+                            {e.upsidePct != null && (
+                              <div className="mt-0.5">
+                                <span
+                                  className={`inline-block font-mono text-[9.5px] font-semibold px-1.5 py-0.2 rounded ${
+                                    e.upsidePct >= 15
+                                      ? "bg-emerald-100 text-emerald-800"
+                                      : e.upsidePct > 0
+                                        ? "bg-emerald-50 text-emerald-700"
+                                        : "bg-slate-100 text-slate-600"
+                                  }`}
+                                >
+                                  {e.upsidePct >= 0 ? "+" : ""}{e.upsidePct.toFixed(1)}%
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-slate-300 font-mono text-[10.5px]">—</span>
+                        )}
+                      </td>
+
+                      {/* Accumulate Zone / Buy Below & Floor */}
+                      <td className="py-1.5 px-3 text-right whitespace-nowrap">
+                        {e.buyBelow != null ? (
+                          <div title={e.bearFloor ? `Bear Floor: ₹${inr(e.bearFloor)}` : undefined}>
+                            <div className="font-mono text-[11.5px] font-medium text-emerald-700">
+                              &le; ₹{inr(e.buyBelow)}
+                            </div>
+                            {e.bearFloor != null && (
+                              <div className="text-[9.5px] text-slate-400 font-mono">
+                                Flr: ₹{inr(e.bearFloor)}
+                              </div>
+                            )}
+                          </div>
                         ) : (
                           <span className="text-slate-300 font-mono text-[10.5px]">—</span>
                         )}

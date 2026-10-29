@@ -31,6 +31,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from financial_models import evaluate_institutional_models  # noqa: E402
+from valuation_engine import calculate_stock_valuation  # noqa: E402
 
 OLLAMA_URL = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434") + "/api/generate"
 DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:14b")
@@ -968,6 +969,14 @@ def main() -> int:
             else:
                 pts = [val_text if "validated parameters" in p.lower() else p for p in pts]
             verdict_obj["points"] = pts
+
+            # Calculate institutional valuation targets
+            val_res = calculate_stock_valuation(sym, item)
+            verdict_obj["target_price"] = val_res.get("target_price")
+            verdict_obj["buy_below"] = val_res.get("buy_below")
+            verdict_obj["bear_floor"] = val_res.get("bear_floor")
+            verdict_obj["upside_pct"] = val_res.get("upside_pct")
+            verdict_obj["valuation_method"] = val_res.get("method")
 
             # Step 4: DB Load
             db_status = "Saved ✓"
