@@ -934,7 +934,9 @@ def main() -> int:
                 "pat_cagr_5y": "np_cagr_5y",
                 "sales_cagr_5y": "rev_cagr_5y",
             }
-            valid_keys = set(item.get("metrics", {}).get("cluster_metrics", {}).keys()) | {
+            metrics_dict = item.get("metrics") or {}
+            cluster_metrics_dict = metrics_dict.get("cluster_metrics") or {}
+            valid_keys = set(cluster_metrics_dict.keys()) | {
                 "pe_band_lo", "pe_band_hi", "pe_band_avg", "pe_vs_own_history",
                 "delivery_pct", "pledge_pct", "roce_3y", "roce_5y", "pe_ttm",
                 "pb", "ev_ebitda_ttm", "cfo_pat_3y", "fcf_yield", "opm_now",
@@ -976,6 +978,7 @@ def main() -> int:
                     str(ROOT / "etl" / ".venv" / "bin" / "python"),
                     str(ROOT / "scripts" / "verdict-load.py"),
                     str(tmp_single),
+                    "--allow-no-evidence",
                 ]
                 res = subprocess.run(load_cmd, capture_output=True, text=True)
                 if tmp_single.exists():
