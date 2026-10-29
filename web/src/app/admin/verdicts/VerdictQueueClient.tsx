@@ -899,7 +899,9 @@ export function VerdictQueueClient() {
                         <div className="flex items-center gap-1.5">
                           <Link
                             href={`/stock/${e.symbol}`}
-                            className={`font-mono font-semibold text-[11px] hover:underline ${
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className={`font-mono font-semibold text-[12px] hover:underline ${
                               isInspected
                                 ? "text-indigo-800 group-hover:text-indigo-950"
                                 : "text-slate-900 group-hover:text-emerald-700"
@@ -940,11 +942,11 @@ export function VerdictQueueClient() {
                             </span>
                           )}
                         </div>
-                        <div className="text-[10px] text-slate-500 truncate max-w-[210px] mt-0.5">
+                        <div className="text-[11px] text-slate-500 truncate max-w-[210px] mt-0.5">
                           {e.company_name || e.industry || "—"}
                         </div>
                         {e.industry && (
-                          <div className="text-[9px] text-slate-400 mt-0.5 truncate max-w-[210px]">
+                          <div className="text-[10px] text-slate-400 mt-0.5 truncate max-w-[210px]">
                             {e.industry}
                           </div>
                         )}
