@@ -370,78 +370,78 @@ function weekStartOf(d: Date): string {
  * and the writing batches are marked on the same line for context.
  */
 export const CLUSTER_INDEX_MAP: Record<string, number> = {
-  bfsi_exchange: 1,
-  cap_goods_pumps_valves: 2,
-  cap_goods_precision_eng: 3,
-  electrical_transformers_grid: 4,
-  cap_goods_pipes_building: 5,
-  cap_goods_ems: 6,
-  defense_aero: 7,
-  metals_ferrous: 8,
-  auto_tyres_rubber: 9,
-  packaging_containers: 10,
-  bfsi_rta_rating: 11,
-  bfsi_pvt_banks_large: 12,
-  cap_goods_machinery_equipment: 13,
-  retail: 14,
-  consumer_jewellery: 15,
-  consumer_appliances: 16,
-  health_services: 17,
-  oil_refining: 18,
-  pharma_cdmo_apis: 19,
-  pharma: 20,
-  auto_components: 21,
-  it_services_midsmall: 22,
-  chemicals_specialty: 23,
-  construction: 24,
-  auto_oem: 25,
-  bfsi_housing_finance: 26,
-  consumer_building_home: 27,
-  it_services_large: 28,
-  diversified: 29,
-  bfsi_sfb: 30,
-  fmcg_diversified: 31,
-  bfsi_psu_banks: 32,
-  consumer_footwear: 33,
-  gas_distribution: 34,
-  bfsi_fintech: 35,
-  bfsi_insurance: 36,
-  bfsi_pvt_banks_mid_small: 37,
-  services_hr_staffing: 38,
-  bfsi_amc_wealth: 39,
-  bfsi_gold_microfinance: 40,
-  medtech: 41,
-  it_erd_engineering: 42,
-  it_hardware: 43,
-  realty_commercial_coworking: 44,
-  fmcg_beverages: 45,
-  education_training_services: 46,
-  fmcg_personal: 47,
-  bfsi_holding_companies: 48,
-  construction_railways_infra: 49,
-  paper_forest: 50,
-  leisure_hospitality: 51,
-  it_software_products_saas: 52,
-  telecom: 53,
-  agri_sugar_biofuels: 54,
-  metals_nonferrous_mining: 55,
-  cement: 56,
-  chemicals_dyes_pigments: 57,
-  chemicals_agro: 58,
-  hospitality_hotels: 59,
-  power: 60,
-  fmcg_packaged_foods: 61,
-  fmcg_food_agri: 62,
-  media_entertainment: 63,
-  cap_goods_electrical: 64,
-  electrical_wires_cables: 65,
-  textiles_apparel_retail: 66,
-  textiles_spinning_yarn: 67,
-  services_staffing_facilities: 68,
-  realty: 69,
-  transport_logistics: 70,
-  bfsi_broker: 71,
-  bfsi_nbfc: 72,
+  bfsi_exchange: 1, // Exchanges & Depositories
+  cap_goods_pumps_valves: 2, // Industrial Pumps, Valves & Compressors
+  cap_goods_precision_eng: 3, // Precision Bearings & Castings
+  electrical_transformers_grid: 4, // Transformers & Power Grid
+  cap_goods_pipes_building: 5, // Pipes & Structural Tubes
+  cap_goods_ems: 6, // EMS & Advanced Electronics
+  defense_aero: 7, // Defense & Aerospace
+  metals_ferrous: 8, // Ferrous Metals
+  auto_tyres_rubber: 9, // Tyres & Rubber Products
+  packaging_containers: 10, // Packaging & Containers
+  bfsi_rta_rating: 11, // RTAs & Rating Agencies
+  bfsi_pvt_banks_large: 12, // Private Banks — Large Cap
+  cap_goods_machinery_equipment: 13, // Machinery & Heavy Equipment
+  retail: 14, // Retail
+  consumer_jewellery: 15, // Jewellery & Gems
+  consumer_appliances: 16, // Consumer Appliances & Electronics
+  consumer_building_home: 17, // Home Improvement, Paints & Tiles
+  electrical_wires_cables: 18, // Wires & Cables
+  it_erd_engineering: 19, // Engineering R&D & Embedded Systems
+  auto_components: 20, // Auto Components (Powertrain & Body)
+  it_software_products_saas: 21, // Software Products & SaaS Platforms
+  auto_oem: 22, // Auto OEMs
+  oil_refining: 23, // Oil & Refining
+  health_services: 24, // Hospitals & Diagnostics
+  pharma_cdmo_apis: 25, // Pharma CDMO, CRAMS & APIs
+  pharma: 26, // Pharma — Formulations & Generics
+  it_services_midsmall: 27, // IT Services & Consulting
+  it_services_large: 28, // IT Services — Large Cap
+  diversified: 29, // Diversified Conglomerates
+  bfsi_sfb: 30, // Small Finance Banks
+  fmcg_diversified: 31, // Diversified FMCG (incl. Tobacco)
+  bfsi_psu_banks: 32, // PSU Banks
+  consumer_footwear: 33, // Footwear & Athleisure
+  bfsi_insurance: 34, // Insurance
+  bfsi_fintech: 35, // Fintech
+  gas_distribution: 36, // Gas Distribution
+  bfsi_pvt_banks_mid_small: 37, // Private Banks — Mid/Small
+  services_hr_staffing: 38, // Staffing, Security & Cash Logistics
+  bfsi_amc_wealth: 39, // AMCs & Wealth Managers
+  bfsi_gold_microfinance: 40, // Gold Loan & Microfinance
+  medtech: 41, // MedTech
+  it_hardware: 42, // IT Hardware
+  realty_commercial_coworking: 43, // Commercial Real Estate & Coworking
+  fmcg_beverages: 44, // Beverages
+  education_training_services: 45, // Education & EdTech
+  fmcg_personal: 46, // Personal Care & Household
+  bfsi_holding_companies: 47, // Holding Companies & CICs
+  construction_railways_infra: 48, // Railways & Transport Infra EPC
+  paper_forest: 49, // Paper & Forest Products
+  bfsi_housing_finance: 50, // Housing Finance
+  leisure_hospitality: 51, // Dining, QSR & Entertainment
+  telecom: 52, // Telecom
+  agri_sugar_biofuels: 53, // Sugar & Biofuels
+  metals_nonferrous_mining: 54, // Non-Ferrous & Mining
+  cement: 55, // Cement
+  bfsi_broker: 56, // Brokers
+  chemicals_dyes_pigments: 57, // Dyes, Pigments & Colorants
+  chemicals_agro: 58, // Agrochemicals & Fertilizers
+  hospitality_hotels: 59, // Hotels & Resorts
+  power: 60, // Power Generation & Utilities
+  fmcg_packaged_foods: 61, // Packaged Foods & Dairy
+  cap_goods_electrical: 62, // Electrical Equipment & Switchgear
+  fmcg_food_agri: 63, // Agri Commodities & Edible Oils
+  media_entertainment: 64, // Media & Entertainment
+  textiles_apparel_retail: 65, // Apparel & Garment Exports
+  services_staffing_facilities: 66, // Commercial B2B Services & Supplies
+  textiles_spinning_yarn: 67, // Spinning Mills & Commodity Textiles
+  realty: 68, // Residential Real Estate Developers
+  transport_logistics: 69, // Transport & Logistics
+  construction: 70, // Civil Infrastructure & Construction EPC
+  bfsi_nbfc: 71, // NBFCs — Diversified & Retail
+  chemicals_specialty: 72, // Specialty & Performance Chemicals
   unclassified: 73,
 };
 

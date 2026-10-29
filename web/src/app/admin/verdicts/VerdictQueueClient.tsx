@@ -71,7 +71,19 @@ function getBadgeTheme(action: string | null) {
   return ACTION_THEMES[firstWord] || { dot: "bg-slate-400", pill: "bg-slate-100 text-slate-700 border-slate-200" };
 }
 
-type SortKey = "move" | "freshness" | "symbol" | "urgency";
+type SortKey = "symbol" | "company" | "conviction" | "thesis" | "anchor" | "ltp" | "move" | "freshness" | "urgency";
+type SortDirection = "asc" | "desc";
+
+const CONVICTION_RANK: Record<string, number> = {
+  BUY: 1,
+  ACCUMULATE: 2,
+  HOLD: 3,
+  WATCH: 4,
+  SPECULATIVE: 4,
+  REDUCE: 5,
+  AVOID: 6,
+  SELL: 6,
+};
 
 export function VerdictQueueClient() {
   const [state, setState] = useState<
@@ -82,12 +94,26 @@ export function VerdictQueueClient() {
   const [category, setCategory] = useState<ConvictionCategory>("all");
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("freshness");
+  const [sortDir, setSortDir] = useState<SortDirection>("desc");
   const [showTimeline, setShowTimeline] = useState(false);
   const [selectedCluster, setSelectedCluster] = useState<string | null>(null);
   const [showClusterTracker, setShowClusterTracker] = useState(false);
   const [clusterSearch, setClusterSearch] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(20);
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir((prev) => (prev === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      if (key === "symbol" || key === "company" || key === "thesis" || key === "conviction") {
+        setSortDir("asc");
+      } else {
+        setSortDir("desc");
+      }
+    }
+  };
 
   // Restore inspected stocks from localStorage across sessions
   useEffect(() => {
@@ -222,29 +248,52 @@ export function VerdictQueueClient() {
 
     // Sort
     return list.slice().sort((a, b) => {
-      if (sortKey === "move") {
-        const ma = a.pctMove ?? -9999;
-        const mb = b.pctMove ?? -9999;
-        return mb - ma;
-      }
-      if (sortKey === "freshness") {
+      let diff = 0;
+      if (sortKey === "symbol") {
+        diff = a.symbol.localeCompare(b.symbol);
+      } else if (sortKey === "company") {
+        diff = (a.company_name || a.symbol).localeCompare(b.company_name || b.symbol);
+      } else if (sortKey === "conviction") {
+        const actA = a.action ? a.action.toUpperCase().split(/[\s,]+/)[0] : "";
+        const actB = b.action ? b.action.toUpperCase().split(/[\s,]+/)[0] : "";
+        const rankA = CONVICTION_RANK[actA] ?? 99;
+        const rankB = CONVICTION_RANK[actB] ?? 99;
+        diff = rankA - rankB;
+      } else if (sortKey === "thesis") {
+        diff = (a.thesis || "").localeCompare(b.thesis || "");
+      } else if (sortKey === "anchor") {
+        const pa = a.anchorPrice ?? -999999;
+        const pb = b.anchorPrice ?? -999999;
+        diff = pa - pb;
+      } else if (sortKey === "ltp") {
+        const pa = a.currentLtp ?? -999999;
+        const pb = b.currentLtp ?? -999999;
+        diff = pa - pb;
+      } else if (sortKey === "move") {
+        const ma = a.pctMove ?? -999999;
+        const mb = b.pctMove ?? -999999;
+        diff = ma - mb;
+      } else if (sortKey === "freshness") {
         const ta = a.generated_at ? new Date(a.generated_at).getTime() : 0;
         const tb = b.generated_at ? new Date(b.generated_at).getTime() : 0;
-        return tb - ta;
-      }
-      if (sortKey === "urgency") {
+        diff = ta - tb;
+      } else if (sortKey === "urgency") {
         const ua = a.movedCount > 0 ? 2 : (a.ageDays ?? 0) > STALE_DAYS ? 1 : 0;
         const ub = b.movedCount > 0 ? 2 : (b.ageDays ?? 0) > STALE_DAYS ? 1 : 0;
-        return ub - ua || (b.ageDays ?? 0) - (a.ageDays ?? 0);
+        diff = ua - ub || (a.ageDays ?? 0) - (b.ageDays ?? 0);
       }
-      return a.symbol.localeCompare(b.symbol);
+
+      if (diff === 0) {
+        diff = a.symbol.localeCompare(b.symbol);
+      }
+      return sortDir === "asc" ? diff : -diff;
     });
-  }, [state, category, search, sortKey, selectedCluster, inspectedSymbols]);
+  }, [state, category, search, sortKey, sortDir, selectedCluster, inspectedSymbols]);
 
   // Reset to page 1 whenever any filter, search, sort, or pageSize changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [category, search, sortKey, selectedCluster, pageSize]);
+  }, [category, search, sortKey, sortDir, selectedCluster, pageSize]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(Math.max(1, currentPage), totalPages);
@@ -786,14 +835,25 @@ export function VerdictQueueClient() {
 
           <select
             value={sortKey}
-            onChange={(e) => setSortKey(e.target.value as SortKey)}
+            onChange={(e) => {
+              const k = e.target.value as SortKey;
+              setSortKey(k);
+              if (k === "symbol" || k === "company" || k === "thesis" || k === "conviction") {
+                setSortDir("asc");
+              } else {
+                setSortDir("desc");
+              }
+            }}
             aria-label="Sort order"
             className="text-[12px] bg-white border border-slate-200 rounded-md px-2 py-1 text-slate-700 focus:outline-none focus:border-slate-400"
           >
             <option value="freshness">Sort: Recently Updated</option>
             <option value="move">Sort: Return Since Verdict</option>
+            <option value="conviction">Sort: Conviction Tier</option>
             <option value="urgency">Sort: Needs Review (Drift)</option>
             <option value="symbol">Sort: Symbol (A-Z)</option>
+            <option value="company">Sort: Company Name</option>
+            <option value="ltp">Sort: Current LTP</option>
           </select>
 
           {/* Top Quick Page Stepper */}
@@ -847,24 +907,84 @@ export function VerdictQueueClient() {
           <div className="overflow-auto max-h-[calc(100vh-270px)] min-h-[380px]">
             <table className="w-full text-[12px] border-collapse min-w-[920px]">
               <thead className="sticky top-0 z-20 bg-slate-50 shadow-xs">
-                <tr className="border-b border-slate-200 bg-slate-50 text-[10.5px] font-semibold uppercase tracking-wider text-slate-600">
+                <tr className="border-b border-slate-200 bg-slate-50 text-[10.5px] font-semibold uppercase tracking-wider text-slate-600 select-none">
                   <th className="sticky top-0 left-0 z-30 bg-slate-50 text-left py-2 px-3 border-b border-slate-200 shadow-xs">
-                    Company &amp; Sector
+                    <button
+                      type="button"
+                      onClick={() => toggleSort("symbol")}
+                      className="group inline-flex items-center gap-1 font-semibold hover:text-slate-900 transition-colors cursor-pointer"
+                      title="Click to sort by Symbol / Company"
+                    >
+                      <span>Company &amp; Sector</span>
+                      <span className={`text-[10px] ${sortKey === "symbol" || sortKey === "company" ? "text-slate-900 font-bold" : "text-slate-300 opacity-60 group-hover:opacity-100"}`}>
+                        {sortKey === "symbol" || sortKey === "company" ? (sortDir === "asc" ? "▲" : "▼") : "↕"}
+                      </span>
+                    </button>
                   </th>
                   <th className="sticky top-0 z-20 bg-slate-50 text-left py-2 px-3 border-b border-slate-200 shadow-xs">
-                    Conviction
+                    <button
+                      type="button"
+                      onClick={() => toggleSort("conviction")}
+                      className="group inline-flex items-center gap-1 font-semibold hover:text-slate-900 transition-colors cursor-pointer"
+                      title="Click to sort by Conviction Tier"
+                    >
+                      <span>Conviction</span>
+                      <span className={`text-[10px] ${sortKey === "conviction" ? "text-slate-900 font-bold" : "text-slate-300 opacity-60 group-hover:opacity-100"}`}>
+                        {sortKey === "conviction" ? (sortDir === "asc" ? "▲" : "▼") : "↕"}
+                      </span>
+                    </button>
                   </th>
                   <th className="sticky top-0 z-20 bg-slate-50 text-left py-2 px-3 w-[40%] border-b border-slate-200 shadow-xs">
-                    1-Line Verdict Thesis
+                    <button
+                      type="button"
+                      onClick={() => toggleSort("thesis")}
+                      className="group inline-flex items-center gap-1 font-semibold hover:text-slate-900 transition-colors cursor-pointer"
+                      title="Click to sort by Verdict Thesis"
+                    >
+                      <span>1-Line Verdict Thesis</span>
+                      <span className={`text-[10px] ${sortKey === "thesis" ? "text-slate-900 font-bold" : "text-slate-300 opacity-60 group-hover:opacity-100"}`}>
+                        {sortKey === "thesis" ? (sortDir === "asc" ? "▲" : "▼") : "↕"}
+                      </span>
+                    </button>
                   </th>
                   <th className="sticky top-0 z-20 bg-slate-50 text-right py-2 px-3 border-b border-slate-200 shadow-xs">
-                    At Verdict
+                    <button
+                      type="button"
+                      onClick={() => toggleSort("anchor")}
+                      className="group inline-flex items-center gap-1 font-semibold hover:text-slate-900 transition-colors cursor-pointer ml-auto"
+                      title="Click to sort by Price At Verdict"
+                    >
+                      <span>At Verdict</span>
+                      <span className={`text-[10px] ${sortKey === "anchor" ? "text-slate-900 font-bold" : "text-slate-300 opacity-60 group-hover:opacity-100"}`}>
+                        {sortKey === "anchor" ? (sortDir === "asc" ? "▲" : "▼") : "↕"}
+                      </span>
+                    </button>
                   </th>
                   <th className="sticky top-0 z-20 bg-slate-50 text-right py-2 px-3 border-b border-slate-200 shadow-xs">
-                    Current LTP
+                    <button
+                      type="button"
+                      onClick={() => toggleSort("ltp")}
+                      className="group inline-flex items-center gap-1 font-semibold hover:text-slate-900 transition-colors cursor-pointer ml-auto"
+                      title="Click to sort by Current Market Price (LTP)"
+                    >
+                      <span>Current LTP</span>
+                      <span className={`text-[10px] ${sortKey === "ltp" ? "text-slate-900 font-bold" : "text-slate-300 opacity-60 group-hover:opacity-100"}`}>
+                        {sortKey === "ltp" ? (sortDir === "asc" ? "▲" : "▼") : "↕"}
+                      </span>
+                    </button>
                   </th>
                   <th className="sticky top-0 z-20 bg-slate-50 text-right py-2 px-3 border-b border-slate-200 shadow-xs">
-                    Return
+                    <button
+                      type="button"
+                      onClick={() => toggleSort("move")}
+                      className="group inline-flex items-center gap-1 font-semibold hover:text-slate-900 transition-colors cursor-pointer ml-auto"
+                      title="Click to sort by Return %"
+                    >
+                      <span>Return</span>
+                      <span className={`text-[10px] ${sortKey === "move" ? "text-slate-900 font-bold" : "text-slate-300 opacity-60 group-hover:opacity-100"}`}>
+                        {sortKey === "move" ? (sortDir === "asc" ? "▲" : "▼") : "↕"}
+                      </span>
+                    </button>
                   </th>
                   <th className="sticky top-0 z-20 bg-slate-50 text-right py-2 px-3.5 border-b border-slate-200 shadow-xs">
                     Action
@@ -890,7 +1010,7 @@ export function VerdictQueueClient() {
                     >
                       {/* Symbol & Company */}
                       <td
-                        className={`py-1.5 px-3 sticky left-0 z-10 transition-colors border-r border-slate-100/60 ${
+                        className={`py-2 px-3 sticky left-0 z-10 transition-colors border-r border-slate-100/60 ${
                           isInspected
                             ? "bg-[#f5f6ff] group-hover:bg-[#ebeeff]"
                             : "bg-white group-hover:bg-slate-50"
@@ -901,7 +1021,7 @@ export function VerdictQueueClient() {
                             href={`/stock/${e.symbol}`}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className={`font-mono font-semibold text-[12px] hover:underline ${
+                            className={`font-mono font-bold text-[13.5px] sm:text-[14px] hover:underline ${
                               isInspected
                                 ? "text-indigo-800 group-hover:text-indigo-950"
                                 : "text-slate-900 group-hover:text-emerald-700"
@@ -911,7 +1031,7 @@ export function VerdictQueueClient() {
                           </Link>
                           {(e.isPortfolio || e.isHolding) && (
                             <span
-                              className="inline-flex items-center gap-0.5 text-[8.5px] font-semibold uppercase tracking-wider px-1 py-0.2 rounded bg-emerald-50 text-emerald-800 border border-emerald-300 shadow-2xs"
+                              className="inline-flex items-center gap-0.5 text-[8.5px] font-semibold uppercase tracking-wider px-1 py-0.2 rounded bg-emerald-50 text-emerald-800 border border-emerald-300 shadow-2xs shrink-0"
                               title="In your portfolio"
                             >
                               <span>💼</span>
@@ -920,7 +1040,7 @@ export function VerdictQueueClient() {
                           )}
                           {e.isWatchlist && (
                             <span
-                              className="inline-flex items-center gap-0.5 text-[8.5px] font-semibold uppercase tracking-wider px-1 py-0.2 rounded bg-amber-50 text-amber-800 border border-amber-300 shadow-2xs"
+                              className="inline-flex items-center gap-0.5 text-[8.5px] font-semibold uppercase tracking-wider px-1 py-0.2 rounded bg-amber-50 text-amber-800 border border-amber-300 shadow-2xs shrink-0"
                               title="On your watchlist"
                             >
                               <span>⭐</span>
@@ -929,7 +1049,7 @@ export function VerdictQueueClient() {
                           )}
                           {isInspected && (
                             <span
-                              className="inline-flex items-center gap-0.5 text-[8.5px] font-semibold uppercase tracking-wider px-1 py-0.2 rounded bg-indigo-100 text-indigo-700 border border-indigo-200 shadow-2xs"
+                              className="inline-flex items-center gap-0.5 text-[8.5px] font-semibold uppercase tracking-wider px-1 py-0.2 rounded bg-indigo-100 text-indigo-700 border border-indigo-200 shadow-2xs shrink-0"
                               title="Inspected (persisted across sessions)"
                             >
                               <span>✓</span>
@@ -937,16 +1057,16 @@ export function VerdictQueueClient() {
                             </span>
                           )}
                           {e.bucket === "dormant" && (
-                            <span className="text-[8.5px] text-slate-400 bg-slate-100 px-1 py-0.2 rounded font-normal">
+                            <span className="text-[8.5px] text-slate-400 bg-slate-100 px-1 py-0.2 rounded font-normal shrink-0">
                               archived
                             </span>
                           )}
                         </div>
-                        <div className="text-[11px] text-slate-500 truncate max-w-[210px] mt-0.5">
+                        <div className="text-[12px] font-medium text-slate-700 truncate max-w-[220px] mt-0.5">
                           {e.company_name || e.industry || "—"}
                         </div>
                         {e.industry && (
-                          <div className="text-[10px] text-slate-400 mt-0.5 truncate max-w-[210px]">
+                          <div className="text-[11px] text-slate-400 mt-0.5 truncate max-w-[220px]">
                             {e.industry}
                           </div>
                         )}
@@ -1222,6 +1342,34 @@ function Timeline({
   weeks: TimelineWeek[];
   onOpen: (s: string) => void;
 }) {
+  const [tSortKey, setTSortKey] = useState<"week" | "broke" | "stale" | "written">("week");
+  const [tSortDir, setTSortDir] = useState<"asc" | "desc">("desc");
+
+  const toggleTSort = (key: "week" | "broke" | "stale" | "written") => {
+    if (tSortKey === key) {
+      setTSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setTSortKey(key);
+      setTSortDir("desc");
+    }
+  };
+
+  const sortedWeeks = useMemo(() => {
+    return [...weeks].sort((a, b) => {
+      let diff = 0;
+      if (tSortKey === "week") {
+        diff = new Date(a.weekStart).getTime() - new Date(b.weekStart).getTime();
+      } else if (tSortKey === "broke") {
+        diff = a.broke.length - b.broke.length;
+      } else if (tSortKey === "stale") {
+        diff = a.wentStale.length - b.wentStale.length;
+      } else if (tSortKey === "written") {
+        diff = a.written.length - b.written.length;
+      }
+      return tSortDir === "asc" ? diff : -diff;
+    });
+  }, [weeks, tSortKey, tSortDir]);
+
   const anything = weeks.some(
     (w) => w.written.length || w.broke.length || w.wentStale.length || w.added.length
   );
@@ -1241,34 +1389,118 @@ function Timeline({
         <div className="overflow-x-auto">
           <table className="w-full text-[12px] min-w-[560px]">
             <thead>
-              <tr className="text-slate-400 border-b border-slate-100 text-[10.5px] uppercase">
-                <th className="text-left py-1 pr-3 font-medium">Week</th>
-                <th className="text-left py-1 px-3 font-medium">Evidence Shifted</th>
-                <th className="text-left py-1 px-3 font-medium">Turned Stale</th>
-                <th className="text-left py-1 px-3 font-medium">Verdicts Written</th>
+              <tr className="text-slate-500 border-b border-slate-200 text-[10.5px] font-semibold uppercase tracking-wider select-none">
+                <th className="text-left py-1.5 pr-3">
+                  <button
+                    type="button"
+                    onClick={() => toggleTSort("week")}
+                    className="inline-flex items-center gap-1 hover:text-slate-900 transition-colors cursor-pointer"
+                    title="Click to sort by Week"
+                  >
+                    <span>Week</span>
+                    <span className={`text-[9.5px] ${tSortKey === "week" ? "text-slate-900 font-bold" : "text-slate-300"}`}>
+                      {tSortKey === "week" ? (tSortDir === "asc" ? "▲" : "▼") : "↕"}
+                    </span>
+                  </button>
+                </th>
+                <th className="text-left py-1.5 px-3">
+                  <button
+                    type="button"
+                    onClick={() => toggleTSort("broke")}
+                    className="inline-flex items-center gap-1 hover:text-slate-900 transition-colors cursor-pointer"
+                    title="Click to sort by Evidence Shifted count"
+                  >
+                    <span>Evidence Shifted</span>
+                    <span className={`text-[9.5px] ${tSortKey === "broke" ? "text-slate-900 font-bold" : "text-slate-300"}`}>
+                      {tSortKey === "broke" ? (tSortDir === "asc" ? "▲" : "▼") : "↕"}
+                    </span>
+                  </button>
+                </th>
+                <th className="text-left py-1.5 px-3">
+                  <button
+                    type="button"
+                    onClick={() => toggleTSort("stale")}
+                    className="inline-flex items-center gap-1 hover:text-slate-900 transition-colors cursor-pointer"
+                    title="Click to sort by Turned Stale count"
+                  >
+                    <span>Turned Stale</span>
+                    <span className={`text-[9.5px] ${tSortKey === "stale" ? "text-slate-900 font-bold" : "text-slate-300"}`}>
+                      {tSortKey === "stale" ? (tSortDir === "asc" ? "▲" : "▼") : "↕"}
+                    </span>
+                  </button>
+                </th>
+                <th className="text-left py-1.5 px-3">
+                  <button
+                    type="button"
+                    onClick={() => toggleTSort("written")}
+                    className="inline-flex items-center gap-1 hover:text-slate-900 transition-colors cursor-pointer"
+                    title="Click to sort by Verdicts Written count"
+                  >
+                    <span>Verdicts Written</span>
+                    <span className={`text-[9.5px] ${tSortKey === "written" ? "text-slate-900 font-bold" : "text-slate-300"}`}>
+                      {tSortKey === "written" ? (tSortDir === "asc" ? "▲" : "▼") : "↕"}
+                    </span>
+                  </button>
+                </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-50 font-normal">
-              {weeks.map((w) => (
-                <tr key={w.weekStart} className="hover:bg-slate-50/50">
-                  <td className="py-1.5 pr-3 font-mono text-[11px] text-slate-500">{shortDate(w.weekStart)}</td>
-                  <td className="py-1.5 px-3">
+            <tbody className="divide-y divide-slate-100 font-normal">
+              {sortedWeeks.map((w) => (
+                <tr key={w.weekStart} className="hover:bg-slate-50/70 transition-colors">
+                  <td className="py-2 pr-3 font-mono text-[11px] text-slate-600">{shortDate(w.weekStart)}</td>
+                  <td className="py-2 px-3">
                     {w.broke.length > 0 ? (
-                      <span className="text-rose-600 font-medium">{w.broke.join(", ")}</span>
+                      <div className="flex flex-wrap gap-1">
+                        {w.broke.map((sym) => (
+                          <button
+                            key={sym}
+                            type="button"
+                            onClick={() => onOpen(sym)}
+                            className="text-rose-600 hover:text-rose-800 hover:underline font-mono font-semibold text-[11.5px]"
+                            title={`Inspect ${sym} verdict & drift`}
+                          >
+                            {sym}
+                          </button>
+                        ))}
+                      </div>
                     ) : (
                       <span className="text-slate-300">—</span>
                     )}
                   </td>
-                  <td className="py-1.5 px-3">
+                  <td className="py-2 px-3">
                     {w.wentStale.length > 0 ? (
-                      <span className="text-amber-700">{w.wentStale.join(", ")}</span>
+                      <div className="flex flex-wrap gap-1">
+                        {w.wentStale.map((sym) => (
+                          <button
+                            key={sym}
+                            type="button"
+                            onClick={() => onOpen(sym)}
+                            className="text-amber-700 hover:text-amber-900 hover:underline font-mono font-semibold text-[11.5px]"
+                            title={`Inspect ${sym} stale verdict`}
+                          >
+                            {sym}
+                          </button>
+                        ))}
+                      </div>
                     ) : (
                       <span className="text-slate-300">—</span>
                     )}
                   </td>
-                  <td className="py-1.5 px-3">
+                  <td className="py-2 px-3">
                     {w.written.length > 0 ? (
-                      <span className="text-emerald-700">{w.written.join(", ")}</span>
+                      <div className="flex flex-wrap gap-1">
+                        {w.written.map((sym) => (
+                          <button
+                            key={sym}
+                            type="button"
+                            onClick={() => onOpen(sym)}
+                            className="text-emerald-700 hover:text-emerald-900 hover:underline font-mono font-semibold text-[11.5px]"
+                            title={`Inspect ${sym} verdict`}
+                          >
+                            {sym}
+                          </button>
+                        ))}
+                      </div>
                     ) : (
                       <span className="text-slate-300">—</span>
                     )}
