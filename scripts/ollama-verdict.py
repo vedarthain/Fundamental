@@ -998,9 +998,15 @@ def main() -> int:
                 eta_str = f"{rem_sec // 60}m {rem_sec % 60}s" if rem_sec >= 60 else f"{rem_sec}s"
                 pct = (completed_count / len(queue_symbols)) * 100
                 success_symbols.append((sym, v_headline, verdict_obj.get("model", "")))
+                elapsed_total = int(time.time() - start_total_time)
 
-                print(f"[{completed_count}/{len(queue_symbols)}] ({pct:.1f}%) ── {sym}: {v_headline}")
-                print(f"    ├─ LLM: {llm_dur:.2f}s | DB: {db_status} | Total: {stock_dur:.1f}s | Avg: {avg_pace:.1f}s | ETA: {eta_str}")
+                print(f"\n[{completed_count}/{len(queue_symbols)}] ({pct:.1f}%) ── SYMBOL: {sym} ──")
+                print(f"  ├─ 📊 [Step 1/4] Compiling 10Y financials & 9 institutional models... Done")
+                print(f"  ├─ 🤖 [Step 2/4] Calling {args.engine.upper()} API ({args.model})... Done ({llm_dur:.2f}s)")
+                print(f"  ├─ 🛡️ [Step 3/4] Validating parameters, checking syntax & filtering dilution... Done")
+                print(f"  └─ 💾 [Step 4/4] Writing to database (app.stock_verdict)... {db_status}")
+                print(f"      ✓ {sym}: {v_headline}")
+                print(f"      ⏱️  Pace: {stock_dur:.1f}s | Avg: {avg_pace:.1f}s/stock | Elapsed: {elapsed_total}s | ETA: {eta_str}", flush=True)
 
             if args.delay and args.delay > 0:
                 time.sleep(args.delay)
