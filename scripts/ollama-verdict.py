@@ -525,6 +525,7 @@ def main() -> int:
     ap.add_argument("--since", help="Process symbols that had verdicts generated on or after this date (e.g. 2026-10-25)")
     ap.add_argument("--unverdicted", action="store_true", help="Process active universe symbols that do not yet have a verdict")
     ap.add_argument("--drift", action="store_true", help="Process stocks whose stored evidence has drifted from live cluster metrics")
+    ap.add_argument("--workers", type=int, default=1, help="Concurrent workers (default: 1; use 3-5 for fast parallel Gemini generation)")
     ap.add_argument("--delay", type=float, default=3.0, help="Delay in seconds between LLM calls to go easy on Gemini (default: 3.0s)")
     ap.add_argument("--limit", type=int, default=None, help="Limit number of symbols to process")
     ap.add_argument("--engine", choices=["gemini", "ollama"], default="gemini", help="Inference engine: gemini or ollama (default: gemini)")
@@ -879,20 +880,23 @@ def main() -> int:
     failed_symbols: list[tuple[str, str]] = []
     durations: list[float] = []
 
-    for idx, item in enumerate(queue_symbols, 1):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    print_lock = threading.Lock()
+    completed_count = 0
+
+    def process_item(idx_item):
+        nonlocal completed_count
+        idx, item = idx_item
         sym = item.get("symbol")
-        pct = (idx / len(queue_symbols)) * 100
         t_stock_start = time.time()
 
-        print(f"\n[{idx}/{len(queue_symbols)}] ({pct:.1f}%) ── SYMBOL: {sym} ──")
         try:
             # Step 1: Prompt compilation
-            print(f"  ├─ 📊 [Step 1/4] Compiling 10Y financials & 9 institutional models...", end="", flush=True)
             prompt = format_symbol_evidence_prompt(item)
-            print(" Done")
 
             # Step 2: LLM Inference
-            print(f"  ├─ 🤖 [Step 2/4] Calling {args.engine.upper()} API ({args.model})...", end="", flush=True)
             t_llm = time.time()
             if args.engine == "gemini":
                 verdict_obj, used_cand = call_gemini(args.model, prompt)
@@ -903,14 +907,11 @@ def main() -> int:
                 verdict_obj["model"] = f"{args.model} (local-ollama)"
                 verdict_obj["source_report"] = "ollama-verdict-batch"
             llm_dur = time.time() - t_llm
-            print(f" Done ({llm_dur:.2f}s)")
 
             verdict_obj["snapshot_date"] = snapshot_date
             verdict_obj["price_asof"] = price_asof
 
             # Step 3: Validation & post-processing
-            print(f"  ├─ 🛡️ [Step 3/4] Validating parameters, checking syntax & filtering dilution...", end="", flush=True)
-            # Filter out any composite model names from Good and Bad to prevent dilution
             MODEL_KEYWORDS = ["piotroski", "altman", "beneish", "sloan", "dupont"]
             clean_pts = []
             for p in verdict_obj.get("points", []):
@@ -920,7 +921,6 @@ def main() -> int:
                 clean_pts.append(p)
             verdict_obj["points"] = clean_pts
 
-            # Normalize and filter evidence keys to strictly valid cluster_metrics
             EVIDENCE_KEY_MAP = {
                 "cfo_pat_3y_avg": "cfo_pat_3y",
                 "cfo_pat": "cfo_pat_3y",
@@ -966,14 +966,11 @@ def main() -> int:
             else:
                 pts = [val_text if "validated parameters" in p.lower() else p for p in pts]
             verdict_obj["points"] = pts
-            print(" Done")
-
-            results.append(verdict_obj)
 
             # Step 4: DB Load
+            db_status = "Saved ✓"
             if args.load:
-                print(f"  └─ 💾 [Step 4/4] Writing to database (app.stock_verdict)...", end="", flush=True)
-                tmp_single = Path(f"/tmp/v_{sym}_{int(datetime.now().timestamp())}.json")
+                tmp_single = Path(f"/tmp/v_{sym}_{int(datetime.now().timestamp())}_{idx}.json")
                 tmp_single.write_text(json.dumps([verdict_obj], indent=2))
                 load_cmd = [
                     str(ROOT / "etl" / ".venv" / "bin" / "python"),
@@ -983,40 +980,46 @@ def main() -> int:
                 res = subprocess.run(load_cmd, capture_output=True, text=True)
                 if tmp_single.exists():
                     tmp_single.unlink(missing_ok=True)
-                if res.returncode == 0:
-                    print(" Saved ✓")
-                else:
-                    print(f" Failed ✗ ({res.stderr[:80]})")
+                if res.returncode != 0:
+                    db_status = f"Failed ✗ ({res.stderr[:80]})"
             else:
-                print(f"  └─ 📋 [Step 4/4] Verdict ready (dry-run/file-out mode)")
+                db_status = "Dry-run (not saved)"
 
             stock_dur = time.time() - t_stock_start
-            durations.append(stock_dur)
-            avg_pace = sum(durations) / len(durations)
-            rem_stocks = len(queue_symbols) - idx
-            rem_sec = int(rem_stocks * avg_pace)
-            eta_str = f"{rem_sec // 60}m {rem_sec % 60}s" if rem_sec >= 60 else f"{rem_sec}s"
-
             v_headline = verdict_obj.get("verdict", "No verdict")
-            success_symbols.append((sym, v_headline, verdict_obj.get("model", "")))
 
-            print(f"      ✓ {sym}: {v_headline}", flush=True)
-            print(f"      ⏱️  Pace: {stock_dur:.1f}s | Avg: {avg_pace:.1f}s/stock | Elapsed: {int(time.time() - start_total_time)}s | ETA: {eta_str}", flush=True)
+            with print_lock:
+                completed_count += 1
+                results.append(verdict_obj)
+                durations.append(stock_dur)
+                avg_pace = sum(durations) / len(durations)
+                rem_stocks = len(queue_symbols) - completed_count
+                rem_sec = int(rem_stocks * (avg_pace / max(1, args.workers)))
+                eta_str = f"{rem_sec // 60}m {rem_sec % 60}s" if rem_sec >= 60 else f"{rem_sec}s"
+                pct = (completed_count / len(queue_symbols)) * 100
+                success_symbols.append((sym, v_headline, verdict_obj.get("model", "")))
 
-            if args.dry_run:
-                print(f"\n  [DRY RUN DETAILS FOR {sym}]")
-                for p in verdict_obj.get("points", []):
-                    clean_p = p.replace("<b>", "").replace("</b>", "").replace("<i>", "").replace("</i>", "")
-                    print(f"    • {clean_p}")
-                print(f"    Trigger: {verdict_obj.get('trigger_text')}")
+                print(f"[{completed_count}/{len(queue_symbols)}] ({pct:.1f}%) ── {sym}: {v_headline}")
+                print(f"    ├─ LLM: {llm_dur:.2f}s | DB: {db_status} | Total: {stock_dur:.1f}s | Avg: {avg_pace:.1f}s | ETA: {eta_str}")
 
             if args.delay and args.delay > 0:
                 time.sleep(args.delay)
 
         except Exception as e:
             stock_dur = time.time() - t_stock_start
-            print(f"\n      ✗ ERROR processing {sym} after {stock_dur:.1f}s: {e}")
-            failed_symbols.append((sym, str(e)))
+            with print_lock:
+                completed_count += 1
+                failed_symbols.append((sym, str(e)))
+                print(f"[{completed_count}/{len(queue_symbols)}] ── {sym} ERROR after {stock_dur:.1f}s: {e}")
+
+    items_to_process = list(enumerate(queue_symbols, 1))
+    if args.workers > 1:
+        print(f"⚡ Processing with {args.workers} concurrent worker threads...\n")
+        with ThreadPoolExecutor(max_workers=args.workers) as executor:
+            list(executor.map(process_item, items_to_process))
+    else:
+        for it in items_to_process:
+            process_item(it)
 
     if args.out:
         out_file = Path(args.out)
