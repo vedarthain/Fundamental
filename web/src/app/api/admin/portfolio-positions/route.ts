@@ -8,6 +8,13 @@
  * than re-deriving qty/avg-cost from app.portfolio_holding here. One holdings
  * calc, read by both.
  *
+ * Also returns `trades`: one "B" entry mark per held symbol (via
+ * loadHoldingEntryMarks, unrestricted — every portfolio symbol, not just the
+ * one currently selected), so the Detail page's chart can show where EVERY
+ * portfolio holding's buy sits, not only the symbol open at fetch time. Same
+ * split-safe construction the stock page and watchlist already use — see
+ * that function's header for why it's never the raw trade log.
+ *
  * Session-scoped, not query-param-scoped: "my portfolio" means the signed-in
  * admin's own holdings (session.userId), same as every other portfolio read
  * in this app. isAdminRequest() still gates it because this route lives under
@@ -16,7 +23,8 @@
 import { NextResponse } from "next/server";
 import { isAdminRequest } from "@/lib/auth";
 import { getSession } from "@/lib/auth";
-import { loadHeldPositions } from "@/lib/portfolio";
+import { loadHeldPositions, loadHoldingEntryMarks } from "@/lib/portfolio";
+import type { TradeMark } from "@/app/tools/scanner/CandleChart";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,7 +35,10 @@ export async function GET() {
   }
   const session = await getSession();
   if (!session) {
-    return NextResponse.json({ positions: {} }, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json(
+      { positions: {}, trades: {} },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   }
 
   let positions: Record<string, { qty: number; avgCost: number | null }> = {};
@@ -37,5 +48,12 @@ export async function GET() {
     positions = {};
   }
 
-  return NextResponse.json({ positions }, { headers: { "Cache-Control": "no-store" } });
+  let trades: Record<string, TradeMark[]> = {};
+  try {
+    trades = await loadHoldingEntryMarks(session.userId);
+  } catch {
+    trades = {};
+  }
+
+  return NextResponse.json({ positions, trades }, { headers: { "Cache-Control": "no-store" } });
 }

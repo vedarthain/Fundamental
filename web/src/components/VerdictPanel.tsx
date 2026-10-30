@@ -799,7 +799,7 @@ function VerdictContentBlock({
           {/* 1ST SECTION: Positive & Negative Fundamental Review */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <div className="text-[11px] font-medium uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+              <div className="text-[12px] font-semibold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
                 <span>1. Fundamental Operating Review</span>
               </div>
               <span className="text-[11px] text-slate-400 font-normal">
@@ -1169,13 +1169,13 @@ export function VerdictPanel({
       {/* Model Selection Tabs (when multiple model verdicts exist) */}
       {tabs.length > 1 && (
         <div className="flex items-center gap-2 border-b hairline pb-2 flex-wrap">
-          <span className="text-[11.5px] font-semibold text-slate-500 mr-1">AI Verdict Engine:</span>
+          <span className="text-[12.5px] font-semibold text-slate-500 mr-1">AI Verdict Engine:</span>
           {tabs.map((tab) => (
             <button
               key={tab.id}
               type="button"
               onClick={() => setActiveTab(tab.id)}
-              className={`px-2.5 py-1 rounded-md text-[12px] font-medium transition-all ${
+              className={`px-2.5 py-1 rounded-md text-[12.5px] font-medium transition-all ${
                 activeTab === tab.id
                   ? "bg-slate-900 text-white shadow-xs"
                   : "bg-slate-100 text-slate-700 hover:bg-slate-200"

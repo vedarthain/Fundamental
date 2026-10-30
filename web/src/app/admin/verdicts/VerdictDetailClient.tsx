@@ -45,11 +45,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Home, Bookmark, BookmarkCheck, CheckCircle2, Circle } from "lucide-react";
 import { PriceChart } from "@/components/PriceChart";
+import type { TradeMark } from "@/app/tools/scanner/CandleChart";
 import { VerdictPanel, VerdictEmpty } from "@/components/VerdictPanel";
 import CapTierBadge, { type CapCategory } from "@/components/CapTierBadge";
 import { IntradayPriceBadge } from "@/components/IntradayPriceBadge";
 import { tierLabel } from "@/lib/score";
-import type { QueueEntry, VerdictQueue, VerdictData } from "@/lib/verdict";
+// Type-only import of QueueEntry/VerdictQueue from lib/verdict.ts: that
+// module's top-level `import { sql } from "@/lib/db"` pulls the Postgres
+// driver (needs Node's `tls`/`net`) into any bundle that imports it as a
+// VALUE. `import type` is fully erased by the compiler, so this client
+// component never drags that module in — STALE_DAYS and the other runtime
+// values come from verdictTypes.ts instead, which has no server code.
+import type { QueueEntry, VerdictQueue } from "@/lib/verdict";
+import { STALE_DAYS, getWatchSubtype, type VerdictData, type WatchSubtypeKey } from "@/lib/verdictTypes";
 
 type NewsRow = { title: string; source: string; url: string; published_at: string | null };
 type FilingRow = {
@@ -74,6 +82,11 @@ type PortfolioPosition = { qty: number; avgCost: number | null };
 
 type Scope = "nifty500" | "all" | "watchlist" | "portfolio" | "archived" | "inspected";
 type ActionFilter = "buy" | "accumulate" | "hold" | "watch" | "avoid" | null;
+// "all"/"near_entry"/"high_upside" are UI-only slices of the watch bucket;
+// the rest are getWatchSubtype()'s own thesis-classification keys — reusing
+// that function rather than re-deriving a second copy of the taxonomy, the
+// way the Board tab's two independent label sets have already drifted apart.
+type WatchFilterType = "all" | "near_entry" | "high_upside" | WatchSubtypeKey;
 
 const INSPECTED_KEY = "fundamental_verdict_detail_inspected";
 const BOOKMARK_KEY = "fundamental_verdict_detail_bookmark";
@@ -86,6 +99,19 @@ const ACTION_COLOR: Record<string, string> = {
   SELL: "bg-rose-600 text-white",
   AVOID: "bg-rose-600 text-white",
   "REDUCE & AVOID": "bg-rose-600 text-white",
+};
+
+// Display labels for the WATCH dropdown's own current-selection text. Kept
+// static (not derived from getWatchSubtype, which classifies a stock, not a
+// filter key) — matches the same wording the dropdown's own option rows use.
+const WATCH_FILTER_LABEL: Record<Exclude<WatchFilterType, "all">, string> = {
+  near_entry: "Near Buy Zone",
+  high_upside: "≥20% Upside",
+  cashflow: "Cash Flow Proof",
+  roce: "Capital Efficiency",
+  pullback: "Valuation Pullback",
+  turnaround: "Margin Turnaround",
+  risk: "Governance / Risk",
 };
 
 function actionClass(action: string | null): string {
@@ -178,9 +204,9 @@ export function VerdictDetailClient() {
   // same scheme WatchlistClient's rail uses, so several sectors/industries
   // can stay open at once instead of one accordion slot.
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
-  // Nifty 500 is the default scope, not "all" — the user picked it as the
-  // landing filter, so new sessions open already narrowed to it.
-  const [scope, setScope] = useState<Scope>("nifty500");
+  // Watchlist is the default scope, not Nifty 500 — the focus is "what am I
+  // actually tracking", so new sessions open already narrowed to it.
+  const [scope, setScope] = useState<Scope>("watchlist");
   const [actionFilter, setActionFilter] = useState<ActionFilter>(null);
   const [reviewFilter, setReviewFilter] = useState<"pending" | "due" | "changed" | null>(null);
   // Cluster filter — ported from the Board tab. Filters by cluster_id (the
@@ -190,6 +216,11 @@ export function VerdictDetailClient() {
   const [selectedCluster, setSelectedCluster] = useState<string | null>(null);
   const [clusterMenuOpen, setClusterMenuOpen] = useState(false);
   const [clusterMenuSearch, setClusterMenuSearch] = useState("");
+  // WATCH sub-category dropdown — ported from the Board tab's inline
+  // breakdown bar, as a dropdown instead since this page's top bar is
+  // already dense. Only has effect when actionFilter === "watch".
+  const [watchFilter, setWatchFilter] = useState<WatchFilterType>("all");
+  const [watchMenuOpen, setWatchMenuOpen] = useState(false);
   const [inspected, setInspected] = useState<Set<string>>(() => readInspected());
   const [mark, setMark] = useState<string | null>(() => readBookmark());
 
@@ -209,6 +240,9 @@ export function VerdictDetailClient() {
   // app.universe.sector/industry fields.
   const [symbolMap, setSymbolMap] = useState<Map<string, { cluster_name: string; sector_name: string }>>(new Map());
   const [positions, setPositions] = useState<Record<string, PortfolioPosition>>({});
+  // "B" entry mark per held symbol (not just the one selected) — see
+  // /api/admin/portfolio-positions's header for why this is unrestricted.
+  const [tradesBySymbol, setTradesBySymbol] = useState<Record<string, TradeMark[]>>({});
   // True once the cluster-map fetch has settled (success or fail) — gates the
   // very first auto-selection below so it picks the tree's real first
   // sector-cluster, not whatever queue order / noisy fallback sector sorts
@@ -253,8 +287,12 @@ export function VerdictDetailClient() {
     fetch("/api/admin/portfolio-positions", { cache: "no-store" })
       .then(async (r) => {
         if (!live || !r.ok) return;
-        const j = (await r.json()) as { positions: Record<string, PortfolioPosition> };
+        const j = (await r.json()) as {
+          positions: Record<string, PortfolioPosition>;
+          trades?: Record<string, TradeMark[]>;
+        };
         setPositions(j.positions ?? {});
+        setTradesBySymbol(j.trades ?? {});
       })
       .catch(() => {});
 
@@ -346,11 +384,11 @@ export function VerdictDetailClient() {
     });
   }, [symbol]);
 
-  // Scope (All Active / Watchlist / Portfolio / Archived / Inspected) and the
-  // action-count tabs, both applied before search and the tree grouping.
-  // "Archived" mirrors the Board's dormant bucket — a symbol no longer on the
-  // watchlist or in the portfolio.
-  const scoped = useMemo(() => {
+  // Scope + cluster only — the base pool the WATCH dropdown's per-section
+  // counts read from, computed BEFORE actionFilter/watchFilter/reviewFilter
+  // so the dropdown always shows "how many in this scope/cluster", not "how
+  // many after I've already filtered to watch".
+  const scopePool = useMemo(() => {
     if (queueState.kind !== "ok") return [];
     let rows = queueState.q.entries;
     if (scope === "nifty500") rows = rows.filter((e) => e.isNifty500);
@@ -358,13 +396,31 @@ export function VerdictDetailClient() {
     else if (scope === "portfolio") rows = rows.filter((e) => e.isPortfolio || e.isHolding);
     else if (scope === "archived") rows = rows.filter((e) => e.bucket === "dormant");
     else if (scope === "inspected") rows = rows.filter((e) => inspected.has(e.symbol));
+    if (selectedCluster) rows = rows.filter((e) => e.cluster_id === selectedCluster);
+    return rows;
+  }, [queueState, scope, inspected, selectedCluster]);
+
+  // Scope (All Active / Watchlist / Portfolio / Archived / Inspected), the
+  // action-count tabs and the WATCH sub-category dropdown, applied before
+  // search and the tree grouping. "Archived" mirrors the Board's dormant
+  // bucket — a symbol no longer on the watchlist or in the portfolio.
+  const scoped = useMemo(() => {
+    let rows = scopePool;
     if (actionFilter) rows = rows.filter((e) => actionMatchesFilter(e.action, actionFilter));
+    if (actionFilter === "watch" && watchFilter !== "all") {
+      if (watchFilter === "near_entry") {
+        rows = rows.filter((e) => e.ltp != null && e.buyBelow != null && e.buyBelow > 0 && e.ltp <= e.buyBelow * 1.05);
+      } else if (watchFilter === "high_upside") {
+        rows = rows.filter((e) => e.upsidePct != null && e.upsidePct >= 20);
+      } else {
+        rows = rows.filter((e) => getWatchSubtype(e).key === watchFilter);
+      }
+    }
     if (reviewFilter === "pending") rows = rows.filter((e) => e.bucket === "missing");
     else if (reviewFilter === "due") rows = rows.filter((e) => e.bucket === "due");
     else if (reviewFilter === "changed") rows = rows.filter((e) => e.hasActionChanged);
-    if (selectedCluster) rows = rows.filter((e) => e.cluster_id === selectedCluster);
     return rows;
-  }, [queueState, scope, inspected, actionFilter, reviewFilter, selectedCluster]);
+  }, [scopePool, actionFilter, watchFilter, reviewFilter]);
 
   // q.counts is the exact per-entry bucket tally (every tracked symbol gets
   // one entry — see lib/verdict.ts), so "pending"/"needs review" read off it
@@ -401,6 +457,27 @@ export function VerdictDetailClient() {
     );
   }, [clusters, clusterMenuSearch]);
   const activeClusterObj = clusters.find((c) => c.clusterId === selectedCluster) ?? null;
+
+  // Per-section counts for the WATCH dropdown, over scopePool (current
+  // scope + cluster, same pool the WATCH button's own count reads from via
+  // actionMatchesFilter) — not the full queue, so the dropdown's numbers
+  // match what clicking "All Watch" would actually select here.
+  const watchCounts = useMemo(() => {
+    const res = { all: 0, near_entry: 0, high_upside: 0, cashflow: 0, roce: 0, pullback: 0, turnaround: 0, risk: 0 };
+    for (const e of scopePool) {
+      if (!actionMatchesFilter(e.action, "watch")) continue;
+      res.all++;
+      if (e.ltp != null && e.buyBelow != null && e.buyBelow > 0 && e.ltp <= e.buyBelow * 1.05) res.near_entry++;
+      if (e.upsidePct != null && e.upsidePct >= 20) res.high_upside++;
+      const sub = getWatchSubtype(e).key;
+      if (sub === "cashflow") res.cashflow++;
+      else if (sub === "roce") res.roce++;
+      else if (sub === "pullback") res.pullback++;
+      else if (sub === "risk") res.risk++;
+      else res.turnaround++;
+    }
+    return res;
+  }, [scopePool]);
 
   // Real ~9-sector taxonomy (app.meta_cluster), resolved two ways: by
   // cluster_id via clusterMap for entries that carry one (every live/tracked
@@ -511,6 +588,15 @@ export function VerdictDetailClient() {
 
   // Open the sector (and industry) containing a search hit or the selected
   // stock, so neither lands on a tree that still looks collapsed around it.
+  // Also closes whichever sector/industry THIS effect auto-opened for the
+  // previous stock, if the new stock is in a different one — otherwise
+  // paging through Prev/Next left every cluster you'd ever visited open
+  // forever. Only the auto-opened node is closed; anything the user opened
+  // by hand (a sector they clicked themselves) is left alone.
+  const autoOpenedRef = useRef<{ sector: string | null; industryKey: string | null }>({
+    sector: null,
+    industryKey: null,
+  });
   useEffect(() => {
     if (tree.length === 0) return;
     if (treeSearch.trim()) return; // searching force-opens every node in the render below
@@ -519,15 +605,29 @@ export function VerdictDetailClient() {
       : null;
     if (!withSelected) return;
     const ind = withSelected.industries.find((i) => i.entries.some((e) => e.symbol === symbol));
+    const newSector = withSelected.sector;
+    const newIndustryKey = ind ? `${newSector}//${ind.industry}` : null;
+    const prevAuto = autoOpenedRef.current;
+
+    if (prevAuto.sector === newSector && prevAuto.industryKey === newIndustryKey) {
+      return; // same cluster as last time — nothing to open or close
+    }
+
     setExpandedNodes((prev) => {
-      if (prev.has(withSelected.sector) && (!ind || prev.has(`${withSelected.sector}//${ind.industry}`))) {
-        return prev;
-      }
       const next = new Set(prev);
-      next.add(withSelected.sector);
-      if (ind) next.add(`${withSelected.sector}//${ind.industry}`);
+      if (prevAuto.sector && prevAuto.sector !== newSector) {
+        // Different sector-cluster: close the whole previous branch.
+        next.delete(prevAuto.sector);
+        if (prevAuto.industryKey) next.delete(prevAuto.industryKey);
+      } else if (prevAuto.industryKey && prevAuto.industryKey !== newIndustryKey) {
+        // Same sector, different industry within it: close just the old industry.
+        next.delete(prevAuto.industryKey);
+      }
+      next.add(newSector);
+      if (newIndustryKey) next.add(newIndustryKey);
       return next;
     });
+    autoOpenedRef.current = { sector: newSector, industryKey: newIndustryKey };
     // Only re-run when the selected symbol or the tree shape changes — not on
     // every expandedNodes write, which would fight the user's own clicks.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -628,7 +728,6 @@ export function VerdictDetailClient() {
             ["buy", "BUY", ac.buy, "text-emerald-700"],
             ["accumulate", "ACCUMULATE", ac.accumulate, "text-emerald-600"],
             ["hold", "HOLD", ac.hold, "text-slate-600"],
-            ["watch", "WATCH", ac.watch, "text-amber-600"],
             ["avoid", "REDUCE & AVOID", ac.avoid + ac.sell, "text-rose-700"],
           ] as const
         ).map(([key, label, count, tone]) => (
@@ -643,8 +742,76 @@ export function VerdictDetailClient() {
             {label} {count}
           </button>
         ))}
+
+        {/* ── WATCH as a dropdown of sub-sections, ported from the Board
+            tab's inline breakdown bar — click opens a menu of Near Buy
+            Zone / ≥20% Upside / the five thesis-reason buckets instead of
+            one flat WATCH count. ──────────────────────────────────────── */}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setWatchMenuOpen((o) => !o)}
+            className={`font-semibold rounded px-1.5 py-[1px] flex items-center gap-1 ${
+              actionFilter === "watch" ? "bg-slate-800 !text-white" : "text-amber-600 hover:bg-[var(--color-paper)]"
+            }`}
+            title="WATCH — choose a sub-category"
+          >
+            <span>
+              {actionFilter === "watch" && watchFilter !== "all"
+                ? `WATCH · ${WATCH_FILTER_LABEL[watchFilter]}`
+                : `WATCH ${ac.watch}`}
+            </span>
+            <span className="text-[9px]">{watchMenuOpen ? "▲" : "▼"}</span>
+          </button>
+          {watchMenuOpen && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setWatchMenuOpen(false)} />
+              <div className="absolute z-20 mt-1 left-0 w-64 rounded-md border hairline bg-[var(--color-paper)] shadow-lg p-1">
+                {(
+                  [
+                    ["all", "All Watch", watchCounts.all, "bg-amber-600 text-white", "text-slate-700"],
+                    ["near_entry", "🎯 Near Buy Zone", watchCounts.near_entry, "bg-emerald-700 text-white", "text-emerald-800"],
+                    ["high_upside", "🚀 ≥20% Upside", watchCounts.high_upside, "bg-teal-700 text-white", "text-teal-800"],
+                    ["cashflow", "💵 Cash Flow Proof", watchCounts.cashflow, "bg-blue-700 text-white", "text-blue-800"],
+                    ["roce", "⚙️ Capital Efficiency", watchCounts.roce, "bg-purple-700 text-white", "text-purple-800"],
+                    ["pullback", "🏷️ Valuation Pullback", watchCounts.pullback, "bg-amber-600 text-white", "text-amber-800"],
+                    ["turnaround", "📈 Margin Turnaround", watchCounts.turnaround, "bg-teal-700 text-white", "text-teal-800"],
+                    ["risk", "⚠️ Governance / Risk", watchCounts.risk, "bg-rose-700 text-white", "text-rose-800"],
+                  ] as const
+                ).map(([key, label, count, activeClass, inactiveClass]) => {
+                  const isActive = actionFilter === "watch" && watchFilter === key;
+                  if (key !== "all" && count === 0) return null;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => {
+                        setActionFilter("watch");
+                        setWatchFilter(key);
+                        setWatchMenuOpen(false);
+                      }}
+                      className={`w-full text-left px-2 py-1 rounded text-[11.5px] font-medium flex items-center justify-between gap-2 mb-0.5 ${
+                        isActive ? activeClass : `hover:bg-[var(--color-border-default)] ${inactiveClass}`
+                      }`}
+                    >
+                      <span>{label}</span>
+                      <span className={`font-mono text-[10px] ${isActive ? "" : "muted-text"}`}>{count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+
         {actionFilter && (
-          <button onClick={() => setActionFilter(null)} className="muted-text underline text-[10.5px]">
+          <button
+            onClick={() => {
+              setActionFilter(null);
+              setWatchFilter("all");
+            }}
+            className="muted-text underline text-[10.5px]"
+          >
             clear
           </button>
         )}
@@ -654,9 +821,9 @@ export function VerdictDetailClient() {
       <div className="flex items-center gap-1 mb-2 flex-wrap">
         {(
           [
+            ["watchlist", `Watchlist (${scopeCounts.watchlist})`],
             ["nifty500", `Nifty 500 (${scopeCounts.nifty500})`],
             ["all", `All Active (${scopeCounts.all})`],
-            ["watchlist", `Watchlist (${scopeCounts.watchlist})`],
             ["portfolio", `Portfolio (${scopeCounts.portfolio})`],
             ["inspected", `Inspected (${scopeCounts.inspected})`],
             ["archived", `Archived (${scopeCounts.archived})`],
@@ -855,9 +1022,14 @@ export function VerdictDetailClient() {
                                       className={`shrink-0 px-1 rounded text-[9px] font-sans font-semibold tracking-wide ${
                                         symbol === e.symbol ? "bg-white/20 text-white" : actionClass(e.action)
                                       }`}
-                                      title={e.action ?? "No verdict yet"}
+                                      title={
+                                        e.hasActionChanged && e.prevAction
+                                          ? `${e.action ?? "No verdict yet"} (was ${e.prevAction})`
+                                          : e.action ?? "No verdict yet"
+                                      }
                                     >
                                       {actionShort(e.action)}
+                                      {e.hasActionChanged && <sup className="text-[7px] ml-[1px]">•</sup>}
                                     </span>
                                   </button>
                                 ))}
@@ -980,6 +1152,22 @@ export function VerdictDetailClient() {
                       {selected.action}
                     </span>
                   )}
+                  {/* Changed-action badge: the "Changed" count/filter above
+                      already flags which symbols flipped, but gave no way to
+                      see FROM what — so a HOLD→BUY looked the same as any
+                      other BUY. prevAction/hasActionChanged are already
+                      computed in loadVerdictQueue (lib/verdict.ts); this is
+                      the first place they're rendered. */}
+                  {selected?.hasActionChanged && selected.prevAction && (
+                    <span
+                      className="px-1.5 py-[1px] rounded text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200"
+                      title={`Previous verdict: ${selected.prevVerdict ?? selected.prevAction}${
+                        selected.prevGeneratedAt ? ` (written ${shortDate(selected.prevGeneratedAt)})` : ""
+                      }`}
+                    >
+                      was {selected.prevAction}
+                    </span>
+                  )}
                   {meta?.current_price != null && (
                     <IntradayPriceBadge
                       price={meta.current_price}
@@ -1017,8 +1205,8 @@ export function VerdictDetailClient() {
                     doing with it right now, read together. */}
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] mt-1.5 rounded-md border hairline bg-[var(--color-paper)] px-2.5 py-1.5">
                   <span>
-                    <span className="muted-text">LTP </span>
-                    <span className="font-mono font-semibold">{money(selected?.ltp ?? null)}</span>
+                    <span className="text-slate-600 font-medium">LTP </span>
+                    <span className="font-mono font-semibold text-slate-900">{money(selected?.ltp ?? null)}</span>
                     {selected?.pctMove != null && (
                       <span className={`font-mono ml-1 ${selected.pctMove >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
                         {pct(selected.pctMove)} since call
@@ -1026,27 +1214,50 @@ export function VerdictDetailClient() {
                     )}
                   </span>
                   <span>
-                    <span className="muted-text">Target </span>
-                    <span className="font-mono">{money(selected?.targetPrice ?? null)}</span>
+                    <span className="text-slate-600 font-medium">Target </span>
+                    <span className="font-mono font-semibold text-indigo-700">{money(selected?.targetPrice ?? null)}</span>
                   </span>
                   <span>
-                    <span className="muted-text">Buy below </span>
-                    <span className="font-mono">{money(selected?.buyBelow ?? null)}</span>
+                    <span className="text-slate-600 font-medium">Buy below </span>
+                    <span className="font-mono font-semibold text-emerald-700">{money(selected?.buyBelow ?? null)}</span>
                   </span>
                   <span>
-                    <span className="muted-text">Bear floor </span>
-                    <span className="font-mono">{money(selected?.bearFloor ?? null)}</span>
+                    <span className="text-slate-600 font-medium">Bear floor </span>
+                    <span className="font-mono font-semibold text-rose-700">{money(selected?.bearFloor ?? null)}</span>
                   </span>
                   {selected?.upsidePct != null && (
                     <span>
-                      <span className="muted-text">Upside </span>
-                      <span className="font-mono">{pct(selected.upsidePct)}</span>
+                      <span className="text-slate-600 font-medium">Upside </span>
+                      <span
+                        className={`font-mono font-semibold ${selected.upsidePct >= 0 ? "text-emerald-700" : "text-rose-700"}`}
+                      >
+                        {pct(selected.upsidePct)}
+                      </span>
                     </span>
                   )}
                   {selected?.generated_at && (
-                    <span className="muted-text">Called {shortDate(selected.generated_at)}</span>
+                    <span className="text-slate-600 font-medium">
+                      Called <span className="text-slate-800 font-mono">{shortDate(selected.generated_at)}</span>
+                    </span>
                   )}
                 </div>
+
+                {/* Drift warning / staleness note — ported from the Board
+                    tab's row-level text (VerdictQueueClient.tsx:1418-1428).
+                    Drift takes priority: a verdict whose own evidence has
+                    moved is untrustworthy regardless of age, so the age-only
+                    note only shows when nothing has actually moved. */}
+                {selected && selected.movedCount > 0 && (
+                  <div className="text-[11px] text-rose-600 font-medium mt-1.5 flex items-center gap-1">
+                    <span>⚠️</span>
+                    <span>{selected.movedCount} key metric{selected.movedCount === 1 ? "" : "s"} shifted since writing</span>
+                  </div>
+                )}
+                {selected && selected.movedCount === 0 && selected.ageDays != null && selected.ageDays > STALE_DAYS && (
+                  <div className="text-[11px] text-amber-700 font-medium mt-1.5">
+                    Review window open ({selected.ageDays}d old)
+                  </div>
+                )}
 
                 {/* Held quantity — only for stocks actually in the portfolio,
                     from /api/admin/portfolio-positions (loadHeldPositions()). */}
@@ -1072,7 +1283,7 @@ export function VerdictDetailClient() {
 
               {/* Map (price chart) */}
               <div className="rounded-md border hairline overflow-hidden mb-3">
-                <PriceChart symbol={symbol} />
+                <PriceChart symbol={symbol} trades={symbol ? tradesBySymbol[symbol.toUpperCase()] : undefined} />
               </div>
 
               {/* Verdict: operating review, target price detail, quant models */}
@@ -1117,9 +1328,22 @@ export function VerdictDetailClient() {
               {contextState.news.length === 0 ? (
                 <p className="muted-text text-[10px]">No news in the last 6 months.</p>
               ) : (
-                <ul className="space-y-2">
+                <ul className="space-y-0">
                   {contextState.news.slice(0, 15).map((n, i) => (
-                    <li key={i} className="text-[13px] leading-snug">
+                    // Alternating shade (even rows only) so adjacent headlines
+                    // don't visually run together in this dense, unbordered list.
+                    // NOT --color-paper: this panel sits directly on the page's
+                    // own --color-paper background (it never set its own white
+                    // card bg), so shading with the same token painted every
+                    // "shaded" row the identical color as the page behind it —
+                    // invisible. --color-border-default/40 reads as a visible
+                    // light-gray stripe regardless of what's behind the panel.
+                    <li
+                      key={i}
+                      className={`text-[13px] leading-snug px-1.5 py-1.5 rounded-sm ${
+                        i % 2 === 0 ? "bg-[var(--color-border-default)]/40" : ""
+                      }`}
+                    >
                       <a href={n.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
                         {n.title}
                       </a>

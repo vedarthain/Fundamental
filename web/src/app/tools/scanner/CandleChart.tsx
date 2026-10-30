@@ -671,6 +671,40 @@ function renderChart(
         });
       })()}
 
+      {/* Latest buy standing — a dashed horizontal line from the most recent
+          real buy's bar out to the right edge, so it reads at a glance
+          whether today's price sits above (green) or below (red) that buy,
+          the same way the alert lines above show where a target sits. Only
+          the single newest "B" trade; older ones already have their own dot
+          + caption and don't need a second reference line cluttering the
+          chart. */}
+      {(() => {
+        const realBuys = trades.filter((t) => t.side === "B");
+        if (realBuys.length === 0) return null;
+        const latest = realBuys.reduce((a, b) => (b.d > a.d ? b : a));
+        const idx = idxForDate(data, latest.d);
+        const x0 = cx(idx);
+        const y = yP(latest.price);
+        if (y < priceTop - 1 || y > priceBot + 1) return null;
+        const lastClose = data[data.length - 1]?.c;
+        const up = lastClose == null || lastClose >= latest.price;
+        const color = up ? BUY_COL : SELL_COL;
+        const tag = fmtPrice(latest.price);
+        const tw = 6.6 * tag.length + 22;
+        const ty = y - priceTop < 12 ? y + 12 : y - 5;
+        return (
+          <g pointerEvents="none">
+            <line
+              x1={x0} y1={y} x2={plotR} y2={y}
+              stroke={color} strokeWidth={1.2} strokeDasharray="4 3" opacity={0.85}
+            />
+            <rect x={plotR - tw} y={ty - 9} width={tw} height={12} rx={2} fill={color} opacity={0.92} />
+            <text x={plotR - tw + 3} y={ty} textAnchor="start" fontSize={9.5} fontWeight={800} fill="#fff">B</text>
+            <text x={plotR - 3} y={ty} textAnchor="end" fontSize={9.5} fontWeight={700} fill="#fff">{tag}</text>
+          </g>
+        );
+      })()}
+
       {/* live draft preview while placing an hline / trend / alert */}
       {draft && (draft.tool === "hline" ? (
         <line pointerEvents="none" x1={plotL} y1={draft.y} x2={plotR} y2={draft.y} stroke={ACCENT} strokeWidth={1.2} strokeDasharray="5 3" opacity={0.6} />
