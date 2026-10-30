@@ -9,7 +9,9 @@
 import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 import { isAdminRequest } from "@/lib/auth";
-import { VerdictQueueClient } from "./VerdictQueueClient";
+// Two views of the same queue, chosen by a tab: the dense Board (unchanged)
+// and a card reading view. VerdictTabs mounts one at a time.
+import { VerdictTabs } from "./VerdictTabs";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
@@ -27,7 +29,7 @@ export default async function AdminVerdictsPage() {
           Verdict - Admin
         </h1>
       </div>
-      <VerdictQueueClient />
+      <VerdictTabs />
     </main>
   );
 }

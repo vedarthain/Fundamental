@@ -428,8 +428,13 @@ def compute_historical_band_target(pack: dict[str, Any], qi: dict[str, Any]) -> 
 # Master Triangulation Engine
 # -------------------------------------------------------------------------
 
-def calculate_stock_valuation(pack: dict[str, Any]) -> dict[str, Any]:
+def calculate_stock_valuation(pack: dict[str, Any] | str, item_dict: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     """Run all relevant models, apply sector weights, and generate actionable price targets."""
+    if item_dict is not None and isinstance(item_dict, dict):
+        pack = item_dict
+    elif not isinstance(pack, dict):
+        pack = {}
+
     cluster_id = (pack.get("identity") or {}).get("cluster_id")
     category = get_valuation_category(cluster_id)
     qi = extract_quant_inputs(pack)

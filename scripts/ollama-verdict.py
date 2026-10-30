@@ -971,12 +971,12 @@ def main() -> int:
             verdict_obj["points"] = pts
 
             # Calculate institutional valuation targets
-            val_res = calculate_stock_valuation(sym, item)
+            val_res = calculate_stock_valuation(item)
             verdict_obj["target_price"] = val_res.get("target_price")
             verdict_obj["buy_below"] = val_res.get("buy_below")
             verdict_obj["bear_floor"] = val_res.get("bear_floor")
             verdict_obj["upside_pct"] = val_res.get("upside_pct")
-            verdict_obj["valuation_method"] = val_res.get("method")
+            verdict_obj["valuation_method"] = val_res.get("valuation_method")
 
             # Step 4: DB Load
             db_status = "Saved ✓"
