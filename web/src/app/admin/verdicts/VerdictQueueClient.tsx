@@ -11,7 +11,12 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { VerdictSheet } from "@/components/VerdictSheet";
-import { STALE_DAYS, type QueueBucket } from "@/lib/verdictTypes";
+import {
+  STALE_DAYS,
+  getWatchSubtype,
+  type QueueBucket,
+  type WatchSubtypeKey,
+} from "@/lib/verdictTypes";
 import type { QueueEntry, TimelineWeek, VerdictQueue } from "@/lib/verdict";
 
 function shortDate(iso: string): string {
@@ -41,6 +46,8 @@ type ConvictionCategory =
   | "needs_review"
   | "changed"
   | "dormant";
+
+type WatchFilterType = "all" | "near_entry" | "high_upside" | WatchSubtypeKey;
 
 function categorize(e: QueueEntry): "buy" | "accumulate" | "hold" | "watch" | "avoid" | "missing" | "dormant" {
   if (e.bucket === "dormant") return "dormant";
@@ -110,6 +117,7 @@ export function VerdictQueueClient() {
   const [open, setOpen] = useState<string | null>(null);
   const [inspectedSymbols, setInspectedSymbols] = useState<Set<string>>(new Set());
   const [category, setCategory] = useState<ConvictionCategory>("all");
+  const [watchFilter, setWatchFilter] = useState<WatchFilterType>("all");
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("freshness");
   const [sortDir, setSortDir] = useState<SortDirection>("desc");
@@ -224,6 +232,41 @@ export function VerdictQueueClient() {
     return res;
   }, [state, inspectedSymbols]);
 
+  // Sub-category counts across WATCH entries
+  const watchCounts = useMemo(() => {
+    const res = {
+      all: 0,
+      near_entry: 0,
+      high_upside: 0,
+      cashflow: 0,
+      roce: 0,
+      pullback: 0,
+      turnaround: 0,
+      risk: 0,
+    };
+    if (state.kind !== "ok") return res;
+    let pool = state.q.entries;
+    if (selectedCluster) {
+      pool = pool.filter((e) => e.cluster_id === selectedCluster);
+    }
+    for (const e of pool) {
+      if (categorize(e) !== "watch") continue;
+      res.all++;
+      const isNearEntry =
+        e.ltp != null && e.buyBelow != null && e.buyBelow > 0 && e.ltp <= e.buyBelow * 1.05;
+      if (isNearEntry) res.near_entry++;
+      if (e.upsidePct != null && e.upsidePct >= 20) res.high_upside++;
+
+      const sub = getWatchSubtype(e).key;
+      if (sub === "cashflow") res.cashflow++;
+      else if (sub === "roce") res.roce++;
+      else if (sub === "pullback") res.pullback++;
+      else if (sub === "risk") res.risk++;
+      else res.turnaround++;
+    }
+    return res;
+  }, [state, selectedCluster]);
+
   // Filtered & Sorted list
   const filtered = useMemo(() => {
     if (state.kind !== "ok") return [];
@@ -245,6 +288,17 @@ export function VerdictQueueClient() {
       list = list.filter((e) => e.hasActionChanged);
     } else if (category === "needs_review") {
       list = list.filter((e) => e.bucket === "due");
+    } else if (category === "watch") {
+      list = list.filter((e) => categorize(e) === "watch");
+      if (watchFilter === "near_entry") {
+        list = list.filter(
+          (e) => e.ltp != null && e.buyBelow != null && e.buyBelow > 0 && e.ltp <= e.buyBelow * 1.05
+        );
+      } else if (watchFilter === "high_upside") {
+        list = list.filter((e) => e.upsidePct != null && e.upsidePct >= 20);
+      } else if (watchFilter !== "all") {
+        list = list.filter((e) => getWatchSubtype(e).key === watchFilter);
+      }
     } else if (category !== "all") {
       list = list.filter((e) => categorize(e) === category);
     } else {
@@ -314,12 +368,12 @@ export function VerdictQueueClient() {
       }
       return sortDir === "asc" ? diff : -diff;
     });
-  }, [state, category, search, sortKey, sortDir, selectedCluster, inspectedSymbols]);
+  }, [state, category, watchFilter, search, sortKey, sortDir, selectedCluster, inspectedSymbols]);
 
   // Reset to page 1 whenever any filter, search, sort, or pageSize changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [category, search, sortKey, sortDir, selectedCluster, pageSize]);
+  }, [category, watchFilter, search, sortKey, sortDir, selectedCluster, pageSize]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(Math.max(1, currentPage), totalPages);
@@ -717,13 +771,187 @@ export function VerdictQueueClient() {
         </button>
       </div>
 
+      {/* 1.5. Watch Sub-Category Breakdown (Rendered when Watch category is selected) */}
+      {category === "watch" && (
+        <div className="rounded-lg border border-amber-300/80 bg-amber-50/40 p-3 shadow-2xs space-y-2">
+          <div className="flex items-center justify-between text-[11.5px] text-amber-950 font-medium">
+            <span className="flex items-center gap-1.5">
+              <span>🔍</span>
+              <span>
+                Divide <b>{watchCounts.all}</b> Watch Stocks by Investment Reason &amp; Catalyst:
+              </span>
+            </span>
+            {watchFilter !== "all" && (
+              <button
+                type="button"
+                onClick={() => setWatchFilter("all")}
+                className="text-amber-800 hover:text-amber-950 underline font-normal text-[11px]"
+              >
+                Reset to All Watch ({watchCounts.all})
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1.5 flex-wrap text-[11.5px]">
+            {/* All Watch */}
+            <button
+              type="button"
+              onClick={() => setWatchFilter("all")}
+              className={`px-2.5 py-1 rounded-md transition-all font-medium flex items-center gap-1.5 border ${
+                watchFilter === "all"
+                  ? "bg-amber-600 text-white border-amber-700 shadow-2xs"
+                  : "bg-white text-slate-700 border-slate-200/90 hover:bg-amber-50 hover:border-amber-300"
+              }`}
+            >
+              <span>All Watch</span>
+              <span className={`text-[10px] font-mono px-1 py-0.2 rounded ${watchFilter === "all" ? "bg-amber-700/60 text-white" : "bg-slate-100 text-slate-500"}`}>
+                {watchCounts.all}
+              </span>
+            </button>
+
+            {/* Near Accumulate Zone */}
+            {watchCounts.near_entry > 0 && (
+              <button
+                type="button"
+                onClick={() => setWatchFilter("near_entry")}
+                className={`px-2.5 py-1 rounded-md transition-all font-medium flex items-center gap-1.5 border ${
+                  watchFilter === "near_entry"
+                    ? "bg-emerald-700 text-white border-emerald-800 shadow-2xs"
+                    : "bg-emerald-50/90 text-emerald-800 border-emerald-300/80 hover:bg-emerald-100"
+                }`}
+                title="Watch stocks currently trading within 5% of their buy-below ceiling or cheaper"
+              >
+                <span>🎯</span>
+                <span>Near Buy Zone</span>
+                <span className={`text-[10px] font-mono px-1 py-0.2 rounded ${watchFilter === "near_entry" ? "bg-emerald-800 text-white" : "bg-emerald-100 text-emerald-800"}`}>
+                  {watchCounts.near_entry}
+                </span>
+              </button>
+            )}
+
+            {/* High Upside */}
+            {watchCounts.high_upside > 0 && (
+              <button
+                type="button"
+                onClick={() => setWatchFilter("high_upside")}
+                className={`px-2.5 py-1 rounded-md transition-all font-medium flex items-center gap-1.5 border ${
+                  watchFilter === "high_upside"
+                    ? "bg-teal-700 text-white border-teal-800 shadow-2xs"
+                    : "bg-teal-50/90 text-teal-800 border-teal-300/80 hover:bg-teal-100"
+                }`}
+                title="Watch stocks with ≥ 20% upside to multi-model intrinsic target"
+              >
+                <span>🚀</span>
+                <span>&ge;20% Upside</span>
+                <span className={`text-[10px] font-mono px-1 py-0.2 rounded ${watchFilter === "high_upside" ? "bg-teal-800 text-white" : "bg-teal-100 text-teal-800"}`}>
+                  {watchCounts.high_upside}
+                </span>
+              </button>
+            )}
+
+            {/* Cash Flow Proof */}
+            <button
+              type="button"
+              onClick={() => setWatchFilter("cashflow")}
+              className={`px-2.5 py-1 rounded-md transition-all font-medium flex items-center gap-1.5 border ${
+                watchFilter === "cashflow"
+                  ? "bg-blue-700 text-white border-blue-800 shadow-2xs"
+                  : "bg-white text-slate-700 border-slate-200/90 hover:bg-blue-50 hover:border-blue-300"
+              }`}
+              title="Waiting for cash collection (CFO/PAT) to normalize against accounting profits"
+            >
+              <span>💵</span>
+              <span>Cash Flow Proof</span>
+              <span className={`text-[10px] font-mono px-1 py-0.2 rounded ${watchFilter === "cashflow" ? "bg-blue-800 text-white" : "bg-slate-100 text-slate-500"}`}>
+                {watchCounts.cashflow}
+              </span>
+            </button>
+
+            {/* Capital Efficiency / ROCE */}
+            <button
+              type="button"
+              onClick={() => setWatchFilter("roce")}
+              className={`px-2.5 py-1 rounded-md transition-all font-medium flex items-center gap-1.5 border ${
+                watchFilter === "roce"
+                  ? "bg-purple-700 text-white border-purple-800 shadow-2xs"
+                  : "bg-white text-slate-700 border-slate-200/90 hover:bg-purple-50 hover:border-purple-300"
+              }`}
+              title="Sales scaling, but ROCE < 12% is lagging industry peers"
+            >
+              <span>⚙️</span>
+              <span>Capital Efficiency</span>
+              <span className={`text-[10px] font-mono px-1 py-0.2 rounded ${watchFilter === "roce" ? "bg-purple-800 text-white" : "bg-slate-100 text-slate-500"}`}>
+                {watchCounts.roce}
+              </span>
+            </button>
+
+            {/* Valuation Pullback */}
+            <button
+              type="button"
+              onClick={() => setWatchFilter("pullback")}
+              className={`px-2.5 py-1 rounded-md transition-all font-medium flex items-center gap-1.5 border ${
+                watchFilter === "pullback"
+                  ? "bg-amber-600 text-white border-amber-700 shadow-2xs"
+                  : "bg-white text-slate-700 border-slate-200/90 hover:bg-amber-50 hover:border-amber-300"
+              }`}
+              title="Strong franchise; waiting for multiple contraction or price dip"
+            >
+              <span>🏷️</span>
+              <span>Valuation Pullback</span>
+              <span className={`text-[10px] font-mono px-1 py-0.2 rounded ${watchFilter === "pullback" ? "bg-amber-700 text-white" : "bg-slate-100 text-slate-500"}`}>
+                {watchCounts.pullback}
+              </span>
+            </button>
+
+            {/* Margin Turnaround */}
+            <button
+              type="button"
+              onClick={() => setWatchFilter("turnaround")}
+              className={`px-2.5 py-1 rounded-md transition-all font-medium flex items-center gap-1.5 border ${
+                watchFilter === "turnaround"
+                  ? "bg-teal-700 text-white border-teal-800 shadow-2xs"
+                  : "bg-white text-slate-700 border-slate-200/90 hover:bg-teal-50 hover:border-teal-300"
+              }`}
+              title="Turnaround candidate; waiting for sustained margin stabilization"
+            >
+              <span>📈</span>
+              <span>Margin Turnaround</span>
+              <span className={`text-[10px] font-mono px-1 py-0.2 rounded ${watchFilter === "turnaround" ? "bg-teal-800 text-white" : "bg-slate-100 text-slate-500"}`}>
+                {watchCounts.turnaround}
+              </span>
+            </button>
+
+            {/* Risk / Solvency */}
+            <button
+              type="button"
+              onClick={() => setWatchFilter("risk")}
+              className={`px-2.5 py-1 rounded-md transition-all font-medium flex items-center gap-1.5 border ${
+                watchFilter === "risk"
+                  ? "bg-rose-700 text-white border-rose-800 shadow-2xs"
+                  : "bg-white text-slate-700 border-slate-200/90 hover:bg-rose-50 hover:border-rose-300"
+              }`}
+              title="High debt or forensic accrual warnings; observe until audit clearance"
+            >
+              <span>⚠️</span>
+              <span>Governance / Risk</span>
+              <span className={`text-[10px] font-mono px-1 py-0.2 rounded ${watchFilter === "risk" ? "bg-rose-800 text-white" : "bg-slate-100 text-slate-500"}`}>
+                {watchCounts.risk}
+              </span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 2. Controls & Filter Bar */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1">
         {/* Active Filters & Reset */}
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 text-[12px]">
           <button
             type="button"
-            onClick={() => setCategory("all")}
+            onClick={() => {
+              setCategory("all");
+              setWatchFilter("all");
+            }}
             className={`px-3 py-1 rounded-md font-medium transition-all ${
               category === "all"
                 ? "bg-slate-900 text-white shadow-xs"
@@ -793,12 +1021,20 @@ export function VerdictQueueClient() {
             category !== "inspected" && (
             <div className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-slate-900 text-white text-[11.5px] font-medium shadow-xs shrink-0">
               <span className="capitalize">{category.replace("_", " ")}</span>
+              {category === "watch" && watchFilter !== "all" && (
+                <span className="text-amber-300 font-medium text-[11px]">
+                  : {watchFilter === "near_entry" ? "Near Buy Zone" : watchFilter === "high_upside" ? "≥20% Upside" : watchFilter.replace("_", " ")}
+                </span>
+              )}
               <span className="text-slate-300 font-mono text-[10.5px]">
                 ({filtered.length})
               </span>
               <button
                 type="button"
-                onClick={() => setCategory("all")}
+                onClick={() => {
+                  setCategory("all");
+                  setWatchFilter("all");
+                }}
                 className="ml-1 text-slate-400 hover:text-white font-bold text-[12px] leading-none"
                 title="Reset to All Active"
               >
@@ -1125,12 +1361,22 @@ export function VerdictQueueClient() {
                           </span>
                         ) : (
                           <div className="space-y-0.5">
-                            <span
-                              className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full border ${badge.pill}`}
-                            >
-                              <span className={`w-1.5 h-1.5 rounded-full ${badge.dot}`} />
-                              {e.action || "HOLD"}
-                            </span>
+                            <div className="flex items-center gap-1 flex-wrap">
+                              <span
+                                className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full border ${badge.pill}`}
+                              >
+                                <span className={`w-1.5 h-1.5 rounded-full ${badge.dot}`} />
+                                {e.action || "HOLD"}
+                              </span>
+                              {e.action && e.action.toUpperCase().includes("WATCH") && (
+                                <span
+                                  className={`inline-block text-[9px] font-mono font-medium px-1.5 py-0.2 rounded border ${getWatchSubtype(e).badgeClass}`}
+                                  title={getWatchSubtype(e).description}
+                                >
+                                  {getWatchSubtype(e).badge}
+                                </span>
+                              )}
+                            </div>
                             {e.hasActionChanged && e.prevAction && (
                               <div
                                 className="flex items-center gap-1 text-[9px] font-mono font-medium text-indigo-700 bg-indigo-50/90 px-1.5 py-0.2 rounded border border-indigo-200/70 w-fit"

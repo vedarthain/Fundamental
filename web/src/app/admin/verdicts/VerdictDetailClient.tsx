@@ -13,29 +13,42 @@
  * copy here would be exactly the drift CLAUDE.md §4 warns about — two renders
  * of one verdict that can silently disagree. This page's only job is the
  * frame around that existing panel: the top stats bar, the tree, the stock
- * header + chart above the panel, and the news beside it.
+ * header + nav strip + chart above the panel, and the news beside it.
  *
- * EVERYTHING ON THIS PAGE EXCEPT NEWS/FILINGS COMES FROM ONE FETCH:
- * /api/admin/verdict?queue=1 already returns, per entry, sector/industry
- * (tree), action/confidence/ageDays (header + tree badges), and
+ * MOST OF THIS PAGE COMES FROM ONE FETCH: /api/admin/verdict?queue=1 already
+ * returns, per entry, sector/industry (tree), action/confidence/ageDays
+ * (header + tree badges + action tabs), and
  * ltp/anchorPrice/targetPrice/buyBelow/bearFloor/upsidePct (header stats) —
  * the same payload the Board tab reads, plus `summary`/`counts` for the top
  * bar. Grouping/filtering/ranking those client-side costs nothing further.
  *
- * THE CHART SELF-FETCHES. <PriceChart symbol={...} /> without a `candles` prop
- * fetches its own OHLC — see that component's header — so no chart data is
- * loaded here either.
+ * THE CHART SELF-FETCHES. <PriceChart symbol={...} /> without a `candles`
+ * prop fetches its own OHLC — see that component's header.
  *
- * News and filings are the one genuinely new read: GET
- * /api/admin/stock-context?symbol=X, a copy of the stock page's own two
- * queries (see that route's header for why it is not folded into the verdict
- * route). A symbol can legitimately have one and not the other — e.g. recent
- * BSE filings but no press coverage, or vice versa — that is a true read of
- * app.announcement / app.news, not a bug in this page.
+ * TWO GENUINELY NEW READS, both admin-only, both one-route-per-concern (see
+ * each route's own header for why they aren't folded into /api/admin/verdict):
+ *   - /api/admin/stock-context?symbol=X — news + BSE filings, copied verbatim
+ *     from the stock page's own queries. A symbol can legitimately have one
+ *     and not the other (recent filings, no press coverage, or vice versa) —
+ *     that is a true read of app.announcement / app.news, not a bug here.
+ *   - /api/admin/stock-meta?symbol=X — maturity tier, cap tier, listing date,
+ *     live intraday price + 1-day move, and the scores snapshot date. All of
+ *     this already exists for the scanner/watchlist pages via CapTierBadge /
+ *     IntradayPriceBadge / tierLabel; this route just scopes the same source
+ *     tables to one symbol instead of the whole universe.
+ *
+ * "Inspected" and the bookmark are admin-page-local state, kept in
+ * localStorage under their own keys (not scannerBookmarks / the watchlist's
+ * marks, which are user-facing and sometimes server-synced — mixing an admin
+ * tool's scratch state into those would leak into a real user's watchlist UI).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Home, Bookmark, BookmarkCheck, CheckCircle2, Circle } from "lucide-react";
 import { PriceChart } from "@/components/PriceChart";
 import { VerdictPanel, VerdictEmpty } from "@/components/VerdictPanel";
+import CapTierBadge, { type CapCategory } from "@/components/CapTierBadge";
+import { IntradayPriceBadge } from "@/components/IntradayPriceBadge";
+import { tierLabel } from "@/lib/score";
 import type { QueueEntry, VerdictQueue, VerdictData } from "@/lib/verdict";
 
 type NewsRow = { title: string; source: string; url: string; published_at: string | null };
@@ -46,8 +59,24 @@ type FilingRow = {
   published_at: string | null;
   pdf_url: string | null;
 };
+type StockMeta = {
+  maturity_tier: string | null;
+  market_cap_category: CapCategory;
+  listing_date: string | null;
+  current_price: number | null;
+  price_fetched_at: string | null;
+  ret_1d: number | null;
+  scores_snapshot_date: string | null;
+};
+type ClusterMapRow = { cluster_id: string; cluster_name: string; sector_name: string };
+type SymbolMapRow = { symbol: string; cluster_name: string; sector_name: string };
+type PortfolioPosition = { qty: number; avgCost: number | null };
 
-type Scope = "all" | "watchlist" | "portfolio" | "archived";
+type Scope = "nifty500" | "all" | "watchlist" | "portfolio" | "archived" | "inspected";
+type ActionFilter = "buy" | "accumulate" | "hold" | "watch" | "avoid" | null;
+
+const INSPECTED_KEY = "fundamental_verdict_detail_inspected";
+const BOOKMARK_KEY = "fundamental_verdict_detail_bookmark";
 
 const ACTION_COLOR: Record<string, string> = {
   BUY: "bg-emerald-600 text-white",
@@ -77,6 +106,20 @@ function actionShort(action: string | null): string {
   return up.slice(0, 3);
 }
 
+/** Matches a QueueEntry.action string against one of the five count-bar
+ *  buckets. SELL is folded into "avoid" here — the bar shows one combined
+ *  "REDUCE & AVOID" count, same as the Board. */
+function actionMatchesFilter(action: string | null, filter: ActionFilter): boolean {
+  if (!filter) return true;
+  const up = (action ?? "").toUpperCase();
+  if (filter === "accumulate") return up.includes("ACCUMULATE");
+  if (filter === "buy") return up.includes("BUY") && !up.includes("ACCUMULATE");
+  if (filter === "hold") return up.includes("HOLD");
+  if (filter === "watch") return up.includes("WATCH") || up.includes("SPECULATIVE");
+  if (filter === "avoid") return up.includes("AVOID") || up.includes("REDUCE") || up.includes("SELL");
+  return true;
+}
+
 function shortDate(iso: string | null): string {
   if (!iso) return "—";
   try {
@@ -84,6 +127,15 @@ function shortDate(iso: string | null): string {
   } catch {
     return iso;
   }
+}
+
+/** YYYY-MM-DD → "Mon, 24 May 2026", anchored at noon UTC so the date string
+ *  doesn't roll back a day in negative timezones. Same formatter the
+ *  watchlist page uses for its "Scores" badge. */
+function formatSnapshotDate(iso: string): string {
+  const d = new Date(`${iso}T12:00:00Z`);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short", year: "numeric" });
 }
 
 function money(n: number | null): string {
@@ -97,14 +149,49 @@ function pct(n: number | null): string {
   return `${s}${n.toFixed(1)}%`;
 }
 
+function readInspected(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = localStorage.getItem(INSPECTED_KEY);
+    return raw ? new Set(JSON.parse(raw)) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function readBookmark(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return localStorage.getItem(BOOKMARK_KEY);
+  } catch {
+    return null;
+  }
+}
+
 export function VerdictDetailClient() {
   const [queueState, setQueueState] = useState<
     { kind: "loading" } | { kind: "ok"; q: VerdictQueue } | { kind: "error"; msg: string }
   >({ kind: "loading" });
   const [symbol, setSymbol] = useState<string | null>(null);
   const [treeSearch, setTreeSearch] = useState("");
-  const [openSector, setOpenSector] = useState<string | null>(null);
-  const [scope, setScope] = useState<Scope>("all");
+  // Multi-node expand state, keyed by sector name and "sector//industry" —
+  // same scheme WatchlistClient's rail uses, so several sectors/industries
+  // can stay open at once instead of one accordion slot.
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
+  // Nifty 500 is the default scope, not "all" — the user picked it as the
+  // landing filter, so new sessions open already narrowed to it.
+  const [scope, setScope] = useState<Scope>("nifty500");
+  const [actionFilter, setActionFilter] = useState<ActionFilter>(null);
+  const [reviewFilter, setReviewFilter] = useState<"pending" | "due" | "changed" | null>(null);
+  // Cluster filter — ported from the Board tab. Filters by cluster_id (the
+  // ~79 industry-level clusters, same granularity Board filters at — not the
+  // ~9 meta-cluster "sectors" the tree groups by), sourced from the SAME
+  // queue payload's q.clusterProgress, so no extra fetch.
+  const [selectedCluster, setSelectedCluster] = useState<string | null>(null);
+  const [clusterMenuOpen, setClusterMenuOpen] = useState(false);
+  const [clusterMenuSearch, setClusterMenuSearch] = useState("");
+  const [inspected, setInspected] = useState<Set<string>>(() => readInspected());
+  const [mark, setMark] = useState<string | null>(() => readBookmark());
 
   const [verdictState, setVerdictState] = useState<
     { kind: "idle" } | { kind: "loading" } | { kind: "ok"; data: VerdictData | null } | { kind: "error"; msg: string }
@@ -112,6 +199,21 @@ export function VerdictDetailClient() {
   const [contextState, setContextState] = useState<
     { kind: "idle" } | { kind: "loading" } | { kind: "ok"; news: NewsRow[]; filings: FilingRow[] } | { kind: "error" }
   >({ kind: "idle" });
+  const [metaState, setMetaState] = useState<
+    { kind: "idle" } | { kind: "loading" } | { kind: "ok"; meta: StockMeta } | { kind: "error" }
+  >({ kind: "idle" });
+  const [clusterMap, setClusterMap] = useState<Map<string, string>>(new Map());
+  // symbol -> {cluster_name, sector_name}, from app.cluster_assignment —
+  // covers dormant entries too, which carry cluster_id: null (see
+  // cluster-map/route.ts header) and would otherwise fall back to the noisy
+  // app.universe.sector/industry fields.
+  const [symbolMap, setSymbolMap] = useState<Map<string, { cluster_name: string; sector_name: string }>>(new Map());
+  const [positions, setPositions] = useState<Record<string, PortfolioPosition>>({});
+  // True once the cluster-map fetch has settled (success or fail) — gates the
+  // very first auto-selection below so it picks the tree's real first
+  // sector-cluster, not whatever queue order / noisy fallback sector sorts
+  // to before that map arrives.
+  const [mapsReady, setMapsReady] = useState(false);
 
   // Queue once, for the top bar, the tree and the nav strip.
   useEffect(() => {
@@ -125,26 +227,50 @@ export function VerdictDetailClient() {
         }
         const q = (await r.json()) as VerdictQueue;
         setQueueState({ kind: "ok", q });
-        if (q.entries.length > 0 && !symbol) {
-          setSymbol(q.entries[0].symbol);
-          setOpenSector(q.entries[0].sector ?? "Unclassified");
-        }
+        // Default symbol selection is pinned by the effect below, once the
+        // real sector map has loaded — not here, and not to queue order
+        // (q.entries[0] is arbitrary; the tree's first sector-cluster/first
+        // stock is what "pin the start" means).
       })
       .catch(() => {
         if (live) setQueueState({ kind: "error", msg: "The stock list request did not complete." });
       });
+
+    fetch("/api/admin/cluster-map", { cache: "no-store" })
+      .then(async (r) => {
+        if (!live || !r.ok) return;
+        const j = (await r.json()) as { rows: ClusterMapRow[]; bySymbol: SymbolMapRow[] };
+        setClusterMap(new Map(j.rows.map((row) => [row.cluster_id, row.sector_name])));
+        setSymbolMap(
+          new Map(j.bySymbol.map((row) => [row.symbol, { cluster_name: row.cluster_name, sector_name: row.sector_name }])),
+        );
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (live) setMapsReady(true);
+      });
+
+    fetch("/api/admin/portfolio-positions", { cache: "no-store" })
+      .then(async (r) => {
+        if (!live || !r.ok) return;
+        const j = (await r.json()) as { positions: Record<string, PortfolioPosition> };
+        setPositions(j.positions ?? {});
+      })
+      .catch(() => {});
+
     return () => {
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Verdict + news/filings, per selected symbol.
+  // Verdict + news/filings + stock meta, per selected symbol.
   useEffect(() => {
     if (!symbol) return;
     let live = true;
     setVerdictState({ kind: "loading" });
     setContextState({ kind: "loading" });
+    setMetaState({ kind: "loading" });
 
     fetch(`/api/admin/verdict?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" })
       .then(async (r) => {
@@ -174,33 +300,129 @@ export function VerdictDetailClient() {
         if (live) setContextState({ kind: "error" });
       });
 
+    fetch(`/api/admin/stock-meta?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" })
+      .then(async (r) => {
+        if (!live) return;
+        if (!r.ok) {
+          setMetaState({ kind: "error" });
+          return;
+        }
+        setMetaState({ kind: "ok", meta: (await r.json()) as StockMeta });
+      })
+      .catch(() => {
+        if (live) setMetaState({ kind: "error" });
+      });
+
     return () => {
       live = false;
     };
   }, [symbol]);
 
-  // Scope (All Active / Watchlist / Portfolio / Archived), applied before
-  // search and the tree grouping. "Archived" mirrors the Board's dormant
-  // bucket — a symbol no longer on the watchlist or in the portfolio.
+  const toggleInspected = useCallback((sym: string) => {
+    setInspected((prev) => {
+      const next = new Set(prev);
+      if (next.has(sym)) next.delete(sym);
+      else next.add(sym);
+      try {
+        localStorage.setItem(INSPECTED_KEY, JSON.stringify([...next]));
+      } catch {
+        // localStorage can be unavailable (private mode, quota) — inspected
+        // marks are a convenience, not data, so fail silently.
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleMark = useCallback(() => {
+    setMark((prev) => {
+      const next = prev === symbol ? null : symbol;
+      try {
+        if (next) localStorage.setItem(BOOKMARK_KEY, next);
+        else localStorage.removeItem(BOOKMARK_KEY);
+      } catch {
+        // Same as above — not worth surfacing an error for a convenience flag.
+      }
+      return next;
+    });
+  }, [symbol]);
+
+  // Scope (All Active / Watchlist / Portfolio / Archived / Inspected) and the
+  // action-count tabs, both applied before search and the tree grouping.
+  // "Archived" mirrors the Board's dormant bucket — a symbol no longer on the
+  // watchlist or in the portfolio.
   const scoped = useMemo(() => {
     if (queueState.kind !== "ok") return [];
-    const all = queueState.q.entries;
-    if (scope === "watchlist") return all.filter((e) => e.isWatchlist);
-    if (scope === "portfolio") return all.filter((e) => e.isPortfolio || e.isHolding);
-    if (scope === "archived") return all.filter((e) => e.bucket === "dormant");
-    return all;
-  }, [queueState, scope]);
+    let rows = queueState.q.entries;
+    if (scope === "nifty500") rows = rows.filter((e) => e.isNifty500);
+    else if (scope === "watchlist") rows = rows.filter((e) => e.isWatchlist);
+    else if (scope === "portfolio") rows = rows.filter((e) => e.isPortfolio || e.isHolding);
+    else if (scope === "archived") rows = rows.filter((e) => e.bucket === "dormant");
+    else if (scope === "inspected") rows = rows.filter((e) => inspected.has(e.symbol));
+    if (actionFilter) rows = rows.filter((e) => actionMatchesFilter(e.action, actionFilter));
+    if (reviewFilter === "pending") rows = rows.filter((e) => e.bucket === "missing");
+    else if (reviewFilter === "due") rows = rows.filter((e) => e.bucket === "due");
+    else if (reviewFilter === "changed") rows = rows.filter((e) => e.hasActionChanged);
+    if (selectedCluster) rows = rows.filter((e) => e.cluster_id === selectedCluster);
+    return rows;
+  }, [queueState, scope, inspected, actionFilter, reviewFilter, selectedCluster]);
+
+  // q.counts is the exact per-entry bucket tally (every tracked symbol gets
+  // one entry — see lib/verdict.ts), so "pending"/"needs review" read off it
+  // directly rather than recomputing. summary.pendingCount is the same number
+  // by construction; counts.missing is what the click-filter above matches
+  // against, so the bar shows the one it filters by.
+  const needsReview = queueState.kind === "ok" ? queueState.q.counts.due : 0;
+  const pendingCount = queueState.kind === "ok" ? queueState.q.counts.missing : 0;
+  const changedCount = queueState.kind === "ok" ? queueState.q.summary.changedCount : 0;
 
   const scopeCounts = useMemo(() => {
-    if (queueState.kind !== "ok") return { all: 0, watchlist: 0, portfolio: 0, archived: 0 };
+    if (queueState.kind !== "ok")
+      return { nifty500: 0, all: 0, watchlist: 0, portfolio: 0, archived: 0, inspected: 0 };
     const all = queueState.q.entries;
     return {
+      nifty500: all.filter((e) => e.isNifty500).length,
       all: all.length,
       watchlist: all.filter((e) => e.isWatchlist).length,
       portfolio: all.filter((e) => e.isPortfolio || e.isHolding).length,
       archived: all.filter((e) => e.bucket === "dormant").length,
+      inspected: all.filter((e) => inspected.has(e.symbol)).length,
     };
-  }, [queueState]);
+  }, [queueState, inspected]);
+
+  // All ~79 clusters, same list the Board's dropdown reads (q.clusterProgress
+  // is in the same /api/admin/verdict?queue=1 payload this page already
+  // fetches), optionally narrowed by the dropdown's own search box.
+  const clusters = queueState.kind === "ok" ? queueState.q.clusterProgress : [];
+  const clusterMenuOptions = useMemo(() => {
+    const needle = clusterMenuSearch.trim().toLowerCase();
+    if (!needle) return clusters;
+    return clusters.filter(
+      (c) => c.clusterName.toLowerCase().includes(needle) || c.clusterId.toLowerCase().includes(needle),
+    );
+  }, [clusters, clusterMenuSearch]);
+  const activeClusterObj = clusters.find((c) => c.clusterId === selectedCluster) ?? null;
+
+  // Real ~9-sector taxonomy (app.meta_cluster), resolved two ways: by
+  // cluster_id via clusterMap for entries that carry one (every live/tracked
+  // stock), or by symbol via symbolMap for the ones that don't (dormant
+  // entries — lib/verdict.ts hard-codes their cluster_id to null). Only
+  // falls back to the noisy app.universe.sector/industry fields for the ~3
+  // symbols app.cluster_assignment itself has no row for.
+  const realSector = useCallback(
+    (e: QueueEntry): string => {
+      const byCluster = e.cluster_id ? clusterMap.get(e.cluster_id) : undefined;
+      const bySym = symbolMap.get(e.symbol)?.sector_name;
+      return byCluster ?? bySym ?? e.sector ?? "Unclassified";
+    },
+    [clusterMap, symbolMap],
+  );
+  const realIndustry = useCallback(
+    (e: QueueEntry): string => {
+      const bySym = symbolMap.get(e.symbol)?.cluster_name;
+      return e.cluster_name ?? bySym ?? e.industry ?? "Unclassified";
+    },
+    [symbolMap],
+  );
 
   const tree = useMemo(() => {
     const needle = treeSearch.trim().toUpperCase();
@@ -213,8 +435,8 @@ export function VerdictDetailClient() {
     });
     const bySector = new Map<string, Map<string, QueueEntry[]>>();
     for (const e of rows) {
-      const sector = e.sector ?? "Unclassified";
-      const industry = e.industry ?? "Unclassified";
+      const sector = realSector(e);
+      const industry = realIndustry(e);
       if (!bySector.has(sector)) bySector.set(sector, new Map());
       const byIndustry = bySector.get(sector)!;
       const list = byIndustry.get(industry);
@@ -233,22 +455,83 @@ export function VerdictDetailClient() {
             entries: [...entries].sort((a, b) => a.symbol.localeCompare(b.symbol)),
           })),
       }));
-  }, [scoped, treeSearch]);
+  }, [scoped, treeSearch, realSector, realIndustry]);
 
-  // Flat, tree-order list of symbols currently visible — what Prev/Next and
-  // the arrow keys walk, and what the "N / total" counter counts against.
+  // Flat, tree-order list of symbols currently visible — what Prev/Next, Home
+  // and the arrow keys walk, and what the "N / total" counter counts against.
   const flatOrder = useMemo(
     () => tree.flatMap((s) => s.industries.flatMap((i) => i.entries.map((e) => e.symbol))),
     [tree],
   );
 
-  // Auto-expand the sector containing a search hit, so searching doesn't land
-  // on a tree that still looks collapsed around the match.
+  // Pin the very first selection to the tree's first sector-cluster / first
+  // stock within it, not queue order. Waits for mapsReady so the tree is
+  // already sorted by the real ~9-sector taxonomy before picking "first".
   useEffect(() => {
-    if (treeSearch.trim() && tree.length > 0) {
-      setOpenSector(tree[0].sector);
-    }
-  }, [treeSearch, tree]);
+    if (symbol) return;
+    if (!mapsReady) return;
+    if (flatOrder.length === 0) return;
+    setSymbol(flatOrder[0]);
+  }, [symbol, mapsReady, flatOrder]);
+
+  // Switching scope (e.g. clicking "Nifty 500") or picking a cluster from the
+  // dropdown jumps to the new view's first stock in tree order, same rule as
+  // the initial pin above — selecting a view should show its own first
+  // stock, not whatever was selected in the previous view.
+  const prevScopeRef = useRef(scope);
+  const prevClusterRef = useRef(selectedCluster);
+  useEffect(() => {
+    const scopeChanged = prevScopeRef.current !== scope;
+    const clusterChanged = prevClusterRef.current !== selectedCluster;
+    prevScopeRef.current = scope;
+    prevClusterRef.current = selectedCluster;
+    if (!scopeChanged && !clusterChanged) return;
+    if (flatOrder.length > 0) setSymbol(flatOrder[0]);
+  }, [scope, selectedCluster, flatOrder]);
+
+  const toggleNode = useCallback((key: string) => {
+    setExpandedNodes((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  // Every node key in the current tree — sector names plus "sector//industry"
+  // pairs — for the Expand all / Collapse all toggle below.
+  const allNodeKeys = useMemo(
+    () => tree.flatMap((s) => [s.sector, ...s.industries.map((i) => `${s.sector}//${i.industry}`)]),
+    [tree],
+  );
+  const allExpanded = allNodeKeys.length > 0 && allNodeKeys.every((k) => expandedNodes.has(k));
+  const toggleAllNodes = useCallback(() => {
+    setExpandedNodes(allExpanded ? new Set() : new Set(allNodeKeys));
+  }, [allExpanded, allNodeKeys]);
+
+  // Open the sector (and industry) containing a search hit or the selected
+  // stock, so neither lands on a tree that still looks collapsed around it.
+  useEffect(() => {
+    if (tree.length === 0) return;
+    if (treeSearch.trim()) return; // searching force-opens every node in the render below
+    const withSelected = symbol
+      ? tree.find((s) => s.industries.some((i) => i.entries.some((e) => e.symbol === symbol)))
+      : null;
+    if (!withSelected) return;
+    const ind = withSelected.industries.find((i) => i.entries.some((e) => e.symbol === symbol));
+    setExpandedNodes((prev) => {
+      if (prev.has(withSelected.sector) && (!ind || prev.has(`${withSelected.sector}//${ind.industry}`))) {
+        return prev;
+      }
+      const next = new Set(prev);
+      next.add(withSelected.sector);
+      if (ind) next.add(`${withSelected.sector}//${ind.industry}`);
+      return next;
+    });
+    // Only re-run when the selected symbol or the tree shape changes — not on
+    // every expandedNodes write, which would fight the user's own clicks.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbol, tree]);
 
   const rotate = useCallback(
     (dir: 1 | -1) => {
@@ -261,6 +544,14 @@ export function VerdictDetailClient() {
   );
   const rotateRef = useRef(rotate);
   rotateRef.current = rotate;
+
+  const goFirst = useCallback(() => {
+    if (flatOrder.length > 0) setSymbol(flatOrder[0]);
+  }, [flatOrder]);
+
+  const goMark = useCallback(() => {
+    if (mark && flatOrder.includes(mark)) setSymbol(mark);
+  }, [mark, flatOrder]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -289,10 +580,14 @@ export function VerdictDetailClient() {
   const selected = q.entries.find((e) => e.symbol === symbol) ?? null;
   const posInOrder = symbol ? flatOrder.indexOf(symbol) : -1;
   const ac = q.summary.actionCounts;
+  const meta = metaState.kind === "ok" ? metaState.meta : null;
+  const isInspected = !!symbol && inspected.has(symbol);
+  const isMarked = !!mark && mark === symbol;
 
   return (
     <div>
-      {/* ── Top bar: completion + action counts (same numbers as the Board) ── */}
+      {/* ── Top bar: completion + action counts. Each count is a filter tab —
+          click BUY to see only buy calls in the tree, click again to clear. ── */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] rounded-md border hairline px-3 py-1.5 mb-2">
         <span className="flex items-center gap-1.5">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
@@ -304,27 +599,66 @@ export function VerdictDetailClient() {
             ({q.summary.completedPercent.toFixed(1)}%)
           </span>
         </span>
-        <span className="muted-text">
-          Pending <span className="font-mono text-amber-700">{q.summary.pendingCount}</span>
-        </span>
-        <span className="muted-text">
-          Changed <span className="font-mono text-indigo-700">{q.summary.changedCount}</span>
-        </span>
+        {(
+          [
+            ["pending", "Pending", pendingCount, "text-amber-700"],
+            ["due", "Needs review", needsReview, "text-orange-700"],
+            ["changed", "Changed", changedCount, "text-indigo-700"],
+          ] as const
+        ).map(([key, label, count, tone]) => (
+          <button
+            key={key}
+            onClick={() => setReviewFilter(reviewFilter === key ? null : key)}
+            className={`muted-text rounded px-1 py-[1px] ${
+              reviewFilter === key ? "bg-slate-800 !text-white !opacity-100" : "hover:bg-[var(--color-paper)]"
+            }`}
+            title={`Show only ${label.toLowerCase()} stocks`}
+          >
+            {label} <span className={`font-mono ${reviewFilter === key ? "" : tone}`}>{count}</span>
+          </button>
+        ))}
+        {reviewFilter && (
+          <button onClick={() => setReviewFilter(null)} className="muted-text underline text-[10.5px]">
+            clear
+          </button>
+        )}
         <span className="h-3 w-px bg-[var(--color-border-default)]" />
-        <span className="font-semibold text-emerald-700">BUY {ac.buy}</span>
-        <span className="font-semibold text-emerald-600">ACCUMULATE {ac.accumulate}</span>
-        <span className="font-semibold text-slate-600">HOLD {ac.hold}</span>
-        <span className="font-semibold text-amber-600">WATCH {ac.watch}</span>
-        <span className="font-semibold text-rose-700">REDUCE &amp; AVOID {ac.avoid + ac.sell}</span>
+        {(
+          [
+            ["buy", "BUY", ac.buy, "text-emerald-700"],
+            ["accumulate", "ACCUMULATE", ac.accumulate, "text-emerald-600"],
+            ["hold", "HOLD", ac.hold, "text-slate-600"],
+            ["watch", "WATCH", ac.watch, "text-amber-600"],
+            ["avoid", "REDUCE & AVOID", ac.avoid + ac.sell, "text-rose-700"],
+          ] as const
+        ).map(([key, label, count, tone]) => (
+          <button
+            key={key}
+            onClick={() => setActionFilter(actionFilter === key ? null : key)}
+            className={`font-semibold rounded px-1.5 py-[1px] ${tone} ${
+              actionFilter === key ? "bg-slate-800 !text-white" : "hover:bg-[var(--color-paper)]"
+            }`}
+            title={`Show only ${label} calls`}
+          >
+            {label} {count}
+          </button>
+        ))}
+        {actionFilter && (
+          <button onClick={() => setActionFilter(null)} className="muted-text underline text-[10.5px]">
+            clear
+          </button>
+        )}
       </div>
 
       {/* ── Scope tabs ──────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-1 mb-2">
+      <div className="flex items-center gap-1 mb-2 flex-wrap">
         {(
           [
+            ["nifty500", `Nifty 500 (${scopeCounts.nifty500})`],
             ["all", `All Active (${scopeCounts.all})`],
             ["watchlist", `Watchlist (${scopeCounts.watchlist})`],
             ["portfolio", `Portfolio (${scopeCounts.portfolio})`],
+            ["inspected", `Inspected (${scopeCounts.inspected})`],
             ["archived", `Archived (${scopeCounts.archived})`],
           ] as const
         ).map(([key, label]) => (
@@ -340,66 +674,203 @@ export function VerdictDetailClient() {
             {label}
           </button>
         ))}
+
+        <span className="h-3 w-px bg-[var(--color-border-default)] mx-1" />
+
+        {/* ── Cluster filter — ported from the Board tab. Click opens a
+            dropdown of all clusters; picking one filters the tree to that
+            cluster_id, same key the Board filters by. ────────────────── */}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setClusterMenuOpen((o) => !o)}
+            className={`px-2 py-[3px] text-[11px] rounded-md border flex items-center gap-1 ${
+              selectedCluster
+                ? "bg-slate-800 text-white border-slate-800"
+                : "hairline hover:bg-[var(--color-paper)]"
+            }`}
+          >
+            <span>
+              {activeClusterObj ? `#${activeClusterObj.clusterIndex} ${activeClusterObj.clusterName}` : `Clusters (${clusters.length})`}
+            </span>
+            <span className="text-[9px]">{clusterMenuOpen ? "▲" : "▼"}</span>
+          </button>
+          {clusterMenuOpen && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setClusterMenuOpen(false)} />
+              <div className="absolute z-20 mt-1 left-0 w-80 max-h-96 overflow-hidden flex flex-col rounded-md border hairline bg-[var(--color-paper)] shadow-lg">
+                <div className="p-2 border-b hairline flex items-center gap-2 shrink-0">
+                  <input
+                    autoFocus
+                    value={clusterMenuSearch}
+                    onChange={(e) => setClusterMenuSearch(e.target.value)}
+                    placeholder="Find a cluster…"
+                    className="flex-1 px-2 py-1 text-[12px] rounded-md border hairline bg-transparent"
+                  />
+                  {selectedCluster && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedCluster(null);
+                        setClusterMenuOpen(false);
+                      }}
+                      className="text-[10.5px] text-rose-600 hover:text-rose-800 font-medium shrink-0"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                <div className="overflow-y-auto p-1">
+                  {clusterMenuOptions.length === 0 ? (
+                    <p className="muted-text text-[11px] py-2 px-1.5">No match.</p>
+                  ) : (
+                    clusterMenuOptions.map((c) => {
+                      const isSelected = selectedCluster === c.clusterId;
+                      return (
+                        <button
+                          key={c.clusterId}
+                          type="button"
+                          onClick={() => {
+                            setSelectedCluster(isSelected ? null : c.clusterId);
+                            setClusterMenuOpen(false);
+                          }}
+                          className={`w-full text-left px-1.5 py-1 rounded text-[11.5px] flex items-center justify-between gap-2 ${
+                            isSelected ? "bg-slate-800 text-white" : "hover:bg-[var(--color-border-default)]"
+                          }`}
+                        >
+                          <span className="flex items-center gap-1.5 min-w-0">
+                            <span
+                              className={`text-[9.5px] font-mono shrink-0 px-1 rounded ${
+                                isSelected ? "bg-white/20" : "muted-text bg-[var(--color-border-default)]"
+                              }`}
+                            >
+                              #{c.clusterIndex}
+                            </span>
+                            <span className="truncate">{c.clusterName}</span>
+                          </span>
+                          <span className={`font-mono text-[10px] shrink-0 ${isSelected ? "" : "muted-text"}`}>
+                            {c.completedStocks}/{c.totalStocks}
+                          </span>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[220px_minmax(0,1fr)_280px] gap-3 items-start">
-        {/* ── Tree: sector → industry → stock, action badge per stock ──── */}
-        <div className="rounded-md border hairline p-2 lg:sticky lg:top-3 lg:max-h-[calc(100vh-2rem)] overflow-y-auto">
-          <input
-            value={treeSearch}
-            onChange={(e) => setTreeSearch(e.target.value)}
-            placeholder="Find a stock"
-            className="w-full px-2 py-1 text-[12px] rounded-md border hairline bg-transparent mb-2"
-          />
-          {tree.length === 0 ? (
-            <p className="muted-text text-[11px] py-2">No match.</p>
-          ) : (
-            tree.map((s) => (
-              <div key={s.sector} className="mb-1">
-                <button
-                  onClick={() => setOpenSector(openSector === s.sector ? null : s.sector)}
-                  className="w-full flex items-center justify-between text-left px-1 py-1 text-[11.5px] font-semibold rounded hover:bg-[var(--color-paper)]"
-                >
-                  <span className="truncate">{s.sector}</span>
-                  <span className="muted-text tabular-nums text-[10px] shrink-0 ml-1">
-                    {s.count}
-                  </span>
-                </button>
-                {openSector === s.sector && (
-                  <div className="pl-2 border-l hairline ml-1.5">
-                    {s.industries.map((ind) => (
-                      <div key={ind.industry} className="mt-0.5">
-                        <div className="muted-text text-[10px] uppercase tracking-wide px-1 py-0.5 truncate">
-                          {ind.industry}
-                        </div>
-                        {ind.entries.map((e) => (
-                          <button
-                            key={e.symbol}
-                            onClick={() => setSymbol(e.symbol)}
-                            className={`w-full flex items-center justify-between gap-1 text-left px-1.5 py-[3px] text-[11.5px] rounded font-mono ${
-                              symbol === e.symbol
-                                ? "bg-slate-800 text-white"
-                                : "hover:bg-[var(--color-paper)]"
-                            }`}
-                          >
-                            <span className="truncate">{e.symbol}</span>
-                            <span
-                              className={`shrink-0 px-1 rounded text-[9px] font-sans font-semibold tracking-wide ${
-                                symbol === e.symbol ? "bg-white/20 text-white" : actionClass(e.action)
-                              }`}
-                              title={e.action ?? "No verdict yet"}
-                            >
-                              {actionShort(e.action)}
-                            </span>
-                          </button>
-                        ))}
+        {/* ── Tree: sector → industry → stock, action badge per stock ────
+            Same disclosure pattern as the watchlist's own rail — every
+            sector/industry can be open at once, not one accordion slot. ── */}
+        <div className="rounded-md border hairline lg:sticky lg:top-3 lg:max-h-[calc(100vh-2rem)] flex flex-col overflow-hidden">
+          <div className="px-2 py-1.5 border-b hairline flex items-center justify-between gap-2 shrink-0">
+            <span className="text-[11px] font-semibold uppercase tracking-wide muted-text">
+              Sectors &amp; industries
+            </span>
+            <span className="text-[10px] muted-text tabular-nums">
+              {tree.length} · {tree.reduce((n, s) => n + s.industries.length, 0)}
+            </span>
+          </div>
+          <div className="p-2 border-b hairline shrink-0">
+            <input
+              value={treeSearch}
+              onChange={(e) => setTreeSearch(e.target.value)}
+              placeholder="Find a stock or industry"
+              className="w-full px-2 py-1 text-[12px] rounded-md border hairline bg-transparent"
+            />
+          </div>
+          <div className="px-2 py-1 border-b hairline shrink-0 flex justify-end">
+            <button
+              type="button"
+              onClick={toggleAllNodes}
+              disabled={!!treeSearch.trim() || allNodeKeys.length === 0}
+              className="inline-flex items-center gap-1 px-1.5 py-[3px] rounded text-[10.5px] muted-text hover:text-[var(--color-ink)] hover:bg-[var(--color-paper)] disabled:opacity-40"
+              title={treeSearch.trim() ? "Clear search to collapse" : allExpanded ? "Collapse every sector" : "Expand every sector"}
+            >
+              <span aria-hidden className="text-[9px]">{allExpanded ? "⊟" : "⊞"}</span>
+              {allExpanded ? "Collapse all" : "Expand all"}
+            </button>
+          </div>
+          <div className="overflow-y-auto flex-1 min-h-0 p-1">
+            {tree.length === 0 ? (
+              <p className="muted-text text-[11px] py-2 px-1">No match.</p>
+            ) : (
+              tree.map((s) => {
+                const secOpen = !!treeSearch.trim() || expandedNodes.has(s.sector);
+                return (
+                  <div key={s.sector} className="mb-0.5">
+                    <button
+                      onClick={() => toggleNode(s.sector)}
+                      className="w-full flex items-center gap-1.5 text-left px-1 py-1 text-[11.5px] font-semibold rounded hover:bg-[var(--color-paper)]"
+                      aria-expanded={secOpen}
+                    >
+                      <Chevron open={secOpen} />
+                      <span className="truncate flex-1">{s.sector}</span>
+                      <span className="muted-text tabular-nums text-[10px] shrink-0 ml-1">
+                        {s.count}
+                      </span>
+                    </button>
+                    {secOpen && (
+                      <div className="pl-2 border-l hairline ml-2.5">
+                        {s.industries.map((ind) => {
+                          const indKey = `${s.sector}//${ind.industry}`;
+                          const indOpen = !!treeSearch.trim() || expandedNodes.has(indKey);
+                          return (
+                            <div key={ind.industry} className="mt-0.5">
+                              <button
+                                onClick={() => toggleNode(indKey)}
+                                className="w-full flex items-center gap-1 text-left px-1 py-0.5 rounded hover:bg-[var(--color-paper)]"
+                                aria-expanded={indOpen}
+                              >
+                                <Chevron open={indOpen} small />
+                                <span className="muted-text text-[10px] uppercase tracking-wide truncate flex-1">
+                                  {ind.industry}
+                                </span>
+                                <span className="muted-text tabular-nums text-[9.5px] shrink-0">
+                                  {ind.entries.length}
+                                </span>
+                              </button>
+                              {indOpen &&
+                                ind.entries.map((e) => (
+                                  <button
+                                    key={e.symbol}
+                                    onClick={() => setSymbol(e.symbol)}
+                                    className={`w-full flex items-center justify-between gap-1 text-left px-1.5 py-[3px] text-[11.5px] rounded font-mono ${
+                                      symbol === e.symbol
+                                        ? "bg-slate-800 text-white"
+                                        : "hover:bg-[var(--color-paper)]"
+                                    }`}
+                                  >
+                                    <span className="flex items-center gap-1 min-w-0">
+                                      {inspected.has(e.symbol) && (
+                                        <CheckCircle2 size={10} className="shrink-0 text-emerald-500" />
+                                      )}
+                                      <span className="truncate">{e.symbol}</span>
+                                    </span>
+                                    <span
+                                      className={`shrink-0 px-1 rounded text-[9px] font-sans font-semibold tracking-wide ${
+                                        symbol === e.symbol ? "bg-white/20 text-white" : actionClass(e.action)
+                                      }`}
+                                      title={e.action ?? "No verdict yet"}
+                                    >
+                                      {actionShort(e.action)}
+                                    </span>
+                                  </button>
+                                ))}
+                            </div>
+                          );
+                        })}
                       </div>
-                    ))}
+                    )}
                   </div>
-                )}
-              </div>
-            ))
-          )}
+                );
+              })
+            )}
+          </div>
         </div>
 
         {/* ── Stock header, nav strip, map (price chart), verdict below ── */}
@@ -410,29 +881,91 @@ export function VerdictDetailClient() {
             <>
               {/* Nav strip */}
               <div className="flex flex-wrap items-center justify-between gap-2 mb-2 text-[11px]">
-                <span className="muted-text">
-                  {posInOrder >= 0 ? posInOrder + 1 : "—"} / {flatOrder.length}
-                  <span className="hidden sm:inline"> · use ← → keys</span>
-                  {selected?.cluster_name && (
-                    <span className="ml-2">
-                      {selected.sector ?? "Unclassified"} · {selected.cluster_name}
+                <span className="muted-text flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
+                  <span className="shrink-0 tabular-nums">
+                    {posInOrder >= 0 ? posInOrder + 1 : "—"} / {flatOrder.length}
+                  </span>
+                  <span className="hidden sm:inline opacity-70 shrink-0">· use ← → keys</span>
+                  {selected && (
+                    <span className="truncate">
+                      {realSector(selected)} · {realIndustry(selected)}
                     </span>
                   )}
+                  {meta?.scores_snapshot_date && (
+                    <span
+                      className="hidden md:inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border hairline shrink-0"
+                      title="Scoring snapshot date (Q/V/M percentiles)."
+                    >
+                      <span className="opacity-70">Scores</span>
+                      <span className="font-medium">{formatSnapshotDate(meta.scores_snapshot_date)}</span>
+                    </span>
+                  )}
+                  <span className="shrink-0 tabular-nums">
+                    <span className="font-semibold text-[12.5px] text-[var(--color-accent-600,inherit)]">
+                      {scopeCounts.watchlist}
+                    </span>{" "}
+                    stocks on your watchlist
+                  </span>
                 </span>
-                <span className="flex items-center gap-1">
+                <div className="inline-flex rounded-md border hairline overflow-hidden shrink-0">
+                  <button
+                    onClick={goFirst}
+                    disabled={flatOrder.length === 0 || symbol === flatOrder[0]}
+                    className="px-2 py-[3px] hover:bg-[var(--color-paper)] disabled:opacity-40"
+                    title="First stock in this list"
+                    aria-label="First stock"
+                  >
+                    <Home size={12} className="inline-block align-[-2px]" />
+                  </button>
+                  <button
+                    onClick={toggleMark}
+                    disabled={!symbol}
+                    className={`px-2 py-[3px] border-l hairline hover:bg-[var(--color-paper)] disabled:opacity-40 ${
+                      isMarked ? "text-amber-600" : ""
+                    }`}
+                    aria-pressed={isMarked}
+                    title={isMarked ? `${symbol} is bookmarked — click to clear` : `Bookmark ${symbol}`}
+                  >
+                    {isMarked ? (
+                      <BookmarkCheck size={12} className="inline-block align-[-2px]" />
+                    ) : (
+                      <Bookmark size={12} className="inline-block align-[-2px]" />
+                    )}
+                  </button>
+                  {mark && !isMarked && (
+                    <button
+                      onClick={goMark}
+                      className="px-2 py-[3px] border-l hairline hover:bg-[var(--color-paper)] text-amber-600 font-mono"
+                      title={`Go to bookmarked stock (${mark})`}
+                    >
+                      {mark}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => toggleInspected(symbol)}
+                    className={`px-2 py-[3px] border-l hairline hover:bg-[var(--color-paper)] flex items-center gap-1 ${
+                      isInspected ? "text-emerald-600" : ""
+                    }`}
+                    title={isInspected ? `${symbol} marked inspected — click to clear` : `Mark ${symbol} inspected`}
+                  >
+                    {isInspected ? <CheckCircle2 size={12} /> : <Circle size={12} />}
+                    <span className="hidden sm:inline">Inspected</span>
+                  </button>
                   <button
                     onClick={() => rotate(-1)}
-                    className="px-2 py-[3px] rounded-md border hairline hover:bg-[var(--color-paper)]"
+                    disabled={flatOrder.length < 2}
+                    className="px-2 py-[3px] border-l hairline hover:bg-[var(--color-paper)] disabled:opacity-40"
                   >
                     ‹ Prev
                   </button>
                   <button
                     onClick={() => rotate(1)}
-                    className="px-2 py-[3px] rounded-md border hairline hover:bg-[var(--color-paper)]"
+                    disabled={flatOrder.length < 2}
+                    className="px-2 py-[3px] border-l hairline hover:bg-[var(--color-paper)] disabled:opacity-40"
                   >
                     Next ›
                   </button>
-                </span>
+                </div>
               </div>
 
               {/* Stock header */}
@@ -447,14 +980,42 @@ export function VerdictDetailClient() {
                       {selected.action}
                     </span>
                   )}
+                  {meta?.current_price != null && (
+                    <IntradayPriceBadge
+                      price={meta.current_price}
+                      fetchedAt={meta.price_fetched_at}
+                      className="text-[13px] font-semibold"
+                    />
+                  )}
+                  {meta?.ret_1d != null && (
+                    <span className={`font-mono text-[11px] ${meta.ret_1d >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
+                      1D: {pct(meta.ret_1d)}
+                    </span>
+                  )}
+                  {meta?.maturity_tier && (
+                    <span className="px-1.5 py-[1px] rounded text-[10px] border hairline">
+                      {tierLabel(meta.maturity_tier)}
+                    </span>
+                  )}
+                  {meta?.market_cap_category && (
+                    <CapTierBadge
+                      category={meta.market_cap_category}
+                      listingDate={meta.listing_date}
+                      textClass="text-[10px]"
+                    />
+                  )}
                   {selected?.confidence && (
                     <span className="muted-text text-[10px] uppercase">{selected.confidence} confidence</span>
                   )}
                 </div>
                 <div className="muted-text text-[11px] mt-0.5">
-                  {(selected?.sector ?? "Unclassified")} · {(selected?.industry ?? "Unclassified")}
+                  {selected ? realSector(selected) : "Unclassified"} ·{" "}
+                  {selected ? realIndustry(selected) : "Unclassified"}
                 </div>
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] mt-1.5">
+                {/* LTP + target / buy-below / bear-floor / upside / called —
+                    one line, one box: "the call" plus what the market is
+                    doing with it right now, read together. */}
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] mt-1.5 rounded-md border hairline bg-[var(--color-paper)] px-2.5 py-1.5">
                   <span>
                     <span className="muted-text">LTP </span>
                     <span className="font-mono font-semibold">{money(selected?.ltp ?? null)}</span>
@@ -486,6 +1047,27 @@ export function VerdictDetailClient() {
                     <span className="muted-text">Called {shortDate(selected.generated_at)}</span>
                   )}
                 </div>
+
+                {/* Held quantity — only for stocks actually in the portfolio,
+                    from /api/admin/portfolio-positions (loadHeldPositions()). */}
+                {symbol && (selected?.isPortfolio || selected?.isHolding) && positions[symbol] && (
+                  <div className="text-[11.5px] mt-1.5">
+                    <span className="muted-text">Held </span>
+                    <span className="font-mono font-semibold">
+                      {positions[symbol].qty.toLocaleString("en-IN")} sh
+                    </span>
+                    {positions[symbol].avgCost != null && (
+                      <span className="muted-text ml-1">
+                        @ avg {money(positions[symbol].avgCost)}
+                      </span>
+                    )}
+                    {selected?.ltp != null && (
+                      <span className="font-mono ml-2">
+                        Value {money(positions[symbol].qty * selected.ltp)}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Map (price chart) */}
@@ -504,16 +1086,18 @@ export function VerdictDetailClient() {
                 <VerdictEmpty symbol={symbol} />
               )}
               {verdictState.kind === "ok" && verdictState.data != null && (
-                <VerdictPanel symbol={symbol} data={verdictState.data} />
+                <VerdictPanel symbol={symbol} data={verdictState.data} hideAccumulationBox />
               )}
             </>
           )}
         </div>
 
-        {/* ── News + filings, far right ────────────────────────────────── */}
+        {/* ── News, far right. Filings deliberately dropped per feedback —
+            this column is news-only now; /api/admin/stock-context still
+            returns filings too, just unused here. ────────────────────── */}
         <div className="rounded-md border hairline p-2 lg:sticky lg:top-3 lg:max-h-[calc(100vh-2rem)] overflow-y-auto">
           <div className="text-[11px] font-semibold uppercase tracking-wide mb-1.5">
-            {symbol ? `News & filings · ${symbol}` : "News & filings"}
+            {symbol ? `News · ${symbol}` : "News"}
           </div>
           {!symbol ? (
             <p className="muted-text text-[11px]">Pick a stock to see its feed.</p>
@@ -524,59 +1108,28 @@ export function VerdictDetailClient() {
               ))}
             </div>
           ) : contextState.kind === "error" ? (
-            <p className="muted-text text-[11px]">Could not load news/filings.</p>
+            <p className="muted-text text-[11px]">Could not load news.</p>
           ) : (
             <>
-              {contextState.news.length === 0 && contextState.filings.length === 0 && (
-                <p className="muted-text text-[11px]">Nothing on record for {symbol}.</p>
-              )}
-              {contextState.news.length > 0 && (
-                <div className="mb-3">
-                  <div className="muted-text text-[9.5px] uppercase tracking-wide mb-1">
-                    News ({contextState.news.length})
-                  </div>
-                  <ul className="space-y-1.5">
-                    {contextState.news.slice(0, 15).map((n, i) => (
-                      <li key={i} className="text-[11px] leading-tight">
-                        <a href={n.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
-                          {n.title}
-                        </a>
-                        <div className="muted-text text-[9.5px] mt-[1px]">
-                          {n.source} · {shortDate(n.published_at)}
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {contextState.news.length === 0 && (
-                <p className="muted-text text-[10px] mb-3">No news in the last 6 months.</p>
-              )}
-              <div>
-                <div className="muted-text text-[9.5px] uppercase tracking-wide mb-1">
-                  Filings ({contextState.filings.length})
-                </div>
-                {contextState.filings.length === 0 ? (
-                  <p className="muted-text text-[10px]">No exchange filings on record.</p>
-                ) : (
-                  <ul className="space-y-1.5">
-                    {contextState.filings.slice(0, 15).map((f, i) => (
-                      <li key={i} className="text-[11px] leading-tight">
-                        {f.pdf_url ? (
-                          <a href={f.pdf_url} target="_blank" rel="noopener noreferrer" className="hover:underline">
-                            {f.headline || f.title}
-                          </a>
-                        ) : (
-                          <span>{f.headline || f.title}</span>
-                        )}
-                        <div className="muted-text text-[9.5px] mt-[1px]">
-                          {f.category} · {shortDate(f.published_at)}
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
+              <div className="muted-text text-[9.5px] uppercase tracking-wide mb-1">
+                News ({contextState.news.length})
               </div>
+              {contextState.news.length === 0 ? (
+                <p className="muted-text text-[10px]">No news in the last 6 months.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {contextState.news.slice(0, 15).map((n, i) => (
+                    <li key={i} className="text-[13px] leading-snug">
+                      <a href={n.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
+                        {n.title}
+                      </a>
+                      <div className="muted-text text-[10.5px] mt-[1px]">
+                        {n.source} · {shortDate(n.published_at)}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </>
           )}
         </div>
@@ -589,5 +1142,19 @@ export function VerdictDetailClient() {
         )}
       </div>
     </div>
+  );
+}
+
+/** Disclosure chevron that rotates from ▶ (closed) to ▼ (open). Same shape as
+ *  the watchlist rail's — see WatchlistClient.tsx. */
+function Chevron({ open, small = false }: { open: boolean; small?: boolean }) {
+  return (
+    <span
+      aria-hidden
+      className={`inline-block muted-text transition-transform shrink-0 ${small ? "text-[8px]" : "text-[9px]"}`}
+      style={{ transform: open ? "rotate(90deg)" : "none" }}
+    >
+      ▶
+    </span>
   );
 }

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { VerdictData, VerdictRow, DriftRow, EvidenceValue, VerdictBucket } from "@/lib/verdictTypes";
-import { BUCKET_COLOR, STALE_DAYS, verdictBucket } from "@/lib/verdictTypes";
+import { BUCKET_COLOR, STALE_DAYS, verdictBucket, getWatchSubtype } from "@/lib/verdictTypes";
 
 /**
  * The admin-only Verdict tab.
@@ -563,21 +563,21 @@ function renderModelCard(item: { label: string; value: string }, idx: number) {
       className="rounded-md border border-slate-200/80 bg-white p-2.5 text-[12px] shadow-2xs hover:border-slate-300 transition-colors"
     >
       <div className="flex items-center justify-between gap-2 mb-1">
-        <span className="font-medium text-slate-500 text-[10.5px] uppercase tracking-wider">
+        <span className="font-semibold text-slate-700 text-[10.5px] uppercase tracking-wider">
           {item.label}
         </span>
         <span
-          className={`inline-flex items-center gap-1.5 text-[10px] font-normal px-2 py-0.5 rounded-full border ${badgeTheme}`}
+          className={`inline-flex items-center gap-1.5 text-[10px] font-medium px-2 py-0.5 rounded-full border ${badgeTheme}`}
         >
           <span className={`w-1.5 h-1.5 rounded-full ${dotColor} shrink-0`} />
           {analysis.badge}
         </span>
       </div>
-      <div className="font-mono text-[11.5px] font-normal text-slate-700 leading-snug">
+      <div className="font-mono text-[12px] font-semibold text-slate-900 leading-snug">
         {item.value}
       </div>
       {analysis.contextNote && (
-        <div className="text-[11px] text-slate-400 font-normal mt-1.5 leading-snug border-t border-slate-100 pt-1">
+        <div className="text-[11px] text-slate-600 font-normal mt-1.5 leading-snug border-t border-slate-100 pt-1">
           {analysis.contextNote}
         </div>
       )}
@@ -591,15 +591,23 @@ function VerdictContentBlock({
   latestAnnual,
   stock,
   shareholding,
+  hideAccumulationBox,
 }: {
   verdict: VerdictRow;
   ageDays: number;
   latestAnnual?: any;
   stock?: any;
   shareholding?: any;
+  /** Suppresses the "Institutional Target & Accumulation Framework" box.
+   *  Default false everywhere (stock page tab, watchlist sheet) — only the
+   *  admin verdict Detail page sets this, because that page already shows
+   *  target/buy-below/bear-floor in its own header box and the two were
+   *  rendering as visible duplicates on the same screen. */
+  hideAccumulationBox?: boolean;
 }) {
   const bucket = verdictBucket(verdict.verdict);
   const theme = LIGHT_THEME[bucket] || LIGHT_THEME.hold;
+  const watchSub = bucket === "watch" ? getWatchSubtype(verdict) : null;
   const { good, bad, params, decision, other, isTwoColumn } = parseVerdictPoints(verdict.points);
   const parsedParams = parseParameterItems(params);
 
@@ -636,8 +644,18 @@ function VerdictContentBlock({
           }}
         >
           <div>
-            <div className="text-[10px] font-medium uppercase tracking-wider mb-1 text-slate-500">
-              Verdict Headline
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <span className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
+                Verdict Headline
+              </span>
+              {watchSub && (
+                <span
+                  className={`text-[9.5px] font-mono font-medium px-2 py-0.5 rounded border ${watchSub.badgeClass}`}
+                  title={watchSub.description}
+                >
+                  Watch Category: {watchSub.label}
+                </span>
+              )}
             </div>
             <div className="text-[15px] font-medium tracking-tight leading-snug" style={{ color: theme.text }}>
               {verdict.verdict}
@@ -688,7 +706,7 @@ function VerdictContentBlock({
       </div>
 
       {/* Institutional Valuation & Accumulation Targets */}
-      {verdict.target_price != null && (
+      {!hideAccumulationBox && verdict.target_price != null && (
         <div
           className="mt-3.5 rounded-lg border p-4 shadow-2xs"
           style={{
@@ -842,10 +860,10 @@ function VerdictContentBlock({
           {/* 2ND SECTION: Institutional Quantitative Models */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <div className="text-[11px] font-medium uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
                 <span>2. Quantitative Institutional Models</span>
               </div>
-              <span className="text-[11px] text-slate-400 font-normal">
+              <span className="text-[11px] text-slate-600 font-medium">
                 {greenModels.length + redModels.length} models checked
               </span>
             </div>
@@ -1073,12 +1091,14 @@ export function VerdictPanel({
   latestAnnual,
   stock,
   shareholding,
+  hideAccumulationBox,
 }: {
   symbol: string;
   data: VerdictData;
   latestAnnual?: any;
   stock?: any;
   shareholding?: any;
+  hideAccumulationBox?: boolean;
 }) {
   const { current, history, drift, ageDays, dormant } = data;
   const movedCount = drift.filter((d) => d.moved).length;
@@ -1168,7 +1188,7 @@ export function VerdictPanel({
       )}
 
       {/* The Active Verdict View */}
-      <VerdictContentBlock verdict={selectedVerdict} ageDays={ageDays} latestAnnual={latestAnnual} stock={stock} shareholding={shareholding} />
+      <VerdictContentBlock verdict={selectedVerdict} ageDays={ageDays} latestAnnual={latestAnnual} stock={stock} shareholding={shareholding} hideAccumulationBox={hideAccumulationBox} />
 
       {/* Stored vs live */}
       <div className="rounded-lg border p-5"

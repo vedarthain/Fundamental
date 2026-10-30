@@ -241,3 +241,95 @@ export function verdictBucket(v: string): VerdictBucket {
   if (u.startsWith("WATCH") || u.startsWith("SPECULATIVE")) return "watch";
   return "hold";
 }
+
+export type WatchSubtypeKey =
+  | "near_entry"
+  | "cashflow"
+  | "roce"
+  | "pullback"
+  | "turnaround"
+  | "risk";
+
+export type WatchSubtypeInfo = {
+  key: WatchSubtypeKey;
+  label: string;
+  badge: string;
+  badgeClass: string;
+  description: string;
+};
+
+export function getWatchSubtype(item: {
+  verdict?: string | null;
+  thesis?: string | null;
+  ltp?: number | null;
+  buy_below?: number | null;
+  buyBelow?: number | null;
+}): WatchSubtypeInfo {
+  const bb = item.buyBelow ?? item.buy_below ?? null;
+  const isNearEntry =
+    item.ltp != null && bb != null && bb > 0 && item.ltp <= bb * 1.05;
+
+  const t = (item.thesis || item.verdict || "").toLowerCase();
+
+  if (isNearEntry) {
+    return {
+      key: "near_entry",
+      label: "Near Accumulate Zone",
+      badge: "Near Entry",
+      badgeClass: "bg-emerald-50 text-emerald-800 border-emerald-300",
+      description: "Trading near or below the institutional margin of safety entry ceiling.",
+    };
+  }
+  if (t.match(/(valuation|expensive|multiple|stretched|pullback|fairly priced)/)) {
+    return {
+      key: "pullback",
+      label: "Valuation Pullback",
+      badge: "Pullback",
+      badgeClass: "bg-amber-50 text-amber-800 border-amber-300",
+      description: "Sound business fundamentals; waiting for valuation multiples or price to pull back.",
+    };
+  }
+  if (t.match(/(cash|cfo|accrual|conversion|receivable|working capital)/)) {
+    return {
+      key: "cashflow",
+      label: "Cash Flow Proof",
+      badge: "Cash Flow",
+      badgeClass: "bg-blue-50 text-blue-800 border-blue-200",
+      description: "Profitable on paper, but waiting for operating cash flow to normalize against accounting net profit.",
+    };
+  }
+  if (t.match(/(capital efficiency|roce|return on capital|roe|capital return|asset sweat)/)) {
+    return {
+      key: "roce",
+      label: "Capital Efficiency",
+      badge: "Low ROCE",
+      badgeClass: "bg-purple-50 text-purple-800 border-purple-200",
+      description: "Scaling revenue, but return on capital is lagging industry cohort peers.",
+    };
+  }
+  if (t.match(/(turnaround|margin|profitability|stabiliz|margin expansion|operational)/)) {
+    return {
+      key: "turnaround",
+      label: "Margin Turnaround",
+      badge: "Turnaround",
+      badgeClass: "bg-teal-50 text-teal-800 border-teal-200",
+      description: "Cyclical or operational turnaround candidate; waiting for sustained margin stability.",
+    };
+  }
+  if (t.match(/(manipulation|forensic|beneish|debt|leverage|solvency|borrowing|promoter)/)) {
+    return {
+      key: "risk",
+      label: "Governance / Solvency",
+      badge: "Risk Flag",
+      badgeClass: "bg-rose-50 text-rose-800 border-rose-200",
+      description: "High leverage, Sloan accruals, or forensic flags; observe until audit clearance.",
+    };
+  }
+  return {
+    key: "turnaround",
+    label: "Operating Proof",
+    badge: "Operating",
+    badgeClass: "bg-slate-50 text-slate-700 border-slate-200",
+    description: "Mixed operating metrics; keep on watch until structural profitability stabilizes.",
+  };
+}

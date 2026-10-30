@@ -311,6 +311,7 @@ export type QueueEntry = {
   isHolding?: boolean;
   isPortfolio?: boolean;
   isWatchlist?: boolean;
+  isNifty500?: boolean;
 };
 
 export type ClusterQueueProgress = {
@@ -577,6 +578,21 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
     }
   }
 
+  // NOT app.universe.is_nifty500 — that boolean was seeded once and never
+  // maintained (0 rows true in prod as of 2026-10-30; §5's "seeded and never
+  // maintained" bug). app.index_constituent is the current, actively-loaded
+  // membership table (scripts/fetch-index-constituents.py), ~501 symbols for
+  // NIFTY500.
+  const nifty500Symbols = new Set<string>();
+  try {
+    const nRows = await sql<{ symbol: string }[]>`
+      SELECT symbol FROM app.index_constituent WHERE index_code = 'NIFTY500'
+    `;
+    for (const r of nRows) nifty500Symbols.add(r.symbol);
+  } catch {
+    // non-fatal
+  }
+
   const portfolioSymbols = new Set<string>();
   try {
     const pHoldings = await sql<{ symbol: string }[]>`
@@ -701,6 +717,7 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
         isHolding: portfolioSymbols.has(t.symbol),
         isPortfolio: portfolioSymbols.has(t.symbol),
         isWatchlist: watchlistSymbols.has(t.symbol),
+        isNifty500: nifty500Symbols.has(t.symbol),
       });
       counts.missing++;
       continue;
@@ -754,6 +771,7 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
       isHolding: portfolioSymbols.has(t.symbol),
       isPortfolio: portfolioSymbols.has(t.symbol),
       isWatchlist: watchlistSymbols.has(t.symbol),
+      isNifty500: nifty500Symbols.has(t.symbol),
     });
     counts[bucket]++;
   }
@@ -807,6 +825,7 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
       isHolding: portfolioSymbols.has(symbol),
       isPortfolio: portfolioSymbols.has(symbol),
       isWatchlist: watchlistSymbols.has(symbol),
+      isNifty500: nifty500Symbols.has(symbol),
     });
     counts.dormant++;
   }
