@@ -74,3 +74,37 @@ export function withinPingerWindow(d: Date = new Date()): boolean {
   const minOfHour = minutes % 60;
   return SLOTS.some(([lo, hi]) => minOfHour >= lo && minOfHour <= hi);
 }
+
+// ── Once-a-day "post-close" window, for the EOD signal crons ───────────────
+//
+// momentum-signals / trend-leaders / support-floor all key off the LATEST
+// golden bar (MAX(date)) and REPLACE that day's row on a same-day re-run — so
+// nothing breaks if the external pinger (cron-job.org) fires them more than
+// once. But nothing stopped it either: unlike withinPingerWindow() above,
+// these three had NO code-level gate at all, so their real Neon cost was
+// whatever cron-job.org's dashboard happened to be configured to (unverifiable
+// from this repo — see the audit that added this comment). This closes that
+// gap the same way intraday pricing already does: a narrow time band, checked
+// BEFORE any DB access, so an over-firing or misconfigured external schedule
+// costs nothing outside it.
+//
+// Window picked from refresh-ltp.yml's measured bhavcopy-to-golden completion
+// time (17:33–18:35 UTC, per web/src/app/api/cron/portfolio-snapshot/route.ts's
+// own comment) plus a 10-minute buffer, so these signals read the SAME day's
+// close rather than yesterday's. Checked in UTC, not IST, deliberately: an IST
+// conversion of 18:45–19:15 UTC rolls to 00:15–00:45 IST THE NEXT CALENDAR
+// DAY — exactly the rollover trap portfolio-snapshot's own comments already
+// warn about — so a weekday check done in shifted-IST would wrongly reject
+// Friday's post-close run. Staying in UTC for both the clock read and the
+// weekday check sidesteps that trap entirely.
+const SIGNAL_WINDOW_START_UTC_MIN = 18 * 60 + 45; // 18:45 UTC
+const SIGNAL_WINDOW_END_UTC_MIN = 19 * 60 + 15; // 19:15 UTC, 30-min band for jitter
+
+/** True only once a day, Mon–Fri, 18:45–19:15 UTC. Every other pinger fire
+ *  no-ops before any DB access. */
+export function withinDailySignalWindowUTC(d: Date = new Date()): boolean {
+  const dow = d.getUTCDay(); // 0 = Sunday … 6 = Saturday
+  if (dow === 0 || dow === 6) return false;
+  const mins = d.getUTCHours() * 60 + d.getUTCMinutes();
+  return mins >= SIGNAL_WINDOW_START_UTC_MIN && mins <= SIGNAL_WINDOW_END_UTC_MIN;
+}

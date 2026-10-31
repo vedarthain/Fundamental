@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "crypto";
 import { computeSupportFloor, persistSupportFloor, pruneSupportFloorHistory } from "@/lib/supportFloor";
+import { withinDailySignalWindowUTC } from "@/lib/marketHours";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -41,6 +42,13 @@ export async function POST(req: NextRequest) {
 async function run(req: NextRequest): Promise<NextResponse> {
   if (!authOk(req)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  // Cost guard: no-op before any DB access outside the once-daily post-close
+  // window. See marketHours.ts's withinDailySignalWindowUTC() doc comment —
+  // this cron had NO frequency gate before and could be fired by the external
+  // pinger as often as its dashboard schedule allowed.
+  if (!withinDailySignalWindowUTC()) {
+    return NextResponse.json({ ok: true, skipped: "outside daily signal window" });
   }
 
   const { snapDate, signals } = await computeSupportFloor();

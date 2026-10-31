@@ -466,6 +466,37 @@ export function VerdictDetailClient() {
     });
   }, []);
 
+  // Add-only variant for the auto-mark timer below — toggleInspected would
+  // flip an already-inspected stock back OFF if the 30s timer fired a second
+  // time (e.g. after a manual un-mark mid-dwell), which is not what "still
+  // reading this 30s later" should do.
+  const markInspected = useCallback((sym: string) => {
+    setInspected((prev) => {
+      if (prev.has(sym)) return prev;
+      const next = new Set(prev);
+      next.add(sym);
+      const list = [...next];
+      if (inspectedSignedInRef.current) {
+        putInspectedServer(list).catch(() => {});
+      } else {
+        writeInspectedLocal(list);
+      }
+      return next;
+    });
+  }, []);
+
+  // Auto-mark: a stock open for 30s uninterrupted counts as "actually looked
+  // at", not just clicked through on the way to another one. Timer restarts
+  // on every symbol switch; a stock left for under 30s before switching away
+  // never gets marked by this path (toggleInspected's explicit button still
+  // works at any time).
+  useEffect(() => {
+    if (!symbol) return;
+    const sym = symbol;
+    const t = setTimeout(() => markInspected(sym), 30_000);
+    return () => clearTimeout(t);
+  }, [symbol, markInspected]);
+
   const toggleMark = useCallback(() => {
     setMark((prev) => {
       const next = prev === symbol ? null : symbol;
@@ -1071,7 +1102,7 @@ export function VerdictDetailClient() {
                       aria-expanded={secOpen}
                     >
                       <Chevron open={secOpen} />
-                      <span className="truncate flex-1">{s.sector}</span>
+                      <span className="truncate flex-1 text-sky-500">{s.sector}</span>
                       <span className="muted-text tabular-nums text-[10px] shrink-0 ml-1">
                         {s.count}
                       </span>
@@ -1089,7 +1120,7 @@ export function VerdictDetailClient() {
                                 aria-expanded={indOpen}
                               >
                                 <Chevron open={indOpen} small />
-                                <span className="muted-text text-[10px] uppercase tracking-wide truncate flex-1">
+                                <span className="text-violet-400 text-[10px] uppercase tracking-wide truncate flex-1">
                                   {ind.industry}
                                 </span>
                                 <span className="muted-text tabular-nums text-[9.5px] shrink-0">
@@ -1112,6 +1143,13 @@ export function VerdictDetailClient() {
                                         <CheckCircle2 size={10} className="shrink-0 text-emerald-500" />
                                       )}
                                       <span className="truncate">{e.symbol}</span>
+                                    </span>
+                                    <span
+                                      className={`shrink-0 tabular-nums text-[10px] ${
+                                        symbol === e.symbol ? "text-white/70" : "muted-text"
+                                      }`}
+                                    >
+                                      {money(e.ltp)}
                                     </span>
                                     <span
                                       className={`shrink-0 px-1 rounded text-[9px] font-sans font-semibold tracking-wide ${
@@ -1155,7 +1193,9 @@ export function VerdictDetailClient() {
                   <span className="hidden sm:inline opacity-70 shrink-0">· use ← → keys</span>
                   {selected && (
                     <span className="truncate">
-                      {realSector(selected)} · {realIndustry(selected)}
+                      <span className="text-sky-500">{realSector(selected)}</span>
+                      <span className="opacity-60"> · </span>
+                      <span className="text-violet-400">{realIndustry(selected)}</span>
                     </span>
                   )}
                   {meta?.scores_snapshot_date && (
@@ -1302,9 +1342,10 @@ export function VerdictDetailClient() {
                     <span className="muted-text text-[10px] uppercase">{selected.confidence} confidence</span>
                   )}
                 </div>
-                <div className="muted-text text-[11px] mt-0.5">
-                  {selected ? realSector(selected) : "Unclassified"} ·{" "}
-                  {selected ? realIndustry(selected) : "Unclassified"}
+                <div className="text-[11px] mt-0.5">
+                  <span className="text-sky-500">{selected ? realSector(selected) : "Unclassified"}</span>
+                  <span className="muted-text opacity-60"> · </span>
+                  <span className="text-violet-400">{selected ? realIndustry(selected) : "Unclassified"}</span>
                 </div>
                 {/* LTP + target / buy-below / bear-floor / upside / called —
                     one line, one box: "the call" plus what the market is

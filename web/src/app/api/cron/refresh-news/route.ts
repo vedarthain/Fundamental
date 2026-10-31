@@ -45,6 +45,27 @@ function isWeekendIST(): boolean {
   return dow === 0 || dow === 6;
 }
 
+// Cost guard, same shape as keep-warm's withinActiveWindowIST() and
+// marketHours.ts's windows: cron-job.org fires this EVERY hour, 24/day on
+// weekdays ('0 * * * 1-5') — the external schedule can't be edited from this
+// repo, so the throttle has to live here, checked BEFORE the GitHub dispatch
+// (which is what actually wakes Neon downstream, via scripts/fetch-news.py).
+// Two restrictions, both in IST:
+//   1. Business-hours band 07:00–22:00 — outside it there's no fresh broadcast
+//      RSS to fetch anyway (markets shut, newsrooms quiet overnight).
+//   2. EVEN hours only within that band — approximates an every-2-hours
+//      cadence purely in code, since the pinger side is fixed at hourly.
+// Together: ~8 dispatches/weekday instead of 24, each a GitHub Actions run
+// that wakes Neon — roughly a 3x cut on this cron's contribution.
+const NEWS_START_HOUR_IST = 7; // inclusive
+const NEWS_END_HOUR_IST = 22; // exclusive
+function withinNewsWindowIST(): boolean {
+  const istMs = Date.now() + 5.5 * 60 * 60 * 1000;
+  const hour = new Date(istMs).getUTCHours();
+  if (hour < NEWS_START_HOUR_IST || hour >= NEWS_END_HOUR_IST) return false;
+  return hour % 2 === 0;
+}
+
 function authOk(req: NextRequest): boolean {
   const expected = process.env.INTRADAY_CRON_TOKEN || process.env.REVALIDATE_TOKEN;
   if (!expected) return false;
@@ -84,14 +105,18 @@ async function trigger(): Promise<NextResponse> {
 }
 
 // 200 (not an error) so cron-job.org records a healthy ping and doesn't retry
-// or alert; `skipped` makes the weekend no-op visible in its response log.
+// or alert; `skipped` makes the no-op visible in its response log either way.
 function weekendSkip(): NextResponse {
   return NextResponse.json({ ok: true, skipped: "weekend", dispatched: null });
+}
+function offWindowSkip(): NextResponse {
+  return NextResponse.json({ ok: true, skipped: "outside news window", dispatched: null });
 }
 
 export async function POST(req: NextRequest) {
   if (!authOk(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   if (isWeekendIST()) return weekendSkip();
+  if (!withinNewsWindowIST()) return offWindowSkip();
   return trigger();
 }
 
@@ -99,5 +124,6 @@ export async function POST(req: NextRequest) {
 export async function GET(req: NextRequest) {
   if (!authOk(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   if (isWeekendIST()) return weekendSkip();
+  if (!withinNewsWindowIST()) return offWindowSkip();
   return trigger();
 }
