@@ -52,6 +52,11 @@ const KEY_LIMITS: Record<string, { maxItems: number; maxBytes: number }> = {
   "er:graphSectorReviews:v1": { maxItems: 64, maxBytes: 16 * 1024 },
   // 110 themes today. 300 leaves room to grow without another migration.
   "er:themeReviews:v1": { maxItems: 300, maxBytes: 48 * 1024 },
+  // "Inspected" marks on the admin verdict detail page — one entry per
+  // symbol an admin has opened and checked off. Was localStorage-only (per
+  // browser, per machine); moved here so it follows the admin across
+  // devices. Universe is ~3,200 symbols; cap set above that with headroom.
+  "er:verdictInspected:v1": { maxItems: 3500, maxBytes: 256 * 1024 },
 };
 
 const ALLOWED_KEYS = new Set(Object.keys(KEY_LIMITS));

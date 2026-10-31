@@ -493,13 +493,28 @@ def calculate_stock_valuation(pack: dict[str, Any] | str, item_dict: Optional[di
 
         bull_target = round(base_target * 1.20, 2)
 
+        # Hierarchy: Bear Floor < Buy Below <= Base Target (strict margin of safety)
         hist_floor = m_hist.get("floor_price") if m_hist else None
-        if hist_floor and 0 < hist_floor < current_price:
-            bear_floor = round(hist_floor, 2)
-        else:
-            bear_floor = round(min(base_target * 0.75, current_price * 0.85), 2)
+        candidate_floor = hist_floor if (hist_floor and 0 < hist_floor < current_price) else (current_price * 0.80)
 
-        buy_below = round(min(current_price * 0.98, (bear_floor + current_price) / 2.0 * 1.05), 2)
+        # Bear floor cannot exceed 75% of fair target or 85% of current price
+        bear_floor = round(min(candidate_floor, base_target * 0.75, current_price * 0.85), 2)
+
+        # Buy Below represents the accumulation boundary offering a Margin of Safety.
+        # It must never be higher than base_target * 0.90 (never buy at or above intrinsic target price).
+        if current_price < base_target:
+            # Undervalued: accumulate on minor pullback from current price, well below target
+            buy_below = round(min(current_price * 0.98, base_target * 0.90), 2)
+        else:
+            # Overvalued: stock is trading above fair value; accumulate ONLY after it corrects below fair target
+            mid_val = (bear_floor + base_target) / 2.0
+            buy_below = round(min(base_target * 0.90, max(bear_floor * 1.05, mid_val)), 2)
+
+        # Strict monotonicity enforcement
+        if buy_below <= bear_floor:
+            buy_below = round(bear_floor * 1.08, 2)
+        if buy_below > base_target * 0.95:
+            buy_below = round(base_target * 0.90, 2)
 
     upside_pct = round(((base_target - current_price) / current_price) * 100.0, 1)
     downside_risk = max(1.0, current_price - bear_floor)

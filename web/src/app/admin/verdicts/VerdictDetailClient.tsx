@@ -37,16 +37,22 @@
  *     IntradayPriceBadge / tierLabel; this route just scopes the same source
  *     tables to one symbol instead of the whole universe.
  *
- * "Inspected" and the bookmark are admin-page-local state, kept in
- * localStorage under their own keys (not scannerBookmarks / the watchlist's
- * marks, which are user-facing and sometimes server-synced — mixing an admin
- * tool's scratch state into those would leak into a real user's watchlist UI).
+ * "Inspected" is dual-mode, same pattern as lib/scannerBookmarks.ts: signed-in
+ * admins read/write app.user_scanner_bookmark (via /api/scanner/bookmarks,
+ * under its own "er:verdictInspected:v1" key — not the watchlist's own marks,
+ * which are user-facing; mixing an admin tool's scratch state into those would
+ * leak into a real user's watchlist UI). Signed-out admins (the legacy
+ * admin-token cookie path, which has no session.userId) fall back to
+ * localStorage, same as before this moved server-side. The bookmark (single
+ * "jump back here" symbol) is still admin-page-local state in localStorage —
+ * lower value to carry cross-device, left as is.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Home, Bookmark, BookmarkCheck, CheckCircle2, Circle } from "lucide-react";
 import { PriceChart } from "@/components/PriceChart";
 import type { TradeMark } from "@/app/tools/scanner/CandleChart";
 import { VerdictPanel, VerdictEmpty } from "@/components/VerdictPanel";
+import { CompanyProfile } from "@/components/CompanyProfile";
 import CapTierBadge, { type CapCategory } from "@/components/CapTierBadge";
 import { IntradayPriceBadge } from "@/components/IntradayPriceBadge";
 import { tierLabel } from "@/lib/score";
@@ -185,6 +191,56 @@ function readInspected(): Set<string> {
   }
 }
 
+function writeInspectedLocal(symbols: string[]) {
+  try {
+    localStorage.setItem(INSPECTED_KEY, JSON.stringify(symbols));
+  } catch {
+    // localStorage can be unavailable (private mode, quota) — inspected
+    // marks are a convenience, not data, so fail silently.
+  }
+}
+
+// ── Server-side mode for "inspected" ─────────────────────────────────────
+//
+// Was localStorage-only, so a mark made on one browser/machine was invisible
+// on another for the same admin. Now dual-mode, same pattern as
+// lib/scannerBookmarks.ts's useBookmarks: signed-in admins read/write
+// app.user_scanner_bookmark (via the existing /api/scanner/bookmarks route,
+// under a new "er:verdictInspected:v1" key — see that route's KEY_LIMITS);
+// signed out (e.g. the legacy admin-token cookie path, which has no
+// session.userId) falls back to the original localStorage behavior.
+const INSPECTED_SERVER_KEY = "er:verdictInspected:v1";
+
+async function fetchInspectedServer(): Promise<{ signedIn: boolean; symbols: string[] }> {
+  try {
+    const r = await fetch(`/api/scanner/bookmarks?key=${encodeURIComponent(INSPECTED_SERVER_KEY)}`, {
+      credentials: "include",
+    });
+    if (!r.ok) return { signedIn: false, symbols: [] };
+    const d = (await r.json()) as { signedIn?: boolean; items?: { id: string }[] };
+    return {
+      signedIn: !!d.signedIn,
+      symbols: Array.isArray(d.items) ? d.items.map((it) => it.id) : [],
+    };
+  } catch {
+    return { signedIn: false, symbols: [] };
+  }
+}
+
+async function putInspectedServer(symbols: string[]): Promise<void> {
+  const items = symbols.map((s) => ({ id: s, label: s }));
+  try {
+    await fetch(`/api/scanner/bookmarks`, {
+      method: "PUT",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: INSPECTED_SERVER_KEY, items }),
+    });
+  } catch {
+    // Best-effort — the UI already reflects the toggle locally.
+  }
+}
+
 function readBookmark(): string | null {
   if (typeof window === "undefined") return null;
   try {
@@ -222,7 +278,46 @@ export function VerdictDetailClient() {
   const [watchFilter, setWatchFilter] = useState<WatchFilterType>("all");
   const [watchMenuOpen, setWatchMenuOpen] = useState(false);
   const [inspected, setInspected] = useState<Set<string>>(() => readInspected());
+  // Which store toggleInspected writes to. Decided once by the hydration
+  // fetch below — a ref, not state, since it's an implementation detail of
+  // persistence and shouldn't itself trigger a re-render.
+  const inspectedSignedInRef = useRef(false);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const local = readInspected();
+      const server = await fetchInspectedServer();
+      if (!alive) return;
+      if (server.signedIn) {
+        inspectedSignedInRef.current = true;
+        // One-time carry-up: if the server has nothing yet but this browser
+        // already has marks, push them so the admin's existing progress
+        // survives the move to server storage.
+        if (server.symbols.length === 0 && local.size > 0) {
+          const merged = [...local];
+          putInspectedServer(merged).catch(() => {});
+          setInspected(new Set(merged));
+        } else {
+          setInspected(new Set(server.symbols));
+        }
+      } else {
+        inspectedSignedInRef.current = false;
+        setInspected(local);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
   const [mark, setMark] = useState<string | null>(() => readBookmark());
+  // "About" company-profile panel (same card the watchlist's ⓘ button opens,
+  // via the shared src/components/CompanyProfile.tsx). Closed by default on
+  // every symbol switch so it doesn't carry one stock's open panel onto the
+  // next, unrelated one.
+  const [profileOpen, setProfileOpen] = useState(false);
+  useEffect(() => {
+    setProfileOpen(false);
+  }, [symbol]);
 
   const [verdictState, setVerdictState] = useState<
     { kind: "idle" } | { kind: "loading" } | { kind: "ok"; data: VerdictData | null } | { kind: "error"; msg: string }
@@ -361,11 +456,11 @@ export function VerdictDetailClient() {
       const next = new Set(prev);
       if (next.has(sym)) next.delete(sym);
       else next.add(sym);
-      try {
-        localStorage.setItem(INSPECTED_KEY, JSON.stringify([...next]));
-      } catch {
-        // localStorage can be unavailable (private mode, quota) — inspected
-        // marks are a convenience, not data, so fail silently.
+      const list = [...next];
+      if (inspectedSignedInRef.current) {
+        putInspectedServer(list).catch(() => {});
+      } else {
+        writeInspectedLocal(list);
       }
       return next;
     });
@@ -1147,6 +1242,17 @@ export function VerdictDetailClient() {
                   {selected?.company_name && (
                     <span className="muted-text text-[12px]">{selected.company_name}</span>
                   )}
+                  {symbol && (
+                    <button
+                      type="button"
+                      onClick={() => setProfileOpen((o) => !o)}
+                      className="text-[11px] leading-none rounded-full border hairline w-4 h-4 flex items-center justify-center muted-text hover:text-[var(--color-ink)]"
+                      title={profileOpen ? "Hide company information" : "About this company"}
+                      aria-label="Toggle company information"
+                    >
+                      ⓘ
+                    </button>
+                  )}
                   {selected?.action && (
                     <span className={`px-1.5 py-[1px] rounded text-[10px] font-semibold ${actionClass(selected.action)}`}>
                       {selected.action}
@@ -1280,6 +1386,12 @@ export function VerdictDetailClient() {
                   </div>
                 )}
               </div>
+
+              {profileOpen && symbol && (
+                <div className="mb-3">
+                  <CompanyProfile symbol={symbol} onClose={() => setProfileOpen(false)} />
+                </div>
+              )}
 
               {/* Map (price chart) */}
               <div className="rounded-md border hairline overflow-hidden mb-3">
