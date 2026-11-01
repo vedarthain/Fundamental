@@ -59,35 +59,14 @@ function authOk(req: NextRequest): boolean {
 }
 
 async function warm(req: NextRequest): Promise<NextResponse> {
-  // Outside 08:00–22:00 IST: skip the fan-out entirely (no page warming, no cost
-  // beyond this one trivial invocation). The app isn't used overnight.
-  if (!withinActiveWindowIST()) {
-    return NextResponse.json({ ok: true, skipped: "outside 08:00-22:00 IST" });
-  }
-  // Warm the deployment that received this ping (prod in practice). Same-origin
-  // fetches keep us on the right region's instances.
-  const origin = req.nextUrl.origin;
-  const t0 = Date.now();
-  const results = await Promise.allSettled(
-    WARM_PATHS.map(async (p) => {
-      const started = Date.now();
-      // No cookies, no cache — a clean signed-out boot of the target function.
-      const res = await fetch(`${origin}${p}`, {
-        headers: { "user-agent": "keep-warm" },
-        cache: "no-store",
-        redirect: "manual",
-      });
-      // Drain the body so the request fully completes (function stays warm).
-      await res.arrayBuffer().catch(() => undefined);
-      return { path: p, status: res.status, ms: Date.now() - started };
-    }),
-  );
-  const warmed = results.map((r, i) =>
-    r.status === "fulfilled"
-      ? r.value
-      : { path: WARM_PATHS[i], status: 0, error: String(r.reason) },
-  );
-  return NextResponse.json({ ok: true, ms: Date.now() - t0, warmed });
+  // RETIRED: Keep-warm previously fetched 4 heavy serverless pages every 5 minutes,
+  // preventing Neon PostgreSQL from ever auto-suspending and driving CU-hour billing
+  // to 24/7 run rates. Disabled to allow Neon to scale to zero when idle.
+  return NextResponse.json({
+    ok: true,
+    disabled: true,
+    message: "Keep-warm retired to prevent Neon compute billing overage.",
+  });
 }
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
