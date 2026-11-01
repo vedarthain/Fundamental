@@ -585,6 +585,104 @@ function renderModelCard(item: { label: string; value: string }, idx: number) {
   );
 }
 
+type GrowthEngineInfo = {
+  title: string;
+  badge: string;
+  badgeColor: string;
+  icon: string;
+  targetCagr: string;
+  sizing: string;
+  sipRole: string;
+  horizon: string;
+  description: string;
+};
+
+function getGrowthEngineCategory(
+  bucket: VerdictBucket,
+  verdict: VerdictRow,
+  stock?: any
+): GrowthEngineInfo {
+  const ev = (verdict.evidence || {}) as Record<string, any>;
+  const mcap = String(stock?.market_cap_category || stock?.mcap_category || "").toLowerCase();
+  const sector = String(stock?.sector || "").toLowerCase();
+
+  let rawRoce = Number(ev.roce_3y ?? ev.roce ?? 0);
+  if (rawRoce > 0 && rawRoce <= 1.0) rawRoce *= 100.0;
+  const rawPe = Number(ev.pe_ttm ?? ev.pe ?? 25.0);
+
+  if (bucket === "watch" || bucket === "sell") {
+    return {
+      title: "Capital Preservation / Sidelines",
+      badge: "Sidelines (0% Allocation)",
+      badgeColor: "bg-amber-50 text-amber-800 border-amber-200",
+      icon: "⚠️",
+      targetCagr: "Negative / Downside Risk",
+      sizing: "0% (Keep on sidelines)",
+      sipRole: "Do not allocate monthly SIP",
+      horizon: "Wait for trigger / reset",
+      description: "Excessive valuation froth, weak capital returns, or forensic concerns. Capital preservation takes precedence over return chasing.",
+    };
+  }
+
+  // High Growth Mid-Cap Compounder (20-25%+ target)
+  if ((mcap === "mid_cap" || mcap === "small_cap") && rawRoce >= 18.0) {
+    return {
+      title: "High-Growth Alpha Compounder",
+      badge: "Alpha Engine (20–25%+ Target)",
+      badgeColor: "bg-purple-50 text-purple-700 border-purple-200",
+      icon: "🚀",
+      targetCagr: "20% – 25%+ CAGR",
+      sizing: "8% – 10% max allocation",
+      sipRole: "₹10,000/mo (Alpha Tranche)",
+      horizon: "3 – 5 Years (Multi-Year)",
+      description: "Fast-growing sector leader compounding profits at 20%+ with superior return on capital (ROCE > 18%). Primary driver of portfolio alpha.",
+    };
+  }
+
+  // Scalable Secular Monopoly (14-18% target)
+  if (mcap === "large_cap" || sector.includes("financial") || sector.includes("technology") || sector.includes("telecom")) {
+    return {
+      title: "Scalable Secular Compounder",
+      badge: "Core Foundation (14–18% Target)",
+      badgeColor: "bg-blue-50 text-blue-700 border-blue-200",
+      icon: "🏛️",
+      targetCagr: "14% – 18% CAGR",
+      sizing: "10% – 12% max allocation",
+      sipRole: "₹10,000/mo (Core Anchor)",
+      horizon: "5+ Years (Long-Term)",
+      description: "Market-dominating giant with deep competitive moats, pricing power, and institutional sponsorship. Provides bedrock stability and low drawdowns.",
+    };
+  }
+
+  // Defensive Cash Flow Fortress (12-15% target)
+  if (sector.includes("fmcg") || sector.includes("consumer") || sector.includes("power") || sector.includes("oil") || rawPe < 18.0) {
+    return {
+      title: "Defensive Cash Flow & Dividend Fortress",
+      badge: "Defensive Anchor (12–15% Target)",
+      badgeColor: "bg-emerald-50 text-emerald-700 border-emerald-200",
+      icon: "🛡️",
+      targetCagr: "12% – 15% CAGR",
+      sizing: "6% – 8% max allocation",
+      sipRole: "₹10,000/mo (Defensive Tranche)",
+      horizon: "3+ Years",
+      description: "High cash conversion, steady dividend payouts, and recession-resilient earnings. Acts as a portfolio stabilizer during market volatility.",
+    };
+  }
+
+  // Default: Emerging Niche Champion
+  return {
+    title: "Emerging Niche Champion",
+    badge: "Niche Growth (18–22% Target)",
+    badgeColor: "bg-teal-50 text-teal-700 border-teal-200",
+    icon: "⚡",
+    targetCagr: "18% – 22% CAGR",
+    sizing: "6% – 8% max allocation",
+    sipRole: "₹10,000/mo (Growth Tranche)",
+    horizon: "3 – 5 Years",
+    description: "Specialized niche operator expanding capacity and taking market share in structural secular tailwinds.",
+  };
+}
+
 function VerdictContentBlock({
   verdict,
   ageDays,
@@ -610,6 +708,7 @@ function VerdictContentBlock({
   const watchSub = bucket === "watch" ? getWatchSubtype(verdict) : null;
   const { good, bad, params, decision, other, isTwoColumn } = parseVerdictPoints(verdict.points);
   const parsedParams = parseParameterItems(params);
+  const growthEngine = getGrowthEngineCategory(bucket, verdict, stock);
 
   // Three sub-tabs instead of one long stacked scroll — headline/decision/
   // targets, the fundamental good-vs-bad review, and the quant model review.
@@ -989,6 +1088,49 @@ function VerdictContentBlock({
                 <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded bg-slate-200/80 text-slate-700 border border-slate-300/60 uppercase">
                   Action: {bucket.toUpperCase()}
                 </span>
+              </div>
+
+              {/* Growth Engine Role & Sizing Banner */}
+              <div className="rounded-lg border border-slate-200/90 bg-gradient-to-r from-slate-50 via-white to-slate-50 p-4 shadow-2xs">
+                <div className="flex items-center justify-between flex-wrap gap-2 pb-2.5 mb-3 border-b border-slate-200/70">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[18px]">{growthEngine.icon}</span>
+                    <div>
+                      <div className="text-[10px] font-semibold tracking-wider uppercase text-slate-500">
+                        Growth Engine Category &amp; Portfolio Role
+                      </div>
+                      <div className="text-[14px] font-bold text-slate-900 mt-0.5">
+                        {growthEngine.title}
+                      </div>
+                    </div>
+                  </div>
+                  <span className={`text-[10.5px] font-mono font-medium px-2.5 py-1 rounded border ${growthEngine.badgeColor}`}>
+                    {growthEngine.badge}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  <div className="rounded bg-white border border-slate-200/80 p-2">
+                    <div className="text-[9.5px] font-medium uppercase text-slate-400">Target Return Profile</div>
+                    <div className="text-[13px] font-mono font-bold text-slate-800 mt-0.5">{growthEngine.targetCagr}</div>
+                  </div>
+                  <div className="rounded bg-white border border-slate-200/80 p-2">
+                    <div className="text-[9.5px] font-medium uppercase text-slate-400">Max Portfolio Sizing</div>
+                    <div className="text-[13px] font-mono font-bold text-slate-800 mt-0.5">{growthEngine.sizing}</div>
+                  </div>
+                  <div className="rounded bg-white border border-slate-200/80 p-2">
+                    <div className="text-[9.5px] font-medium uppercase text-slate-400">₹1L/mo SIP Role</div>
+                    <div className="text-[13px] font-mono font-bold text-indigo-700 mt-0.5">{growthEngine.sipRole}</div>
+                  </div>
+                  <div className="rounded bg-white border border-slate-200/80 p-2">
+                    <div className="text-[9.5px] font-medium uppercase text-slate-400">Suggested Horizon</div>
+                    <div className="text-[13px] font-mono font-bold text-slate-800 mt-0.5">{growthEngine.horizon}</div>
+                  </div>
+                </div>
+
+                <p className="text-[11.5px] text-slate-600 mt-2.5 leading-relaxed">
+                  {growthEngine.description}
+                </p>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
