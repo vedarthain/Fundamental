@@ -773,20 +773,41 @@ export function VerdictDetailClient() {
   // and for bookmarkHydrated so a signed-in admin's server bookmark has had
   // a chance to load before flatOrder[0] gets picked by default — otherwise
   // that race always loses to the default on a fresh page load.
+  //
+  // flatOrder is filtered by the CURRENT scope, which defaults to
+  // "watchlist" — a bookmarked stock that isn't on the watchlist would never
+  // be in flatOrder, so the fallback to flatOrder[0] would fire every time
+  // and the bookmark would look broken even though it saved correctly. Widen
+  // to the unfiltered "all" scope once, on first load only, before giving up
+  // on the bookmark — triedWidenRef stops it from fighting a scope the user
+  // picks by hand afterwards.
+  //
+  // prevScopeRef is declared above the scope-switch effect below (rather than
+  // alongside it) so this effect can pre-sync it the moment it calls
+  // setScope("all") — otherwise that other effect sees the same scope change
+  // one render later, decides "user switched scope", and overwrites our
+  // bookmark-chosen symbol with flatOrder[0] right after we set it.
+  const prevScopeRef = useRef(scope);
+  const prevClusterRef = useRef(selectedCluster);
+  const triedWidenForMarkRef = useRef(false);
   useEffect(() => {
     if (symbol) return;
     if (!mapsReady) return;
     if (!bookmarkHydrated) return;
     if (flatOrder.length === 0) return;
+    if (mark && !flatOrder.includes(mark) && scope !== "all" && !triedWidenForMarkRef.current) {
+      triedWidenForMarkRef.current = true;
+      prevScopeRef.current = "all";
+      setScope("all");
+      return;
+    }
     setSymbol(mark && flatOrder.includes(mark) ? mark : flatOrder[0]);
-  }, [symbol, mapsReady, bookmarkHydrated, mark, flatOrder]);
+  }, [symbol, mapsReady, bookmarkHydrated, mark, flatOrder, scope]);
 
   // Switching scope (e.g. clicking "Nifty 500") or picking a cluster from the
   // dropdown jumps to the new view's first stock in tree order, same rule as
   // the initial pin above — selecting a view should show its own first
   // stock, not whatever was selected in the previous view.
-  const prevScopeRef = useRef(scope);
-  const prevClusterRef = useRef(selectedCluster);
   useEffect(() => {
     const scopeChanged = prevScopeRef.current !== scope;
     const clusterChanged = prevClusterRef.current !== selectedCluster;
