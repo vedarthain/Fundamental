@@ -538,16 +538,17 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
   }[] = [];
   try {
     vrows = await sql`
-      SELECT symbol, generated_at, verdict, confidence, evidence,
-             price_asof, anchor_price::float AS anchor_price,
-             target_price::float AS target_price,
-             fair_value::float AS fair_value,
-             buy_below::float AS buy_below,
-             bear_floor::float AS bear_floor,
-             upside_pct::float AS upside_pct,
-             valuation_method
-        FROM app.stock_verdict
-       ORDER BY generated_at DESC
+      SELECT v.symbol, v.generated_at, v.verdict, v.confidence, v.evidence,
+             v.price_asof, v.anchor_price::float AS anchor_price,
+             v.target_price::float AS target_price,
+             v.fair_value::float AS fair_value,
+             v.buy_below::float AS buy_below,
+             v.bear_floor::float AS bear_floor,
+             v.upside_pct::float AS upside_pct,
+             v.valuation_method
+        FROM app.stock_verdict v
+        JOIN app.universe u ON u.symbol = v.symbol AND u.is_active
+       ORDER BY v.generated_at DESC
     `;
   } catch {
     return { ...empty, trackedCount: tracked.length };
