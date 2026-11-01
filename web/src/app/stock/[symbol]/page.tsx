@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import type { Metadata } from "next";
 import { sql, golden } from "@/lib/db";
 import { cleanStockNews } from "@/lib/newsCluster";
@@ -67,6 +67,63 @@ function classificationLabel(sector: string | null, industry: string | null): st
 /** Industry name for prose, or a neutral stand-in when unclustered. */
 function industryLabel(industry: string | null): string {
   return industry || "its peer group";
+}
+
+/** Known historical NSE symbol renames. Maps OLD -> NEW canonical symbol. */
+const KNOWN_TICKER_RENAMES: Record<string, string> = {
+  AMIRCHAND: "AEROPLANE",
+  ICICIPRULI: "ICICILIFE",
+  GUJGASLTD: "GUJENERGY",
+  MIRCELECTR: "ONIDA",
+  SASTASUNDR: "HEALTHX",
+  ASHIKA: "ASHIKAG",
+  LYPSAGEMS: "AURUS",
+  SILLYMONKS: "CRESTO",
+  VISASTEEL: "VISACHROME",
+  GFSTEELS: "TIKONA",
+  HEG: "HEGAM",
+  SANGINITA: "AGASTYAEN",
+  LTI: "LTM",
+  LTIM: "LTM",
+};
+
+/**
+ * Check if a symbol was renamed to an active ticker on NSE, either via the
+ * known dictionary or by dynamic ISIN match in app.universe.
+ */
+async function findActiveRename(symbol: string): Promise<string | null> {
+  const upper = symbol.toUpperCase();
+  if (KNOWN_TICKER_RENAMES[upper]) return KNOWN_TICKER_RENAMES[upper];
+
+  // Dynamic ISIN lookup: check if an inactive ticker shares an ISIN with an active one
+  const rows = await sql<{ symbol: string }[]>`
+    SELECT new_u.symbol
+    FROM app.universe old_u
+    JOIN app.universe new_u
+      ON old_u.isin = new_u.isin
+     AND new_u.is_active
+     AND new_u.symbol != old_u.symbol
+    WHERE old_u.symbol = ${upper}
+    LIMIT 1
+  `.catch(() => []);
+  return rows[0]?.symbol ?? null;
+}
+
+/**
+ * Format price fetch timestamp: shows "HH:MM IST" if today, or "D Mon, HH:MM IST"
+ * if fetched on a prior date, preventing confusion over stale prices.
+ */
+function formatPriceFetchedAt(isoString: string): string {
+  const d = new Date(isoString);
+  const now = new Date();
+  const dDay = new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric" }).format(d);
+  const nowDay = new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric" }).format(now);
+  const timeStr = new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false }).format(d);
+  if (dDay === nowDay) {
+    return `${timeStr} IST`;
+  }
+  const dateShort = new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short" }).format(d);
+  return `${dateShort}, ${timeStr} IST`;
 }
 
 type ShareholdingRow = {
@@ -172,7 +229,9 @@ export async function generateMetadata(
   { params }: { params: Promise<{ symbol: string }> },
 ): Promise<Metadata> {
   const { symbol } = await params;
-  const upper = decodeSymbolParam(symbol).toUpperCase();
+  const rawUpper = decodeSymbolParam(symbol).toUpperCase();
+  const renamedTo = await findActiveRename(rawUpper);
+  const upper = renamedTo || rawUpper;
   const rows = await sql<{
     company_name: string; industry_name: string | null; sector_name: string | null;
     listing_date: string | null; first_bar_date: string | null; years_of_data: number | null;
@@ -619,6 +678,10 @@ export default async function StockPage({
 }) {
   const { symbol: rawSymbol } = await params;
   const symbol = decodeSymbolParam(rawSymbol);
+  const renamedTo = await findActiveRename(symbol);
+  if (renamedTo && renamedTo !== symbol.toUpperCase()) {
+    redirect(`/stock/${renamedTo}`);
+  }
   const [data, persistence, session, isAdmin] = await Promise.all([
     loadStock(symbol),
     loadPersistenceForSymbol(symbol),
@@ -864,10 +927,7 @@ export default async function StockPage({
                     style={{ background: "color-mix(in srgb, var(--color-muted) 10%, transparent)", color: "var(--color-muted)" }}
                     title="Last time the intraday price pinger updated this stock"
                   >
-                    {new Intl.DateTimeFormat("en-IN", {
-                      timeZone: "Asia/Kolkata",
-                      hour: "2-digit", minute: "2-digit", hour12: false,
-                    }).format(new Date(stock.price_fetched_at))} IST
+                    {formatPriceFetchedAt(stock.price_fetched_at)}
                   </span>
                 )}
               </>
