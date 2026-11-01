@@ -348,75 +348,95 @@ const VERDICT_STORAGE_KEY_SYMBOL = "er_admin_verdict_symbol";
 const VERDICT_STORAGE_KEY_CLUSTER = "er_admin_verdict_cluster";
 const VERDICT_STORAGE_KEY_WATCH = "er_admin_verdict_watch";
 
-export function VerdictDetailClient() {
+export function VerdictDetailClient({
+  initialParams,
+}: {
+  initialParams?: {
+    scope?: string;
+    action?: string;
+    symbol?: string;
+    cluster?: string;
+    watch?: string;
+  };
+} = {}) {
+  const initScope: Scope =
+    initialParams?.scope && ["nifty500", "all", "watchlist", "portfolio", "archived", "inspected"].includes(initialParams.scope)
+      ? (initialParams.scope as Scope)
+      : "watchlist";
+
+  const initAction: ActionFilter =
+    initialParams?.action && ["buy", "accumulate", "hold", "watch", "avoid"].includes(initialParams.action)
+      ? (initialParams.action as ActionFilter)
+      : null;
+
+  const initSymbol = initialParams?.symbol ? initialParams.symbol.toUpperCase() : null;
+  const initCluster = initialParams?.cluster ?? null;
+  const initWatch: WatchFilterType = (initialParams?.watch as WatchFilterType) ?? "all";
+
   const [queueState, setQueueState] = useState<
     { kind: "loading" } | { kind: "ok"; q: VerdictQueue } | { kind: "error"; msg: string }
   >({ kind: "loading" });
-  const [symbol, setSymbol] = useState<string | null>(null);
+  const [symbol, setSymbol] = useState<string | null>(initSymbol);
   const [treeSearch, setTreeSearch] = useState("");
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
-  const [scope, setScope] = useState<Scope>("watchlist");
-  const [actionFilter, setActionFilter] = useState<ActionFilter>(null);
+  const [scope, setScope] = useState<Scope>(initScope);
+  const [actionFilter, setActionFilter] = useState<ActionFilter>(initAction);
   const [reviewFilter, setReviewFilter] = useState<"pending" | "due" | "changed" | null>(null);
-  const [selectedCluster, setSelectedCluster] = useState<string | null>(null);
+  const [selectedCluster, setSelectedCluster] = useState<string | null>(initCluster);
   const [clusterMenuOpen, setClusterMenuOpen] = useState(false);
   const [clusterMenuSearch, setClusterMenuSearch] = useState("");
-  const [watchFilter, setWatchFilter] = useState<WatchFilterType>("all");
+  const [watchFilter, setWatchFilter] = useState<WatchFilterType>(initWatch);
   const [watchMenuOpen, setWatchMenuOpen] = useState(false);
 
   // Persistence refs to preserve view across Cmd+R / page refreshes
-  const initialTargetSymbolRef = useRef<string | null>(null);
-  const didHydrateUrlRef = useRef(false);
-  const prevScopeRef = useRef<Scope>("watchlist");
-  const prevClusterRef = useRef<string | null>(null);
-  const prevActionFilterRef = useRef<ActionFilter>(null);
+  const initialTargetSymbolRef = useRef<string | null>(initSymbol);
+  const isFirstRenderRef = useRef(true);
+  const prevScopeRef = useRef<Scope>(initScope);
+  const prevClusterRef = useRef<string | null>(initCluster);
+  const prevActionFilterRef = useRef<ActionFilter>(initAction);
 
-  // Hydrate filters & symbol from URL query params (or localStorage fallback) on mount
+  // If no initialParams were provided via URL, check localStorage once on mount
   useEffect(() => {
-    if (didHydrateUrlRef.current) return;
-    didHydrateUrlRef.current = true;
-    try {
-      const sp = new URLSearchParams(window.location.search);
-      const urlScope = sp.get("scope") as Scope | null;
-      const urlAction = sp.get("action") as ActionFilter | null;
-      const urlSymbol = sp.get("symbol");
-      const urlCluster = sp.get("cluster");
-      const urlWatch = sp.get("watch") as WatchFilterType | null;
+    if (!initialParams?.scope && !initialParams?.action && !initialParams?.symbol) {
+      try {
+        const savedScope = localStorage.getItem(VERDICT_STORAGE_KEY_SCOPE) as Scope | null;
+        const savedAction = localStorage.getItem(VERDICT_STORAGE_KEY_ACTION) as ActionFilter | null;
+        const savedSymbol = localStorage.getItem(VERDICT_STORAGE_KEY_SYMBOL);
+        const savedCluster = localStorage.getItem(VERDICT_STORAGE_KEY_CLUSTER);
+        const savedWatch = localStorage.getItem(VERDICT_STORAGE_KEY_WATCH) as WatchFilterType | null;
 
-      const savedScope = (urlScope || localStorage.getItem(VERDICT_STORAGE_KEY_SCOPE)) as Scope | null;
-      const savedAction = (urlAction || localStorage.getItem(VERDICT_STORAGE_KEY_ACTION)) as ActionFilter | null;
-      const savedSymbol = urlSymbol || localStorage.getItem(VERDICT_STORAGE_KEY_SYMBOL);
-      const savedCluster = urlCluster || localStorage.getItem(VERDICT_STORAGE_KEY_CLUSTER);
-      const savedWatch = (urlWatch || localStorage.getItem(VERDICT_STORAGE_KEY_WATCH)) as WatchFilterType | null;
-
-      if (savedScope && ["nifty500", "all", "watchlist", "portfolio", "archived", "inspected"].includes(savedScope)) {
-        setScope(savedScope);
-        prevScopeRef.current = savedScope;
+        if (savedScope && ["nifty500", "all", "watchlist", "portfolio", "archived", "inspected"].includes(savedScope)) {
+          setScope(savedScope);
+          prevScopeRef.current = savedScope;
+        }
+        if (savedAction && ["buy", "accumulate", "hold", "watch", "avoid"].includes(savedAction)) {
+          setActionFilter(savedAction);
+          prevActionFilterRef.current = savedAction;
+        }
+        if (savedCluster) {
+          setSelectedCluster(savedCluster);
+          prevClusterRef.current = savedCluster;
+        }
+        if (savedWatch) {
+          setWatchFilter(savedWatch);
+        }
+        if (savedSymbol) {
+          const symUpper = savedSymbol.toUpperCase();
+          initialTargetSymbolRef.current = symUpper;
+          setSymbol(symUpper);
+        }
+      } catch {
+        // ignore
       }
-      if (savedAction && ["buy", "accumulate", "hold", "watch", "avoid"].includes(savedAction)) {
-        setActionFilter(savedAction);
-        prevActionFilterRef.current = savedAction;
-      }
-      if (savedCluster) {
-        setSelectedCluster(savedCluster);
-        prevClusterRef.current = savedCluster;
-      }
-      if (savedWatch) {
-        setWatchFilter(savedWatch);
-      }
-      if (savedSymbol) {
-        const symUpper = savedSymbol.toUpperCase();
-        initialTargetSymbolRef.current = symUpper;
-        setSymbol(symUpper);
-      }
-    } catch {
-      // ignore
     }
-  }, []);
+  }, [initialParams]);
 
-  // Sync state to URL and localStorage so Cmd+R or F5 restores the exact working view
+  // Sync state to URL and localStorage whenever user changes filters or selected symbol
   useEffect(() => {
-    if (!didHydrateUrlRef.current) return;
+    if (isFirstRenderRef.current) {
+      isFirstRenderRef.current = false;
+      return; // Never clobber URL query params on the initial render!
+    }
     try {
       localStorage.setItem(VERDICT_STORAGE_KEY_SCOPE, scope);
       if (actionFilter) localStorage.setItem(VERDICT_STORAGE_KEY_ACTION, actionFilter);

@@ -23,8 +23,19 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-export default async function AdminVerdictsPage() {
+export default async function AdminVerdictsPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{
+    scope?: string;
+    action?: string;
+    symbol?: string;
+    cluster?: string;
+    watch?: string;
+  }>;
+}) {
   if (!(await isAdminRequest())) redirect("/");
+  const sp = searchParams ? await searchParams : undefined;
 
   return (
     // `zoom` (not `transform: scale`) so the bump actually reflows — most of
@@ -35,7 +46,7 @@ export default async function AdminVerdictsPage() {
       className="mx-auto max-w-[1600px] px-3 sm:px-4 py-2 sm:py-3"
       style={{ zoom: 1.06 }}
     >
-      <VerdictDetailClient />
+      <VerdictDetailClient initialParams={sp} />
     </main>
   );
 }
