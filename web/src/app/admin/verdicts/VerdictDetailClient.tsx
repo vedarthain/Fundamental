@@ -250,6 +250,44 @@ function readBookmark(): string | null {
   }
 }
 
+// ── Server-side mode for the single-stock "jump back here" bookmark ─────
+//
+// Same dual-mode pattern as "inspected" above, one symbol instead of a set.
+// Also now auto-follows the last stock marked "inspected" (see markInspected
+// / toggleInspected below), so the admin's next session opens where they
+// last actually finished reading, not wherever they happened to click last.
+const BOOKMARK_SERVER_KEY = "er:verdictBookmark:v1";
+
+async function fetchBookmarkServer(): Promise<{ signedIn: boolean; symbol: string | null }> {
+  try {
+    const r = await fetch(`/api/scanner/bookmarks?key=${encodeURIComponent(BOOKMARK_SERVER_KEY)}`, {
+      credentials: "include",
+    });
+    if (!r.ok) return { signedIn: false, symbol: null };
+    const d = (await r.json()) as { signedIn?: boolean; items?: { id: string }[] };
+    return {
+      signedIn: !!d.signedIn,
+      symbol: Array.isArray(d.items) && d.items.length > 0 ? d.items[0].id : null,
+    };
+  } catch {
+    return { signedIn: false, symbol: null };
+  }
+}
+
+async function putBookmarkServer(symbol: string | null): Promise<void> {
+  const items = symbol ? [{ id: symbol, label: symbol }] : [];
+  try {
+    await fetch(`/api/scanner/bookmarks`, {
+      method: "PUT",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: BOOKMARK_SERVER_KEY, items }),
+    });
+  } catch {
+    // Best-effort — the UI already reflects the change locally.
+  }
+}
+
 export function VerdictDetailClient() {
   const [queueState, setQueueState] = useState<
     { kind: "loading" } | { kind: "ok"; q: VerdictQueue } | { kind: "error"; msg: string }
@@ -310,6 +348,58 @@ export function VerdictDetailClient() {
     };
   }, []);
   const [mark, setMark] = useState<string | null>(() => readBookmark());
+  // Which store the bookmark writes to — decided once by the hydration fetch
+  // below, same split as inspectedSignedInRef.
+  const bookmarkSignedInRef = useRef(false);
+  // Gates the initial-symbol-pin effect (below) so it doesn't pick
+  // flatOrder[0] before the server bookmark has had a chance to load — that
+  // race would always lose to the default, silently undoing "start from the
+  // last inspected stock" on every signed-in page load.
+  const [bookmarkHydrated, setBookmarkHydrated] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const local = readBookmark();
+      const server = await fetchBookmarkServer();
+      if (!alive) return;
+      if (server.signedIn) {
+        bookmarkSignedInRef.current = true;
+        // One-time carry-up: server has nothing yet but this browser already
+        // has a bookmark — push it so it isn't lost by the move to server
+        // storage.
+        if (!server.symbol && local) {
+          putBookmarkServer(local).catch(() => {});
+          setMark(local);
+        } else {
+          setMark(server.symbol);
+        }
+      } else {
+        bookmarkSignedInRef.current = false;
+        setMark(local);
+      }
+      setBookmarkHydrated(true);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+  // Shared setter — persists through whichever store hydration selected.
+  // Used by the manual bookmark button AND, below, by the auto-inspect timer
+  // and the manual inspect toggle so the bookmark follows the last stock
+  // marked "inspected".
+  const setBookmarkSymbol = useCallback((sym: string | null) => {
+    setMark(sym);
+    if (bookmarkSignedInRef.current) {
+      putBookmarkServer(sym).catch(() => {});
+    } else {
+      try {
+        if (sym) localStorage.setItem(BOOKMARK_KEY, sym);
+        else localStorage.removeItem(BOOKMARK_KEY);
+      } catch {
+        // Not worth surfacing an error for a convenience flag.
+      }
+    }
+  }, []);
   // "About" company-profile panel (same card the watchlist's ⓘ button opens,
   // via the shared src/components/CompanyProfile.tsx). Closed by default on
   // every symbol switch so it doesn't carry one stock's open panel onto the
@@ -451,39 +541,57 @@ export function VerdictDetailClient() {
     };
   }, [symbol]);
 
-  const toggleInspected = useCallback((sym: string) => {
-    setInspected((prev) => {
-      const next = new Set(prev);
-      if (next.has(sym)) next.delete(sym);
-      else next.add(sym);
-      const list = [...next];
-      if (inspectedSignedInRef.current) {
-        putInspectedServer(list).catch(() => {});
-      } else {
-        writeInspectedLocal(list);
-      }
-      return next;
-    });
-  }, []);
+  // Depends on `inspected` to know whether this click is adding or removing a
+  // mark — safe here because it's click-driven, not reconstructed inside the
+  // 30s timer effect below (markInspected deliberately avoids that dependency).
+  const toggleInspected = useCallback(
+    (sym: string) => {
+      const adding = !inspected.has(sym);
+      setInspected((prev) => {
+        const next = new Set(prev);
+        if (next.has(sym)) next.delete(sym);
+        else next.add(sym);
+        const list = [...next];
+        if (inspectedSignedInRef.current) {
+          putInspectedServer(list).catch(() => {});
+        } else {
+          writeInspectedLocal(list);
+        }
+        return next;
+      });
+      // Bookmark follows the last stock newly marked inspected — only on the
+      // add direction; un-marking shouldn't move the "jump back here" spot.
+      if (adding) setBookmarkSymbol(sym);
+    },
+    [inspected, setBookmarkSymbol],
+  );
 
   // Add-only variant for the auto-mark timer below — toggleInspected would
   // flip an already-inspected stock back OFF if the 30s timer fired a second
   // time (e.g. after a manual un-mark mid-dwell), which is not what "still
-  // reading this 30s later" should do.
-  const markInspected = useCallback((sym: string) => {
-    setInspected((prev) => {
-      if (prev.has(sym)) return prev;
-      const next = new Set(prev);
-      next.add(sym);
-      const list = [...next];
-      if (inspectedSignedInRef.current) {
-        putInspectedServer(list).catch(() => {});
-      } else {
-        writeInspectedLocal(list);
-      }
-      return next;
-    });
-  }, []);
+  // reading this 30s later" should do. Kept dependency-free (functional
+  // setState + the stable setBookmarkSymbol) so the 30s dwell timer below
+  // never restarts on an inspected-set change.
+  const markInspected = useCallback(
+    (sym: string) => {
+      setInspected((prev) => {
+        if (prev.has(sym)) return prev;
+        const next = new Set(prev);
+        next.add(sym);
+        const list = [...next];
+        if (inspectedSignedInRef.current) {
+          putInspectedServer(list).catch(() => {});
+        } else {
+          writeInspectedLocal(list);
+        }
+        return next;
+      });
+      // Add-only and idempotent, so safe to call unconditionally — if sym was
+      // already inspected this just re-affirms it as the bookmark.
+      setBookmarkSymbol(sym);
+    },
+    [setBookmarkSymbol],
+  );
 
   // Auto-mark: a stock open for 30s uninterrupted counts as "actually looked
   // at", not just clicked through on the way to another one. Timer restarts
@@ -498,17 +606,8 @@ export function VerdictDetailClient() {
   }, [symbol, markInspected]);
 
   const toggleMark = useCallback(() => {
-    setMark((prev) => {
-      const next = prev === symbol ? null : symbol;
-      try {
-        if (next) localStorage.setItem(BOOKMARK_KEY, next);
-        else localStorage.removeItem(BOOKMARK_KEY);
-      } catch {
-        // Same as above — not worth surfacing an error for a convenience flag.
-      }
-      return next;
-    });
-  }, [symbol]);
+    setBookmarkSymbol(mark === symbol ? null : symbol);
+  }, [mark, symbol, setBookmarkSymbol]);
 
   // Scope + cluster only — the base pool the WATCH dropdown's per-section
   // counts read from, computed BEFORE actionFilter/watchFilter/reviewFilter
@@ -667,15 +766,20 @@ export function VerdictDetailClient() {
     [tree],
   );
 
-  // Pin the very first selection to the tree's first sector-cluster / first
-  // stock within it, not queue order. Waits for mapsReady so the tree is
-  // already sorted by the real ~9-sector taxonomy before picking "first".
+  // Pin the very first selection to the bookmark (which now follows the last
+  // stock marked "inspected") if it's still in view, else the tree's first
+  // sector-cluster / first stock within it. Waits for mapsReady so the tree
+  // is already sorted by the real ~9-sector taxonomy before picking "first",
+  // and for bookmarkHydrated so a signed-in admin's server bookmark has had
+  // a chance to load before flatOrder[0] gets picked by default — otherwise
+  // that race always loses to the default on a fresh page load.
   useEffect(() => {
     if (symbol) return;
     if (!mapsReady) return;
+    if (!bookmarkHydrated) return;
     if (flatOrder.length === 0) return;
-    setSymbol(flatOrder[0]);
-  }, [symbol, mapsReady, flatOrder]);
+    setSymbol(mark && flatOrder.includes(mark) ? mark : flatOrder[0]);
+  }, [symbol, mapsReady, bookmarkHydrated, mark, flatOrder]);
 
   // Switching scope (e.g. clicking "Nifty 500") or picking a cluster from the
   // dropdown jumps to the new view's first stock in tree order, same rule as

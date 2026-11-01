@@ -57,6 +57,9 @@ const KEY_LIMITS: Record<string, { maxItems: number; maxBytes: number }> = {
   // browser, per machine); moved here so it follows the admin across
   // devices. Universe is ~3,200 symbols; cap set above that with headroom.
   "er:verdictInspected:v1": { maxItems: 3500, maxBytes: 256 * 1024 },
+  // Single-stock "jump back here" bookmark on the admin verdict detail page.
+  // Now auto-follows the last stock marked inspected; one entry only.
+  "er:verdictBookmark:v1": { maxItems: 1, maxBytes: 1024 },
 };
 
 const ALLOWED_KEYS = new Set(Object.keys(KEY_LIMITS));
