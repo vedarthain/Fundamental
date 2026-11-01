@@ -328,33 +328,107 @@ async function putBookmarkServer(symbol: string | null): Promise<void> {
   }
 }
 
+const VERDICT_STORAGE_KEY_SCOPE = "er_admin_verdict_scope";
+const VERDICT_STORAGE_KEY_ACTION = "er_admin_verdict_action";
+const VERDICT_STORAGE_KEY_SYMBOL = "er_admin_verdict_symbol";
+const VERDICT_STORAGE_KEY_CLUSTER = "er_admin_verdict_cluster";
+const VERDICT_STORAGE_KEY_WATCH = "er_admin_verdict_watch";
+
 export function VerdictDetailClient() {
   const [queueState, setQueueState] = useState<
     { kind: "loading" } | { kind: "ok"; q: VerdictQueue } | { kind: "error"; msg: string }
   >({ kind: "loading" });
   const [symbol, setSymbol] = useState<string | null>(null);
   const [treeSearch, setTreeSearch] = useState("");
-  // Multi-node expand state, keyed by sector name and "sector//industry" —
-  // same scheme WatchlistClient's rail uses, so several sectors/industries
-  // can stay open at once instead of one accordion slot.
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
-  // Watchlist is the default scope, not Nifty 500 — the focus is "what am I
-  // actually tracking", so new sessions open already narrowed to it.
   const [scope, setScope] = useState<Scope>("watchlist");
   const [actionFilter, setActionFilter] = useState<ActionFilter>(null);
   const [reviewFilter, setReviewFilter] = useState<"pending" | "due" | "changed" | null>(null);
-  // Cluster filter — ported from the Board tab. Filters by cluster_id (the
-  // ~79 industry-level clusters, same granularity Board filters at — not the
-  // ~9 meta-cluster "sectors" the tree groups by), sourced from the SAME
-  // queue payload's q.clusterProgress, so no extra fetch.
   const [selectedCluster, setSelectedCluster] = useState<string | null>(null);
   const [clusterMenuOpen, setClusterMenuOpen] = useState(false);
   const [clusterMenuSearch, setClusterMenuSearch] = useState("");
-  // WATCH sub-category dropdown — ported from the Board tab's inline
-  // breakdown bar, as a dropdown instead since this page's top bar is
-  // already dense. Only has effect when actionFilter === "watch".
   const [watchFilter, setWatchFilter] = useState<WatchFilterType>("all");
   const [watchMenuOpen, setWatchMenuOpen] = useState(false);
+
+  // Persistence refs to preserve view across Cmd+R / page refreshes
+  const initialTargetSymbolRef = useRef<string | null>(null);
+  const didHydrateUrlRef = useRef(false);
+  const prevScopeRef = useRef<Scope>("watchlist");
+  const prevClusterRef = useRef<string | null>(null);
+  const prevActionFilterRef = useRef<ActionFilter>(null);
+
+  // Hydrate filters & symbol from URL query params (or localStorage fallback) on mount
+  useEffect(() => {
+    if (didHydrateUrlRef.current) return;
+    didHydrateUrlRef.current = true;
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      const urlScope = sp.get("scope") as Scope | null;
+      const urlAction = sp.get("action") as ActionFilter | null;
+      const urlSymbol = sp.get("symbol");
+      const urlCluster = sp.get("cluster");
+      const urlWatch = sp.get("watch") as WatchFilterType | null;
+
+      const savedScope = (urlScope || localStorage.getItem(VERDICT_STORAGE_KEY_SCOPE)) as Scope | null;
+      const savedAction = (urlAction || localStorage.getItem(VERDICT_STORAGE_KEY_ACTION)) as ActionFilter | null;
+      const savedSymbol = urlSymbol || localStorage.getItem(VERDICT_STORAGE_KEY_SYMBOL);
+      const savedCluster = urlCluster || localStorage.getItem(VERDICT_STORAGE_KEY_CLUSTER);
+      const savedWatch = (urlWatch || localStorage.getItem(VERDICT_STORAGE_KEY_WATCH)) as WatchFilterType | null;
+
+      if (savedScope && ["nifty500", "all", "watchlist", "portfolio", "archived", "inspected"].includes(savedScope)) {
+        setScope(savedScope);
+        prevScopeRef.current = savedScope;
+      }
+      if (savedAction && ["buy", "accumulate", "hold", "watch", "avoid"].includes(savedAction)) {
+        setActionFilter(savedAction);
+        prevActionFilterRef.current = savedAction;
+      }
+      if (savedCluster) {
+        setSelectedCluster(savedCluster);
+        prevClusterRef.current = savedCluster;
+      }
+      if (savedWatch) {
+        setWatchFilter(savedWatch);
+      }
+      if (savedSymbol) {
+        const symUpper = savedSymbol.toUpperCase();
+        initialTargetSymbolRef.current = symUpper;
+        setSymbol(symUpper);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Sync state to URL and localStorage so Cmd+R or F5 restores the exact working view
+  useEffect(() => {
+    if (!didHydrateUrlRef.current) return;
+    try {
+      localStorage.setItem(VERDICT_STORAGE_KEY_SCOPE, scope);
+      if (actionFilter) localStorage.setItem(VERDICT_STORAGE_KEY_ACTION, actionFilter);
+      else localStorage.removeItem(VERDICT_STORAGE_KEY_ACTION);
+
+      if (symbol) localStorage.setItem(VERDICT_STORAGE_KEY_SYMBOL, symbol);
+      if (selectedCluster) localStorage.setItem(VERDICT_STORAGE_KEY_CLUSTER, selectedCluster);
+      else localStorage.removeItem(VERDICT_STORAGE_KEY_CLUSTER);
+
+      if (watchFilter && watchFilter !== "all") localStorage.setItem(VERDICT_STORAGE_KEY_WATCH, watchFilter);
+      else localStorage.removeItem(VERDICT_STORAGE_KEY_WATCH);
+
+      const sp = new URLSearchParams();
+      if (scope !== "watchlist") sp.set("scope", scope);
+      if (actionFilter) sp.set("action", actionFilter);
+      if (symbol) sp.set("symbol", symbol);
+      if (selectedCluster) sp.set("cluster", selectedCluster);
+      if (watchFilter !== "all") sp.set("watch", watchFilter);
+
+      const qs = sp.toString();
+      const nextUrl = qs ? `${window.location.pathname}?${qs}` : window.location.pathname;
+      window.history.replaceState(null, "", nextUrl);
+    } catch {
+      // ignore
+    }
+  }, [scope, actionFilter, symbol, selectedCluster, watchFilter]);
   const [inspected, setInspected] = useState<Set<string>>(() => readInspected());
   // Which store toggleInspected writes to. Decided once by the hydration
   // fetch below — a ref, not state, since it's an implementation detail of
@@ -843,14 +917,25 @@ export function VerdictDetailClient() {
   // setScope("all") — otherwise that other effect sees the same scope change
   // one render later, decides "user switched scope", and overwrites our
   // bookmark-chosen symbol with flatOrder[0] right after we set it.
-  const prevScopeRef = useRef(scope);
-  const prevClusterRef = useRef(selectedCluster);
   const triedWidenForMarkRef = useRef(false);
   useEffect(() => {
-    if (symbol) return;
     if (!mapsReady) return;
     if (!bookmarkHydrated) return;
     if (flatOrder.length === 0) return;
+
+    // If a target symbol was restored from URL or localStorage and exists in current view:
+    if (initialTargetSymbolRef.current) {
+      const target = initialTargetSymbolRef.current;
+      if (flatOrder.includes(target)) {
+        if (symbol !== target) setSymbol(target);
+        initialTargetSymbolRef.current = null;
+        return;
+      }
+    }
+
+    // If current symbol is already valid in the filtered flatOrder, keep it
+    if (symbol && flatOrder.includes(symbol)) return;
+
     if (mark && !flatOrder.includes(mark) && scope !== "all" && !triedWidenForMarkRef.current) {
       triedWidenForMarkRef.current = true;
       prevScopeRef.current = "all";
@@ -860,18 +945,19 @@ export function VerdictDetailClient() {
     setSymbol(mark && flatOrder.includes(mark) ? mark : flatOrder[0]);
   }, [symbol, mapsReady, bookmarkHydrated, mark, flatOrder, scope]);
 
-  // Switching scope (e.g. clicking "Nifty 500") or picking a cluster from the
-  // dropdown jumps to the new view's first stock in tree order, same rule as
-  // the initial pin above — selecting a view should show its own first
-  // stock, not whatever was selected in the previous view.
+  // Switching scope, cluster, or action filter adjusts selection only if the current symbol is not in view
   useEffect(() => {
     const scopeChanged = prevScopeRef.current !== scope;
     const clusterChanged = prevClusterRef.current !== selectedCluster;
+    const actionChanged = prevActionFilterRef.current !== actionFilter;
     prevScopeRef.current = scope;
     prevClusterRef.current = selectedCluster;
-    if (!scopeChanged && !clusterChanged) return;
+    prevActionFilterRef.current = actionFilter;
+    if (!scopeChanged && !clusterChanged && !actionChanged) return;
+    // If the currently selected symbol is still in view under the new filter/scope, keep it!
+    if (symbol && flatOrder.includes(symbol)) return;
     if (flatOrder.length > 0) setSymbol(flatOrder[0]);
-  }, [scope, selectedCluster, flatOrder]);
+  }, [scope, selectedCluster, actionFilter, flatOrder, symbol]);
 
   const toggleNode = useCallback((key: string) => {
     setExpandedNodes((prev) => {
