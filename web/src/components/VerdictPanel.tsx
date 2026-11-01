@@ -615,7 +615,7 @@ function VerdictContentBlock({
   // targets, the fundamental good-vs-bad review, and the quant model review.
   // Only meaningful for the parsed two-column shape; the legacy single-list
   // fallback below has no such sections to split.
-  type Section = "headline" | "fundamentals" | "models";
+  type Section = "headline" | "fundamentals" | "models" | "strategy";
   const [section, setSection] = useState<Section>("headline");
 
   // Separate institutional models into Green (passed/healthy) vs Red/Caution
@@ -645,6 +645,7 @@ function VerdictContentBlock({
             ["headline", "Verdict Headline"],
             ["fundamentals", "Fundamental overview"],
             ["models", "Model overview"],
+            ["strategy", "Execution Strategy"],
           ] as [Section, string][]).map(([id, label]) => (
             <button
               key={id}
@@ -975,6 +976,140 @@ function VerdictContentBlock({
             </div>
           )}
           </>
+          )}
+
+          {/* 4TH SECTION: Execution & Position Sizing Strategy */}
+          {section === "strategy" && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                  <span className="text-[14px]">⚡</span>
+                  <span>Portfolio Execution &amp; Position Sizing Playbook</span>
+                </div>
+                <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded bg-slate-200/80 text-slate-700 border border-slate-300/60 uppercase">
+                  Action: {bucket.toUpperCase()}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Box 1: For Existing Holdings (Current Owners) */}
+                <div className="rounded-lg border border-slate-200/90 bg-slate-50/50 p-4 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-200/60">
+                      <div className="flex items-center gap-2 font-medium text-slate-800 text-[13px]">
+                        <span className="w-2.5 h-2.5 rounded-full bg-indigo-600 inline-block" />
+                        Existing Position (What to do if you own it)
+                      </div>
+                      <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200/60">
+                        {bucket === "hold" ? "Stay Invested" : bucket === "buy" ? "Overweight" : "Trim / Protect"}
+                      </span>
+                    </div>
+
+                    <div className="text-[12px] text-slate-700 space-y-2.5 leading-relaxed">
+                      {bucket === "hold" ? (
+                        <>
+                          <p>
+                            <strong>Action: Hold existing position.</strong> Ride ongoing business compounding toward the 12M Target (₹{Math.round(verdict.target_price ?? 0).toLocaleString("en-IN")}).
+                          </p>
+                          <p className="text-slate-600 text-[11.5px]">
+                            • <strong>Why not sell?</strong> High-quality businesses compounding earnings at 15–20%+ frequently maintain premium market multiples. Premature selling triggers capital gains taxes and risks missing multi-year compound runs.
+                          </p>
+                          <p className="text-slate-600 text-[11.5px]">
+                            • <strong>Risk Floor / Review Trigger:</strong> Keep a trailing stop or re-evaluate only if price breaches cycle support at ₹{Math.round(verdict.bear_floor ?? 0).toLocaleString("en-IN")} or if quarterly earnings growth drops below 10%.
+                          </p>
+                        </>
+                      ) : bucket === "buy" ? (
+                        <>
+                          <p>
+                            <strong>Action: Maintain / Add to Winners.</strong> High fundamental conviction and favorable margin of safety.
+                          </p>
+                          <p className="text-slate-600 text-[11.5px]">
+                            • <strong>Allocation:</strong> Full portfolio allocation target. Allow profits to run toward target price of ₹{Math.round(verdict.target_price ?? 0).toLocaleString("en-IN")}.
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <p>
+                            <strong>Action: Trim or Exit on Strength.</strong> Unfavorable reward-to-risk ratio.
+                          </p>
+                          <p className="text-slate-600 text-[11.5px]">
+                            • <strong>Rationale:</strong> Fundamental headwinds, forensic flags, or speculative valuation froth warrant capital preservation. Reallocate to higher-conviction opportunities.
+                          </p>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Box 2: Fresh Capital (New Buyers & Position Sizing) */}
+                <div className="rounded-lg border border-slate-200/90 bg-slate-50/50 p-4 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-200/60">
+                      <div className="flex items-center gap-2 font-medium text-slate-800 text-[13px]">
+                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-600 inline-block" />
+                        Fresh Capital (New Buyers &amp; Sizing)
+                      </div>
+                      <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200/60">
+                        {bucket === "hold" ? "Staggered Entry" : bucket === "buy" ? "Tranche Buying" : "Sidelines"}
+                      </span>
+                    </div>
+
+                    <div className="text-[12px] text-slate-700 space-y-2.5 leading-relaxed">
+                      {bucket === "hold" ? (
+                        <>
+                          <p>
+                            <strong>Rule: Do NOT deploy 100% lump-sum at current peak multiples.</strong> Use a disciplined 3-stage staggered entry:
+                          </p>
+                          <div className="space-y-1.5 pt-1 text-[11.5px]">
+                            <div className="p-2 rounded bg-white border border-slate-200/80">
+                              <span className="font-semibold text-slate-900">1. Toehold / Tracking Position (20–30%):</span>
+                              <div className="text-slate-600 mt-0.5">
+                                Start a modest tracking tranche or monthly SIP to participate in business momentum without timing anxiety.
+                              </div>
+                            </div>
+                            <div className="p-2 rounded bg-white border border-slate-200/80">
+                              <span className="font-semibold text-slate-900">2. Tactical Dip (35–40%):</span>
+                              <div className="text-slate-600 mt-0.5">
+                                Deploy the next major tranche on an 8–12% normal market pullback (testing 100/200 DMA support).
+                              </div>
+                            </div>
+                            <div className="p-2 rounded bg-white border border-slate-200/80">
+                              <span className="font-semibold text-slate-900">3. Deep-Value Floor ({verdict.buy_below != null ? `≤ ₹${Math.round(verdict.buy_below).toLocaleString("en-IN")}` : "Fair Value"}):</span>
+                              <div className="text-slate-600 mt-0.5">
+                                Reserve remaining cash for deep market panic / multiple compression offering high margin of safety.
+                              </div>
+                            </div>
+                          </div>
+                        </>
+                      ) : bucket === "buy" ? (
+                        <>
+                          <p>
+                            <strong>Rule: Systematic accumulation permitted.</strong>
+                          </p>
+                          <div className="space-y-1.5 pt-1 text-[11.5px]">
+                            <div className="p-2 rounded bg-white border border-slate-200/80">
+                              <span className="font-semibold text-slate-900">Tranche 1 (50%):</span> Immediate entry at current market price.
+                            </div>
+                            <div className="p-2 rounded bg-white border border-slate-200/80">
+                              <span className="font-semibold text-slate-900">Tranche 2 (50%):</span> Add on any pullback below ₹{Math.round(verdict.buy_below ?? 0).toLocaleString("en-IN")}.
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <p>
+                            <strong>Rule: Keep fresh capital on the sidelines (0% allocation).</strong>
+                          </p>
+                          <p className="text-slate-600 text-[11.5px]">
+                            Do not attempt to catch falling knives or pay speculative multiples for low-quality earnings. Wait for either valuation multiple normalization or clear structural turnaround before deploying fresh money.
+                          </p>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           )}
         </div>
       ) : (
