@@ -81,6 +81,12 @@ type StockMeta = {
   price_fetched_at: string | null;
   ret_1d: number | null;
   scores_snapshot_date: string | null;
+  day_volume?: number | null;
+  day_turnover_cr?: number | null;
+  week_volume?: number | null;
+  avg_volume_20d?: number | null;
+  rel_volume?: number | null;
+  volume_date?: string | null;
 };
 type ClusterMapRow = { cluster_id: string; cluster_name: string; sector_name: string };
 type SymbolMapRow = { symbol: string; cluster_name: string; sector_name: string };
@@ -233,6 +239,14 @@ function pct(n: number | null): string {
   if (n == null) return "—";
   const s = n >= 0 ? "+" : "";
   return `${s}${n.toFixed(1)}%`;
+}
+
+function fmtVol(v: number | null | undefined): string {
+  if (v == null) return "—";
+  if (v >= 1e7) return `${(v / 1e7).toFixed(2)} Cr`;
+  if (v >= 1e5) return `${(v / 1e5).toFixed(1)} L`;
+  if (v >= 1e3) return `${(v / 1e3).toFixed(1)}K`;
+  return String(Math.round(v));
 }
 
 function readInspected(): Set<string> {
@@ -1628,6 +1642,43 @@ export function VerdictDetailClient({
                       textClass="text-[10px]"
                     />
                   )}
+                  {meta?.day_volume != null && (
+                    <span
+                      className="inline-flex items-center gap-1 px-1.5 py-[1px] rounded text-[10px] border hairline bg-slate-50 text-slate-700 tabular-nums font-mono"
+                      title={`Latest daily traded volume${meta.volume_date ? ` (${meta.volume_date})` : ""}${
+                        meta.day_turnover_cr != null ? ` · ₹${meta.day_turnover_cr} Cr turnover` : ""
+                      }`}
+                    >
+                      <span className="text-slate-500 font-sans">Day:</span>
+                      <span className="font-semibold text-slate-900">{fmtVol(meta.day_volume)}</span>
+                      {meta.day_turnover_cr != null && (
+                        <span className="text-[9px] text-slate-500 font-normal">₹{meta.day_turnover_cr} Cr</span>
+                      )}
+                    </span>
+                  )}
+                  {meta?.week_volume != null && (
+                    <span
+                      className="inline-flex items-center gap-1 px-1.5 py-[1px] rounded text-[10px] border hairline bg-slate-50 text-slate-700 tabular-nums font-mono"
+                      title="Traded volume over the past week (last 5 trading sessions)"
+                    >
+                      <span className="text-slate-500 font-sans">Wk:</span>
+                      <span className="font-semibold text-slate-900">{fmtVol(meta.week_volume)}</span>
+                    </span>
+                  )}
+                  {meta?.rel_volume != null && (
+                    <span
+                      className={`inline-flex items-center px-1.5 py-[1px] rounded text-[10px] font-semibold tabular-nums border ${
+                        meta.rel_volume >= 1.5
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                          : meta.rel_volume < 0.6
+                            ? "bg-amber-50 text-amber-700 border-amber-200"
+                            : "border-slate-200 text-slate-600"
+                      }`}
+                      title={`Relative volume vs ~20-day average (${meta.avg_volume_20d ? fmtVol(meta.avg_volume_20d) : ""}). >1.5× = elevated activity.`}
+                    >
+                      {meta.rel_volume.toFixed(2)}× Vol
+                    </span>
+                  )}
                   {selected?.confidence && (
                     <span className="muted-text text-[10px] uppercase">{selected.confidence} confidence</span>
                   )}
@@ -1759,6 +1810,37 @@ export function VerdictDetailClient({
                     {selected?.generated_at && (
                       <span className="text-slate-600 font-medium">
                         Called <span className="text-slate-800 font-mono">{shortDate(selected.generated_at)}</span>
+                      </span>
+                    )}
+                    {meta?.day_volume != null && (
+                      <span>
+                        <span className="text-slate-600 font-medium">Day Vol </span>
+                        <span className="font-mono font-semibold text-slate-900">{fmtVol(meta.day_volume)}</span>
+                        {meta.day_turnover_cr != null && (
+                          <span className="text-[10px] text-slate-500 font-mono ml-0.5">(₹{meta.day_turnover_cr} Cr)</span>
+                        )}
+                      </span>
+                    )}
+                    {meta?.week_volume != null && (
+                      <span>
+                        <span className="text-slate-600 font-medium">Week Vol </span>
+                        <span className="font-mono font-semibold text-slate-900">{fmtVol(meta.week_volume)}</span>
+                      </span>
+                    )}
+                    {meta?.rel_volume != null && (
+                      <span>
+                        <span className="text-slate-600 font-medium">Rel Vol </span>
+                        <span
+                          className={`font-mono font-semibold ${
+                            meta.rel_volume >= 1.5
+                              ? "text-emerald-700"
+                              : meta.rel_volume < 0.6
+                                ? "text-amber-700"
+                                : "text-slate-700"
+                          }`}
+                        >
+                          {meta.rel_volume.toFixed(2)}×
+                        </span>
                       </span>
                     )}
                   </div>
