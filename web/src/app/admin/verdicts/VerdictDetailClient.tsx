@@ -400,23 +400,16 @@ export function VerdictDetailClient() {
       }
     }
   }, []);
-  // "About" company-profile panel (same card the watchlist's ⓘ button opens,
-  // via the shared src/components/CompanyProfile.tsx). Closed by default on
-  // every symbol switch so it doesn't carry one stock's open panel onto the
-  // next, unrelated one.
-  const [profileOpen, setProfileOpen] = useState(false);
-  useEffect(() => {
-    setProfileOpen(false);
-  }, [symbol]);
-
   // Top-level page tab — Graph (chart + LTP/target strip) is its own tab now,
   // anchored first so it's what a fresh page load or a stock switch lands on.
-  // The other four delegate to VerdictPanel's existing per-section content
-  // via controlledSection, rather than duplicating it here. Graph must stay
-  // outside the verdict-loading gate below (VerdictPanel only mounts once
-  // verdict data resolves) — otherwise the chart would vanish while the
-  // verdict is loading or for stocks with no verdict at all.
-  type PageTab = "graph" | "headline" | "fundamentals" | "models" | "strategy";
+  // "about" is the company-profile card (same card the watchlist's ⓘ button
+  // used to open as an inline toggle; now its own tab, right after Graph).
+  // The remaining four delegate to VerdictPanel's existing per-section
+  // content via controlledSection, rather than duplicating it here. Graph
+  // must stay outside the verdict-loading gate below (VerdictPanel only
+  // mounts once verdict data resolves) — otherwise the chart would vanish
+  // while the verdict is loading or for stocks with no verdict at all.
+  type PageTab = "graph" | "about" | "headline" | "fundamentals" | "models" | "strategy";
   const [pageTab, setPageTab] = useState<PageTab>("graph");
 
   const [verdictState, setVerdictState] = useState<
@@ -1400,17 +1393,6 @@ export function VerdictDetailClient() {
                   {selected?.company_name && (
                     <span className="muted-text text-[12px]">{selected.company_name}</span>
                   )}
-                  {symbol && (
-                    <button
-                      type="button"
-                      onClick={() => setProfileOpen((o) => !o)}
-                      className="text-[11px] leading-none rounded-full border hairline w-4 h-4 flex items-center justify-center muted-text hover:text-[var(--color-ink)]"
-                      title={profileOpen ? "Hide company information" : "About this company"}
-                      aria-label="Toggle company information"
-                    >
-                      ⓘ
-                    </button>
-                  )}
                   {selected?.action && (
                     <span className={`px-1.5 py-[1px] rounded text-[10px] font-semibold ${actionClass(selected.action)}`}>
                       {selected.action}
@@ -1504,22 +1486,19 @@ export function VerdictDetailClient() {
                 )}
               </div>
 
-              {profileOpen && symbol && (
-                <div className="mb-3">
-                  <CompanyProfile symbol={symbol} onClose={() => setProfileOpen(false)} />
-                </div>
-              )}
-
               {/* Top-level page tabs. Graph is anchored first — it's what a
                   fresh load or a stock switch shows — and holds the chart
                   plus the LTP/target/buy-below/bear-floor/upside/called strip
-                  that used to sit in the header above. The other four are
-                  the SAME content VerdictPanel always had; controlledSection
-                  tells it which one to show instead of running its own
-                  (now-redundant) internal tab bar. */}
+                  that used to sit in the header above. About (the company
+                  profile card, previously an inline ⓘ toggle) sits right
+                  after it. The last four are the SAME content VerdictPanel
+                  always had; controlledSection tells it which one to show
+                  instead of running its own (now-redundant) internal tab
+                  bar. */}
               <div className="flex items-center gap-1.5 mb-3 flex-wrap">
                 {([
                   ["graph", "Graph"],
+                  ["about", "About"],
                   ["headline", "Verdict"],
                   ["fundamentals", "Fundamental"],
                   ["models", "Model"],
@@ -1595,8 +1574,14 @@ export function VerdictDetailClient() {
                 </>
               )}
 
+              {/* About tab — the company-profile card, previously an inline
+                  toggle off the ⓘ button next to the symbol. */}
+              {pageTab === "about" && symbol && (
+                <CompanyProfile symbol={symbol} onClose={() => setPageTab("graph")} />
+              )}
+
               {/* Verdict: operating review, target price detail, quant models */}
-              {pageTab !== "graph" && (
+              {pageTab !== "graph" && pageTab !== "about" && (
                 <>
                   {verdictState.kind === "loading" && (
                     <div className="h-[300px] rounded-md border hairline animate-pulse" />

@@ -337,6 +337,96 @@ function renderVerdictBullet(raw: string, idx: number, tagRegex: RegExp, tone: "
   );
 }
 
+/**
+ * Interactive twin of renderVerdictBullet, used only in the live Fundamental
+ * tab's Good/Bad lists (renderVerdictBullet itself stays as the static,
+ * always-expanded version for the read-only history accordion below).
+ *
+ * Collapsed by default: metric + peer comparison only, one line. The
+ * "why" (reasonPart / the rest of the sentence) is the part that made these
+ * lists long and hard to scan — it's hidden until clicked.
+ */
+function VerdictBulletItem({
+  raw,
+  tagRegex,
+  tone,
+}: {
+  raw: string;
+  tagRegex: RegExp;
+  tone: "good" | "bad";
+}) {
+  const [open, setOpen] = useState(false);
+  let cleaned = stripTag(raw, tagRegex);
+  cleaned = cleaned.replace(/^(\*|-|•)\s*/, "").trim();
+  cleaned = cleaned.replace(/<\/?(b|strong)>/gi, "");
+  const parts = cleaned.split(/\s*(?:,\s*-\s*|\s+-\s+|\s*—\s*)\s*/);
+
+  const isGood = tone === "good";
+  const bulletColor = isGood ? "text-emerald-500" : "text-rose-500";
+  const metricColor = "text-slate-800 font-medium";
+  const peerColor = isGood ? "text-emerald-700 font-normal" : "text-rose-700 font-normal";
+  const reasonColor = "text-slate-500 font-normal";
+  const sepColor = "text-slate-300";
+  const caret = (hasMore: boolean) =>
+    hasMore ? (
+      <span className="text-slate-400 text-[9px] ml-1.5 shrink-0 select-none">{open ? "▲" : "▼"}</span>
+    ) : null;
+
+  if (parts.length >= 2) {
+    let metricPart = parts[0];
+    const peerPart = parts[1];
+    const reasonPart = parts.slice(2).join(" - ");
+
+    if (!isGood && metricPart.includes(" > ")) {
+      const fullLower = cleaned.toLowerCase();
+      const isExcess = fullLower.includes("exceeds") || fullLower.includes("premium to") || fullLower.includes("high debt");
+      const isLow = fullLower.includes("lowest") || fullLower.includes("ranks #5") || fullLower.includes("ranks #4") ||
+                    fullLower.includes("dead last") || fullLower.includes("lags") || fullLower.includes("depressed") ||
+                    fullLower.includes("softened") || fullLower.includes("thin") || fullLower.includes("worst") ||
+                    fullLower.includes("below") || fullLower.includes("sluggish");
+      if (isLow || !isExcess) {
+        metricPart = metricPart.replace(" > ", " < ");
+      }
+    }
+
+    return (
+      <li className="flex items-start gap-2">
+        <span className={`${bulletColor} font-mono text-[13px] shrink-0 mt-0.5 select-none`}>*</span>
+        <button type="button" onClick={() => setOpen((o) => !o)} className="text-left flex-1 min-w-0">
+          <div className="text-[12.5px] leading-relaxed">
+            <span className={metricColor}>{metricPart}</span>
+            <span className={`${sepColor} mx-1.5`}>-</span>
+            <span className={peerColor}>{peerPart}</span>
+            {caret(!!reasonPart)}
+          </div>
+          {open && reasonPart ? (
+            <div className={`text-[12px] leading-relaxed mt-1 ${reasonColor}`}>{reasonPart}</div>
+          ) : null}
+        </button>
+      </li>
+    );
+  }
+
+  const isLong = cleaned.length > 90;
+  // dangerouslySetInnerHTML on a plain-text sentence — cleaned has already had
+  // <b>/<strong> stripped above, same trust level the static version uses.
+  const compact = isLong ? `${cleaned.slice(0, 90)}…` : cleaned;
+  return (
+    <li className="flex items-start gap-2">
+      <span className={`${bulletColor} font-mono text-[13px] shrink-0 mt-0.5 select-none`}>*</span>
+      <button type="button" onClick={() => setOpen((o) => !o)} className="text-left flex-1 min-w-0">
+        <div
+          className="text-[12.5px] leading-relaxed text-slate-700 font-normal"
+          dangerouslySetInnerHTML={{ __html: open ? cleaned : compact }}
+        />
+        {isLong && (
+          <span className="text-slate-400 text-[9px] select-none">{open ? "▲ less" : "▼ more"}</span>
+        )}
+      </button>
+    </li>
+  );
+}
+
 function getModelAnalysis(label: string, value: string): {
   status: "green" | "red" | "amber";
   badge: string;
@@ -538,7 +628,13 @@ function getModelAnalysis(label: string, value: string): {
   };
 }
 
-function renderModelCard(item: { label: string; value: string }, idx: number) {
+/**
+ * Collapsed by default: label, badge, and the raw value only — one line.
+ * contextNote (the sentence explaining what the badge means) is the part
+ * that made the model grid tall; it only shows once clicked open.
+ */
+function ModelCard({ item }: { item: { label: string; value: string } }) {
+  const [open, setOpen] = useState(false);
   const analysis = getModelAnalysis(item.label, item.value);
   const isGreen = analysis.status === "green";
   const isRed = analysis.status === "red";
@@ -558,9 +654,10 @@ function renderModelCard(item: { label: string; value: string }, idx: number) {
     : "text-amber-700 bg-amber-50/60 border-amber-200/60";
 
   return (
-    <div
-      key={idx}
-      className="rounded-md border border-slate-200/80 bg-white p-2.5 text-[12px] shadow-2xs hover:border-slate-300 transition-colors"
+    <button
+      type="button"
+      onClick={() => setOpen((o) => !o)}
+      className="w-full text-left rounded-md border border-slate-200/80 bg-white p-2.5 text-[12px] shadow-2xs hover:border-slate-300 transition-colors"
     >
       <div className="flex items-center justify-between gap-2 mb-1">
         <span className="font-semibold text-slate-700 text-[10.5px] uppercase tracking-wider">
@@ -573,15 +670,20 @@ function renderModelCard(item: { label: string; value: string }, idx: number) {
           {analysis.badge}
         </span>
       </div>
-      <div className="font-mono text-[12px] font-semibold text-slate-900 leading-snug">
-        {item.value}
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-mono text-[12px] font-semibold text-slate-900 leading-snug">
+          {item.value}
+        </span>
+        {analysis.contextNote && (
+          <span className="text-slate-400 text-[9px] shrink-0 select-none">{open ? "▲" : "▼"}</span>
+        )}
       </div>
-      {analysis.contextNote && (
+      {open && analysis.contextNote && (
         <div className="text-[11px] text-slate-600 font-normal mt-1.5 leading-snug border-t border-slate-100 pt-1">
           {analysis.contextNote}
         </div>
       )}
-    </div>
+    </button>
   );
 }
 
@@ -980,9 +1082,9 @@ function VerdictContentBlock({
                   </div>
                   {good.length > 0 ? (
                     <ul className="space-y-2.5">
-                      {good.map((p, idx) =>
-                        renderVerdictBullet(p, idx, /^<b>(the good|good|strengths):?<\/b>:?\s*/i, "good")
-                      )}
+                      {good.map((p, idx) => (
+                        <VerdictBulletItem key={idx} raw={p} tagRegex={/^<b>(the good|good|strengths):?<\/b>:?\s*/i} tone="good" />
+                      ))}
                     </ul>
                   ) : (
                     <div className="text-[12px] text-slate-400 italic py-2">No material fundamental strengths identified.</div>
@@ -1004,9 +1106,9 @@ function VerdictContentBlock({
                   </div>
                   {bad.length > 0 ? (
                     <ul className="space-y-2.5">
-                      {bad.map((p, idx) =>
-                        renderVerdictBullet(p, idx, /^<b>(the bad|bad|risks|warnings):?<\/b>:?\s*/i, "bad")
-                      )}
+                      {bad.map((p, idx) => (
+                        <VerdictBulletItem key={idx} raw={p} tagRegex={/^<b>(the bad|bad|risks|warnings):?<\/b>:?\s*/i} tone="bad" />
+                      ))}
                     </ul>
                   ) : (
                     <div className="text-[12px] text-slate-400 italic py-2">No critical red flags or capital warnings detected.</div>
@@ -1044,7 +1146,9 @@ function VerdictContentBlock({
                   </div>
                   {greenModels.length > 0 ? (
                     <div className="space-y-2">
-                      {greenModels.map((item, idx) => renderModelCard(item, idx))}
+                      {greenModels.map((item, idx) => (
+                        <ModelCard key={idx} item={item} />
+                      ))}
                     </div>
                   ) : (
                     <div className="text-[12px] text-slate-400 italic py-2">No models currently in green standing.</div>
@@ -1066,7 +1170,9 @@ function VerdictContentBlock({
                   </div>
                   {redModels.length > 0 ? (
                     <div className="space-y-2">
-                      {redModels.map((item, idx) => renderModelCard(item, idx))}
+                      {redModels.map((item, idx) => (
+                        <ModelCard key={idx} item={item} />
+                      ))}
                     </div>
                   ) : (
                     <div className="text-[12px] text-slate-500 font-normal italic py-2 flex items-center gap-1.5">
@@ -1303,38 +1409,14 @@ export function VerdictPanel({
   const unverifiedCount = drift.filter((d) => d.comparable && d.liveMissing).length;
   const stale = ageDays > STALE_DAYS;
 
-  // Categorize available verdicts across models
+  // Gemini only — Claude/Opus and Ollama verdict tabs removed per request.
+  // Most existing rows carry no `model` tag at all (written before models
+  // were distinguished), so falling back to `current` rather than leaving
+  // the panel with nothing is deliberate: a tagged Gemini verdict wins when
+  // one exists, otherwise the latest verdict on file is shown as-is.
   const allVerdicts = [current, ...(history || [])];
-
-  const geminiVerdict = allVerdicts.find((v) =>
-    v.model?.toLowerCase().includes("gemini"),
-  );
-  const claudeVerdict = allVerdicts.find(
-    (v) =>
-      v.model?.toLowerCase().includes("claude") ||
-      v.model?.toLowerCase().includes("opus") ||
-      v.model?.toLowerCase().includes("sonnet") ||
-      !v.model,
-  );
-  const ollamaVerdict = allVerdicts.find(
-    (v) =>
-      v.model?.toLowerCase().includes("ollama") ||
-      v.model?.toLowerCase().includes("qwen"),
-  );
-
-  type TabId = "gemini" | "claude" | "ollama";
-  const tabs: { id: TabId; label: string; verdict: VerdictRow }[] = [];
-  if (geminiVerdict) tabs.push({ id: "gemini", label: "✨ Google Gemini", verdict: geminiVerdict });
-  if (claudeVerdict) tabs.push({ id: "claude", label: "☁️ Claude Opus", verdict: claudeVerdict });
-  if (ollamaVerdict) tabs.push({ id: "ollama", label: "🖥️ Local Ollama", verdict: ollamaVerdict });
-
-  // Fallback if none matched
-  if (tabs.length === 0) {
-    tabs.push({ id: "gemini", label: "✨ AI Verdict", verdict: current });
-  }
-
-  const [activeTab, setActiveTab] = useState<TabId>(tabs[0].id);
-  const selectedVerdict = tabs.find((t) => t.id === activeTab)?.verdict || tabs[0].verdict;
+  const geminiVerdict = allVerdicts.find((v) => v.model?.toLowerCase().includes("gemini"));
+  const selectedVerdict = geminiVerdict ?? current;
 
   return (
     <div className="space-y-5 w-full">
@@ -1362,27 +1444,6 @@ export function VerdictPanel({
           )}
         </div>
       </div>
-
-      {/* Model Selection Tabs (when multiple model verdicts exist) */}
-      {tabs.length > 1 && (
-        <div className="flex items-center gap-2 border-b hairline pb-2 flex-wrap">
-          <span className="text-[12.5px] font-semibold text-slate-500 mr-1">AI Verdict Engine:</span>
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-              className={`px-2.5 py-1 rounded-md text-[12.5px] font-medium transition-all ${
-                activeTab === tab.id
-                  ? "bg-slate-900 text-white shadow-xs"
-                  : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-      )}
 
       {/* The Active Verdict View */}
       <VerdictContentBlock verdict={selectedVerdict} ageDays={ageDays} latestAnnual={latestAnnual} stock={stock} shareholding={shareholding} hideAccumulationBox={hideAccumulationBox} controlledSection={controlledSection} />
