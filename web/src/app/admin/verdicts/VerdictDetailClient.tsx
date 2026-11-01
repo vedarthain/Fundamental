@@ -1190,23 +1190,6 @@ export function VerdictDetailClient() {
                   <span className="shrink-0 tabular-nums">
                     {posInOrder >= 0 ? posInOrder + 1 : "—"} / {flatOrder.length}
                   </span>
-                  <span className="hidden sm:inline opacity-70 shrink-0">· use ← → keys</span>
-                  {selected && (
-                    <span className="truncate">
-                      <span className="text-sky-500">{realSector(selected)}</span>
-                      <span className="opacity-60"> · </span>
-                      <span className="text-violet-400">{realIndustry(selected)}</span>
-                    </span>
-                  )}
-                  {meta?.scores_snapshot_date && (
-                    <span
-                      className="hidden md:inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border hairline shrink-0"
-                      title="Scoring snapshot date (Q/V/M percentiles)."
-                    >
-                      <span className="opacity-70">Scores</span>
-                      <span className="font-medium">{formatSnapshotDate(meta.scores_snapshot_date)}</span>
-                    </span>
-                  )}
                   <span className="shrink-0 tabular-nums">
                     <span className="font-semibold text-[12.5px] text-[var(--color-accent-600,inherit)]">
                       {scopeCounts.watchlist}

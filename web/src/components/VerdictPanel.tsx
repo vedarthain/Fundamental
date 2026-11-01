@@ -611,6 +611,13 @@ function VerdictContentBlock({
   const { good, bad, params, decision, other, isTwoColumn } = parseVerdictPoints(verdict.points);
   const parsedParams = parseParameterItems(params);
 
+  // Three sub-tabs instead of one long stacked scroll — headline/decision/
+  // targets, the fundamental good-vs-bad review, and the quant model review.
+  // Only meaningful for the parsed two-column shape; the legacy single-list
+  // fallback below has no such sections to split.
+  type Section = "headline" | "fundamentals" | "models";
+  const [section, setSection] = useState<Section>("headline");
+
   // Separate institutional models into Green (passed/healthy) vs Red/Caution
   const greenModels: { label: string; value: string }[] = [];
   const redModels: { label: string; value: string }[] = [];
@@ -632,6 +639,30 @@ function VerdictContentBlock({
         background: "var(--color-paper)",
       }}
     >
+      {isTwoColumn && (
+        <div className="flex items-center gap-1.5 mb-3.5 border-b hairline pb-2.5 flex-wrap">
+          {([
+            ["headline", "Verdict Headline"],
+            ["fundamentals", "Fundamental overview"],
+            ["models", "Model overview"],
+          ] as [Section, string][]).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setSection(id)}
+              className={`px-2.5 py-1 rounded-md text-[11.5px] font-medium transition-all ${
+                section === id
+                  ? "bg-slate-900 text-white shadow-xs"
+                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      {(!isTwoColumn || section === "headline") && (
+      <>
       {/* 2-Column Tight Top Layout: Verdict / Watch (Col 1) + Action Plan & Triggers (Col 2) */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 items-stretch">
         {/* Left Column: Verdict Title & Executive Conclusion (Engine Details Hidden) */}
@@ -792,11 +823,14 @@ function VerdictContentBlock({
           </div>
         </div>
       )}
+      </>
+      )}
 
       {/* Main Content Layout */}
       {isTwoColumn ? (
         <div className="mt-5 space-y-6">
           {/* 1ST SECTION: Positive & Negative Fundamental Review */}
+          {section === "fundamentals" && (
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <div className="text-[12px] font-semibold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
@@ -856,8 +890,11 @@ function VerdictContentBlock({
               </div>
             </div>
           </div>
+          )}
 
           {/* 2ND SECTION: Institutional Quantitative Models */}
+          {section === "models" && (
+          <>
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
@@ -923,6 +960,8 @@ function VerdictContentBlock({
                 <div key={idx} dangerouslySetInnerHTML={{ __html: p }} />
               ))}
             </div>
+          )}
+          </>
           )}
         </div>
       ) : (
