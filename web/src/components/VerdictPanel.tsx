@@ -683,6 +683,8 @@ function getGrowthEngineCategory(
   };
 }
 
+type Section = "headline" | "fundamentals" | "models" | "strategy";
+
 function VerdictContentBlock({
   verdict,
   ageDays,
@@ -690,6 +692,7 @@ function VerdictContentBlock({
   stock,
   shareholding,
   hideAccumulationBox,
+  controlledSection,
 }: {
   verdict: VerdictRow;
   ageDays: number;
@@ -702,6 +705,12 @@ function VerdictContentBlock({
    *  target/buy-below/bear-floor in its own header box and the two were
    *  rendering as visible duplicates on the same screen. */
   hideAccumulationBox?: boolean;
+  /** When set, an outer page owns the tab bar (admin verdict detail page's
+   *  Graph/Verdict/Fundamental/Model/Strategy strip) and this component just
+   *  renders the content for whichever section it's told — no internal tab
+   *  bar, no internal state. Omitted everywhere else (stock page tab,
+   *  watchlist sheet), which keeps their own in-component tab switcher. */
+  controlledSection?: Section;
 }) {
   const bucket = verdictBucket(verdict.verdict);
   const theme = LIGHT_THEME[bucket] || LIGHT_THEME.hold;
@@ -710,12 +719,15 @@ function VerdictContentBlock({
   const parsedParams = parseParameterItems(params);
   const growthEngine = getGrowthEngineCategory(bucket, verdict, stock);
 
-  // Three sub-tabs instead of one long stacked scroll — headline/decision/
-  // targets, the fundamental good-vs-bad review, and the quant model review.
-  // Only meaningful for the parsed two-column shape; the legacy single-list
-  // fallback below has no such sections to split.
-  type Section = "headline" | "fundamentals" | "models" | "strategy";
-  const [section, setSection] = useState<Section>("headline");
+  // Four sub-tabs instead of one long stacked scroll — headline/decision/
+  // targets, the fundamental good-vs-bad review, the quant model review, and
+  // execution strategy. Only meaningful for the parsed two-column shape; the
+  // legacy single-list fallback below has no such sections to split.
+  // Ignored when controlledSection is set — the outer page drives section
+  // selection then, via the "effective" value below.
+  const [internalSection, setInternalSection] = useState<Section>("headline");
+  const section = controlledSection ?? internalSection;
+  const setSection = setInternalSection;
 
   // Separate institutional models into Green (passed/healthy) vs Red/Caution
   const greenModels: { label: string; value: string }[] = [];
@@ -738,13 +750,13 @@ function VerdictContentBlock({
         background: "var(--color-paper)",
       }}
     >
-      {isTwoColumn && (
+      {isTwoColumn && controlledSection === undefined && (
         <div className="flex items-center gap-1.5 mb-3.5 border-b hairline pb-2.5 flex-wrap">
           {([
-            ["headline", "Verdict Headline"],
-            ["fundamentals", "Fundamental overview"],
-            ["models", "Model overview"],
-            ["strategy", "Execution Strategy"],
+            ["headline", "Verdict"],
+            ["fundamentals", "Fundamental"],
+            ["models", "Model"],
+            ["strategy", "Strategy"],
           ] as [Section, string][]).map(([id, label]) => (
             <button
               key={id}
@@ -1273,6 +1285,7 @@ export function VerdictPanel({
   stock,
   shareholding,
   hideAccumulationBox,
+  controlledSection,
 }: {
   symbol: string;
   data: VerdictData;
@@ -1280,6 +1293,9 @@ export function VerdictPanel({
   stock?: any;
   shareholding?: any;
   hideAccumulationBox?: boolean;
+  /** Passed straight through to VerdictContentBlock — see its own doc
+   *  comment. Only the admin verdict detail page sets this. */
+  controlledSection?: Section;
 }) {
   const { current, history, drift, ageDays, dormant } = data;
   const movedCount = drift.filter((d) => d.moved).length;
@@ -1369,7 +1385,7 @@ export function VerdictPanel({
       )}
 
       {/* The Active Verdict View */}
-      <VerdictContentBlock verdict={selectedVerdict} ageDays={ageDays} latestAnnual={latestAnnual} stock={stock} shareholding={shareholding} hideAccumulationBox={hideAccumulationBox} />
+      <VerdictContentBlock verdict={selectedVerdict} ageDays={ageDays} latestAnnual={latestAnnual} stock={stock} shareholding={shareholding} hideAccumulationBox={hideAccumulationBox} controlledSection={controlledSection} />
 
       {/* Stored vs live */}
       <div className="rounded-lg border p-5"

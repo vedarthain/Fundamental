@@ -409,6 +409,16 @@ export function VerdictDetailClient() {
     setProfileOpen(false);
   }, [symbol]);
 
+  // Top-level page tab — Graph (chart + LTP/target strip) is its own tab now,
+  // anchored first so it's what a fresh page load or a stock switch lands on.
+  // The other four delegate to VerdictPanel's existing per-section content
+  // via controlledSection, rather than duplicating it here. Graph must stay
+  // outside the verdict-loading gate below (VerdictPanel only mounts once
+  // verdict data resolves) — otherwise the chart would vanish while the
+  // verdict is loading or for stocks with no verdict at all.
+  type PageTab = "graph" | "headline" | "fundamentals" | "models" | "strategy";
+  const [pageTab, setPageTab] = useState<PageTab>("graph");
+
   const [verdictState, setVerdictState] = useState<
     { kind: "idle" } | { kind: "loading" } | { kind: "ok"; data: VerdictData | null } | { kind: "error"; msg: string }
   >({ kind: "idle" });
@@ -1455,54 +1465,6 @@ export function VerdictDetailClient() {
                   <span className="muted-text opacity-60"> · </span>
                   <span className="text-violet-400">{selected ? realIndustry(selected) : "Unclassified"}</span>
                 </div>
-                {/* LTP + target / buy-below / bear-floor / upside / called —
-                    one line, one box: "the call" plus what the market is
-                    doing with it right now, read together. */}
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] mt-1.5 rounded-md border hairline bg-[var(--color-paper)] px-2.5 py-1.5">
-                  <span>
-                    <span className="text-slate-600 font-medium">LTP </span>
-                    <span className="font-mono font-semibold text-slate-900">{money(selected?.ltp ?? null)}</span>
-                    {selected?.pctMove != null && (
-                      <span className={`font-mono ml-1 ${selected.pctMove >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
-                        {pct(selected.pctMove)} since call
-                      </span>
-                    )}
-                  </span>
-                  <span>
-                    <span className="text-slate-600 font-medium">12M Target </span>
-                    <span className="font-mono font-semibold text-indigo-700">{money(selected?.targetPrice ?? null)}</span>
-                  </span>
-                  {selected?.fairValue != null && (
-                    <span>
-                      <span className="text-slate-600 font-medium">Fair value </span>
-                      <span className="font-mono font-semibold text-slate-700">{money(selected.fairValue)}</span>
-                    </span>
-                  )}
-                  <span>
-                    <span className="text-slate-600 font-medium">Buy below </span>
-                    <span className="font-mono font-semibold text-emerald-700">{money(selected?.buyBelow ?? null)}</span>
-                  </span>
-                  <span>
-                    <span className="text-slate-600 font-medium">Bear floor </span>
-                    <span className="font-mono font-semibold text-rose-700">{money(selected?.bearFloor ?? null)}</span>
-                  </span>
-                  {selected?.upsidePct != null && (
-                    <span>
-                      <span className="text-slate-600 font-medium">Upside </span>
-                      <span
-                        className={`font-mono font-semibold ${selected.upsidePct >= 0 ? "text-emerald-700" : "text-rose-700"}`}
-                      >
-                        {pct(selected.upsidePct)}
-                      </span>
-                    </span>
-                  )}
-                  {selected?.generated_at && (
-                    <span className="text-slate-600 font-medium">
-                      Called <span className="text-slate-800 font-mono">{shortDate(selected.generated_at)}</span>
-                    </span>
-                  )}
-                </div>
-
                 {/* Drift warning / staleness note — ported from the Board
                     tab's row-level text (VerdictQueueClient.tsx:1418-1428).
                     Drift takes priority: a verdict whose own evidence has
@@ -1548,23 +1510,112 @@ export function VerdictDetailClient() {
                 </div>
               )}
 
-              {/* Map (price chart) */}
-              <div className="rounded-md border hairline overflow-hidden mb-3">
-                <PriceChart symbol={symbol} trades={symbol ? tradesBySymbol[symbol.toUpperCase()] : undefined} />
+              {/* Top-level page tabs. Graph is anchored first — it's what a
+                  fresh load or a stock switch shows — and holds the chart
+                  plus the LTP/target/buy-below/bear-floor/upside/called strip
+                  that used to sit in the header above. The other four are
+                  the SAME content VerdictPanel always had; controlledSection
+                  tells it which one to show instead of running its own
+                  (now-redundant) internal tab bar. */}
+              <div className="flex items-center gap-1.5 mb-3 flex-wrap">
+                {([
+                  ["graph", "Graph"],
+                  ["headline", "Verdict"],
+                  ["fundamentals", "Fundamental"],
+                  ["models", "Model"],
+                  ["strategy", "Strategy"],
+                ] as [PageTab, string][]).map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setPageTab(id)}
+                    className={`px-2.5 py-1 rounded-md text-[11.5px] font-medium transition-all ${
+                      pageTab === id
+                        ? "bg-slate-900 text-white shadow-xs"
+                        : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
 
+              {/* Graph tab — deliberately NOT gated by verdictState, so the
+                  chart stays visible while the verdict is loading, errored,
+                  or simply doesn't exist for this stock. */}
+              {pageTab === "graph" && (
+                <>
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] mb-3 rounded-md border hairline bg-[var(--color-paper)] px-2.5 py-1.5">
+                    <span>
+                      <span className="text-slate-600 font-medium">LTP </span>
+                      <span className="font-mono font-semibold text-slate-900">{money(selected?.ltp ?? null)}</span>
+                      {selected?.pctMove != null && (
+                        <span className={`font-mono ml-1 ${selected.pctMove >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
+                          {pct(selected.pctMove)} since call
+                        </span>
+                      )}
+                    </span>
+                    <span>
+                      <span className="text-slate-600 font-medium">12M Target </span>
+                      <span className="font-mono font-semibold text-indigo-700">{money(selected?.targetPrice ?? null)}</span>
+                    </span>
+                    {selected?.fairValue != null && (
+                      <span>
+                        <span className="text-slate-600 font-medium">Fair value </span>
+                        <span className="font-mono font-semibold text-slate-700">{money(selected.fairValue)}</span>
+                      </span>
+                    )}
+                    <span>
+                      <span className="text-slate-600 font-medium">Buy below </span>
+                      <span className="font-mono font-semibold text-emerald-700">{money(selected?.buyBelow ?? null)}</span>
+                    </span>
+                    <span>
+                      <span className="text-slate-600 font-medium">Bear floor </span>
+                      <span className="font-mono font-semibold text-rose-700">{money(selected?.bearFloor ?? null)}</span>
+                    </span>
+                    {selected?.upsidePct != null && (
+                      <span>
+                        <span className="text-slate-600 font-medium">Upside </span>
+                        <span
+                          className={`font-mono font-semibold ${selected.upsidePct >= 0 ? "text-emerald-700" : "text-rose-700"}`}
+                        >
+                          {pct(selected.upsidePct)}
+                        </span>
+                      </span>
+                    )}
+                    {selected?.generated_at && (
+                      <span className="text-slate-600 font-medium">
+                        Called <span className="text-slate-800 font-mono">{shortDate(selected.generated_at)}</span>
+                      </span>
+                    )}
+                  </div>
+                  <div className="rounded-md border hairline overflow-hidden mb-3">
+                    <PriceChart symbol={symbol} trades={symbol ? tradesBySymbol[symbol.toUpperCase()] : undefined} />
+                  </div>
+                </>
+              )}
+
               {/* Verdict: operating review, target price detail, quant models */}
-              {verdictState.kind === "loading" && (
-                <div className="h-[300px] rounded-md border hairline animate-pulse" />
-              )}
-              {verdictState.kind === "error" && (
-                <p className="text-[13px] text-rose-700 py-4">{verdictState.msg}</p>
-              )}
-              {verdictState.kind === "ok" && verdictState.data == null && (
-                <VerdictEmpty symbol={symbol} />
-              )}
-              {verdictState.kind === "ok" && verdictState.data != null && (
-                <VerdictPanel symbol={symbol} data={verdictState.data} hideAccumulationBox />
+              {pageTab !== "graph" && (
+                <>
+                  {verdictState.kind === "loading" && (
+                    <div className="h-[300px] rounded-md border hairline animate-pulse" />
+                  )}
+                  {verdictState.kind === "error" && (
+                    <p className="text-[13px] text-rose-700 py-4">{verdictState.msg}</p>
+                  )}
+                  {verdictState.kind === "ok" && verdictState.data == null && (
+                    <VerdictEmpty symbol={symbol} />
+                  )}
+                  {verdictState.kind === "ok" && verdictState.data != null && (
+                    <VerdictPanel
+                      symbol={symbol}
+                      data={verdictState.data}
+                      hideAccumulationBox
+                      controlledSection={pageTab}
+                    />
+                  )}
+                </>
               )}
             </>
           )}
