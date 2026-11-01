@@ -129,12 +129,26 @@ const WATCH_FILTER_LABEL: Record<Exclude<WatchFilterType, "all">, string> = {
 // to drift sideways slightly. Two guards enforce that: a minimum horizontal
 // distance (SWIPE_MIN_PX) and a ratio check requiring the horizontal travel
 // to dominate the vertical travel, not just exceed it.
+//
+// A third guard, `data-swipe-ignore`: the Graph tab's own range strip
+// (1W/1M/3M/.../ALL in PriceChart.tsx) is itself a horizontally-tappable row
+// sitting inside this same swipe region, so tapping a range button was
+// getting read as a tab swipe and flipping the page off Graph mid-tap. Any
+// element the touch starts inside with that attribute opts the gesture out
+// entirely — checked at touchstart so an ignored gesture never sets a start
+// point for touchend to act on.
 const SWIPE_MIN_PX = 50;
 function useSwipeHandlers(onSwipeLeft: () => void, onSwipeRight: () => void) {
   const startX = useRef<number | null>(null);
   const startY = useRef<number | null>(null);
 
   const onTouchStart = useCallback((e: React.TouchEvent) => {
+    const target = e.target as HTMLElement | null;
+    if (target?.closest('[data-swipe-ignore="true"]')) {
+      startX.current = null;
+      startY.current = null;
+      return;
+    }
     const t = e.touches[0];
     startX.current = t.clientX;
     startY.current = t.clientY;
@@ -526,15 +540,15 @@ export function VerdictDetailClient() {
   type PageTab = "graph" | "about" | "headline" | "fundamentals" | "models" | "strategy";
   const [pageTab, setPageTab] = useState<PageTab>("graph");
   // Swipe-left/right on the tab content steps through this in order — same
-  // left-to-right order as the tab bar buttons below. Clamped, not wrapped:
-  // swiping past Strategy or before Graph does nothing, rather than looping
-  // back around, which is less surprising on a linear tab strip.
+  // left-to-right order as the tab bar buttons below. Wraps: swiping left
+  // past Strategy loops back to Graph, and right past Graph loops back to
+  // Strategy — a closed loop rather than a dead stop at either end.
   const TAB_ORDER: PageTab[] = ["graph", "about", "headline", "fundamentals", "models", "strategy"];
   const stepTab = useCallback((dir: 1 | -1) => {
     setPageTab((cur) => {
       const idx = TAB_ORDER.indexOf(cur);
-      const next = idx + dir;
-      return next >= 0 && next < TAB_ORDER.length ? TAB_ORDER[next] : cur;
+      const next = (idx + dir + TAB_ORDER.length) % TAB_ORDER.length;
+      return TAB_ORDER[next];
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

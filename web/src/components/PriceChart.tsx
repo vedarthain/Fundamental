@@ -533,7 +533,16 @@ export function PriceChart({
             of forcing the card (and then the page) wider. The parent still
             wraps, so the strip drops below the headline before it ever has
             to scroll. */}
-        <div className="flex flex-nowrap items-center gap-0.5 justify-end min-w-0 overflow-x-auto">
+        {/* data-swipe-ignore: the admin verdict page wraps the whole Graph
+            tab in a touch handler that turns a horizontal swipe into a
+            next/prev TAB change. This strip is itself horizontally
+            scrollable/tappable (range buttons, left-right), so without this
+            opt-out, tapping or scrolling it got read as a swipe and flipped
+            the page off the Graph tab mid-interaction. */}
+        <div
+          data-swipe-ignore="true"
+          className="flex flex-nowrap items-center gap-0.5 justify-end min-w-0 overflow-x-auto"
+        >
           {RANGES.map((r) => {
             const active = r === range;
             const p = rangePctMap[r];
@@ -771,7 +780,7 @@ export function PriceChart({
 
             {/* Range tabs (each showing its own % change), shared with the inline chart. */}
             <div className="flex flex-wrap items-center gap-3 border-b hairline px-4 py-2">
-              <div className="flex flex-wrap gap-1">
+              <div data-swipe-ignore="true" className="flex flex-wrap gap-1">
                 {RANGES.map((r) => {
                   const active = r === range;
                   const p = rangePctMap[r];
