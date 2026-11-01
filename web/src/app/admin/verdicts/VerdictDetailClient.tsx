@@ -120,6 +120,46 @@ const WATCH_FILTER_LABEL: Record<Exclude<WatchFilterType, "all">, string> = {
   risk: "Governance / Risk",
 };
 
+// Horizontal swipe, mobile-only in practice (touch events don't fire from a
+// mouse). Used twice below: on the stock header (swipe = prev/next stock,
+// mirroring the existing ‹Prev/Next› buttons and arrow-key handler) and on
+// the tab content area (swipe = prev/next tab). Vertical scrolling inside
+// either box must never be misread as a horizontal swipe — e.g. scrolling the
+// News/price chart tooltip or just scrolling the page while a thumb happens
+// to drift sideways slightly. Two guards enforce that: a minimum horizontal
+// distance (SWIPE_MIN_PX) and a ratio check requiring the horizontal travel
+// to dominate the vertical travel, not just exceed it.
+const SWIPE_MIN_PX = 50;
+function useSwipeHandlers(onSwipeLeft: () => void, onSwipeRight: () => void) {
+  const startX = useRef<number | null>(null);
+  const startY = useRef<number | null>(null);
+
+  const onTouchStart = useCallback((e: React.TouchEvent) => {
+    const t = e.touches[0];
+    startX.current = t.clientX;
+    startY.current = t.clientY;
+  }, []);
+
+  const onTouchEnd = useCallback(
+    (e: React.TouchEvent) => {
+      const sx = startX.current;
+      const sy = startY.current;
+      startX.current = null;
+      startY.current = null;
+      if (sx == null || sy == null) return;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - sx;
+      const dy = t.clientY - sy;
+      if (Math.abs(dx) < SWIPE_MIN_PX || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+      if (dx < 0) onSwipeLeft();
+      else onSwipeRight();
+    },
+    [onSwipeLeft, onSwipeRight],
+  );
+
+  return { onTouchStart, onTouchEnd };
+}
+
 function actionClass(action: string | null): string {
   if (!action) return "bg-slate-200 text-slate-600";
   const key = Object.keys(ACTION_COLOR).find((k) => action.toUpperCase().includes(k));
@@ -411,6 +451,19 @@ export function VerdictDetailClient() {
   // while the verdict is loading or for stocks with no verdict at all.
   type PageTab = "graph" | "about" | "headline" | "fundamentals" | "models" | "strategy";
   const [pageTab, setPageTab] = useState<PageTab>("graph");
+  // Swipe-left/right on the tab content steps through this in order — same
+  // left-to-right order as the tab bar buttons below. Clamped, not wrapped:
+  // swiping past Strategy or before Graph does nothing, rather than looping
+  // back around, which is less surprising on a linear tab strip.
+  const TAB_ORDER: PageTab[] = ["graph", "about", "headline", "fundamentals", "models", "strategy"];
+  const stepTab = useCallback((dir: 1 | -1) => {
+    setPageTab((cur) => {
+      const idx = TAB_ORDER.indexOf(cur);
+      const next = idx + dir;
+      return next >= 0 && next < TAB_ORDER.length ? TAB_ORDER[next] : cur;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [verdictState, setVerdictState] = useState<
     { kind: "idle" } | { kind: "loading" } | { kind: "ok"; data: VerdictData | null } | { kind: "error"; msg: string }
@@ -899,6 +952,18 @@ export function VerdictDetailClient() {
   const rotateRef = useRef(rotate);
   rotateRef.current = rotate;
 
+  // Mobile swipe: left on the stock header = next stock, right = previous —
+  // same direction the ‹Prev/Next› buttons and ArrowRight/ArrowLeft already
+  // use. Left on the tab content = next tab, right = previous tab.
+  const stockSwipe = useSwipeHandlers(
+    () => rotate(1),
+    () => rotate(-1),
+  );
+  const tabSwipe = useSwipeHandlers(
+    () => stepTab(1),
+    () => stepTab(-1),
+  );
+
   const goFirst = useCallback(() => {
     if (flatOrder.length > 0) setSymbol(flatOrder[0]);
   }, [flatOrder]);
@@ -1386,8 +1451,13 @@ export function VerdictDetailClient() {
                 </div>
               </div>
 
-              {/* Stock header */}
-              <div className="rounded-md border hairline px-3 py-2 mb-2">
+              {/* Stock header — swipe left/right on mobile to go to the
+                  next/previous stock (same as the ‹Prev/Next› buttons). */}
+              <div
+                className="rounded-md border hairline px-3 py-2 mb-2"
+                onTouchStart={stockSwipe.onTouchStart}
+                onTouchEnd={stockSwipe.onTouchEnd}
+              >
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-mono font-semibold text-[14px]">{symbol}</span>
                   {selected?.company_name && (
@@ -1519,6 +1589,10 @@ export function VerdictDetailClient() {
                 ))}
               </div>
 
+              {/* Tab content — swipe left/right on mobile to move to the
+                  next/previous tab (Graph → About → Verdict → Fundamental →
+                  Model → Strategy), same order as the buttons above. */}
+              <div onTouchStart={tabSwipe.onTouchStart} onTouchEnd={tabSwipe.onTouchEnd}>
               {/* Graph tab — deliberately NOT gated by verdictState, so the
                   chart stays visible while the verdict is loading, errored,
                   or simply doesn't exist for this stock. */}
@@ -1602,6 +1676,7 @@ export function VerdictDetailClient() {
                   )}
                 </>
               )}
+              </div>
             </>
           )}
         </div>
