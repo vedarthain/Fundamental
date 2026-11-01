@@ -759,35 +759,48 @@ function VerdictContentBlock({
             )}
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {/* Target Price */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            {/* 12M Target Price */}
             <div className="rounded-md border border-slate-200/90 bg-white p-2.5 shadow-2xs">
               <div className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">
-                Base Target Price
+                12M Target Price
               </div>
               <div className="text-[17px] font-mono font-bold text-slate-900 mt-0.5">
                 ₹{Math.round(verdict.target_price).toLocaleString("en-IN")}
               </div>
               <div className="text-[10px] text-slate-400 mt-0.5">
-                Fair Intrinsic Multi-Model Value
+                12-Month Forward Objective
               </div>
             </div>
 
             {/* Upside Potential */}
             <div className="rounded-md border border-slate-200/90 bg-white p-2.5 shadow-2xs">
               <div className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">
-                Valuation Upside
+                12M Target Upside
               </div>
               <div
                 className={`text-[17px] font-mono font-bold mt-0.5 ${
-                  (verdict.upside_pct ?? 0) >= 0 ? "text-emerald-700" : "text-slate-600"
+                  (verdict.upside_pct ?? 0) >= 0 ? "text-emerald-700" : "text-rose-700"
                 }`}
               >
                 {(verdict.upside_pct ?? 0) >= 0 ? "+" : ""}
                 {verdict.upside_pct != null ? verdict.upside_pct.toFixed(1) : "0.0"}%
               </div>
               <div className="text-[10px] text-slate-400 mt-0.5">
-                Expected compounder upside
+                Expected 1-year price change
+              </div>
+            </div>
+
+            {/* Fair Intrinsic Value */}
+            <div className="rounded-md border border-slate-200/90 bg-white p-2.5 shadow-2xs">
+              <div className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">
+                Intrinsic Fair Value
+              </div>
+              <div className="text-[17px] font-mono font-bold text-slate-800 mt-0.5">
+                ₹{Math.round(verdict.fair_value ?? verdict.target_price).toLocaleString("en-IN")}
+              </div>
+              <div className="text-[10px] text-slate-400 mt-0.5">
+                Conservative DCF &amp; asset value
               </div>
             </div>
 

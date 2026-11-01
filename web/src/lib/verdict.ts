@@ -61,6 +61,7 @@ type RawVerdict = {
   model: string | null;
   source_report: string | null;
   target_price?: number | null;
+  fair_value?: number | null;
   buy_below?: number | null;
   bear_floor?: number | null;
   upside_pct?: number | null;
@@ -83,6 +84,7 @@ function normalise(r: RawVerdict): VerdictRow {
     model: r.model,
     source_report: r.source_report,
     target_price: r.target_price ?? null,
+    fair_value: r.fair_value ?? null,
     buy_below: r.buy_below ?? null,
     bear_floor: r.bear_floor ?? null,
     upside_pct: r.upside_pct ?? null,
@@ -141,6 +143,7 @@ export async function loadVerdict(symbol: string): Promise<VerdictData | null> {
       SELECT generated_at, verdict, confidence, points, trigger_text, evidence,
              snapshot_date, price_asof, model, source_report,
              target_price::float AS target_price,
+             fair_value::float AS fair_value,
              buy_below::float AS buy_below,
              bear_floor::float AS bear_floor,
              upside_pct::float AS upside_pct,
@@ -300,6 +303,7 @@ export type QueueEntry = {
   ltp: number | null;
   pctMove: number | null;
   targetPrice: number | null;
+  fairValue: number | null;
   buyBelow: number | null;
   bearFloor: number | null;
   upsidePct: number | null;
@@ -528,7 +532,7 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
     symbol: string; generated_at: Date; verdict: string;
     confidence: "high" | "medium" | "low"; evidence: unknown;
     price_asof: Date | null; anchor_price: number | null;
-    target_price: number | null; buy_below: number | null;
+    target_price: number | null; fair_value: number | null; buy_below: number | null;
     bear_floor: number | null; upside_pct: number | null;
     valuation_method: string | null;
   }[] = [];
@@ -537,6 +541,7 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
       SELECT symbol, generated_at, verdict, confidence, evidence,
              price_asof, anchor_price::float AS anchor_price,
              target_price::float AS target_price,
+             fair_value::float AS fair_value,
              buy_below::float AS buy_below,
              bear_floor::float AS bear_floor,
              upside_pct::float AS upside_pct,
@@ -710,6 +715,7 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
         ...priceOf(t.symbol, null),
         priceAsof: null,
         targetPrice: null,
+        fairValue: null,
         buyBelow: null,
         bearFloor: null,
         upsidePct: null,
@@ -760,6 +766,7 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
       ...priceOf(t.symbol, v.anchor_price),
       priceAsof: v.price_asof ? v.price_asof.toISOString().slice(0, 10) : null,
       targetPrice: v.target_price ?? null,
+      fairValue: v.fair_value ?? null,
       buyBelow: v.buy_below ?? null,
       bearFloor: v.bear_floor ?? null,
       upsidePct: v.upside_pct ?? null,
@@ -814,6 +821,7 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
       ...priceOf(symbol, v.anchor_price),
       priceAsof: v.price_asof ? v.price_asof.toISOString().slice(0, 10) : null,
       targetPrice: v.target_price ?? null,
+      fairValue: v.fair_value ?? null,
       buyBelow: v.buy_below ?? null,
       bearFloor: v.bear_floor ?? null,
       upsidePct: v.upside_pct ?? null,

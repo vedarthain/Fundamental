@@ -136,6 +136,7 @@ def main() -> int:
             "metrics": m,
             "annual": annual_map.get(sym, []),
             "quarterly": quarterly_map.get(sym, []),
+            "verdict": v.get("verdict"),
         }
 
         val = calculate_stock_valuation(pack)
@@ -144,6 +145,7 @@ def main() -> int:
             "symbol": sym,
             "generated_at": gen_at,
             "target_price": val["target_price"],
+            "fair_value": val["fair_value"],
             "buy_below": val["buy_below"],
             "bear_floor": val["bear_floor"],
             "upside_pct": val["upside_pct"],
@@ -158,7 +160,7 @@ def main() -> int:
     if args.dry_run:
         print("\n[Dry Run] Sample preview of 5 stocks:")
         for u in updates[:5]:
-            print(f"  • {u['symbol']:<10} Target: ₹{u['target_price']:>8.2f} ({u['upside_pct']:>+5.1f}%) | Buy Below: ₹{u['buy_below']:>8.2f} | Method: {u['valuation_method']}")
+            print(f"  • {u['symbol']:<10} 12M Target: ₹{u['target_price']:>8.2f} ({u['upside_pct']:>+5.1f}%) | Fair Val: ₹{u['fair_value']:>8.2f} | Buy Below: ₹{u['buy_below']:>8.2f}")
         return 0
 
     print("Updating app.stock_verdict in local PostgreSQL...")
@@ -167,6 +169,7 @@ def main() -> int:
             cur.executemany("""
                 UPDATE app.stock_verdict SET
                     target_price = %(target_price)s,
+                    fair_value = %(fair_value)s,
                     buy_below = %(buy_below)s,
                     bear_floor = %(bear_floor)s,
                     upside_pct = %(upside_pct)s,

@@ -37,6 +37,7 @@ export type VerdictRow = {
   model: string | null;
   source_report: string | null;
   target_price?: number | null;
+  fair_value?: number | null;
   buy_below?: number | null;
   bear_floor?: number | null;
   upside_pct?: number | null;

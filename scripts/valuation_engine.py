@@ -478,7 +478,7 @@ def calculate_stock_valuation(pack: dict[str, Any] | str, item_dict: Optional[di
     active_models = [(m, w, name) for (m, w, name) in weights if m and m.get("target_price") and m["target_price"] > 0]
 
     if not active_models:
-        base_target = round(current_price * 1.15, 2)
+        fair_value = round(current_price * 1.15, 2)
         bull_target = round(current_price * 1.30, 2)
         bear_floor = round(current_price * 0.85, 2)
         buy_below = round(current_price * 0.95, 2)
@@ -486,49 +486,99 @@ def calculate_stock_valuation(pack: dict[str, Any] | str, item_dict: Optional[di
     else:
         tot_w = sum(w for (_, w, _) in active_models)
         weighted_sum = sum(m["target_price"] * (w / tot_w) for (m, w, _) in active_models)
-        base_target = round(weighted_sum, 2)
+        fair_value = round(weighted_sum, 2)
 
         method_parts = [f"{int(round((w / tot_w) * 100))}% {name}" for (_, w, name) in active_models]
         method = " + ".join(method_parts)
 
-        bull_target = round(base_target * 1.20, 2)
-
-        # Hierarchy: Bear Floor < Buy Below <= Base Target (strict margin of safety)
+        # Hierarchy: Bear Floor < Buy Below <= Intrinsic Fair Value (strict margin of safety)
         hist_floor = m_hist.get("floor_price") if m_hist else None
         candidate_floor = hist_floor if (hist_floor and 0 < hist_floor < current_price) else (current_price * 0.80)
 
-        # Bear floor cannot exceed 75% of fair target or 85% of current price
-        bear_floor = round(min(candidate_floor, base_target * 0.75, current_price * 0.85), 2)
+        # Bear floor cannot exceed 75% of fair value or 85% of current price
+        bear_floor = round(min(candidate_floor, fair_value * 0.75, current_price * 0.85), 2)
 
         # Buy Below represents the accumulation boundary offering a Margin of Safety.
-        # It must never be higher than base_target * 0.90 (never buy at or above intrinsic target price).
-        if current_price < base_target:
-            # Undervalued: accumulate on minor pullback from current price, well below target
-            buy_below = round(min(current_price * 0.98, base_target * 0.90), 2)
+        # It must never be higher than fair_value * 0.90 (never buy at or above intrinsic value).
+        if current_price < fair_value:
+            # Undervalued: accumulate on minor pullback from current price, well below fair value
+            buy_below = round(min(current_price * 0.98, fair_value * 0.90), 2)
         else:
-            # Overvalued: stock is trading above fair value; accumulate ONLY after it corrects below fair target
-            mid_val = (bear_floor + base_target) / 2.0
-            buy_below = round(min(base_target * 0.90, max(bear_floor * 1.05, mid_val)), 2)
+            # Overvalued: stock is trading above fair value; accumulate ONLY after it corrects below fair value
+            mid_val = (bear_floor + fair_value) / 2.0
+            buy_below = round(min(fair_value * 0.90, max(bear_floor * 1.05, mid_val)), 2)
 
         # Strict monotonicity enforcement
         if buy_below <= bear_floor:
             buy_below = round(bear_floor * 1.08, 2)
-        if buy_below > base_target * 0.95:
-            buy_below = round(base_target * 0.90, 2)
+        if buy_below > fair_value * 0.95:
+            buy_below = round(fair_value * 0.90, 2)
 
-    upside_pct = round(((base_target - current_price) / current_price) * 100.0, 1)
+    # -------------------------------------------------------------------------
+    # Dual-Clarity Model: 12-Month Forward Price Target vs Intrinsic Fair Value
+    # -------------------------------------------------------------------------
+    # Extract verdict action (e.g. HOLD, ACCUMULATE, BUY, WATCH, AVOID)
+    verdict_text = str(pack.get("verdict") or pack.get("action") or "").strip().upper()
+    first_token = verdict_text.split()[0] if verdict_text else ""
+    if first_token.startswith("BUY"):
+        verdict_action = "BUY"
+    elif first_token.startswith("ACCUMULATE"):
+        verdict_action = "ACCUMULATE"
+    elif first_token.startswith("HOLD"):
+        verdict_action = "HOLD"
+    elif first_token.startswith("AVOID"):
+        verdict_action = "AVOID"
+    elif first_token.startswith("REDUCE"):
+        verdict_action = "REDUCE"
+    elif first_token.startswith("WATCH"):
+        verdict_action = "WATCH"
+    else:
+        verdict_action = "GENERAL"
+
+    growth_pct = (m_pe.get("projected_growth_pct") if m_pe else None) or 12.0
+    growth_rate = max(0.06, min(0.25, growth_pct / 100.0))
+    pe_ttm = qi.get("pe_ttm") or 25.0
+
+    if verdict_action in ("BUY", "ACCUMULATE"):
+        # Quality company with positive investment rating
+        if fair_value > current_price:
+            target_price = fair_value
+        else:
+            target_price = round(max(fair_value, current_price * (1.0 + max(0.12, growth_rate))), 2)
+    elif verdict_action == "HOLD":
+        # Compounding winner trading at market premium.
+        # 12M target reflects 1Y forward earnings compounding with sustainable multiple retention.
+        if pe_ttm > 60.0:
+            retention = 0.93  # High P/E multiple compression
+        elif pe_ttm > 35.0:
+            retention = 0.96
+        else:
+            retention = 0.99
+        forward_factor = max(1.06, min(1.20, (1.0 + growth_rate) * retention))
+        target_price = round(max(fair_value, current_price * forward_factor), 2)
+    else:
+        # WATCH, AVOID, REDUCE, or distressed:
+        # No artificial multiple expansion; 12M target equals intrinsic fair value (highlighting downside risk)
+        target_price = fair_value
+
+    bull_target = round(target_price * 1.18, 2)
+    upside_pct = round(((target_price - current_price) / current_price) * 100.0, 1)
+    fair_value_gap_pct = round(((fair_value - current_price) / current_price) * 100.0, 1)
     downside_risk = max(1.0, current_price - bear_floor)
-    upside_reward = max(0.0, base_target - current_price)
+    upside_reward = max(0.0, target_price - current_price)
     rr_ratio = round(upside_reward / downside_risk, 1) if downside_risk > 0 else 1.0
 
     return {
-        "target_price": base_target,
+        "target_price": target_price,
+        "fair_value": fair_value,
         "bull_target": bull_target,
         "bear_floor": bear_floor,
         "buy_below": buy_below,
         "upside_pct": upside_pct,
+        "fair_value_gap_pct": fair_value_gap_pct,
         "reward_risk_ratio": rr_ratio,
         "valuation_method": method,
+        "verdict_action": verdict_action,
         "category": category,
         "models_evaluated": {
             "justified_pb": m_pb,

@@ -1344,9 +1344,15 @@ export function VerdictDetailClient() {
                     )}
                   </span>
                   <span>
-                    <span className="text-slate-600 font-medium">Target </span>
+                    <span className="text-slate-600 font-medium">12M Target </span>
                     <span className="font-mono font-semibold text-indigo-700">{money(selected?.targetPrice ?? null)}</span>
                   </span>
+                  {selected?.fairValue != null && (
+                    <span>
+                      <span className="text-slate-600 font-medium">Fair value </span>
+                      <span className="font-mono font-semibold text-slate-700">{money(selected.fairValue)}</span>
+                    </span>
+                  )}
                   <span>
                     <span className="text-slate-600 font-medium">Buy below </span>
                     <span className="font-mono font-semibold text-emerald-700">{money(selected?.buyBelow ?? null)}</span>
