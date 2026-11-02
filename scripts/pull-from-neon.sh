@@ -33,7 +33,16 @@
 #   export NEON_GOLDEN_URL="postgresql://..."
 #   bash scripts/pull-from-neon.sh
 
-set -eo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+if [[ -z "$NEON_APP_URL" || -z "$NEON_GOLDEN_URL" ]]; then
+  if [[ -f "$ROOT_DIR/.env.local" ]]; then
+    set -a
+    # shellcheck disable=SC1091
+    source "$ROOT_DIR/.env.local"
+    set +a
+  fi
+fi
 
 [[ -z "$NEON_APP_URL"    ]] && { echo "❌ NEON_APP_URL not set";    exit 1; }
 [[ -z "$NEON_GOLDEN_URL" ]] && { echo "❌ NEON_GOLDEN_URL not set"; exit 1; }
@@ -273,6 +282,27 @@ if [[ -n "$LATEST_CLUSTER_CACHE" ]]; then
     "snapshot_date = '$LATEST_CLUSTER_CACHE'" \
     "snapshot_date = '$LATEST_CLUSTER_CACHE'"
 fi
+
+# ----- verdicts -----------------------------------------------------------
+echo ""
+echo "=== Stock verdicts ==="
+pull_replace app.stock_verdict "$NEON_APP_URL" "$LOCAL_APP" \
+  "TRUE" "TRUE"
+
+# ----- portfolio transactions & holdings ---------------------------------
+echo ""
+echo "=== Portfolio data ==="
+pull_replace app.portfolio_transaction "$NEON_APP_URL" "$LOCAL_APP" \
+  "TRUE" "TRUE"
+
+pull_replace app.portfolio_holding "$NEON_APP_URL" "$LOCAL_APP" \
+  "TRUE" "TRUE"
+
+# ----- upstox instrument keys --------------------------------------------
+echo ""
+echo "=== Upstox instruments ==="
+pull_replace app.upstox_instrument "$NEON_APP_URL" "$LOCAL_APP" \
+  "TRUE" "TRUE"
 
 # ----- golden.stocks (the FK parent of price_history) ---------------------
 #
