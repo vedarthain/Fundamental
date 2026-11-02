@@ -54,7 +54,7 @@ import type { TradeMark } from "@/app/tools/scanner/CandleChart";
 import { VerdictPanel, VerdictEmpty } from "@/components/VerdictPanel";
 import { CompanyProfile } from "@/components/CompanyProfile";
 import CapTierBadge, { type CapCategory } from "@/components/CapTierBadge";
-import { IntradayPriceBadge } from "@/components/IntradayPriceBadge";
+import { IntradayPriceBadge, formatFetchedAt } from "@/components/IntradayPriceBadge";
 import { tierLabel } from "@/lib/score";
 // Type-only import of QueueEntry/VerdictQueue from lib/verdict.ts: that
 // module's top-level `import { sql } from "@/lib/db"` pulls the Postgres
@@ -1626,7 +1626,13 @@ export function VerdictDetailClient({
                     />
                   )}
                   {meta?.ret_1d != null && (
-                    <span className={`font-mono text-[11px] ${meta.ret_1d >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
+                    <span
+                      className={`px-1.5 py-[1px] rounded font-mono text-[11px] font-semibold border ${
+                        meta.ret_1d >= 0
+                          ? "text-emerald-700 bg-emerald-50 border-emerald-200"
+                          : "text-rose-700 bg-rose-50 border-rose-200"
+                      }`}
+                    >
                       1D: {pct(meta.ret_1d)}
                     </span>
                   )}
@@ -1772,12 +1778,26 @@ export function VerdictDetailClient({
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] mb-3 rounded-md border hairline bg-[var(--color-paper)] px-2.5 py-1.5">
                     <span>
                       <span className="text-slate-600 font-medium">LTP </span>
-                      <span className="font-mono font-semibold text-slate-900">{money(selected?.ltp ?? null)}</span>
-                      {selected?.pctMove != null && (
-                        <span className={`font-mono ml-1 ${selected.pctMove >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
-                          {pct(selected.pctMove)} since call
+                      <span className="font-mono font-semibold text-slate-900">
+                        {money(meta?.current_price ?? selected?.ltp ?? null)}
+                      </span>
+                      {meta?.current_price != null && selected?.ltp != null && meta.current_price !== selected.ltp && (
+                        <span className="text-[10px] text-slate-400 font-mono ml-1" title="Last settled trading session close">
+                          (EOD {money(selected.ltp)})
                         </span>
                       )}
+                      {(() => {
+                        const move =
+                          meta?.current_price != null && selected?.anchorPrice != null && selected.anchorPrice > 0
+                            ? ((meta.current_price - selected.anchorPrice) / selected.anchorPrice) * 100
+                            : selected?.pctMove;
+                        if (move == null) return null;
+                        return (
+                          <span className={`font-mono ml-1 ${move >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
+                            {pct(move)} since call
+                          </span>
+                        );
+                      })()}
                     </span>
                     <span>
                       <span className="text-slate-600 font-medium">12M Target </span>
@@ -1845,7 +1865,14 @@ export function VerdictDetailClient({
                     )}
                   </div>
                   <div className="rounded-md border hairline overflow-hidden mb-3">
-                    <PriceChart symbol={symbol} trades={symbol ? tradesBySymbol[symbol.toUpperCase()] : undefined} />
+                    <PriceChart
+                      symbol={symbol}
+                      currentPrice={meta?.current_price ?? undefined}
+                      dayChangePct={meta?.ret_1d}
+                      asOfLabel={meta?.price_fetched_at ? formatFetchedAt(meta.price_fetched_at) : undefined}
+                      asOfKind={meta?.price_fetched_at ? "live" : "eod"}
+                      trades={symbol ? tradesBySymbol[symbol.toUpperCase()] : undefined}
+                    />
                   </div>
                 </>
               )}

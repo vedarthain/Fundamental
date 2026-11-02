@@ -16,12 +16,34 @@
  * render an identical badge.
  */
 
-const IST_TIME = new Intl.DateTimeFormat("en-IN", {
-  timeZone: "Asia/Kolkata",
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
-});
+export function formatFetchedAt(iso: string): string {
+  try {
+    const dt = new Date(iso);
+    const now = new Date();
+    const isToday =
+      dt.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }) ===
+      now.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+
+    const timeStr = dt.toLocaleTimeString("en-IN", {
+      timeZone: "Asia/Kolkata",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+
+    if (isToday) {
+      return `Today ${timeStr} IST`;
+    }
+    const dateStr = dt.toLocaleDateString("en-IN", {
+      timeZone: "Asia/Kolkata",
+      day: "2-digit",
+      month: "short",
+    });
+    return `${dateStr} ${timeStr} IST`;
+  } catch {
+    return iso;
+  }
+}
 
 export function IntradayPriceBadge({
   price,
@@ -43,9 +65,9 @@ export function IntradayPriceBadge({
             background: "color-mix(in srgb, var(--color-muted) 10%, transparent)",
             color: "var(--color-muted)",
           }}
-          title="Last time the intraday price pinger updated this stock (blank/older outside 09:30–15:30 IST market hours)"
+          title={`Last price update: ${new Date(fetchedAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}`}
         >
-          {IST_TIME.format(new Date(fetchedAt))} IST
+          {formatFetchedAt(fetchedAt)}
         </span>
       )}
     </span>
