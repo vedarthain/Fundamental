@@ -217,11 +217,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
             "np_cagr_5y": 8, "np_consistency_5y": 6,
         },
         valuation={"pe_ttm": 35, "ev_ebitda_ttm": 20, "peg": 25, "fcf_yield": 15, "div_yield": 5},
-        momentum={
-            "ret_12m_rel": 15, "ret_6m_rel": 15, "ret_3m_rel": 10,
-            "pct_above_200ema_252d": 10, "ema_stack_bull": 5, "tech_net_score_scaled": 5,
-            "sales_yoy_q": 22.5, "np_yoy_q": 17.5,
-        },
+        momentum=UNIVERSAL_MOMENTUM,
         loss_maker_val_fallback=_val_fallback_ev_sales(),
     ),
     "it_services_midsmall": Scorecard(
@@ -309,11 +305,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
             "inv_days": 8, "rev_cagr_5y": 12, "np_cagr_5y": 10, "cfo_pat_3y": 8, "debt_equity": 8,
         },
         valuation={"pe_ttm": 30, "ev_ebitda_ttm": 22, "peg": 23, "pb": 10, "fcf_yield": 10, "div_yield": 5},
-        momentum={
-            "ret_12m_rel": 20, "ret_6m_rel": 15, "ret_3m_rel": 10,
-            "pct_above_200ema_252d": 10, "ema_stack_bull": 5, "tech_net_score_scaled": 5,
-            "sales_yoy_q": 20, "np_yoy_q": 15,
-        },
+        momentum=UNIVERSAL_MOMENTUM,
         loss_maker_val_fallback=_val_fallback_ev_sales(),
     ),
     "retail": Scorecard(
@@ -324,11 +316,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
             "np_consistency_5y": 6, "debt_equity": 2,
         },
         valuation={"pe_ttm": 30, "ev_ebitda_ttm": 25, "peg": 22, "pb": 13, "fcf_yield": 5, "div_yield": 5},
-        momentum={
-            "ret_12m_rel": 20, "ret_6m_rel": 15, "ret_3m_rel": 10,
-            "pct_above_200ema_252d": 10, "ema_stack_bull": 5, "tech_net_score_scaled": 5,
-            "sales_yoy_q": 22.5, "np_yoy_q": 12.5,
-        },
+        momentum=UNIVERSAL_MOMENTUM,
         loss_maker_val_fallback=_val_fallback_ev_sales(),
     ),
     "leisure_hospitality": Scorecard(
@@ -396,11 +384,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
             "rev_cagr_5y": 10, "np_consistency_5y": 6,
         },
         valuation={"ev_ebitda_ttm": 35, "pe_ttm": 22, "pb": 15, "fcf_yield": 18, "div_yield": 10},
-        momentum={
-            "ret_12m_rel": 18, "ret_6m_rel": 15, "ret_3m_rel": 10,
-            "pct_above_200ema_252d": 10, "ema_stack_bull": 5, "tech_net_score_scaled": 7,
-            "sales_yoy_q": 17.5, "np_yoy_q": 17.5,
-        },
+        momentum=UNIVERSAL_MOMENTUM,
         loss_maker_val_fallback=_val_fallback_ev_sales(),
     ),
     "metals_ferrous": Scorecard(
@@ -411,11 +395,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
             "rev_cagr_5y": 6, "np_cagr_5y": 6,
         },
         valuation={"ev_ebitda_ttm": 35, "pe_ttm": 22, "pb": 15, "fcf_yield": 18, "div_yield": 10},
-        momentum={
-            "ret_12m_rel": 15, "ret_6m_rel": 18, "ret_3m_rel": 15,
-            "pct_above_200ema_252d": 8, "ema_stack_bull": 5, "tech_net_score_scaled": 4,
-            "sales_yoy_q": 17.5, "np_yoy_q": 17.5,
-        },
+        momentum=UNIVERSAL_MOMENTUM,
         loss_maker_val_fallback=_val_fallback_industrials(),
     ),
     "metals_nonferrous_mining": Scorecard(
@@ -426,11 +406,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
             "rev_cagr_5y": 6, "np_cagr_5y": 6,
         },
         valuation={"ev_ebitda_ttm": 35, "pe_ttm": 22, "pb": 15, "fcf_yield": 18, "div_yield": 10},
-        momentum={
-            "ret_12m_rel": 15, "ret_6m_rel": 18, "ret_3m_rel": 15,
-            "pct_above_200ema_252d": 8, "ema_stack_bull": 5, "tech_net_score_scaled": 4,
-            "sales_yoy_q": 17.5, "np_yoy_q": 17.5,
-        },
+        momentum=UNIVERSAL_MOMENTUM,
         loss_maker_val_fallback=_val_fallback_industrials(),
     ),
     "paper_forest": Scorecard(
@@ -462,11 +438,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
             "np_consistency_5y": 8, "inv_days": 10,
         },
         valuation={"ev_ebitda_ttm": 32, "pe_ttm": 22, "pb": 18, "fcf_yield": 18, "div_yield": 10},
-        momentum={
-            "ret_12m_rel": 18, "ret_6m_rel": 15, "ret_3m_rel": 15,
-            "pct_above_200ema_252d": 10, "ema_stack_bull": 5, "tech_net_score_scaled": 2,
-            "sales_yoy_q": 17.5, "np_yoy_q": 17.5,
-        },
+        momentum=UNIVERSAL_MOMENTUM,
         loss_maker_val_fallback=_val_fallback_ev_sales(),
     ),
     "gas_distribution": Scorecard(
@@ -499,11 +471,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
             "np_consistency_5y": 4, "debt_equity": 4,
         },
         valuation={"pe_ttm": 30, "ev_ebitda_ttm": 25, "peg": 22, "pb": 10, "fcf_yield": 8, "div_yield": 5},
-        momentum={
-            "ret_12m_rel": 20, "ret_6m_rel": 15, "ret_3m_rel": 10,
-            "pct_above_200ema_252d": 10, "ema_stack_bull": 5, "tech_net_score_scaled": 6,
-            "sales_yoy_q": 22, "np_yoy_q": 12,
-        },
+        momentum=UNIVERSAL_MOMENTUM,
         loss_maker_val_fallback=_val_fallback_industrials(),
     ),
     "cap_goods_pipes_building": Scorecard(
@@ -534,11 +502,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
             "cfo_pat_3y": 10, "rev_cagr_5y": 14, "np_cagr_5y": 10, "debt_equity": 10,
         },
         valuation={"pe_ttm": 25, "ev_ebitda_ttm": 25, "peg": 30, "pb": 10, "fcf_yield": 10},
-        momentum={
-            "ret_12m_rel": 22, "ret_6m_rel": 15, "ret_3m_rel": 10,
-            "pct_above_200ema_252d": 10, "ema_stack_bull": 5, "tech_net_score_scaled": 1,
-            "sales_yoy_q": 22, "np_yoy_q": 15,
-        },
+        momentum=UNIVERSAL_MOMENTUM,
         loss_maker_val_fallback=_val_fallback_industrials(),
     ),
     "packaging_containers": Scorecard(
@@ -558,11 +522,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
             "inv_days": 8, "rev_cagr_5y": 12, "np_cagr_5y": 10, "cfo_pat_3y": 8, "debt_equity": 8,
         },
         valuation={"pe_ttm": 30, "ev_ebitda_ttm": 22, "peg": 23, "pb": 10, "fcf_yield": 10, "div_yield": 5},
-        momentum={
-            "ret_12m_rel": 20, "ret_6m_rel": 15, "ret_3m_rel": 10,
-            "pct_above_200ema_252d": 10, "ema_stack_bull": 5, "tech_net_score_scaled": 5,
-            "sales_yoy_q": 20, "np_yoy_q": 15,
-        },
+        momentum=UNIVERSAL_MOMENTUM,
         loss_maker_val_fallback=_val_fallback_ev_sales(),
     ),
     "consumer_jewellery": Scorecard(
@@ -809,11 +769,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
             "np_consistency_5y": 4, "debt_equity": 4,
         },
         valuation={"pe_ttm": 30, "ev_ebitda_ttm": 25, "peg": 22, "pb": 10, "fcf_yield": 8, "div_yield": 5},
-        momentum={
-            "ret_12m_rel": 20, "ret_6m_rel": 15, "ret_3m_rel": 10,
-            "pct_above_200ema_252d": 10, "ema_stack_bull": 5, "tech_net_score_scaled": 6,
-            "sales_yoy_q": 22, "np_yoy_q": 12,
-        },
+        momentum=UNIVERSAL_MOMENTUM,
         loss_maker_val_fallback=_val_fallback_industrials(),
     ),
     "cap_goods_electrical": Scorecard(
@@ -835,11 +791,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
             "np_consistency_5y": 6,
         },
         valuation={"pe_ttm": 25, "peg": 35, "ev_ebitda_ttm": 20, "pb": 10, "fcf_yield": 10},
-        momentum={
-            "ret_12m_rel": 22, "ret_6m_rel": 15, "ret_3m_rel": 10,
-            "pct_above_200ema_252d": 10, "ema_stack_bull": 5, "tech_net_score_scaled": 1,
-            "sales_yoy_q": 22, "np_yoy_q": 15,
-        },
+        momentum=UNIVERSAL_MOMENTUM,
         loss_maker_val_fallback=_val_fallback_industrials(),
     ),
     "construction": Scorecard(
@@ -850,11 +802,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
             "np_consistency_5y": 8,
         },
         valuation={"pe_ttm": 25, "pb": 25, "ev_ebitda_ttm": 20, "fcf_yield": 15, "div_yield": 5, "peg": 10},
-        momentum={
-            "ret_12m_rel": 20, "ret_6m_rel": 15, "ret_3m_rel": 10,
-            "pct_above_200ema_252d": 10, "ema_stack_bull": 5, "tech_net_score_scaled": 6,
-            "sales_yoy_q": 22, "np_yoy_q": 12,
-        },
+        momentum=UNIVERSAL_MOMENTUM,
         loss_maker_val_fallback=_val_fallback_industrials(),
     ),
     "realty": Scorecard(
@@ -877,11 +825,7 @@ SCORECARDS_MATURE: dict[str, Scorecard] = {
             "debt_equity": 6,
         },
         valuation={"pe_ttm": 30, "ev_ebitda_ttm": 25, "peg": 18, "pb": 12, "fcf_yield": 10, "div_yield": 5},
-        momentum={
-            "ret_12m_rel": 18, "ret_6m_rel": 15, "ret_3m_rel": 10,
-            "pct_above_200ema_252d": 10, "ema_stack_bull": 5, "tech_net_score_scaled": 2,
-            "sales_yoy_q": 22, "np_yoy_q": 18,
-        },
+        momentum=UNIVERSAL_MOMENTUM,
         loss_maker_val_fallback=_val_fallback_ev_sales(),
     ),
     "auto_components": Scorecard(

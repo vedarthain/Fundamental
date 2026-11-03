@@ -24,6 +24,7 @@ from statistics import median
 from typing import Optional
 
 import psycopg
+from psycopg.rows import dict_row
 from openpyxl import load_workbook
 
 from ..log import log
@@ -366,71 +367,52 @@ def load_nifty_returns(conn_golden: psycopg.Connection) -> dict[str, float]:
     and the median is more robust than the mean to outlier IPOs/penny stocks.
     """
     with conn_golden.cursor() as cur:
-        # close IS NOT NULL throughout — a broken ingest day (rows present,
-        # close blank) would otherwise corrupt every anchor date and median.
+        # Find 5 anchor trading days quickly using RELIANCE.NS (indexed on symbol, interval, date)
         cur.execute("""
-            WITH latest AS (
-              SELECT MAX(date) AS d FROM golden.price_history
-               WHERE interval='1d' AND symbol LIKE '%.NS' AND close IS NOT NULL
-            ),
-            windows AS (
-              SELECT
-                d AS today,
-                d - INTERVAL '21 days'  AS d_1m,
-                d - INTERVAL '63 days'  AS d_3m,
-                d - INTERVAL '126 days' AS d_6m,
-                d - INTERVAL '252 days' AS d_12m
-              FROM latest
-            ),
-            base AS (
-              SELECT ph.symbol, ph.date, ph.close
-              FROM golden.price_history ph
-              JOIN golden.stocks s USING (symbol)
-              JOIN windows w ON TRUE
-              WHERE ph.interval='1d' AND s.exchange='NSE' AND s.is_active
-                AND ph.close IS NOT NULL
-                AND ph.date IN (
-                  -- nearest available trading day to each anchor
-                  (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND close IS NOT NULL),
-                  (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND close IS NOT NULL AND date <= (SELECT d_1m FROM windows)),
-                  (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND close IS NOT NULL AND date <= (SELECT d_3m FROM windows)),
-                  (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND close IS NOT NULL AND date <= (SELECT d_6m FROM windows)),
-                  (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND close IS NOT NULL AND date <= (SELECT d_12m FROM windows))
-                )
-            ),
-            anchor_dates AS (
-              SELECT
-                (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND close IS NOT NULL) AS d_now,
-                (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND close IS NOT NULL AND date <= (SELECT d_1m FROM windows)) AS d_1m,
-                (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND close IS NOT NULL AND date <= (SELECT d_3m FROM windows)) AS d_3m,
-                (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND close IS NOT NULL AND date <= (SELECT d_6m FROM windows)) AS d_6m,
-                (SELECT MAX(date) FROM golden.price_history WHERE interval='1d' AND symbol LIKE '%.NS' AND close IS NOT NULL AND date <= (SELECT d_12m FROM windows)) AS d_12m
-            ),
-            now AS (SELECT symbol, close FROM base, anchor_dates WHERE base.date = anchor_dates.d_now),
-            d1  AS (SELECT symbol, close FROM base, anchor_dates WHERE base.date = anchor_dates.d_1m),
-            d3  AS (SELECT symbol, close FROM base, anchor_dates WHERE base.date = anchor_dates.d_3m),
-            d6  AS (SELECT symbol, close FROM base, anchor_dates WHERE base.date = anchor_dates.d_6m),
-            d12 AS (SELECT symbol, close FROM base, anchor_dates WHERE base.date = anchor_dates.d_12m)
-            SELECT
-              percentile_cont(0.5) WITHIN GROUP (ORDER BY now.close/d1.close - 1)  AS r1,
-              percentile_cont(0.5) WITHIN GROUP (ORDER BY now.close/d3.close - 1)  AS r3,
-              percentile_cont(0.5) WITHIN GROUP (ORDER BY now.close/d6.close - 1)  AS r6,
-              percentile_cont(0.5) WITHIN GROUP (ORDER BY now.close/d12.close - 1) AS r12
-            FROM now
-              JOIN d1  USING (symbol)
-              JOIN d3  USING (symbol)
-              JOIN d6  USING (symbol)
-              JOIN d12 USING (symbol)
-            WHERE d1.close > 0 AND d3.close > 0 AND d6.close > 0 AND d12.close > 0
+            SELECT date FROM golden.price_history
+            WHERE symbol = 'RELIANCE.NS' AND interval = '1d' AND close IS NOT NULL
+            ORDER BY date DESC LIMIT 260;
         """)
+        dates = [r["date"] if isinstance(r, dict) else r[0] for r in cur.fetchall()]
+        if not dates or len(dates) < 22:
+            return {}
+        d_now = dates[0]
+        d_1m = dates[min(21, len(dates) - 1)]
+        d_3m = dates[min(63, len(dates) - 1)]
+        d_6m = dates[min(126, len(dates) - 1)]
+        d_12m = dates[min(252, len(dates) - 1)]
+
+        cur.execute("""
+            WITH target_prices AS (
+              SELECT symbol, date, close
+              FROM golden.price_history
+              WHERE interval = '1d' AND date IN (%(d_now)s, %(d_1m)s, %(d_3m)s, %(d_6m)s, %(d_12m)s) AND close > 0
+            ),
+            p_now AS (SELECT symbol, close FROM target_prices WHERE date = %(d_now)s),
+            p_1m  AS (SELECT symbol, close FROM target_prices WHERE date = %(d_1m)s),
+            p_3m  AS (SELECT symbol, close FROM target_prices WHERE date = %(d_3m)s),
+            p_6m  AS (SELECT symbol, close FROM target_prices WHERE date = %(d_6m)s),
+            p_12m AS (SELECT symbol, close FROM target_prices WHERE date = %(d_12m)s)
+            SELECT
+              percentile_cont(0.5) WITHIN GROUP (ORDER BY p_now.close/p_1m.close - 1)  AS r1,
+              percentile_cont(0.5) WITHIN GROUP (ORDER BY p_now.close/p_3m.close - 1)  AS r3,
+              percentile_cont(0.5) WITHIN GROUP (ORDER BY p_now.close/p_6m.close - 1)  AS r6,
+              percentile_cont(0.5) WITHIN GROUP (ORDER BY p_now.close/p_12m.close - 1) AS r12
+            FROM p_now
+              JOIN p_1m  USING (symbol)
+              JOIN p_3m  USING (symbol)
+              JOIN p_6m  USING (symbol)
+              JOIN p_12m USING (symbol);
+        """, {"d_now": d_now, "d_1m": d_1m, "d_3m": d_3m, "d_6m": d_6m, "d_12m": d_12m})
         r = cur.fetchone()
     if not r:
         return {}
+    r_dict = r if isinstance(r, dict) else {"r1": r[0], "r3": r[1], "r6": r[2], "r12": r[3]}
     return {
-        "1m":  float(r["r1"])  if r["r1"]  is not None else None,
-        "3m":  float(r["r3"])  if r["r3"]  is not None else None,
-        "6m":  float(r["r6"])  if r["r6"]  is not None else None,
-        "12m": float(r["r12"]) if r["r12"] is not None else None,
+        "1m":  float(r_dict["r1"])  if r_dict["r1"]  is not None else None,
+        "3m":  float(r_dict["r3"])  if r_dict["r3"]  is not None else None,
+        "6m":  float(r_dict["r6"])  if r_dict["r6"]  is not None else None,
+        "12m": float(r_dict["r12"]) if r_dict["r12"] is not None else None,
     }
 
 
@@ -782,7 +764,7 @@ def load_shareholding_latest(conn: psycopg.Connection) -> dict[str, dict]:
     round-trips for context and factor values is wall time spent on something that is
     one index scan.
     """
-    with conn.cursor() as cur:
+    with conn.cursor(row_factory=dict_row) as cur:
         cur.execute("""
             SELECT symbol, period_end, promoter_pct, fii_pct, dii_pct, shareholders
               FROM app.shareholding_pattern
@@ -932,7 +914,7 @@ def compute_metrics_for_symbol(
     rets = compute_returns(prices)
     # Shareholding trends (institutional flow + insider trend)
     if shareholding is None:
-        with app_conn.cursor() as cur:
+        with app_conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""
                 SELECT symbol, period_end, promoter_pct, fii_pct, dii_pct, shareholders
                   FROM app.shareholding_pattern
