@@ -9,6 +9,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
@@ -39,8 +40,9 @@ def main() -> int:
     print("=" * 80 + "\n")
 
     t0 = time.time()
+    db_url = os.environ.get("APP_DB_URL", "dbname=fundamental_app")
 
-    with psycopg.connect("dbname=fundamental_app") as conn:
+    with psycopg.connect(db_url) as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             # 1. Fetch distinct symbols with their latest verdict
             if args.symbol:
@@ -183,8 +185,8 @@ def main() -> int:
             print(f"  • {u['symbol']:<10} 12M Target: ₹{u['target_price']:>8.2f} ({u['upside_pct']:>+5.1f}%) | Fair Val: ₹{u['fair_value']:>8.2f} | Buy Below: ₹{u['buy_below']:>8.2f}")
         return 0
 
-    print("Updating app.stock_verdict in local PostgreSQL...")
-    with psycopg.connect("dbname=fundamental_app") as conn:
+    print(f"Updating app.stock_verdict in {'Neon' if 'neon' in db_url else 'local'} PostgreSQL...")
+    with psycopg.connect(db_url) as conn:
         with conn.cursor() as cur:
             cur.executemany("""
                 UPDATE app.stock_verdict SET
