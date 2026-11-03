@@ -70,7 +70,7 @@ export function CallsClient() {
         symbol: "INDUSTOWER",
         name: "Indus Towers Ltd.",
         cluster: "Telecom",
-        weightPct: 25,
+        weightPct: 20,
         cmp: 380.9,
         buyBelow: 370.7,
         target: 554.4,
@@ -81,10 +81,24 @@ export function CallsClient() {
         rationale: "FCF yield > 15%, zero-discount cash collection, massive bad debt recoveries, 5G tenancy growth.",
       },
       {
+        symbol: "BHARTIARTL",
+        name: "Bharti Airtel Ltd.",
+        cluster: "Telecom",
+        weightPct: 20,
+        cmp: 1805.1,
+        buyBelow: 1934.2,
+        target: 2484.7,
+        stopLoss: 1620.0,
+        upside: 25.9,
+        scores: "91 / 77 / 64",
+        role: "Core Monopoly Bedrock",
+        rationale: "Secular telecom duopoly, industry-leading ARPU expansion, massive institutional accumulation.",
+      },
+      {
         symbol: "MAHABANK",
         name: "Bank of Maharashtra",
         cluster: "PSU Banks",
-        weightPct: 25,
+        weightPct: 15,
         cmp: 83.2,
         buyBelow: 79.7,
         target: 108.3,
@@ -98,7 +112,7 @@ export function CallsClient() {
         symbol: "NATCOPHARM",
         name: "Natco Pharma Ltd.",
         cluster: "Pharma CDMO / APIs",
-        weightPct: 25,
+        weightPct: 15,
         cmp: 790.5,
         buyBelow: 766.8,
         target: 1022.5,
@@ -109,18 +123,32 @@ export function CallsClient() {
         rationale: "Operating margin > 35%, zero net debt, lucrative specialty generic launches in North America.",
       },
       {
-        symbol: "BHARTIARTL",
-        name: "Bharti Airtel Ltd.",
-        cluster: "Telecom",
-        weightPct: 25,
-        cmp: 1805.1,
-        buyBelow: 1934.2,
-        target: 2484.7,
-        stopLoss: 1620.0,
-        upside: 25.9,
-        scores: "91 / 77 / 64",
-        role: "Core Monopoly Bedrock",
-        rationale: "Secular telecom duopoly, industry-leading ARPU expansion, massive institutional accumulation.",
+        symbol: "ALLDIGI",
+        name: "Alldigi Tech Ltd.",
+        cluster: "Commercial Services",
+        weightPct: 15,
+        cmp: 789.2,
+        buyBelow: 815.0,
+        target: 1117.7,
+        stopLoss: 582.0,
+        upside: 34.4,
+        scores: "94 / 78 / 52",
+        role: "B2B Tech Alpha",
+        rationale: "High ROCE (>22%), expanding enterprise customer retention, compounding digital revenue.",
+      },
+      {
+        symbol: "ORIENTCEM",
+        name: "Orient Cement Ltd.",
+        cluster: "Cement",
+        weightPct: 15,
+        cmp: 112.0,
+        buyBelow: 110.5,
+        target: 154.7,
+        stopLoss: 79.0,
+        upside: 37.2,
+        scores: "94 / 73 / 25",
+        role: "Asset Re-rating Turnaround",
+        rationale: "M&A and capacity expansion catalyst; trading at steep discount to replacement plant value.",
       },
     ];
 
@@ -355,7 +383,7 @@ export function CallsClient() {
                     Monthly Fresh Capital Deployment Calculator
                   </div>
                   <div className="text-base font-bold text-slate-900">
-                    Deploying {money(capital)} across 4 Balanced Institutional Alpha Calls
+                    Deploying {money(capital)} across 6 Diversified Institutional Alpha Calls
                   </div>
                 </div>
               </div>
@@ -385,7 +413,7 @@ export function CallsClient() {
                 <div className="text-[17px] font-mono font-bold text-slate-900 mt-0.5">
                   {money(capital)}
                 </div>
-                <div className="text-[10px] text-slate-500 mt-0.5">4 Tranches @ 25% each</div>
+                <div className="text-[10px] text-slate-500 mt-0.5">6 Diversified Tranches</div>
               </div>
 
               <div className="rounded-md border border-emerald-200 bg-emerald-50/30 p-2.5 shadow-2xs">
