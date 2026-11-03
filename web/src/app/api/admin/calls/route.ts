@@ -12,6 +12,8 @@ export type ClusterGem = {
   cluster_name: string | null;
   market_cap_cr: number | null;
   ltp: number | null;
+  anchor_price: number | null;
+  pct_move: number | null;
   verdict: string | null;
   confidence: "high" | "medium" | "low" | null;
   target_price: number | null;
@@ -37,6 +39,8 @@ export type PortfolioActionCall = {
   total_qty: number;
   weighted_avg_cost: number;
   ltp: number;
+  anchor_price: number | null;
+  pct_move: number | null;
   invested_val: number;
   cur_val: number;
   pnl: number;
@@ -51,6 +55,7 @@ export type PortfolioActionCall = {
   bear_floor: number | null;
   upside_pct: number | null;
   valuation_method: string | null;
+  generated_at: string | null;
   action_today: "TRIM / TAKE PROFIT" | "HOLD & COMPOUND" | "ACCUMULATE / ADD" | "EXIT / CUT LOSS";
   action_reason: string;
   sell_timeline: string;
@@ -62,11 +67,11 @@ export async function GET() {
   }
 
   try {
-    // 1. Fetch Cluster Calls / Screened Candidates
+    // 1. Fetch Cluster Calls / Screened Candidates with anchor_price and generated_at
     const rawGems = await sql<any[]>`
       WITH latest_verdict AS (
           SELECT DISTINCT ON (symbol)
-              symbol, verdict, confidence, target_price, fair_value, buy_below, bear_floor, upside_pct, valuation_method, generated_at
+              symbol, verdict, confidence, target_price, fair_value, buy_below, bear_floor, upside_pct, valuation_method, generated_at, anchor_price
           FROM app.stock_verdict
           ORDER BY symbol, generated_at DESC
       ),
@@ -88,6 +93,7 @@ export async function GET() {
           c.name AS cluster_name,
           p.market_cap_cr,
           COALESCE(si.ltp, p.current_price) AS ltp,
+          v.anchor_price,
           v.verdict,
           v.confidence,
           v.target_price,
@@ -109,8 +115,8 @@ export async function GET() {
       WHERE v.target_price IS NOT NULL AND v.buy_below IS NOT NULL
         AND p.composite_pct >= 60
         AND p.quality_pct >= 50
-      ORDER BY p.composite_pct DESC, v.upside_pct DESC
-      LIMIT 200
+      ORDER BY v.generated_at DESC, p.composite_pct DESC
+      LIMIT 250
     `;
 
     const clusterGems: ClusterGem[] = rawGems.map((r) => {
@@ -120,6 +126,8 @@ export async function GET() {
       const comp = Number(r.composite_pct ?? 0);
       const qual = Number(r.quality_pct ?? 0);
       const mcap = Number(r.market_cap_cr ?? 0);
+      const anchor = r.anchor_price ? Number(r.anchor_price) : null;
+      const pctMove = anchor && anchor > 0 ? ((ltp - anchor) / anchor) * 100 : null;
 
       const isGem = comp >= 75 && qual >= 58 && (buyBelow > 0 && ltp <= buyBelow * 1.05) && upside >= 15 && mcap >= 800;
 
@@ -134,6 +142,8 @@ export async function GET() {
         cluster_name: r.cluster_name ?? "General",
         market_cap_cr: mcap,
         ltp,
+        anchor_price: anchor,
+        pct_move: pctMove,
         verdict: r.verdict,
         confidence: r.confidence,
         target_price: r.target_price ? Number(r.target_price) : null,
@@ -157,7 +167,7 @@ export async function GET() {
     const rawPortfolio = await sql<any[]>`
       WITH latest_verdict AS (
           SELECT DISTINCT ON (symbol)
-              symbol, verdict, confidence, target_price, fair_value, buy_below, bear_floor, upside_pct, valuation_method, generated_at
+              symbol, verdict, confidence, target_price, fair_value, buy_below, bear_floor, upside_pct, valuation_method, generated_at, anchor_price
           FROM app.stock_verdict
           ORDER BY symbol, generated_at DESC
       ),
@@ -197,7 +207,8 @@ export async function GET() {
           v.bear_floor,
           v.upside_pct,
           v.valuation_method,
-          v.generated_at
+          v.generated_at,
+          v.anchor_price
       FROM app.portfolio_holding p
       LEFT JOIN app.universe u ON u.symbol = p.symbol
       LEFT JOIN app.cluster_assignment ca ON ca.symbol = p.symbol
@@ -207,8 +218,8 @@ export async function GET() {
       LEFT JOIN latest_verdict v ON v.symbol = p.symbol
       WHERE p.quantity > 0
       GROUP BY p.symbol, u.company_name, c.name, lp.composite_pct, lp.quality_pct, lp.valuation_pct, lp.momentum_pct,
-               v.verdict, v.confidence, v.target_price, v.fair_value, v.buy_below, v.bear_floor, v.upside_pct, v.valuation_method, v.generated_at
-      ORDER BY invested_val DESC NULLS LAST
+               v.verdict, v.confidence, v.target_price, v.fair_value, v.buy_below, v.bear_floor, v.upside_pct, v.valuation_method, v.generated_at, v.anchor_price
+      ORDER BY v.generated_at DESC NULLS LAST
     `;
 
     const portfolioActions: PortfolioActionCall[] = rawPortfolio.map((r) => {
@@ -222,6 +233,8 @@ export async function GET() {
       const qual = r.quality_pct ? Number(r.quality_pct) : 50;
       const mom = r.momentum_pct ? Number(r.momentum_pct) : 50;
       const comp = r.composite_pct ? Number(r.composite_pct) : 50;
+      const anchor = r.anchor_price ? Number(r.anchor_price) : null;
+      const pctMove = anchor && anchor > 0 ? ((ltp - anchor) / anchor) * 100 : null;
 
       let actionToday: "TRIM / TAKE PROFIT" | "HOLD & COMPOUND" | "ACCUMULATE / ADD" | "EXIT / CUT LOSS" = "HOLD & COMPOUND";
       let reason = "Core business compounding intact toward 12M forward target.";
@@ -261,6 +274,8 @@ export async function GET() {
         total_qty: Number(r.total_qty ?? 0),
         weighted_avg_cost: avgCost,
         ltp,
+        anchor_price: anchor,
+        pct_move: pctMove,
         invested_val: Number(r.invested_val ?? 0),
         cur_val: Number(r.cur_val ?? 0),
         pnl: Number(r.pnl ?? 0),
@@ -275,6 +290,7 @@ export async function GET() {
         bear_floor: bearFloor,
         upside_pct: r.upside_pct ? Number(r.upside_pct) : null,
         valuation_method: r.valuation_method,
+        generated_at: r.generated_at ? new Date(r.generated_at).toISOString() : null,
         action_today: actionToday,
         action_reason: reason,
         sell_timeline: timeline,

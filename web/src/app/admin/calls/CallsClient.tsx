@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowUpRight, Search, ShieldAlert, Sparkles, TrendingUp, CheckCircle, AlertTriangle, Wallet, Calculator, Coins, ArrowRight } from "lucide-react";
+import { ArrowUpRight, Search, Sparkles, Wallet, Coins, ArrowRight, ArrowDownUp } from "lucide-react";
 import type { ClusterGem, PortfolioActionCall } from "@/app/api/admin/calls/route";
 
 function money(v: number | null | undefined): string {
@@ -15,7 +15,21 @@ function pct(v: number | null | undefined): string {
   return `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`;
 }
 
+function fmtDate(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleDateString("en-IN", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
+  } catch {
+    return iso;
+  }
+}
+
 type CallTab = "plan" | "portfolio" | "gems";
+type SortBy = "date_desc" | "date_asc" | "perf_desc" | "upside_desc" | "comp_desc";
 
 export function CallsClient() {
   const [data, setData] = useState<{
@@ -39,6 +53,7 @@ export function CallsClient() {
 
   const [activeTab, setActiveTab] = useState<CallTab>("plan");
   const [capital, setCapital] = useState<number>(100000);
+  const [sortBy, setSortBy] = useState<SortBy>("date_desc");
   const [search, setSearch] = useState("");
   const [selectedCluster, setSelectedCluster] = useState<string>("ALL");
   const [actionFilter, setActionFilter] = useState<string>("ALL");
@@ -63,7 +78,7 @@ export function CallsClient() {
     fetchData();
   }, []);
 
-  // Top 4 curated deployment calls
+  // Top 6 curated deployment calls
   const curatedPlan = useMemo(() => {
     const picks = [
       {
@@ -198,7 +213,7 @@ export function CallsClient() {
 
   const filteredPortfolio = useMemo(() => {
     if (!data) return [];
-    return data.portfolioActions.filter((p) => {
+    const list = data.portfolioActions.filter((p) => {
       if (search) {
         const q = search.toLowerCase();
         const matchSym = p.symbol.toLowerCase().includes(q);
@@ -209,11 +224,32 @@ export function CallsClient() {
       if (actionFilter !== "ALL" && !p.action_today.includes(actionFilter)) return false;
       return true;
     });
-  }, [data, search, selectedCluster, actionFilter]);
+
+    list.sort((a, b) => {
+      if (sortBy === "date_desc") {
+        return new Date(b.generated_at ?? 0).getTime() - new Date(a.generated_at ?? 0).getTime();
+      }
+      if (sortBy === "date_asc") {
+        return new Date(a.generated_at ?? 0).getTime() - new Date(b.generated_at ?? 0).getTime();
+      }
+      if (sortBy === "perf_desc") {
+        return (b.pct_move ?? b.pnl_pct ?? 0) - (a.pct_move ?? a.pnl_pct ?? 0);
+      }
+      if (sortBy === "upside_desc") {
+        return (b.upside_pct ?? 0) - (a.upside_pct ?? 0);
+      }
+      if (sortBy === "comp_desc") {
+        return (b.composite_pct ?? 0) - (a.composite_pct ?? 0);
+      }
+      return 0;
+    });
+
+    return list;
+  }, [data, search, selectedCluster, actionFilter, sortBy]);
 
   const filteredGems = useMemo(() => {
     if (!data) return [];
-    return data.clusterGems.filter((g) => {
+    const list = data.clusterGems.filter((g) => {
       if (gemsOnly && !g.is_gem) return false;
       if (search) {
         const q = search.toLowerCase();
@@ -224,7 +260,28 @@ export function CallsClient() {
       if (selectedCluster !== "ALL" && g.cluster_name !== selectedCluster) return false;
       return true;
     });
-  }, [data, search, selectedCluster, gemsOnly]);
+
+    list.sort((a, b) => {
+      if (sortBy === "date_desc") {
+        return new Date(b.generated_at ?? 0).getTime() - new Date(a.generated_at ?? 0).getTime();
+      }
+      if (sortBy === "date_asc") {
+        return new Date(a.generated_at ?? 0).getTime() - new Date(b.generated_at ?? 0).getTime();
+      }
+      if (sortBy === "perf_desc") {
+        return (b.pct_move ?? 0) - (a.pct_move ?? 0);
+      }
+      if (sortBy === "upside_desc") {
+        return (b.upside_pct ?? 0) - (a.upside_pct ?? 0);
+      }
+      if (sortBy === "comp_desc") {
+        return (b.composite_pct ?? 0) - (a.composite_pct ?? 0);
+      }
+      return 0;
+    });
+
+    return list;
+  }, [data, search, selectedCluster, gemsOnly, sortBy]);
 
   return (
     <div className="space-y-5">
@@ -241,7 +298,7 @@ export function CallsClient() {
             </span>
           </div>
           <p className="text-[12.5px] text-slate-500 mt-0.5">
-            Active monthly capital deployment plan, exact share sizing, entry tranches, and portfolio sweep.
+            Active capital deployment plan, exact share sizing, entry tranches, date-wise history, and live performance.
           </p>
         </div>
 
@@ -294,9 +351,25 @@ export function CallsClient() {
           </button>
         </div>
 
-        {/* Search & Cluster Selector for Table Views */}
+        {/* Search, Cluster Selector & Date-wise Sort Controls */}
         {activeTab !== "plan" && (
           <div className="flex items-center gap-2 flex-wrap">
+            {/* Sort Selector */}
+            <div className="flex items-center gap-1 bg-slate-50 border border-slate-300 rounded-md px-2 py-0.5">
+              <ArrowDownUp className="w-3.5 h-3.5 text-slate-500" />
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as SortBy)}
+                className="text-[12px] bg-transparent text-slate-800 font-medium focus:outline-none cursor-pointer"
+              >
+                <option value="date_desc">📅 Date Called (Newest First)</option>
+                <option value="date_asc">📅 Date Called (Oldest First)</option>
+                <option value="perf_desc">📈 Performance Since Call</option>
+                <option value="upside_desc">🎯 12M Forward Upside</option>
+                <option value="comp_desc">⭐ Composite Score</option>
+              </select>
+            </div>
+
             <div className="relative">
               <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
@@ -304,14 +377,14 @@ export function CallsClient() {
                 placeholder="Search symbol..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="pl-8 pr-3 py-1 text-[12px] rounded-md border border-slate-300 bg-white focus:outline-none focus:ring-1 focus:ring-slate-400 w-36 sm:w-48"
+                className="pl-8 pr-3 py-1 text-[12px] rounded-md border border-slate-300 bg-white focus:outline-none focus:ring-1 focus:ring-slate-400 w-32 sm:w-44"
               />
             </div>
 
             <select
               value={selectedCluster}
               onChange={(e) => setSelectedCluster(e.target.value)}
-              className="text-[12px] px-2.5 py-1 rounded-md border border-slate-300 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-slate-400 max-w-[200px]"
+              className="text-[12px] px-2.5 py-1 rounded-md border border-slate-300 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-slate-400 max-w-[160px]"
             >
               {clusters.map((c) => (
                 <option key={c} value={c}>
@@ -443,7 +516,7 @@ export function CallsClient() {
           </div>
 
           {/* Actionable Call Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {curatedPlan.map((c) => (
               <div
                 key={c.symbol}
@@ -461,7 +534,7 @@ export function CallsClient() {
                           <ArrowUpRight className="w-3.5 h-3.5 text-slate-400" />
                         </Link>
                         <span className="text-[10.5px] font-mono font-semibold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
-                          {c.weightPct}% Allocation ({money(c.allocatedAmount)})
+                          {c.weightPct}% ({money(c.allocatedAmount)})
                         </span>
                       </div>
                       <div className="text-[11px] text-slate-500">
@@ -486,7 +559,7 @@ export function CallsClient() {
                       <div className="bg-white rounded border border-slate-200 p-2">
                         <div className="text-[10px] text-emerald-700 font-semibold uppercase">Tranche 1 (Today)</div>
                         <div className="font-mono font-bold text-slate-900 mt-0.5">
-                          Buy {c.tranche1Shares} shares @ {money(c.cmp)}
+                          Buy {c.tranche1Shares} @ {money(c.cmp)}
                         </div>
                         <div className="text-[10px] text-slate-500 mt-0.5">Cost: {money(c.t1Value)}</div>
                       </div>
@@ -494,7 +567,7 @@ export function CallsClient() {
                       <div className="bg-white rounded border border-slate-200 p-2">
                         <div className="text-[10px] text-blue-700 font-semibold uppercase">Tranche 2 (Limit Dip)</div>
                         <div className="font-mono font-bold text-slate-900 mt-0.5">
-                          Limit {c.tranche2Shares} shares $\le$ {money(c.buyBelow)}
+                          Limit {c.tranche2Shares} $\le$ {money(c.buyBelow)}
                         </div>
                         <div className="text-[10px] text-slate-500 mt-0.5">Cost: {money(c.t2Value)}</div>
                       </div>
@@ -518,7 +591,7 @@ export function CallsClient() {
                     <div className="rounded border border-rose-200 p-2 bg-rose-50/20">
                       <div className="text-rose-600 font-medium text-[9.5px] uppercase">Hard Stop-Loss</div>
                       <div className="font-mono font-bold text-rose-700 mt-0.5">{money(c.stopLoss)}</div>
-                      <div className="text-[9.5px] text-rose-600 font-medium mt-0.5">Structural Floor</div>
+                      <div className="text-[9.5px] text-rose-600 font-medium mt-0.5">Floor</div>
                     </div>
                   </div>
 
@@ -533,7 +606,7 @@ export function CallsClient() {
                     href={`/admin/verdicts?symbol=${c.symbol}&scope=all`}
                     className="font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
                   >
-                    <span>View Full Audit &amp; Verdict</span>
+                    <span>Verdict</span>
                     <ArrowRight className="w-3 h-3" />
                   </Link>
                 </div>
@@ -568,10 +641,12 @@ export function CallsClient() {
             <table className="w-full text-[12px] text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50/80 border-b border-slate-200 text-slate-600 font-semibold text-[11px] uppercase tracking-wider">
+                  <th className="py-2.5 px-3">Call Date</th>
                   <th className="py-2.5 px-3">Stock &amp; Cluster</th>
                   <th className="py-2.5 px-3">Action Today</th>
                   <th className="py-2.5 px-3 text-right">Holdings</th>
                   <th className="py-2.5 px-3 text-right">CMP / LTP</th>
+                  <th className="py-2.5 px-3 text-right">Since Call (Perf)</th>
                   <th className="py-2.5 px-3 text-right">Buy Below</th>
                   <th className="py-2.5 px-3 text-right">12M Target</th>
                   <th className="py-2.5 px-3 text-right">Upside</th>
@@ -595,6 +670,10 @@ export function CallsClient() {
 
                   return (
                     <tr key={p.symbol} className="hover:bg-slate-50/60 transition-colors">
+                      <td className="py-2.5 px-3 whitespace-nowrap text-slate-500 font-mono text-[11px]">
+                        {fmtDate(p.generated_at)}
+                      </td>
+
                       <td className="py-2.5 px-3">
                         <div className="flex items-center gap-1.5">
                           <Link
@@ -605,7 +684,7 @@ export function CallsClient() {
                             <ArrowUpRight className="w-3 h-3 text-slate-400" />
                           </Link>
                         </div>
-                        <div className="text-[10.5px] text-slate-500 truncate max-w-[150px]">
+                        <div className="text-[10.5px] text-slate-500 truncate max-w-[140px]">
                           {p.cluster_name}
                         </div>
                       </td>
@@ -621,12 +700,23 @@ export function CallsClient() {
                           {p.total_qty} @ {money(p.weighted_avg_cost)}
                         </div>
                         <div className={`text-[10.5px] font-mono font-medium ${p.pnl_pct >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
-                          {pct(p.pnl_pct)}
+                          PnL: {pct(p.pnl_pct)}
                         </div>
                       </td>
 
                       <td className="py-2.5 px-3 text-right font-mono font-semibold text-slate-900 whitespace-nowrap">
                         {money(p.ltp)}
+                      </td>
+
+                      <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                        {p.pct_move != null ? (
+                          <div className={`font-mono font-bold text-[11.5px] ${p.pct_move >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
+                            {pct(p.pct_move)}
+                            <div className="text-[9.5px] text-slate-400 font-normal">from {money(p.anchor_price)}</div>
+                          </div>
+                        ) : (
+                          <span className="text-slate-400">—</span>
+                        )}
                       </td>
 
                       <td className="py-2.5 px-3 text-right font-mono text-emerald-700 whitespace-nowrap">
@@ -651,7 +741,7 @@ export function CallsClient() {
                         </span>
                       </td>
 
-                      <td className="py-2.5 px-3 max-w-[280px]">
+                      <td className="py-2.5 px-3 max-w-[260px]">
                         <div className="text-[11.5px] text-slate-700 leading-snug">
                           {p.action_reason}
                         </div>
@@ -675,9 +765,11 @@ export function CallsClient() {
             <table className="w-full text-[12px] text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50/80 border-b border-slate-200 text-slate-600 font-semibold text-[11px] uppercase tracking-wider">
+                  <th className="py-2.5 px-3">Call Date</th>
                   <th className="py-2.5 px-3">Stock &amp; Cluster</th>
                   <th className="py-2.5 px-3">Status</th>
                   <th className="py-2.5 px-3 text-right">CMP / LTP</th>
+                  <th className="py-2.5 px-3 text-right">Since Call (Perf)</th>
                   <th className="py-2.5 px-3 text-right">Accumulate Below</th>
                   <th className="py-2.5 px-3 text-right">12M Target</th>
                   <th className="py-2.5 px-3 text-right">Upside</th>
@@ -691,6 +783,10 @@ export function CallsClient() {
                   const inZone = g.buy_below != null && g.ltp != null && g.ltp <= g.buy_below * 1.05;
                   return (
                     <tr key={g.symbol} className="hover:bg-slate-50/60 transition-colors">
+                      <td className="py-2.5 px-3 whitespace-nowrap text-slate-500 font-mono text-[11px]">
+                        {fmtDate(g.generated_at)}
+                      </td>
+
                       <td className="py-2.5 px-3">
                         <div className="flex items-center gap-1.5">
                           <Link
@@ -711,7 +807,7 @@ export function CallsClient() {
                             </span>
                           )}
                         </div>
-                        <div className="text-[10.5px] text-slate-500 truncate max-w-[160px]">
+                        <div className="text-[10.5px] text-slate-500 truncate max-w-[150px]">
                           {g.cluster_name} {g.market_cap_cr ? `· ₹${Math.round(g.market_cap_cr).toLocaleString("en-IN")} Cr` : ""}
                         </div>
                       </td>
@@ -728,6 +824,17 @@ export function CallsClient() {
 
                       <td className="py-2.5 px-3 text-right font-mono font-semibold text-slate-900 whitespace-nowrap">
                         {money(g.ltp)}
+                      </td>
+
+                      <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                        {g.pct_move != null ? (
+                          <div className={`font-mono font-bold text-[11.5px] ${g.pct_move >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
+                            {pct(g.pct_move)}
+                            <div className="text-[9.5px] text-slate-400 font-normal">from {money(g.anchor_price)}</div>
+                          </div>
+                        ) : (
+                          <span className="text-slate-400">—</span>
+                        )}
                       </td>
 
                       <td className="py-2.5 px-3 text-right font-mono font-bold text-emerald-700 whitespace-nowrap">
@@ -756,7 +863,7 @@ export function CallsClient() {
                         </span>
                       </td>
 
-                      <td className="py-2.5 px-3 max-w-[240px]">
+                      <td className="py-2.5 px-3 max-w-[220px]">
                         <div className="text-[11.5px] text-slate-800 font-medium">
                           {g.sell_timeline}
                         </div>
