@@ -104,18 +104,38 @@ def _percentile_rank(values: list[Optional[float]], higher_is_better: bool) -> l
     Convention: percentile=100 means BEST in the peer set (top), percentile=1 means worst.
     For higher_is_better=True, the largest value gets 100.
     For higher_is_better=False (e.g. P/E, debt/equity — lower is better), the smallest value gets 100.
+
+    Ties share the mean rank position (mid-rank), ensuring identical fundamental or
+    technical values receive identical percentile scores rather than arbitrary
+    staggering based on input order.
     """
     indexed = [(i, v) for i, v in enumerate(values) if v is not None]
     if not indexed:
         return [None] * len(values)
-    # Sort so that the BEST value lands at rank_pos=0 (gets pct=100).
+    # Sort so that the BEST value lands at rank_pos=0.
     # higher_is_better → sort DESCENDING (largest first)
     # !higher_is_better → sort ASCENDING (smallest first)
     indexed.sort(key=lambda iv: iv[1], reverse=higher_is_better)
     n = len(indexed)
+
     pcts: dict[int, int] = {}
-    for rank_pos, (i, _v) in enumerate(indexed):
-        pcts[i] = int(round(100 * (n - rank_pos) / n))
+    i_start = 0
+    while i_start < n:
+        i_end = i_start + 1
+        val = indexed[i_start][1]
+        while i_end < n and indexed[i_end][1] == val:
+            i_end += 1
+
+        # rank_pos ranges from i_start to i_end - 1
+        avg_rank_pos = (i_start + (i_end - 1)) / 2.0
+        pct = int(round(100.0 * (n - avg_rank_pos) / n))
+
+        for k in range(i_start, i_end):
+            orig_idx = indexed[k][0]
+            pcts[orig_idx] = pct
+
+        i_start = i_end
+
     return [pcts.get(i) for i in range(len(values))]
 
 

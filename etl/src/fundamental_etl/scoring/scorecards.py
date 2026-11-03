@@ -14,14 +14,15 @@ from typing import Optional
 # Universal momentum scorecard (used unless cluster overrides)
 # -------------------------------------------------------------------------
 UNIVERSAL_MOMENTUM: dict[str, float] = {
-    "ret_12m_rel":           20.0,
+    "ret_12m_rel":           17.5,
     "ret_6m_rel":            15.0,
     "ret_3m_rel":            10.0,
     "pct_above_200ema_252d": 10.0,
     "ema_stack_bull":         5.0,
     "tech_net_score_scaled":  5.0,
-    "sales_yoy_q":           17.5,
-    "np_yoy_q":              17.5,
+    "inst_flow_2q":           7.5,
+    "sales_yoy_q":           15.0,
+    "np_yoy_q":              15.0,
 }
 
 
@@ -75,7 +76,7 @@ def _bank_momentum() -> dict[str, float]:
     """Banks: NII = sales (slow); NP YoY upweighted; preserves sum=100."""
     m = dict(UNIVERSAL_MOMENTUM)
     m["sales_yoy_q"] = 10.0
-    m["np_yoy_q"] = 25.0  # sum becomes 100
+    m["np_yoy_q"] = 20.0  # sum becomes 100
     return m
 
 

@@ -477,43 +477,6 @@ def calculate_stock_valuation(pack: dict[str, Any] | str, item_dict: Optional[di
 
     active_models = [(m, w, name) for (m, w, name) in weights if m and m.get("target_price") and m["target_price"] > 0]
 
-    if not active_models:
-        fair_value = round(current_price * 1.15, 2)
-        bull_target = round(current_price * 1.30, 2)
-        bear_floor = round(current_price * 0.85, 2)
-        buy_below = round(current_price * 0.95, 2)
-        method = "Heuristic Baseline (+15% Fair Value)"
-    else:
-        tot_w = sum(w for (_, w, _) in active_models)
-        weighted_sum = sum(m["target_price"] * (w / tot_w) for (m, w, _) in active_models)
-        fair_value = round(weighted_sum, 2)
-
-        method_parts = [f"{int(round((w / tot_w) * 100))}% {name}" for (_, w, name) in active_models]
-        method = " + ".join(method_parts)
-
-        # Hierarchy: Bear Floor < Buy Below <= Intrinsic Fair Value (strict margin of safety)
-        hist_floor = m_hist.get("floor_price") if m_hist else None
-        candidate_floor = hist_floor if (hist_floor and 0 < hist_floor < current_price) else (current_price * 0.80)
-
-        # Bear floor cannot exceed 75% of fair value or 85% of current price
-        bear_floor = round(min(candidate_floor, fair_value * 0.75, current_price * 0.85), 2)
-
-        # Buy Below represents the accumulation boundary offering a Margin of Safety.
-        # It must never be higher than fair_value * 0.90 (never buy at or above intrinsic value).
-        if current_price < fair_value:
-            # Undervalued: accumulate on minor pullback from current price, well below fair value
-            buy_below = round(min(current_price * 0.98, fair_value * 0.90), 2)
-        else:
-            # Overvalued: stock is trading above fair value; accumulate ONLY after it corrects below fair value
-            mid_val = (bear_floor + fair_value) / 2.0
-            buy_below = round(min(fair_value * 0.90, max(bear_floor * 1.05, mid_val)), 2)
-
-        # Strict monotonicity enforcement
-        if buy_below <= bear_floor:
-            buy_below = round(bear_floor * 1.08, 2)
-        if buy_below > fair_value * 0.95:
-            buy_below = round(fair_value * 0.90, 2)
-
     # -------------------------------------------------------------------------
     # Dual-Clarity Model: 12-Month Forward Price Target vs Intrinsic Fair Value
     # -------------------------------------------------------------------------
@@ -538,6 +501,77 @@ def calculate_stock_valuation(pack: dict[str, Any] | str, item_dict: Optional[di
     growth_pct = (m_pe.get("projected_growth_pct") if m_pe else None) or 12.0
     growth_rate = max(0.06, min(0.25, growth_pct / 100.0))
     pe_ttm = qi.get("pe_ttm") or 25.0
+
+    scores = pack.get("scores") or {}
+    mom_pct = scores.get("momentum_pct") if scores.get("momentum_pct") is not None else pack.get("momentum_pct")
+    qual_pct = scores.get("quality_pct") if scores.get("quality_pct") is not None else pack.get("quality_pct")
+    comp_pct = scores.get("composite_pct") if scores.get("composite_pct") is not None else pack.get("composite_pct")
+
+    # High-growth compounder / momentum leader check:
+    # Quality companies in expansion mode where market commands a persistent growth premium
+    is_growth_leader = (
+        verdict_action in ("BUY", "ACCUMULATE", "HOLD")
+        and (
+            (mom_pct is not None and mom_pct >= 65)
+            or (comp_pct is not None and comp_pct >= 70 and (qual_pct or 0) >= 65)
+            or (growth_rate >= 0.20 and (qual_pct or 0) >= 60)
+        )
+    )
+
+    if not active_models:
+        fair_value = round(current_price * 1.15, 2)
+        bear_floor = round(current_price * 0.85, 2)
+        if is_growth_leader:
+            entry_mode = "momentum_pullback"
+            buy_below = round(current_price * 0.95, 2)
+            stop_loss = round(buy_below * 0.92, 2)
+        else:
+            entry_mode = "deep_value"
+            buy_below = round(current_price * 0.95, 2)
+            stop_loss = bear_floor
+        method = "Heuristic Baseline (+15% Fair Value)"
+    else:
+        tot_w = sum(w for (_, w, _) in active_models)
+        weighted_sum = sum(m["target_price"] * (w / tot_w) for (m, w, _) in active_models)
+        fair_value = round(weighted_sum, 2)
+
+        method_parts = [f"{int(round((w / tot_w) * 100))}% {name}" for (_, w, name) in active_models]
+        method = " + ".join(method_parts)
+
+        # Hierarchy: Bear Floor < Buy Below <= Intrinsic Fair Value (strict margin of safety)
+        hist_floor = m_hist.get("floor_price") if m_hist else None
+        candidate_floor = hist_floor if (hist_floor and 0 < hist_floor < current_price) else (current_price * 0.80)
+
+        # Bear floor cannot exceed 75% of fair value or 85% of current price
+        bear_floor = round(min(candidate_floor, fair_value * 0.75, current_price * 0.85), 2)
+
+        if is_growth_leader and current_price >= fair_value * 0.90:
+            # Momentum / Secular Compounder Regime:
+            # High-growth leaders (like DIXON, Trent, Kaynes) consolidate sideways while earnings catch up.
+            # Waiting for a 25-40% multiple collapse to Graham fair value means permanently missing multi-baggers.
+            # Entry is anchored to swing pullback support (-5% from current price / pivot),
+            # protected by a strict structural trailing stop-loss (-8%), NOT a static intrinsic DCF floor.
+            entry_mode = "momentum_pullback"
+            buy_below = round(current_price * 0.95, 2)
+            stop_loss = round(buy_below * 0.92, 2)
+        else:
+            # Deep-Value / Cyclical / Mean-Reverting Regime:
+            # Margin of safety anchored to intrinsic DCF / cycle fair value
+            entry_mode = "deep_value"
+            if current_price < fair_value:
+                # Undervalued: accumulate on minor pullback from current price, well below fair value
+                buy_below = round(min(current_price * 0.98, fair_value * 0.90), 2)
+            else:
+                # Overvalued: stock is trading above fair value; accumulate ONLY after it corrects below fair value
+                mid_val = (bear_floor + fair_value) / 2.0
+                buy_below = round(min(fair_value * 0.90, max(bear_floor * 1.05, mid_val)), 2)
+
+            # Strict monotonicity enforcement
+            if buy_below <= bear_floor:
+                buy_below = round(bear_floor * 1.08, 2)
+            if buy_below > fair_value * 0.95:
+                buy_below = round(fair_value * 0.90, 2)
+            stop_loss = bear_floor
 
     if verdict_action in ("BUY", "ACCUMULATE"):
         # Quality company with positive investment rating
@@ -574,6 +608,8 @@ def calculate_stock_valuation(pack: dict[str, Any] | str, item_dict: Optional[di
         "bull_target": bull_target,
         "bear_floor": bear_floor,
         "buy_below": buy_below,
+        "stop_loss": stop_loss,
+        "entry_mode": entry_mode,
         "upside_pct": upside_pct,
         "fair_value_gap_pct": fair_value_gap_pct,
         "reward_risk_ratio": rr_ratio,

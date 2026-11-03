@@ -1090,6 +1090,9 @@ def ema_stack_bull(annual, quarterly, meta, signals, nifty_returns):
 
 @_higher
 def tech_net_score_scaled(annual, quarterly, meta, signals, nifty_returns):
+    val = meta.get("tech_net_score_scaled")
+    if val is not None:
+        return val
     if not signals:
         return None
     return signals.get("net_score")
@@ -1116,6 +1119,45 @@ def np_yoy_q(annual, quarterly, meta, signals, nifty_returns):
     if cur is None or yoy is None or abs(yoy) < 1e-6:
         return None
     return (cur - yoy) / abs(yoy)
+
+
+# ---------- SMART MONEY & EARNINGS PURITY -----------------------------
+
+@_higher
+def inst_flow_2q(annual, quarterly, meta, signals, nifty_returns):
+    """Institutional sponsorship: change in (FII% + DII%) over trailing 2 quarters."""
+    return meta.get("inst_flow_2q")
+
+
+@_higher
+def promoter_trend_1y(annual, quarterly, meta, signals, nifty_returns):
+    """Insider conviction: change in Promoter% over trailing 4 quarters (1 year)."""
+    return meta.get("promoter_trend_1y")
+
+
+@_lower
+def other_income_ratio(annual, quarterly, meta, signals, nifty_returns):
+    """Earnings purity: Other Income / PBT over trailing 4 quarters (lower is better)."""
+    pbt_ttm = _ttm_sum(quarterly, "profit_before_tax")
+    oi_ttm = _ttm_sum(quarterly, "other_income")
+    if pbt_ttm is None or oi_ttm is None or pbt_ttm <= 0:
+        return None
+    return min(1.0, max(0.0, oi_ttm / pbt_ttm))
+
+
+@_lower
+def cash_conversion_cycle(annual, *_):
+    """Working capital float: DSO + Inventory Days - Payable Days (lower is better; negative = supplier float)."""
+    r = _bs(annual)
+    if r is None:
+        return None
+    s = r.get("sales")
+    if not s or s <= 0:
+        return None
+    dso_val = (r.get("receivables") or 0) * 365.0 / s
+    inv_val = (r.get("inventory") or 0) * 365.0 / s
+    pay_val = (r.get("other_liabilities") or 0) * 365.0 / s
+    return dso_val + inv_val - pay_val
 
 
 # ---------- REGISTRY ---------------------------------------------------

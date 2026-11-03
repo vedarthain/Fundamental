@@ -18,6 +18,7 @@ Outputs:
 from __future__ import annotations
 
 import io
+from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from statistics import median
 from typing import Optional
@@ -328,6 +329,7 @@ def compute_ema_metrics(prices: list[dict]) -> dict[str, Optional[float]]:
     out: dict[str, Optional[float]] = {
         "pct_above_200ema_252d": None,
         "ema_stack_bull": None,
+        "tech_net_score_scaled": None,
     }
     # prices arrive newest-first from load_price_history.
     closes = [p["close"] for p in reversed(prices) if p.get("close") is not None]
@@ -343,6 +345,15 @@ def compute_ema_metrics(prices: list[dict]) -> dict[str, Optional[float]]:
     e9, e20, e50 = (_ema(closes, s)[-1] if closes else None for s in (9, 20, 50))
     if e9 is not None and e20 is not None and e50 is not None:
         out["ema_stack_bull"] = 1.0 if (e9 > e20 > e50) else 0.0
+
+    # Composite technical trend score (52W high proximity + Price > 50 EMA + 9 vs 20 EMA)
+    if closes and len(closes) >= EMA_MIN_BARS:
+        c_latest = closes[-1]
+        hi252 = max(closes[-252:])
+        prox_52w = (c_latest / hi252) if hi252 > 0 else 0.5
+        c_above_e50 = 1.0 if (e50 is not None and c_latest > e50) else 0.0
+        e9_above_e20 = 1.0 if (e9 is not None and e20 is not None and e9 > e20) else 0.0
+        out["tech_net_score_scaled"] = round(0.50 * prox_52w + 0.30 * c_above_e50 + 0.20 * e9_above_e20, 4)
 
     return out
 
@@ -764,21 +775,56 @@ if _collisions:  # pragma: no cover - import-time guard
 
 
 def load_shareholding_latest(conn: psycopg.Connection) -> dict[str, dict]:
-    """Newest shareholding row per symbol, for the whole universe, in one query.
+    """Newest shareholding row per symbol, with 2Q institutional flow and 1Y promoter trend.
 
     Loaded once per run and passed down rather than queried per symbol: the
     metrics pass walks ~3,000 symbols over a cross-region link, and 3,000 extra
-    round-trips for nine context values is wall time spent on something that is
+    round-trips for context and factor values is wall time spent on something that is
     one index scan.
     """
     with conn.cursor() as cur:
         cur.execute("""
-            SELECT DISTINCT ON (symbol)
-                   symbol, period_end, promoter_pct, fii_pct, dii_pct, shareholders
+            SELECT symbol, period_end, promoter_pct, fii_pct, dii_pct, shareholders
               FROM app.shareholding_pattern
              ORDER BY symbol, period_end DESC
         """)
-        return {r["symbol"]: r for r in cur.fetchall()}
+        by_symbol: dict[str, list[dict]] = defaultdict(list)
+        for r in cur.fetchall():
+            if len(by_symbol[r["symbol"]]) < 5:
+                by_symbol[r["symbol"]].append(r)
+
+    out: dict[str, dict] = {}
+    for sym, rows in by_symbol.items():
+        f_fii = float(rows[0]["fii_pct"]) if rows[0].get("fii_pct") is not None else None
+        f_dii = float(rows[0]["dii_pct"]) if rows[0].get("dii_pct") is not None else None
+        f_prom = float(rows[0]["promoter_pct"]) if rows[0].get("promoter_pct") is not None else None
+        latest = {
+            "symbol": sym,
+            "period_end": rows[0].get("period_end"),
+            "promoter_pct": f_prom,
+            "fii_pct": f_fii,
+            "dii_pct": f_dii,
+            "shareholders": rows[0].get("shareholders"),
+        }
+        # Institutional flow over trailing 2 quarters: (FII + DII)_now - (FII + DII)_2q_ago
+        if len(rows) >= 3 and (rows[0].get("fii_pct") is not None or rows[0].get("dii_pct") is not None):
+            curr_inst = (float(rows[0]["fii_pct"]) if rows[0].get("fii_pct") is not None else 0.0) + \
+                        (float(rows[0]["dii_pct"]) if rows[0].get("dii_pct") is not None else 0.0)
+            prev2_inst = (float(rows[2]["fii_pct"]) if rows[2].get("fii_pct") is not None else 0.0) + \
+                         (float(rows[2]["dii_pct"]) if rows[2].get("dii_pct") is not None else 0.0)
+            latest["inst_flow_2q"] = round(curr_inst - prev2_inst, 2)
+        else:
+            latest["inst_flow_2q"] = None
+
+        # Promoter trend over trailing 1 year (4 quarters): Promoter_now - Promoter_1y_ago
+        if len(rows) >= 5 and rows[0].get("promoter_pct") is not None and rows[4].get("promoter_pct") is not None:
+            latest["promoter_trend_1y"] = round(float(rows[0]["promoter_pct"]) - float(rows[4]["promoter_pct"]), 2)
+        else:
+            latest["promoter_trend_1y"] = None
+
+        out[sym] = latest
+
+    return out
 
 
 def compute_ttm_context(quarterly: list[dict]) -> dict[str, Optional[float]]:
@@ -884,10 +930,41 @@ def compute_metrics_for_symbol(
     # indexes from the newest end so the extra history cannot shift a return.
     prices = load_price_history(golden_conn, symbol, limit=700)
     rets = compute_returns(prices)
+    # Shareholding trends (institutional flow + insider trend)
+    if shareholding is None:
+        with app_conn.cursor() as cur:
+            cur.execute("""
+                SELECT symbol, period_end, promoter_pct, fii_pct, dii_pct, shareholders
+                  FROM app.shareholding_pattern
+                 WHERE symbol = %s ORDER BY period_end DESC LIMIT 5
+            """, (symbol,))
+            rows = cur.fetchall()
+            if rows:
+                latest = dict(rows[0])
+                if len(rows) >= 3 and (rows[0].get("fii_pct") is not None or rows[0].get("dii_pct") is not None):
+                    curr_inst = (float(rows[0]["fii_pct"]) if rows[0].get("fii_pct") is not None else 0.0) + \
+                                (float(rows[0]["dii_pct"]) if rows[0].get("dii_pct") is not None else 0.0)
+                    prev2_inst = (float(rows[2]["fii_pct"]) if rows[2].get("fii_pct") is not None else 0.0) + \
+                                 (float(rows[2]["dii_pct"]) if rows[2].get("dii_pct") is not None else 0.0)
+                    latest["inst_flow_2q"] = round(curr_inst - prev2_inst, 2)
+                else:
+                    latest["inst_flow_2q"] = None
+                if len(rows) >= 5 and rows[0].get("promoter_pct") is not None and rows[4].get("promoter_pct") is not None:
+                    latest["promoter_trend_1y"] = round(float(rows[0]["promoter_pct"]) - float(rows[4]["promoter_pct"]), 2)
+                else:
+                    latest["promoter_trend_1y"] = None
+                shp = latest
+            else:
+                shp = {}
+    else:
+        shp = shareholding.get(symbol) or {}
+
     meta_full = {
         **meta,
         **rets,
         **compute_ema_metrics(prices),
+        "inst_flow_2q": shp.get("inst_flow_2q"),
+        "promoter_trend_1y": shp.get("promoter_trend_1y"),
     }
 
     sc = (get_scorecard_from(scorecard_overrides, cluster_id, tier)
@@ -914,19 +991,6 @@ def compute_metrics_for_symbol(
     nonnull = sum(1 for v in out.values() if v is not None)
 
     ctx = compute_ttm_context(quarterly)
-    # A caller that did not preload falls back to a single-symbol read rather
-    # than to nulls: a context value that is absent because nobody passed a map
-    # is indistinguishable, downstream, from one the company never reported.
-    if shareholding is None:
-        with app_conn.cursor() as cur:
-            cur.execute("""
-                SELECT promoter_pct, fii_pct, dii_pct, shareholders
-                  FROM app.shareholding_pattern
-                 WHERE symbol = %s ORDER BY period_end DESC LIMIT 1
-            """, (symbol,))
-            shp = cur.fetchone() or {}
-    else:
-        shp = shareholding.get(symbol) or {}
     for key in ("promoter_pct", "fii_pct", "dii_pct", "shareholders"):
         v = shp.get(key)
         ctx[key] = float(v) if v is not None else None

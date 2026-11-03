@@ -39,7 +39,7 @@ export const VALUATION_FORMULAS = [
 export const MOMENTUM_FORMULAS = [
   "ret_3m_rel", "ret_6m_rel", "ret_12m_rel",
   "pct_above_200ema_252d", "ema_stack_bull", "tech_net_score_scaled",
-  "sales_yoy_q", "np_yoy_q",
+  "inst_flow_2q", "sales_yoy_q", "np_yoy_q",
 ] as const;
 
 export const FALLBACK_FORMULAS = [

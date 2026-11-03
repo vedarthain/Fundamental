@@ -46,7 +46,7 @@ const VALUATION = new Set([
 const MOMENTUM = new Set([
   "ret_3m_rel", "ret_6m_rel", "ret_12m_rel",
   "pct_above_200ema_252d", "ema_stack_bull", "tech_net_score_scaled",
-  "sales_yoy_q", "np_yoy_q",
+  "inst_flow_2q", "sales_yoy_q", "np_yoy_q",
 ]);
 
 function bucket(name: string): SpiderAxis | null {

@@ -106,6 +106,10 @@ const STRENGTH_PHRASE: Record<string, string> = {
   pct_above_200ema_252d: "Trending above 200-day EMA most of the year",
   ema_stack_bull: "Moving averages stacked bullishly",
   tech_net_score_scaled: "Technical signals net bullish",
+  inst_flow_2q: "Institutions (FII+DII) actively accumulating over last 2 quarters",
+  promoter_trend_1y: "Promoter/insider stake increasing over past year",
+  other_income_ratio: "High core operating profit purity (low other income)",
+  cash_conversion_cycle: "Strong working capital float (short or negative cash cycle)",
   sales_yoy_q: "Latest quarter sales growth beats peers",
   np_yoy_q: "Latest quarter profit growth beats peers",
 };
@@ -190,6 +194,10 @@ const GAP_PHRASE: Record<string, string> = {
   pct_above_200ema_252d: "Stock spent most of the year below 200-day EMA",
   ema_stack_bull: "Moving averages not in bullish stack",
   tech_net_score_scaled: "Technical signals net bearish",
+  inst_flow_2q: "Institutions (FII+DII) reducing stake over last 2 quarters",
+  promoter_trend_1y: "Promoter/insider stake declining over past year",
+  other_income_ratio: "High reliance on non-operating other income",
+  cash_conversion_cycle: "Long cash conversion cycle tying up working capital",
   sales_yoy_q: "Latest quarter sales growth lags peers",
   np_yoy_q: "Latest quarter profit growth lags peers",
 };

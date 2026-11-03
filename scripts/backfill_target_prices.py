@@ -27,25 +27,37 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dry-run", action="store_true", help="Preview calculations without writing to database")
     ap.add_argument("--limit", type=int, help="Limit number of stocks to process")
+    ap.add_argument("--symbol", type=str, help="Process a specific stock symbol (e.g. DIXON)")
     args = ap.parse_args()
 
     print("\n" + "=" * 80)
     print("🏛️  BACKFILL INSTITUTIONAL TARGET PRICES & ACCUMULATION ZONES")
     print("=" * 80)
     print(f"Dry Run: {'YES' if args.dry_run else 'NO'}")
+    if args.symbol:
+        print(f"Symbol Filter: {args.symbol.upper()}")
     print("=" * 80 + "\n")
 
     t0 = time.time()
 
     with psycopg.connect("dbname=fundamental_app") as conn:
         with conn.cursor(row_factory=dict_row) as cur:
-            # 1. Fetch all distinct symbols with their latest verdict
-            cur.execute("""
-                SELECT DISTINCT ON (symbol) 
-                    symbol, generated_at, verdict, anchor_price
-                FROM app.stock_verdict
-                ORDER BY symbol, generated_at DESC;
-            """)
+            # 1. Fetch distinct symbols with their latest verdict
+            if args.symbol:
+                cur.execute("""
+                    SELECT DISTINCT ON (symbol) 
+                        symbol, generated_at, verdict, anchor_price
+                    FROM app.stock_verdict
+                    WHERE symbol = %s
+                    ORDER BY symbol, generated_at DESC;
+                """, (args.symbol.upper(),))
+            else:
+                cur.execute("""
+                    SELECT DISTINCT ON (symbol) 
+                        symbol, generated_at, verdict, anchor_price
+                    FROM app.stock_verdict
+                    ORDER BY symbol, generated_at DESC;
+                """)
             verdicts = cur.fetchall()
             print(f"✓ Found {len(verdicts)} distinct stocks in app.stock_verdict.")
 
@@ -102,6 +114,13 @@ def main() -> int:
                 if len(quarterly_map[sym]) < 8:
                     quarterly_map[sym].append(r)
 
+            # 6b. Pre-fetch scores (composite, quality, valuation, momentum)
+            cur.execute("""
+                SELECT symbol, composite_pct, quality_pct, valuation_pct, momentum_pct
+                FROM app.scores_latest;
+            """)
+            scores_map = {r["symbol"]: r for r in cur.fetchall()}
+
     print("Computing institutional valuation models across all stocks...")
     updates: list[dict[str, Any]] = []
 
@@ -137,6 +156,7 @@ def main() -> int:
             "annual": annual_map.get(sym, []),
             "quarterly": quarterly_map.get(sym, []),
             "verdict": v.get("verdict"),
+            "scores": scores_map.get(sym, {}),
         }
 
         val = calculate_stock_valuation(pack)
