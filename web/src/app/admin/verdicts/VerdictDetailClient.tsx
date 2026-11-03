@@ -571,13 +571,13 @@ export function VerdictDetailClient({
   // must stay outside the verdict-loading gate below (VerdictPanel only
   // mounts once verdict data resolves) — otherwise the chart would vanish
   // while the verdict is loading or for stocks with no verdict at all.
-  type PageTab = "graph" | "about" | "headline" | "fundamentals" | "models" | "strategy";
+  type PageTab = "graph" | "about" | "headline" | "fundamentals" | "models" | "strategy" | "audit";
   const [pageTab, setPageTab] = useState<PageTab>("graph");
   // Swipe-left/right on the tab content steps through this in order — same
   // left-to-right order as the tab bar buttons below. Wraps: swiping left
-  // past Strategy loops back to Graph, and right past Graph loops back to
-  // Strategy — a closed loop rather than a dead stop at either end.
-  const TAB_ORDER: PageTab[] = ["graph", "about", "headline", "fundamentals", "models", "strategy"];
+  // past Audit loops back to Graph, and right past Graph loops back to
+  // Audit — a closed loop rather than a dead stop at either end.
+  const TAB_ORDER: PageTab[] = ["graph", "about", "headline", "fundamentals", "models", "strategy", "audit"];
   const stepTab = useCallback((dir: 1 | -1) => {
     setPageTab((cur) => {
       const idx = TAB_ORDER.indexOf(cur);
@@ -1750,6 +1750,7 @@ export function VerdictDetailClient({
                   ["fundamentals", "Fundamental"],
                   ["models", "Model"],
                   ["strategy", "Strategy"],
+                  ["audit", "Audit & Findings"],
                 ] as [PageTab, string][]).map(([id, label]) => (
                   <button
                     key={id}

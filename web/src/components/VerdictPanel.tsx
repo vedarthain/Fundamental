@@ -785,7 +785,7 @@ function getGrowthEngineCategory(
   };
 }
 
-type Section = "headline" | "fundamentals" | "models" | "strategy";
+type Section = "headline" | "fundamentals" | "models" | "strategy" | "audit";
 
 function VerdictContentBlock({
   verdict,
@@ -795,6 +795,7 @@ function VerdictContentBlock({
   shareholding,
   hideAccumulationBox,
   controlledSection,
+  drift,
 }: {
   verdict: VerdictRow;
   ageDays: number;
@@ -813,6 +814,7 @@ function VerdictContentBlock({
    *  bar, no internal state. Omitted everywhere else (stock page tab,
    *  watchlist sheet), which keeps their own in-component tab switcher. */
   controlledSection?: Section;
+  drift?: DriftRow[];
 }) {
   const bucket = verdictBucket(verdict.verdict);
   const theme = LIGHT_THEME[bucket] || LIGHT_THEME.hold;
@@ -859,6 +861,7 @@ function VerdictContentBlock({
             ["fundamentals", "Fundamental"],
             ["models", "Model"],
             ["strategy", "Strategy"],
+            ["audit", "Audit & Findings"],
           ] as [Section, string][]).map(([id, label]) => (
             <button
               key={id}
@@ -1371,6 +1374,162 @@ function VerdictContentBlock({
               </div>
             </div>
           )}
+
+          {/* 5TH SECTION: Audit & Findings (Validation, Drift, & Exit Timeline) */}
+          {section === "audit" && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                  <span className="text-[14px]">🔍</span>
+                  <span>Verdict Audit &amp; Thesis Revalidation</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded bg-slate-200/80 text-slate-700 border border-slate-300/60 uppercase">
+                    Regime: {formatValuationMethod(verdict.valuation_method)}
+                  </span>
+                  {drift && (
+                    <span
+                      className={`text-[10px] font-medium px-2 py-0.5 rounded border ${
+                        drift.filter((d) => d.moved).length === 0
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                          : "bg-rose-50 text-rose-700 border-rose-200"
+                      }`}
+                    >
+                      {drift.filter((d) => d.moved).length === 0
+                        ? "✓ Thesis Intact (0 Drift)"
+                        : `⚠️ ${drift.filter((d) => d.moved).length} Figures Drifted`}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Valuation Corridor & Price Status Card */}
+              <div className="rounded-lg border border-slate-200/90 bg-slate-50/50 p-4 shadow-2xs">
+                <div className="flex items-center justify-between pb-2.5 mb-3 border-b border-slate-200/70 flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[15px]">⚖️</span>
+                    <div>
+                      <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                        Valuation Corridor &amp; Action Boundaries
+                      </div>
+                      <div className="text-[13px] font-bold text-slate-900">
+                        Target ₹{Math.round(verdict.target_price ?? 0).toLocaleString("en-IN")} · Buy Below {verdict.buy_below != null ? `≤ ₹${Math.round(verdict.buy_below).toLocaleString("en-IN")}` : "—"} · Floor {verdict.bear_floor != null ? `₹${Math.round(verdict.bear_floor).toLocaleString("en-IN")}` : "—"}
+                      </div>
+                    </div>
+                  </div>
+                  {verdict.upside_pct != null && (
+                    <span
+                      className={`text-[12px] font-mono font-bold px-2.5 py-1 rounded border ${
+                        verdict.upside_pct >= 20
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                          : verdict.upside_pct >= 0
+                            ? "bg-blue-50 text-blue-700 border-blue-200"
+                            : "bg-rose-50 text-rose-700 border-rose-200"
+                      }`}
+                    >
+                      {verdict.upside_pct >= 0 ? "+" : ""}
+                      {verdict.upside_pct.toFixed(1)}% Upside to Target
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  <div className="rounded bg-white border border-slate-200/80 p-2.5">
+                    <div className="text-[9.5px] font-medium uppercase text-slate-400">12M Target Objective</div>
+                    <div className="text-[15px] font-mono font-bold text-indigo-700 mt-0.5">
+                      ₹{Math.round(verdict.target_price ?? 0).toLocaleString("en-IN")}
+                    </div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">Primary exit milestone</div>
+                  </div>
+                  <div className="rounded bg-white border border-slate-200/80 p-2.5">
+                    <div className="text-[9.5px] font-medium uppercase text-slate-400">Margin of Safety Entry</div>
+                    <div className="text-[15px] font-mono font-bold text-emerald-700 mt-0.5">
+                      {verdict.buy_below != null ? `≤ ₹${Math.round(verdict.buy_below).toLocaleString("en-IN")}` : "—"}
+                    </div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">Max price to add fresh capital</div>
+                  </div>
+                  <div className="rounded bg-white border border-slate-200/80 p-2.5">
+                    <div className="text-[9.5px] font-medium uppercase text-slate-400">Intrinsic Fair Value</div>
+                    <div className="text-[15px] font-mono font-bold text-slate-800 mt-0.5">
+                      ₹{Math.round(verdict.fair_value ?? verdict.target_price ?? 0).toLocaleString("en-IN")}
+                    </div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">Fundamental DCF anchor</div>
+                  </div>
+                  <div className="rounded bg-white border border-slate-200/80 p-2.5">
+                    <div className="text-[9.5px] font-medium uppercase text-slate-400">Hard Stop / Bear Floor</div>
+                    <div className="text-[15px] font-mono font-bold text-rose-700 mt-0.5">
+                      {verdict.bear_floor != null ? `₹${Math.round(verdict.bear_floor).toLocaleString("en-IN")}` : "—"}
+                    </div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">Thesis invalidation floor</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Sell Timeline & Review Milestones */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="rounded-lg border border-slate-200/90 bg-slate-50/50 p-4">
+                  <div className="flex items-center gap-2 mb-2 pb-1.5 border-b border-slate-200/60 font-medium text-slate-800 text-[12.5px]">
+                    <span>⏱️</span>
+                    <span>Holding Timeline &amp; Sell Exit Horizon</span>
+                  </div>
+                  <div className="space-y-2 text-[12px] text-slate-700 leading-relaxed">
+                    <p>
+                      <strong>Target Horizon: 9 to 12 Months.</strong> Positions in accumulation zones are designed to compound over a 3-4 quarter horizon to allow operating leverage and multiple expansion to materialize.
+                    </p>
+                    <p className="text-slate-600 text-[11.5px]">
+                      • <strong>When to Sell / Trim:</strong> When stock approaches or exceeds 12M Target (₹{Math.round(verdict.target_price ?? 0).toLocaleString("en-IN")}) or when valuation multiple exceeds historical ceiling without commensurate earnings growth.
+                    </p>
+                    <p className="text-slate-600 text-[11.5px]">
+                      • <strong>Review Cadence:</strong> Quarterly post-earnings filings or upon major institutional shareholding shifts.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-slate-200/90 bg-slate-50/50 p-4">
+                  <div className="flex items-center gap-2 mb-2 pb-1.5 border-b border-slate-200/60 font-medium text-slate-800 text-[12.5px]">
+                    <span>🛑</span>
+                    <span>Thesis Invalidation &amp; Stop Criteria</span>
+                  </div>
+                  <div className="space-y-2 text-[12px] text-slate-700 leading-relaxed">
+                    {verdict.trigger_text ? (
+                      <p>
+                        <strong>What Changes This Verdict:</strong>{" "}
+                        <span dangerouslySetInnerHTML={{ __html: verdict.trigger_text.replace(/<\/?(b|strong)>/gi, "") }} />
+                      </p>
+                    ) : (
+                      <p>
+                        <strong>Hard Exit Rule:</strong> Immediate exit triggered if price breaches Bear Floor support at ₹{Math.round(verdict.bear_floor ?? 0).toLocaleString("en-IN")} on heavy weekly volume or if consecutive quarterly earnings decline &gt; 15%.
+                      </p>
+                    )}
+                    <p className="text-slate-600 text-[11.5px]">
+                      • <strong>Capital Preservation:</strong> If core thesis assumptions fail, exit without waiting for bounce. Do not average down on broken fundamentals.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Drift Table: Frozen vs Live Evidence Check */}
+              {drift && drift.length > 0 && (
+                <div className="rounded-lg border border-slate-200/90 bg-white p-4 shadow-2xs">
+                  <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-200/70">
+                    <div>
+                      <div className="text-[12.5px] font-semibold text-slate-800 flex items-center gap-1.5">
+                        <span>📊</span>
+                        <span>Evidence Baseline vs Live Metrics Drift</span>
+                      </div>
+                      <div className="text-[11px] text-slate-500 mt-0.5">
+                        Audit of metrics frozen at verdict generation versus live database snapshot.
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-mono text-slate-500">
+                      {drift.filter((d) => d.moved).length} / {drift.filter((d) => d.comparable && !d.liveMissing).length} moved
+                    </span>
+                  </div>
+                  <DriftTable drift={drift} />
+                </div>
+              )}
+            </div>
+          )}
         </div>
       ) : (
         /* Legacy single-list presentation */
@@ -1446,21 +1605,23 @@ export function VerdictPanel({
       </div>
 
       {/* The Active Verdict View */}
-      <VerdictContentBlock verdict={selectedVerdict} ageDays={ageDays} latestAnnual={latestAnnual} stock={stock} shareholding={shareholding} hideAccumulationBox={hideAccumulationBox} controlledSection={controlledSection} />
+      <VerdictContentBlock verdict={selectedVerdict} ageDays={ageDays} latestAnnual={latestAnnual} stock={stock} shareholding={shareholding} hideAccumulationBox={hideAccumulationBox} controlledSection={controlledSection} drift={drift} />
 
-      {/* Stored vs live */}
-      <div className="rounded-lg border p-5"
-           style={{ borderColor: "var(--color-border-default)", background: "var(--color-paper)" }}>
-        <div className="text-[13px] font-semibold ink-text">
-          What it was written against, and what those figures are now
+      {/* Stored vs live: shown only when not controlled by an outer tab strip (e.g. stock page fallback) */}
+      {controlledSection === undefined && (
+        <div className="rounded-lg border p-5"
+             style={{ borderColor: "var(--color-border-default)", background: "var(--color-paper)" }}>
+          <div className="text-[13px] font-semibold ink-text">
+            What it was written against, and what those figures are now
+          </div>
+          <p className="mt-1 mb-3 text-[12px] muted-text leading-relaxed">
+            Frozen at the time of writing and re-read live on every page load. This is how the
+            verdict reports its own staleness — through the numbers that moved, not through a
+            date.
+          </p>
+          <DriftTable drift={drift} />
         </div>
-        <p className="mt-1 mb-3 text-[12px] muted-text leading-relaxed">
-          Frozen at the time of writing and re-read live on every page load. This is how the
-          verdict reports its own staleness — through the numbers that moved, not through a
-          date.
-        </p>
-        <DriftTable drift={drift} />
-      </div>
+      )}
 
       {/* History */}
       {history.length > 0 && (
