@@ -567,7 +567,7 @@ export function CallsClient() {
                       <div className="bg-white rounded border border-slate-200 p-2">
                         <div className="text-[10px] text-blue-700 font-semibold uppercase">Tranche 2 (Limit Dip)</div>
                         <div className="font-mono font-bold text-slate-900 mt-0.5">
-                          Limit {c.tranche2Shares} $\le$ {money(c.buyBelow)}
+                          Limit {c.tranche2Shares} @ ≤ {money(c.buyBelow)}
                         </div>
                         <div className="text-[10px] text-slate-500 mt-0.5">Cost: {money(c.t2Value)}</div>
                       </div>
@@ -579,7 +579,7 @@ export function CallsClient() {
                     <div className="rounded border border-slate-200 p-2 bg-white">
                       <div className="text-slate-400 font-medium text-[9.5px] uppercase">CMP / Entry</div>
                       <div className="font-mono font-bold text-slate-900 mt-0.5">{money(c.cmp)}</div>
-                      <div className="text-[9.5px] text-emerald-700 font-medium mt-0.5">Buy $\le$ {money(c.buyBelow)}</div>
+                      <div className="text-[9.5px] text-emerald-700 font-medium mt-0.5">Buy ≤ {money(c.buyBelow)}</div>
                     </div>
 
                     <div className="rounded border border-indigo-200 p-2 bg-indigo-50/20">
