@@ -232,6 +232,17 @@ export function UserMenu({ email, displayName, isAdmin = false }: Props) {
               </Link>
 
               <Link
+                href="/admin/calls"
+                role="menuitem"
+                onClick={() => setOpen(false)}
+                className="block px-4 py-2.5 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
+                title="Admin · Cluster Calls & Portfolio Sweep"
+              >
+                Calls{" "}
+                <AdminBadge />
+              </Link>
+
+              <Link
                 href="/admin/verdicts"
                 role="menuitem"
                 onClick={() => setOpen(false)}

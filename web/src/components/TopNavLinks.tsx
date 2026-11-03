@@ -541,6 +541,15 @@ function PopupSheet({
                   />
 
                   <PopupLink
+                    href="/admin/calls"
+                    label="Calls"
+                    sublabel="Cluster Gems & Portfolio Action Sweep"
+                    badge="ADMIN"
+                    active={isActive(pathname, "/admin/calls")}
+                    onClose={onClose}
+                  />
+
+                  <PopupLink
                     href="/admin/verdicts"
                     label="Verdicts"
                     sublabel="Institutional Conviction Board & Verdicts"
