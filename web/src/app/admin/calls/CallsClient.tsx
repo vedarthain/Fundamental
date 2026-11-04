@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowUpRight, Search, Sparkles, Wallet, Coins, ArrowRight, ArrowDownUp } from "lucide-react";
+import { ArrowUpRight, Search, Sparkles, Wallet, Coins, ArrowRight, ArrowDownUp, CheckCircle2, ShieldCheck } from "lucide-react";
 import type { ClusterGem, PortfolioActionCall } from "@/app/api/admin/calls/route";
 
 function money(v: number | null | undefined): string {
@@ -58,6 +58,7 @@ export function CallsClient() {
   const [selectedCluster, setSelectedCluster] = useState<string>("ALL");
   const [actionFilter, setActionFilter] = useState<string>("ALL");
   const [gemsOnly, setGemsOnly] = useState(false);
+  const [avoidOwned, setAvoidOwned] = useState(false);
 
   const fetchData = async () => {
     setLoading(true);
@@ -80,7 +81,7 @@ export function CallsClient() {
 
   // Top 6 curated deployment calls
   const curatedPlan = useMemo(() => {
-    const picks = [
+    const basePicks = [
       {
         symbol: "INDUSTOWER",
         name: "Indus Towers Ltd.",
@@ -167,18 +168,86 @@ export function CallsClient() {
       },
     ];
 
-    return picks.map((p) => {
+    let picksToDeploy = basePicks;
+
+    if (avoidOwned && data) {
+      // Find which base picks are NOT held in portfolio
+      const unheldBase = basePicks.filter((p) => {
+        const port = data.portfolioActions.find((a) => a.symbol === p.symbol);
+        const gem = data.clusterGems.find((g) => g.symbol === p.symbol);
+        return !(port && port.total_qty > 0) && !gem?.is_portfolio;
+      });
+
+      const usedSymbols = new Set(unheldBase.map((p) => p.symbol));
+      const usedClusters = new Set(unheldBase.map((p) => p.cluster));
+      const replacements: typeof basePicks = [];
+
+      for (const g of data.clusterGems) {
+        if (unheldBase.length + replacements.length >= 6) break;
+        if (g.is_portfolio) continue;
+        if (usedSymbols.has(g.symbol)) continue;
+        if (g.cluster_name && usedClusters.has(g.cluster_name)) continue;
+        if (!g.target_price || !g.buy_below || !g.ltp) continue;
+
+        replacements.push({
+          symbol: g.symbol,
+          name: g.company_name || g.symbol,
+          cluster: g.cluster_name || "General",
+          weightPct: 15,
+          cmp: g.ltp,
+          buyBelow: g.buy_below,
+          target: g.target_price,
+          stopLoss: g.bear_floor || Math.round(g.ltp * 0.85),
+          upside: Math.round(g.upside_pct || 25),
+          scores: `${g.composite_pct ?? "—"} / ${g.quality_pct ?? "—"} / ${g.momentum_pct ?? "—"}`,
+          role: "Fresh Cluster Discovery",
+          rationale: `Top unheld gem in ${g.cluster_name}. Quality: ${g.quality_pct}, Composite: ${g.composite_pct}.`,
+        });
+        usedSymbols.add(g.symbol);
+        if (g.cluster_name) usedClusters.add(g.cluster_name);
+      }
+
+      const combined = [...unheldBase, ...replacements].slice(0, 6);
+      if (combined.length > 0) {
+        const weightPerStock = Math.floor(100 / combined.length);
+        const remainder = 100 - weightPerStock * combined.length;
+        picksToDeploy = combined.map((p, idx) => ({
+          ...p,
+          weightPct: idx === 0 ? weightPerStock + remainder : weightPerStock,
+        }));
+      }
+    }
+
+    return picksToDeploy.map((p) => {
+      const gem = data?.clusterGems.find((g) => g.symbol === p.symbol);
+      const port = data?.portfolioActions.find((a) => a.symbol === p.symbol);
+      const liveCmp = port?.ltp ?? gem?.ltp ?? p.cmp;
+      const cmp = liveCmp > 0 ? liveCmp : p.cmp;
+      const anchorPrice = gem?.anchor_price ?? p.cmp;
+      const pctMove = gem?.pct_move ?? (anchorPrice > 0 ? ((cmp - anchorPrice) / anchorPrice) * 100 : 0);
+      const isPortfolio = Boolean(port && port.total_qty > 0) || Boolean(gem?.is_portfolio);
+      const heldQty = port?.total_qty ?? 0;
+      const callDate = gem?.generated_at ?? "2026-10-31";
+      const actionToday = port?.action_today ?? (isPortfolio ? "HOLD & COMPOUND" : "ACCUMULATE / ADD");
+
       const allocatedAmount = Math.round((capital * p.weightPct) / 100);
-      const totalShares = Math.floor(allocatedAmount / p.cmp);
+      const totalShares = Math.floor(allocatedAmount / cmp);
       const tranche1Shares = Math.ceil(totalShares / 2);
-      const tranche2Shares = totalShares - tranche1Shares;
-      const t1Value = tranche1Shares * p.cmp;
-      const t2Value = tranche2Shares * p.cmp;
+      const tranche2Shares = Math.max(0, totalShares - tranche1Shares);
+      const t1Value = tranche1Shares * cmp;
+      const t2Value = tranche2Shares * cmp;
       const projectedValue = Math.round(totalShares * p.target);
       const profitRupees = projectedValue - allocatedAmount;
 
       return {
         ...p,
+        cmp,
+        anchorPrice,
+        pctMove,
+        isPortfolio,
+        heldQty,
+        callDate,
+        actionToday,
         allocatedAmount,
         totalShares,
         tranche1Shares,
@@ -189,7 +258,7 @@ export function CallsClient() {
         profitRupees,
       };
     });
-  }, [capital]);
+  }, [capital, avoidOwned, data]);
 
   const totalProjectedProfit = useMemo(() => {
     return curatedPlan.reduce((acc, p) => acc + p.profitRupees, 0);
@@ -250,6 +319,7 @@ export function CallsClient() {
   const filteredGems = useMemo(() => {
     if (!data) return [];
     const list = data.clusterGems.filter((g) => {
+      if (avoidOwned && g.is_portfolio) return false;
       if (gemsOnly && !g.is_gem) return false;
       if (search) {
         const q = search.toLowerCase();
@@ -281,7 +351,7 @@ export function CallsClient() {
     });
 
     return list;
-  }, [data, search, selectedCluster, gemsOnly, sortBy]);
+  }, [data, search, selectedCluster, gemsOnly, sortBy, avoidOwned]);
 
   return (
     <div className="space-y-5">
@@ -412,17 +482,32 @@ export function CallsClient() {
             )}
 
             {activeTab === "gems" && (
-              <button
-                onClick={() => setGemsOnly((o) => !o)}
-                className={`px-2.5 py-1 rounded text-[11.5px] font-medium border transition-colors flex items-center gap-1 ${
-                  gemsOnly
-                    ? "bg-amber-50 text-amber-800 border-amber-300"
-                    : "bg-white text-slate-600 border-slate-300 hover:bg-slate-50"
-                }`}
-              >
-                <Sparkles className="w-3 h-3 text-amber-500" />
-                <span>Gems Only</span>
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setAvoidOwned((o) => !o)}
+                  className={`px-2.5 py-1 rounded text-[11.5px] font-medium border transition-colors flex items-center gap-1 ${
+                    avoidOwned
+                      ? "bg-indigo-600 text-white border-indigo-700 shadow-2xs font-semibold"
+                      : "bg-white text-slate-700 border-slate-300 hover:bg-slate-50"
+                  }`}
+                  title="Filter out stocks already present in your portfolio to avoid duplicate purchases"
+                >
+                  <CheckCircle2 className={`w-3.5 h-3.5 ${avoidOwned ? "text-white" : "text-emerald-500"}`} />
+                  <span>{avoidOwned ? "Avoiding Owned (Fresh Only)" : "Avoid Already Owned"}</span>
+                </button>
+
+                <button
+                  onClick={() => setGemsOnly((o) => !o)}
+                  className={`px-2.5 py-1 rounded text-[11.5px] font-medium border transition-colors flex items-center gap-1 ${
+                    gemsOnly
+                      ? "bg-amber-50 text-amber-800 border-amber-300"
+                      : "bg-white text-slate-600 border-slate-300 hover:bg-slate-50"
+                  }`}
+                >
+                  <Sparkles className="w-3 h-3 text-amber-500" />
+                  <span>Gems Only</span>
+                </button>
+              </div>
             )}
           </div>
         )}
@@ -461,21 +546,47 @@ export function CallsClient() {
                 </div>
               </div>
 
-              {/* Capital Preset Buttons */}
-              <div className="flex items-center gap-1.5">
-                {[50000, 100000, 200000, 500000].map((amt) => (
+              {/* Capital Preset Buttons & Mode Toggle */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex items-center bg-white rounded-md border border-slate-300 p-0.5 text-[11px]">
                   <button
-                    key={amt}
-                    onClick={() => setCapital(amt)}
-                    className={`px-2.5 py-1 rounded text-[11.5px] font-mono font-medium transition-all ${
-                      capital === amt
-                        ? "bg-indigo-600 text-white shadow-xs font-bold"
-                        : "bg-white text-slate-700 border border-slate-300 hover:bg-slate-100"
+                    onClick={() => setAvoidOwned(false)}
+                    className={`px-2.5 py-1 rounded transition-colors font-medium ${
+                      !avoidOwned
+                        ? "bg-indigo-600 text-white shadow-2xs font-bold"
+                        : "text-slate-600 hover:text-slate-900"
                     }`}
                   >
-                    {amt >= 100000 ? `₹${amt / 100000}L` : `₹${amt / 1000}k`}
+                    Foundation Barbell (6 Core)
                   </button>
-                ))}
+                  <button
+                    onClick={() => setAvoidOwned(true)}
+                    className={`px-2.5 py-1 rounded transition-colors font-medium flex items-center gap-1 ${
+                      avoidOwned
+                        ? "bg-indigo-600 text-white shadow-2xs font-bold"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    <CheckCircle2 className="w-3 h-3" />
+                    <span>Avoid Already Owned (Fresh Only)</span>
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-1">
+                  {[50000, 100000, 200000, 500000].map((amt) => (
+                    <button
+                      key={amt}
+                      onClick={() => setCapital(amt)}
+                      className={`px-2.5 py-1 rounded text-[11.5px] font-mono font-medium transition-all ${
+                        capital === amt
+                          ? "bg-slate-900 text-white shadow-xs font-bold"
+                          : "bg-white text-slate-700 border border-slate-300 hover:bg-slate-100"
+                      }`}
+                    >
+                      {amt >= 100000 ? `₹${amt / 100000}L` : `₹${amt / 1000}k`}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -547,6 +658,40 @@ export function CallsClient() {
                       <div className="text-[12px] font-mono font-bold text-slate-800">{c.scores}</div>
                     </div>
                   </div>
+
+                  {/* Provenance, Call Performance & Holding Status */}
+                  <div className="flex items-center justify-between text-[11px] bg-slate-50 border border-slate-200/80 rounded px-2.5 py-1.5 mb-2.5">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-slate-500 font-mono text-[10.5px]">
+                        Call: {fmtDate(c.callDate)} @ {money(c.anchorPrice)}
+                      </span>
+                      {c.pctMove != null && (
+                        <span className={`font-mono font-bold text-[10.5px] px-1.5 py-0.2 rounded border ${
+                          c.pctMove >= 0 ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-rose-50 text-rose-700 border-rose-200"
+                        }`}>
+                          {pct(c.pctMove)}
+                        </span>
+                      )}
+                    </div>
+
+                    <div>
+                      {c.isPortfolio ? (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-300">
+                          HELD ({c.heldQty} sh)
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
+                          FRESH CANDIDATE
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {c.isPortfolio && (
+                    <div className="text-[10.5px] text-amber-900 bg-amber-50/80 border border-amber-200 rounded p-2 mb-2.5 leading-snug">
+                      ⚠️ <strong>Already in your portfolio.</strong> Do not buy as a new stock every week. Rule: <strong>{c.actionToday}</strong> toward {money(c.target)} target. Only add if price pulls back to Limit Dip (≤ {money(c.buyBelow)}).
+                    </div>
+                  )}
 
                   {/* Sizing & Execution Box */}
                   <div className="bg-slate-50/70 rounded-md border border-slate-200/80 p-3 mb-3">
@@ -629,6 +774,28 @@ export function CallsClient() {
               <li><strong>`ABCAPITAL`</strong> (stretched multiple): Trim 13 shares to unlock <strong>~₹4,771</strong>.</li>
               <li><strong>`GODFRYPHLP`</strong> (+26% gain): Trim 3 shares to unlock <strong>~₹5,184</strong>.</li>
               <li><strong>`JSWENERGY` / `SUBROS`</strong> (deteriorating momentum): Exiting unlocks <strong>~₹9,170</strong>.</li>
+            </ul>
+          </div>
+
+          {/* Institutional Portfolio Discipline & Anti-Churn Rule */}
+          <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-4 text-[12px] text-amber-950 leading-relaxed shadow-2xs">
+            <div className="font-bold text-amber-900 mb-1 flex items-center gap-1.5 text-[12.5px]">
+              <ShieldCheck className="w-4 h-4 text-amber-700" />
+              <span>Institutional Rule: Why We Avoid Buying New Stocks Every Week</span>
+            </div>
+            <p className="text-amber-900/90">
+              High-performing institutional portfolios maintain <strong>15 to 20 high-conviction positions</strong>, never 50+ fragmented bets.
+            </p>
+            <ul className="list-disc pl-5 mt-1.5 space-y-1 text-amber-900/80">
+              <li>
+                <strong>Once Recommended → Stays in HOLD &amp; COMPOUND:</strong> When you buy a stock called by the desk (e.g. <code>INDUSTOWER</code> or <code>BHARTIARTL</code>), it enters your portfolio. You do not buy it as a &ldquo;new stock&rdquo; next week. It remains in compound mode until it hits its 12M target price or stop-loss.
+              </li>
+              <li>
+                <strong>Avoid Portfolio Bloat:</strong> If you buy 6 new stocks every week, you would hold 24 stocks in a month and over 100 stocks in a year. The <strong>&ldquo;Avoid Already Owned&rdquo;</strong> filter ensures you only evaluate fresh ideas when you actually have new capital to deploy.
+              </li>
+              <li>
+                <strong>Cycle Capital via Trims:</strong> Only add new stocks when existing positions reach their 12M targets (e.g., trimming Federal Bank or Paytm) or when deploying scheduled fresh monthly savings.
+              </li>
             </ul>
           </div>
         </div>
