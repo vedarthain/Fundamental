@@ -145,6 +145,10 @@ export function CallsClient() {
     }
   };
 
+  useEffect(() => {
+    fetchData();
+  }, []);
+
   const handleTakeCall = async (symbol: string) => {
     setUserCallOverrides((prev) => ({
       ...prev,
