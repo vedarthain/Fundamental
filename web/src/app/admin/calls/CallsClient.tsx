@@ -657,62 +657,64 @@ export function CallsClient() {
         )}
       </div>
 
-      {/* Horizon Strategy & Call Status Filter Bar */}
-      <div className="flex items-center justify-between flex-wrap gap-2 py-2 px-3 rounded-lg border border-slate-200 bg-slate-50/70 text-[11.5px]">
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-[10.5px] font-bold text-slate-500 uppercase tracking-wide mr-1">
-            Idea Horizon:
-          </span>
-          {[
-            { id: "ALL", label: `All Horizons (${data?.clusterGems.length ?? 0})` },
-            { id: "1M", label: `⚡ 1M Tactical (${data?.summary?.horizonCounts?.["1M"] ?? 0})` },
-            { id: "3M", label: `🚀 3M Catalyst (${data?.summary?.horizonCounts?.["3M"] ?? 0})` },
-            { id: "6M", label: `📈 6M Turnaround (${data?.summary?.horizonCounts?.["6M"] ?? 0})` },
-            { id: "1Y", label: `🏛️ 1Y Core (${data?.summary?.horizonCounts?.["1Y"] ?? 0})` },
-            { id: ">1Y", label: `💎 >1Y Compounder (${data?.summary?.horizonCounts?.[">1Y"] ?? 0})` },
-            { id: "EXIT", label: `🛑 Exit Ideas (${data?.summary?.horizonCounts?.["EXIT"] ?? 0})` },
-          ].map((h) => (
-            <button
-              key={h.id}
-              onClick={() => setSelectedHorizon(h.id)}
-              className={`px-2.5 py-1 rounded text-[11px] font-medium transition-all ${
-                selectedHorizon === h.id
-                  ? "bg-slate-900 text-white shadow-xs font-bold"
-                  : "bg-white text-slate-700 border border-slate-200 hover:bg-slate-100"
-              }`}
-            >
-              {h.label}
-            </button>
-          ))}
-        </div>
-
-        {activeTab === "gems" && (
+      {/* Horizon Strategy & Call Status Filter Bar (hidden on 1 Lakh Deployment Plan tab) */}
+      {activeTab !== "plan" && (
+        <div className="flex items-center justify-between flex-wrap gap-2 py-2 px-3 rounded-lg border border-slate-200 bg-slate-50/70 text-[11.5px]">
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-[10.5px] font-bold text-slate-500 uppercase tracking-wide mr-1">
-              Call Status:
+              Idea Horizon:
             </span>
             {[
-              { id: "ALL", label: "All" },
-              { id: "taken", label: "🟦 Taken" },
-              { id: "profit", label: "🟩 In Profit" },
-              { id: "loss", label: "🟥 In Loss" },
-              { id: "exited", label: "⬛ Exited" },
-            ].map((s) => (
+              { id: "ALL", label: `All Horizons (${data?.clusterGems.length ?? 0})` },
+              { id: "1M", label: `⚡ 1M Tactical (${data?.summary?.horizonCounts?.["1M"] ?? 0})` },
+              { id: "3M", label: `🚀 3M Catalyst (${data?.summary?.horizonCounts?.["3M"] ?? 0})` },
+              { id: "6M", label: `📈 6M Turnaround (${data?.summary?.horizonCounts?.["6M"] ?? 0})` },
+              { id: "1Y", label: `🏛️ 1Y Core (${data?.summary?.horizonCounts?.["1Y"] ?? 0})` },
+              { id: ">1Y", label: `💎 >1Y Compounder (${data?.summary?.horizonCounts?.[">1Y"] ?? 0})` },
+              { id: "EXIT", label: `🛑 Exit Ideas (${data?.summary?.horizonCounts?.["EXIT"] ?? 0})` },
+            ].map((h) => (
               <button
-                key={s.id}
-                onClick={() => setSelectedStatus(s.id)}
-                className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all ${
-                  selectedStatus === s.id
-                    ? "bg-indigo-700 text-white shadow-xs font-bold"
-                    : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
+                key={h.id}
+                onClick={() => setSelectedHorizon(h.id)}
+                className={`px-2.5 py-1 rounded text-[11px] font-medium transition-all ${
+                  selectedHorizon === h.id
+                    ? "bg-slate-900 text-white shadow-xs font-bold"
+                    : "bg-white text-slate-700 border border-slate-200 hover:bg-slate-100"
                 }`}
               >
-                {s.label}
+                {h.label}
               </button>
             ))}
           </div>
-        )}
-      </div>
+
+          {activeTab === "gems" && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[10.5px] font-bold text-slate-500 uppercase tracking-wide mr-1">
+                Call Status:
+              </span>
+              {[
+                { id: "ALL", label: "All" },
+                { id: "taken", label: "🟦 Taken" },
+                { id: "profit", label: "🟩 In Profit" },
+                { id: "loss", label: "🟥 In Loss" },
+                { id: "exited", label: "⬛ Exited" },
+              ].map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => setSelectedStatus(s.id)}
+                  className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all ${
+                    selectedStatus === s.id
+                      ? "bg-indigo-700 text-white shadow-xs font-bold"
+                      : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
+                  }`}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Loading & Error States */}
       {loading && (
