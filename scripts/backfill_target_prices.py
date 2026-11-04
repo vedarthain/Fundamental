@@ -44,6 +44,16 @@ def main() -> int:
 
     with psycopg.connect(db_url) as conn:
         with conn.cursor(row_factory=dict_row) as cur:
+            # 0. Ensure all active tracked universe stocks have an entry in app.stock_verdict
+            cur.execute("""
+                INSERT INTO app.stock_verdict (symbol, generated_at, verdict, confidence, points)
+                SELECT u.symbol, NOW(), 'WATCH — Quant models active', 'medium', '[]'::jsonb
+                FROM app.universe u
+                WHERE NOT EXISTS (SELECT 1 FROM app.stock_verdict sv WHERE sv.symbol = u.symbol)
+                ON CONFLICT DO NOTHING;
+            """)
+            conn.commit()
+
             # 1. Fetch distinct symbols with their latest verdict
             if args.symbol:
                 cur.execute("""
