@@ -166,6 +166,7 @@ def main() -> int:
         updates.append({
             "symbol": sym,
             "generated_at": gen_at,
+            "current_price": curr_price if curr_price > 0 else None,
             "target_price": val["target_price"],
             "fair_value": val["fair_value"],
             "buy_below": val["buy_below"],
@@ -195,7 +196,8 @@ def main() -> int:
                     buy_below = %(buy_below)s,
                     bear_floor = %(bear_floor)s,
                     upside_pct = %(upside_pct)s,
-                    valuation_method = %(valuation_method)s
+                    valuation_method = %(valuation_method)s,
+                    anchor_price = COALESCE(anchor_price, %(current_price)s)
                 WHERE symbol = %(symbol)s AND generated_at = %(generated_at)s;
             """, updates)
         conn.commit()

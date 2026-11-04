@@ -1,0 +1,92 @@
+# Weekly CALLS & AUDIT — part 2 of weekly pipeline (Saturday: Compute, Sunday: Calls & Audit).
+#
+# Dedicated Sunday pipeline that runs after Saturday's multi-factor composite scoring:
+#   1. Computes institutional fair values, target prices, buy-below limits, and bear floors
+#      across all stocks via scripts/backfill_target_prices.py
+#   2. Scans cluster-by-cluster to audit actionable calls & verdict gems
+#   3. Evaluates portfolio holdings for weekly action triggers (TRIM, ACCUMULATE, HOLD, EXIT)
+#   4. Purges CDN caches so the Admin Calls Desk and user views are ready for Monday open.
+#
+# Trigger: SUNDAY CRON (03:00 UTC = 08:30 IST).
+#
+# Required secrets:
+#   NEON_APP_URL        — fundamental_app on Neon
+#   NEON_GOLDEN_URL     — golden_db on Neon
+#   REVALIDATE_TOKEN    — bearer for the /api/revalidate cache purge
+
+name: Sunday Calls & Portfolio Audit
+
+on:
+  schedule:
+    # Sun 03:00 UTC = 08:30 IST. Saturday's compute & scoring has fully landed.
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (preview calls without writing updates)'
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: weekly-calls
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  audit-and-calls:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install 'psycopg[binary]==3.2.*' numpy scipy
+          pip install -e ./etl
+
+      - name: Compute institutional target prices & accumulation zones
+        env:
+          APP_DB_URL: ${{ secrets.NEON_APP_URL }}
+          GOLDEN_DB_URL: ${{ secrets.NEON_GOLDEN_URL }}
+          FUNDAMENTAL_ALLOW_REMOTE_DB: "1"
+          PYTHONUNBUFFERED: "1"
+        run: |
+          DRY_ARG=""
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            DRY_ARG="--dry-run"
+          fi
+          python scripts/backfill_target_prices.py $DRY_ARG
+
+      - name: Run cluster-by-cluster calls & portfolio sweep audit
+        env:
+          APP_DB_URL: ${{ secrets.NEON_APP_URL }}
+          PYTHONUNBUFFERED: "1"
+        run: python scripts/audit_cluster_calls.py
+
+      # Purge Next.js Data Cache so Monday morning opens with fresh calls
+      - name: Purge Next.js Data Cache
+        run: |
+          set +e
+          RESPONSE_FILE=$(mktemp)
+          HTTP_CODE=$(curl -sS -o "$RESPONSE_FILE" -w "%{http_code}" \
+            -X POST "https://equityroots.in/api/revalidate" \
+            -H "Authorization: Bearer ${{ secrets.REVALIDATE_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"tags":["market","panel-cache","snapshot","sectors","calls"]}')
+          echo "HTTP status: $HTTP_CODE"
+          echo "Response body:"
+          cat "$RESPONSE_FILE"
+          echo
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::Cache purge failed (HTTP $HTTP_CODE) — check REVALIDATE_TOKEN secret matches Vercel."
+            exit 1
+          fi

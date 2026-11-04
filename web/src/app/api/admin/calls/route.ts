@@ -193,7 +193,7 @@ export async function GET() {
           p.cluster_id,
           c.name AS cluster_name,
           p.market_cap_cr,
-          COALESCE(si.ltp, p.current_price) AS ltp,
+          COALESCE(si.ltp, sm.current_price, p.current_price) AS ltp,
           v.anchor_price,
           v.verdict,
           v.confidence,
@@ -214,6 +214,7 @@ export async function GET() {
       FROM latest_panel p
       JOIN latest_verdict v ON v.symbol = p.symbol
       LEFT JOIN app.cluster c ON c.id = p.cluster_id
+      LEFT JOIN app.screener_meta sm ON sm.symbol = p.symbol
       LEFT JOIN intraday_price si ON si.symbol = p.symbol
       LEFT JOIN user_calls uc ON uc.symbol = p.symbol
       WHERE v.target_price IS NOT NULL AND v.buy_below IS NOT NULL
@@ -307,7 +308,7 @@ export async function GET() {
           p.symbol,
           SUM(p.quantity) AS total_qty,
           SUM(p.quantity * p.avg_cost) / NULLIF(SUM(p.quantity), 0) AS weighted_avg_cost,
-          COALESCE(MAX(si.ltp), MAX(lp.current_price), MAX(p.broker_ltp)) AS ltp,
+          COALESCE(MAX(si.ltp), MAX(sm.current_price), MAX(lp.current_price), MAX(p.broker_ltp)) AS ltp,
           SUM(p.broker_cur_value) AS cur_val,
           SUM(p.quantity * p.avg_cost) AS invested_val,
           SUM(p.broker_cur_value) - SUM(p.quantity * p.avg_cost) AS pnl,
@@ -334,6 +335,7 @@ export async function GET() {
       LEFT JOIN app.universe u ON u.symbol = p.symbol
       LEFT JOIN app.cluster_assignment ca ON ca.symbol = p.symbol
       LEFT JOIN app.cluster c ON c.id = ca.cluster_id
+      LEFT JOIN app.screener_meta sm ON sm.symbol = p.symbol
       LEFT JOIN latest_panel lp ON lp.symbol = p.symbol
       LEFT JOIN intraday_price si ON si.symbol = p.symbol
       LEFT JOIN latest_verdict v ON v.symbol = p.symbol

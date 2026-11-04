@@ -144,7 +144,6 @@ jobs:
           python -m fundamental_etl.cli assign-clusters
           python -m fundamental_etl.cli compute-metrics $SNAP_ARG
           python -m fundamental_etl.cli score $SNAP_ARG
-          python scripts/backfill_target_prices.py
 
       # Every evidence sheet is a page of figures from ONE app.scores snapshot,
       # so the `score` step above just made all of them a week old. They still
