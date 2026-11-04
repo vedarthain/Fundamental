@@ -156,17 +156,15 @@ def main() -> None:
                     cur.executemany(
                         """
                         INSERT INTO app.corporate_action
-                          (symbol, action_type, ex_date, purpose, amount, details, bse_code, fetched_at)
-                        VALUES (%s,%s,%s,%s,%s,%s::jsonb,%s, now())
+                          (symbol, action_type, ex_date, purpose, amount, details, bse_code, source, fetched_at)
+                        VALUES (%s,%s,%s,%s,%s,%s::jsonb,%s, 'bse', now())
                         ON CONFLICT (symbol, ex_date, purpose) DO UPDATE SET
                           action_type = EXCLUDED.action_type,
                           amount      = EXCLUDED.amount,
                           details     = EXCLUDED.details,
                           bse_code    = EXCLUDED.bse_code,
+                          source      = 'bse',
                           fetched_at  = now()
-                        -- Never clobber an indianapi row that happens to share
-                        -- (symbol, ex_date, purpose) — indianapi is authoritative.
-                        WHERE corporate_action.source = 'bse'
                         """,
                         actions,
                     )

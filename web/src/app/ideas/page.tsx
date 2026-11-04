@@ -614,8 +614,7 @@ async function loadResultWinners(tier: IdxTier): Promise<ResultWinner[]> {
 }
 
 /** Upcoming events — dividends / board meetings with an ex_date in the next
- *  ~3 weeks. DISTINCT ON collapses the indianapi+bse dual-source dupes (prefer
- *  indianapi), mirroring the stock-page dedup. */
+ *  ~3 weeks. DISTINCT ON collapses dual-source records, prioritizing fresh exchange feeds. */
 async function loadUpcomingEvents(tier: IdxTier): Promise<UpcomingEvent[]> {
   try {
     return await sql<UpcomingEvent[]>`
@@ -627,7 +626,7 @@ async function loadUpcomingEvents(tier: IdxTier): Promise<UpcomingEvent[]> {
                  symbol, action_type, ex_date, purpose, amount
             FROM app.corporate_action
            WHERE ex_date >= CURRENT_DATE AND ex_date <= CURRENT_DATE + interval '21 days'
-           ORDER BY symbol, action_type, ex_date, (source = 'indianapi') DESC
+           ORDER BY symbol, action_type, ex_date, (source = 'bse') DESC, (source = 'indianapi') DESC
         ) ca
         JOIN app.universe u ON u.symbol = ca.symbol
         LEFT JOIN app.scores sc

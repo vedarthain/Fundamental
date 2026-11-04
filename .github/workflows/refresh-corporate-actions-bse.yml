@@ -1,24 +1,16 @@
-# Corporate actions — FRESH dividends from BSE (free), 2×/week.
+# Corporate actions — Official Exchange Pipeline from BSE (100% Free).
 #
-# Complements the monthly indianapi sweep (refresh-corporate-actions.yml):
-#   - indianapi = full history + splits/bonus/rights/board-meetings (monthly).
-#   - BSE       = recent dividends only (its free per-stock endpoint returns
-#                 ~the last 5 actions, mostly dividends), but FREE so we run it
-#                 often to keep newly-declared dividends current between the
-#                 monthly indianapi runs.
-#
-# Coexistence: scripts/fetch-corporate-actions.py writes source='bse' and its
-# ON CONFLICT never clobbers an indianapi row; the indianapi fetcher's delete is
-# source-scoped so it won't wipe these. The stock page dedups on
-# (action_type, ex_date) preferring indianapi — so no duplicate rows show.
+# Primary corporate actions engine:
+#   - Ingests dividends, splits, bonus issues, rights, and buybacks directly from BSE's official API
+#   - 100% FREE with zero external subscription costs (replaces paid indianapi.in)
+#   - Runs twice weekly (Tue & Fri 10:47 IST) to keep newly declared actions up-to-date
 #
 # Cadence: Tue + Fri 05:17 UTC = 10:47 IST. Off-the-hour to dodge GitHub's
-# top-of-hour scheduler contention. ON CONFLICT makes every run idempotent, so a
-# partial/timed-out run is harmless — the next run completes it.
+# top-of-hour scheduler contention. ON CONFLICT makes every run idempotent.
 #
 # Required secret: NEON_APP_URL. (BSE needs no API key.)
 
-name: Refresh corporate actions (BSE)
+name: Refresh Corporate Actions (Exchange Feed)
 
 on:
   schedule:
