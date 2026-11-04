@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowUpRight, Search, Sparkles, Wallet, Coins, ArrowRight, ArrowDownUp, CheckCircle2, ShieldCheck } from "lucide-react";
-import type { ClusterGem, PortfolioActionCall } from "@/app/api/admin/calls/route";
+import { ArrowUpRight, Search, Sparkles, Wallet, Coins, ArrowRight, ArrowDownUp, CheckCircle2, ShieldCheck, ExternalLink } from "lucide-react";
+import type { ClusterGem, PortfolioActionCall, IdeaHorizon } from "@/app/api/admin/calls/route";
 
 function money(v: number | null | undefined): string {
   if (v == null) return "—";
@@ -28,6 +28,71 @@ function fmtDate(iso: string | null | undefined): string {
   }
 }
 
+export function getCallBoxStyle(isTaken: boolean, isCleared: boolean, move: number | null | undefined) {
+  if (isCleared) {
+    return {
+      cardClass: "bg-slate-100/90 border-slate-300 text-slate-500 opacity-65",
+      badgeClass: "bg-slate-200 text-slate-700 border-slate-300",
+      badgeText: "EXITED / CLOSED",
+      rowClass: "bg-slate-100/70 opacity-65 text-slate-500",
+      boxType: "exited" as const,
+    };
+  }
+  if (isTaken) {
+    if (move != null && move > 0.5) {
+      return {
+        cardClass: "bg-emerald-50/40 border-emerald-400 shadow-xs ring-1 ring-emerald-400/40",
+        badgeClass: "bg-emerald-100 text-emerald-800 border-emerald-300 font-bold",
+        badgeText: `PROFIT (${pct(move)})`,
+        rowClass: "bg-emerald-50/40 hover:bg-emerald-50/70 border-l-4 border-l-emerald-500",
+        boxType: "profit" as const,
+      };
+    }
+    if (move != null && move < -0.5) {
+      return {
+        cardClass: "bg-rose-50/40 border-rose-400 shadow-xs ring-1 ring-rose-400/40",
+        badgeClass: "bg-rose-100 text-rose-800 border-rose-300 font-bold",
+        badgeText: `LOSS (${pct(move)})`,
+        rowClass: "bg-rose-50/40 hover:bg-rose-50/70 border-l-4 border-l-rose-500",
+        boxType: "loss" as const,
+      };
+    }
+    return {
+      cardClass: "bg-blue-50/40 border-blue-400 shadow-xs ring-1 ring-blue-400/40",
+      badgeClass: "bg-blue-100 text-blue-800 border-blue-300 font-bold",
+      badgeText: "TAKEN / ACTIVE",
+      rowClass: "bg-blue-50/40 hover:bg-blue-50/70 border-l-4 border-l-blue-500",
+      boxType: "taken" as const,
+    };
+  }
+  return {
+    cardClass: "bg-white border-slate-200/90 hover:border-slate-300",
+    badgeClass: "bg-slate-100 text-slate-600 border-slate-200",
+    badgeText: "FRESH IDEA",
+    rowClass: "hover:bg-slate-50/60",
+    boxType: "fresh" as const,
+  };
+}
+
+export function getHorizonBadge(horizon: string | null | undefined) {
+  switch (horizon) {
+    case "1M":
+      return "bg-amber-100 text-amber-900 border-amber-300";
+    case "3M":
+      return "bg-cyan-100 text-cyan-900 border-cyan-300";
+    case "6M":
+      return "bg-indigo-100 text-indigo-900 border-indigo-300";
+    case "1Y":
+      return "bg-purple-100 text-purple-900 border-purple-300";
+    case ">1Y":
+      return "bg-emerald-100 text-emerald-900 border-emerald-300";
+    case "EXIT":
+      return "bg-rose-100 text-rose-900 border-rose-300";
+    default:
+      return "bg-slate-100 text-slate-800 border-slate-300";
+  }
+}
+
 type CallTab = "plan" | "portfolio" | "gems";
 type SortBy = "date_desc" | "date_asc" | "perf_desc" | "upside_desc" | "comp_desc";
 
@@ -43,6 +108,8 @@ export function CallsClient() {
       portfolioExitCount: number;
       totalInvestedCr: number;
       totalCurrentCr: number;
+      horizonCounts?: Record<string, number>;
+      statusCounts?: { takenCount: number; clearedCount: number; freshCount: number };
     };
     clusterGems: ClusterGem[];
     portfolioActions: PortfolioActionCall[];
@@ -57,8 +124,11 @@ export function CallsClient() {
   const [search, setSearch] = useState("");
   const [selectedCluster, setSelectedCluster] = useState<string>("ALL");
   const [actionFilter, setActionFilter] = useState<string>("ALL");
+  const [selectedHorizon, setSelectedHorizon] = useState<string>("ALL");
+  const [selectedStatus, setSelectedStatus] = useState<string>("ALL");
   const [gemsOnly, setGemsOnly] = useState(false);
   const [avoidOwned, setAvoidOwned] = useState(false);
+  const [userCallOverrides, setUserCallOverrides] = useState<Record<string, { is_taken: boolean; is_cleared: boolean }>>({});
 
   const fetchData = async () => {
     setLoading(true);
@@ -75,11 +145,39 @@ export function CallsClient() {
     }
   };
 
-  useEffect(() => {
-    fetchData();
-  }, []);
+  const handleTakeCall = async (symbol: string) => {
+    setUserCallOverrides((prev) => ({
+      ...prev,
+      [symbol]: { is_taken: true, is_cleared: false },
+    }));
+    try {
+      await fetch("/api/calls", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbol, side: "B" }),
+      });
+    } catch {
+      // optimistic update maintained
+    }
+  };
 
-  // Top 6 curated deployment calls
+  const handleExitCall = async (symbol: string) => {
+    setUserCallOverrides((prev) => ({
+      ...prev,
+      [symbol]: { is_taken: false, is_cleared: true },
+    }));
+    try {
+      await fetch("/api/calls", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbol }),
+      });
+    } catch {
+      // optimistic update maintained
+    }
+  };
+
+  // Top 6 curated deployment calls spanning distinct horizons
   const curatedPlan = useMemo(() => {
     const basePicks = [
       {
@@ -93,7 +191,10 @@ export function CallsClient() {
         stopLoss: 335.0,
         upside: 46.5,
         scores: "100 / 82 / 51",
-        role: "Alpha FCF Compounder",
+        horizon: "1Y" as IdeaHorizon,
+        horizonLabel: "🏛️ 1Y Core Institutional",
+        timeline: "9–12 Months",
+        role: "1Y Alpha FCF Compounder",
         rationale: "FCF yield > 15%, zero-discount cash collection, massive bad debt recoveries, 5G tenancy growth.",
       },
       {
@@ -107,7 +208,10 @@ export function CallsClient() {
         stopLoss: 1620.0,
         upside: 25.9,
         scores: "91 / 77 / 64",
-        role: "Core Monopoly Bedrock",
+        horizon: ">1Y" as IdeaHorizon,
+        horizonLabel: "💎 >1Y Secular Compounder",
+        timeline: "1–3 Years",
+        role: ">1Y Monopoly Bedrock",
         rationale: "Secular telecom duopoly, industry-leading ARPU expansion, massive institutional accumulation.",
       },
       {
@@ -121,7 +225,10 @@ export function CallsClient() {
         stopLoss: 71.0,
         upside: 33.1,
         scores: "100 / 87 / 72",
-        role: "Banking Growth Anchor",
+        horizon: "6M" as IdeaHorizon,
+        horizonLabel: "📈 6M Medium Turnaround",
+        timeline: "5–6 Months",
+        role: "6M Banking Growth Anchor",
         rationale: "Highest ROA (>1.5%) and lowest Net NPA (<0.25%) in PSU banking. Compounding loan book at low P/B.",
       },
       {
@@ -135,7 +242,10 @@ export function CallsClient() {
         stopLoss: 690.0,
         upside: 30.7,
         scores: "96 / 73 / 37",
-        role: "Defensive High-Margin",
+        horizon: "3M" as IdeaHorizon,
+        horizonLabel: "🚀 3M Catalyst",
+        timeline: "2–3 Months",
+        role: "3M Defensive High-Margin",
         rationale: "Operating margin > 35%, zero net debt, lucrative specialty generic launches in North America.",
       },
       {
@@ -149,7 +259,10 @@ export function CallsClient() {
         stopLoss: 582.0,
         upside: 34.4,
         scores: "94 / 78 / 52",
-        role: "B2B Tech Alpha",
+        horizon: "1M" as IdeaHorizon,
+        horizonLabel: "⚡ 1M Tactical Swing",
+        timeline: "2–4 Weeks",
+        role: "1M B2B Tech Alpha",
         rationale: "High ROCE (>22%), expanding enterprise customer retention, compounding digital revenue.",
       },
       {
@@ -163,7 +276,10 @@ export function CallsClient() {
         stopLoss: 79.0,
         upside: 37.2,
         scores: "94 / 73 / 25",
-        role: "Asset Re-rating Turnaround",
+        horizon: "3M" as IdeaHorizon,
+        horizonLabel: "🚀 3M Catalyst",
+        timeline: "2–3 Months",
+        role: "3M Asset Re-rating Turnaround",
         rationale: "M&A and capacity expansion catalyst; trading at steep discount to replacement plant value.",
       },
     ];
@@ -200,8 +316,11 @@ export function CallsClient() {
           stopLoss: g.bear_floor || Math.round(g.ltp * 0.85),
           upside: Math.round(g.upside_pct || 25),
           scores: `${g.composite_pct ?? "—"} / ${g.quality_pct ?? "—"} / ${g.momentum_pct ?? "—"}`,
-          role: "Fresh Cluster Discovery",
-          rationale: `Top unheld gem in ${g.cluster_name}. Quality: ${g.quality_pct}, Composite: ${g.composite_pct}.`,
+          horizon: g.horizon,
+          horizonLabel: g.horizon_label,
+          timeline: g.sell_timeline,
+          role: `${g.horizon} Cluster Alpha`,
+          rationale: `Top unheld gem in ${g.cluster_name}. ${g.strategy_desc}`,
         });
         usedSymbols.add(g.symbol);
         if (g.cluster_name) usedClusters.add(g.cluster_name);
@@ -230,6 +349,11 @@ export function CallsClient() {
       const callDate = gem?.generated_at ?? "2026-10-31";
       const actionToday = port?.action_today ?? (isPortfolio ? "HOLD & COMPOUND" : "ACCUMULATE / ADD");
 
+      const override = userCallOverrides[p.symbol];
+      const isTaken = override ? override.is_taken : Boolean(port && port.total_qty > 0) || Boolean(gem?.is_taken);
+      const isCleared = override ? override.is_cleared : Boolean(gem?.is_cleared);
+      const boxStyle = getCallBoxStyle(isTaken, isCleared, pctMove);
+
       const allocatedAmount = Math.round((capital * p.weightPct) / 100);
       const totalShares = Math.floor(allocatedAmount / cmp);
       const tranche1Shares = Math.ceil(totalShares / 2);
@@ -248,6 +372,9 @@ export function CallsClient() {
         heldQty,
         callDate,
         actionToday,
+        isTaken,
+        isCleared,
+        boxStyle,
         allocatedAmount,
         totalShares,
         tranche1Shares,
@@ -258,7 +385,7 @@ export function CallsClient() {
         profitRupees,
       };
     });
-  }, [capital, avoidOwned, data]);
+  }, [capital, avoidOwned, data, userCallOverrides]);
 
   const totalProjectedProfit = useMemo(() => {
     return curatedPlan.reduce((acc, p) => acc + p.profitRupees, 0);
@@ -283,6 +410,7 @@ export function CallsClient() {
   const filteredPortfolio = useMemo(() => {
     if (!data) return [];
     const list = data.portfolioActions.filter((p) => {
+      if (selectedHorizon !== "ALL" && p.horizon !== selectedHorizon) return false;
       if (search) {
         const q = search.toLowerCase();
         const matchSym = p.symbol.toLowerCase().includes(q);
@@ -314,13 +442,25 @@ export function CallsClient() {
     });
 
     return list;
-  }, [data, search, selectedCluster, actionFilter, sortBy]);
+  }, [data, search, selectedCluster, actionFilter, selectedHorizon, sortBy]);
 
   const filteredGems = useMemo(() => {
     if (!data) return [];
     const list = data.clusterGems.filter((g) => {
+      const override = userCallOverrides[g.symbol];
+      const isTaken = override ? override.is_taken : g.is_taken;
+      const isCleared = override ? override.is_cleared : g.is_cleared;
+
       if (avoidOwned && g.is_portfolio) return false;
       if (gemsOnly && !g.is_gem) return false;
+      if (selectedHorizon !== "ALL" && g.horizon !== selectedHorizon) return false;
+
+      if (selectedStatus === "taken" && !isTaken) return false;
+      if (selectedStatus === "profit" && !(isTaken && (g.pct_move ?? 0) > 0.5)) return false;
+      if (selectedStatus === "loss" && !(isTaken && (g.pct_move ?? 0) < -0.5)) return false;
+      if (selectedStatus === "exited" && !isCleared) return false;
+      if (selectedStatus === "fresh" && (isTaken || isCleared)) return false;
+
       if (search) {
         const q = search.toLowerCase();
         const matchSym = g.symbol.toLowerCase().includes(q);
@@ -351,7 +491,7 @@ export function CallsClient() {
     });
 
     return list;
-  }, [data, search, selectedCluster, gemsOnly, sortBy, avoidOwned]);
+  }, [data, search, selectedCluster, gemsOnly, sortBy, avoidOwned, selectedHorizon, selectedStatus, userCallOverrides]);
 
   return (
     <div className="space-y-5">
@@ -513,6 +653,63 @@ export function CallsClient() {
         )}
       </div>
 
+      {/* Horizon Strategy & Call Status Filter Bar */}
+      <div className="flex items-center justify-between flex-wrap gap-2 py-2 px-3 rounded-lg border border-slate-200 bg-slate-50/70 text-[11.5px]">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-[10.5px] font-bold text-slate-500 uppercase tracking-wide mr-1">
+            Idea Horizon:
+          </span>
+          {[
+            { id: "ALL", label: `All Horizons (${data?.clusterGems.length ?? 0})` },
+            { id: "1M", label: `⚡ 1M Tactical (${data?.summary?.horizonCounts?.["1M"] ?? 0})` },
+            { id: "3M", label: `🚀 3M Catalyst (${data?.summary?.horizonCounts?.["3M"] ?? 0})` },
+            { id: "6M", label: `📈 6M Turnaround (${data?.summary?.horizonCounts?.["6M"] ?? 0})` },
+            { id: "1Y", label: `🏛️ 1Y Core (${data?.summary?.horizonCounts?.["1Y"] ?? 0})` },
+            { id: ">1Y", label: `💎 >1Y Compounder (${data?.summary?.horizonCounts?.[">1Y"] ?? 0})` },
+            { id: "EXIT", label: `🛑 Exit Ideas (${data?.summary?.horizonCounts?.["EXIT"] ?? 0})` },
+          ].map((h) => (
+            <button
+              key={h.id}
+              onClick={() => setSelectedHorizon(h.id)}
+              className={`px-2.5 py-1 rounded text-[11px] font-medium transition-all ${
+                selectedHorizon === h.id
+                  ? "bg-slate-900 text-white shadow-xs font-bold"
+                  : "bg-white text-slate-700 border border-slate-200 hover:bg-slate-100"
+              }`}
+            >
+              {h.label}
+            </button>
+          ))}
+        </div>
+
+        {activeTab === "gems" && (
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[10.5px] font-bold text-slate-500 uppercase tracking-wide mr-1">
+              Call Status:
+            </span>
+            {[
+              { id: "ALL", label: "All" },
+              { id: "taken", label: "🟦 Taken" },
+              { id: "profit", label: "🟩 In Profit" },
+              { id: "loss", label: "🟥 In Loss" },
+              { id: "exited", label: "⬛ Exited" },
+            ].map((s) => (
+              <button
+                key={s.id}
+                onClick={() => setSelectedStatus(s.id)}
+                className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all ${
+                  selectedStatus === s.id
+                    ? "bg-indigo-700 text-white shadow-xs font-bold"
+                    : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* Loading & Error States */}
       {loading && (
         <div className="h-64 rounded-lg border border-slate-200 bg-[var(--color-paper)] flex items-center justify-center text-[13px] text-slate-500">
@@ -631,31 +828,65 @@ export function CallsClient() {
             {curatedPlan.map((c) => (
               <div
                 key={c.symbol}
-                className="rounded-lg border border-slate-200/90 bg-white p-4 shadow-2xs hover:border-slate-300 transition-all flex flex-col justify-between"
+                className={`rounded-lg p-4 shadow-2xs transition-all flex flex-col justify-between border ${c.boxStyle.cardClass}`}
               >
                 <div>
                   <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-100 flex-wrap gap-2">
                     <div>
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <Link
-                          href={`/admin/verdicts?symbol=${c.symbol}&scope=all`}
+                          href={`/stock/${c.symbol}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
                           className="text-base font-bold text-slate-900 hover:text-indigo-600 flex items-center gap-1"
+                          title="Open stock details in new window"
                         >
                           <span>{c.symbol}</span>
-                          <ArrowUpRight className="w-3.5 h-3.5 text-slate-400" />
+                          <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
                         </Link>
-                        <span className="text-[10.5px] font-mono font-semibold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${getHorizonBadge(c.horizon)}`}>
+                          {c.horizonLabel}
+                        </span>
+                        <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
                           {c.weightPct}% ({money(c.allocatedAmount)})
                         </span>
                       </div>
-                      <div className="text-[11px] text-slate-500">
+                      <div className="text-[11px] text-slate-500 mt-0.5">
                         {c.name} · <span className="font-medium text-slate-600">{c.cluster}</span>
                       </div>
                     </div>
 
-                    <div className="text-right">
-                      <div className="text-[10px] uppercase tracking-wide text-slate-400 font-medium">Scores (C/Q/M)</div>
-                      <div className="text-[12px] font-mono font-bold text-slate-800">{c.scores}</div>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className={`inline-block px-2 py-0.5 rounded text-[10.5px] border ${c.boxStyle.badgeClass}`}>
+                        {c.boxStyle.badgeText}
+                      </span>
+                      {!c.isTaken && !c.isCleared && (
+                        <button
+                          onClick={() => handleTakeCall(c.symbol)}
+                          className="px-2 py-0.5 rounded text-[10.5px] font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-2xs transition-colors"
+                          title="Take this call"
+                        >
+                          + Take
+                        </button>
+                      )}
+                      {c.isTaken && (
+                        <button
+                          onClick={() => handleExitCall(c.symbol)}
+                          className="px-2 py-0.5 rounded text-[10.5px] font-semibold bg-slate-600 hover:bg-slate-700 text-white shadow-2xs transition-colors"
+                          title="Exit this call"
+                        >
+                          Exit
+                        </button>
+                      )}
+                      {c.isCleared && (
+                        <button
+                          onClick={() => handleTakeCall(c.symbol)}
+                          className="px-2 py-0.5 rounded text-[10.5px] font-medium bg-slate-200 hover:bg-slate-300 text-slate-700 transition-colors"
+                          title="Re-open this call"
+                        >
+                          Re-take
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -728,7 +959,7 @@ export function CallsClient() {
                     </div>
 
                     <div className="rounded border border-indigo-200 p-2 bg-indigo-50/20">
-                      <div className="text-indigo-600 font-medium text-[9.5px] uppercase">12M Target</div>
+                      <div className="text-indigo-600 font-medium text-[9.5px] uppercase">{c.timeline} Target</div>
                       <div className="font-mono font-bold text-indigo-700 mt-0.5">{money(c.target)}</div>
                       <div className="text-[9.5px] text-indigo-700 font-bold mt-0.5">+{c.upside}% ({money(c.profitRupees)})</div>
                     </div>
@@ -749,6 +980,8 @@ export function CallsClient() {
                   <span className="text-slate-500 font-medium">Role: <span className="text-slate-700">{c.role}</span></span>
                   <Link
                     href={`/admin/verdicts?symbol=${c.symbol}&scope=all`}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className="font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
                   >
                     <span>Verdict</span>
@@ -810,12 +1043,13 @@ export function CallsClient() {
                 <tr className="bg-slate-50/80 border-b border-slate-200 text-slate-600 font-semibold text-[11px] uppercase tracking-wider">
                   <th className="py-2.5 px-3">Call Date</th>
                   <th className="py-2.5 px-3">Stock &amp; Cluster</th>
-                  <th className="py-2.5 px-3">Action Today</th>
+                  <th className="py-2.5 px-3">Action &amp; Horizon</th>
+                  <th className="py-2.5 px-3">Call Status</th>
                   <th className="py-2.5 px-3 text-right">Holdings</th>
                   <th className="py-2.5 px-3 text-right">CMP / LTP</th>
                   <th className="py-2.5 px-3 text-right">Since Call (Perf)</th>
                   <th className="py-2.5 px-3 text-right">Buy Below</th>
-                  <th className="py-2.5 px-3 text-right">12M Target</th>
+                  <th className="py-2.5 px-3 text-right">Target &amp; Horizon</th>
                   <th className="py-2.5 px-3 text-right">Upside</th>
                   <th className="py-2.5 px-3 text-center">Score (C/Q/M)</th>
                   <th className="py-2.5 px-3">Action Rationale &amp; Sell Timeline</th>
@@ -835,20 +1069,39 @@ export function CallsClient() {
                         ? "bg-rose-50 text-rose-800 border-rose-200"
                         : "bg-blue-50 text-blue-800 border-blue-200";
 
+                  const override = userCallOverrides[p.symbol];
+                  const isTaken = override ? override.is_taken : (p.is_taken ?? true);
+                  const isCleared = override ? override.is_cleared : (p.is_cleared ?? false);
+                  const perfMove = p.pct_move != null ? p.pct_move : p.pnl_pct;
+                  const boxStyle = getCallBoxStyle(isTaken, isCleared, perfMove);
+
                   return (
-                    <tr key={p.symbol} className="hover:bg-slate-50/60 transition-colors">
+                    <tr key={p.symbol} className={`transition-colors ${boxStyle.rowClass}`}>
                       <td className="py-2.5 px-3 whitespace-nowrap text-slate-500 font-mono text-[11px]">
                         {fmtDate(p.generated_at)}
                       </td>
 
                       <td className="py-2.5 px-3">
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           <Link
-                            href={`/admin/verdicts?symbol=${p.symbol}&scope=all`}
-                            className="font-bold text-slate-900 hover:text-indigo-600 transition-colors flex items-center gap-0.5"
+                            href={`/stock/${p.symbol}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-bold text-slate-900 hover:text-indigo-600 transition-colors flex items-center gap-1"
+                            title="Open stock chart & fundamentals in new window"
                           >
                             <span>{p.symbol}</span>
-                            <ArrowUpRight className="w-3 h-3 text-slate-400" />
+                            <ExternalLink className="w-3 h-3 text-slate-400" />
+                          </Link>
+                          <Link
+                            href={`/admin/verdicts?symbol=${p.symbol}&scope=all`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[10px] text-indigo-600 hover:text-indigo-800 font-semibold flex items-center"
+                            title="View institutional verdict in new window"
+                          >
+                            <span>Verdict</span>
+                            <ArrowUpRight className="w-2.5 h-2.5" />
                           </Link>
                         </div>
                         <div className="text-[10.5px] text-slate-500 truncate max-w-[140px]">
@@ -857,9 +1110,40 @@ export function CallsClient() {
                       </td>
 
                       <td className="py-2.5 px-3 whitespace-nowrap">
-                        <span className={`inline-block px-2 py-0.5 rounded text-[10.5px] font-semibold border ${actionBadge}`}>
-                          {p.action_today}
-                        </span>
+                        <div className="flex flex-col gap-1 items-start">
+                          <span className={`inline-block px-2 py-0.5 rounded text-[10.5px] font-semibold border ${actionBadge}`}>
+                            {p.action_today}
+                          </span>
+                          <span className={`inline-block px-1.5 py-0.2 rounded text-[9.5px] font-bold border ${getHorizonBadge(p.horizon)}`}>
+                            {p.horizon_label || p.horizon}
+                          </span>
+                        </div>
+                      </td>
+
+                      <td className="py-2.5 px-3 whitespace-nowrap">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className={`inline-block px-2 py-0.5 rounded text-[10.5px] border ${boxStyle.badgeClass}`}>
+                            {boxStyle.badgeText}
+                          </span>
+                          {isTaken && (
+                            <button
+                              onClick={() => handleExitCall(p.symbol)}
+                              className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-600 hover:bg-slate-700 text-white transition-colors"
+                              title="Mark call as exited"
+                            >
+                              Exit
+                            </button>
+                          )}
+                          {isCleared && (
+                            <button
+                              onClick={() => handleTakeCall(p.symbol)}
+                              className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-200 hover:bg-slate-300 text-slate-700 transition-colors"
+                              title="Re-open call"
+                            >
+                              Re-take
+                            </button>
+                          )}
+                        </div>
                       </td>
 
                       <td className="py-2.5 px-3 text-right whitespace-nowrap">
@@ -890,8 +1174,13 @@ export function CallsClient() {
                         {money(p.buy_below)}
                       </td>
 
-                      <td className="py-2.5 px-3 text-right font-mono font-semibold text-indigo-700 whitespace-nowrap">
-                        {money(p.target_price)}
+                      <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                        <div className="font-mono font-semibold text-indigo-700">
+                          {money(p.target_price)}
+                        </div>
+                        <div className="text-[10px] text-slate-500 font-medium">
+                          {p.sell_timeline || "Target"}
+                        </div>
                       </td>
 
                       <td className="py-2.5 px-3 text-right whitespace-nowrap">
@@ -934,34 +1223,51 @@ export function CallsClient() {
                 <tr className="bg-slate-50/80 border-b border-slate-200 text-slate-600 font-semibold text-[11px] uppercase tracking-wider">
                   <th className="py-2.5 px-3">Call Date</th>
                   <th className="py-2.5 px-3">Stock &amp; Cluster</th>
-                  <th className="py-2.5 px-3">Status</th>
+                  <th className="py-2.5 px-3">Call Status</th>
                   <th className="py-2.5 px-3 text-right">CMP / LTP</th>
                   <th className="py-2.5 px-3 text-right">Since Call (Perf)</th>
                   <th className="py-2.5 px-3 text-right">Accumulate Below</th>
-                  <th className="py-2.5 px-3 text-right">12M Target</th>
+                  <th className="py-2.5 px-3 text-right">Target &amp; Horizon</th>
                   <th className="py-2.5 px-3 text-right">Upside</th>
                   <th className="py-2.5 px-3 text-right">Bear Floor</th>
                   <th className="py-2.5 px-3 text-center">Scores (C/Q/M/V)</th>
-                  <th className="py-2.5 px-3">Investment Horizon &amp; Model</th>
+                  <th className="py-2.5 px-3">Horizon Strategy &amp; Model</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredGems.map((g) => {
-                  const inZone = g.buy_below != null && g.ltp != null && g.ltp <= g.buy_below * 1.05;
+                  const override = userCallOverrides[g.symbol];
+                  const isTaken = override ? override.is_taken : g.is_taken;
+                  const isCleared = override ? override.is_cleared : g.is_cleared;
+                  const boxStyle = getCallBoxStyle(isTaken, isCleared, g.pct_move);
+
                   return (
-                    <tr key={g.symbol} className="hover:bg-slate-50/60 transition-colors">
+                    <tr key={g.symbol} className={`transition-colors ${boxStyle.rowClass}`}>
                       <td className="py-2.5 px-3 whitespace-nowrap text-slate-500 font-mono text-[11px]">
                         {fmtDate(g.generated_at)}
                       </td>
 
                       <td className="py-2.5 px-3">
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           <Link
-                            href={`/admin/verdicts?symbol=${g.symbol}&scope=all`}
-                            className="font-bold text-slate-900 hover:text-indigo-600 transition-colors flex items-center gap-0.5"
+                            href={`/stock/${g.symbol}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-bold text-slate-900 hover:text-indigo-600 transition-colors flex items-center gap-1"
+                            title="Open stock chart & fundamentals in new window"
                           >
                             <span>{g.symbol}</span>
-                            <ArrowUpRight className="w-3 h-3 text-slate-400" />
+                            <ExternalLink className="w-3 h-3 text-slate-400" />
+                          </Link>
+                          <Link
+                            href={`/admin/verdicts?symbol=${g.symbol}&scope=all`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[10px] text-indigo-600 hover:text-indigo-800 font-semibold flex items-center"
+                            title="View institutional verdict in new window"
+                          >
+                            <span>Verdict</span>
+                            <ArrowUpRight className="w-2.5 h-2.5" />
                           </Link>
                           {g.is_portfolio && (
                             <span className="text-[9.5px] font-bold px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
@@ -980,13 +1286,38 @@ export function CallsClient() {
                       </td>
 
                       <td className="py-2.5 px-3 whitespace-nowrap">
-                        <span className={`inline-block px-2 py-0.5 rounded text-[10.5px] font-semibold border ${
-                          inZone
-                            ? "bg-emerald-50 text-emerald-800 border-emerald-200"
-                            : "bg-blue-50 text-blue-800 border-blue-200"
-                        }`}>
-                          {inZone ? "BUY / ACCUMULATE" : "HOLD / WATCH"}
-                        </span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className={`inline-block px-2 py-0.5 rounded text-[10.5px] border ${boxStyle.badgeClass}`}>
+                            {boxStyle.badgeText}
+                          </span>
+                          {!isTaken && !isCleared && (
+                            <button
+                              onClick={() => handleTakeCall(g.symbol)}
+                              className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-600 hover:bg-blue-700 text-white transition-colors"
+                              title="Take this call"
+                            >
+                              + Take
+                            </button>
+                          )}
+                          {isTaken && (
+                            <button
+                              onClick={() => handleExitCall(g.symbol)}
+                              className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-600 hover:bg-slate-700 text-white transition-colors"
+                              title="Exit call"
+                            >
+                              Exit
+                            </button>
+                          )}
+                          {isCleared && (
+                            <button
+                              onClick={() => handleTakeCall(g.symbol)}
+                              className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-200 hover:bg-slate-300 text-slate-700 transition-colors"
+                              title="Re-open call"
+                            >
+                              Re-take
+                            </button>
+                          )}
+                        </div>
                       </td>
 
                       <td className="py-2.5 px-3 text-right font-mono font-semibold text-slate-900 whitespace-nowrap">
@@ -1008,8 +1339,13 @@ export function CallsClient() {
                         {money(g.buy_below)}
                       </td>
 
-                      <td className="py-2.5 px-3 text-right font-mono font-bold text-indigo-700 whitespace-nowrap">
-                        {money(g.target_price)}
+                      <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                        <div className="font-mono font-bold text-indigo-700">
+                          {money(g.target_price)}
+                        </div>
+                        <div className="text-[10px] text-slate-500 font-medium">
+                          {g.sell_timeline || "Target"}
+                        </div>
                       </td>
 
                       <td className="py-2.5 px-3 text-right whitespace-nowrap">
@@ -1031,11 +1367,16 @@ export function CallsClient() {
                       </td>
 
                       <td className="py-2.5 px-3 max-w-[220px]">
-                        <div className="text-[11.5px] text-slate-800 font-medium">
-                          {g.sell_timeline}
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${getHorizonBadge(g.horizon)}`}>
+                            {g.horizon_label}
+                          </span>
                         </div>
-                        <div className="text-[10px] text-slate-500 capitalize truncate mt-0.5">
-                          {g.valuation_method ? g.valuation_method.replace(/_/g, " ") : "Multi-Model"}
+                        <div className="text-[11px] text-slate-700 leading-snug">
+                          {g.strategy_desc}
+                        </div>
+                        <div className="text-[10px] text-slate-400 capitalize truncate mt-0.5 font-mono">
+                          Model: {g.valuation_method ? g.valuation_method.replace(/_/g, " ") : "Multi-Model"}
                         </div>
                       </td>
                     </tr>

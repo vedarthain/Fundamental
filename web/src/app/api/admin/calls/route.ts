@@ -5,6 +5,8 @@ import { sql } from "@/lib/db";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+export type IdeaHorizon = "1M" | "3M" | "6M" | "1Y" | ">1Y" | "EXIT";
+
 export type ClusterGem = {
   symbol: string;
   company_name: string | null;
@@ -30,6 +32,11 @@ export type ClusterGem = {
   is_portfolio: boolean;
   is_gem: boolean;
   sell_timeline: string;
+  horizon: IdeaHorizon;
+  horizon_label: string;
+  strategy_desc: string;
+  is_taken: boolean;
+  is_cleared: boolean;
 };
 
 export type PortfolioActionCall = {
@@ -59,7 +66,94 @@ export type PortfolioActionCall = {
   action_today: "TRIM / TAKE PROFIT" | "HOLD & COMPOUND" | "ACCUMULATE / ADD" | "EXIT / CUT LOSS";
   action_reason: string;
   sell_timeline: string;
+  horizon: IdeaHorizon;
+  horizon_label: string;
+  strategy_desc: string;
+  is_taken: boolean;
+  is_cleared: boolean;
 };
+
+function determineIdeaHorizon(args: {
+  actionToday?: string;
+  upsidePct?: number | null;
+  momentumPct?: number | null;
+  qualityPct?: number | null;
+  compositePct?: number | null;
+  marketCapCr?: number | null;
+}): { horizon: IdeaHorizon; label: string; timeline: string; strategy: string } {
+  const { actionToday, upsidePct, momentumPct, qualityPct, compositePct, marketCapCr } = args;
+  const upside = upsidePct ?? 0;
+  const mom = momentumPct ?? 50;
+  const qual = qualityPct ?? 50;
+  const comp = compositePct ?? 50;
+  const mcap = marketCapCr ?? 1000;
+
+  if (actionToday === "EXIT / CUT LOSS" || (qual < 45 && mom < 40)) {
+    return {
+      horizon: "EXIT",
+      label: "🛑 Exit / Cut Loss",
+      timeline: "Immediate",
+      strategy: "Risk Mitigation — thesis breakdown, stop-loss breached or deterioration.",
+    };
+  }
+
+  if (actionToday === "TRIM / TAKE PROFIT" || upside <= 0) {
+    return {
+      horizon: "EXIT",
+      label: "💰 Harvest / Trim",
+      timeline: "1–2 Weeks",
+      strategy: "Profit Harvesting — target reached, lock in gains.",
+    };
+  }
+
+  // 1M: Tactical swing / momentum breakout
+  if (mom >= 72 && upside <= 22) {
+    return {
+      horizon: "1M",
+      label: "⚡ 1M Tactical",
+      timeline: "2–4 Weeks (Tactical Swing)",
+      strategy: "Momentum breakout & quick alpha with tight risk guard.",
+    };
+  }
+
+  // 3M: Quarterly catalyst / earnings inflection
+  if (mom >= 58 || (upside <= 32 && comp >= 68)) {
+    return {
+      horizon: "3M",
+      label: "🚀 3M Catalyst",
+      timeline: "2–3 Months (Quarterly)",
+      strategy: "Quarterly earnings beat & sector rotation catalyst.",
+    };
+  }
+
+  // 6M: Medium-term turnaround & growth
+  if (upside <= 45 || qual < 65) {
+    return {
+      horizon: "6M",
+      label: "📈 6M Turnaround",
+      timeline: "5–6 Months (Medium Growth)",
+      strategy: "Operating margin expansion, capacity ramp-up or turnaround.",
+    };
+  }
+
+  // >1Y: Secular monopoly / multi-year compounding machine
+  if (qual >= 75 && (upside >= 50 || mcap >= 25000)) {
+    return {
+      horizon: ">1Y",
+      label: "💎 >1Y Compounder",
+      timeline: "1–3 Years (Multi-Year)",
+      strategy: "High-ROCE secular monopoly compounder (buy & hold).",
+    };
+  }
+
+  // 1Y: Core institutional cycle
+  return {
+    horizon: "1Y",
+    label: "🏛️ 1Y Core",
+    timeline: "9–12 Months (Full Cycle)",
+    strategy: "Full-cycle multi-factor valuation re-rating to fair value.",
+  };
+}
 
 export async function GET() {
   if (!(await isAdminRequest())) {
@@ -85,6 +179,13 @@ export async function GET() {
           SELECT DISTINCT ON (symbol) symbol, ltp
           FROM app.stock_intraday
           ORDER BY symbol, ts DESC
+      ),
+      user_calls AS (
+          SELECT symbol,
+                 bool_or(cleared_at IS NULL) AS has_active_call,
+                 bool_or(cleared_at IS NOT NULL) AS has_cleared_call
+          FROM app.stock_call
+          GROUP BY symbol
       )
       SELECT 
           p.symbol,
@@ -107,11 +208,14 @@ export async function GET() {
           p.quality_pct,
           p.valuation_pct,
           p.momentum_pct,
-          EXISTS(SELECT 1 FROM app.portfolio_holding ph WHERE ph.symbol = p.symbol AND ph.quantity > 0) AS is_portfolio
+          EXISTS(SELECT 1 FROM app.portfolio_holding ph WHERE ph.symbol = p.symbol AND ph.quantity > 0) AS is_portfolio,
+          COALESCE(uc.has_active_call, false) AS is_call_active,
+          COALESCE(uc.has_cleared_call, false) AS is_call_cleared
       FROM latest_panel p
       JOIN latest_verdict v ON v.symbol = p.symbol
       LEFT JOIN app.cluster c ON c.id = p.cluster_id
       LEFT JOIN intraday_price si ON si.symbol = p.symbol
+      LEFT JOIN user_calls uc ON uc.symbol = p.symbol
       WHERE v.target_price IS NOT NULL AND v.buy_below IS NOT NULL
         AND p.composite_pct >= 60
         AND p.quality_pct >= 50
@@ -125,15 +229,27 @@ export async function GET() {
       const upside = Number(r.upside_pct ?? 0);
       const comp = Number(r.composite_pct ?? 0);
       const qual = Number(r.quality_pct ?? 0);
+      const mom = Number(r.momentum_pct ?? 50);
       const mcap = Number(r.market_cap_cr ?? 0);
       const anchor = r.anchor_price ? Number(r.anchor_price) : null;
       const pctMove = anchor && anchor > 0 ? ((ltp - anchor) / anchor) * 100 : null;
 
       const isGem = comp >= 75 && qual >= 58 && (buyBelow > 0 && ltp <= buyBelow * 1.05) && upside >= 15 && mcap >= 800;
 
-      let timeline = "9–12 Months";
-      if (upside > 50) timeline = "12–15 Months (Cycle Re-Rating)";
-      else if (upside <= 20) timeline = "6–9 Months (Alpha Target)";
+      const isPortfolio = Boolean(r.is_portfolio);
+      const isCallActive = Boolean(r.is_call_active);
+      const isCallCleared = Boolean(r.is_call_cleared);
+
+      const isTaken = isPortfolio || isCallActive;
+      const isCleared = !isTaken && isCallCleared;
+
+      const horizonInfo = determineIdeaHorizon({
+        upsidePct: upside,
+        momentumPct: mom,
+        qualityPct: qual,
+        compositePct: comp,
+        marketCapCr: mcap,
+      });
 
       return {
         symbol: r.symbol,
@@ -156,10 +272,15 @@ export async function GET() {
         composite_pct: comp,
         quality_pct: qual,
         valuation_pct: r.valuation_pct ? Number(r.valuation_pct) : null,
-        momentum_pct: r.momentum_pct ? Number(r.momentum_pct) : null,
-        is_portfolio: Boolean(r.is_portfolio),
+        momentum_pct: mom,
+        is_portfolio: isPortfolio,
         is_gem: isGem,
-        sell_timeline: timeline,
+        sell_timeline: horizonInfo.timeline,
+        horizon: horizonInfo.horizon,
+        horizon_label: horizonInfo.label,
+        strategy_desc: horizonInfo.strategy,
+        is_taken: isTaken,
+        is_cleared: isCleared,
       };
     });
 
@@ -267,6 +388,14 @@ export async function GET() {
         timeline = "9–12 Months";
       }
 
+      const horizonInfo = determineIdeaHorizon({
+        actionToday,
+        upsidePct: upside,
+        momentumPct: mom,
+        qualityPct: qual,
+        compositePct: comp,
+      });
+
       return {
         symbol: r.symbol,
         company_name: r.company_name,
@@ -293,7 +422,12 @@ export async function GET() {
         generated_at: r.generated_at ? new Date(r.generated_at).toISOString() : null,
         action_today: actionToday,
         action_reason: reason,
-        sell_timeline: timeline,
+        sell_timeline: horizonInfo.timeline,
+        horizon: horizonInfo.horizon,
+        horizon_label: horizonInfo.label,
+        strategy_desc: horizonInfo.strategy,
+        is_taken: true,
+        is_cleared: false,
       };
     });
 
@@ -307,6 +441,19 @@ export async function GET() {
       portfolioExitCount: portfolioActions.filter((p) => p.action_today === "EXIT / CUT LOSS").length,
       totalInvestedCr: portfolioActions.reduce((acc, p) => acc + p.invested_val, 0) / 1e7,
       totalCurrentCr: portfolioActions.reduce((acc, p) => acc + p.cur_val, 0) / 1e7,
+      horizonCounts: {
+        "1M": clusterGems.filter((g) => g.horizon === "1M").length,
+        "3M": clusterGems.filter((g) => g.horizon === "3M").length,
+        "6M": clusterGems.filter((g) => g.horizon === "6M").length,
+        "1Y": clusterGems.filter((g) => g.horizon === "1Y").length,
+        ">1Y": clusterGems.filter((g) => g.horizon === ">1Y").length,
+        "EXIT": clusterGems.filter((g) => g.horizon === "EXIT").length,
+      },
+      statusCounts: {
+        takenCount: clusterGems.filter((g) => g.is_taken).length,
+        clearedCount: clusterGems.filter((g) => g.is_cleared).length,
+        freshCount: clusterGems.filter((g) => !g.is_taken && !g.is_cleared).length,
+      },
     };
 
     return NextResponse.json({
