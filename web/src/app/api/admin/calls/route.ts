@@ -10,12 +10,26 @@ export type IdeaHorizon = "1M" | "3M" | "6M" | "1Y" | ">1Y" | "EXIT";
 export type ClusterGem = {
   symbol: string;
   company_name: string | null;
+  sector: string | null;
+  industry: string | null;
+  market_cap_category?: string | null;
   cluster_id: string | null;
   cluster_name: string | null;
   market_cap_cr: number | null;
   ltp: number | null;
   anchor_price: number | null;
   pct_move: number | null;
+  // Dual Anchor 1: Call Given
+  call_date: string | null;
+  call_price: number | null;
+  call_perf_pct: number | null;
+  // Dual Anchor 2: Purchase Executed
+  purchase_date: string | null;
+  purchase_price: number | null;
+  purchase_perf_pct: number | null;
+  held_qty?: number | null;
+  invested_val?: number | null;
+  cur_val?: number | null;
   verdict: string | null;
   confidence: "high" | "medium" | "low" | null;
   target_price: number | null;
@@ -42,12 +56,23 @@ export type ClusterGem = {
 export type PortfolioActionCall = {
   symbol: string;
   company_name: string | null;
+  sector: string | null;
+  industry: string | null;
+  market_cap_category?: string | null;
   cluster_name: string | null;
   total_qty: number;
   weighted_avg_cost: number;
   ltp: number;
   anchor_price: number | null;
   pct_move: number | null;
+  // Dual Anchor 1: Call Given
+  call_date: string | null;
+  call_price: number | null;
+  call_perf_pct: number | null;
+  // Dual Anchor 2: Purchase Executed
+  purchase_date: string | null;
+  purchase_price: number | null;
+  purchase_perf_pct: number | null;
   invested_val: number;
   cur_val: number;
   pnl: number;
@@ -155,18 +180,32 @@ function determineIdeaHorizon(args: {
   };
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   if (!(await isAdminRequest())) {
     return NextResponse.json({ error: "admin only" }, { status: 401 });
   }
 
   try {
-    // 1. Fetch Cluster Calls / Screened Candidates with anchor_price and generated_at
+    const { searchParams } = new URL(request.url);
+    const dateParam = searchParams.get("date"); // e.g. "2026-10-31"
+
+    // Fetch distinct available dates for call date dropdown
+    const availableDatesRows = await sql<{ d: string }[]>`
+      SELECT DISTINCT to_char(generated_at, 'YYYY-MM-DD') AS d
+      FROM app.stock_verdict
+      WHERE generated_at IS NOT NULL
+      ORDER BY d DESC
+      LIMIT 30
+    `;
+    const availableDates = availableDatesRows.map((r) => r.d).filter(Boolean);
+
+    // 1. Fetch Cluster Calls / Screened Candidates with dual anchors, sector and generated_at
     const rawGems = await sql<any[]>`
       WITH latest_verdict AS (
           SELECT DISTINCT ON (symbol)
               symbol, verdict, confidence, target_price, fair_value, buy_below, bear_floor, upside_pct, valuation_method, generated_at, anchor_price
           FROM app.stock_verdict
+          WHERE ${dateParam && dateParam !== "ALL" ? sql`date(generated_at) = ${dateParam}::date` : sql`true`}
           ORDER BY symbol, generated_at DESC
       ),
       latest_panel AS (
@@ -189,7 +228,10 @@ export async function GET() {
       )
       SELECT 
           p.symbol,
-          p.company_name,
+          COALESCE(u.company_name, p.company_name) AS company_name,
+          COALESCE(u.sector, 'Other') AS sector,
+          COALESCE(u.industry, 'General') AS industry,
+          u.market_cap_category,
           p.cluster_id,
           c.name AS cluster_name,
           p.market_cap_cr,
@@ -208,15 +250,33 @@ export async function GET() {
           p.quality_pct,
           p.valuation_pct,
           p.momentum_pct,
-          EXISTS(SELECT 1 FROM app.portfolio_holding ph WHERE ph.symbol = p.symbol AND ph.quantity > 0) AS is_portfolio,
+          ph.quantity AS held_qty,
+          ph.avg_cost AS purchase_price,
+          pt.first_buy_date AS purchase_date,
+          ph.broker_cur_value AS cur_val,
+          (ph.quantity * ph.avg_cost) AS invested_val,
+          EXISTS(SELECT 1 FROM app.portfolio_holding x WHERE x.symbol = p.symbol AND x.quantity > 0) AS is_portfolio,
           COALESCE(uc.has_active_call, false) AS is_call_active,
           COALESCE(uc.has_cleared_call, false) AS is_call_cleared
       FROM latest_panel p
       JOIN latest_verdict v ON v.symbol = p.symbol
+      LEFT JOIN app.universe u ON u.symbol = p.symbol
       LEFT JOIN app.cluster c ON c.id = p.cluster_id
       LEFT JOIN app.screener_meta sm ON sm.symbol = p.symbol
       LEFT JOIN intraday_price si ON si.symbol = p.symbol
       LEFT JOIN user_calls uc ON uc.symbol = p.symbol
+      LEFT JOIN (
+          SELECT symbol, SUM(quantity) as quantity, SUM(quantity * avg_cost)/NULLIF(SUM(quantity), 0) as avg_cost, SUM(broker_cur_value) as broker_cur_value
+          FROM app.portfolio_holding
+          WHERE quantity > 0
+          GROUP BY symbol
+      ) ph ON ph.symbol = p.symbol
+      LEFT JOIN (
+          SELECT symbol, MIN(trade_date) as first_buy_date
+          FROM app.portfolio_transaction
+          WHERE side = 'buy'
+          GROUP BY symbol
+      ) pt ON pt.symbol = p.symbol
       WHERE v.target_price IS NOT NULL AND v.buy_below IS NOT NULL
         AND p.composite_pct >= 60
         AND p.quality_pct >= 50
@@ -234,6 +294,15 @@ export async function GET() {
       const mcap = Number(r.market_cap_cr ?? 0);
       const anchor = r.anchor_price ? Number(r.anchor_price) : null;
       const pctMove = anchor && anchor > 0 ? ((ltp - anchor) / anchor) * 100 : null;
+
+      // Dual Anchors
+      const callPrice = anchor;
+      const callPerfPct = anchor && anchor > 0 ? ((ltp - anchor) / anchor) * 100 : null;
+      const callDate = r.generated_at ? new Date(r.generated_at).toISOString().slice(0, 10) : null;
+
+      const purchasePrice = r.purchase_price ? Number(r.purchase_price) : null;
+      const purchasePerfPct = purchasePrice && purchasePrice > 0 ? ((ltp - purchasePrice) / purchasePrice) * 100 : null;
+      const purchaseDate = r.purchase_date ? new Date(r.purchase_date).toISOString().slice(0, 10) : null;
 
       const isGem = comp >= 75 && qual >= 58 && (buyBelow > 0 && ltp <= buyBelow * 1.05) && upside >= 15 && mcap >= 800;
 
@@ -255,12 +324,24 @@ export async function GET() {
       return {
         symbol: r.symbol,
         company_name: r.company_name,
+        sector: r.sector || "General",
+        industry: r.industry || "General",
+        market_cap_category: r.market_cap_category,
         cluster_id: r.cluster_id,
         cluster_name: r.cluster_name ?? "General",
         market_cap_cr: mcap,
         ltp,
         anchor_price: anchor,
         pct_move: pctMove,
+        call_date: callDate,
+        call_price: callPrice,
+        call_perf_pct: callPerfPct,
+        purchase_date: purchaseDate,
+        purchase_price: purchasePrice,
+        purchase_perf_pct: purchasePerfPct,
+        held_qty: r.held_qty ? Number(r.held_qty) : null,
+        invested_val: r.invested_val ? Number(r.invested_val) : null,
+        cur_val: r.cur_val ? Number(r.cur_val) : null,
         verdict: r.verdict,
         confidence: r.confidence,
         target_price: r.target_price ? Number(r.target_price) : null,
@@ -285,7 +366,7 @@ export async function GET() {
       };
     });
 
-    // 2. Fetch Portfolio Holdings with Action Sweeps
+    // 2. Fetch Portfolio Holdings with Action Sweeps & Dual Anchors
     const rawPortfolio = await sql<any[]>`
       WITH latest_verdict AS (
           SELECT DISTINCT ON (symbol)
@@ -315,8 +396,12 @@ export async function GET() {
           CASE WHEN SUM(p.quantity * p.avg_cost) > 0 
                THEN ((SUM(p.broker_cur_value) - SUM(p.quantity * p.avg_cost)) / SUM(p.quantity * p.avg_cost)) * 100 
                ELSE NULL END AS pnl_pct,
-          u.company_name,
+          COALESCE(u.company_name, p.symbol) AS company_name,
+          COALESCE(u.sector, 'Other') AS sector,
+          COALESCE(u.industry, 'General') AS industry,
+          u.market_cap_category,
           c.name AS cluster_name,
+          pt.first_buy_date AS purchase_date,
           lp.composite_pct,
           lp.quality_pct,
           lp.valuation_pct,
@@ -339,8 +424,15 @@ export async function GET() {
       LEFT JOIN latest_panel lp ON lp.symbol = p.symbol
       LEFT JOIN intraday_price si ON si.symbol = p.symbol
       LEFT JOIN latest_verdict v ON v.symbol = p.symbol
+      LEFT JOIN (
+          SELECT symbol, MIN(trade_date) as first_buy_date
+          FROM app.portfolio_transaction
+          WHERE side = 'buy'
+          GROUP BY symbol
+      ) pt ON pt.symbol = p.symbol
       WHERE p.quantity > 0
-      GROUP BY p.symbol, u.company_name, c.name, lp.composite_pct, lp.quality_pct, lp.valuation_pct, lp.momentum_pct,
+      GROUP BY p.symbol, u.company_name, u.sector, u.industry, u.market_cap_category, c.name, pt.first_buy_date,
+               lp.composite_pct, lp.quality_pct, lp.valuation_pct, lp.momentum_pct,
                v.verdict, v.confidence, v.target_price, v.fair_value, v.buy_below, v.bear_floor, v.upside_pct, v.valuation_method, v.generated_at, v.anchor_price
       ORDER BY v.generated_at DESC NULLS LAST
     `;
@@ -358,6 +450,15 @@ export async function GET() {
       const comp = r.composite_pct ? Number(r.composite_pct) : 50;
       const anchor = r.anchor_price ? Number(r.anchor_price) : null;
       const pctMove = anchor && anchor > 0 ? ((ltp - anchor) / anchor) * 100 : null;
+
+      // Dual Anchors
+      const callPrice = anchor;
+      const callPerfPct = anchor && anchor > 0 ? ((ltp - anchor) / anchor) * 100 : null;
+      const callDate = r.generated_at ? new Date(r.generated_at).toISOString().slice(0, 10) : null;
+
+      const purchasePrice = avgCost > 0 ? avgCost : null;
+      const purchasePerfPct = purchasePrice && purchasePrice > 0 ? ((ltp - purchasePrice) / purchasePrice) * 100 : null;
+      const purchaseDate = r.purchase_date ? new Date(r.purchase_date).toISOString().slice(0, 10) : null;
 
       let actionToday: "TRIM / TAKE PROFIT" | "HOLD & COMPOUND" | "ACCUMULATE / ADD" | "EXIT / CUT LOSS" = "HOLD & COMPOUND";
       let reason = "Core business compounding intact toward 12M forward target.";
@@ -401,12 +502,21 @@ export async function GET() {
       return {
         symbol: r.symbol,
         company_name: r.company_name,
+        sector: r.sector || "General",
+        industry: r.industry || "General",
+        market_cap_category: r.market_cap_category,
         cluster_name: r.cluster_name ?? "General",
         total_qty: Number(r.total_qty ?? 0),
         weighted_avg_cost: avgCost,
         ltp,
         anchor_price: anchor,
         pct_move: pctMove,
+        call_date: callDate,
+        call_price: callPrice,
+        call_perf_pct: callPerfPct,
+        purchase_date: purchaseDate,
+        purchase_price: purchasePrice,
+        purchase_perf_pct: purchasePerfPct,
         invested_val: Number(r.invested_val ?? 0),
         cur_val: Number(r.cur_val ?? 0),
         pnl: Number(r.pnl ?? 0),
@@ -460,6 +570,7 @@ export async function GET() {
 
     return NextResponse.json({
       summary,
+      availableDates,
       clusterGems,
       portfolioActions,
     }, {

@@ -1,8 +1,29 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import Link from "next/link";
-import { ArrowUpRight, Search, Sparkles, Wallet, Coins, ArrowRight, ArrowDownUp, CheckCircle2, ShieldCheck, ExternalLink } from "lucide-react";
+import {
+  Calendar,
+  TrendingUp,
+  Target,
+  Shield,
+  Coins,
+  Wallet,
+  Sparkles,
+  CheckCircle2,
+  ExternalLink,
+  Search,
+  ArrowUpRight,
+  ChevronDown,
+  ChevronRight,
+  Edit3,
+  RotateCcw,
+  Check,
+  X,
+  Filter,
+} from "lucide-react";
+import { PriceChart } from "@/components/PriceChart";
+import CapTierBadge, { type CapCategory } from "@/components/CapTierBadge";
 import type { ClusterGem, PortfolioActionCall, IdeaHorizon } from "@/app/api/admin/calls/route";
 
 function money(v: number | null | undefined): string {
@@ -25,6 +46,19 @@ function fmtDate(iso: string | null | undefined): string {
     });
   } catch {
     return iso;
+  }
+}
+
+function daysAgo(iso: string | null | undefined): string {
+  if (!iso) return "";
+  try {
+    const diffMs = Date.now() - new Date(iso).getTime();
+    const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    if (days <= 0) return "Today";
+    if (days === 1) return "Yesterday";
+    return `${days}d ago`;
+  } catch {
+    return "";
   }
 }
 
@@ -93,8 +127,20 @@ export function getHorizonBadge(horizon: string | null | undefined) {
   }
 }
 
-type CallTab = "plan" | "portfolio" | "gems";
-type SortBy = "date_desc" | "date_asc" | "perf_desc" | "upside_desc" | "comp_desc";
+function actionBadgeClass(action: string | null | undefined): string {
+  if (!action) return "bg-slate-200 text-slate-700";
+  const up = action.toUpperCase();
+  if (up.includes("ACCUMULATE")) return "bg-emerald-100 text-emerald-800 border-emerald-300";
+  if (up.includes("BUY")) return "bg-emerald-600 text-white border-emerald-700";
+  if (up.includes("HOLD")) return "bg-blue-100 text-blue-800 border-blue-300";
+  if (up.includes("TRIM")) return "bg-amber-100 text-amber-800 border-amber-300";
+  if (up.includes("EXIT") || up.includes("SELL") || up.includes("AVOID")) return "bg-rose-100 text-rose-800 border-rose-300";
+  return "bg-slate-100 text-slate-700 border-slate-300";
+}
+
+const CUSTOM_PURCHASE_KEY = "calls_custom_purchase_v1";
+
+type Scope = "all" | "curated" | "portfolio";
 
 export function CallsClient() {
   const [data, setData] = useState<{
@@ -111,6 +157,7 @@ export function CallsClient() {
       horizonCounts?: Record<string, number>;
       statusCounts?: { takenCount: number; clearedCount: number; freshCount: number };
     };
+    availableDates?: string[];
     clusterGems: ClusterGem[];
     portfolioActions: PortfolioActionCall[];
   } | null>(null);
@@ -118,23 +165,71 @@ export function CallsClient() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [activeTab, setActiveTab] = useState<CallTab>("plan");
-  const [capital, setCapital] = useState<number>(100000);
-  const [sortBy, setSortBy] = useState<SortBy>("date_desc");
+  // Filters & Scope
+  const [selectedDate, setSelectedDate] = useState<string>("ALL");
+  const [scope, setScope] = useState<Scope>("all");
   const [search, setSearch] = useState("");
-  const [selectedCluster, setSelectedCluster] = useState<string>("ALL");
-  const [actionFilter, setActionFilter] = useState<string>("ALL");
-  const [selectedHorizon, setSelectedHorizon] = useState<string>("ALL");
-  const [selectedStatus, setSelectedStatus] = useState<string>("ALL");
-  const [gemsOnly, setGemsOnly] = useState(false);
-  const [avoidOwned, setAvoidOwned] = useState(false);
+  const [capital, setCapital] = useState<number>(100000);
+
+  // Selected Stock
+  const [selectedSymbol, setSelectedSymbol] = useState<string>("UNIONBANK");
+
+  // Expanded sectors set for the tree
+  const [expandedSectors, setExpandedSectors] = useState<Set<string>>(new Set());
+
+  // Call status overrides (Take/Exit)
   const [userCallOverrides, setUserCallOverrides] = useState<Record<string, { is_taken: boolean; is_cleared: boolean }>>({});
 
-  const fetchData = async () => {
+  // Custom User Purchase overrides (date & price)
+  const [customPurchases, setCustomPurchases] = useState<Record<string, { purchase_date: string; purchase_price: number }>>({});
+  const [isEditingPurchase, setIsEditingPurchase] = useState(false);
+  const [editPurchaseDate, setEditPurchaseDate] = useState("");
+  const [editPurchasePrice, setEditPurchasePrice] = useState("");
+
+  // Load custom purchases from localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(CUSTOM_PURCHASE_KEY);
+      if (saved) setCustomPurchases(JSON.parse(saved));
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const saveCustomPurchase = (symbol: string, d: string, p: number) => {
+    const updated = {
+      ...customPurchases,
+      [symbol]: { purchase_date: d, purchase_price: p },
+    };
+    setCustomPurchases(updated);
+    try {
+      localStorage.setItem(CUSTOM_PURCHASE_KEY, JSON.stringify(updated));
+    } catch {
+      // ignore
+    }
+    setIsEditingPurchase(false);
+  };
+
+  const clearCustomPurchase = (symbol: string) => {
+    const updated = { ...customPurchases };
+    delete updated[symbol];
+    setCustomPurchases(updated);
+    try {
+      localStorage.setItem(CUSTOM_PURCHASE_KEY, JSON.stringify(updated));
+    } catch {
+      // ignore
+    }
+    setIsEditingPurchase(false);
+  };
+
+  // Fetch calls data
+  const fetchData = useCallback(async (dateFilter?: string) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/admin/calls");
+      const d = dateFilter ?? selectedDate;
+      const url = d && d !== "ALL" ? `/api/admin/calls?date=${encodeURIComponent(d)}` : `/api/admin/calls`;
+      const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
       setData(json);
@@ -143,11 +238,11 @@ export function CallsClient() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedDate]);
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    fetchData(selectedDate);
+  }, [selectedDate, fetchData]);
 
   const handleTakeCall = async (symbol: string) => {
     setUserCallOverrides((prev) => ({
@@ -161,7 +256,7 @@ export function CallsClient() {
         body: JSON.stringify({ symbol, side: "B" }),
       });
     } catch {
-      // optimistic update maintained
+      // optimistic
     }
   };
 
@@ -177,208 +272,208 @@ export function CallsClient() {
         body: JSON.stringify({ symbol }),
       });
     } catch {
-      // optimistic update maintained
+      // optimistic
     }
   };
 
-  // Top 6 curated deployment calls spanning distinct horizons
-  const curatedPlan = useMemo(() => {
-    const basePicks = [
-      {
-        symbol: "INDUSTOWER",
-        name: "Indus Towers Ltd.",
-        cluster: "Telecom",
-        weightPct: 20,
-        cmp: 380.9,
-        buyBelow: 370.7,
-        target: 554.4,
-        stopLoss: 335.0,
-        upside: 46.5,
-        scores: "100 / 82 / 51",
-        horizon: "1Y" as IdeaHorizon,
-        horizonLabel: "🏛️ 1Y Core Institutional",
-        timeline: "9–12 Months",
-        role: "1Y Alpha FCF Compounder",
-        rationale: "FCF yield > 15%, zero-discount cash collection, massive bad debt recoveries, 5G tenancy growth.",
-      },
-      {
-        symbol: "UNIONBANK",
-        name: "Union Bank of India",
-        cluster: "PSU Banks",
-        weightPct: 20,
-        cmp: 173.1,
-        buyBelow: 182.3,
-        target: 270.1,
-        stopLoss: 130.0,
-        upside: 45.2,
-        scores: "83 / 68 / 74",
-        horizon: "6M" as IdeaHorizon,
-        horizonLabel: "📈 6M High-Momentum Banking",
-        timeline: "5–6 Months",
-        role: "6M Banking Growth Anchor",
-        rationale: "Tier-1 PSU banking leader with surging momentum (Momentum 74), expanding corporate credit book, and multi-year asset quality turnaround.",
-      },
-      {
-        symbol: "SHAREINDIA",
-        name: "Share India Securities Ltd.",
-        cluster: "Capital Markets",
-        weightPct: 15,
-        cmp: 182.4,
-        buyBelow: 172.4,
-        target: 265.2,
-        stopLoss: 123.0,
-        upside: 50.7,
-        scores: "91 / 66 / 69",
-        horizon: "1M" as IdeaHorizon,
-        horizonLabel: "⚡ 1M Tactical Swing / High Momentum",
-        timeline: "3–6 Weeks",
-        role: "1M FinTech / Algo Alpha",
-        rationale: "Surging algorithmic trading volumes, high ROE (>25%), robust institutional inflows, and strong relative strength.",
-      },
-      {
-        symbol: "NATCOPHARM",
-        name: "Natco Pharma Ltd.",
-        cluster: "Pharma CDMO / APIs",
-        weightPct: 15,
-        cmp: 790.5,
-        buyBelow: 766.8,
-        target: 1022.5,
-        stopLoss: 690.0,
-        upside: 30.7,
-        scores: "96 / 73 / 37",
-        horizon: "3M" as IdeaHorizon,
-        horizonLabel: "🚀 3M Catalyst",
-        timeline: "2–3 Months",
-        role: "3M Defensive High-Margin",
-        rationale: "Operating margin > 35%, zero net debt, lucrative specialty generic launches in North America.",
-      },
-      {
-        symbol: "ALLDIGI",
-        name: "Alldigi Tech Ltd.",
-        cluster: "Commercial Services",
-        weightPct: 15,
-        cmp: 789.2,
-        buyBelow: 815.0,
-        target: 1117.7,
-        stopLoss: 582.0,
-        upside: 34.4,
-        scores: "94 / 78 / 52",
-        horizon: "1M" as IdeaHorizon,
-        horizonLabel: "⚡ 1M Tactical Swing",
-        timeline: "2–4 Weeks",
-        role: "1M B2B Tech Alpha",
-        rationale: "High ROCE (>22%), expanding enterprise customer retention, compounding digital revenue.",
-      },
-      {
-        symbol: "APOLLOTYRE",
-        name: "Apollo Tyres Ltd.",
-        cluster: "Auto Components",
-        weightPct: 15,
-        cmp: 400.4,
-        buyBelow: 371.9,
-        target: 498.1,
-        stopLoss: 265.0,
-        upside: 31.3,
-        scores: "100 / 63 / 51",
-        horizon: "3M" as IdeaHorizon,
-        horizonLabel: "🚀 3M Support Rebound & Margin Expansion",
-        timeline: "2–3 Months",
-        role: "3M Cyclical Margin Expansion",
-        rationale: "Sitting right at strong multi-month support, expanding European and domestic EBITDA margins, and ongoing balance sheet deleveraging.",
-      },
-    ];
+  // Curated 6 deployment picks with exact target allocation and institutional rationale
+  const curatedPicks = useMemo(() => [
+    {
+      symbol: "INDUSTOWER",
+      name: "Indus Towers Ltd.",
+      sector: "Telecommunication",
+      cluster: "Telecom",
+      weightPct: 20,
+      cmp: 380.9,
+      buyBelow: 370.7,
+      target: 554.4,
+      stopLoss: 335.0,
+      upside: 46.5,
+      scores: "100 / 82 / 51",
+      horizon: "1Y" as IdeaHorizon,
+      horizonLabel: "🏛️ 1Y Core Institutional",
+      timeline: "9–12 Months",
+      role: "1Y Alpha FCF Compounder",
+      rationale: "FCF yield > 15%, zero-discount cash collection, massive bad debt recoveries, 5G tenancy growth.",
+    },
+    {
+      symbol: "UNIONBANK",
+      name: "Union Bank of India",
+      sector: "Financial Services",
+      cluster: "PSU Banks",
+      weightPct: 20,
+      cmp: 173.1,
+      buyBelow: 182.3,
+      target: 270.1,
+      stopLoss: 130.0,
+      upside: 45.2,
+      scores: "83 / 68 / 74",
+      horizon: "6M" as IdeaHorizon,
+      horizonLabel: "📈 6M High-Momentum Banking",
+      timeline: "5–6 Months",
+      role: "6M Banking Growth Anchor",
+      rationale: "Tier-1 PSU banking leader with surging momentum (Momentum 74), expanding corporate credit book, and multi-year asset quality turnaround.",
+    },
+    {
+      symbol: "SHAREINDIA",
+      name: "Share India Securities Ltd.",
+      sector: "Financial Services",
+      cluster: "Capital Markets",
+      weightPct: 15,
+      cmp: 182.4,
+      buyBelow: 172.4,
+      target: 265.2,
+      stopLoss: 123.0,
+      upside: 50.7,
+      scores: "91 / 66 / 69",
+      horizon: "1M" as IdeaHorizon,
+      horizonLabel: "⚡ 1M Tactical Swing / High Momentum",
+      timeline: "3–6 Weeks",
+      role: "1M FinTech / Algo Alpha",
+      rationale: "Surging algorithmic trading volumes, high ROE (>25%), robust institutional inflows, and strong relative strength.",
+    },
+    {
+      symbol: "NATCOPHARM",
+      name: "Natco Pharma Ltd.",
+      sector: "Healthcare",
+      cluster: "Pharma CDMO / APIs",
+      weightPct: 15,
+      cmp: 790.5,
+      buyBelow: 766.8,
+      target: 1022.5,
+      stopLoss: 690.0,
+      upside: 30.7,
+      scores: "96 / 73 / 37",
+      horizon: "3M" as IdeaHorizon,
+      horizonLabel: "🚀 3M Catalyst",
+      timeline: "2–3 Months",
+      role: "3M Defensive High-Margin",
+      rationale: "Operating margin > 35%, zero net debt, lucrative specialty generic launches in North America.",
+    },
+    {
+      symbol: "ALLDIGI",
+      name: "Alldigi Tech Ltd.",
+      sector: "Services",
+      cluster: "Commercial Services",
+      weightPct: 15,
+      cmp: 789.2,
+      buyBelow: 815.0,
+      target: 1117.7,
+      stopLoss: 582.0,
+      upside: 34.4,
+      scores: "94 / 78 / 52",
+      horizon: "1M" as IdeaHorizon,
+      horizonLabel: "⚡ 1M Tactical Swing",
+      timeline: "2–4 Weeks",
+      role: "1M B2B Tech Alpha",
+      rationale: "High ROCE (>22%), expanding enterprise customer retention, compounding digital revenue.",
+    },
+    {
+      symbol: "APOLLOTYRE",
+      name: "Apollo Tyres Ltd.",
+      sector: "Automobile and Auto Components",
+      cluster: "Auto Components",
+      weightPct: 15,
+      cmp: 400.4,
+      buyBelow: 371.9,
+      target: 498.1,
+      stopLoss: 265.0,
+      upside: 31.3,
+      scores: "100 / 63 / 51",
+      horizon: "3M" as IdeaHorizon,
+      horizonLabel: "🚀 3M Support Rebound & Margin Expansion",
+      timeline: "2–3 Months",
+      role: "3M Cyclical Margin Expansion",
+      rationale: "Sitting right at strong multi-month support, expanding European and domestic EBITDA margins, and ongoing balance sheet deleveraging.",
+    },
+  ], []);
 
-    let picksToDeploy = basePicks;
+  // Map of curated symbols
+  const curatedSymbolMap = useMemo(() => {
+    const map = new Map<string, typeof curatedPicks[0]>();
+    curatedPicks.forEach((p) => map.set(p.symbol, p));
+    return map;
+  }, [curatedPicks]);
 
-    if (avoidOwned && data) {
-      // Find which base picks are NOT held in portfolio
-      const unheldBase = basePicks.filter((p) => {
-        const port = data.portfolioActions.find((a) => a.symbol === p.symbol);
-        const gem = data.clusterGems.find((g) => g.symbol === p.symbol);
-        return !(port && port.total_qty > 0) && !gem?.is_portfolio;
-      });
+  // Master Unified Call Items List
+  const unifiedCalls = useMemo(() => {
+    if (!data) return [];
 
-      const usedSymbols = new Set(unheldBase.map((p) => p.symbol));
-      const usedClusters = new Set(unheldBase.map((p) => p.cluster));
-      const replacements: typeof basePicks = [];
+    const callMap = new Map<string, any>();
 
-      for (const g of data.clusterGems) {
-        if (unheldBase.length + replacements.length >= 6) break;
-        if (g.is_portfolio) continue;
-        if (usedSymbols.has(g.symbol)) continue;
-        if (g.cluster_name && usedClusters.has(g.cluster_name)) continue;
-        if (!g.target_price || !g.buy_below || !g.ltp) continue;
+    // 1. Process Cluster Gems
+    data.clusterGems.forEach((g) => {
+      const cur = curatedSymbolMap.get(g.symbol);
+      const port = data.portfolioActions.find((p) => p.symbol === g.symbol);
 
-        replacements.push({
-          symbol: g.symbol,
-          name: g.company_name || g.symbol,
-          cluster: g.cluster_name || "General",
-          weightPct: 15,
-          cmp: g.ltp,
-          buyBelow: g.buy_below,
-          target: g.target_price,
-          stopLoss: g.bear_floor || Math.round(g.ltp * 0.85),
-          upside: Math.round(g.upside_pct || 25),
-          scores: `${g.composite_pct ?? "—"} / ${g.quality_pct ?? "—"} / ${g.momentum_pct ?? "—"}`,
-          horizon: g.horizon,
-          horizonLabel: g.horizon_label,
-          timeline: g.sell_timeline,
-          role: `${g.horizon} Cluster Alpha`,
-          rationale: `Top unheld gem in ${g.cluster_name}. ${g.strategy_desc}`,
-        });
-        usedSymbols.add(g.symbol);
-        if (g.cluster_name) usedClusters.add(g.cluster_name);
-      }
+      const cmp = g.ltp ?? cur?.cmp ?? 0;
+      const target = g.target_price ?? cur?.target ?? 0;
+      const buyBelow = g.buy_below ?? cur?.buyBelow ?? 0;
+      const stopLoss = g.bear_floor ?? cur?.stopLoss ?? Math.round(cmp * 0.82);
+      const upside = g.upside_pct ?? (target > 0 && cmp > 0 ? ((target - cmp) / cmp) * 100 : cur?.upside ?? 0);
 
-      const combined = [...unheldBase, ...replacements].slice(0, 6);
-      if (combined.length > 0) {
-        const weightPerStock = Math.floor(100 / combined.length);
-        const remainder = 100 - weightPerStock * combined.length;
-        picksToDeploy = combined.map((p, idx) => ({
-          ...p,
-          weightPct: idx === 0 ? weightPerStock + remainder : weightPerStock,
-        }));
-      }
-    }
+      // Anchor 1: Call Given
+      const callDate = g.call_date ?? g.generated_at ?? "2026-10-31";
+      const callPrice = g.call_price ?? g.anchor_price ?? cmp;
+      const callPerfPct = g.call_perf_pct ?? (callPrice > 0 ? ((cmp - callPrice) / callPrice) * 100 : 0);
 
-    return picksToDeploy.map((p) => {
-      const gem = data?.clusterGems.find((g) => g.symbol === p.symbol);
-      const port = data?.portfolioActions.find((a) => a.symbol === p.symbol);
-      const liveCmp = port?.ltp ?? gem?.ltp ?? p.cmp;
-      const cmp = liveCmp > 0 ? liveCmp : p.cmp;
-      const anchorPrice = gem?.anchor_price ?? p.cmp;
-      const pctMove = gem?.pct_move ?? (anchorPrice > 0 ? ((cmp - anchorPrice) / anchorPrice) * 100 : 0);
-      const isPortfolio = Boolean(port && port.total_qty > 0) || Boolean(gem?.is_portfolio);
-      const heldQty = port?.total_qty ?? 0;
-      const callDate = gem?.generated_at ?? "2026-10-31";
-      const actionToday = port?.action_today ?? (isPortfolio ? "HOLD & COMPOUND" : "ACCUMULATE / ADD");
+      // Anchor 2: Stock Purchase
+      const customP = customPurchases[g.symbol];
+      const purchaseDate = customP?.purchase_date ?? g.purchase_date ?? port?.purchase_date ?? null;
+      const purchasePrice = customP?.purchase_price ?? g.purchase_price ?? port?.weighted_avg_cost ?? null;
+      const purchasePerfPct =
+        purchasePrice && purchasePrice > 0 ? ((cmp - purchasePrice) / purchasePrice) * 100 : null;
 
-      const override = userCallOverrides[p.symbol];
-      const isTaken = override ? override.is_taken : Boolean(port && port.total_qty > 0) || Boolean(gem?.is_taken);
-      const isCleared = override ? override.is_cleared : Boolean(gem?.is_cleared);
-      const boxStyle = getCallBoxStyle(isTaken, isCleared, pctMove);
+      const isPortfolio = Boolean(port && port.total_qty > 0) || Boolean(g.is_portfolio);
+      const heldQty = port?.total_qty ?? g.held_qty ?? 0;
+      const investedVal = port?.invested_val ?? g.invested_val ?? (purchasePrice ? purchasePrice * heldQty : 0);
+      const curVal = port?.cur_val ?? g.cur_val ?? (cmp * heldQty);
 
-      const allocatedAmount = Math.round((capital * p.weightPct) / 100);
-      const totalShares = Math.floor(allocatedAmount / cmp);
+      const override = userCallOverrides[g.symbol];
+      const isTaken = override ? override.is_taken : isPortfolio || g.is_taken;
+      const isCleared = override ? override.is_cleared : g.is_cleared;
+
+      const weightPct = cur?.weightPct ?? (isPortfolio ? 15 : 10);
+      const allocatedAmount = Math.round((capital * weightPct) / 100);
+      const totalShares = cmp > 0 ? Math.floor(allocatedAmount / cmp) : 0;
       const tranche1Shares = Math.ceil(totalShares / 2);
       const tranche2Shares = Math.max(0, totalShares - tranche1Shares);
       const t1Value = tranche1Shares * cmp;
       const t2Value = tranche2Shares * cmp;
-      const projectedValue = Math.round(totalShares * p.target);
+      const projectedValue = Math.round(totalShares * target);
       const profitRupees = projectedValue - allocatedAmount;
 
-      return {
-        ...p,
+      callMap.set(g.symbol, {
+        symbol: g.symbol,
+        name: g.company_name || cur?.name || g.symbol,
+        sector: g.sector || cur?.sector || "General",
+        industry: g.industry || "General",
+        market_cap_category: g.market_cap_category || "mid_cap",
+        cluster: g.cluster_name || cur?.cluster || "General",
+        marketCapCr: g.market_cap_cr ?? 0,
         cmp,
-        anchorPrice,
-        pctMove,
+        buyBelow,
+        target,
+        stopLoss,
+        upside: Math.round(upside * 10) / 10,
+        scores: `${g.composite_pct ?? cur?.scores?.split(" / ")[0] ?? "—"} / ${g.quality_pct ?? "—"} / ${g.momentum_pct ?? "—"}`,
+        composite_pct: g.composite_pct ?? 70,
+        quality_pct: g.quality_pct ?? 65,
+        valuation_pct: g.valuation_pct ?? 60,
+        momentum_pct: g.momentum_pct ?? 65,
+        horizon: g.horizon || cur?.horizon || ("6M" as IdeaHorizon),
+        horizonLabel: g.horizon_label || cur?.horizonLabel || "📈 6M High-Momentum",
+        timeline: g.sell_timeline || cur?.timeline || "5–6 Months",
+        role: cur?.role || `${g.horizon || "6M"} Opportunity`,
+        rationale: cur?.rationale || g.strategy_desc || g.verdict || "High-conviction re-rating catalyst.",
+        actionToday: isPortfolio ? (port?.action_today || "HOLD & COMPOUND") : (cmp <= buyBelow * 1.02 ? "BUY / ACCUMULATE" : "WATCH / ACCUMULATE"),
+        actionReason: port?.action_reason || g.strategy_desc,
         isPortfolio,
         heldQty,
-        callDate,
-        actionToday,
-        isTaken,
-        isCleared,
-        boxStyle,
+        investedVal,
+        curVal,
+        isCurated: Boolean(cur),
+        weightPct,
         allocatedAmount,
         totalShares,
         tranche1Shares,
@@ -387,1012 +482,1014 @@ export function CallsClient() {
         t2Value,
         projectedValue,
         profitRupees,
-      };
+        // Dual Anchors
+        callDate,
+        callPrice,
+        callPerfPct,
+        purchaseDate,
+        purchasePrice,
+        purchasePerfPct,
+        isTaken,
+        isCleared,
+      });
     });
-  }, [capital, avoidOwned, data, userCallOverrides]);
 
-  const totalProjectedProfit = useMemo(() => {
-    return curatedPlan.reduce((acc, p) => acc + p.profitRupees, 0);
-  }, [curatedPlan]);
+    // 2. Add any Curated picks that weren't in clusterGems
+    curatedPicks.forEach((cp) => {
+      if (!callMap.has(cp.symbol)) {
+        const port = data.portfolioActions.find((p) => p.symbol === cp.symbol);
+        const cmp = port?.ltp ?? cp.cmp;
+        const target = cp.target;
+        const buyBelow = cp.buyBelow;
+        const stopLoss = cp.stopLoss;
+        const upside = cp.upside;
 
-  const blendedUpside = useMemo(() => {
-    if (capital <= 0) return 0;
-    return (totalProjectedProfit / capital) * 100;
-  }, [totalProjectedProfit, capital]);
+        const callDate = "2026-10-31";
+        const callPrice = cp.cmp;
+        const callPerfPct = ((cmp - callPrice) / callPrice) * 100;
 
-  const clusters = useMemo(() => {
-    if (!data) return [];
-    const list = new Set<string>();
-    if (activeTab === "gems") {
-      data.clusterGems.forEach((g) => { if (g.cluster_name) list.add(g.cluster_name); });
-    } else {
-      data.portfolioActions.forEach((p) => { if (p.cluster_name) list.add(p.cluster_name); });
+        const customP = customPurchases[cp.symbol];
+        const purchaseDate = customP?.purchase_date ?? port?.purchase_date ?? null;
+        const purchasePrice = customP?.purchase_price ?? port?.weighted_avg_cost ?? null;
+        const purchasePerfPct =
+          purchasePrice && purchasePrice > 0 ? ((cmp - purchasePrice) / purchasePrice) * 100 : null;
+
+        const isPortfolio = Boolean(port && port.total_qty > 0);
+        const heldQty = port?.total_qty ?? 0;
+        const investedVal = port?.invested_val ?? (purchasePrice ? purchasePrice * heldQty : 0);
+        const curVal = port?.cur_val ?? (cmp * heldQty);
+
+        const allocatedAmount = Math.round((capital * cp.weightPct) / 100);
+        const totalShares = Math.floor(allocatedAmount / cmp);
+        const tranche1Shares = Math.ceil(totalShares / 2);
+        const tranche2Shares = Math.max(0, totalShares - tranche1Shares);
+        const t1Value = tranche1Shares * cmp;
+        const t2Value = tranche2Shares * cmp;
+        const projectedValue = Math.round(totalShares * target);
+        const profitRupees = projectedValue - allocatedAmount;
+
+        callMap.set(cp.symbol, {
+          symbol: cp.symbol,
+          name: cp.name,
+          sector: cp.sector,
+          industry: cp.cluster,
+          market_cap_category: "large_cap",
+          cluster: cp.cluster,
+          marketCapCr: 25000,
+          cmp,
+          buyBelow,
+          target,
+          stopLoss,
+          upside,
+          scores: cp.scores,
+          composite_pct: 85,
+          quality_pct: 75,
+          valuation_pct: 70,
+          momentum_pct: 70,
+          horizon: cp.horizon,
+          horizonLabel: cp.horizonLabel,
+          timeline: cp.timeline,
+          role: cp.role,
+          rationale: cp.rationale,
+          actionToday: isPortfolio ? (port?.action_today || "HOLD & COMPOUND") : "BUY / ACCUMULATE",
+          actionReason: "Curated monthly deployment plan selection.",
+          isPortfolio,
+          heldQty,
+          investedVal,
+          curVal,
+          isCurated: true,
+          weightPct: cp.weightPct,
+          allocatedAmount,
+          totalShares,
+          tranche1Shares,
+          tranche2Shares,
+          t1Value,
+          t2Value,
+          projectedValue,
+          profitRupees,
+          callDate,
+          callPrice,
+          callPerfPct,
+          purchaseDate,
+          purchasePrice,
+          purchasePerfPct,
+          isTaken: isPortfolio,
+          isCleared: false,
+        });
+      }
+    });
+
+    // 3. Add any Portfolio actions not yet in map
+    data.portfolioActions.forEach((pa) => {
+      if (!callMap.has(pa.symbol)) {
+        const cmp = pa.ltp;
+        const target = pa.target_price ?? Math.round(cmp * 1.35);
+        const buyBelow = pa.buy_below ?? Math.round(cmp * 0.98);
+        const stopLoss = pa.bear_floor ?? Math.round(cmp * 0.85);
+        const upside = pa.upside_pct ?? 25;
+
+        const callDate = pa.call_date ?? pa.generated_at ?? "2026-10-31";
+        const callPrice = pa.call_price ?? pa.anchor_price ?? cmp;
+        const callPerfPct = pa.call_perf_pct ?? (callPrice > 0 ? ((cmp - callPrice) / callPrice) * 100 : 0);
+
+        const customP = customPurchases[pa.symbol];
+        const purchaseDate = customP?.purchase_date ?? pa.purchase_date ?? null;
+        const purchasePrice = customP?.purchase_price ?? pa.weighted_avg_cost ?? null;
+        const purchasePerfPct =
+          purchasePrice && purchasePrice > 0 ? ((cmp - purchasePrice) / purchasePrice) * 100 : null;
+
+        callMap.set(pa.symbol, {
+          symbol: pa.symbol,
+          name: pa.company_name || pa.symbol,
+          sector: pa.sector || "General",
+          industry: pa.industry || "General",
+          market_cap_category: pa.market_cap_category || "mid_cap",
+          cluster: pa.cluster_name || "General",
+          marketCapCr: 10000,
+          cmp,
+          buyBelow,
+          target,
+          stopLoss,
+          upside: Math.round(upside * 10) / 10,
+          scores: `${pa.composite_pct ?? "—"} / ${pa.quality_pct ?? "—"} / ${pa.momentum_pct ?? "—"}`,
+          composite_pct: pa.composite_pct ?? 70,
+          quality_pct: pa.quality_pct ?? 65,
+          valuation_pct: pa.valuation_pct ?? 60,
+          momentum_pct: pa.momentum_pct ?? 65,
+          horizon: pa.horizon,
+          horizonLabel: pa.horizon_label,
+          timeline: pa.sell_timeline,
+          role: "Portfolio Holding",
+          rationale: pa.action_reason,
+          actionToday: pa.action_today,
+          actionReason: pa.action_reason,
+          isPortfolio: true,
+          heldQty: pa.total_qty,
+          investedVal: pa.invested_val,
+          curVal: pa.cur_val,
+          isCurated: false,
+          weightPct: 15,
+          allocatedAmount: 15000,
+          totalShares: Math.floor(15000 / cmp),
+          tranche1Shares: Math.ceil(Math.floor(15000 / cmp) / 2),
+          tranche2Shares: Math.floor(Math.floor(15000 / cmp) / 2),
+          t1Value: Math.ceil(Math.floor(15000 / cmp) / 2) * cmp,
+          t2Value: Math.floor(Math.floor(15000 / cmp) / 2) * cmp,
+          projectedValue: Math.round(Math.floor(15000 / cmp) * target),
+          profitRupees: Math.round(Math.floor(15000 / cmp) * target) - 15000,
+          callDate,
+          callPrice,
+          callPerfPct,
+          purchaseDate,
+          purchasePrice,
+          purchasePerfPct,
+          isTaken: true,
+          isCleared: false,
+        });
+      }
+    });
+
+    return Array.from(callMap.values());
+  }, [data, curatedPicks, curatedSymbolMap, capital, customPurchases, userCallOverrides]);
+
+  // Filter unified calls based on Scope and Search
+  const filteredCalls = useMemo(() => {
+    return unifiedCalls.filter((c) => {
+      if (scope === "curated" && !c.isCurated) return false;
+      if (scope === "portfolio" && !c.isPortfolio) return false;
+      if (search.trim()) {
+        const q = search.trim().toLowerCase();
+        const mSym = c.symbol.toLowerCase().includes(q);
+        const mName = c.name.toLowerCase().includes(q);
+        const mSec = c.sector.toLowerCase().includes(q);
+        const mClust = c.cluster.toLowerCase().includes(q);
+        if (!mSym && !mName && !mSec && !mClust) return false;
+      }
+      return true;
+    });
+  }, [unifiedCalls, scope, search]);
+
+  // Group calls by Sector
+  const sectorGroups = useMemo(() => {
+    const map = new Map<string, typeof filteredCalls>();
+    filteredCalls.forEach((c) => {
+      const sec = c.sector || "Other";
+      if (!map.has(sec)) map.set(sec, []);
+      map.get(sec)!.push(c);
+    });
+
+    // Sort calls within each sector: curated first, then composite score desc
+    const groups: { sector: string; count: number; calls: typeof filteredCalls }[] = [];
+    map.forEach((calls, sector) => {
+      calls.sort((a, b) => {
+        if (a.isCurated && !b.isCurated) return -1;
+        if (!a.isCurated && b.isCurated) return 1;
+        return (b.composite_pct ?? 0) - (a.composite_pct ?? 0);
+      });
+      groups.push({ sector, count: calls.length, calls });
+    });
+
+    // Sort sectors alphabetically
+    groups.sort((a, b) => a.sector.localeCompare(b.sector));
+    return groups;
+  }, [filteredCalls]);
+
+  // Default expand all sectors initially or when search matches
+  useEffect(() => {
+    if (sectorGroups.length > 0 && expandedSectors.size === 0) {
+      setExpandedSectors(new Set(sectorGroups.map((g) => g.sector)));
     }
-    return ["ALL", ...Array.from(list).sort()];
-  }, [data, activeTab]);
+  }, [sectorGroups, expandedSectors.size]);
 
-  const filteredPortfolio = useMemo(() => {
-    if (!data) return [];
-    const list = data.portfolioActions.filter((p) => {
-      if (selectedHorizon !== "ALL" && p.horizon !== selectedHorizon) return false;
-      if (search) {
-        const q = search.toLowerCase();
-        const matchSym = p.symbol.toLowerCase().includes(q);
-        const matchName = p.company_name?.toLowerCase().includes(q);
-        if (!matchSym && !matchName) return false;
-      }
-      if (selectedCluster !== "ALL" && p.cluster_name !== selectedCluster) return false;
-      if (actionFilter !== "ALL" && !p.action_today.includes(actionFilter)) return false;
-      return true;
+  // Selected Call Detail
+  const selectedCall = useMemo(() => {
+    return filteredCalls.find((c) => c.symbol === selectedSymbol) || filteredCalls[0] || null;
+  }, [filteredCalls, selectedSymbol]);
+
+  // Sync edit form when selectedCall changes
+  useEffect(() => {
+    if (selectedCall) {
+      setEditPurchaseDate(selectedCall.purchaseDate || new Date().toISOString().slice(0, 10));
+      setEditPurchasePrice(selectedCall.purchasePrice ? String(selectedCall.purchasePrice) : String(selectedCall.cmp));
+      setIsEditingPurchase(false);
+    }
+  }, [selectedCall]);
+
+  const toggleSector = (sec: string) => {
+    setExpandedSectors((prev) => {
+      const next = new Set(prev);
+      if (next.has(sec)) next.delete(sec);
+      else next.add(sec);
+      return next;
     });
+  };
 
-    list.sort((a, b) => {
-      if (sortBy === "date_desc") {
-        return new Date(b.generated_at ?? 0).getTime() - new Date(a.generated_at ?? 0).getTime();
-      }
-      if (sortBy === "date_asc") {
-        return new Date(a.generated_at ?? 0).getTime() - new Date(b.generated_at ?? 0).getTime();
-      }
-      if (sortBy === "perf_desc") {
-        return (b.pct_move ?? b.pnl_pct ?? 0) - (a.pct_move ?? a.pnl_pct ?? 0);
-      }
-      if (sortBy === "upside_desc") {
-        return (b.upside_pct ?? 0) - (a.upside_pct ?? 0);
-      }
-      if (sortBy === "comp_desc") {
-        return (b.composite_pct ?? 0) - (a.composite_pct ?? 0);
-      }
-      return 0;
-    });
+  const expandAll = () => setExpandedSectors(new Set(sectorGroups.map((g) => g.sector)));
+  const collapseAll = () => setExpandedSectors(new Set());
 
-    return list;
-  }, [data, search, selectedCluster, actionFilter, selectedHorizon, sortBy]);
-
-  const filteredGems = useMemo(() => {
-    if (!data) return [];
-    const list = data.clusterGems.filter((g) => {
-      const override = userCallOverrides[g.symbol];
-      const isTaken = override ? override.is_taken : g.is_taken;
-      const isCleared = override ? override.is_cleared : g.is_cleared;
-
-      if (avoidOwned && g.is_portfolio) return false;
-      if (gemsOnly && !g.is_gem) return false;
-      if (selectedHorizon !== "ALL" && g.horizon !== selectedHorizon) return false;
-
-      if (selectedStatus === "taken" && !isTaken) return false;
-      if (selectedStatus === "profit" && !(isTaken && (g.pct_move ?? 0) > 0.5)) return false;
-      if (selectedStatus === "loss" && !(isTaken && (g.pct_move ?? 0) < -0.5)) return false;
-      if (selectedStatus === "exited" && !isCleared) return false;
-      if (selectedStatus === "fresh" && (isTaken || isCleared)) return false;
-
-      if (search) {
-        const q = search.toLowerCase();
-        const matchSym = g.symbol.toLowerCase().includes(q);
-        const matchName = g.company_name?.toLowerCase().includes(q);
-        if (!matchSym && !matchName) return false;
-      }
-      if (selectedCluster !== "ALL" && g.cluster_name !== selectedCluster) return false;
-      return true;
-    });
-
-    list.sort((a, b) => {
-      if (sortBy === "date_desc") {
-        return new Date(b.generated_at ?? 0).getTime() - new Date(a.generated_at ?? 0).getTime();
-      }
-      if (sortBy === "date_asc") {
-        return new Date(a.generated_at ?? 0).getTime() - new Date(b.generated_at ?? 0).getTime();
-      }
-      if (sortBy === "perf_desc") {
-        return (b.pct_move ?? 0) - (a.pct_move ?? 0);
-      }
-      if (sortBy === "upside_desc") {
-        return (b.upside_pct ?? 0) - (a.upside_pct ?? 0);
-      }
-      if (sortBy === "comp_desc") {
-        return (b.composite_pct ?? 0) - (a.composite_pct ?? 0);
-      }
-      return 0;
-    });
-
-    return list;
-  }, [data, search, selectedCluster, gemsOnly, sortBy, avoidOwned, selectedHorizon, selectedStatus, userCallOverrides]);
+  // Distinct dates for dropdown
+  const dateOptions = useMemo(() => {
+    const list = data?.availableDates ? [...data.availableDates] : [];
+    // Ensure 2026-10-31 is present if not already
+    if (!list.includes("2026-10-31")) list.unshift("2026-10-31");
+    return Array.from(new Set(list));
+  }, [data]);
 
   return (
-    <div className="space-y-5">
-      {/* Header bar */}
-      <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-slate-200">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-            <h1 className="text-xl font-bold tracking-tight text-slate-900">
-              Institutional Calls &amp; Capital Allocation Desk
-            </h1>
-            <span className="px-2 py-0.5 rounded text-[10.5px] font-mono font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-              ACTIONABLE CALLS
-            </span>
+    <div className="space-y-4">
+      {/* ── Top Header & Filter Bar ─────────────────────────────────────────── */}
+      <div className="bg-white border hairline rounded-lg p-3 sm:p-4 shadow-2xs space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-2.5">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className="text-lg sm:text-xl font-bold tracking-tight text-slate-900 font-sans">
+                  Institutional Calls Desk
+                </h1>
+                <span className="px-2 py-0.5 rounded text-[10.5px] font-mono font-semibold bg-emerald-50 text-emerald-800 border border-emerald-300">
+                  DUAL-ANCHOR ENGINE
+                </span>
+                {selectedDate !== "ALL" && (
+                  <span className="px-2 py-0.5 rounded text-[10.5px] font-mono bg-indigo-50 text-indigo-700 border border-indigo-200">
+                    Snapshot: {selectedDate}
+                  </span>
+                )}
+              </div>
+              <p className="text-[12px] text-slate-500 mt-0.5">
+                Sector-grouped calls with Dual-Anchor tracking: Call Generation vs. User Execution performance.
+              </p>
+            </div>
           </div>
-          <p className="text-[12.5px] text-slate-500 mt-0.5">
-            Active capital deployment plan, exact share sizing, entry tranches, date-wise history, and live performance.
-          </p>
-        </div>
 
-        <button
-          onClick={fetchData}
-          disabled={loading}
-          className="px-3 py-1.5 rounded-md text-[12px] font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 transition-colors"
-        >
-          {loading ? "Refreshing…" : "Refresh Calls"}
-        </button>
-      </div>
-
-      {/* Primary Navigation Tabs */}
-      <div className="flex items-center justify-between border-b border-slate-200 pb-2 flex-wrap gap-2">
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setActiveTab("plan")}
-            className={`px-3 py-1.5 rounded-md text-[12.5px] font-medium transition-all flex items-center gap-1.5 ${
-              activeTab === "plan"
-                ? "bg-indigo-700 text-white shadow-xs"
-                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-            }`}
-          >
-            <Coins className="w-3.5 h-3.5" />
-            <span>₹1 Lakh Deployment Plan</span>
-          </button>
-
-          <button
-            onClick={() => { setActiveTab("portfolio"); setActionFilter("ALL"); }}
-            className={`px-3 py-1.5 rounded-md text-[12.5px] font-medium transition-all flex items-center gap-1.5 ${
-              activeTab === "portfolio"
-                ? "bg-slate-900 text-white shadow-xs"
-                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-            }`}
-          >
-            <Wallet className="w-3.5 h-3.5" />
-            <span>Portfolio Sweep ({data?.summary?.portfolioTotalCount ?? 0})</span>
-          </button>
-
-          <button
-            onClick={() => { setActiveTab("gems"); setActionFilter("ALL"); }}
-            className={`px-3 py-1.5 rounded-md text-[12.5px] font-medium transition-all flex items-center gap-1.5 ${
-              activeTab === "gems"
-                ? "bg-slate-900 text-white shadow-xs"
-                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-            }`}
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>Cluster Gems &amp; Calls ({data?.summary?.totalClusterCalls ?? 0})</span>
-          </button>
-        </div>
-
-        {/* Search, Cluster Selector & Date-wise Sort Controls */}
-        {activeTab !== "plan" && (
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Sort Selector */}
-            <div className="flex items-center gap-1 bg-slate-50 border border-slate-300 rounded-md px-2 py-0.5">
-              <ArrowDownUp className="w-3.5 h-3.5 text-slate-500" />
+            {/* Top Date Dropdown */}
+            <div className="flex items-center gap-1.5 bg-slate-50 border hairline rounded-md px-2.5 py-1 text-[12px]">
+              <Calendar className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+              <label htmlFor="call-date-select" className="font-semibold text-slate-600 text-[11.5px]">
+                Date:
+              </label>
               <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as SortBy)}
-                className="text-[12px] bg-transparent text-slate-800 font-medium focus:outline-none cursor-pointer"
+                id="call-date-select"
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+                className="bg-transparent font-medium text-slate-900 focus:outline-none cursor-pointer"
               >
-                <option value="date_desc">📅 Date Called (Newest First)</option>
-                <option value="date_asc">📅 Date Called (Oldest First)</option>
-                <option value="perf_desc">📈 Performance Since Call</option>
-                <option value="upside_desc">🎯 12M Forward Upside</option>
-                <option value="comp_desc">⭐ Composite Score</option>
+                <option value="ALL">📅 All Active Dates (Latest)</option>
+                {dateOptions.map((d) => (
+                  <option key={d} value={d}>
+                    {fmtDate(d)} ({daysAgo(d)})
+                  </option>
+                ))}
               </select>
             </div>
 
+            <button
+              onClick={() => fetchData()}
+              disabled={loading}
+              className="px-2.5 py-1 rounded-md text-[12px] font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 border hairline transition-colors flex items-center gap-1"
+            >
+              <RotateCcw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />
+              <span>{loading ? "Loading…" : "Refresh"}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Scope selector & Search Bar */}
+        <div className="flex items-center justify-between flex-wrap gap-2 pt-2 border-t hairline">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <button
+              onClick={() => setScope("all")}
+              className={`px-3 py-1 rounded-md text-[12px] font-medium transition-all flex items-center gap-1.5 ${
+                scope === "all"
+                  ? "bg-slate-900 text-white shadow-xs"
+                  : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>All Calls ({unifiedCalls.length})</span>
+            </button>
+
+            <button
+              onClick={() => setScope("curated")}
+              className={`px-3 py-1 rounded-md text-[12px] font-medium transition-all flex items-center gap-1.5 ${
+                scope === "curated"
+                  ? "bg-indigo-700 text-white shadow-xs"
+                  : "bg-indigo-50 text-indigo-800 hover:bg-indigo-100 border border-indigo-200"
+              }`}
+            >
+              <Coins className="w-3.5 h-3.5 text-amber-300" />
+              <span>Curated Plan (Top 6)</span>
+            </button>
+
+            <button
+              onClick={() => setScope("portfolio")}
+              className={`px-3 py-1 rounded-md text-[12px] font-medium transition-all flex items-center gap-1.5 ${
+                scope === "portfolio"
+                  ? "bg-slate-900 text-white shadow-xs"
+                  : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+              }`}
+            >
+              <Wallet className="w-3.5 h-3.5" />
+              <span>Portfolio Holdings ({unifiedCalls.filter((c) => c.isPortfolio).length})</span>
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2">
             <div className="relative">
               <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
                 type="text"
-                placeholder="Search symbol..."
+                placeholder="Find symbol, company, sector..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="pl-8 pr-3 py-1 text-[12px] rounded-md border border-slate-300 bg-white focus:outline-none focus:ring-1 focus:ring-slate-400 w-32 sm:w-44"
+                className="pl-8 pr-3 py-1 text-[12px] rounded-md border hairline bg-white focus:outline-none focus:ring-1 focus:ring-slate-400 w-48 sm:w-64"
               />
+              {search && (
+                <button
+                  onClick={() => setSearch("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs"
+                >
+                  ✕
+                </button>
+              )}
             </div>
 
-            <select
-              value={selectedCluster}
-              onChange={(e) => setSelectedCluster(e.target.value)}
-              className="text-[12px] px-2.5 py-1 rounded-md border border-slate-300 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-slate-400 max-w-[160px]"
-            >
-              {clusters.map((c) => (
-                <option key={c} value={c}>
-                  {c === "ALL" ? "All Clusters" : c}
-                </option>
-              ))}
-            </select>
-
-            {activeTab === "portfolio" && (
-              <div className="flex items-center gap-1">
-                {(["ALL", "TRIM", "HOLD", "ACCUMULATE", "EXIT"] as const).map((a) => (
-                  <button
-                    key={a}
-                    onClick={() => setActionFilter(a)}
-                    className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
-                      actionFilter === a
-                        ? "bg-slate-800 text-white"
-                        : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                    }`}
-                  >
-                    {a}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {activeTab === "gems" && (
-              <div className="flex items-center gap-1.5">
-                <button
-                  onClick={() => setAvoidOwned((o) => !o)}
-                  className={`px-2.5 py-1 rounded text-[11.5px] font-medium border transition-colors flex items-center gap-1 ${
-                    avoidOwned
-                      ? "bg-indigo-600 text-white border-indigo-700 shadow-2xs font-semibold"
-                      : "bg-white text-slate-700 border-slate-300 hover:bg-slate-50"
-                  }`}
-                  title="Filter out stocks already present in your portfolio to avoid duplicate purchases"
-                >
-                  <CheckCircle2 className={`w-3.5 h-3.5 ${avoidOwned ? "text-white" : "text-emerald-500"}`} />
-                  <span>{avoidOwned ? "Avoiding Owned (Fresh Only)" : "Avoid Already Owned"}</span>
-                </button>
-
-                <button
-                  onClick={() => setGemsOnly((o) => !o)}
-                  className={`px-2.5 py-1 rounded text-[11.5px] font-medium border transition-colors flex items-center gap-1 ${
-                    gemsOnly
-                      ? "bg-amber-50 text-amber-800 border-amber-300"
-                      : "bg-white text-slate-600 border-slate-300 hover:bg-slate-50"
-                  }`}
-                >
-                  <Sparkles className="w-3 h-3 text-amber-500" />
-                  <span>Gems Only</span>
-                </button>
-              </div>
-            )}
+            <div className="text-[11.5px] muted-text hidden sm:block tabular-nums font-mono">
+              {sectorGroups.length} Sectors · {filteredCalls.length} Calls
+            </div>
           </div>
-        )}
+        </div>
       </div>
 
-      {/* Horizon Strategy & Call Status Filter Bar (hidden on 1 Lakh Deployment Plan tab) */}
-      {activeTab !== "plan" && (
-        <div className="flex items-center justify-between flex-wrap gap-2 py-2 px-3 rounded-lg border border-slate-200 bg-slate-50/70 text-[11.5px]">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[10.5px] font-bold text-slate-500 uppercase tracking-wide mr-1">
-              Idea Horizon:
+      {/* ── Main Two-Pane Verdict Layout ────────────────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] xl:grid-cols-[340px_minmax(0,1fr)] gap-4 items-start">
+        {/* ── Left Rail: Sectors & Calls Tree ───────────────────────────────── */}
+        <div className="rounded-lg border hairline bg-white lg:sticky lg:top-3 lg:max-h-[calc(100vh-2rem)] flex flex-col overflow-hidden shadow-2xs">
+          <div className="px-3 py-2 border-b hairline flex items-center justify-between gap-2 shrink-0 bg-slate-50/70">
+            <span className="text-[11.5px] font-bold uppercase tracking-wider text-slate-700">
+              Sectors &amp; Calls
             </span>
-            {[
-              { id: "ALL", label: `All Horizons (${data?.clusterGems.length ?? 0})` },
-              { id: "1M", label: `⚡ 1M Tactical (${data?.summary?.horizonCounts?.["1M"] ?? 0})` },
-              { id: "3M", label: `🚀 3M Catalyst (${data?.summary?.horizonCounts?.["3M"] ?? 0})` },
-              { id: "6M", label: `📈 6M Turnaround (${data?.summary?.horizonCounts?.["6M"] ?? 0})` },
-              { id: "1Y", label: `🏛️ 1Y Core (${data?.summary?.horizonCounts?.["1Y"] ?? 0})` },
-              { id: ">1Y", label: `💎 >1Y Compounder (${data?.summary?.horizonCounts?.[">1Y"] ?? 0})` },
-              { id: "EXIT", label: `🛑 Exit Ideas (${data?.summary?.horizonCounts?.["EXIT"] ?? 0})` },
-            ].map((h) => (
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] muted-text tabular-nums font-mono">
+                {sectorGroups.length}s · {filteredCalls.length}c
+              </span>
               <button
-                key={h.id}
-                onClick={() => setSelectedHorizon(h.id)}
-                className={`px-2.5 py-1 rounded text-[11px] font-medium transition-all ${
-                  selectedHorizon === h.id
-                    ? "bg-slate-900 text-white shadow-xs font-bold"
-                    : "bg-white text-slate-700 border border-slate-200 hover:bg-slate-100"
-                }`}
+                type="button"
+                onClick={expandedSectors.size === sectorGroups.length ? collapseAll : expandAll}
+                className="text-[10px] text-slate-500 hover:text-slate-800 px-1.5 py-0.5 rounded border hairline bg-white"
               >
-                {h.label}
+                {expandedSectors.size === sectorGroups.length ? "⊟ Collapse" : "⊞ Expand"}
               </button>
-            ))}
+            </div>
           </div>
 
-          {activeTab === "gems" && (
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-[10.5px] font-bold text-slate-500 uppercase tracking-wide mr-1">
-                Call Status:
-              </span>
-              {[
-                { id: "ALL", label: "All" },
-                { id: "taken", label: "🟦 Taken" },
-                { id: "profit", label: "🟩 In Profit" },
-                { id: "loss", label: "🟥 In Loss" },
-                { id: "exited", label: "⬛ Exited" },
-              ].map((s) => (
-                <button
-                  key={s.id}
-                  onClick={() => setSelectedStatus(s.id)}
-                  className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all ${
-                    selectedStatus === s.id
-                      ? "bg-indigo-700 text-white shadow-xs font-bold"
-                      : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
-                  }`}
-                >
-                  {s.label}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Loading & Error States */}
-      {loading && (
-        <div className="h-64 rounded-lg border border-slate-200 bg-[var(--color-paper)] flex items-center justify-center text-[13px] text-slate-500">
-          Calculating institutional capital allocation models and loading portfolio...
-        </div>
-      )}
-
-      {error && (
-        <div className="p-4 rounded-lg border border-rose-200 bg-rose-50 text-[13px] text-rose-800">
-          {error}
-        </div>
-      )}
-
-      {/* TAB 1: 1 LAKH MONTHLY DEPLOYMENT PLAN */}
-      {!loading && !error && activeTab === "plan" && (
-        <div className="space-y-5">
-          {/* Capital Slider / Selector Card */}
-          <div className="rounded-lg border border-indigo-200/80 bg-gradient-to-r from-indigo-50/60 via-white to-slate-50 p-4 shadow-2xs">
-            <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-indigo-100">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold text-sm">
-                  ₹
-                </div>
-                <div>
-                  <div className="text-[11px] font-semibold uppercase tracking-wider text-indigo-700">
-                    Monthly Fresh Capital Deployment Calculator
-                  </div>
-                  <div className="text-base font-bold text-slate-900">
-                    Deploying {money(capital)} across 6 Diversified Institutional Alpha Calls
-                  </div>
-                </div>
+          <div className="overflow-y-auto flex-1 min-h-0 p-1.5 space-y-1">
+            {sectorGroups.length === 0 ? (
+              <div className="text-center py-8 px-2 text-slate-400 text-xs">
+                No calls found matching the current filter.
               </div>
+            ) : (
+              sectorGroups.map((g) => {
+                const isSecOpen = !!search.trim() || expandedSectors.has(g.sector);
+                return (
+                  <div key={g.sector} className="rounded border hairline bg-slate-50/40 overflow-hidden">
+                    {/* Sector Header Toggle */}
+                    <button
+                      onClick={() => toggleSector(g.sector)}
+                      className="w-full flex items-center justify-between px-2 py-1.5 text-left text-[12px] font-bold text-slate-800 hover:bg-slate-100/80 transition-colors"
+                      aria-expanded={isSecOpen}
+                    >
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        {isSecOpen ? (
+                          <ChevronDown className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                        ) : (
+                          <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                        )}
+                        <span className="truncate text-indigo-950 font-semibold">{g.sector}</span>
+                      </div>
+                      <span className="px-1.5 py-0.2 rounded text-[10px] font-mono font-semibold bg-slate-200/80 text-slate-700 shrink-0">
+                        {g.count}
+                      </span>
+                    </button>
 
-              {/* Capital Preset Buttons & Mode Toggle */}
-              <div className="flex items-center gap-2 flex-wrap">
-                <div className="flex items-center bg-white rounded-md border border-slate-300 p-0.5 text-[11px]">
-                  <button
-                    onClick={() => setAvoidOwned(false)}
-                    className={`px-2.5 py-1 rounded transition-colors font-medium ${
-                      !avoidOwned
-                        ? "bg-indigo-600 text-white shadow-2xs font-bold"
-                        : "text-slate-600 hover:text-slate-900"
-                    }`}
-                  >
-                    Foundation Barbell (6 Core)
-                  </button>
-                  <button
-                    onClick={() => setAvoidOwned(true)}
-                    className={`px-2.5 py-1 rounded transition-colors font-medium flex items-center gap-1 ${
-                      avoidOwned
-                        ? "bg-indigo-600 text-white shadow-2xs font-bold"
-                        : "text-slate-600 hover:text-slate-900"
-                    }`}
-                  >
-                    <CheckCircle2 className="w-3 h-3" />
-                    <span>Avoid Already Owned (Fresh Only)</span>
-                  </button>
+                    {/* Stock Calls inside this Sector */}
+                    {isSecOpen && (
+                      <div className="p-1 space-y-1 border-t hairline bg-white">
+                        {g.calls.map((call) => {
+                          const isSel = selectedCall?.symbol === call.symbol;
+                          const callMove = call.callPerfPct;
+                          return (
+                            <button
+                              key={call.symbol}
+                              onClick={() => setSelectedSymbol(call.symbol)}
+                              className={`w-full flex items-center justify-between p-2 rounded-md text-left transition-all ${
+                                isSel
+                                  ? "bg-slate-900 text-white shadow-xs"
+                                  : "hover:bg-slate-100/80 text-slate-900"
+                              }`}
+                            >
+                              <div className="min-w-0 flex-1 pr-2">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-mono font-bold text-[12.5px] tracking-tight">
+                                    {call.symbol}
+                                  </span>
+                                  {call.isCurated && (
+                                    <span
+                                      className={`text-[9px] font-bold px-1 rounded ${
+                                        isSel
+                                          ? "bg-amber-400 text-slate-950"
+                                          : "bg-amber-100 text-amber-900 border border-amber-300"
+                                      }`}
+                                      title="Top 6 Curated Deployment Plan Pick"
+                                    >
+                                      ★ TOP 6
+                                    </span>
+                                  )}
+                                  {call.isPortfolio && (
+                                    <span
+                                      className={`text-[9px] font-bold px-1 rounded ${
+                                        isSel
+                                          ? "bg-blue-400 text-slate-950"
+                                          : "bg-blue-100 text-blue-900 border border-blue-300"
+                                      }`}
+                                      title="Held in Portfolio"
+                                    >
+                                      P
+                                    </span>
+                                  )}
+                                </div>
+                                <div
+                                  className={`text-[10.5px] truncate mt-0.5 ${
+                                    isSel ? "text-slate-300" : "text-slate-500"
+                                  }`}
+                                >
+                                  {call.name}
+                                </div>
+                              </div>
+
+                              <div className="text-right shrink-0">
+                                <div className="font-mono font-bold text-[12px]">{money(call.cmp)}</div>
+                                <div className="flex items-center justify-end gap-1 mt-0.5">
+                                  {callMove != null ? (
+                                    <span
+                                      className={`text-[10px] font-mono font-semibold ${
+                                        callMove >= 0
+                                          ? isSel
+                                            ? "text-emerald-400"
+                                            : "text-emerald-700"
+                                          : isSel
+                                          ? "text-rose-400"
+                                          : "text-rose-600"
+                                      }`}
+                                    >
+                                      {pct(callMove)}
+                                    </span>
+                                  ) : null}
+                                  <span
+                                    className={`px-1 rounded text-[8.5px] font-sans font-bold uppercase ${
+                                      isSel
+                                        ? "bg-white/20 text-white"
+                                        : actionBadgeClass(call.actionToday)
+                                    }`}
+                                  >
+                                    {call.actionToday?.split(" ")[0]}
+                                  </span>
+                                </div>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        {/* ── Right Panel: Call Detail & Dual-Anchor Deep Dive ─────────────── */}
+        <div className="space-y-4">
+          {!selectedCall ? (
+            <div className="bg-white border hairline rounded-lg p-12 text-center text-slate-500">
+              Select a stock from the sector list on the left to inspect call details.
+            </div>
+          ) : (
+            <>
+              {/* Header Card */}
+              <div className="bg-white border hairline rounded-lg p-4 shadow-2xs space-y-3">
+                <div className="flex items-start justify-between flex-wrap gap-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h2 className="text-2xl font-bold font-mono tracking-tight text-slate-900">
+                        {selectedCall.symbol}
+                      </h2>
+                      <span className="text-base text-slate-700 font-medium">
+                        {selectedCall.name}
+                      </span>
+                      <CapTierBadge category={selectedCall.market_cap_category as CapCategory} />
+                      {selectedCall.isCurated && (
+                        <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                          ★ ₹1L Curated Allocation Pick
+                        </span>
+                      )}
+                      {selectedCall.isPortfolio && (
+                        <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-blue-100 text-blue-900 border border-blue-300">
+                          Portfolio Position ({selectedCall.heldQty} sh)
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2 text-[12px] text-slate-600 flex-wrap">
+                      <span className="font-semibold text-indigo-700">{selectedCall.sector}</span>
+                      <span>•</span>
+                      <span>{selectedCall.industry}</span>
+                      <span>•</span>
+                      <span className="muted-text">MCAP: ₹{selectedCall.marketCapCr?.toLocaleString()} Cr</span>
+                    </div>
+                  </div>
+
+                  <div className="text-right flex flex-col items-end">
+                    <div className="text-2xl font-bold font-mono text-slate-900">
+                      {money(selectedCall.cmp)}
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-1">
+                      <span
+                        className={`px-2 py-0.5 rounded text-[11px] font-bold border ${actionBadgeClass(
+                          selectedCall.actionToday
+                        )}`}
+                      >
+                        {selectedCall.actionToday}
+                      </span>
+                      <span
+                        className={`px-2 py-0.5 rounded text-[11px] font-semibold border ${getHorizonBadge(
+                          selectedCall.horizon
+                        )}`}
+                      >
+                        {selectedCall.horizonLabel}
+                      </span>
+                    </div>
+                  </div>
                 </div>
 
-                <div className="flex items-center gap-1">
-                  {[50000, 100000, 200000, 500000].map((amt) => (
+                {/* Quick actions strip */}
+                <div className="flex items-center justify-between flex-wrap gap-2 pt-2 border-t hairline text-[12px]">
+                  <div className="flex items-center gap-2">
                     <button
-                      key={amt}
-                      onClick={() => setCapital(amt)}
-                      className={`px-2.5 py-1 rounded text-[11.5px] font-mono font-medium transition-all ${
-                        capital === amt
-                          ? "bg-slate-900 text-white shadow-xs font-bold"
-                          : "bg-white text-slate-700 border border-slate-300 hover:bg-slate-100"
+                      onClick={() => handleTakeCall(selectedCall.symbol)}
+                      disabled={selectedCall.isTaken}
+                      className={`px-2.5 py-1 rounded text-[11.5px] font-semibold transition-colors flex items-center gap-1 ${
+                        selectedCall.isTaken
+                          ? "bg-emerald-50 text-emerald-800 border border-emerald-300 opacity-80"
+                          : "bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs"
                       }`}
                     >
-                      {amt >= 100000 ? `₹${amt / 100000}L` : `₹${amt / 1000}k`}
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>{selectedCall.isTaken ? "Call Taken" : "Take Call"}</span>
                     </button>
-                  ))}
-                </div>
-              </div>
-            </div>
 
-            {/* KPI Summary of the Plan */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3.5">
-              <div className="rounded-md border border-slate-200 bg-white p-2.5 shadow-2xs">
-                <div className="text-[10px] uppercase font-medium text-slate-400">Total Deployment</div>
-                <div className="text-[17px] font-mono font-bold text-slate-900 mt-0.5">
-                  {money(capital)}
-                </div>
-                <div className="text-[10px] text-slate-500 mt-0.5">6 Diversified Tranches</div>
-              </div>
-
-              <div className="rounded-md border border-emerald-200 bg-emerald-50/30 p-2.5 shadow-2xs">
-                <div className="text-[10px] uppercase font-medium text-emerald-800">Tranche 1 (Buy Today)</div>
-                <div className="text-[17px] font-mono font-bold text-emerald-700 mt-0.5">
-                  {money(capital / 2)}
-                </div>
-                <div className="text-[10px] text-emerald-600 mt-0.5">50% market entry at CMP</div>
-              </div>
-
-              <div className="rounded-md border border-blue-200 bg-blue-50/30 p-2.5 shadow-2xs">
-                <div className="text-[10px] uppercase font-medium text-blue-800">Tranche 2 (Pullback Limit)</div>
-                <div className="text-[17px] font-mono font-bold text-blue-700 mt-0.5">
-                  {money(capital / 2)}
-                </div>
-                <div className="text-[10px] text-blue-600 mt-0.5">50% GTT orders at Buy Below</div>
-              </div>
-
-              <div className="rounded-md border border-indigo-200 bg-indigo-50/30 p-2.5 shadow-2xs">
-                <div className="text-[10px] uppercase font-medium text-indigo-800">Projected 12M Return</div>
-                <div className="text-[17px] font-mono font-bold text-indigo-700 mt-0.5">
-                  +{money(totalProjectedProfit)} ({pct(blendedUpside)})
-                </div>
-                <div className="text-[10px] text-indigo-600 mt-0.5">Target Value: {money(capital + totalProjectedProfit)}</div>
-              </div>
-            </div>
-          </div>
-
-          {/* Actionable Call Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {curatedPlan.map((c) => (
-              <div
-                key={c.symbol}
-                className={`rounded-lg p-4 shadow-2xs transition-all flex flex-col justify-between border ${c.boxStyle.cardClass}`}
-              >
-                <div>
-                  <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-100 flex-wrap gap-2">
-                    <div>
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <Link
-                          href={`/stock/${c.symbol}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-base font-bold text-slate-900 hover:text-indigo-600 flex items-center gap-1"
-                          title="Open stock details in new window"
-                        >
-                          <span>{c.symbol}</span>
-                          <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
-                        </Link>
-                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${getHorizonBadge(c.horizon)}`}>
-                          {c.horizonLabel}
-                        </span>
-                        <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
-                          {c.weightPct}% ({money(c.allocatedAmount)})
-                        </span>
-                      </div>
-                      <div className="text-[11px] text-slate-500 mt-0.5">
-                        {c.name} · <span className="font-medium text-slate-600">{c.cluster}</span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className={`inline-block px-2 py-0.5 rounded text-[10.5px] border ${c.boxStyle.badgeClass}`}>
-                        {c.boxStyle.badgeText}
-                      </span>
-                      {!c.isTaken && !c.isCleared && (
-                        <button
-                          onClick={() => handleTakeCall(c.symbol)}
-                          className="px-2 py-0.5 rounded text-[10.5px] font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-2xs transition-colors"
-                          title="Take this call"
-                        >
-                          + Take
-                        </button>
-                      )}
-                      {c.isTaken && (
-                        <button
-                          onClick={() => handleExitCall(c.symbol)}
-                          className="px-2 py-0.5 rounded text-[10.5px] font-semibold bg-slate-600 hover:bg-slate-700 text-white shadow-2xs transition-colors"
-                          title="Exit this call"
-                        >
-                          Exit
-                        </button>
-                      )}
-                      {c.isCleared && (
-                        <button
-                          onClick={() => handleTakeCall(c.symbol)}
-                          className="px-2 py-0.5 rounded text-[10.5px] font-medium bg-slate-200 hover:bg-slate-300 text-slate-700 transition-colors"
-                          title="Re-open this call"
-                        >
-                          Re-take
-                        </button>
-                      )}
-                    </div>
+                    <button
+                      onClick={() => handleExitCall(selectedCall.symbol)}
+                      disabled={selectedCall.isCleared}
+                      className="px-2.5 py-1 rounded text-[11.5px] font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 border hairline transition-colors"
+                    >
+                      {selectedCall.isCleared ? "Call Closed" : "Mark Exit"}
+                    </button>
                   </div>
 
-                  {/* Provenance, Call Performance & Holding Status */}
-                  <div className="flex items-center justify-between text-[11px] bg-slate-50 border border-slate-200/80 rounded px-2.5 py-1.5 mb-2.5">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-slate-500 font-mono text-[10.5px]">
-                        Call: {fmtDate(c.callDate)} @ {money(c.anchorPrice)}
-                      </span>
-                      {c.pctMove != null && (
-                        <span className={`font-mono font-bold text-[10.5px] px-1.5 py-0.2 rounded border ${
-                          c.pctMove >= 0 ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-rose-50 text-rose-700 border-rose-200"
-                        }`}>
-                          {pct(c.pctMove)}
-                        </span>
-                      )}
-                    </div>
-
-                    <div>
-                      {c.isPortfolio ? (
-                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-300">
-                          HELD ({c.heldQty} sh)
-                        </span>
-                      ) : (
-                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
-                          FRESH CANDIDATE
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  {c.isPortfolio && (
-                    <div className="text-[10.5px] text-amber-900 bg-amber-50/80 border border-amber-200 rounded p-2 mb-2.5 leading-snug">
-                      ⚠️ <strong>Already in your portfolio.</strong> Do not buy as a new stock every week. Rule: <strong>{c.actionToday}</strong> toward {money(c.target)} target. Only add if price pulls back to Limit Dip (≤ {money(c.buyBelow)}).
-                    </div>
-                  )}
-
-                  {/* Sizing & Execution Box */}
-                  <div className="bg-slate-50/70 rounded-md border border-slate-200/80 p-3 mb-3">
-                    <div className="text-[11px] font-semibold text-slate-700 uppercase tracking-wide mb-2 flex items-center justify-between">
-                      <span>Execution Blueprint</span>
-                      <span className="text-indigo-700 font-bold font-mono">Total: {c.totalShares} Shares</span>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2 text-[11.5px]">
-                      <div className="bg-white rounded border border-slate-200 p-2">
-                        <div className="text-[10px] text-emerald-700 font-semibold uppercase">Tranche 1 (Today)</div>
-                        <div className="font-mono font-bold text-slate-900 mt-0.5">
-                          Buy {c.tranche1Shares} @ {money(c.cmp)}
-                        </div>
-                        <div className="text-[10px] text-slate-500 mt-0.5">Cost: {money(c.t1Value)}</div>
-                      </div>
-
-                      <div className="bg-white rounded border border-slate-200 p-2">
-                        <div className="text-[10px] text-blue-700 font-semibold uppercase">Tranche 2 (Limit Dip)</div>
-                        <div className="font-mono font-bold text-slate-900 mt-0.5">
-                          Limit {c.tranche2Shares} @ ≤ {money(c.buyBelow)}
-                        </div>
-                        <div className="text-[10px] text-slate-500 mt-0.5">Cost: {money(c.t2Value)}</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Price Boundaries Strip */}
-                  <div className="grid grid-cols-3 gap-2 text-[11px] mb-3">
-                    <div className="rounded border border-slate-200 p-2 bg-white">
-                      <div className="text-slate-400 font-medium text-[9.5px] uppercase">CMP / Entry</div>
-                      <div className="font-mono font-bold text-slate-900 mt-0.5">{money(c.cmp)}</div>
-                      <div className="text-[9.5px] text-emerald-700 font-medium mt-0.5">Buy ≤ {money(c.buyBelow)}</div>
-                    </div>
-
-                    <div className="rounded border border-indigo-200 p-2 bg-indigo-50/20">
-                      <div className="text-indigo-600 font-medium text-[9.5px] uppercase">{c.timeline} Target</div>
-                      <div className="font-mono font-bold text-indigo-700 mt-0.5">{money(c.target)}</div>
-                      <div className="text-[9.5px] text-indigo-700 font-bold mt-0.5">+{c.upside}% ({money(c.profitRupees)})</div>
-                    </div>
-
-                    <div className="rounded border border-rose-200 p-2 bg-rose-50/20">
-                      <div className="text-rose-600 font-medium text-[9.5px] uppercase">Hard Stop-Loss</div>
-                      <div className="font-mono font-bold text-rose-700 mt-0.5">{money(c.stopLoss)}</div>
-                      <div className="text-[9.5px] text-rose-600 font-medium mt-0.5">Floor</div>
-                    </div>
-                  </div>
-
-                  <p className="text-[11.5px] text-slate-600 leading-relaxed">
-                    <strong>Institutional Thesis:</strong> {c.rationale}
-                  </p>
-                </div>
-
-                <div className="mt-3.5 pt-2.5 border-t border-slate-100 flex items-center justify-between text-[11px]">
-                  <span className="text-slate-500 font-medium">Role: <span className="text-slate-700">{c.role}</span></span>
                   <Link
-                    href={`/admin/verdicts?symbol=${c.symbol}&scope=all`}
+                    href={`/stock/${selectedCall.symbol}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
+                    className="inline-flex items-center gap-1 font-semibold text-indigo-600 hover:text-indigo-800 text-[12px]"
                   >
-                    <span>Verdict</span>
-                    <ArrowRight className="w-3 h-3" />
+                    <span>Open Full Deep-Dive Analysis</span>
+                    <ArrowUpRight className="w-3.5 h-3.5" />
                   </Link>
                 </div>
               </div>
-            ))}
-          </div>
 
-          {/* Funding Strategy Note */}
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-[12px] text-slate-700 leading-relaxed">
-            <div className="font-semibold text-slate-900 mb-1 flex items-center gap-1.5">
-              <span>💡</span>
-              <span>Where to source this {money(capital)}: Self-Funded via Portfolio Trims</span>
-            </div>
-            <p>
-              You don&apos;t necessarily need new outside cash for this deployment. Trimming your overextended holdings identified in today&apos;s sweep easily generates more than enough liquidity:
-            </p>
-            <ul className="list-disc pl-5 mt-1.5 space-y-0.5 text-slate-600">
-              <li><strong>`PAYTM`</strong> (+79% gain): Sell 4 shares to unlock <strong>~₹6,645</strong>.</li>
-              <li><strong>`FEDERALBNK`</strong> (+37% gain, target exceeded): Trim 35 shares to unlock <strong>~₹12,173</strong>.</li>
-              <li><strong>`ABCAPITAL`</strong> (stretched multiple): Trim 13 shares to unlock <strong>~₹4,771</strong>.</li>
-              <li><strong>`GODFRYPHLP`</strong> (+26% gain): Trim 3 shares to unlock <strong>~₹5,184</strong>.</li>
-              <li><strong>`JSWENERGY` / `SUBROS`</strong> (deteriorating momentum): Exiting unlocks <strong>~₹9,170</strong>.</li>
-            </ul>
-          </div>
+              {/* ── ⭐ DUAL-ANCHOR PERFORMANCE CARDS (CORE REQUIREMENT) ──────── */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* ANCHOR 1: CALL GIVEN */}
+                <div className="bg-gradient-to-br from-indigo-50/60 to-purple-50/40 border border-indigo-200 rounded-lg p-4 shadow-2xs space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-indigo-900 font-bold text-[12.5px]">
+                      <span className="w-2 h-2 rounded-full bg-indigo-600" />
+                      <span>ANCHOR 1: CALL GIVEN</span>
+                    </div>
+                    <span className="text-[11px] font-mono text-indigo-700 font-medium">
+                      Engine Call
+                    </span>
+                  </div>
 
-          {/* Institutional Portfolio Discipline & Anti-Churn Rule */}
-          <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-4 text-[12px] text-amber-950 leading-relaxed shadow-2xs">
-            <div className="font-bold text-amber-900 mb-1 flex items-center gap-1.5 text-[12.5px]">
-              <ShieldCheck className="w-4 h-4 text-amber-700" />
-              <span>Institutional Rule: Why We Avoid Buying New Stocks Every Week</span>
-            </div>
-            <p className="text-amber-900/90">
-              High-performing institutional portfolios maintain <strong>15 to 20 high-conviction positions</strong>, never 50+ fragmented bets.
-            </p>
-            <ul className="list-disc pl-5 mt-1.5 space-y-1 text-amber-900/80">
-              <li>
-                <strong>Once Recommended → Stays in HOLD &amp; COMPOUND:</strong> When you buy a stock called by the desk (e.g. <code>INDUSTOWER</code> or <code>UNIONBANK</code>), it enters your portfolio. You do not buy it as a &ldquo;new stock&rdquo; next week. It remains in compound mode until it hits its 12M target price or stop-loss.
-              </li>
-              <li>
-                <strong>Avoid Portfolio Bloat:</strong> If you buy 6 new stocks every week, you would hold 24 stocks in a month and over 100 stocks in a year. The <strong>&ldquo;Avoid Already Owned&rdquo;</strong> filter ensures you only evaluate fresh ideas when you actually have new capital to deploy.
-              </li>
-              <li>
-                <strong>Cycle Capital via Trims:</strong> Only add new stocks when existing positions reach their 12M targets (e.g., trimming Federal Bank or Paytm) or when deploying scheduled fresh monthly savings.
-              </li>
-            </ul>
-          </div>
-        </div>
-      )}
+                  <div className="grid grid-cols-2 gap-2 pt-1 border-t border-indigo-100">
+                    <div>
+                      <div className="text-[11px] text-slate-500 uppercase font-semibold">Call Date</div>
+                      <div className="text-[13px] font-bold font-mono text-slate-900 mt-0.5">
+                        {fmtDate(selectedCall.callDate)}
+                      </div>
+                      <div className="text-[10.5px] text-slate-500">{daysAgo(selectedCall.callDate)}</div>
+                    </div>
 
-      {/* TAB 2: PORTFOLIO SWEEP VIEW */}
-      {!loading && !error && activeTab === "portfolio" && (
-        <div className="rounded-lg border border-slate-200 bg-white overflow-hidden shadow-2xs">
-          <div className="overflow-x-auto">
-            <table className="w-full text-[12px] text-left border-collapse">
-              <thead>
-                <tr className="bg-slate-50/80 border-b border-slate-200 text-slate-600 font-semibold text-[11px] uppercase tracking-wider">
-                  <th className="py-2.5 px-3">Call Date</th>
-                  <th className="py-2.5 px-3">Stock &amp; Cluster</th>
-                  <th className="py-2.5 px-3">Action &amp; Horizon</th>
-                  <th className="py-2.5 px-3">Call Status</th>
-                  <th className="py-2.5 px-3 text-right">Holdings</th>
-                  <th className="py-2.5 px-3 text-right">CMP / LTP</th>
-                  <th className="py-2.5 px-3 text-right">Since Call (Perf)</th>
-                  <th className="py-2.5 px-3 text-right">Buy Below</th>
-                  <th className="py-2.5 px-3 text-right">Target &amp; Horizon</th>
-                  <th className="py-2.5 px-3 text-right">Upside</th>
-                  <th className="py-2.5 px-3 text-center">Score (C/Q/M)</th>
-                  <th className="py-2.5 px-3">Action Rationale &amp; Sell Timeline</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filteredPortfolio.map((p) => {
-                  const isTrim = p.action_today.includes("TRIM");
-                  const isAccumulate = p.action_today.includes("ACCUMULATE");
-                  const isExit = p.action_today.includes("EXIT");
+                    <div>
+                      <div className="text-[11px] text-slate-500 uppercase font-semibold">Anchor Call Price</div>
+                      <div className="text-[13px] font-bold font-mono text-slate-900 mt-0.5">
+                        {money(selectedCall.callPrice)}
+                      </div>
+                      <div className="text-[10.5px] text-slate-500">LTP: {money(selectedCall.cmp)}</div>
+                    </div>
+                  </div>
 
-                  const actionBadge = isTrim
-                    ? "bg-amber-50 text-amber-800 border-amber-200"
-                    : isAccumulate
-                      ? "bg-emerald-50 text-emerald-800 border-emerald-200"
-                      : isExit
-                        ? "bg-rose-50 text-rose-800 border-rose-200"
-                        : "bg-blue-50 text-blue-800 border-blue-200";
+                  <div className="pt-2 border-t border-indigo-100 flex items-center justify-between">
+                    <span className="text-[12px] font-semibold text-indigo-950">
+                      Performance Since Call:
+                    </span>
+                    <div className="text-right">
+                      <span
+                        className={`text-base font-bold font-mono ${
+                          (selectedCall.callPerfPct ?? 0) >= 0 ? "text-emerald-700" : "text-rose-600"
+                        }`}
+                      >
+                        {pct(selectedCall.callPerfPct)}
+                      </span>
+                      {selectedCall.callPrice && (
+                        <span className="text-[11px] font-mono text-slate-500 ml-1.5">
+                          ({selectedCall.cmp >= selectedCall.callPrice ? "+" : ""}
+                          {money(selectedCall.cmp - selectedCall.callPrice)}/sh)
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
 
-                  const override = userCallOverrides[p.symbol];
-                  const isTaken = override ? override.is_taken : (p.is_taken ?? true);
-                  const isCleared = override ? override.is_cleared : (p.is_cleared ?? false);
-                  const perfMove = p.pct_move != null ? p.pct_move : p.pnl_pct;
-                  const boxStyle = getCallBoxStyle(isTaken, isCleared, perfMove);
+                {/* ANCHOR 2: USER PURCHASE */}
+                <div className="bg-gradient-to-br from-emerald-50/60 to-teal-50/40 border border-emerald-200 rounded-lg p-4 shadow-2xs space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-emerald-950 font-bold text-[12.5px]">
+                      <span className="w-2 h-2 rounded-full bg-emerald-600" />
+                      <span>ANCHOR 2: STOCK PURCHASE</span>
+                    </div>
+                    <button
+                      onClick={() => setIsEditingPurchase(!isEditingPurchase)}
+                      className="text-[11px] font-medium text-emerald-800 hover:text-emerald-950 inline-flex items-center gap-1 underline underline-offset-2"
+                    >
+                      <Edit3 className="w-3 h-3" />
+                      <span>{selectedCall.purchasePrice ? "Edit / Override" : "Log Purchase"}</span>
+                    </button>
+                  </div>
 
-                  return (
-                    <tr key={p.symbol} className={`transition-colors ${boxStyle.rowClass}`}>
-                      <td className="py-2.5 px-3 whitespace-nowrap text-slate-500 font-mono text-[11px]">
-                        {fmtDate(p.generated_at)}
-                      </td>
-
-                      <td className="py-2.5 px-3">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <Link
-                            href={`/stock/${p.symbol}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="font-bold text-slate-900 hover:text-indigo-600 transition-colors flex items-center gap-1"
-                            title="Open stock chart & fundamentals in new window"
+                  {isEditingPurchase ? (
+                    <div className="bg-white/90 p-2.5 rounded border border-emerald-300 space-y-2">
+                      <div className="grid grid-cols-2 gap-2 text-[11.5px]">
+                        <div>
+                          <label className="block text-slate-600 font-semibold mb-0.5">Purchase Date</label>
+                          <input
+                            type="date"
+                            value={editPurchaseDate}
+                            onChange={(e) => setEditPurchaseDate(e.target.value)}
+                            className="w-full px-2 py-1 text-xs border rounded bg-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-slate-600 font-semibold mb-0.5">Purchase Price (₹)</label>
+                          <input
+                            type="number"
+                            step="0.05"
+                            value={editPurchasePrice}
+                            onChange={(e) => setEditPurchasePrice(e.target.value)}
+                            className="w-full px-2 py-1 text-xs border rounded bg-white font-mono"
+                          />
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-end gap-1.5 pt-1">
+                        <button
+                          onClick={() => setIsEditingPurchase(false)}
+                          className="px-2 py-0.5 text-xs text-slate-600 hover:text-slate-800"
+                        >
+                          Cancel
+                        </button>
+                        {customPurchases[selectedCall.symbol] && (
+                          <button
+                            onClick={() => clearCustomPurchase(selectedCall.symbol)}
+                            className="px-2 py-0.5 text-xs text-rose-700 hover:text-rose-900 border border-rose-200 rounded bg-rose-50"
                           >
-                            <span>{p.symbol}</span>
-                            <ExternalLink className="w-3 h-3 text-slate-400" />
-                          </Link>
-                          <Link
-                            href={`/admin/verdicts?symbol=${p.symbol}&scope=all`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-[10px] text-indigo-600 hover:text-indigo-800 font-semibold flex items-center"
-                            title="View institutional verdict in new window"
-                          >
-                            <span>Verdict</span>
-                            <ArrowUpRight className="w-2.5 h-2.5" />
-                          </Link>
-                        </div>
-                        <div className="text-[10.5px] text-slate-500 truncate max-w-[140px]">
-                          {p.cluster_name}
-                        </div>
-                      </td>
-
-                      <td className="py-2.5 px-3 whitespace-nowrap">
-                        <div className="flex flex-col gap-1 items-start">
-                          <span className={`inline-block px-2 py-0.5 rounded text-[10.5px] font-semibold border ${actionBadge}`}>
-                            {p.action_today}
-                          </span>
-                          <span className={`inline-block px-1.5 py-0.2 rounded text-[9.5px] font-bold border ${getHorizonBadge(p.horizon)}`}>
-                            {p.horizon_label || p.horizon}
-                          </span>
-                        </div>
-                      </td>
-
-                      <td className="py-2.5 px-3 whitespace-nowrap">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className={`inline-block px-2 py-0.5 rounded text-[10.5px] border ${boxStyle.badgeClass}`}>
-                            {boxStyle.badgeText}
-                          </span>
-                          {isTaken && (
-                            <button
-                              onClick={() => handleExitCall(p.symbol)}
-                              className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-600 hover:bg-slate-700 text-white transition-colors"
-                              title="Mark call as exited"
-                            >
-                              Exit
-                            </button>
-                          )}
-                          {isCleared && (
-                            <button
-                              onClick={() => handleTakeCall(p.symbol)}
-                              className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-200 hover:bg-slate-300 text-slate-700 transition-colors"
-                              title="Re-open call"
-                            >
-                              Re-take
-                            </button>
-                          )}
-                        </div>
-                      </td>
-
-                      <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                        <div className="font-mono text-slate-800 font-medium">
-                          {p.total_qty} @ {money(p.weighted_avg_cost)}
-                        </div>
-                        <div className={`text-[10.5px] font-mono font-medium ${p.pnl_pct >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
-                          PnL: {pct(p.pnl_pct)}
-                        </div>
-                      </td>
-
-                      <td className="py-2.5 px-3 text-right font-mono font-semibold text-slate-900 whitespace-nowrap">
-                        {money(p.ltp)}
-                      </td>
-
-                      <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                        {p.pct_move != null ? (
-                          <div className={`font-mono font-bold text-[11.5px] ${p.pct_move >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
-                            {pct(p.pct_move)}
-                            <div className="text-[9.5px] text-slate-400 font-normal">from {money(p.anchor_price)}</div>
-                          </div>
-                        ) : (
-                          <span className="text-slate-400">—</span>
+                            Reset
+                          </button>
                         )}
-                      </td>
-
-                      <td className="py-2.5 px-3 text-right font-mono text-emerald-700 whitespace-nowrap">
-                        {money(p.buy_below)}
-                      </td>
-
-                      <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                        <div className="font-mono font-semibold text-indigo-700">
-                          {money(p.target_price)}
+                        <button
+                          onClick={() => {
+                            const p = parseFloat(editPurchasePrice);
+                            if (!Number.isNaN(p) && p > 0 && editPurchaseDate) {
+                              saveCustomPurchase(selectedCall.symbol, editPurchaseDate, p);
+                            }
+                          }}
+                          className="px-3 py-0.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded shadow-2xs"
+                        >
+                          Save
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-2 gap-2 pt-1 border-t border-emerald-100">
+                        <div>
+                          <div className="text-[11px] text-slate-500 uppercase font-semibold">Purchase Date</div>
+                          <div className="text-[13px] font-bold font-mono text-slate-900 mt-0.5">
+                            {selectedCall.purchaseDate ? fmtDate(selectedCall.purchaseDate) : "Not in Portfolio"}
+                          </div>
+                          <div className="text-[10.5px] text-slate-500">
+                            {selectedCall.purchaseDate ? daysAgo(selectedCall.purchaseDate) : "Ready for Tranche 1"}
+                          </div>
                         </div>
-                        <div className="text-[10px] text-slate-500 font-medium">
-                          {p.sell_timeline || "Target"}
-                        </div>
-                      </td>
 
-                      <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                        <span className={`font-mono font-bold ${
-                          (p.upside_pct ?? 0) >= 15 ? "text-emerald-700" : (p.upside_pct ?? 0) >= 0 ? "text-blue-700" : "text-rose-700"
-                        }`}>
-                          {pct(p.upside_pct)}
+                        <div>
+                          <div className="text-[11px] text-slate-500 uppercase font-semibold">Purchase Price / Avg</div>
+                          <div className="text-[13px] font-bold font-mono text-slate-900 mt-0.5">
+                            {selectedCall.purchasePrice ? money(selectedCall.purchasePrice) : "—"}
+                          </div>
+                          <div className="text-[10.5px] text-slate-500">
+                            {selectedCall.heldQty > 0 ? `Held: ${selectedCall.heldQty} sh` : "Pending Entry"}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="pt-2 border-t border-emerald-100 flex items-center justify-between">
+                        <span className="text-[12px] font-semibold text-emerald-950">
+                          Performance to Purchase:
                         </span>
-                      </td>
-
-                      <td className="py-2.5 px-3 text-center whitespace-nowrap">
-                        <span className="font-mono text-[11px] text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
-                          {p.composite_pct ?? "—"} / {p.quality_pct ?? "—"} / {p.momentum_pct ?? "—"}
-                        </span>
-                      </td>
-
-                      <td className="py-2.5 px-3 max-w-[260px]">
-                        <div className="text-[11.5px] text-slate-700 leading-snug">
-                          {p.action_reason}
-                        </div>
-                        <div className="text-[10.5px] text-slate-400 mt-0.5 flex items-center gap-1 font-mono">
-                          <span>Horizon: {p.sell_timeline}</span>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* TAB 3: CLUSTER GEMS & CALLS VIEW */}
-      {!loading && !error && activeTab === "gems" && (
-        <div className="rounded-lg border border-slate-200 bg-white overflow-hidden shadow-2xs">
-          <div className="overflow-x-auto">
-            <table className="w-full text-[12px] text-left border-collapse">
-              <thead>
-                <tr className="bg-slate-50/80 border-b border-slate-200 text-slate-600 font-semibold text-[11px] uppercase tracking-wider">
-                  <th className="py-2.5 px-3">Call Date</th>
-                  <th className="py-2.5 px-3">Stock &amp; Cluster</th>
-                  <th className="py-2.5 px-3">Call Status</th>
-                  <th className="py-2.5 px-3 text-right">CMP / LTP</th>
-                  <th className="py-2.5 px-3 text-right">Since Call (Perf)</th>
-                  <th className="py-2.5 px-3 text-right">Accumulate Below</th>
-                  <th className="py-2.5 px-3 text-right">Target &amp; Horizon</th>
-                  <th className="py-2.5 px-3 text-right">Upside</th>
-                  <th className="py-2.5 px-3 text-right">Bear Floor</th>
-                  <th className="py-2.5 px-3 text-center">Scores (C/Q/M/V)</th>
-                  <th className="py-2.5 px-3">Horizon Strategy &amp; Model</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filteredGems.map((g) => {
-                  const override = userCallOverrides[g.symbol];
-                  const isTaken = override ? override.is_taken : g.is_taken;
-                  const isCleared = override ? override.is_cleared : g.is_cleared;
-                  const boxStyle = getCallBoxStyle(isTaken, isCleared, g.pct_move);
-
-                  return (
-                    <tr key={g.symbol} className={`transition-colors ${boxStyle.rowClass}`}>
-                      <td className="py-2.5 px-3 whitespace-nowrap text-slate-500 font-mono text-[11px]">
-                        {fmtDate(g.generated_at)}
-                      </td>
-
-                      <td className="py-2.5 px-3">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <Link
-                            href={`/stock/${g.symbol}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="font-bold text-slate-900 hover:text-indigo-600 transition-colors flex items-center gap-1"
-                            title="Open stock chart & fundamentals in new window"
-                          >
-                            <span>{g.symbol}</span>
-                            <ExternalLink className="w-3 h-3 text-slate-400" />
-                          </Link>
-                          <Link
-                            href={`/admin/verdicts?symbol=${g.symbol}&scope=all`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-[10px] text-indigo-600 hover:text-indigo-800 font-semibold flex items-center"
-                            title="View institutional verdict in new window"
-                          >
-                            <span>Verdict</span>
-                            <ArrowUpRight className="w-2.5 h-2.5" />
-                          </Link>
-                          {g.is_portfolio && (
-                            <span className="text-[9.5px] font-bold px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
-                              HELD
-                            </span>
-                          )}
-                          {g.is_gem && (
-                            <span className="text-[9.5px] font-bold px-1.5 py-0.2 rounded bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-0.5">
-                              <Sparkles className="w-2.5 h-2.5 text-amber-500" /> GEM
+                        <div className="text-right">
+                          {selectedCall.purchasePerfPct != null ? (
+                            <>
+                              <span
+                                className={`text-base font-bold font-mono ${
+                                  selectedCall.purchasePerfPct >= 0 ? "text-emerald-700" : "text-rose-600"
+                                }`}
+                              >
+                                {pct(selectedCall.purchasePerfPct)}
+                              </span>
+                              {selectedCall.purchasePrice && (
+                                <span className="text-[11px] font-mono text-slate-500 ml-1.5">
+                                  ({selectedCall.cmp >= selectedCall.purchasePrice ? "+" : ""}
+                                  {money(selectedCall.cmp - selectedCall.purchasePrice)}/sh)
+                                </span>
+                              )}
+                            </>
+                          ) : (
+                            <span className="text-xs text-slate-500 font-medium italic">
+                              Click &ldquo;Log Purchase&rdquo; to track
                             </span>
                           )}
                         </div>
-                        <div className="text-[10.5px] text-slate-500 truncate max-w-[150px]">
-                          {g.cluster_name} {g.market_cap_cr ? `· ₹${Math.round(g.market_cap_cr).toLocaleString("en-IN")} Cr` : ""}
-                        </div>
-                      </td>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
 
-                      <td className="py-2.5 px-3 whitespace-nowrap">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className={`inline-block px-2 py-0.5 rounded text-[10.5px] border ${boxStyle.badgeClass}`}>
-                            {boxStyle.badgeText}
-                          </span>
-                          {!isTaken && !isCleared && (
-                            <button
-                              onClick={() => handleTakeCall(g.symbol)}
-                              className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-600 hover:bg-blue-700 text-white transition-colors"
-                              title="Take this call"
-                            >
-                              + Take
-                            </button>
-                          )}
-                          {isTaken && (
-                            <button
-                              onClick={() => handleExitCall(g.symbol)}
-                              className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-600 hover:bg-slate-700 text-white transition-colors"
-                              title="Exit call"
-                            >
-                              Exit
-                            </button>
-                          )}
-                          {isCleared && (
-                            <button
-                              onClick={() => handleTakeCall(g.symbol)}
-                              className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-200 hover:bg-slate-300 text-slate-700 transition-colors"
-                              title="Re-open call"
-                            >
-                              Re-take
-                            </button>
-                          )}
-                        </div>
-                      </td>
+              {/* ── Key Decision Levels (4-Card Grid) ─────────────────────────── */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="bg-white border hairline rounded-lg p-3 shadow-2xs">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">
+                    Current Price
+                  </div>
+                  <div className="text-xl font-bold font-mono text-slate-900 mt-1">
+                    {money(selectedCall.cmp)}
+                  </div>
+                  <div className="text-[11px] text-slate-500 mt-0.5">Live Market Close</div>
+                </div>
 
-                      <td className="py-2.5 px-3 text-right font-mono font-semibold text-slate-900 whitespace-nowrap">
-                        {money(g.ltp)}
-                      </td>
+                <div className="bg-white border hairline rounded-lg p-3 shadow-2xs">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">
+                    Buy Below Ceiling
+                  </div>
+                  <div className="text-xl font-bold font-mono text-slate-900 mt-1">
+                    {money(selectedCall.buyBelow)}
+                  </div>
+                  <div className="mt-0.5">
+                    {selectedCall.cmp <= selectedCall.buyBelow * 1.01 ? (
+                      <span className="text-[10.5px] font-bold text-emerald-700 bg-emerald-50 px-1 rounded">
+                        ✓ In Buy Zone
+                      </span>
+                    ) : (
+                      <span className="text-[10.5px] font-semibold text-amber-700 bg-amber-50 px-1 rounded">
+                        Wait for Pullback
+                      </span>
+                    )}
+                  </div>
+                </div>
 
-                      <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                        {g.pct_move != null ? (
-                          <div className={`font-mono font-bold text-[11.5px] ${g.pct_move >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
-                            {pct(g.pct_move)}
-                            <div className="text-[9.5px] text-slate-400 font-normal">from {money(g.anchor_price)}</div>
-                          </div>
-                        ) : (
-                          <span className="text-slate-400">—</span>
-                        )}
-                      </td>
+                <div className="bg-white border hairline rounded-lg p-3 shadow-2xs">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">
+                    Target Price
+                  </div>
+                  <div className="text-xl font-bold font-mono text-emerald-700 mt-1">
+                    {money(selectedCall.target)}
+                  </div>
+                  <div className="text-[11px] font-bold text-emerald-700 mt-0.5">
+                    +{selectedCall.upside}% Forward Upside
+                  </div>
+                </div>
 
-                      <td className="py-2.5 px-3 text-right font-mono font-bold text-emerald-700 whitespace-nowrap">
-                        {money(g.buy_below)}
-                      </td>
+                <div className="bg-white border hairline rounded-lg p-3 shadow-2xs">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">
+                    Stop Loss / Floor
+                  </div>
+                  <div className="text-xl font-bold font-mono text-rose-600 mt-1">
+                    {money(selectedCall.stopLoss)}
+                  </div>
+                  <div className="text-[11px] text-slate-500 mt-0.5">
+                    Buffer: -{Math.round(((selectedCall.cmp - selectedCall.stopLoss) / selectedCall.cmp) * 100)}%
+                  </div>
+                </div>
+              </div>
 
-                      <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                        <div className="font-mono font-bold text-indigo-700">
-                          {money(g.target_price)}
-                        </div>
-                        <div className="text-[10px] text-slate-500 font-medium">
-                          {g.sell_timeline || "Target"}
-                        </div>
-                      </td>
+              {/* ── Tranche Deployment Sizing ─────────────────────────────────── */}
+              <div className="bg-white border hairline rounded-lg p-4 shadow-2xs space-y-3">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <Coins className="w-4 h-4 text-indigo-700" />
+                    <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wide">
+                      Capital Sizing &amp; Staggered Tranches
+                    </h3>
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                      {selectedCall.weightPct}% Allocation (₹{selectedCall.allocatedAmount.toLocaleString()})
+                    </span>
+                  </div>
+                  <span className="text-xs text-slate-500 font-medium">
+                    Projected at Target: <strong className="text-emerald-700 font-mono">{money(selectedCall.projectedValue)}</strong> (+{money(selectedCall.profitRupees)})
+                  </span>
+                </div>
 
-                      <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                        <span className={`font-mono font-bold ${
-                          (g.upside_pct ?? 0) >= 30 ? "text-emerald-700" : "text-blue-700"
-                        }`}>
-                          {pct(g.upside_pct)}
-                        </span>
-                      </td>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <div className="p-3 rounded-lg border border-indigo-100 bg-indigo-50/40">
+                    <div className="font-bold text-indigo-950 flex items-center justify-between">
+                      <span>Tranche 1: Market Order (Today)</span>
+                      <span className="font-mono text-indigo-700">~{money(selectedCall.t1Value)}</span>
+                    </div>
+                    <p className="text-slate-600 mt-1">
+                      Buy <strong>{selectedCall.tranche1Shares} shares</strong> at current CMP ({money(selectedCall.cmp)}) to establish primary position.
+                    </p>
+                  </div>
 
-                      <td className="py-2.5 px-3 text-right font-mono text-rose-700 whitespace-nowrap">
-                        {money(g.bear_floor)}
-                      </td>
+                  <div className="p-3 rounded-lg border border-amber-200 bg-amber-50/40">
+                    <div className="font-bold text-amber-950 flex items-center justify-between">
+                      <span>Tranche 2: Limit Order on Dip</span>
+                      <span className="font-mono text-amber-800">~{money(selectedCall.t2Value)}</span>
+                    </div>
+                    <p className="text-slate-600 mt-1">
+                      Set GTT limit for <strong>{selectedCall.tranche2Shares} shares</strong> at or below {money(selectedCall.buyBelow)} to average down.
+                    </p>
+                  </div>
+                </div>
+              </div>
 
-                      <td className="py-2.5 px-3 text-center whitespace-nowrap">
-                        <span className="font-mono text-[11px] text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
-                          {g.composite_pct ?? "—"} / {g.quality_pct ?? "—"} / {g.momentum_pct ?? "—"} / {g.valuation_pct ?? "—"}
-                        </span>
-                      </td>
+              {/* ── Interactive Candlestick Chart ─────────────────────────────── */}
+              <div className="bg-white border hairline rounded-lg p-3 sm:p-4 shadow-2xs space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <TrendingUp className="w-4 h-4 text-slate-700" />
+                    <h3 className="text-sm font-bold text-slate-900 tracking-wide">
+                      Interactive Price Action &amp; Levels
+                    </h3>
+                  </div>
+                  <span className="text-[11px] text-slate-500">
+                    Scroll/drag to inspect support regions &amp; EMAs
+                  </span>
+                </div>
 
-                      <td className="py-2.5 px-3 max-w-[220px]">
-                        <div className="flex items-center gap-1.5 mb-1">
-                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${getHorizonBadge(g.horizon)}`}>
-                            {g.horizon_label}
-                          </span>
-                        </div>
-                        <div className="text-[11px] text-slate-700 leading-snug">
-                          {g.strategy_desc}
-                        </div>
-                        <div className="text-[10px] text-slate-400 capitalize truncate mt-0.5 font-mono">
-                          Model: {g.valuation_method ? g.valuation_method.replace(/_/g, " ") : "Multi-Model"}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                <div className="w-full pt-1">
+                  <PriceChart symbol={selectedCall.symbol} />
+                </div>
+              </div>
+
+              {/* ── Multi-Factor Pillars & Investment Rationale ──────────────── */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Scorecard */}
+                <div className="bg-white border hairline rounded-lg p-4 shadow-2xs space-y-3">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                    Multi-Factor Scorecard
+                  </h3>
+                  <div className="space-y-2.5">
+                    <div>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="text-slate-600 font-medium">Composite Score</span>
+                        <span className="font-bold font-mono text-slate-900">{selectedCall.composite_pct}%</span>
+                      </div>
+                      <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                        <div
+                          className="bg-indigo-600 h-1.5 rounded-full"
+                          style={{ width: `${selectedCall.composite_pct}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="text-slate-600 font-medium">Fundamental Quality</span>
+                        <span className="font-bold font-mono text-slate-900">{selectedCall.quality_pct}%</span>
+                      </div>
+                      <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                        <div
+                          className="bg-emerald-600 h-1.5 rounded-full"
+                          style={{ width: `${selectedCall.quality_pct}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="text-slate-600 font-medium">Valuation Margin</span>
+                        <span className="font-bold font-mono text-slate-900">{selectedCall.valuation_pct}%</span>
+                      </div>
+                      <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                        <div
+                          className="bg-cyan-600 h-1.5 rounded-full"
+                          style={{ width: `${selectedCall.valuation_pct}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="text-slate-600 font-medium">Technical Momentum</span>
+                        <span className="font-bold font-mono text-slate-900">{selectedCall.momentum_pct}%</span>
+                      </div>
+                      <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                        <div
+                          className="bg-purple-600 h-1.5 rounded-full"
+                          style={{ width: `${selectedCall.momentum_pct}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Thesis & Rationale */}
+                <div className="md:col-span-2 bg-white border hairline rounded-lg p-4 shadow-2xs space-y-2">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                    Institutional Thesis &amp; Strategy
+                  </h3>
+                  <p className="text-[13px] leading-relaxed text-slate-800 font-medium bg-slate-50/70 p-3 rounded border hairline">
+                    {selectedCall.rationale}
+                  </p>
+                  <div className="grid grid-cols-2 gap-2 pt-2 text-xs">
+                    <div>
+                      <span className="text-slate-500 font-medium">Execution Horizon:</span>{" "}
+                      <strong className="text-slate-900">{selectedCall.timeline}</strong>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 font-medium">Cluster Role:</span>{" "}
+                      <strong className="text-slate-900">{selectedCall.role}</strong>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 }
