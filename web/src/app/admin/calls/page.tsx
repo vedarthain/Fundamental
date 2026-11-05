@@ -13,10 +13,7 @@ export default async function AdminCallsPage() {
   if (!(await isAdminRequest())) redirect("/");
 
   return (
-    <main
-      className="mx-auto max-w-[1600px] px-3 sm:px-4 py-3 sm:py-4"
-      style={{ zoom: 1.04 }}
-    >
+    <main className="mx-auto max-w-[1700px] px-2 sm:px-3 py-1.5 sm:py-2">
       <CallsClient />
     </main>
   );
