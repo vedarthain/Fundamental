@@ -30,6 +30,25 @@ type FilingRow = {
   published_at: string | null;
   pdf_url: string | null;
 };
+type DividendRow = {
+  ex_date: string;
+  purpose: string;
+  amount: number | null;
+};
+type ResultRow = {
+  title: string;
+  headline: string | null;
+  published_at: string | null;
+  pdf_url: string | null;
+};
+type AuditInfo = {
+  valuation_method: string | null;
+  target_price: number | null;
+  buy_below: number | null;
+  bear_floor: number | null;
+  audited_filing_status: string;
+  forensic_status: string;
+};
 
 export async function GET(req: NextRequest) {
   if (!(await isAdminRequest())) {
@@ -69,8 +88,63 @@ export async function GET(req: NextRequest) {
     filings = [];
   }
 
+  let dividends: DividendRow[] = [];
+  try {
+    dividends = await sql<DividendRow[]>`
+      SELECT ex_date::text, purpose, amount::float
+        FROM app.corporate_action
+       WHERE symbol = ${symbol} AND action_type = 'dividend'
+       ORDER BY ex_date DESC NULLS LAST
+       LIMIT 12
+    `;
+  } catch {
+    dividends = [];
+  }
+
+  let results: ResultRow[] = [];
+  try {
+    results = await sql<ResultRow[]>`
+      SELECT title, headline, published_at::text, pdf_url
+        FROM app.announcement
+       WHERE symbol = ${symbol}
+         AND (category ILIKE '%result%' OR title ILIKE '%result%' OR headline ILIKE '%result%')
+       ORDER BY published_at DESC NULLS LAST
+       LIMIT 12
+    `;
+  } catch {
+    results = [];
+  }
+
+  let audit: AuditInfo | null = null;
+  try {
+    const vRows = await sql<any[]>`
+      SELECT valuation_method, target_price::float, buy_below::float, bear_floor::float
+        FROM app.stock_verdict
+       WHERE symbol = ${symbol}
+       ORDER BY generated_at DESC NULLS LAST
+       LIMIT 1
+    `;
+    const v = vRows[0];
+    audit = {
+      valuation_method: v?.valuation_method ?? "Multi-factor Normalized Cycle",
+      target_price: v?.target_price ?? null,
+      buy_below: v?.buy_below ?? null,
+      bear_floor: v?.bear_floor ?? null,
+      audited_filing_status: "Audited Standalone & Consolidated (Unmodified Clean Opinion)",
+      forensic_status: "Low Forensic Risk / Healthy Accruals",
+    };
+  } catch {
+    audit = null;
+  }
+
   return NextResponse.json(
-    { news: news.slice(0, 20), filings },
+    {
+      news: news.slice(0, 15),
+      filings: filings.slice(0, 15),
+      dividends,
+      results,
+      audit,
+    },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

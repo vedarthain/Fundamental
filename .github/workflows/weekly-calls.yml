@@ -18,8 +18,8 @@ name: Sunday Calls & Portfolio Audit
 
 on:
   schedule:
-    # Sun 03:00 UTC = 08:30 IST. Saturday's compute & scoring has fully landed.
-    - cron: '0 3 * * 0'
+    # Sun 13:30 UTC = 19:00 IST (7:00 PM IST Sunday evening).
+    - cron: '30 13 * * 0'
   workflow_dispatch:
     inputs:
       dry_run:
