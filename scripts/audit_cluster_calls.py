@@ -124,7 +124,9 @@ def main() -> int:
             # Actions categorization
             trims, accumulates, exits, holds = [], [], [], []
             for p in portfolio_rows:
-                sym = p["symbol"]
+                sym = p.get("symbol")
+                if not sym:
+                    continue
                 ltp = float(p["ltp"] or 0)
                 target = float(p["target_price"] or 0)
                 buy_below = float(p["buy_below"] or 0)

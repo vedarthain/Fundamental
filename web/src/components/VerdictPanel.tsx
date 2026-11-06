@@ -208,7 +208,7 @@ function stripTag(text: string, tagRegex: RegExp): string {
   return text.replace(tagRegex, "").trim();
 }
 
-function parseParameterItems(paramStrings: string[]) {
+export function parseParameterItems(paramStrings: string[]) {
   const items: { label: string; value: string }[] = [];
   for (const raw of paramStrings) {
     const stripped = stripTag(raw, /^<b>(validated parameters|parameters validated):?<\/b>:?\s*/i);
@@ -427,7 +427,7 @@ function VerdictBulletItem({
   );
 }
 
-function getModelAnalysis(label: string, value: string): {
+export function getModelAnalysis(label: string, value: string): {
   status: "green" | "red" | "amber";
   badge: string;
   contextNote: string;
@@ -633,7 +633,7 @@ function getModelAnalysis(label: string, value: string): {
  * contextNote (the sentence explaining what the badge means) is the part
  * that made the model grid tall; it only shows once clicked open.
  */
-function ModelCard({ item }: { item: { label: string; value: string } }) {
+export function ModelCard({ item }: { item: { label: string; value: string } }) {
   const [open, setOpen] = useState(false);
   const analysis = getModelAnalysis(item.label, item.value);
   const isGreen = analysis.status === "green";

@@ -33,6 +33,7 @@ import {
 import { PriceChart } from "@/components/PriceChart";
 import { CompanyProfile } from "@/components/CompanyProfile";
 import CapTierBadge, { type CapCategory } from "@/components/CapTierBadge";
+import { parseParameterItems, getModelAnalysis, ModelCard } from "@/components/VerdictPanel";
 import type { ClusterGem, PortfolioActionCall, IdeaHorizon } from "@/app/api/admin/calls/route";
 
 function money(v: number | null | undefined): string {
@@ -107,6 +108,7 @@ function stripTag(text: string, tagRegex: RegExp): string {
 function parseVerdictPoints(points: string[]) {
   const good: string[] = [];
   const bad: string[] = [];
+  const params: string[] = [];
   const decision: string[] = [];
   const other: string[] = [];
 
@@ -117,6 +119,8 @@ function parseVerdictPoints(points: string[]) {
       good.push(clean);
     } else if (lower.startsWith("<b>the bad") || lower.startsWith("<b>bad") || lower.includes("<b>risks") || lower.includes("<b>warnings")) {
       bad.push(clean);
+    } else if (lower.includes("<b>validated parameters") || lower.includes("<b>parameters validated")) {
+      params.push(clean);
     } else if (lower.startsWith("<i>decision") || lower.startsWith("<i>summary") || lower.startsWith("<b>decision")) {
       decision.push(clean);
     } else {
@@ -124,7 +128,7 @@ function parseVerdictPoints(points: string[]) {
     }
   }
 
-  return { good, bad, decision, other };
+  return { good, bad, params, decision, other };
 }
 
 function cleanPointText(raw: string, tagRegex: RegExp): { metric: string; peer?: string; reason?: string } {
@@ -1969,7 +1973,7 @@ export function CallsClient() {
 
                         {/* Verdict Justification Points */}
                         {contextData?.audit?.points && contextData.audit.points.length > 0 && (() => {
-                          const { good, bad, decision, other } = parseVerdictPoints(contextData.audit.points);
+                          const { good, bad, params, decision, other } = parseVerdictPoints(contextData.audit.points);
                           return (
                             <div className="pt-2.5 border-t hairline space-y-2.5">
                               <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
@@ -2067,6 +2071,83 @@ export function CallsClient() {
                                   ))}
                                 </div>
                               )}
+
+                              {/* Quantitative Institutional Models */}
+                              {params.length > 0 && (() => {
+                                const parsedParams = parseParameterItems(params);
+                                const greenModels: { label: string; value: string }[] = [];
+                                const redModels: { label: string; value: string }[] = [];
+                                for (const item of parsedParams) {
+                                  const analysis = getModelAnalysis(item.label, item.value);
+                                  if (analysis.status === "green") {
+                                    greenModels.push(item);
+                                  } else {
+                                    redModels.push(item);
+                                  }
+                                }
+
+                                return (
+                                  <div className="space-y-2 pt-1 border-t hairline">
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+                                        Quantitative Institutional Models ({greenModels.length + redModels.length} models checked)
+                                      </span>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                      {/* Verified Strengths (Passed) */}
+                                      <div className="rounded-lg border border-slate-200/90 bg-slate-50/60 p-3 flex flex-col justify-between">
+                                        <div>
+                                          <div className="flex items-center justify-between mb-2.5 pb-1.5 border-b border-slate-200/60">
+                                            <div className="flex items-center gap-1.5 font-bold text-slate-800 text-xs">
+                                              <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />
+                                              <span>Passed / Healthy Models</span>
+                                            </div>
+                                            <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                              {greenModels.length} Passed
+                                            </span>
+                                          </div>
+                                          {greenModels.length > 0 ? (
+                                            <div className="space-y-1.5">
+                                              {greenModels.map((item, idx) => (
+                                                <ModelCard key={idx} item={item} />
+                                              ))}
+                                            </div>
+                                          ) : (
+                                            <div className="text-xs text-slate-400 italic py-2">No models currently in green standing.</div>
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      {/* Caution & Risk Flags */}
+                                      <div className="rounded-lg border border-slate-200/90 bg-slate-50/60 p-3 flex flex-col justify-between">
+                                        <div>
+                                          <div className="flex items-center justify-between mb-2.5 pb-1.5 border-b border-slate-200/60">
+                                            <div className="flex items-center gap-1.5 font-bold text-slate-800 text-xs">
+                                              <span className="w-2 h-2 rounded-full bg-rose-500 inline-block" />
+                                              <span>Caution &amp; Risk Flags</span>
+                                            </div>
+                                            <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200">
+                                              {redModels.length} Flagged
+                                            </span>
+                                          </div>
+                                          {redModels.length > 0 ? (
+                                            <div className="space-y-1.5">
+                                              {redModels.map((item, idx) => (
+                                                <ModelCard key={idx} item={item} />
+                                              ))}
+                                            </div>
+                                          ) : (
+                                            <div className="text-xs text-slate-500 font-normal italic py-2 flex items-center gap-1.5">
+                                              <span className="text-emerald-600 font-bold">✓</span> Clean slate: Zero valuation warnings flagged across models.
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })()}
 
                               {/* Other points if any */}
                               {other.length > 0 && (

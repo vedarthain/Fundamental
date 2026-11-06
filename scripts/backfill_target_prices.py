@@ -47,7 +47,7 @@ def main() -> int:
             # 0. Ensure all active tracked universe stocks have an entry in app.stock_verdict
             cur.execute("""
                 INSERT INTO app.stock_verdict (symbol, generated_at, verdict, confidence, points)
-                SELECT u.symbol, NOW(), 'WATCH — Quant models active', 'medium', '[]'::jsonb
+                SELECT u.symbol, NOW(), 'WATCH — Quant models active', 'medium', '["Quantitative valuation model initialization"]'::jsonb
                 FROM app.universe u
                 WHERE NOT EXISTS (SELECT 1 FROM app.stock_verdict sv WHERE sv.symbol = u.symbol)
                 ON CONFLICT DO NOTHING;
