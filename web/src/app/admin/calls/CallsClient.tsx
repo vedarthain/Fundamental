@@ -241,6 +241,7 @@ type StockContext = {
 
 // Batch definitions for multi-select
 const BATCH_DEFINITIONS = [
+  { key: "priority_sells", label: "Portfolio Sells & Trims Batch", shortLabel: "Sells & Trims", dateMatch: "priority_sells" },
   { key: "2026-11-06", label: "Fri, 06 Nov 2026 (Today)", shortLabel: "06 Nov (Today)", dateMatch: "2026-11-06" },
   { key: "week_2", label: "Week 2: Sun, 08 Nov 2026 (7:00 PM)", shortLabel: "Wk 2 (08 Nov)", dateMatch: "2026-11-08" },
   { key: "week_1", label: "Week 1: Sun, 01 Nov 2026 (7:00 PM)", shortLabel: "Wk 1 (01 Nov)", dateMatch: "2026-11-01" },
@@ -988,6 +989,7 @@ export function CallsClient() {
           for (const b of selectedBatches) {
             if (b === "week_1" && (c.isCurated || (c.callDate && c.callDate >= "2026-10-31"))) matchesDate = true;
             else if (b === "week_2" && (c.composite_pct ?? 0) >= 80) matchesDate = true;
+            else if (b === "priority_sells" && c.isPortfolio && (c.actionToday?.includes("SELL") || c.actionToday?.includes("TRIM") || c.actionToday?.includes("EXIT") || c.actionToday?.includes("CUT LOSS"))) matchesDate = true;
             else if (c.callDate && c.callDate === b) matchesDate = true;
           }
           if (!matchesDate) return false;
@@ -1318,30 +1320,6 @@ export function CallsClient() {
           </button>
         </div>
       </div>
-
-      {/* 🚨 Priority Action Alert Banner (Immediate Portfolio Sells / Trims) */}
-      {actionCounts.prioritySell > 0 && actionFilter !== "PRIORITY_SELL" && (
-        <div className="bg-gradient-to-r from-rose-50 via-amber-50 to-rose-50 border border-rose-300 rounded-lg p-2 sm:px-3 sm:py-2 flex items-center justify-between gap-3 shadow-2xs">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="text-base sm:text-lg shrink-0">🚨</span>
-            <div className="text-xs min-w-0">
-              <span className="font-bold text-rose-900">
-                Immediate Action Required: {actionCounts.prioritySell} portfolio holding{actionCounts.prioritySell > 1 ? "s" : ""} triggered Trim / Take Profit targets.
-              </span>
-              <span className="hidden sm:inline text-slate-600 ml-1.5">
-                Cluster price targets reached or valuation ceilings breached.
-              </span>
-            </div>
-          </div>
-          <button
-            onClick={() => setActionFilter("PRIORITY_SELL")}
-            className="shrink-0 px-2.5 py-1 rounded bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs shadow-2xs flex items-center gap-1 transition-colors"
-          >
-            <span>Review Priority Sells ({actionCounts.prioritySell})</span>
-            <span>&rarr;</span>
-          </button>
-        </div>
-      )}
 
       {actionFilter === "PRIORITY_SELL" && (
         <div className="bg-slate-900 border border-slate-800 text-white rounded-lg p-2.5 sm:px-3 sm:py-2.5 shadow-2xs text-xs space-y-2">
