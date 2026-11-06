@@ -130,7 +130,7 @@ function determineIdeaHorizon(args: {
     return {
       horizon: "EXIT",
       label: "💰 Harvest / Trim",
-      timeline: "1–2 Weeks",
+      timeline: "1–2W",
       strategy: "Profit Harvesting — target reached, lock in gains.",
     };
   }
@@ -140,7 +140,7 @@ function determineIdeaHorizon(args: {
     return {
       horizon: "1M",
       label: "⚡ 1M Tactical",
-      timeline: "2–4 Weeks (Tactical Swing)",
+      timeline: "2–4W",
       strategy: "Momentum breakout & quick alpha with tight risk guard.",
     };
   }
@@ -150,7 +150,7 @@ function determineIdeaHorizon(args: {
     return {
       horizon: "3M",
       label: "🚀 3M Catalyst",
-      timeline: "2–3 Months (Quarterly)",
+      timeline: "2–3M",
       strategy: "Quarterly earnings beat & sector rotation catalyst.",
     };
   }
@@ -160,7 +160,7 @@ function determineIdeaHorizon(args: {
     return {
       horizon: "6M",
       label: "📈 6M Turnaround",
-      timeline: "5–6 Months (Medium Growth)",
+      timeline: "5–6M",
       strategy: "Operating margin expansion, capacity ramp-up or turnaround.",
     };
   }
@@ -170,7 +170,7 @@ function determineIdeaHorizon(args: {
     return {
       horizon: ">1Y",
       label: "💎 >1Y Compounder",
-      timeline: "1–3 Years (Multi-Year)",
+      timeline: "9–12M",
       strategy: "High-ROCE secular monopoly compounder (buy & hold).",
     };
   }
@@ -179,7 +179,7 @@ function determineIdeaHorizon(args: {
   return {
     horizon: "1Y",
     label: "🏛️ 1Y Core",
-    timeline: "9–12 Months (Full Cycle)",
+    timeline: "9–12M",
     strategy: "Full-cycle multi-factor valuation re-rating to fair value.",
   };
 }
@@ -258,7 +258,7 @@ export async function GET(request: Request) {
           p.momentum_pct,
           ph.quantity AS held_qty,
           ph.avg_cost AS purchase_price,
-          COALESCE(pt.first_buy_date, ph.fallback_buy_date) AS purchase_date,
+          CASE WHEN ph.quantity > 0 THEN COALESCE(pt.first_buy_date, ph.fallback_buy_date) ELSE NULL END AS purchase_date,
           ph.broker_cur_value AS cur_val,
           (ph.quantity * ph.avg_cost) AS invested_val,
           EXISTS(SELECT 1 FROM app.portfolio_holding x WHERE x.symbol = p.symbol AND x.quantity > 0) AS is_portfolio,
@@ -316,11 +316,10 @@ export async function GET(request: Request) {
       const callPerfPct = anchor && anchor > 0 ? ((ltp - anchor) / anchor) * 100 : null;
       const callDate = r.generated_at ? new Date(r.generated_at).toISOString().slice(0, 10) : null;
 
-      const purchasePrice = r.purchase_price ? Number(r.purchase_price) : null;
-      const purchasePerfPct = purchasePrice && purchasePrice > 0 ? ((ltp - purchasePrice) / purchasePrice) * 100 : null;
-      const purchaseDate = r.purchase_date ? new Date(r.purchase_date).toISOString().slice(0, 10) : null;
-
       const isPortfolio = Boolean(r.is_portfolio);
+      const purchasePrice = isPortfolio && r.purchase_price ? Number(r.purchase_price) : null;
+      const purchasePerfPct = purchasePrice && purchasePrice > 0 ? ((ltp - purchasePrice) / purchasePrice) * 100 : null;
+      const purchaseDate = isPortfolio && r.purchase_date ? new Date(r.purchase_date).toISOString().slice(0, 10) : null;
       const isCallActive = Boolean(r.is_call_active);
       const isCallCleared = Boolean(r.is_call_cleared);
 

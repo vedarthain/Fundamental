@@ -747,17 +747,18 @@ export function CallsClient() {
       const callPrice = g.call_price ?? g.anchor_price ?? cur?.anchorPrice ?? cmp;
       const callPerfPct = callPrice > 0 ? ((cmp - callPrice) / callPrice) * 100 : 0;
 
-      // Anchor 2: Stock Purchase
+      const isPortfolio = Boolean(port && port.total_qty > 0) || Boolean(g.is_portfolio);
+
+      // Anchor 2: Stock Purchase (only for actual portfolio holdings or user-logged buys)
       const customP = customPurchases[g.symbol];
-      const purchaseDate = customP?.purchase_date ?? g.purchase_date ?? port?.purchase_date ?? null;
-      const purchasePrice = customP?.purchase_price ?? g.purchase_price ?? port?.weighted_avg_cost ?? null;
+      const purchaseDate = customP?.purchase_date ?? (isPortfolio ? (g.purchase_date ?? port?.purchase_date ?? null) : null);
+      const purchasePrice = customP?.purchase_price ?? (isPortfolio ? (g.purchase_price ?? port?.weighted_avg_cost ?? null) : null);
       const purchasePerfPct =
         purchasePrice && purchasePrice > 0 ? ((cmp - purchasePrice) / purchasePrice) * 100 : null;
 
-      const isPortfolio = Boolean(port && port.total_qty > 0) || Boolean(g.is_portfolio);
-      const heldQty = port?.total_qty ?? g.held_qty ?? 0;
-      const investedVal = port?.invested_val ?? g.invested_val ?? (purchasePrice ? purchasePrice * heldQty : 0);
-      const curVal = port?.cur_val ?? g.cur_val ?? (cmp * heldQty);
+      const heldQty = port?.total_qty ?? (isPortfolio ? g.held_qty : 0) ?? 0;
+      const investedVal = port?.invested_val ?? (isPortfolio ? g.invested_val : 0) ?? (purchasePrice ? purchasePrice * heldQty : 0);
+      const curVal = port?.cur_val ?? (isPortfolio ? g.cur_val : 0) ?? (cmp * heldQty);
 
       // ONLY actual portfolio holdings have a holding duration (from trade buy date)!
       const holdingDuration = isPortfolio && purchaseDate ? getHoldingDuration(purchaseDate) : null;
@@ -800,9 +801,9 @@ export function CallsClient() {
         quality_pct: g.quality_pct ?? 65,
         valuation_pct: g.valuation_pct ?? 60,
         momentum_pct: g.momentum_pct ?? 65,
-        horizon: g.horizon || cur?.horizon || ("6M" as IdeaHorizon),
-        horizonLabel: g.horizon_label || cur?.horizonLabel || "📈 6M High-Momentum",
-        timeline: g.sell_timeline || cur?.timeline || "5–6M",
+        horizon: cur?.horizon || g.horizon || ("6M" as IdeaHorizon),
+        horizonLabel: cur?.horizonLabel || g.horizon_label || "📈 6M High-Momentum",
+        timeline: cur?.timeline || g.sell_timeline || "6M",
         role: cur?.role || `${g.horizon || "6M"} Opportunity`,
         rationale: cur?.rationale || g.action_reason || g.strategy_desc || g.verdict || "High-conviction re-rating catalyst.",
         companyOverview: cur?.companyOverview || null,
@@ -848,14 +849,15 @@ export function CallsClient() {
         const callPrice = gem?.call_price ?? gem?.anchor_price ?? cp.anchorPrice ?? cp.cmp;
         const callPerfPct = callPrice > 0 ? ((cmp - callPrice) / callPrice) * 100 : 0;
 
+        const isPortfolio = Boolean(port && port.total_qty > 0) || Boolean(gem?.is_portfolio);
+
         const customP = customPurchases[cp.symbol];
-        const purchaseDate = customP?.purchase_date ?? port?.purchase_date ?? null;
-        const purchasePrice = customP?.purchase_price ?? port?.weighted_avg_cost ?? null;
+        const purchaseDate = customP?.purchase_date ?? (isPortfolio ? (port?.purchase_date ?? gem?.purchase_date ?? null) : null);
+        const purchasePrice = customP?.purchase_price ?? (isPortfolio ? (port?.weighted_avg_cost ?? gem?.purchase_price ?? null) : null);
         const purchasePerfPct =
           purchasePrice && purchasePrice > 0 ? ((cmp - purchasePrice) / purchasePrice) * 100 : null;
 
-        const isPortfolio = Boolean(port && port.total_qty > 0);
-        const heldQty = port?.total_qty ?? 0;
+        const heldQty = port?.total_qty ?? (isPortfolio ? (gem?.held_qty ?? 0) : 0);
         const investedVal = port?.invested_val ?? (purchasePrice ? purchasePrice * heldQty : 0);
         const curVal = port?.cur_val ?? (cmp * heldQty);
 
@@ -1259,7 +1261,10 @@ export function CallsClient() {
     return act.includes("SELL") || act.includes("TRIM") || act.includes("EXIT") || act.includes("CUT LOSS");
   }, [selectedCall]);
 
-  const purchaseDuration = useMemo(() => getHoldingDuration(selectedCall?.purchaseDate), [selectedCall?.purchaseDate]);
+  const purchaseDuration = useMemo(() => {
+    if (!selectedCall || !selectedCall.isPortfolio || !selectedCall.purchaseDate || !selectedCall.purchasePrice) return null;
+    return getHoldingDuration(selectedCall.purchaseDate);
+  }, [selectedCall?.isPortfolio, selectedCall?.purchaseDate, selectedCall?.purchasePrice]);
 
   // Tab selection
   const effectiveTab = useMemo<DetailTab>(() => {
@@ -2000,20 +2005,20 @@ export function CallsClient() {
                   {/* BOX 1: ANCHOR 1 - CALL GIVEN */}
                   <div className="bg-slate-50/90 border border-indigo-100 rounded-lg p-2 shadow-2xs flex-1 flex flex-col justify-between min-w-0">
                     <div className="flex items-center justify-between text-[11px] gap-1 min-w-0">
-                      <div className="flex items-center gap-1.5 font-bold text-indigo-950 truncate">
+                      <div className="flex items-center gap-1 font-bold text-indigo-950 shrink-0">
                         <span className="w-1.5 h-1.5 rounded-full bg-indigo-600 shrink-0" />
-                        <span className="tracking-wide text-[10px] truncate">ANCHOR 1: CALL GIVEN</span>
+                        <span className="tracking-wide text-[10px] whitespace-nowrap">ANCHOR 1: CALL GIVEN</span>
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
                         {selectedCall.timeline && (
                           <span
-                            className="text-[8.5px] font-mono font-bold px-1.5 py-0.5 rounded border bg-indigo-100 text-indigo-900 border-indigo-200"
+                            className="text-[8.5px] font-mono font-bold px-1.5 py-0.2 rounded border bg-indigo-100 text-indigo-900 border-indigo-200 shrink-0"
                             title={`Target Horizon: ${selectedCall.timeline} to reach target of ${money(selectedCall.target)}`}
                           >
                             🎯 {selectedCall.timeline}
                           </span>
                         )}
-                        <span className="text-[9px] font-mono text-slate-500">
+                        <span className="text-[9px] font-mono text-slate-500 shrink-0">
                           {fmtDate(selectedCall.callDate)} ({daysAgo(selectedCall.callDate)})
                         </span>
                       </div>
@@ -2044,9 +2049,9 @@ export function CallsClient() {
                   {/* BOX 2: ANCHOR 2 - STOCK PURCHASE */}
                   <div className="bg-slate-50/90 border border-emerald-100 rounded-lg p-2 shadow-2xs flex-1 flex flex-col justify-between min-w-0">
                     <div className="flex items-center justify-between text-[11px] gap-1 min-w-0">
-                      <div className="flex items-center gap-1.5 font-bold text-emerald-950 truncate">
+                      <div className="flex items-center gap-1 font-bold text-emerald-950 shrink-0">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 shrink-0" />
-                        <span className="tracking-wide text-[10px] truncate">ANCHOR 2: PURCHASE</span>
+                        <span className="tracking-wide text-[10px] whitespace-nowrap">ANCHOR 2: PURCHASE</span>
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
                         {purchaseDuration && (
@@ -2059,7 +2064,7 @@ export function CallsClient() {
                           className="text-[9px] font-semibold text-emerald-800 hover:text-emerald-950 inline-flex items-center gap-0.5 underline underline-offset-2 shrink-0"
                         >
                           <Edit3 className="w-2.5 h-2.5" />
-                          <span>{selectedCall.purchasePrice ? "Edit" : "Log Buy"}</span>
+                          <span>{selectedCall.isPortfolio && selectedCall.purchasePrice ? "Edit" : "Log Buy"}</span>
                         </button>
                       </div>
                     </div>
@@ -2113,17 +2118,19 @@ export function CallsClient() {
                           <span className="text-[8.5px] uppercase font-semibold text-slate-500 block">Purchase Price</span>
                           <div className="flex items-center gap-1">
                             <span className="text-xs sm:text-sm font-bold font-mono text-slate-900">
-                              {selectedCall.purchasePrice ? money(selectedCall.purchasePrice) : "—"}
+                              {selectedCall.isPortfolio && selectedCall.purchasePrice ? money(selectedCall.purchasePrice) : "—"}
                             </span>
                             <span className="text-[9px] text-slate-500">
-                              {selectedCall.purchaseDate ? `(${fmtDate(selectedCall.purchaseDate)})` : "(None)"}
+                              {selectedCall.isPortfolio && selectedCall.purchasePrice && selectedCall.purchaseDate
+                                ? `(${fmtDate(selectedCall.purchaseDate)})`
+                                : "(Not held)"}
                             </span>
                           </div>
                         </div>
 
                         <div className="text-right">
                           <span className="text-[8.5px] uppercase font-semibold text-slate-500 block">Return Since Buy</span>
-                          {selectedCall.purchasePerfPct != null ? (
+                          {selectedCall.isPortfolio && selectedCall.purchasePerfPct != null && selectedCall.purchasePrice ? (
                             <div className="flex items-center justify-end gap-1">
                               <span className={`text-xs sm:text-sm font-bold font-mono ${selectedCall.purchasePerfPct >= 0 ? "text-emerald-700" : "text-rose-600"}`}>
                                 {pct(selectedCall.purchasePerfPct)}
@@ -2135,7 +2142,7 @@ export function CallsClient() {
                               )}
                             </div>
                           ) : (
-                            <span className="text-[9px] text-slate-400 italic">No trade logged</span>
+                            <span className="text-[9.5px] font-mono text-slate-400">Not in portfolio</span>
                           )}
                         </div>
                       </div>
