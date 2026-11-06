@@ -418,7 +418,12 @@ export function PriceChart({
   // Robust fallbacks when dayChangePct / asOfLabel are not explicitly passed as props:
   const lastBar = candles.length > 0 ? candles[candles.length - 1] : undefined;
   const prevBar = candles.length >= 2 ? candles[candles.length - 2] : undefined;
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
 
   // Headline: latest EOD close (or live LTP)
   const headline = currentPrice ?? lastBar?.c;

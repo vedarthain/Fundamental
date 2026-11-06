@@ -363,8 +363,12 @@ def update_ltps(conn: psycopg.Connection, bars: dict[str, dict],
         return 0, missing
     with conn.cursor() as cur:
         cur.executemany(
-            "UPDATE app.screener_meta SET current_price = %s WHERE symbol = %s",
+            "UPDATE app.screener_meta SET current_price = %s, price_fetched_at = NOW() WHERE symbol = %s",
             [(price, sym) for sym, price in rows],
+        )
+        cur.executemany(
+            "INSERT INTO app.stock_intraday (symbol, ltp, ts) VALUES (%s, %s, NOW())",
+            [(sym, price) for sym, price in rows],
         )
     conn.commit()
     return len(rows), missing

@@ -37,14 +37,18 @@ import CapTierBadge, { type CapCategory } from "@/components/CapTierBadge";
 import { parseParameterItems, getModelAnalysis, ModelCard } from "@/components/VerdictPanel";
 import type { ClusterGem, PortfolioActionCall, IdeaHorizon } from "@/app/api/admin/calls/route";
 
-function money(v: number | null | undefined): string {
+function money(v: number | null | undefined, digits?: number): string {
   if (v == null) return "—";
-  return `₹${v.toLocaleString("en-IN", { maximumFractionDigits: 1 })}`;
+  const fractionDigits = digits ?? (Number.isInteger(v) ? 0 : 2);
+  return `₹${v.toLocaleString("en-IN", {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  })}`;
 }
 
-function pct(v: number | null | undefined): string {
+function pct(v: number | null | undefined, digits: number = 2): string {
   if (v == null) return "—";
-  return `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`;
+  return `${v >= 0 ? "+" : ""}${v.toFixed(digits)}%`;
 }
 
 function fmtDate(iso: string | null | undefined): string {
@@ -1711,7 +1715,7 @@ export function CallsClient() {
                               </div>
 
                               <div className="text-right shrink-0">
-                                <div className="font-mono font-normal text-xs">{money(call.cmp)}</div>
+                                <div className="font-mono font-normal text-xs">{money(call.cmp, 2)}</div>
                                 <div className="flex items-center justify-end gap-1 mt-0.5">
                                   {call.isPortfolio && call.holdingDuration && (
                                     <span
@@ -1848,7 +1852,7 @@ export function CallsClient() {
                 <div className="flex items-center gap-1.5 flex-wrap min-w-0">
                   <div className="flex items-center gap-1.5">
                     <span className="text-lg sm:text-xl font-bold font-mono text-slate-900">
-                      {money(selectedCall.cmp)}
+                      {money(selectedCall.cmp, 2)}
                     </span>
                     {selectedCall.priceFetchedAt ? (
                       <span
@@ -1877,7 +1881,7 @@ export function CallsClient() {
                       }`}
                       title="1-Day Percentage Change"
                     >
-                      1D: {stockPriceInfo.dayChangePct >= 0 ? "+" : ""}{stockPriceInfo.dayChangePct.toFixed(1)}%
+                      1D: {stockPriceInfo.dayChangePct >= 0 ? "+" : ""}{stockPriceInfo.dayChangePct.toFixed(2)}%
                     </span>
                   )}
 
@@ -1886,7 +1890,7 @@ export function CallsClient() {
                       className="px-1.5 py-0.5 rounded text-[10.5px] font-mono text-slate-600 bg-slate-50 border hairline whitespace-nowrap"
                       title="Yesterday's / Previous Trading Session Settled Close"
                     >
-                      Prev Close: <strong className="text-slate-900 font-semibold">{money(stockPriceInfo.prevClose)}</strong>
+                      Prev Close: <strong className="text-slate-900 font-semibold">{money(stockPriceInfo.prevClose, 2)}</strong>
                     </span>
                   )}
 

@@ -219,7 +219,7 @@ export async function GET(request: Request) {
           ORDER BY symbol, snapshot_date DESC
       ),
       intraday_price AS (
-          SELECT DISTINCT ON (symbol) symbol, ltp
+          SELECT DISTINCT ON (symbol) symbol, ltp, ts
           FROM app.stock_intraday
           WHERE ts >= CURRENT_DATE
           ORDER BY symbol, ts DESC
@@ -240,8 +240,20 @@ export async function GET(request: Request) {
           p.cluster_id,
           c.name AS cluster_name,
           p.market_cap_cr,
-          COALESCE(si.ltp, sm.current_price, p.current_price) AS ltp,
-          sm.price_fetched_at::text AS price_fetched_at,
+          COALESCE(
+              CASE WHEN si.ts IS NOT NULL AND sm.price_fetched_at IS NOT NULL AND sm.price_fetched_at > si.ts
+                   THEN sm.current_price
+                   ELSE COALESCE(si.ltp, sm.current_price)
+              END,
+              p.current_price
+          ) AS ltp,
+          COALESCE(
+              CASE WHEN si.ts IS NOT NULL AND sm.price_fetched_at IS NOT NULL AND sm.price_fetched_at > si.ts
+                   THEN sm.price_fetched_at::text
+                   ELSE COALESCE(si.ts::text, sm.price_fetched_at::text)
+              END,
+              sm.price_fetched_at::text
+          ) AS price_fetched_at,
           v.anchor_price,
           v.verdict,
           v.confidence,
@@ -423,7 +435,7 @@ export async function GET(request: Request) {
           ORDER BY symbol, snapshot_date DESC
       ),
       intraday_price AS (
-          SELECT DISTINCT ON (symbol) symbol, ltp
+          SELECT DISTINCT ON (symbol) symbol, ltp, ts
           FROM app.stock_intraday
           WHERE ts >= CURRENT_DATE
           ORDER BY symbol, ts DESC
@@ -432,8 +444,21 @@ export async function GET(request: Request) {
           p.symbol,
           SUM(p.quantity) AS total_qty,
           SUM(p.quantity * p.avg_cost) / NULLIF(SUM(p.quantity), 0) AS weighted_avg_cost,
-          COALESCE(MAX(si.ltp), MAX(sm.current_price), MAX(lp.current_price), MAX(p.broker_ltp)) AS ltp,
-          MAX(sm.price_fetched_at)::text AS price_fetched_at,
+          COALESCE(
+              MAX(CASE WHEN si.ts IS NOT NULL AND sm.price_fetched_at IS NOT NULL AND sm.price_fetched_at > si.ts
+                       THEN sm.current_price
+                       ELSE COALESCE(si.ltp, sm.current_price)
+              END),
+              MAX(lp.current_price),
+              MAX(p.broker_ltp)
+          ) AS ltp,
+          COALESCE(
+              MAX(CASE WHEN si.ts IS NOT NULL AND sm.price_fetched_at IS NOT NULL AND sm.price_fetched_at > si.ts
+                       THEN sm.price_fetched_at::text
+                       ELSE COALESCE(si.ts::text, sm.price_fetched_at::text)
+              END),
+              MAX(sm.price_fetched_at)::text
+          ) AS price_fetched_at,
           SUM(p.broker_cur_value) AS cur_val,
           SUM(p.quantity * p.avg_cost) AS invested_val,
           SUM(p.broker_cur_value) - SUM(p.quantity * p.avg_cost) AS pnl,
