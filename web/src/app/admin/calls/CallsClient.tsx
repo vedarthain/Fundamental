@@ -150,7 +150,7 @@ function cleanPointText(raw: string, tagRegex: RegExp): { metric: string; peer?:
 const CUSTOM_PURCHASE_KEY = "calls_custom_purchase_v1";
 
 type Scope = "all" | "curated" | "portfolio";
-type ActionFilter = "ALL" | "BUY" | "SELL" | "HOLD";
+type ActionFilter = "ALL" | "BUY" | "PRIORITY_SELL" | "SELL" | "HOLD";
 type DetailTab = "overview" | "catalysts" | "results" | "dividends" | "news" | "audit";
 
 type CompanyOverview = {
@@ -866,14 +866,18 @@ export function CallsClient() {
   const actionCounts = useMemo(() => {
     let buy = 0;
     let sell = 0;
+    let prioritySell = 0;
     let hold = 0;
     unifiedCalls.forEach((c) => {
       const act = (c.actionToday || "").toUpperCase();
+      const isSell = act.includes("SELL") || act.includes("TRIM") || act.includes("EXIT") || act.includes("CUT LOSS");
       if (act.includes("BUY") || act.includes("ACCUMULATE")) buy++;
-      else if (act.includes("SELL") || act.includes("TRIM") || act.includes("EXIT") || act.includes("CUT LOSS")) sell++;
-      else hold++;
+      else if (isSell) {
+        sell++;
+        if (c.isPortfolio) prioritySell++;
+      } else hold++;
     });
-    return { all: unifiedCalls.length, buy, sell, hold };
+    return { all: unifiedCalls.length, buy, sell, prioritySell, hold };
   }, [unifiedCalls]);
 
   // Filter unified calls based on Multi-Selected Dates, Scope, Action Filter, and Search
@@ -882,10 +886,14 @@ export function CallsClient() {
       if (scope === "curated" && !c.isCurated) return false;
       if (scope === "portfolio" && !c.isPortfolio) return false;
 
-      // Action Filter (Buy Calls vs Sell Calls vs Hold Calls)
+      // Action Filter (Buy Calls vs Priority Sell vs Sell Calls vs Hold Calls)
       if (actionFilter === "BUY") {
         const act = (c.actionToday || "").toUpperCase();
         if (!act.includes("BUY") && !act.includes("ACCUMULATE")) return false;
+      } else if (actionFilter === "PRIORITY_SELL") {
+        const act = (c.actionToday || "").toUpperCase();
+        const isSell = act.includes("SELL") || act.includes("TRIM") || act.includes("EXIT") || act.includes("CUT LOSS");
+        if (!isSell || !c.isPortfolio) return false;
       } else if (actionFilter === "SELL") {
         const act = (c.actionToday || "").toUpperCase();
         if (!act.includes("SELL") && !act.includes("TRIM") && !act.includes("EXIT") && !act.includes("CUT LOSS")) return false;
@@ -929,6 +937,12 @@ export function CallsClient() {
     const groups: { sector: string; count: number; calls: typeof filteredCalls }[] = [];
     map.forEach((calls, sector) => {
       calls.sort((a, b) => {
+        const aAct = (a.actionToday || "").toUpperCase();
+        const bAct = (b.actionToday || "").toUpperCase();
+        const aIsPri = (aAct.includes("SELL") || aAct.includes("TRIM") || aAct.includes("EXIT") || aAct.includes("CUT LOSS")) && a.isPortfolio;
+        const bIsPri = (bAct.includes("SELL") || bAct.includes("TRIM") || bAct.includes("EXIT") || bAct.includes("CUT LOSS")) && b.isPortfolio;
+        if (aIsPri && !bIsPri) return -1;
+        if (!aIsPri && bIsPri) return 1;
         if (a.isCurated && !b.isCurated) return -1;
         if (!a.isCurated && b.isCurated) return 1;
         return (b.composite_pct ?? 0) - (a.composite_pct ?? 0);
@@ -940,21 +954,29 @@ export function CallsClient() {
     return groups;
   }, [filteredCalls]);
 
-  // Initial state: sectors collapsed and only 1 stock (the top one) shown
-  useEffect(() => {
-    if (sectorGroups.length > 0 && !hasInitializedSectors) {
-      const topSec = sectorGroups.find((g) => g.calls.some((c) => c.symbol === "INDUSTOWER"))?.sector || sectorGroups[0]?.sector;
-      if (topSec) {
-        setExpandedSectors(new Set([topSec]));
-      }
-      setHasInitializedSectors(true);
-    }
-  }, [sectorGroups, hasInitializedSectors]);
-
   // Selected Call Detail
   const selectedCall = useMemo(() => {
     return filteredCalls.find((c) => c.symbol === selectedSymbol) || filteredCalls[0] || null;
   }, [filteredCalls, selectedSymbol]);
+
+  // Initial state & dynamic auto-expansion: ALWAYS open the selected stock's sector in left rail
+  useEffect(() => {
+    if (selectedCall?.sector) {
+      setExpandedSectors((prev) => {
+        if (prev.has(selectedCall.sector)) return prev;
+        const next = new Set(prev);
+        next.add(selectedCall.sector);
+        return next;
+      });
+      // Scroll the selected stock in the left rail into view smoothly
+      setTimeout(() => {
+        const el = document.getElementById(`stock-rail-${selectedCall.symbol}`);
+        if (el) {
+          el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        }
+      }, 60);
+    }
+  }, [selectedCall?.symbol, selectedCall?.sector]);
 
   useEffect(() => {
     if (selectedCall) {
@@ -1054,6 +1076,16 @@ export function CallsClient() {
             >
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
               <span>Buy ({actionCounts.buy})</span>
+            </button>
+            <button
+              onClick={() => setActionFilter("PRIORITY_SELL")}
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 ${
+                actionFilter === "PRIORITY_SELL" ? "bg-rose-600 text-white shadow-2xs font-bold ring-2 ring-rose-400" : "text-rose-700 hover:text-rose-900 bg-rose-50/70 hover:bg-rose-100"
+              }`}
+              title="Immediate sell/trim priority calls for held portfolio positions"
+            >
+              <span>🚨</span>
+              <span>Priority Sell ({actionCounts.prioritySell})</span>
             </button>
             <button
               onClick={() => setActionFilter("SELL")}
@@ -1194,6 +1226,45 @@ export function CallsClient() {
         </div>
       </div>
 
+      {/* 🚨 Priority Action Alert Banner (Immediate Portfolio Sells / Trims) */}
+      {actionCounts.prioritySell > 0 && actionFilter !== "PRIORITY_SELL" && (
+        <div className="bg-gradient-to-r from-rose-50 via-amber-50 to-rose-50 border border-rose-300 rounded-lg p-2 sm:px-3 sm:py-2 flex items-center justify-between gap-3 shadow-2xs">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-base sm:text-lg shrink-0">🚨</span>
+            <div className="text-xs min-w-0">
+              <span className="font-bold text-rose-900">
+                Immediate Action Required: {actionCounts.prioritySell} portfolio holding{actionCounts.prioritySell > 1 ? "s" : ""} triggered Trim / Take Profit targets.
+              </span>
+              <span className="hidden sm:inline text-slate-600 ml-1.5">
+                Cluster price targets reached or valuation ceilings breached.
+              </span>
+            </div>
+          </div>
+          <button
+            onClick={() => setActionFilter("PRIORITY_SELL")}
+            className="shrink-0 px-2.5 py-1 rounded bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs shadow-2xs flex items-center gap-1 transition-colors"
+          >
+            <span>Review Priority Sells ({actionCounts.prioritySell})</span>
+            <span>&rarr;</span>
+          </button>
+        </div>
+      )}
+
+      {actionFilter === "PRIORITY_SELL" && (
+        <div className="bg-rose-600 text-white rounded-lg p-2 sm:px-3 sm:py-2 flex items-center justify-between gap-3 shadow-2xs text-xs">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-bold">🚨 Showing {filteredCalls.length} Priority Sell / Trim Holdings</span>
+            <span className="text-rose-100 hidden sm:inline">— Review prices, audit catalysts, and trim orders</span>
+          </div>
+          <button
+            onClick={() => setActionFilter("ALL")}
+            className="px-2 py-0.5 rounded bg-white text-rose-800 font-semibold text-[11px] hover:bg-rose-50 transition-colors"
+          >
+            Clear Filter (Show All)
+          </button>
+        </div>
+      )}
+
       {/* ── Two-Pane Workstation: Compressed Left Rail + Right Workstation ──── */}
       <div className="grid grid-cols-1 lg:grid-cols-[195px_minmax(0,1fr)] xl:grid-cols-[210px_minmax(0,1fr)] gap-2 items-start w-full min-w-0">
         {/* ── Left Rail: Compressed, Non-Bold, Neutral Styling ───────────────── */}
@@ -1252,19 +1323,35 @@ export function CallsClient() {
                           const callMove = call.callPerfPct;
                           const actUpper = (call.actionToday || "").toUpperCase();
                           const isSell = actUpper.includes("SELL") || actUpper.includes("TRIM") || actUpper.includes("EXIT") || actUpper.includes("CUT LOSS");
+                          const isPrioritySell = isSell && call.isPortfolio;
                           return (
                             <button
                               key={call.symbol}
+                              id={`stock-rail-${call.symbol}`}
                               onClick={() => setSelectedSymbol(call.symbol)}
                               className={`w-full flex items-center justify-between px-2 py-1 rounded text-left transition-all ${
                                 isSel
-                                  ? "bg-slate-900 text-white shadow-2xs"
-                                  : "hover:bg-slate-100/70 text-slate-800"
+                                  ? isPrioritySell
+                                    ? "bg-slate-900 text-white shadow-2xs ring-1 ring-rose-500"
+                                    : "bg-slate-900 text-white shadow-2xs"
+                                  : isPrioritySell
+                                    ? "bg-rose-50/70 hover:bg-rose-100/80 text-slate-900 border-l-2 border-rose-500"
+                                    : "hover:bg-slate-100/70 text-slate-800"
                               }`}
                             >
                               <div className="min-w-0 flex-1 pr-1.5">
                                 <div className="flex items-center gap-1">
                                   <span className="font-mono font-medium text-xs">{call.symbol}</span>
+                                  {isPrioritySell && (
+                                    <span
+                                      className={`text-[8px] px-1 py-0.2 rounded font-bold uppercase tracking-tight flex items-center gap-0.5 ${
+                                        isSel ? "bg-rose-500 text-white" : "bg-rose-600 text-white"
+                                      }`}
+                                      title="Priority Portfolio Sell / Trim"
+                                    >
+                                      🚨 SELL
+                                    </span>
+                                  )}
                                   {call.isCurated && (
                                     <span
                                       className={`text-[8.5px] px-1 rounded font-normal ${
@@ -1274,7 +1361,7 @@ export function CallsClient() {
                                       TOP6
                                     </span>
                                   )}
-                                  {call.isPortfolio && (
+                                  {call.isPortfolio && !isPrioritySell && (
                                     <span
                                       className={`text-[8.5px] px-1 rounded font-normal ${
                                         isSel ? "bg-blue-400 text-slate-950" : "bg-blue-50 text-blue-900 border border-blue-200"
@@ -1307,9 +1394,11 @@ export function CallsClient() {
                                     className={`px-1 py-0.2 rounded text-[8px] uppercase font-normal ${
                                       isSel
                                         ? "bg-white/20 text-white"
-                                        : isSell
-                                          ? "bg-rose-100 text-rose-800 border border-rose-300"
-                                          : actionBadgeClass(call.actionToday)
+                                        : isPrioritySell
+                                          ? "bg-rose-600 text-white font-semibold"
+                                          : isSell
+                                            ? "bg-rose-100 text-rose-800 border border-rose-300"
+                                            : actionBadgeClass(call.actionToday)
                                     }`}
                                   >
                                     {call.actionToday?.split(" ")[0]}
@@ -1358,6 +1447,11 @@ export function CallsClient() {
                   {selectedCall.isPortfolio && (
                     <span className="px-1.5 py-0.5 rounded text-[10.5px] font-medium bg-blue-50 text-blue-800 border border-blue-200">
                       Held: {selectedCall.heldQty} sh
+                    </span>
+                  )}
+                  {selectedCall.isPortfolio && isSellAction && (
+                    <span className="px-2 py-0.5 rounded text-[10.5px] font-bold bg-rose-600 text-white shadow-2xs flex items-center gap-1">
+                      <span>🚨 PRIORITY TRIM / EXIT</span>
                     </span>
                   )}
                 </div>
@@ -1454,6 +1548,21 @@ export function CallsClient() {
                   </Link>
                 </div>
               </div>
+
+              {/* Priority Sell Alert for currently viewed stock */}
+              {selectedCall.isPortfolio && isSellAction && (
+                <div className="bg-rose-50 border border-rose-300 rounded-lg p-2 px-3 text-xs flex items-center justify-between gap-2 shadow-2xs">
+                  <div className="flex items-center gap-2">
+                    <span className="text-rose-600 font-bold shrink-0">🚨 IMMEDIATE PORTFOLIO ACTION:</span>
+                    <span className="text-slate-800">
+                      <strong>{selectedCall.symbol}</strong> is held ({selectedCall.heldQty} shares) and has reached target or triggered exit criteria. Recommended action: <strong className="text-rose-700">{selectedCall.actionToday}</strong>.
+                    </span>
+                  </div>
+                  <span className="font-mono text-rose-800 font-semibold shrink-0">
+                    Target: {money(selectedCall.target)} | CMP: {money(selectedCall.cmp)}
+                  </span>
+                </div>
+              )}
 
               {/* ── ROW 2: Price Graph (Left) & Stacked 4 Boxes (Right) ───────── */}
               <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_260px] xl:grid-cols-[minmax(0,1fr)_275px] gap-2 items-stretch w-full min-w-0">
