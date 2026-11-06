@@ -258,7 +258,7 @@ export async function GET(request: Request) {
           p.momentum_pct,
           ph.quantity AS held_qty,
           ph.avg_cost AS purchase_price,
-          pt.first_buy_date AS purchase_date,
+          COALESCE(pt.first_buy_date, ph.fallback_buy_date) AS purchase_date,
           ph.broker_cur_value AS cur_val,
           (ph.quantity * ph.avg_cost) AS invested_val,
           EXISTS(SELECT 1 FROM app.portfolio_holding x WHERE x.symbol = p.symbol AND x.quantity > 0) AS is_portfolio,
@@ -272,7 +272,11 @@ export async function GET(request: Request) {
       LEFT JOIN intraday_price si ON si.symbol = p.symbol
       LEFT JOIN user_calls uc ON uc.symbol = p.symbol
       LEFT JOIN (
-          SELECT symbol, SUM(quantity) as quantity, SUM(quantity * avg_cost)/NULLIF(SUM(quantity), 0) as avg_cost, SUM(broker_cur_value) as broker_cur_value
+          SELECT symbol, 
+                 SUM(quantity) as quantity, 
+                 SUM(quantity * avg_cost)/NULLIF(SUM(quantity), 0) as avg_cost, 
+                 SUM(broker_cur_value) as broker_cur_value,
+                 MIN(COALESCE(first_seen_at::date, imported_at::date)) as fallback_buy_date
           FROM app.portfolio_holding
           WHERE quantity > 0
           GROUP BY symbol
@@ -442,7 +446,7 @@ export async function GET(request: Request) {
           COALESCE(u.industry, 'General') AS industry,
           u.market_cap_category,
           c.name AS cluster_name,
-          pt.first_buy_date AS purchase_date,
+          COALESCE(pt.first_buy_date, MIN(p.first_seen_at)::date, MIN(p.imported_at)::date) AS purchase_date,
           lp.composite_pct,
           lp.quality_pct,
           lp.valuation_pct,

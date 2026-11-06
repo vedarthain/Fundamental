@@ -759,8 +759,8 @@ export function CallsClient() {
       const investedVal = port?.invested_val ?? g.invested_val ?? (purchasePrice ? purchasePrice * heldQty : 0);
       const curVal = port?.cur_val ?? g.cur_val ?? (cmp * heldQty);
 
-      const holdingDate = isPortfolio ? (purchaseDate || callDate) : callDate;
-      const holdingDuration = getHoldingDuration(holdingDate);
+      // ONLY actual portfolio holdings have a holding duration (from trade buy date)!
+      const holdingDuration = isPortfolio && purchaseDate ? getHoldingDuration(purchaseDate) : null;
 
       const override = userCallOverrides[g.symbol];
       const isTaken = override ? override.is_taken : isPortfolio || g.is_taken;
@@ -859,8 +859,8 @@ export function CallsClient() {
         const investedVal = port?.invested_val ?? (purchasePrice ? purchasePrice * heldQty : 0);
         const curVal = port?.cur_val ?? (cmp * heldQty);
 
-        const holdingDate = isPortfolio ? (purchaseDate || callDate) : callDate;
-        const holdingDuration = getHoldingDuration(holdingDate);
+        // ONLY actual portfolio holdings have a holding duration (from trade buy date)!
+        const holdingDuration = isPortfolio && purchaseDate ? getHoldingDuration(purchaseDate) : null;
 
         const allocatedAmount = Math.round((capital * cp.weightPct) / 100);
         const totalShares = Math.floor(allocatedAmount / cmp);
@@ -947,8 +947,8 @@ export function CallsClient() {
         const investedVal = port.invested_val;
         const curVal = port.cur_val;
 
-        const holdingDate = purchaseDate || callDate;
-        const holdingDuration = getHoldingDuration(holdingDate);
+        // Portfolio holdings use their actual purchase date
+        const holdingDuration = purchaseDate ? getHoldingDuration(purchaseDate) : null;
 
         const weightPct = 10;
         const allocatedAmount = Math.round((capital * weightPct) / 100);
@@ -1052,7 +1052,7 @@ export function CallsClient() {
     return { all: profitTrim + drawdown + exit, profitTrim, drawdown, exit };
   }, [unifiedCalls]);
 
-  // Holding age bracket breakdown counts
+  // Holding age bracket breakdown counts (for actual portfolio holdings)
   const holdingAgeCounts = useMemo(() => {
     const counts: Record<HoldingAgeTier, number> = {
       "< 1M": 0,
@@ -1061,18 +1061,20 @@ export function CallsClient() {
       "6M–1Y": 0,
       "> 1Y": 0,
     };
-    const scopedCalls = unifiedCalls.filter((c) => {
-      if (scope === "curated" && !c.isCurated) return false;
-      if (scope === "portfolio" && !c.isPortfolio) return false;
-      return true;
-    });
-    scopedCalls.forEach((c) => {
-      if (c.holdingDuration?.tier) {
+    unifiedCalls.forEach((c) => {
+      if (c.isPortfolio && c.holdingDuration?.tier) {
         counts[c.holdingDuration.tier as HoldingAgeTier] = (counts[c.holdingDuration.tier as HoldingAgeTier] || 0) + 1;
       }
     });
     return counts;
-  }, [unifiedCalls, scope]);
+  }, [unifiedCalls]);
+
+  const handleHoldingAgeClick = (tier: "ALL" | HoldingAgeTier) => {
+    setHoldingAgeFilter(tier);
+    if (tier !== "ALL") {
+      setScope("portfolio");
+    }
+  };
 
   // Filter unified calls based on Multi-Selected Dates, Scope, Action Filter, Holding Age, and Search
   const filteredCalls = useMemo(() => {
@@ -1084,7 +1086,7 @@ export function CallsClient() {
         const isSell = act.includes("SELL") || act.includes("TRIM") || act.includes("EXIT") || act.includes("CUT LOSS");
         if (!isSell || !c.isPortfolio) return false;
         if (prioritySubFilter !== "ALL" && getPriorityCategory(c).category !== prioritySubFilter) return false;
-        if (holdingAgeFilter !== "ALL" && c.holdingDuration?.tier !== holdingAgeFilter) return false;
+        if (holdingAgeFilter !== "ALL" && (!c.isPortfolio || c.holdingDuration?.tier !== holdingAgeFilter)) return false;
       } else {
         // Standard Scope Filter (Curated Top 6 vs Portfolio vs All)
         if (scope === "curated" && !c.isCurated) return false;
@@ -1104,7 +1106,7 @@ export function CallsClient() {
 
         // Holding Age Filter (< 1M, 1M–3M, 3M–6M, 6M–1Y, > 1Y)
         if (holdingAgeFilter !== "ALL") {
-          if (c.holdingDuration?.tier !== holdingAgeFilter) return false;
+          if (!c.isPortfolio || c.holdingDuration?.tier !== holdingAgeFilter) return false;
         }
 
         // Multi-date selection check
@@ -1257,7 +1259,6 @@ export function CallsClient() {
     return act.includes("SELL") || act.includes("TRIM") || act.includes("EXIT") || act.includes("CUT LOSS");
   }, [selectedCall]);
 
-  const callDuration = useMemo(() => getHoldingDuration(selectedCall?.callDate), [selectedCall?.callDate]);
   const purchaseDuration = useMemo(() => getHoldingDuration(selectedCall?.purchaseDate), [selectedCall?.purchaseDate]);
 
   // Tab selection
@@ -1456,7 +1457,7 @@ export function CallsClient() {
             </span>
             <div className="flex items-center bg-slate-100 p-0.5 rounded-md border hairline text-xs gap-0.5">
               <button
-                onClick={() => setHoldingAgeFilter("ALL")}
+                onClick={() => handleHoldingAgeClick("ALL")}
                 className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all ${
                   holdingAgeFilter === "ALL" ? "bg-white text-slate-900 shadow-2xs font-semibold" : "text-slate-600 hover:text-slate-900"
                 }`}
@@ -1464,7 +1465,7 @@ export function CallsClient() {
                 All
               </button>
               <button
-                onClick={() => setHoldingAgeFilter("< 1M")}
+                onClick={() => handleHoldingAgeClick("< 1M")}
                 className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all flex items-center gap-1 ${
                   holdingAgeFilter === "< 1M" ? "bg-blue-600 text-white shadow-2xs font-semibold" : "text-blue-700 hover:bg-blue-50"
                 }`}
@@ -1475,7 +1476,7 @@ export function CallsClient() {
                 </span>
               </button>
               <button
-                onClick={() => setHoldingAgeFilter("1M–3M")}
+                onClick={() => handleHoldingAgeClick("1M–3M")}
                 className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all flex items-center gap-1 ${
                   holdingAgeFilter === "1M–3M" ? "bg-cyan-700 text-white shadow-2xs font-semibold" : "text-cyan-800 hover:bg-cyan-50"
                 }`}
@@ -1486,7 +1487,7 @@ export function CallsClient() {
                 </span>
               </button>
               <button
-                onClick={() => setHoldingAgeFilter("3M–6M")}
+                onClick={() => handleHoldingAgeClick("3M–6M")}
                 className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all flex items-center gap-1 ${
                   holdingAgeFilter === "3M–6M" ? "bg-amber-600 text-white shadow-2xs font-semibold" : "text-amber-800 hover:bg-amber-50"
                 }`}
@@ -1497,7 +1498,7 @@ export function CallsClient() {
                 </span>
               </button>
               <button
-                onClick={() => setHoldingAgeFilter("6M–1Y")}
+                onClick={() => handleHoldingAgeClick("6M–1Y")}
                 className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all flex items-center gap-1 ${
                   holdingAgeFilter === "6M–1Y" ? "bg-purple-600 text-white shadow-2xs font-semibold" : "text-purple-800 hover:bg-purple-50"
                 }`}
@@ -1508,7 +1509,7 @@ export function CallsClient() {
                 </span>
               </button>
               <button
-                onClick={() => setHoldingAgeFilter("> 1Y")}
+                onClick={() => handleHoldingAgeClick("> 1Y")}
                 className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all flex items-center gap-1 ${
                   holdingAgeFilter === "> 1Y" ? "bg-emerald-600 text-white shadow-2xs font-semibold" : "text-emerald-800 hover:bg-emerald-50"
                 }`}
@@ -1707,12 +1708,12 @@ export function CallsClient() {
                               <div className="text-right shrink-0">
                                 <div className="font-mono font-normal text-xs">{money(call.cmp)}</div>
                                 <div className="flex items-center justify-end gap-1 mt-0.5">
-                                  {call.holdingDuration && (
+                                  {call.isPortfolio && call.holdingDuration && (
                                     <span
                                       className={`text-[8px] font-mono px-1 py-0.2 rounded border ${
                                         isSel ? call.holdingDuration.badgeClassDark : call.holdingDuration.badgeClass
                                       }`}
-                                      title={`${call.isPortfolio ? "Holding duration" : "Call age"}: ${call.holdingDuration.days} days (${call.holdingDuration.tier} bracket)`}
+                                      title={`Holding duration: ${call.holdingDuration.days} days (${call.holdingDuration.tier} bracket)`}
                                     >
                                       {call.holdingDuration.shortLabel}
                                     </span>
@@ -1787,13 +1788,13 @@ export function CallsClient() {
                       Held: {selectedCall.heldQty} sh
                     </span>
                   )}
-                  {selectedCall.holdingDuration && (
+                  {selectedCall.isPortfolio && selectedCall.holdingDuration && (
                     <span
                       className={`px-1.5 py-0.5 rounded text-[10.5px] font-medium border flex items-center gap-1 ${selectedCall.holdingDuration.badgeClass}`}
-                      title={`${selectedCall.isPortfolio ? "Holding" : "Call"} age: ${selectedCall.holdingDuration.days} days (${selectedCall.holdingDuration.tier} bracket)`}
+                      title={`Holding age: ${selectedCall.holdingDuration.days} days (${selectedCall.holdingDuration.tier} bracket)`}
                     >
                       <Clock className="w-3 h-3" />
-                      <span>{selectedCall.isPortfolio ? "Holding:" : "Call Age:"} {selectedCall.holdingDuration.label}</span>
+                      <span>Held: {selectedCall.holdingDuration.label}</span>
                     </span>
                   )}
                   {selectedCall.isPortfolio && isSellAction && (
@@ -2004,11 +2005,6 @@ export function CallsClient() {
                         <span className="tracking-wide text-[10px] truncate">ANCHOR 1: CALL GIVEN</span>
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
-                        {callDuration && (
-                          <span className={`text-[8.5px] font-mono px-1 py-0.2 rounded border ${callDuration.badgeClass}`}>
-                            {callDuration.shortLabel}
-                          </span>
-                        )}
                         <span className="text-[9px] font-mono text-slate-500">
                           {fmtDate(selectedCall.callDate)} ({daysAgo(selectedCall.callDate)})
                         </span>
