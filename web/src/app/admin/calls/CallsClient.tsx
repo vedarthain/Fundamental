@@ -29,6 +29,8 @@ import {
   Activity,
   Info,
   Clock,
+  PieChart,
+  Layers,
 } from "lucide-react";
 import { PriceChart } from "@/components/PriceChart";
 import { formatFetchedAt } from "@/components/IntradayPriceBadge";
@@ -229,7 +231,7 @@ const CUSTOM_PURCHASE_KEY = "calls_custom_purchase_v1";
 
 type Scope = "all" | "curated" | "portfolio";
 type ActionFilter = "ALL" | "BUY" | "PRIORITY_SELL" | "SELL" | "HOLD";
-type DetailTab = "overview" | "catalysts" | "results" | "dividends" | "news" | "audit";
+type DetailTab = "overview" | "catalysts" | "results" | "dividends" | "news" | "audit" | "density";
 export type PriorityCategory = "ALL" | "PROFIT_TRIM" | "DRAWDOWN_REVIEW" | "STRUCTURAL_EXIT";
 
 export function getPriorityCategory(call: {
@@ -355,7 +357,7 @@ export function CallsClient() {
   const [isDateDropdownOpen, setIsDateDropdownOpen] = useState(false);
   const dateDropdownRef = useRef<HTMLDivElement>(null);
 
-  // Scope & Action Filters: Always default to 'curated' (Top 6) on refresh
+  // Scope & Action Filters: Always default to 'curated' (Top) on refresh
   const [scope, setScope] = useState<Scope>("curated");
   const [actionFilter, setActionFilter] = useState<ActionFilter>("ALL");
   const [prioritySubFilter, setPrioritySubFilter] = useState<PriorityCategory>("ALL");
@@ -366,13 +368,15 @@ export function CallsClient() {
   // Selected Stock & Detail Tab: default to top pick INDUSTOWER
   const [selectedSymbol, setSelectedSymbol] = useState<string>("INDUSTOWER");
   const [activeTab, setActiveTab] = useState<DetailTab>("overview");
+  const [densityScope, setDensityScope] = useState<"curated" | "portfolio" | "all">("curated");
 
   // Stock context data
   const [contextData, setContextData] = useState<StockContext | null>(null);
   const [contextLoading, setContextLoading] = useState(false);
 
-  // Expanded sectors set for tree (only 1 sector open initially)
+  // Expanded sectors set for tree (in 'all'/'portfolio' only 1 sector open initially; in 'curated' (Top) all are uncollapsed by default)
   const [expandedSectors, setExpandedSectors] = useState<Set<string>>(new Set());
+  const [collapsedCuratedSectors, setCollapsedCuratedSectors] = useState<Set<string>>(new Set());
   const [hasInitializedSectors, setHasInitializedSectors] = useState(false);
 
   // Call status overrides
@@ -522,14 +526,14 @@ export function CallsClient() {
     }
   };
 
-  // Comprehensive Curated 6 deployment picks with rich operational thesis & company overview
+  // Comprehensive Curated deployment picks with rich operational thesis & company overview
   const curatedPicks = useMemo(() => [
     {
       symbol: "INDUSTOWER",
       name: "Indus Towers Ltd.",
       sector: "Telecommunication",
       cluster: "Telecom",
-      weightPct: 20,
+      weightPct: 15,
       cmp: 378.3,
       anchorPrice: 380.0,
       callDate: "2026-11-01",
@@ -562,7 +566,7 @@ export function CallsClient() {
       name: "Union Bank of India",
       sector: "Financial Services",
       cluster: "PSU Banks",
-      weightPct: 20,
+      weightPct: 15,
       cmp: 186.0,
       anchorPrice: 178.9,
       callDate: "2026-11-01",
@@ -589,6 +593,39 @@ export function CallsClient() {
         "Recovery from legacy stressed assets via NCLT resolutions feeding directly into non-interest income.",
       ],
       marginOfSafety: "Sizable valuation cushion trading at an attractive Price-to-Adjusted Book Value (P/ABV < 0.85x), well below historical peak multiples of 1.2x. Floor anchored at ₹130 (0.65x ABV).",
+    },
+    {
+      symbol: "BBTC",
+      name: "Bombay Burmah Trading Corporation Ltd.",
+      sector: "Fast Moving Consumer Goods",
+      cluster: "Packaged Foods & Dairy",
+      weightPct: 15,
+      cmp: 1284.3,
+      anchorPrice: 1284.3,
+      callDate: "2026-11-06",
+      buyBelow: 1124.3,
+      target: 2356.9,
+      stopLoss: 1050.0,
+      upside: 83.5,
+      scores: "100 / 82 / 27",
+      horizon: ">1Y" as IdeaHorizon,
+      horizonLabel: "💎 >1Y Asset Arbitrage",
+      timeline: "9–15M",
+      role: ">1Y Holding Co Arbitrage",
+      rationale: "Holding company of the Wadia Group controlling a massive 50.5% effective equity stake in Britannia Industries alongside prime land parcels, plantations, and auto components, trading at an extreme >60% holding discount.",
+      companyOverview: "The Bombay Burmah Trading Corporation, Limited (BBTC) is a 160+ year old flagship enterprise of the Wadia Group. Its primary economic engine is its majority ownership in Britannia Industries Limited (direct and through subsidiaries), coupled with direct operations in tea and coffee plantations, auto-electrical components, and real estate assets.",
+      operatingHighlights: [
+        "Unrivaled asset backing: BBTC holds ~12.16 crore shares (~50.5%) of Britannia Industries Ltd, valued in excess of ₹65,000 Cr at market prices.",
+        "Deep holding company discount (>60%) compared to historical typical holding discounts of 35–40%, offering a massive structural mean-reversion cushion.",
+        "Zero-leverage parent holding structure with regular dividend pass-through from Britannia fueling treasury yield.",
+        "Significant standalone land banks and high-margin plantation assets providing hard asset floor.",
+      ],
+      catalysts: [
+        "Narrowing holding company discount driven by institutional activist pressure and corporate simplification.",
+        "Accelerating volume recovery and rural demand tailwinds in Britannia's premium biscuit and dairy portfolio.",
+        "Potential value unlocking or restructuring of non-core real estate land holdings in South and Western India.",
+      ],
+      marginOfSafety: "Pristine fundamental backing with Britannia market value alone representing >2.5x BBTC's current market cap. High margin of safety with firm support floor at ₹1,050.",
     },
     {
       symbol: "SHAREINDIA",
@@ -694,7 +731,7 @@ export function CallsClient() {
       name: "Apollo Tyres Ltd.",
       sector: "Automobile and Auto Components",
       cluster: "Auto Components",
-      weightPct: 15,
+      weightPct: 10,
       cmp: 400.4,
       anchorPrice: 384.15,
       callDate: "2026-11-01",
@@ -843,7 +880,7 @@ export function CallsClient() {
       });
     });
 
-    // 2. Curated Picks fallback (ensures Top 6 are always present)
+    // 2. Curated Picks fallback (ensures Top are always present)
     curatedPicks.forEach((cp) => {
       if (!callMap.has(cp.symbol)) {
         const port = data.portfolioActions.find((p) => p.symbol === cp.symbol);
@@ -1094,7 +1131,7 @@ export function CallsClient() {
         if (prioritySubFilter !== "ALL" && getPriorityCategory(c).category !== prioritySubFilter) return false;
         if (holdingAgeFilter !== "ALL" && (!c.isPortfolio || c.holdingDuration?.tier !== holdingAgeFilter)) return false;
       } else {
-        // Standard Scope Filter (Curated Top 6 vs Portfolio vs All)
+        // Standard Scope Filter (Curated Top vs Portfolio vs All)
         if (scope === "curated" && !c.isCurated) return false;
         if (scope === "portfolio" && !c.isPortfolio) return false;
 
@@ -1177,12 +1214,21 @@ export function CallsClient() {
   // Initial state & dynamic auto-expansion: ALWAYS open the selected stock's sector in left rail
   useEffect(() => {
     if (selectedCall?.sector) {
-      setExpandedSectors((prev) => {
-        if (prev.has(selectedCall.sector)) return prev;
-        const next = new Set(prev);
-        next.add(selectedCall.sector);
-        return next;
-      });
+      if (scope === "curated") {
+        setCollapsedCuratedSectors((prev) => {
+          if (!prev.has(selectedCall.sector)) return prev;
+          const next = new Set(prev);
+          next.delete(selectedCall.sector);
+          return next;
+        });
+      } else {
+        setExpandedSectors((prev) => {
+          if (prev.has(selectedCall.sector)) return prev;
+          const next = new Set(prev);
+          next.add(selectedCall.sector);
+          return next;
+        });
+      }
       // Scroll the selected stock in the left rail into view smoothly
       setTimeout(() => {
         const el = document.getElementById(`stock-rail-${selectedCall.symbol}`);
@@ -1191,7 +1237,7 @@ export function CallsClient() {
         }
       }, 60);
     }
-  }, [selectedCall?.symbol, selectedCall?.sector]);
+  }, [selectedCall?.symbol, selectedCall?.sector, scope]);
 
   // Price info callback from PriceChart (carries computed prev close & 1D change)
   const [stockPriceInfo, setStockPriceInfo] = useState<{
@@ -1214,12 +1260,21 @@ export function CallsClient() {
   }, [selectedCall]);
 
   const toggleSector = (sec: string) => {
-    setExpandedSectors((prev) => {
-      const next = new Set(prev);
-      if (next.has(sec)) next.delete(sec);
-      else next.add(sec);
-      return next;
-    });
+    if (scope === "curated") {
+      setCollapsedCuratedSectors((prev) => {
+        const next = new Set(prev);
+        if (next.has(sec)) next.delete(sec);
+        else next.add(sec);
+        return next;
+      });
+    } else {
+      setExpandedSectors((prev) => {
+        const next = new Set(prev);
+        if (next.has(sec)) next.delete(sec);
+        else next.add(sec);
+        return next;
+      });
+    }
   };
 
   const toggleBatch = (key: string) => {
@@ -1244,8 +1299,126 @@ export function CallsClient() {
   const selectAllBatches = () => setSelectedBatches(new Set(["all"]));
   const clearAllBatches = () => setSelectedBatches(new Set(["all"]));
 
-  const expandAll = () => setExpandedSectors(new Set(sectorGroups.map((g) => g.sector)));
-  const collapseAll = () => setExpandedSectors(new Set());
+  const expandAll = () => {
+    if (scope === "curated") {
+      setCollapsedCuratedSectors(new Set());
+    } else {
+      setExpandedSectors(new Set(sectorGroups.map((g) => g.sector)));
+    }
+  };
+
+  const collapseAll = () => {
+    if (scope === "curated") {
+      setCollapsedCuratedSectors(new Set(sectorGroups.map((g) => g.sector)));
+    } else {
+      setExpandedSectors(new Set());
+    }
+  };
+
+  // Keyboard Arrow Key Navigation (ArrowDown/ArrowRight = Next stock, ArrowUp/ArrowLeft = Prev stock)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+        e.preventDefault();
+        const visibleList = sectorGroups.flatMap((g) => g.calls);
+        if (visibleList.length === 0) return;
+        const currentIndex = visibleList.findIndex((c) => c.symbol === selectedSymbol);
+        if (currentIndex === -1 || currentIndex >= visibleList.length - 1) {
+          setSelectedSymbol(visibleList[0].symbol);
+        } else {
+          setSelectedSymbol(visibleList[currentIndex + 1].symbol);
+        }
+      } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+        e.preventDefault();
+        const visibleList = sectorGroups.flatMap((g) => g.calls);
+        if (visibleList.length === 0) return;
+        const currentIndex = visibleList.findIndex((c) => c.symbol === selectedSymbol);
+        if (currentIndex <= 0) {
+          setSelectedSymbol(visibleList[visibleList.length - 1].symbol);
+        } else {
+          setSelectedSymbol(visibleList[currentIndex - 1].symbol);
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [sectorGroups, selectedSymbol]);
+
+  // Sector Density & Concentration Analysis ("Don't put all eggs in one basket")
+  const sectorDensityData = useMemo(() => {
+    const targetCalls = densityScope === "curated"
+      ? unifiedCalls.filter((c) => c.isCurated)
+      : densityScope === "portfolio"
+      ? unifiedCalls.filter((c) => c.isPortfolio)
+      : filteredCalls;
+
+    const totalCap = targetCalls.reduce((sum, c) => sum + (c.allocatedAmount || (c.cmp * (c.heldQty || 100))), 0);
+    const totalCallsCount = targetCalls.length;
+
+    type CallItem = (typeof targetCalls)[number];
+    const sectorMap = new Map<string, {
+      sector: string;
+      calls: CallItem[];
+      allocatedAmount: number;
+      projectedProfit: number;
+      weightPct: number;
+    }>();
+
+    targetCalls.forEach((c) => {
+      const sec = c.sector || "Other";
+      const existing = sectorMap.get(sec) || {
+        sector: sec,
+        calls: [] as CallItem[],
+        allocatedAmount: 0,
+        projectedProfit: 0,
+        weightPct: 0,
+      };
+      existing.calls.push(c);
+      existing.allocatedAmount += (c.allocatedAmount || (c.cmp * (c.heldQty || 100)));
+      existing.projectedProfit += (c.profitRupees || 0);
+      existing.weightPct += (c.weightPct || 0);
+      sectorMap.set(sec, existing);
+    });
+
+    const list = Array.from(sectorMap.values()).map((s) => {
+      const calculatedWeight = totalCap > 0 ? (s.allocatedAmount / totalCap) * 100 : (s.calls.length / (totalCallsCount || 1)) * 100;
+      let riskLevel: "optimal" | "moderate" | "high" = "optimal";
+      if (calculatedWeight > 30) riskLevel = "high";
+      else if (calculatedWeight >= 20) riskLevel = "moderate";
+
+      return {
+        ...s,
+        calculatedWeight,
+        countPct: totalCallsCount > 0 ? (s.calls.length / totalCallsCount) * 100 : 0,
+        riskLevel,
+      };
+    });
+
+    list.sort((a, b) => b.calculatedWeight - a.calculatedWeight);
+    const maxWeight = list.length > 0 ? list[0].calculatedWeight : 0;
+    const isOverconcentrated = maxWeight > 30;
+
+    return {
+      totalCallsCount,
+      totalCap,
+      list,
+      maxWeight,
+      isOverconcentrated,
+      sectorsCount: list.length,
+    };
+  }, [unifiedCalls, filteredCalls, densityScope]);
 
   // Date selection button label
   const batchButtonLabel = useMemo(() => {
@@ -1414,7 +1587,7 @@ export function CallsClient() {
               }`}
             >
               <Coins className="w-3 h-3 text-amber-400" />
-              <span>Top 6</span>
+              <span>Top</span>
             </button>
             <button
               onClick={() => setScope("all")}
@@ -1614,10 +1787,16 @@ export function CallsClient() {
             <div className="flex items-center gap-1">
               <button
                 type="button"
-                onClick={expandedSectors.size === sectorGroups.length ? collapseAll : expandAll}
+                onClick={
+                  (scope === "curated" ? collapsedCuratedSectors.size === 0 : expandedSectors.size === sectorGroups.length)
+                    ? collapseAll
+                    : expandAll
+                }
                 className="text-[10px] text-slate-500 hover:text-slate-800 px-1.5 py-0.2 rounded border hairline bg-white"
               >
-                {expandedSectors.size === sectorGroups.length ? "Collapse" : "Expand"}
+                {(scope === "curated" ? collapsedCuratedSectors.size === 0 : expandedSectors.size === sectorGroups.length)
+                  ? "Collapse"
+                  : "Expand"}
               </button>
             </div>
           </div>
@@ -1629,7 +1808,10 @@ export function CallsClient() {
               </div>
             ) : (
               sectorGroups.map((g) => {
-                const isSecOpen = !!search.trim() || expandedSectors.has(g.sector);
+                const isSecOpen =
+                  scope === "curated"
+                    ? !collapsedCuratedSectors.has(g.sector)
+                    : (!!search.trim() || expandedSectors.has(g.sector));
                 return (
                   <div key={g.sector} className="rounded border hairline bg-slate-50/40 overflow-hidden">
                     <button
@@ -1696,7 +1878,7 @@ export function CallsClient() {
                                         isSel ? "bg-amber-400 text-slate-950 font-medium" : "bg-amber-100 text-amber-900"
                                       }`}
                                     >
-                                      TOP6
+                                      TOP
                                     </span>
                                   )}
                                   {call.isPortfolio && !isPrioritySell && (
@@ -1789,7 +1971,7 @@ export function CallsClient() {
                   </span>
                   {selectedCall.isCurated && (
                     <span className="px-1.5 py-0.5 rounded text-[10.5px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
-                      ★ TOP 6
+                      ★ TOP
                     </span>
                   )}
                   {selectedCall.isPortfolio && (
@@ -2324,6 +2506,19 @@ export function CallsClient() {
                     <CheckSquare className="w-3.5 h-3.5" />
                     <span>Audit &amp; Governance</span>
                   </button>
+
+                  <button
+                    onClick={() => setActiveTab("density")}
+                    className={`px-3 py-1 rounded-md font-medium transition-all flex items-center gap-1.5 shrink-0 ${
+                      effectiveTab === "density" ? "bg-indigo-700 text-white shadow-xs font-semibold" : "text-slate-600 hover:bg-slate-200/60"
+                    }`}
+                  >
+                    <PieChart className="w-3.5 h-3.5" />
+                    <span>Sector Density</span>
+                    <span className="text-[10px] font-mono px-1 rounded bg-slate-200/60 text-slate-700">
+                      {sectorDensityData.sectorsCount}
+                    </span>
+                  </button>
                 </div>
 
                 <div className="p-3.5">
@@ -2791,6 +2986,295 @@ export function CallsClient() {
                           <span>Open Full Verdict Evidence &amp; Metric Drift Sheet</span>
                           <ExternalLink className="w-3.5 h-3.5" />
                         </Link>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* TAB 7: SECTOR DENSITY & CONCENTRATION ANALYSIS */}
+                  {effectiveTab === "density" && (
+                    <div className="space-y-4">
+                      {/* Top Header & Scope Selector */}
+                      <div className="bg-slate-50 border hairline rounded-lg p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                              <PieChart className="w-4 h-4 text-indigo-600" />
+                              <span>Sector Density &amp; Portfolio Concentration</span>
+                            </h3>
+                            <span
+                              className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
+                                sectorDensityData.maxWeight > 30
+                                  ? "bg-rose-100 text-rose-800 border border-rose-300"
+                                  : sectorDensityData.maxWeight > 20
+                                  ? "bg-amber-100 text-amber-800 border border-amber-300"
+                                  : "bg-emerald-100 text-emerald-800 border border-emerald-300"
+                              }`}
+                            >
+                              {sectorDensityData.maxWeight > 30
+                                ? "⚠️ High Concentration Risk"
+                                : sectorDensityData.maxWeight > 20
+                                ? "🟡 Moderate Concentration"
+                                : "🟢 Optimal Diversification"}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-500 mt-1">
+                            Portfolio Rule: Never put all eggs in one basket. No single sector should exceed 20–25% to protect capital against industry-wide cyclical drawdowns.
+                          </p>
+                        </div>
+
+                        {/* Scope Toggle inside Density Tab */}
+                        <div className="flex items-center gap-1 bg-white p-0.5 rounded-md border hairline text-xs shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setDensityScope("curated")}
+                            className={`px-2.5 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 ${
+                              densityScope === "curated"
+                                ? "bg-indigo-700 text-white shadow-2xs font-semibold"
+                                : "text-slate-600 hover:bg-slate-100"
+                            }`}
+                          >
+                            <Coins className="w-3 h-3 text-amber-400" />
+                            <span>Top Calls</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDensityScope("portfolio")}
+                            className={`px-2.5 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 ${
+                              densityScope === "portfolio"
+                                ? "bg-indigo-700 text-white shadow-2xs font-semibold"
+                                : "text-slate-600 hover:bg-slate-100"
+                            }`}
+                          >
+                            <Wallet className="w-3 h-3" />
+                            <span>Held Portfolio</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDensityScope("all")}
+                            className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                              densityScope === "all"
+                                ? "bg-indigo-700 text-white shadow-2xs font-semibold"
+                                : "text-slate-600 hover:bg-slate-100"
+                            }`}
+                          >
+                            All Calls
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Density KPI Summary Cards */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                        <div className="p-3 rounded-lg border hairline bg-white shadow-2xs">
+                          <span className="text-[10.5px] uppercase font-bold text-slate-400 block">Sectors Represented</span>
+                          <span className="text-lg font-bold text-slate-900 block mt-0.5 font-mono">
+                            {sectorDensityData.sectorsCount}
+                          </span>
+                          <span className="text-[10px] text-slate-500 block">Across {sectorDensityData.totalCallsCount} active stocks</span>
+                        </div>
+
+                        <div className="p-3 rounded-lg border hairline bg-white shadow-2xs">
+                          <span className="text-[10.5px] uppercase font-bold text-slate-400 block">Max Sector Exposure</span>
+                          <span className={`text-lg font-bold block mt-0.5 font-mono ${
+                            sectorDensityData.maxWeight > 30 ? "text-rose-600" : sectorDensityData.maxWeight > 20 ? "text-amber-600" : "text-emerald-700"
+                          }`}>
+                            {sectorDensityData.maxWeight.toFixed(1)}%
+                          </span>
+                          <span className="text-[10px] text-slate-500 truncate block">
+                            {sectorDensityData.list[0]?.sector || "None"}
+                          </span>
+                        </div>
+
+                        <div className="p-3 rounded-lg border hairline bg-white shadow-2xs">
+                          <span className="text-[10.5px] uppercase font-bold text-slate-400 block">Recommended Sector Cap</span>
+                          <span className="text-lg font-bold text-slate-900 block mt-0.5 font-mono">
+                            25.0%
+                          </span>
+                          <span className="text-[10px] text-emerald-600 block font-medium">Institutional safety limit</span>
+                        </div>
+
+                        <div className="p-3 rounded-lg border hairline bg-white shadow-2xs">
+                          <span className="text-[10.5px] uppercase font-bold text-slate-400 block">Total Capital Allocated</span>
+                          <span className="text-lg font-bold text-slate-900 block mt-0.5 font-mono">
+                            {money(sectorDensityData.totalCap)}
+                          </span>
+                          <span className="text-[10px] text-indigo-600 block font-medium">100% Capital Deployed</span>
+                        </div>
+                      </div>
+
+                      {/* Visual Proportional Segment Bar */}
+                      <div className="p-3 rounded-lg border hairline bg-white space-y-2">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-bold text-slate-700 flex items-center gap-1.5">
+                            <Layers className="w-3.5 h-3.5 text-indigo-600" />
+                            <span>Sector Allocation Distribution</span>
+                          </span>
+                          <span className="text-[11px] text-slate-400 font-mono">
+                            {sectorDensityData.sectorsCount} Sectors • {sectorDensityData.totalCallsCount} Stocks
+                          </span>
+                        </div>
+
+                        <div className="h-4 w-full rounded-md overflow-hidden flex bg-slate-100 border hairline">
+                          {sectorDensityData.list.map((sec, idx) => {
+                            const colors = [
+                              "bg-indigo-600",
+                              "bg-emerald-600",
+                              "bg-sky-600",
+                              "bg-amber-600",
+                              "bg-violet-600",
+                              "bg-teal-600",
+                              "bg-rose-600",
+                              "bg-slate-600",
+                            ];
+                            const color = colors[idx % colors.length];
+                            return (
+                              <div
+                                key={sec.sector}
+                                style={{ width: `${Math.max(sec.calculatedWeight, 2)}%` }}
+                                className={`${color} h-full transition-all relative group cursor-pointer`}
+                                title={`${sec.sector}: ${sec.calculatedWeight.toFixed(1)}% (${sec.calls.length} stocks)`}
+                              />
+                            );
+                          })}
+                        </div>
+
+                        {/* Legend */}
+                        <div className="flex flex-wrap gap-2 pt-1 text-[11px]">
+                          {sectorDensityData.list.map((sec, idx) => {
+                            const badgeColors = [
+                              "bg-indigo-50 text-indigo-700 border-indigo-200",
+                              "bg-emerald-50 text-emerald-700 border-emerald-200",
+                              "bg-sky-50 text-sky-700 border-sky-200",
+                              "bg-amber-50 text-amber-700 border-amber-200",
+                              "bg-violet-50 text-violet-700 border-violet-200",
+                              "bg-teal-50 text-teal-700 border-teal-200",
+                              "bg-rose-50 text-rose-700 border-rose-200",
+                              "bg-slate-50 text-slate-700 border-slate-200",
+                            ];
+                            const badge = badgeColors[idx % badgeColors.length];
+                            return (
+                              <span
+                                key={sec.sector}
+                                className={`px-2 py-0.5 rounded-full border text-[10.5px] font-medium flex items-center gap-1.5 ${badge}`}
+                              >
+                                <span className="font-semibold">{sec.sector}:</span>
+                                <span className="font-mono">{sec.calculatedWeight.toFixed(1)}%</span>
+                              </span>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Detailed Sector Density Breakdown Cards */}
+                      <div className="space-y-2">
+                        <div className="text-xs font-bold text-slate-700 uppercase tracking-wider px-0.5">
+                          Sector Breakdown &amp; Concentration Risk Audit
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          {sectorDensityData.list.map((sec) => {
+                            const isOver = sec.calculatedWeight > 30;
+                            const isMod = sec.calculatedWeight >= 20 && sec.calculatedWeight <= 30;
+                            return (
+                              <div
+                                key={sec.sector}
+                                className={`rounded-lg border p-3.5 space-y-2.5 transition-all bg-white shadow-2xs ${
+                                  isOver
+                                    ? "border-rose-300 ring-1 ring-rose-200"
+                                    : isMod
+                                    ? "border-amber-300 ring-1 ring-amber-100"
+                                    : "border-slate-200 hover:border-indigo-300"
+                                }`}
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div>
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <h4 className="font-bold text-slate-900 text-xs sm:text-sm">
+                                        {sec.sector}
+                                      </h4>
+                                      <span
+                                        className={`text-[9.5px] font-bold px-1.5 py-0.2 rounded uppercase ${
+                                          isOver
+                                            ? "bg-rose-100 text-rose-800 border border-rose-300"
+                                            : isMod
+                                            ? "bg-amber-100 text-amber-800 border border-amber-300"
+                                            : "bg-emerald-100 text-emerald-800 border border-emerald-300"
+                                        }`}
+                                      >
+                                        {isOver ? "Overweight / Egg Basket Alert" : isMod ? "Moderate / Monitor" : "Balanced Exposure"}
+                                      </span>
+                                    </div>
+                                    <span className="text-[11px] text-slate-500 font-mono mt-0.5 block">
+                                      {sec.calls.length} position{sec.calls.length > 1 ? "s" : ""} • Allocated: {money(sec.allocatedAmount)}
+                                    </span>
+                                  </div>
+
+                                  <div className="text-right shrink-0">
+                                    <span className="font-mono font-bold text-base text-slate-900">
+                                      {sec.calculatedWeight.toFixed(1)}%
+                                    </span>
+                                    <span className="text-[10px] text-slate-400 block">of Total</span>
+                                  </div>
+                                </div>
+
+                                {/* Visual Progress Bar */}
+                                <div className="space-y-1">
+                                  <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
+                                    <div
+                                      style={{ width: `${Math.min(sec.calculatedWeight, 100)}%` }}
+                                      className={`h-full rounded-full ${
+                                        isOver ? "bg-rose-600" : isMod ? "bg-amber-500" : "bg-emerald-600"
+                                      }`}
+                                    />
+                                  </div>
+                                </div>
+
+                                {/* Positions in this sector */}
+                                <div className="space-y-1 pt-1">
+                                  <span className="text-[10px] font-bold uppercase text-slate-400 block">Stocks in this Sector:</span>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {sec.calls.map((c) => {
+                                      const isCurSel = selectedCall.symbol === c.symbol;
+                                      return (
+                                        <button
+                                          key={c.symbol}
+                                          type="button"
+                                          onClick={() => setSelectedSymbol(c.symbol)}
+                                          className={`px-2 py-1 rounded text-xs font-mono transition-all flex items-center gap-1.5 ${
+                                            isCurSel
+                                              ? "bg-indigo-700 text-white font-bold shadow-xs"
+                                              : "bg-slate-100 hover:bg-indigo-50 text-slate-800 border hairline"
+                                          }`}
+                                        >
+                                          <span>{c.symbol}</span>
+                                          <span className="text-[10px] opacity-80">{money(c.cmp, 2)}</span>
+                                          <span className={`text-[10px] font-semibold ${isCurSel ? "text-amber-300" : "text-emerald-700"}`}>
+                                            +{c.upside}%
+                                          </span>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+
+                                {/* Guidance / Basket note */}
+                                <div className="text-[11px] pt-1 text-slate-600 border-t hairline flex items-center justify-between">
+                                  <span>
+                                    {isOver
+                                      ? "⚠️ Caution: High single-sector exposure. Avoid allocating additional capital."
+                                      : isMod
+                                      ? "✓ Moderate weight. Keep below 25% institutional threshold."
+                                      : "✓ Healthy diversification. Well insulated against idiosyncratic shocks."}
+                                  </span>
+                                  {sec.projectedProfit > 0 && (
+                                    <span className="font-mono text-emerald-700 font-semibold shrink-0 ml-2">
+                                      Proj. +{money(sec.projectedProfit)}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                     </div>
                   )}
