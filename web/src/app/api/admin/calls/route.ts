@@ -285,15 +285,15 @@ export async function GET(request: Request) {
       ) pt ON pt.symbol = p.symbol
       WHERE v.target_price IS NOT NULL
         AND (
-          p.symbol IN ('INDUSTOWER', 'UNIONBANK', 'ORIENTTECH', 'MAXESTATES', 'PITTIENG', 'GRAVITA')
+          p.symbol IN ('INDUSTOWER', 'UNIONBANK', 'SHAREINDIA', 'NATCOPHARM', 'ALLDIGI', 'APOLLOTYRE', 'ORIENTTECH', 'MAXESTATES', 'PITTIENG', 'GRAVITA')
           OR (p.composite_pct >= 60 AND p.quality_pct >= 50 AND v.buy_below IS NOT NULL)
           OR v.verdict ILIKE '%SELL%'
           OR v.verdict ILIKE '%EXIT%'
           OR v.verdict ILIKE '%TRIM%'
           OR (v.upside_pct IS NOT NULL AND v.upside_pct < -5)
         )
-      ORDER BY v.generated_at DESC, p.composite_pct DESC
-      LIMIT 300
+      ORDER BY (p.symbol IN ('INDUSTOWER', 'UNIONBANK', 'SHAREINDIA', 'NATCOPHARM', 'ALLDIGI', 'APOLLOTYRE')) DESC, v.generated_at DESC, p.composite_pct DESC
+      LIMIT 600
     `;
 
     const clusterGems: ClusterGem[] = rawGems.map((r) => {
@@ -327,11 +327,11 @@ export async function GET(request: Request) {
       let actionToday: "BUY / ACCUMULATE" | "SELL / EXIT" | "TRIM / TAKE PROFIT" | "HOLD & COMPOUND" | "WATCH / ACCUMULATE" = "BUY / ACCUMULATE";
       let actionReason = "Strong composite score and upside potential inside institutional buy zone.";
 
-      const isTopCurated = ["INDUSTOWER", "UNIONBANK", "ORIENTTECH", "MAXESTATES", "PITTIENG", "GRAVITA"].includes(r.symbol);
+      const isTopCurated = ["INDUSTOWER", "UNIONBANK", "SHAREINDIA", "NATCOPHARM", "ALLDIGI", "APOLLOTYRE", "ORIENTTECH", "MAXESTATES", "PITTIENG", "GRAVITA"].includes(r.symbol);
       const vLower = (r.verdict ?? "").toLowerCase();
       if (isTopCurated) {
         actionToday = "BUY / ACCUMULATE";
-        actionReason = "Top 6 High-Conviction Institutional Alpha Recommendation.";
+        actionReason = "Top High-Conviction Institutional Alpha Recommendation.";
       } else if (vLower.includes("sell") || vLower.includes("exit") || (r.bear_floor && ltp <= Number(r.bear_floor) && qual < 50)) {
         actionToday = "SELL / EXIT";
         actionReason = `Exit alert: ${r.verdict || "Breached bear floor with deterioration in quality"}.`;

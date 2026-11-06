@@ -73,6 +73,79 @@ function daysAgo(iso: string | null | undefined): string {
   }
 }
 
+export type HoldingAgeTier = "< 1M" | "1M–3M" | "3M–6M" | "6M–1Y" | "> 1Y";
+
+export type HoldingDurationInfo = {
+  days: number;
+  label: string;
+  shortLabel: string;
+  tier: HoldingAgeTier;
+  badgeClass: string;
+  badgeClassDark: string;
+};
+
+export function getHoldingDuration(
+  dateStr: string | null | undefined
+): HoldingDurationInfo | null {
+  if (!dateStr) return null;
+  const dt = new Date(dateStr);
+  if (Number.isNaN(dt.getTime())) return null;
+  const days = Math.max(0, Math.floor((Date.now() - dt.getTime()) / 86400000));
+
+  if (days < 30) {
+    return {
+      days,
+      label: `${days}d (< 1M)`,
+      shortLabel: `${days}d (<1M)`,
+      tier: "< 1M",
+      badgeClass: "bg-blue-50 text-blue-700 border-blue-200",
+      badgeClassDark: "bg-blue-900/60 text-blue-200 border-blue-500/40",
+    };
+  }
+  if (days <= 90) {
+    const mo = Math.max(1, Math.round(days / 30));
+    return {
+      days,
+      label: `${days}d (1M–3M)`,
+      shortLabel: `${mo}M (1-3M)`,
+      tier: "1M–3M",
+      badgeClass: "bg-cyan-50 text-cyan-800 border-cyan-200",
+      badgeClassDark: "bg-cyan-900/60 text-cyan-200 border-cyan-500/40",
+    };
+  }
+  if (days <= 180) {
+    const mo = Math.round(days / 30);
+    return {
+      days,
+      label: `${mo}M (3M–6M)`,
+      shortLabel: `${mo}M (3-6M)`,
+      tier: "3M–6M",
+      badgeClass: "bg-amber-50 text-amber-800 border-amber-200",
+      badgeClassDark: "bg-amber-900/60 text-amber-200 border-amber-500/40",
+    };
+  }
+  if (days <= 365) {
+    const mo = Math.round(days / 30);
+    return {
+      days,
+      label: `${mo}M (6M–1Y)`,
+      shortLabel: `${mo}M (6-12M)`,
+      tier: "6M–1Y",
+      badgeClass: "bg-purple-50 text-purple-800 border-purple-200",
+      badgeClassDark: "bg-purple-900/60 text-purple-200 border-purple-500/40",
+    };
+  }
+  const yrs = (days / 365.25).toFixed(1);
+  return {
+    days,
+    label: `${yrs}y (> 1Y)`,
+    shortLabel: `${yrs}y (>1Y)`,
+    tier: "> 1Y",
+    badgeClass: "bg-emerald-50 text-emerald-800 border-emerald-300 font-semibold",
+    badgeClassDark: "bg-emerald-900/60 text-emerald-200 border-emerald-500/40 font-semibold",
+  };
+}
+
 function actionBadgeClass(action: string | null | undefined): string {
   if (!action) return "bg-slate-200 text-slate-700";
   const up = action.toUpperCase();
@@ -282,6 +355,7 @@ export function CallsClient() {
   const [scope, setScope] = useState<Scope>("curated");
   const [actionFilter, setActionFilter] = useState<ActionFilter>("ALL");
   const [prioritySubFilter, setPrioritySubFilter] = useState<PriorityCategory>("ALL");
+  const [holdingAgeFilter, setHoldingAgeFilter] = useState<"ALL" | HoldingAgeTier>("ALL");
   const [search, setSearch] = useState("");
   const [capital] = useState<number>(100000);
 
@@ -454,6 +528,7 @@ export function CallsClient() {
       weightPct: 20,
       cmp: 378.3,
       anchorPrice: 380.0,
+      callDate: "2026-11-01",
       buyBelow: 370.7,
       target: 554.4,
       stopLoss: 335.0,
@@ -486,6 +561,7 @@ export function CallsClient() {
       weightPct: 20,
       cmp: 186.0,
       anchorPrice: 178.9,
+      callDate: "2026-11-01",
       buyBelow: 182.3,
       target: 270.1,
       stopLoss: 130.0,
@@ -517,6 +593,8 @@ export function CallsClient() {
       cluster: "Capital Markets",
       weightPct: 15,
       cmp: 182.4,
+      anchorPrice: 171.68,
+      callDate: "2026-11-01",
       buyBelow: 172.4,
       target: 265.2,
       stopLoss: 123.0,
@@ -548,6 +626,8 @@ export function CallsClient() {
       cluster: "Pharma CDMO",
       weightPct: 15,
       cmp: 790.5,
+      anchorPrice: 791.85,
+      callDate: "2026-11-01",
       buyBelow: 766.8,
       target: 1022.5,
       stopLoss: 690.0,
@@ -578,7 +658,9 @@ export function CallsClient() {
       sector: "Services",
       cluster: "Commercial Services",
       weightPct: 15,
-      cmp: 789.2,
+      cmp: 831.65,
+      anchorPrice: 772.25,
+      callDate: "2026-11-01",
       buyBelow: 815.0,
       target: 1117.7,
       stopLoss: 582.0,
@@ -610,6 +692,8 @@ export function CallsClient() {
       cluster: "Auto Components",
       weightPct: 15,
       cmp: 400.4,
+      anchorPrice: 384.15,
+      callDate: "2026-11-01",
       buyBelow: 371.9,
       target: 498.1,
       stopLoss: 265.0,
@@ -659,7 +743,7 @@ export function CallsClient() {
       const upside = g.upside_pct ?? (target > 0 && cmp > 0 ? ((target - cmp) / cmp) * 100 : cur?.upside ?? 0);
 
       // Anchor 1: Call Given
-      const callDate = g.call_date ?? (g.generated_at ? g.generated_at.slice(0, 10) : "2026-11-01");
+      const callDate = cur?.callDate ?? g.call_date ?? (g.generated_at ? g.generated_at.slice(0, 10) : "2026-11-01");
       const callPrice = g.call_price ?? g.anchor_price ?? cur?.anchorPrice ?? cmp;
       const callPerfPct = callPrice > 0 ? ((cmp - callPrice) / callPrice) * 100 : 0;
 
@@ -674,6 +758,9 @@ export function CallsClient() {
       const heldQty = port?.total_qty ?? g.held_qty ?? 0;
       const investedVal = port?.invested_val ?? g.invested_val ?? (purchasePrice ? purchasePrice * heldQty : 0);
       const curVal = port?.cur_val ?? g.cur_val ?? (cmp * heldQty);
+
+      const holdingDate = isPortfolio ? (purchaseDate || callDate) : callDate;
+      const holdingDuration = getHoldingDuration(holdingDate);
 
       const override = userCallOverrides[g.symbol];
       const isTaken = override ? override.is_taken : isPortfolio || g.is_taken;
@@ -744,6 +831,7 @@ export function CallsClient() {
         purchaseDate,
         purchasePrice,
         purchasePerfPct,
+        holdingDuration,
         isTaken,
         isCleared,
         priceFetchedAt: g.price_fetched_at ?? null,
@@ -756,7 +844,7 @@ export function CallsClient() {
         const port = data.portfolioActions.find((p) => p.symbol === cp.symbol);
         const gem = data.clusterGems.find((g) => g.symbol === cp.symbol);
         const cmp = gem?.ltp ?? port?.ltp ?? cp.cmp;
-        const callDate = gem?.call_date ?? "2026-11-01";
+        const callDate = cp.callDate ?? gem?.call_date ?? "2026-11-01";
         const callPrice = gem?.call_price ?? gem?.anchor_price ?? cp.anchorPrice ?? cp.cmp;
         const callPerfPct = callPrice > 0 ? ((cmp - callPrice) / callPrice) * 100 : 0;
 
@@ -770,6 +858,9 @@ export function CallsClient() {
         const heldQty = port?.total_qty ?? 0;
         const investedVal = port?.invested_val ?? (purchasePrice ? purchasePrice * heldQty : 0);
         const curVal = port?.cur_val ?? (cmp * heldQty);
+
+        const holdingDate = isPortfolio ? (purchaseDate || callDate) : callDate;
+        const holdingDuration = getHoldingDuration(holdingDate);
 
         const allocatedAmount = Math.round((capital * cp.weightPct) / 100);
         const totalShares = Math.floor(allocatedAmount / cmp);
@@ -825,6 +916,7 @@ export function CallsClient() {
           purchaseDate,
           purchasePrice,
           purchasePerfPct,
+          holdingDuration,
           isTaken: isPortfolio,
           isCleared: false,
           priceFetchedAt: gem?.price_fetched_at ?? port?.price_fetched_at ?? null,
@@ -854,6 +946,9 @@ export function CallsClient() {
         const heldQty = port.total_qty;
         const investedVal = port.invested_val;
         const curVal = port.cur_val;
+
+        const holdingDate = purchaseDate || callDate;
+        const holdingDuration = getHoldingDuration(holdingDate);
 
         const weightPct = 10;
         const allocatedAmount = Math.round((capital * weightPct) / 100);
@@ -910,6 +1005,7 @@ export function CallsClient() {
           purchaseDate,
           purchasePrice,
           purchasePerfPct,
+          holdingDuration,
           isTaken: true,
           isCleared: false,
           priceFetchedAt: port.price_fetched_at ?? null,
@@ -956,7 +1052,29 @@ export function CallsClient() {
     return { all: profitTrim + drawdown + exit, profitTrim, drawdown, exit };
   }, [unifiedCalls]);
 
-  // Filter unified calls based on Multi-Selected Dates, Scope, Action Filter, and Search
+  // Holding age bracket breakdown counts
+  const holdingAgeCounts = useMemo(() => {
+    const counts: Record<HoldingAgeTier, number> = {
+      "< 1M": 0,
+      "1M–3M": 0,
+      "3M–6M": 0,
+      "6M–1Y": 0,
+      "> 1Y": 0,
+    };
+    const scopedCalls = unifiedCalls.filter((c) => {
+      if (scope === "curated" && !c.isCurated) return false;
+      if (scope === "portfolio" && !c.isPortfolio) return false;
+      return true;
+    });
+    scopedCalls.forEach((c) => {
+      if (c.holdingDuration?.tier) {
+        counts[c.holdingDuration.tier as HoldingAgeTier] = (counts[c.holdingDuration.tier as HoldingAgeTier] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [unifiedCalls, scope]);
+
+  // Filter unified calls based on Multi-Selected Dates, Scope, Action Filter, Holding Age, and Search
   const filteredCalls = useMemo(() => {
     return unifiedCalls.filter((c) => {
       // 1. Priority Sell calls: Immediate risk management alerts for held portfolio positions
@@ -966,6 +1084,7 @@ export function CallsClient() {
         const isSell = act.includes("SELL") || act.includes("TRIM") || act.includes("EXIT") || act.includes("CUT LOSS");
         if (!isSell || !c.isPortfolio) return false;
         if (prioritySubFilter !== "ALL" && getPriorityCategory(c).category !== prioritySubFilter) return false;
+        if (holdingAgeFilter !== "ALL" && c.holdingDuration?.tier !== holdingAgeFilter) return false;
       } else {
         // Standard Scope Filter (Curated Top 6 vs Portfolio vs All)
         if (scope === "curated" && !c.isCurated) return false;
@@ -981,6 +1100,11 @@ export function CallsClient() {
         } else if (actionFilter === "HOLD") {
           const act = (c.actionToday || "").toUpperCase();
           if (!act.includes("HOLD") && !act.includes("WATCH")) return false;
+        }
+
+        // Holding Age Filter (< 1M, 1M–3M, 3M–6M, 6M–1Y, > 1Y)
+        if (holdingAgeFilter !== "ALL") {
+          if (c.holdingDuration?.tier !== holdingAgeFilter) return false;
         }
 
         // Multi-date selection check
@@ -1006,7 +1130,7 @@ export function CallsClient() {
 
       return true;
     });
-  }, [unifiedCalls, scope, actionFilter, prioritySubFilter, selectedBatches, search]);
+  }, [unifiedCalls, scope, actionFilter, prioritySubFilter, holdingAgeFilter, selectedBatches, search]);
 
   // Group filtered calls by Sector for the Left Rail Tree
   const sectorGroups = useMemo(() => {
@@ -1132,6 +1256,9 @@ export function CallsClient() {
     const act = (selectedCall.actionToday || "").toUpperCase();
     return act.includes("SELL") || act.includes("TRIM") || act.includes("EXIT") || act.includes("CUT LOSS");
   }, [selectedCall]);
+
+  const callDuration = useMemo(() => getHoldingDuration(selectedCall?.callDate), [selectedCall?.callDate]);
+  const purchaseDuration = useMemo(() => getHoldingDuration(selectedCall?.purchaseDate), [selectedCall?.purchaseDate]);
 
   // Tab selection
   const effectiveTab = useMemo<DetailTab>(() => {
@@ -1319,6 +1446,89 @@ export function CallsClient() {
             <RotateCcw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
           </button>
         </div>
+
+        {/* ── Holding Age Brackets Filter Strip ───────────────────────────── */}
+        <div className="flex items-center gap-1.5 flex-wrap text-xs pt-1.5 mt-1 border-t hairline w-full justify-between">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+              <Clock className="w-3 h-3 text-slate-400" />
+              <span>Holding Age:</span>
+            </span>
+            <div className="flex items-center bg-slate-100 p-0.5 rounded-md border hairline text-xs gap-0.5">
+              <button
+                onClick={() => setHoldingAgeFilter("ALL")}
+                className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all ${
+                  holdingAgeFilter === "ALL" ? "bg-white text-slate-900 shadow-2xs font-semibold" : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                All
+              </button>
+              <button
+                onClick={() => setHoldingAgeFilter("< 1M")}
+                className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all flex items-center gap-1 ${
+                  holdingAgeFilter === "< 1M" ? "bg-blue-600 text-white shadow-2xs font-semibold" : "text-blue-700 hover:bg-blue-50"
+                }`}
+              >
+                <span>&lt; 1M</span>
+                <span className={`text-[9.5px] px-1 rounded-full ${holdingAgeFilter === "< 1M" ? "bg-white/20" : "bg-blue-100 text-blue-800"}`}>
+                  {holdingAgeCounts["< 1M"]}
+                </span>
+              </button>
+              <button
+                onClick={() => setHoldingAgeFilter("1M–3M")}
+                className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all flex items-center gap-1 ${
+                  holdingAgeFilter === "1M–3M" ? "bg-cyan-700 text-white shadow-2xs font-semibold" : "text-cyan-800 hover:bg-cyan-50"
+                }`}
+              >
+                <span>1M–3M</span>
+                <span className={`text-[9.5px] px-1 rounded-full ${holdingAgeFilter === "1M–3M" ? "bg-white/20" : "bg-cyan-100 text-cyan-900"}`}>
+                  {holdingAgeCounts["1M–3M"]}
+                </span>
+              </button>
+              <button
+                onClick={() => setHoldingAgeFilter("3M–6M")}
+                className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all flex items-center gap-1 ${
+                  holdingAgeFilter === "3M–6M" ? "bg-amber-600 text-white shadow-2xs font-semibold" : "text-amber-800 hover:bg-amber-50"
+                }`}
+              >
+                <span>3M–6M</span>
+                <span className={`text-[9.5px] px-1 rounded-full ${holdingAgeFilter === "3M–6M" ? "bg-white/20" : "bg-amber-100 text-amber-900"}`}>
+                  {holdingAgeCounts["3M–6M"]}
+                </span>
+              </button>
+              <button
+                onClick={() => setHoldingAgeFilter("6M–1Y")}
+                className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all flex items-center gap-1 ${
+                  holdingAgeFilter === "6M–1Y" ? "bg-purple-600 text-white shadow-2xs font-semibold" : "text-purple-800 hover:bg-purple-50"
+                }`}
+              >
+                <span>6M–1Y</span>
+                <span className={`text-[9.5px] px-1 rounded-full ${holdingAgeFilter === "6M–1Y" ? "bg-white/20" : "bg-purple-100 text-purple-900"}`}>
+                  {holdingAgeCounts["6M–1Y"]}
+                </span>
+              </button>
+              <button
+                onClick={() => setHoldingAgeFilter("> 1Y")}
+                className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all flex items-center gap-1 ${
+                  holdingAgeFilter === "> 1Y" ? "bg-emerald-600 text-white shadow-2xs font-semibold" : "text-emerald-800 hover:bg-emerald-50"
+                }`}
+              >
+                <span>&gt; 1Y</span>
+                <span className={`text-[9.5px] px-1 rounded-full ${holdingAgeFilter === "> 1Y" ? "bg-white/20" : "bg-emerald-100 text-emerald-900"}`}>
+                  {holdingAgeCounts["> 1Y"]}
+                </span>
+              </button>
+            </div>
+          </div>
+          {holdingAgeFilter !== "ALL" && (
+            <button
+              onClick={() => setHoldingAgeFilter("ALL")}
+              className="text-[10.5px] text-slate-500 hover:text-slate-800 underline"
+            >
+              Reset Age Filter
+            </button>
+          )}
+        </div>
       </div>
 
       {actionFilter === "PRIORITY_SELL" && (
@@ -1497,6 +1707,16 @@ export function CallsClient() {
                               <div className="text-right shrink-0">
                                 <div className="font-mono font-normal text-xs">{money(call.cmp)}</div>
                                 <div className="flex items-center justify-end gap-1 mt-0.5">
+                                  {call.holdingDuration && (
+                                    <span
+                                      className={`text-[8px] font-mono px-1 py-0.2 rounded border ${
+                                        isSel ? call.holdingDuration.badgeClassDark : call.holdingDuration.badgeClass
+                                      }`}
+                                      title={`${call.isPortfolio ? "Holding duration" : "Call age"}: ${call.holdingDuration.days} days (${call.holdingDuration.tier} bracket)`}
+                                    >
+                                      {call.holdingDuration.shortLabel}
+                                    </span>
+                                  )}
                                   {callMove != null ? (
                                     <span
                                       className={`text-[9.5px] font-mono font-normal ${
@@ -1565,6 +1785,15 @@ export function CallsClient() {
                   {selectedCall.isPortfolio && (
                     <span className="px-1.5 py-0.5 rounded text-[10.5px] font-medium bg-blue-50 text-blue-800 border border-blue-200">
                       Held: {selectedCall.heldQty} sh
+                    </span>
+                  )}
+                  {selectedCall.holdingDuration && (
+                    <span
+                      className={`px-1.5 py-0.5 rounded text-[10.5px] font-medium border flex items-center gap-1 ${selectedCall.holdingDuration.badgeClass}`}
+                      title={`${selectedCall.isPortfolio ? "Holding" : "Call"} age: ${selectedCall.holdingDuration.days} days (${selectedCall.holdingDuration.tier} bracket)`}
+                    >
+                      <Clock className="w-3 h-3" />
+                      <span>{selectedCall.isPortfolio ? "Holding:" : "Call Age:"} {selectedCall.holdingDuration.label}</span>
                     </span>
                   )}
                   {selectedCall.isPortfolio && isSellAction && (
@@ -1774,9 +2003,16 @@ export function CallsClient() {
                         <span className="w-1.5 h-1.5 rounded-full bg-indigo-600 shrink-0" />
                         <span className="tracking-wide text-[10px] truncate">ANCHOR 1: CALL GIVEN</span>
                       </div>
-                      <span className="text-[9px] font-mono text-slate-500 shrink-0">
-                        {fmtDate(selectedCall.callDate)} ({daysAgo(selectedCall.callDate)})
-                      </span>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {callDuration && (
+                          <span className={`text-[8.5px] font-mono px-1 py-0.2 rounded border ${callDuration.badgeClass}`}>
+                            {callDuration.shortLabel}
+                          </span>
+                        )}
+                        <span className="text-[9px] font-mono text-slate-500">
+                          {fmtDate(selectedCall.callDate)} ({daysAgo(selectedCall.callDate)})
+                        </span>
+                      </div>
                     </div>
 
                     <div className="flex items-center justify-between pt-1 mt-0.5 border-t border-indigo-100/80">
@@ -1808,13 +2044,20 @@ export function CallsClient() {
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 shrink-0" />
                         <span className="tracking-wide text-[10px] truncate">ANCHOR 2: PURCHASE</span>
                       </div>
-                      <button
-                        onClick={() => setIsEditingPurchase(!isEditingPurchase)}
-                        className="text-[9px] font-semibold text-emerald-800 hover:text-emerald-950 inline-flex items-center gap-0.5 underline underline-offset-2 shrink-0"
-                      >
-                        <Edit3 className="w-2.5 h-2.5" />
-                        <span>{selectedCall.purchasePrice ? "Edit" : "Log Buy"}</span>
-                      </button>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {purchaseDuration && (
+                          <span className={`text-[8.5px] font-mono px-1 py-0.2 rounded border ${purchaseDuration.badgeClass}`}>
+                            ⏱️ {purchaseDuration.label}
+                          </span>
+                        )}
+                        <button
+                          onClick={() => setIsEditingPurchase(!isEditingPurchase)}
+                          className="text-[9px] font-semibold text-emerald-800 hover:text-emerald-950 inline-flex items-center gap-0.5 underline underline-offset-2 shrink-0"
+                        >
+                          <Edit3 className="w-2.5 h-2.5" />
+                          <span>{selectedCall.purchasePrice ? "Edit" : "Log Buy"}</span>
+                        </button>
+                      </div>
                     </div>
 
                     {isEditingPurchase ? (
