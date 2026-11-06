@@ -2005,6 +2005,14 @@ export function CallsClient() {
                         <span className="tracking-wide text-[10px] truncate">ANCHOR 1: CALL GIVEN</span>
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
+                        {selectedCall.timeline && (
+                          <span
+                            className="text-[8.5px] font-mono font-bold px-1.5 py-0.5 rounded border bg-indigo-100 text-indigo-900 border-indigo-200"
+                            title={`Target Horizon: ${selectedCall.timeline} to reach target of ${money(selectedCall.target)}`}
+                          >
+                            🎯 {selectedCall.timeline}
+                          </span>
+                        )}
                         <span className="text-[9px] font-mono text-slate-500">
                           {fmtDate(selectedCall.callDate)} ({daysAgo(selectedCall.callDate)})
                         </span>
