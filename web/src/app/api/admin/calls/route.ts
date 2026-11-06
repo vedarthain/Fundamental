@@ -51,6 +51,8 @@ export type ClusterGem = {
   strategy_desc: string;
   is_taken: boolean;
   is_cleared: boolean;
+  action_today?: "BUY / ACCUMULATE" | "SELL / EXIT" | "TRIM / TAKE PROFIT" | "HOLD & COMPOUND" | "WATCH / ACCUMULATE";
+  action_reason?: string;
 };
 
 export type PortfolioActionCall = {
@@ -277,11 +279,16 @@ export async function GET(request: Request) {
           WHERE side = 'buy'
           GROUP BY symbol
       ) pt ON pt.symbol = p.symbol
-      WHERE v.target_price IS NOT NULL AND v.buy_below IS NOT NULL
-        AND p.composite_pct >= 60
-        AND p.quality_pct >= 50
+      WHERE v.target_price IS NOT NULL
+        AND (
+          (p.composite_pct >= 60 AND p.quality_pct >= 50 AND v.buy_below IS NOT NULL)
+          OR v.verdict ILIKE '%SELL%'
+          OR v.verdict ILIKE '%EXIT%'
+          OR v.verdict ILIKE '%TRIM%'
+          OR (v.upside_pct IS NOT NULL AND v.upside_pct < -5)
+        )
       ORDER BY v.generated_at DESC, p.composite_pct DESC
-      LIMIT 250
+      LIMIT 300
     `;
 
     const clusterGems: ClusterGem[] = rawGems.map((r) => {
@@ -304,8 +311,6 @@ export async function GET(request: Request) {
       const purchasePerfPct = purchasePrice && purchasePrice > 0 ? ((ltp - purchasePrice) / purchasePrice) * 100 : null;
       const purchaseDate = r.purchase_date ? new Date(r.purchase_date).toISOString().slice(0, 10) : null;
 
-      const isGem = comp >= 75 && qual >= 58 && (buyBelow > 0 && ltp <= buyBelow * 1.05) && upside >= 15 && mcap >= 800;
-
       const isPortfolio = Boolean(r.is_portfolio);
       const isCallActive = Boolean(r.is_call_active);
       const isCallCleared = Boolean(r.is_call_cleared);
@@ -313,7 +318,29 @@ export async function GET(request: Request) {
       const isTaken = isPortfolio || isCallActive;
       const isCleared = !isTaken && isCallCleared;
 
+      // Action determination for screened universe candidate
+      let actionToday: "BUY / ACCUMULATE" | "SELL / EXIT" | "TRIM / TAKE PROFIT" | "HOLD & COMPOUND" | "WATCH / ACCUMULATE" = "BUY / ACCUMULATE";
+      let actionReason = "Strong composite score and upside potential inside institutional buy zone.";
+
+      const vLower = (r.verdict ?? "").toLowerCase();
+      if (vLower.includes("sell") || vLower.includes("exit") || (r.bear_floor && ltp <= Number(r.bear_floor) && qual < 50)) {
+        actionToday = "SELL / EXIT";
+        actionReason = `Exit alert: ${r.verdict || "Breached bear floor with deterioration in quality"}.`;
+      } else if (vLower.includes("trim") || (r.target_price && ltp >= Number(r.target_price)) || upside < -5) {
+        actionToday = "TRIM / TAKE PROFIT";
+        actionReason = `Profit booking / trim: LTP (₹${ltp.toFixed(1)}) reached fundamental target (₹${Number(r.target_price ?? 0).toFixed(1)}).`;
+      } else if (buyBelow > 0 && ltp <= buyBelow * 1.02) {
+        actionToday = "BUY / ACCUMULATE";
+        actionReason = `Trading within institutional accumulate zone (≤ ₹${buyBelow.toFixed(1)}).`;
+      } else {
+        actionToday = "WATCH / ACCUMULATE";
+        actionReason = `High-quality leader; monitor for entry pullback toward buy limit (₹${buyBelow.toFixed(1)}).`;
+      }
+
+      const isGem = actionToday === "BUY / ACCUMULATE" && comp >= 75 && qual >= 58 && upside >= 15 && mcap >= 800;
+
       const horizonInfo = determineIdeaHorizon({
+        actionToday,
         upsidePct: upside,
         momentumPct: mom,
         qualityPct: qual,
@@ -363,6 +390,8 @@ export async function GET(request: Request) {
         strategy_desc: horizonInfo.strategy,
         is_taken: isTaken,
         is_cleared: isCleared,
+        action_today: actionToday,
+        action_reason: actionReason,
       };
     });
 

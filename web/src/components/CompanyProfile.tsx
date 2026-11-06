@@ -137,7 +137,7 @@ function HealthBullets({ health, symbol }: { health: BusinessHealth; symbol: str
   );
 }
 
-export function CompanyProfile({ symbol, onClose }: { symbol: string; onClose: () => void }) {
+export function CompanyProfile({ symbol, onClose }: { symbol: string; onClose?: () => void }) {
   const [data, setData] = useState<CompanyProfileData | null>(profileCache.get(symbol) ?? null);
   const [err, setErr] = useState(false);
 
@@ -170,6 +170,7 @@ export function CompanyProfile({ symbol, onClose }: { symbol: string; onClose: (
   // Close on Escape — the panel is dismissible chrome, and reaching back for
   // the ⓘ to close it is the thing that makes an expander annoying.
   useEffect(() => {
+    if (!onClose) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
@@ -186,15 +187,17 @@ export function CompanyProfile({ symbol, onClose }: { symbol: string; onClose: (
         <span className="text-[10px] uppercase tracking-wide muted-text font-semibold">
           About {symbol}
         </span>
-        <button
-          type="button"
-          onClick={onClose}
-          className="text-[13px] leading-none muted-text hover:text-[var(--color-ink)] shrink-0"
-          title="Close"
-          aria-label="Close company information"
-        >
-          ×
-        </button>
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-[13px] leading-none muted-text hover:text-[var(--color-ink)] shrink-0"
+            title="Close"
+            aria-label="Close company information"
+          >
+            ×
+          </button>
+        )}
       </div>
 
       {err ? (

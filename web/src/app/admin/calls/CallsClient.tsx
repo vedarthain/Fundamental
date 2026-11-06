@@ -21,8 +21,17 @@ import {
   Newspaper,
   CheckSquare,
   Check,
+  Building2,
+  AlertTriangle,
+  ShieldAlert,
+  ArrowDownRight,
+  Target,
+  Activity,
+  Info,
+  Clock,
 } from "lucide-react";
 import { PriceChart } from "@/components/PriceChart";
+import { CompanyProfile } from "@/components/CompanyProfile";
 import CapTierBadge, { type CapCategory } from "@/components/CapTierBadge";
 import type { ClusterGem, PortfolioActionCall, IdeaHorizon } from "@/app/api/admin/calls/route";
 
@@ -73,21 +82,105 @@ function actionBadgeClass(action: string | null | undefined): string {
   return "bg-slate-100 text-slate-700 border-slate-300";
 }
 
+function formatValuationRegime(method: string | null | undefined): string {
+  if (!method) return "Multi-Model Triangulation";
+  switch (method) {
+    case "gordon_pb_roe":
+      return "Gordon Growth P/B-ROE";
+    case "normalized_ev_ebitda":
+      return "EV/EBITDA Cycle Multiple";
+    case "quality_pe":
+      return "Forward Quality P/E";
+    case "owner_dcf":
+      return "Owner Earnings DCF";
+    case "historical_bands":
+      return "Historical Multiple Bands";
+    default:
+      return method.replace(/_/g, " ").toUpperCase();
+  }
+}
+
+function stripTag(text: string, tagRegex: RegExp): string {
+  return text.replace(tagRegex, "").trim();
+}
+
+function parseVerdictPoints(points: string[]) {
+  const good: string[] = [];
+  const bad: string[] = [];
+  const decision: string[] = [];
+  const other: string[] = [];
+
+  for (const p of points) {
+    const clean = p.trim();
+    const lower = clean.toLowerCase();
+    if (lower.startsWith("<b>the good") || lower.startsWith("<b>good") || lower.includes("<b>strengths")) {
+      good.push(clean);
+    } else if (lower.startsWith("<b>the bad") || lower.startsWith("<b>bad") || lower.includes("<b>risks") || lower.includes("<b>warnings")) {
+      bad.push(clean);
+    } else if (lower.startsWith("<i>decision") || lower.startsWith("<i>summary") || lower.startsWith("<b>decision")) {
+      decision.push(clean);
+    } else {
+      other.push(clean);
+    }
+  }
+
+  return { good, bad, decision, other };
+}
+
+function cleanPointText(raw: string, tagRegex: RegExp): { metric: string; peer?: string; reason?: string } {
+  let cleaned = stripTag(raw, tagRegex);
+  cleaned = cleaned.replace(/^(\*|-|•)\s*/, "").trim();
+  cleaned = cleaned.replace(/<\/?(b|strong|i|em)>/gi, "");
+
+  const parts = cleaned.split(/\s*(?:,\s*-\s*|\s+-\s+|\s*—\s*)\s*/);
+  if (parts.length >= 2) {
+    return {
+      metric: parts[0],
+      peer: parts[1],
+      reason: parts.slice(2).join(" · "),
+    };
+  }
+  return { metric: cleaned };
+}
+
 const CUSTOM_PURCHASE_KEY = "calls_custom_purchase_v1";
 
 type Scope = "all" | "curated" | "portfolio";
-type DetailTab = "overview" | "results" | "dividends" | "news" | "audit";
+type ActionFilter = "ALL" | "BUY" | "SELL" | "HOLD";
+type DetailTab = "overview" | "catalysts" | "results" | "dividends" | "news" | "audit";
+
+type CompanyOverview = {
+  symbol: string;
+  company_name: string | null;
+  business_summary: string | null;
+  website: string | null;
+  employees: number | null;
+  ceo_name: string | null;
+  ceo_title: string | null;
+  listing_date: string | null;
+  sector: string | null;
+  industry: string | null;
+  market_cap_category: string | null;
+};
 
 type StockContext = {
+  overview?: CompanyOverview | null;
   news: { title: string; source: string; url: string; published_at: string | null }[];
   filings: { title: string; category: string; headline: string | null; published_at: string | null; pdf_url: string | null }[];
   dividends: { ex_date: string; purpose: string; amount: number | null }[];
   results: { title: string; headline: string | null; published_at: string | null; pdf_url: string | null }[];
   audit: {
+    verdict: string | null;
+    confidence: string | null;
+    points: string[];
+    trigger_text: string | null;
+    generated_at: string | null;
     valuation_method: string | null;
     target_price: number | null;
+    fair_value: number | null;
     buy_below: number | null;
     bear_floor: number | null;
+    upside_pct: number | null;
     audited_filing_status: string;
     forensic_status: string;
   } | null;
@@ -130,21 +223,23 @@ export function CallsClient() {
   const [isDateDropdownOpen, setIsDateDropdownOpen] = useState(false);
   const dateDropdownRef = useRef<HTMLDivElement>(null);
 
-  // Scope & Filters
-  const [scope, setScope] = useState<Scope>("all");
+  // Scope & Action Filters: Always default to 'curated' (Top 6) on refresh
+  const [scope, setScope] = useState<Scope>("curated");
+  const [actionFilter, setActionFilter] = useState<ActionFilter>("ALL");
   const [search, setSearch] = useState("");
   const [capital] = useState<number>(100000);
 
-  // Selected Stock & Detail Tab
-  const [selectedSymbol, setSelectedSymbol] = useState<string>("UNIONBANK");
+  // Selected Stock & Detail Tab: default to top pick INDUSTOWER
+  const [selectedSymbol, setSelectedSymbol] = useState<string>("INDUSTOWER");
   const [activeTab, setActiveTab] = useState<DetailTab>("overview");
 
   // Stock context data
   const [contextData, setContextData] = useState<StockContext | null>(null);
   const [contextLoading, setContextLoading] = useState(false);
 
-  // Expanded sectors set for tree
+  // Expanded sectors set for tree (only 1 sector open initially)
   const [expandedSectors, setExpandedSectors] = useState<Set<string>>(new Set());
+  const [hasInitializedSectors, setHasInitializedSectors] = useState(false);
 
   // Call status overrides
   const [userCallOverrides, setUserCallOverrides] = useState<Record<string, { is_taken: boolean; is_cleared: boolean }>>({});
@@ -170,35 +265,38 @@ export function CallsClient() {
   useEffect(() => {
     try {
       const saved = localStorage.getItem(CUSTOM_PURCHASE_KEY);
-      if (saved) setCustomPurchases(JSON.parse(saved));
+      if (saved) {
+        setCustomPurchases(JSON.parse(saved));
+      }
     } catch {
       // ignore
     }
   }, []);
 
-  const saveCustomPurchase = (symbol: string, d: string, p: number) => {
-    const updated = {
-      ...customPurchases,
-      [symbol]: { purchase_date: d, purchase_price: p },
-    };
-    setCustomPurchases(updated);
-    try {
-      localStorage.setItem(CUSTOM_PURCHASE_KEY, JSON.stringify(updated));
-    } catch {
-      // ignore
-    }
+  const saveCustomPurchase = (sym: string, date: string, price: number) => {
+    setCustomPurchases((prev) => {
+      const next = { ...prev, [sym]: { purchase_date: date, purchase_price: price } };
+      try {
+        localStorage.setItem(CUSTOM_PURCHASE_KEY, JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
     setIsEditingPurchase(false);
   };
 
-  const clearCustomPurchase = (symbol: string) => {
-    const updated = { ...customPurchases };
-    delete updated[symbol];
-    setCustomPurchases(updated);
-    try {
-      localStorage.setItem(CUSTOM_PURCHASE_KEY, JSON.stringify(updated));
-    } catch {
-      // ignore
-    }
+  const clearCustomPurchase = (sym: string) => {
+    setCustomPurchases((prev) => {
+      const next = { ...prev };
+      delete next[sym];
+      try {
+        localStorage.setItem(CUSTOM_PURCHASE_KEY, JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
     setIsEditingPurchase(false);
   };
 
@@ -207,11 +305,12 @@ export function CallsClient() {
     setLoading(true);
     try {
       const res = await fetch("/api/admin/calls");
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json();
-      setData(json);
+      if (res.ok) {
+        const json = await res.json();
+        setData(json);
+      }
     } catch {
-      // ignore
+      // keep fallback
     } finally {
       setLoading(false);
     }
@@ -221,18 +320,22 @@ export function CallsClient() {
     fetchData();
   }, [fetchData]);
 
-  // Fetch contextual stock data
+  // Fetch stock context for selected symbol
   useEffect(() => {
     if (!selectedSymbol) return;
     let cancelled = false;
     setContextLoading(true);
 
     fetch(`/api/admin/stock-context?symbol=${encodeURIComponent(selectedSymbol)}`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((d) => {
-        if (!cancelled && d) setContextData(d);
+      .then((r) => (r.ok ? r.json() : null))
+      .then((json) => {
+        if (!cancelled && json) {
+          setContextData(json);
+        }
       })
-      .catch(() => {})
+      .catch(() => {
+        if (!cancelled) setContextData(null);
+      })
       .finally(() => {
         if (!cancelled) setContextLoading(false);
       });
@@ -242,39 +345,50 @@ export function CallsClient() {
     };
   }, [selectedSymbol]);
 
+  // User take / exit action handlers
   const handleTakeCall = async (symbol: string) => {
-    setUserCallOverrides((prev) => ({
-      ...prev,
-      [symbol]: { is_taken: true, is_cleared: false },
-    }));
     try {
-      await fetch("/api/calls", {
+      const res = await fetch("/api/admin/calls/take", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol, side: "B" }),
+        body: JSON.stringify({ symbol }),
       });
+      if (res.ok) {
+        setUserCallOverrides((prev) => ({
+          ...prev,
+          [symbol]: { is_taken: true, is_cleared: false },
+        }));
+      }
     } catch {
-      // optimistic
+      setUserCallOverrides((prev) => ({
+        ...prev,
+        [symbol]: { is_taken: true, is_cleared: false },
+      }));
     }
   };
 
   const handleExitCall = async (symbol: string) => {
-    setUserCallOverrides((prev) => ({
-      ...prev,
-      [symbol]: { is_taken: false, is_cleared: true },
-    }));
     try {
-      await fetch("/api/calls", {
-        method: "PATCH",
+      const res = await fetch("/api/admin/calls/exit", {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ symbol }),
       });
+      if (res.ok) {
+        setUserCallOverrides((prev) => ({
+          ...prev,
+          [symbol]: { is_taken: false, is_cleared: true },
+        }));
+      }
     } catch {
-      // optimistic
+      setUserCallOverrides((prev) => ({
+        ...prev,
+        [symbol]: { is_taken: false, is_cleared: true },
+      }));
     }
   };
 
-  // Curated 6 deployment picks
+  // Comprehensive Curated 6 deployment picks with rich operational thesis & company overview
   const curatedPicks = useMemo(() => [
     {
       symbol: "INDUSTOWER",
@@ -292,7 +406,20 @@ export function CallsClient() {
       horizonLabel: "🏛️ 1Y Core",
       timeline: "9–12M",
       role: "1Y Alpha FCF Compounder",
-      rationale: "FCF yield > 15%, bad debt recoveries, expanding 5G tenancies.",
+      rationale: "India's leading telecom tower infrastructure provider benefiting from nationwide 5G densification, accelerating collection of legacy Vodafone Idea receivables, and structural Free Cash Flow yield > 15%.",
+      companyOverview: "Indus Towers Ltd. is India's leading passive telecom infrastructure provider, deploying, owning, and managing over 225,000 telecom towers and 365,000 co-locations across all 22 telecom circles in India. It serves major wireless operators including Bharti Airtel, Reliance Jio, and Vodafone Idea with long-term Master Service Agreements.",
+      operatingHighlights: [
+        "Massive Free Cash Flow (FCF) yield exceeding 15% with high operating EBITDA margins (>52%).",
+        "Consistent recovery of overdue receivables from Vodafone Idea as telco funding and tariff hikes take effect.",
+        "Aggressive nationwide 5G tower tenancies and small-cell rollouts driving multi-year loading factor expansion per tower.",
+        "Significant operating leverage with near-zero incremental CAPEX needed for co-location additions.",
+      ],
+      catalysts: [
+        "Formalization of additional tenant additions from ongoing 5G site densification across Tier-2/3 cities.",
+        "Dividend reinstatement / potential special dividend distribution as trapped working capital unwinds.",
+        "Continuous balance sheet deleveraging leading to interest cost savings and ROE expansion toward 25%.",
+      ],
+      marginOfSafety: "Irreplaceable nationwide physical infrastructure asset base. Trading at significant discount to international tower peers. Bear floor well anchored at ₹335.",
     },
     {
       symbol: "UNIONBANK",
@@ -310,7 +437,20 @@ export function CallsClient() {
       horizonLabel: "📈 6M Banking",
       timeline: "5–6M",
       role: "6M Banking Growth Anchor",
-      rationale: "Tier-1 PSU banking leader (Momentum 74), expanding corporate credit book, turnaround.",
+      rationale: "Tier-1 PSU banking leader demonstrating strong balance sheet turnaround, multi-quarter decline in Net NPAs (<0.95%), expanding RAM (Retail, Agri, MSME) loan book, and high technical momentum (Pillar 74).",
+      companyOverview: "Union Bank of India is one of the premier public sector banking institutions in India, operating an extensive network of 8,500+ domestic branches and ATMs serving over 150 million customers across retail, agriculture, MSME (RAM), and large corporate segments. Headquartered in Mumbai, it commands significant market share in regional deposit mobilization and priority lending.",
+      operatingHighlights: [
+        "Robust NIM expansion with disciplined deposit re-pricing and expanding CASA ratio (>34%).",
+        "Asset quality turnaround: Gross NPA falling steadily below 4.5% and Net NPA < 0.95% with high Provision Coverage Ratio (PCR > 92%).",
+        "Corporate credit book accelerating at 12–14% CAGR driven by infrastructure, renewable energy, and manufacturing CAPEX.",
+        "Strong capital adequacy (CRAR > 16.2%), providing substantial headroom for risk-weighted asset expansion without near-term dilution risk.",
+      ],
+      catalysts: [
+        "Impending credit ratings upgrade by domestic and international agencies following multi-quarter balance sheet clean-up.",
+        "Operating leverage kicks in as digital banking transactions cross 82% of total retail volume, lowering cost-to-income ratio.",
+        "Recovery from legacy stressed assets via NCLT resolutions feeding directly into non-interest income.",
+      ],
+      marginOfSafety: "Sizable valuation cushion trading at an attractive Price-to-Adjusted Book Value (P/ABV < 0.85x), well below historical peak multiples of 1.2x. Floor anchored at ₹130 (0.65x ABV).",
     },
     {
       symbol: "SHAREINDIA",
@@ -328,7 +468,20 @@ export function CallsClient() {
       horizonLabel: "⚡ 1M Swing",
       timeline: "3–6W",
       role: "1M FinTech Alpha",
-      rationale: "Surging algorithmic trading volumes, >25% ROE, zero net debt, institutional accumulation.",
+      rationale: "High-growth quantitative algorithmic trading pioneer with >25% ROE, zero net debt, proprietary low-latency colocation technology moats, and accelerating market share gains in institutional derivatives.",
+      companyOverview: "Share India Securities is a high-growth financial services powerhouse and quantitative trading pioneer, dominating high-frequency trading (HFT), algorithmic market making, retail broking, NBFC lending, and insurance distribution with a rapidly growing proprietary algorithmic engine.",
+      operatingHighlights: [
+        "Industry-leading profitability metrics: Return on Equity (ROE > 26%) and Return on Capital Employed (ROCE > 28%).",
+        "Zero net debt balance sheet with proprietary low-latency colocation technology moats.",
+        "Surging average daily turnover (ADTO) in equity derivatives and commodities capturing outsized market share.",
+        "Expanding high-margin institutional and algorithmic client base.",
+      ],
+      catalysts: [
+        "Rapid expansion of algorithmic retail trading platforms (uTrade Algos) democratizing institutional-grade execution.",
+        "Scaled NBFC loan book generating high-margin interest income with strict collateral margins.",
+        "Potential inclusion in small/mid-cap indices driving passive ETF inflows.",
+      ],
+      marginOfSafety: "Trading at low forward P/E (< 11x) relative to >30% PAT CAGR. Strong cash pile and clean corporate governance.",
     },
     {
       symbol: "NATCOPHARM",
@@ -346,7 +499,20 @@ export function CallsClient() {
       horizonLabel: "🚀 3M Catalyst",
       timeline: "2–3M",
       role: "3M Defensive Margin",
-      rationale: "Operating margin > 35%, zero net debt, specialty generic launches in North America.",
+      rationale: "High-margin pharmaceutical innovator boasting industry-leading EBITDA margins (>35%), pristine net cash reserves, clean FDA compliance record, and high-barrier specialty generic product launches.",
+      companyOverview: "Natco Pharma is an R&D-driven pharmaceutical leader specializing in complex generic formulations, oncology therapeutics, niche chemical synthesis, and crop health sciences. It possesses world-class US FDA-approved manufacturing plants and strategic international marketing alliances.",
+      operatingHighlights: [
+        "Industry-high operating EBITDA margin (>35%) supported by high-barrier generic oncology exclusivity.",
+        "Zero net debt balance sheet with significant cash reserves and pristine working capital cycle.",
+        "Expanding market share in North American Revlimid generics and upcoming launches in semaglutide / oncology pipelines.",
+        "Strong domestic branded oncology formulations commanding leadership position in Indian hospitals.",
+      ],
+      catalysts: [
+        "First-to-file generic product approvals in North America and Brazil opening high-margin revenue streams.",
+        "Ramp-up of domestic crop protection / agrochemical formulations diversifying revenue streams.",
+        "Potential capital return / buyback given substantial net cash reserves.",
+      ],
+      marginOfSafety: "Pristine balance sheet with zero debt and large cash reserves. Quality percentile score of 96 with solid bear floor at ₹690.",
     },
     {
       symbol: "ALLDIGI",
@@ -364,7 +530,20 @@ export function CallsClient() {
       horizonLabel: "⚡ 1M Swing",
       timeline: "2–4W",
       role: "1M B2B Tech Alpha",
-      rationale: "High ROCE (>22%), expanding enterprise customer retention, compounding digital revenue.",
+      rationale: "B2B enterprise digital transformation and payroll solutions compounder delivering >24% ROCE, long-term enterprise retention (>95%), and accelerating AI-driven margin expansion.",
+      companyOverview: "Alldigi Tech (formerly Allsec Technologies) is a premier digital transformation, BPO, and enterprise HR/payroll processing solutions provider, serving Global Fortune 500 enterprises across North America, Europe, and APAC with scalable cloud SaaS platforms.",
+      operatingHighlights: [
+        "Exceptional capital efficiency with ROCE > 24% and consistent debt-free cash generation.",
+        "Long-term sticky enterprise contracts with >95% client retention and rising contract values.",
+        "Accelerating adoption of AI-enabled automated customer experience (CX) and compliance workflows.",
+        "High operating cash conversion with over 90% of EBITDA converting directly into free cash.",
+      ],
+      catalysts: [
+        "Margin expansion as automated AI workflows displace legacy manual service hours.",
+        "Inorganic tuck-in acquisitions enabled by debt-free treasury.",
+        "Dividend payout ratio exceeding 50% providing superior cash yield to shareholders.",
+      ],
+      marginOfSafety: "Debt-free balance sheet with high cash per share, sticky recurring multi-year enterprise contracts, and strong floor at ₹582.",
     },
     {
       symbol: "APOLLOTYRE",
@@ -382,7 +561,20 @@ export function CallsClient() {
       horizonLabel: "🚀 3M Support Rebound",
       timeline: "2–3M",
       role: "3M Margin Expansion",
-      rationale: "Firm multi-month support, expanding European EBITDA margins, debt reduction cycle.",
+      rationale: "Global radial tire manufacturing leader trading at strong multi-month support, expanding European EBITDA margins, accelerating debt reduction cycle, and benefiting from stabilizing raw material costs.",
+      companyOverview: "Apollo Tyres is a global tire manufacturing giant with iconic brand equity across India and Europe (Vredestein brand), manufacturing high-performance radial tires for passenger vehicles, commercial trucks, off-highway vehicles, and two-wheelers.",
+      operatingHighlights: [
+        "Structural margin inflection: Consolidated EBITDA margins expanding toward 16% on disciplined pricing and premiumization.",
+        "Strong balance sheet deleveraging with net debt-to-EBITDA dropping below 1.0x.",
+        "European operations (Vredestein) capturing market share in all-season and ultra-high-performance tire categories.",
+        "Improving capacity utilization across Indian plants driving operational efficiency.",
+      ],
+      catalysts: [
+        "Stabilization in natural rubber and crude-derivative raw material inputs expanding gross margins.",
+        "Recovery in Indian commercial vehicle replacement demand and automotive OEM volumes.",
+        "Enhanced free cash flow generation driving accelerated debt retirement and ROE expansion toward 17%.",
+      ],
+      marginOfSafety: "Firm technical and fundamental support around the ₹380–₹395 zone. Substantial replacement market revenue cushioning cyclic downturns.",
     },
   ], []);
 
@@ -392,12 +584,12 @@ export function CallsClient() {
     return map;
   }, [curatedPicks]);
 
-  // Unified Calls List
+  // Unified Calls List: Cluster Gems + Curated Top Picks + Portfolio Action Calls (Buy, Sell, Trim, Exit)
   const unifiedCalls = useMemo(() => {
     if (!data) return [];
     const callMap = new Map<string, any>();
 
-    // 1. Cluster Gems
+    // 1. Cluster Gems (from server)
     data.clusterGems.forEach((g) => {
       const cur = curatedSymbolMap.get(g.symbol);
       const port = data.portfolioActions.find((p) => p.symbol === g.symbol);
@@ -439,11 +631,17 @@ export function CallsClient() {
       const projectedValue = Math.round(totalShares * target);
       const profitRupees = projectedValue - allocatedAmount;
 
+      // Determine Action
+      let actionToday = g.action_today || (isPortfolio ? (port?.action_today || "HOLD & COMPOUND") : (cmp <= buyBelow * 1.02 ? "BUY / ACCUMULATE" : "WATCH / ACCUMULATE"));
+      if (isPortfolio && port?.action_today) {
+        actionToday = port.action_today;
+      }
+
       callMap.set(g.symbol, {
         symbol: g.symbol,
         name: g.company_name || cur?.name || g.symbol,
         sector: g.sector || cur?.sector || "General",
-        industry: g.industry || "General",
+        industry: g.industry || cur?.cluster || "General",
         market_cap_category: g.market_cap_category || "mid_cap",
         cluster: g.cluster_name || cur?.cluster || "General",
         marketCapCr: g.market_cap_cr ?? 0,
@@ -461,8 +659,13 @@ export function CallsClient() {
         horizonLabel: g.horizon_label || cur?.horizonLabel || "📈 6M High-Momentum",
         timeline: g.sell_timeline || cur?.timeline || "5–6M",
         role: cur?.role || `${g.horizon || "6M"} Opportunity`,
-        rationale: cur?.rationale || g.strategy_desc || g.verdict || "High-conviction re-rating catalyst.",
-        actionToday: isPortfolio ? (port?.action_today || "HOLD & COMPOUND") : (cmp <= buyBelow * 1.02 ? "BUY / ACCUMULATE" : "WATCH / ACCUMULATE"),
+        rationale: cur?.rationale || g.action_reason || g.strategy_desc || g.verdict || "High-conviction re-rating catalyst.",
+        companyOverview: cur?.companyOverview || null,
+        operatingHighlights: cur?.operatingHighlights || null,
+        catalysts: cur?.catalysts || null,
+        marginOfSafety: cur?.marginOfSafety || null,
+        actionToday,
+        actionReason: g.action_reason || port?.action_reason || cur?.rationale || "Active recommendation under tracking.",
         isPortfolio,
         heldQty,
         investedVal,
@@ -488,7 +691,7 @@ export function CallsClient() {
       });
     });
 
-    // 2. Curated Picks fallback
+    // 2. Curated Picks fallback (ensures Top 6 are always present)
     curatedPicks.forEach((cp) => {
       if (!callMap.has(cp.symbol)) {
         const port = data.portfolioActions.find((p) => p.symbol === cp.symbol);
@@ -536,7 +739,12 @@ export function CallsClient() {
           timeline: cp.timeline,
           role: cp.role,
           rationale: cp.rationale,
+          companyOverview: cp.companyOverview,
+          operatingHighlights: cp.operatingHighlights,
+          catalysts: cp.catalysts,
+          marginOfSafety: cp.marginOfSafety,
           actionToday: isPortfolio ? (port?.action_today || "HOLD & COMPOUND") : "BUY / ACCUMULATE",
+          actionReason: cp.rationale,
           isPortfolio,
           heldQty,
           investedVal,
@@ -563,14 +771,124 @@ export function CallsClient() {
       }
     });
 
+    // 3. Add Portfolio Holdings with Action Sweeps
+    data.portfolioActions.forEach((port) => {
+      if (!callMap.has(port.symbol)) {
+        const cmp = port.ltp;
+        const target = port.target_price ?? Math.round(cmp * 1.25);
+        const buyBelow = port.buy_below ?? Math.round(cmp * 0.95);
+        const stopLoss = port.bear_floor ?? Math.round(cmp * 0.85);
+        const upside = port.upside_pct ?? ((target - cmp) / cmp) * 100;
+
+        const customP = customPurchases[port.symbol];
+        const purchaseDate = customP?.purchase_date ?? port.purchase_date ?? null;
+        const purchasePrice = customP?.purchase_price ?? port.weighted_avg_cost ?? null;
+        const purchasePerfPct =
+          purchasePrice && purchasePrice > 0 ? ((cmp - purchasePrice) / purchasePrice) * 100 : null;
+
+        const callDate = port.call_date ?? (port.generated_at ? port.generated_at.slice(0, 10) : "2026-11-01");
+        const callPrice = port.call_price ?? port.anchor_price ?? cmp;
+        const callPerfPct = callPrice > 0 ? ((cmp - callPrice) / callPrice) * 100 : 0;
+
+        const heldQty = port.total_qty;
+        const investedVal = port.invested_val;
+        const curVal = port.cur_val;
+
+        const weightPct = 10;
+        const allocatedAmount = Math.round((capital * weightPct) / 100);
+        const totalShares = cmp > 0 ? Math.floor(allocatedAmount / cmp) : 0;
+        const tranche1Shares = Math.ceil(totalShares / 2);
+        const tranche2Shares = Math.max(0, totalShares - tranche1Shares);
+
+        callMap.set(port.symbol, {
+          symbol: port.symbol,
+          name: port.company_name || port.symbol,
+          sector: port.sector || "General",
+          industry: port.industry || "General",
+          market_cap_category: port.market_cap_category || "mid_cap",
+          cluster: port.cluster_name || "Portfolio",
+          marketCapCr: 0,
+          cmp,
+          buyBelow,
+          target,
+          stopLoss,
+          upside: Math.round(upside * 10) / 10,
+          scores: `${port.composite_pct ?? "—"} / ${port.quality_pct ?? "—"} / ${port.momentum_pct ?? "—"}`,
+          composite_pct: port.composite_pct ?? 50,
+          quality_pct: port.quality_pct ?? 50,
+          valuation_pct: port.valuation_pct ?? 50,
+          momentum_pct: port.momentum_pct ?? 50,
+          horizon: port.horizon,
+          horizonLabel: port.horizon_label,
+          timeline: port.sell_timeline,
+          role: "Portfolio Holding Action",
+          rationale: port.action_reason || "Portfolio holding under active risk management.",
+          companyOverview: null,
+          operatingHighlights: null,
+          catalysts: null,
+          marginOfSafety: null,
+          actionToday: port.action_today,
+          actionReason: port.action_reason,
+          isPortfolio: true,
+          heldQty,
+          investedVal,
+          curVal,
+          isCurated: false,
+          weightPct,
+          allocatedAmount,
+          totalShares,
+          tranche1Shares,
+          tranche2Shares,
+          t1Value: tranche1Shares * cmp,
+          t2Value: tranche2Shares * cmp,
+          projectedValue: Math.round(totalShares * target),
+          profitRupees: Math.round(totalShares * target) - allocatedAmount,
+          callDate,
+          callPrice,
+          callPerfPct,
+          purchaseDate,
+          purchasePrice,
+          purchasePerfPct,
+          isTaken: true,
+          isCleared: false,
+        });
+      }
+    });
+
     return Array.from(callMap.values());
   }, [data, curatedPicks, curatedSymbolMap, capital, customPurchases, userCallOverrides]);
 
-  // Filter unified calls based on Multi-Selected Dates, Scope, and Search
+  // Action counts for filtering (Buy calls vs Sell calls vs Hold calls)
+  const actionCounts = useMemo(() => {
+    let buy = 0;
+    let sell = 0;
+    let hold = 0;
+    unifiedCalls.forEach((c) => {
+      const act = (c.actionToday || "").toUpperCase();
+      if (act.includes("BUY") || act.includes("ACCUMULATE")) buy++;
+      else if (act.includes("SELL") || act.includes("TRIM") || act.includes("EXIT") || act.includes("CUT LOSS")) sell++;
+      else hold++;
+    });
+    return { all: unifiedCalls.length, buy, sell, hold };
+  }, [unifiedCalls]);
+
+  // Filter unified calls based on Multi-Selected Dates, Scope, Action Filter, and Search
   const filteredCalls = useMemo(() => {
     return unifiedCalls.filter((c) => {
       if (scope === "curated" && !c.isCurated) return false;
       if (scope === "portfolio" && !c.isPortfolio) return false;
+
+      // Action Filter (Buy Calls vs Sell Calls vs Hold Calls)
+      if (actionFilter === "BUY") {
+        const act = (c.actionToday || "").toUpperCase();
+        if (!act.includes("BUY") && !act.includes("ACCUMULATE")) return false;
+      } else if (actionFilter === "SELL") {
+        const act = (c.actionToday || "").toUpperCase();
+        if (!act.includes("SELL") && !act.includes("TRIM") && !act.includes("EXIT") && !act.includes("CUT LOSS")) return false;
+      } else if (actionFilter === "HOLD") {
+        const act = (c.actionToday || "").toUpperCase();
+        if (!act.includes("HOLD") && !act.includes("WATCH")) return false;
+      }
 
       // Multi-date selection check
       if (!selectedBatches.has("all") && selectedBatches.size > 0) {
@@ -588,14 +906,14 @@ export function CallsClient() {
         const mSym = c.symbol.toLowerCase().includes(q);
         const mName = c.name.toLowerCase().includes(q);
         const mSec = c.sector.toLowerCase().includes(q);
-        const mClust = c.cluster.toLowerCase().includes(q);
-        if (!mSym && !mName && !mSec && !mClust) return false;
+        if (!mSym && !mName && !mSec) return false;
       }
+
       return true;
     });
-  }, [unifiedCalls, scope, search, selectedBatches]);
+  }, [unifiedCalls, scope, actionFilter, selectedBatches, search]);
 
-  // Group calls by Sector
+  // Group filtered calls by Sector for the Left Rail Tree
   const sectorGroups = useMemo(() => {
     const map = new Map<string, typeof filteredCalls>();
     filteredCalls.forEach((c) => {
@@ -618,11 +936,16 @@ export function CallsClient() {
     return groups;
   }, [filteredCalls]);
 
+  // Initial state: sectors collapsed and only 1 stock (the top one) shown
   useEffect(() => {
-    if (sectorGroups.length > 0 && expandedSectors.size === 0) {
-      setExpandedSectors(new Set(sectorGroups.map((g) => g.sector)));
+    if (sectorGroups.length > 0 && !hasInitializedSectors) {
+      const topSec = sectorGroups.find((g) => g.calls.some((c) => c.symbol === "INDUSTOWER"))?.sector || sectorGroups[0]?.sector;
+      if (topSec) {
+        setExpandedSectors(new Set([topSec]));
+      }
+      setHasInitializedSectors(true);
     }
-  }, [sectorGroups, expandedSectors.size]);
+  }, [sectorGroups, hasInitializedSectors]);
 
   // Selected Call Detail
   const selectedCall = useMemo(() => {
@@ -673,117 +996,170 @@ export function CallsClient() {
 
   // Date selection button label
   const batchButtonLabel = useMemo(() => {
-    if (selectedBatches.has("all")) return "📅 All Batches (Active)";
+    if (selectedBatches.has("all")) return "📅 All Batches";
     if (selectedBatches.size === 1) {
       const key = Array.from(selectedBatches)[0];
       const found = BATCH_DEFINITIONS.find((b) => b.key === key);
       return found ? `📅 ${found.shortLabel}` : `📅 ${key}`;
     }
-    return `📅 ${selectedBatches.size} Batches Selected`;
+    return `📅 ${selectedBatches.size} Batches`;
   }, [selectedBatches]);
+
+  // Is selected call a Sell / Exit / Trim action?
+  const isSellAction = useMemo(() => {
+    if (!selectedCall) return false;
+    const act = (selectedCall.actionToday || "").toUpperCase();
+    return act.includes("SELL") || act.includes("TRIM") || act.includes("EXIT") || act.includes("CUT LOSS");
+  }, [selectedCall]);
+
+  // Tab selection
+  const effectiveTab = useMemo<DetailTab>(() => {
+    return activeTab;
+  }, [activeTab]);
 
   return (
     <div className="space-y-2.5 text-slate-900">
-      {/* ── Compact Header & Multi-Select Bar ──────────────────────────────── */}
-      <div className="bg-white border hairline rounded-md px-3 py-2 shadow-2xs flex items-center justify-between flex-wrap gap-2">
+      {/* ── Top Header & Executive Controls ─────────────────────────────────── */}
+      <div className="bg-white border hairline rounded-lg p-2 sm:p-2.5 shadow-2xs flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-          <h1 className="text-base font-bold tracking-tight text-slate-900 font-sans">
-            Calls Desk
+          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+          <h1 className="text-base sm:text-lg font-bold tracking-tight text-slate-900 font-sans">
+            Calls Desk &amp; Verdicts
           </h1>
-          <span className="px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold bg-emerald-50 text-emerald-800 border border-emerald-300">
-            SUN 7 PM IST BATCH
+          <span className="px-2 py-0.5 rounded text-[10.5px] font-mono font-medium bg-emerald-50 text-emerald-800 border border-emerald-300">
+            SUN 7 PM IST
           </span>
         </div>
 
-        {/* Multi-Select Date Picker Dropdown */}
-        <div className="flex items-center gap-1.5 relative" ref={dateDropdownRef}>
-          <button
-            type="button"
-            onClick={() => setIsDateDropdownOpen(!isDateDropdownOpen)}
-            className="flex items-center gap-1 bg-slate-50 hover:bg-slate-100 border hairline rounded px-2 py-1 text-[11.5px] font-semibold text-slate-800 transition-colors shadow-2xs"
-          >
-            <Calendar className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-            <span>{batchButtonLabel}</span>
-            <ChevronDown className="w-3 h-3 text-slate-500" />
-          </button>
-
-          {isDateDropdownOpen && (
-            <div className="absolute left-0 top-full mt-1 w-64 bg-white border hairline rounded-md shadow-lg z-50 p-1.5 text-[11px] space-y-1">
-              <div className="flex items-center justify-between pb-1 border-b hairline px-1">
-                <span className="font-bold text-slate-500 uppercase text-[9.5px]">Filter Weekly Batches</span>
-                <div className="flex items-center gap-1 text-[10px]">
-                  <button onClick={selectAllBatches} className="text-indigo-600 hover:underline font-semibold">
-                    All
-                  </button>
-                  <span>•</span>
-                  <button onClick={clearAllBatches} className="text-slate-500 hover:underline">
-                    Reset
-                  </button>
-                </div>
-              </div>
-
-              <div className="max-h-56 overflow-y-auto space-y-0.5 pt-0.5">
-                <button
-                  onClick={() => toggleBatch("all")}
-                  className={`w-full flex items-center gap-2 px-1.5 py-1 rounded text-left hover:bg-slate-100 ${
-                    selectedBatches.has("all") ? "font-bold text-indigo-700 bg-indigo-50/60" : "text-slate-700"
-                  }`}
-                >
-                  <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${
-                    selectedBatches.has("all") ? "bg-indigo-600 border-indigo-600 text-white" : "border-slate-300"
-                  }`}>
-                    {selectedBatches.has("all") && <Check className="w-2.5 h-2.5" />}
-                  </div>
-                  <span className="truncate">All Active Deployment Batches</span>
-                </button>
-
-                {BATCH_DEFINITIONS.map((b) => {
-                  const isChecked = selectedBatches.has(b.key);
-                  return (
-                    <button
-                      key={b.key}
-                      onClick={() => toggleBatch(b.key)}
-                      className={`w-full flex items-center gap-2 px-1.5 py-1 rounded text-left hover:bg-slate-100 ${
-                        isChecked ? "font-bold text-indigo-700 bg-indigo-50/60" : "text-slate-700"
-                      }`}
-                    >
-                      <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${
-                        isChecked ? "bg-indigo-600 border-indigo-600 text-white" : "border-slate-300"
-                      }`}>
-                        {isChecked && <Check className="w-2.5 h-2.5" />}
-                      </div>
-                      <span className="truncate">{b.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Scope switchers */}
-          <div className="flex items-center gap-1 ml-1">
+        {/* Action Type Filters (All vs Buy Calls vs Sell Calls vs Hold) */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <div className="flex items-center bg-slate-100 p-0.5 rounded-md border hairline text-xs">
             <button
-              onClick={() => setScope("all")}
-              className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
-                scope === "all" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+              onClick={() => setActionFilter("ALL")}
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-all ${
+                actionFilter === "ALL" ? "bg-white text-slate-900 shadow-2xs font-semibold" : "text-slate-600 hover:text-slate-900"
               }`}
             >
-              All ({filteredCalls.length})
+              All ({actionCounts.all})
             </button>
             <button
+              onClick={() => setActionFilter("BUY")}
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 ${
+                actionFilter === "BUY" ? "bg-emerald-600 text-white shadow-2xs font-semibold" : "text-emerald-700 hover:text-emerald-900"
+              }`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              <span>Buy ({actionCounts.buy})</span>
+            </button>
+            <button
+              onClick={() => setActionFilter("SELL")}
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 ${
+                actionFilter === "SELL" ? "bg-rose-600 text-white shadow-2xs font-semibold" : "text-rose-700 hover:text-rose-900"
+              }`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+              <span>Sell Calls ({actionCounts.sell})</span>
+            </button>
+            <button
+              onClick={() => setActionFilter("HOLD")}
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 ${
+                actionFilter === "HOLD" ? "bg-blue-600 text-white shadow-2xs font-semibold" : "text-blue-700 hover:text-blue-900"
+              }`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+              <span>Hold ({actionCounts.hold})</span>
+            </button>
+          </div>
+
+          {/* Multi-Select Date Picker Dropdown */}
+          <div className="relative" ref={dateDropdownRef}>
+            <button
+              type="button"
+              onClick={() => setIsDateDropdownOpen(!isDateDropdownOpen)}
+              className="flex items-center gap-1.5 bg-slate-50 hover:bg-slate-100 border hairline rounded px-2.5 py-1 text-xs font-medium text-slate-800 transition-colors shadow-2xs"
+            >
+              <Calendar className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+              <span>{batchButtonLabel}</span>
+              <ChevronDown className="w-3 h-3 text-slate-500" />
+            </button>
+
+            {isDateDropdownOpen && (
+              <div className="absolute right-0 top-full mt-1.5 w-72 bg-white border hairline rounded-lg shadow-xl z-50 p-2 text-xs space-y-1.5">
+                <div className="flex items-center justify-between pb-1.5 border-b hairline px-1">
+                  <span className="font-bold text-slate-600 uppercase text-[10.5px]">Weekly Deployment Batches</span>
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <button onClick={selectAllBatches} className="text-indigo-600 hover:underline font-semibold">
+                      Select All
+                    </button>
+                    <span>•</span>
+                    <button onClick={clearAllBatches} className="text-slate-500 hover:underline">
+                      Reset
+                    </button>
+                  </div>
+                </div>
+
+                <div className="max-h-64 overflow-y-auto space-y-1 pt-1">
+                  <button
+                    onClick={() => toggleBatch("all")}
+                    className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left hover:bg-slate-100 ${
+                      selectedBatches.has("all") ? "font-bold text-indigo-700 bg-indigo-50/70" : "text-slate-700"
+                    }`}
+                  >
+                    <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
+                      selectedBatches.has("all") ? "bg-indigo-600 border-indigo-600 text-white" : "border-slate-300"
+                    }`}>
+                      {selectedBatches.has("all") && <Check className="w-3 h-3" />}
+                    </div>
+                    <span className="truncate">All Deployment Batches</span>
+                  </button>
+
+                  {BATCH_DEFINITIONS.map((b) => {
+                    const isChecked = selectedBatches.has(b.key);
+                    return (
+                      <button
+                        key={b.key}
+                        onClick={() => toggleBatch(b.key)}
+                        className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left hover:bg-slate-100 ${
+                          isChecked ? "font-bold text-indigo-700 bg-indigo-50/70" : "text-slate-700"
+                        }`}
+                      >
+                        <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
+                          isChecked ? "bg-indigo-600 border-indigo-600 text-white" : "border-slate-300"
+                        }`}>
+                          {isChecked && <Check className="w-3 h-3" />}
+                        </div>
+                        <span className="truncate">{b.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Scope switchers */}
+          <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-md border hairline text-xs">
+            <button
               onClick={() => setScope("curated")}
-              className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors flex items-center gap-1 ${
-                scope === "curated" ? "bg-indigo-700 text-white" : "bg-indigo-50 text-indigo-800 hover:bg-indigo-100"
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 ${
+                scope === "curated" ? "bg-indigo-700 text-white shadow-2xs font-semibold" : "text-indigo-800 hover:bg-indigo-100"
               }`}
             >
               <Coins className="w-3 h-3 text-amber-400" />
               <span>Top 6</span>
             </button>
             <button
+              onClick={() => setScope("all")}
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                scope === "all" ? "bg-slate-900 text-white shadow-2xs font-semibold" : "text-slate-700 hover:bg-slate-200"
+              }`}
+            >
+              All Calls
+            </button>
+            <button
               onClick={() => setScope("portfolio")}
-              className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors flex items-center gap-1 ${
-                scope === "portfolio" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 ${
+                scope === "portfolio" ? "bg-slate-900 text-white shadow-2xs font-semibold" : "text-slate-700 hover:bg-slate-200"
               }`}
             >
               <Wallet className="w-3 h-3" />
@@ -792,71 +1168,75 @@ export function CallsClient() {
           </div>
 
           {/* Search bar */}
-          <div className="relative ml-1">
+          <div className="relative">
             <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
-              placeholder="Find stock..."
+              placeholder="Find stock…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="pl-6 pr-2 py-0.5 text-[11px] rounded border hairline bg-white focus:outline-none focus:ring-1 focus:ring-slate-400 w-32 sm:w-40"
+              className="pl-7 pr-2 py-0.5 text-xs rounded border hairline bg-white focus:outline-none focus:ring-1 focus:ring-slate-400 w-28 sm:w-36 shadow-2xs"
             />
           </div>
 
           <button
             onClick={() => fetchData()}
             disabled={loading}
-            className="p-1 rounded text-slate-600 hover:bg-slate-100 border hairline"
-            title="Refresh Calls"
+            className="p-1 rounded text-slate-600 hover:bg-slate-100 border hairline shadow-2xs transition-colors"
+            title="Refresh Calls Feed"
           >
             <RotateCcw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
           </button>
         </div>
       </div>
 
-      {/* ── Two-Pane Dense Master-Detail Workstation ────────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[300px_minmax(0,1fr)] gap-2.5 items-start">
-        {/* ── Left Rail: Compact Sector Tree ─────────────────────────────────── */}
-        <div className="rounded-md border hairline bg-white lg:sticky lg:top-2 lg:max-h-[calc(100vh-4rem)] flex flex-col overflow-hidden shadow-2xs">
-          <div className="px-2.5 py-1.5 border-b hairline flex items-center justify-between shrink-0 bg-slate-50/80">
-            <span className="text-[10.5px] font-bold uppercase tracking-wider text-slate-600">
-              Sectors &amp; Calls
-            </span>
-            <div className="flex items-center gap-1">
-              <span className="text-[10px] text-slate-500 tabular-nums font-mono">
-                {sectorGroups.length}s · {filteredCalls.length}c
+      {/* ── Two-Pane Workstation: Compressed Left Rail + Right Workstation ──── */}
+      <div className="grid grid-cols-1 lg:grid-cols-[195px_minmax(0,1fr)] xl:grid-cols-[210px_minmax(0,1fr)] gap-2 items-start w-full min-w-0">
+        {/* ── Left Rail: Compressed, Non-Bold, Neutral Styling ───────────────── */}
+        <div className="w-full rounded-lg border hairline bg-white lg:sticky lg:top-2 lg:max-h-[calc(100vh-4rem)] flex flex-col overflow-hidden shadow-2xs">
+          <div className="px-2.5 py-1.5 border-b hairline flex items-center justify-between shrink-0 bg-slate-50">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] font-medium uppercase tracking-wider text-slate-600">
+                Sectors &amp; Calls
               </span>
+              <span className="text-[10px] text-slate-400 font-mono">
+                ({filteredCalls.length})
+              </span>
+            </div>
+            <div className="flex items-center gap-1">
               <button
                 type="button"
                 onClick={expandedSectors.size === sectorGroups.length ? collapseAll : expandAll}
-                className="text-[9.5px] text-slate-500 hover:text-slate-800 px-1 py-0.2 rounded border hairline bg-white"
+                className="text-[10px] text-slate-500 hover:text-slate-800 px-1.5 py-0.2 rounded border hairline bg-white"
               >
-                {expandedSectors.size === sectorGroups.length ? "⊟" : "⊞"}
+                {expandedSectors.size === sectorGroups.length ? "Collapse" : "Expand"}
               </button>
             </div>
           </div>
 
-          <div className="overflow-y-auto flex-1 min-h-0 p-1 space-y-0.5">
+          <div className="overflow-y-auto flex-1 min-h-0 p-1 space-y-1">
             {sectorGroups.length === 0 ? (
-              <div className="text-center py-6 px-2 text-slate-400 text-xs">No calls match filters.</div>
+              <div className="text-center py-8 px-2 text-slate-400 text-xs">
+                No calls found.
+              </div>
             ) : (
               sectorGroups.map((g) => {
                 const isSecOpen = !!search.trim() || expandedSectors.has(g.sector);
                 return (
-                  <div key={g.sector} className="rounded border hairline bg-slate-50/30 overflow-hidden">
+                  <div key={g.sector} className="rounded border hairline bg-slate-50/40 overflow-hidden">
                     <button
                       onClick={() => toggleSector(g.sector)}
-                      className="w-full flex items-center justify-between px-2 py-1 text-left text-[11px] font-bold text-slate-800 hover:bg-slate-100 transition-colors"
+                      className="w-full flex items-center justify-between px-2 py-1 text-left text-xs font-normal text-slate-700 hover:bg-slate-100 transition-colors"
                     >
                       <div className="flex items-center gap-1 min-w-0">
                         {isSecOpen ? (
-                          <ChevronDown className="w-3 h-3 text-slate-500 shrink-0" />
+                          <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" />
                         ) : (
-                          <ChevronRight className="w-3 h-3 text-slate-500 shrink-0" />
+                          <ChevronRight className="w-3 h-3 text-slate-400 shrink-0" />
                         )}
-                        <span className="truncate text-indigo-950 font-semibold">{g.sector}</span>
+                        <span className="truncate text-slate-700 font-normal">{g.sector}</span>
                       </div>
-                      <span className="px-1 rounded text-[9px] font-mono font-semibold bg-slate-200/80 text-slate-700 shrink-0">
+                      <span className="px-1 py-0.2 rounded text-[9.5px] font-mono font-normal bg-slate-200/60 text-slate-600 shrink-0">
                         {g.count}
                       </span>
                     </button>
@@ -866,6 +1246,8 @@ export function CallsClient() {
                         {g.calls.map((call) => {
                           const isSel = selectedCall?.symbol === call.symbol;
                           const callMove = call.callPerfPct;
+                          const actUpper = (call.actionToday || "").toUpperCase();
+                          const isSell = actUpper.includes("SELL") || actUpper.includes("TRIM") || actUpper.includes("EXIT") || actUpper.includes("CUT LOSS");
                           return (
                             <button
                               key={call.symbol}
@@ -873,42 +1255,42 @@ export function CallsClient() {
                               className={`w-full flex items-center justify-between px-2 py-1 rounded text-left transition-all ${
                                 isSel
                                   ? "bg-slate-900 text-white shadow-2xs"
-                                  : "hover:bg-slate-100/80 text-slate-900"
+                                  : "hover:bg-slate-100/70 text-slate-800"
                               }`}
                             >
                               <div className="min-w-0 flex-1 pr-1.5">
                                 <div className="flex items-center gap-1">
-                                  <span className="font-mono font-bold text-[11.5px]">{call.symbol}</span>
+                                  <span className="font-mono font-medium text-xs">{call.symbol}</span>
                                   {call.isCurated && (
                                     <span
-                                      className={`text-[8.5px] font-bold px-1 rounded ${
-                                        isSel ? "bg-amber-400 text-slate-950" : "bg-amber-100 text-amber-900"
+                                      className={`text-[8.5px] px-1 rounded font-normal ${
+                                        isSel ? "bg-amber-400 text-slate-950 font-medium" : "bg-amber-100 text-amber-900"
                                       }`}
                                     >
-                                      ★ TOP6
+                                      TOP6
                                     </span>
                                   )}
                                   {call.isPortfolio && (
                                     <span
-                                      className={`text-[8.5px] font-bold px-1 rounded ${
-                                        isSel ? "bg-blue-400 text-slate-950" : "bg-blue-100 text-blue-900"
+                                      className={`text-[8.5px] px-1 rounded font-normal ${
+                                        isSel ? "bg-blue-400 text-slate-950" : "bg-blue-50 text-blue-900 border border-blue-200"
                                       }`}
                                     >
                                       P
                                     </span>
                                   )}
                                 </div>
-                                <div className={`text-[10px] truncate ${isSel ? "text-slate-300" : "text-slate-500"}`}>
+                                <div className={`text-[10px] truncate ${isSel ? "text-slate-300" : "text-slate-500"} font-normal`}>
                                   {call.name}
                                 </div>
                               </div>
 
                               <div className="text-right shrink-0">
-                                <div className="font-mono font-bold text-[11px]">{money(call.cmp)}</div>
-                                <div className="flex items-center justify-end gap-1">
+                                <div className="font-mono font-normal text-xs">{money(call.cmp)}</div>
+                                <div className="flex items-center justify-end gap-1 mt-0.5">
                                   {callMove != null ? (
                                     <span
-                                      className={`text-[9.5px] font-mono font-semibold ${
+                                      className={`text-[9.5px] font-mono font-normal ${
                                         callMove >= 0
                                           ? isSel ? "text-emerald-400" : "text-emerald-700"
                                           : isSel ? "text-rose-400" : "text-rose-600"
@@ -918,8 +1300,12 @@ export function CallsClient() {
                                     </span>
                                   ) : null}
                                   <span
-                                    className={`px-1 rounded text-[8px] font-bold uppercase ${
-                                      isSel ? "bg-white/20 text-white" : actionBadgeClass(call.actionToday)
+                                    className={`px-1 py-0.2 rounded text-[8px] uppercase font-normal ${
+                                      isSel
+                                        ? "bg-white/20 text-white"
+                                        : isSell
+                                          ? "bg-rose-100 text-rose-800 border border-rose-300"
+                                          : actionBadgeClass(call.actionToday)
                                     }`}
                                   >
                                     {call.actionToday?.split(" ")[0]}
@@ -938,366 +1324,517 @@ export function CallsClient() {
           </div>
         </div>
 
-        {/* ── Right Panel: Compact Detail & Workstation ─────────────────────── */}
-        <div className="space-y-2.5 min-w-0">
+        {/* ── Right Panel: Comprehensive Detail & Workstation ────────────────── */}
+        <div className="space-y-2 min-w-0 w-full overflow-hidden">
           {!selectedCall ? (
-            <div className="bg-white border hairline rounded-md p-8 text-center text-slate-400 text-xs">
-              Select a stock from the left rail to view details.
+            <div className="bg-white border hairline rounded-lg p-10 text-center text-slate-400 text-xs">
+              Select a stock from the left rail to view verdict and details.
             </div>
           ) : (
             <>
-              {/* Header Bar */}
-              <div className="bg-white border hairline rounded-md p-2.5 shadow-2xs flex items-center justify-between flex-wrap gap-2">
-                <div className="flex items-center gap-2 flex-wrap min-w-0">
-                  <h2 className="text-lg font-bold font-mono tracking-tight text-slate-900">
+              {/* ── ROW 1: Integrated Stock Header & Score Pillars ─────────────────── */}
+              <div className="bg-white border hairline rounded-lg p-2 sm:p-2.5 shadow-2xs flex items-center justify-between flex-wrap gap-2 min-w-0 w-full">
+                {/* Left: Stock info */}
+                <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap min-w-0">
+                  <h2 className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-slate-900">
                     {selectedCall.symbol}
                   </h2>
-                  <span className="text-xs text-slate-700 font-medium truncate max-w-xs">
+                  <span className="text-xs sm:text-sm font-medium text-slate-700 truncate max-w-[150px] sm:max-w-xs">
                     {selectedCall.name}
                   </span>
                   <CapTierBadge category={selectedCall.market_cap_category as CapCategory} />
-                  <span className="px-1.5 py-0.2 rounded text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200">
+                  <span className="px-1.5 py-0.5 rounded text-[10.5px] font-medium text-slate-700 bg-slate-100 border hairline">
                     {selectedCall.sector}
                   </span>
                   {selectedCall.isCurated && (
-                    <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
-                      ★ ₹1L Curated Pick
+                    <span className="px-1.5 py-0.5 rounded text-[10.5px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                      ★ TOP 6
                     </span>
                   )}
                   {selectedCall.isPortfolio && (
-                    <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-blue-100 text-blue-900 border border-blue-300">
+                    <span className="px-1.5 py-0.5 rounded text-[10.5px] font-medium bg-blue-50 text-blue-800 border border-blue-200">
                       Held: {selectedCall.heldQty} sh
                     </span>
                   )}
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0">
-                  <div className="text-right">
-                    <span className="text-lg font-bold font-mono text-slate-900">
-                      {money(selectedCall.cmp)}
-                    </span>
+                {/* Center: Score Pillars (clean, compact) */}
+                <div className="flex items-center gap-2 bg-slate-50 border hairline px-2 py-1 rounded-md text-xs shrink-0">
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] text-slate-500 font-medium">Comp</span>
+                    <span className="font-mono font-bold text-indigo-700 text-[11px]">{selectedCall.composite_pct}%</span>
+                    <div className="w-7 sm:w-9 bg-slate-200 rounded-full h-1 overflow-hidden">
+                      <div className="bg-indigo-600 h-1 rounded-full" style={{ width: `${selectedCall.composite_pct}%` }} />
+                    </div>
                   </div>
+                  <span className="text-slate-300">|</span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] text-slate-500 font-medium">Qual</span>
+                    <span className="font-mono font-bold text-emerald-700 text-[11px]">{selectedCall.quality_pct}%</span>
+                    <div className="w-6 sm:w-8 bg-slate-200 rounded-full h-1 overflow-hidden">
+                      <div className="bg-emerald-600 h-1 rounded-full" style={{ width: `${selectedCall.quality_pct}%` }} />
+                    </div>
+                  </div>
+                  <span className="text-slate-300">|</span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] text-slate-500 font-medium">Val</span>
+                    <span className="font-mono font-bold text-cyan-700 text-[11px]">{selectedCall.valuation_pct}%</span>
+                    <div className="w-6 sm:w-8 bg-slate-200 rounded-full h-1 overflow-hidden">
+                      <div className="bg-cyan-600 h-1 rounded-full" style={{ width: `${selectedCall.valuation_pct}%` }} />
+                    </div>
+                  </div>
+                  <span className="text-slate-300">|</span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] text-slate-500 font-medium">Mom</span>
+                    <span className="font-mono font-bold text-purple-700 text-[11px]">{selectedCall.momentum_pct}%</span>
+                    <div className="w-6 sm:w-8 bg-slate-200 rounded-full h-1 overflow-hidden">
+                      <div className="bg-purple-600 h-1 rounded-full" style={{ width: `${selectedCall.momentum_pct}%` }} />
+                    </div>
+                  </div>
+                </div>
 
-                  <span className={`px-2 py-0.5 rounded text-[10.5px] font-bold border ${actionBadgeClass(selectedCall.actionToday)}`}>
+                {/* Right: CMP, Buy/Accumulate action & Price Tags */}
+                <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                  <span className="text-lg sm:text-xl font-bold font-mono text-slate-900">
+                    {money(selectedCall.cmp)}
+                  </span>
+
+                  <span className={`px-2 py-0.5 rounded text-xs font-semibold border ${actionBadgeClass(selectedCall.actionToday)}`}>
                     {selectedCall.actionToday}
+                  </span>
+
+                  {/* Buy Below Tag */}
+                  <span className="px-1.5 py-0.5 rounded text-[10.5px] font-mono text-slate-700 bg-slate-50 border hairline">
+                    Buy ≤ <strong className="text-slate-900 font-bold">{money(selectedCall.buyBelow)}</strong>
+                  </span>
+
+                  {/* Target Tag */}
+                  <span className="px-1.5 py-0.5 rounded text-[10.5px] font-mono text-emerald-800 bg-emerald-50 border border-emerald-200">
+                    Target <strong className="text-emerald-900 font-bold">{money(selectedCall.target)}</strong> (+{selectedCall.upside}%)
+                  </span>
+
+                  {/* Floor Tag */}
+                  <span className="px-1.5 py-0.5 rounded text-[10.5px] font-mono text-rose-700 bg-rose-50 border border-rose-200">
+                    Floor <strong className="text-rose-900 font-bold">{money(selectedCall.stopLoss)}</strong>
                   </span>
 
                   <button
                     onClick={() => handleTakeCall(selectedCall.symbol)}
                     disabled={selectedCall.isTaken}
-                    className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-colors flex items-center gap-1 ${
+                    className={`px-2 py-0.5 rounded-md text-xs font-semibold transition-colors flex items-center gap-1 ${
                       selectedCall.isTaken
                         ? "bg-emerald-50 text-emerald-800 border border-emerald-300"
-                        : "bg-emerald-600 hover:bg-emerald-700 text-white"
+                        : "bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs"
                     }`}
                   >
-                    <CheckCircle2 className="w-3 h-3" />
-                    <span>{selectedCall.isTaken ? "Taken" : "Take"}</span>
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>{selectedCall.isTaken ? "Taken" : "Take Call"}</span>
                   </button>
 
                   <button
                     onClick={() => handleExitCall(selectedCall.symbol)}
                     disabled={selectedCall.isCleared}
-                    className="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 border hairline"
+                    className="px-2 py-0.5 rounded-md text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 border hairline shadow-2xs"
                   >
-                    {selectedCall.isCleared ? "Closed" : "Exit"}
+                    {selectedCall.isCleared ? "Closed" : "Close"}
                   </button>
 
                   <Link
                     href={`/stock/${selectedCall.symbol}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="p-1 rounded text-indigo-600 hover:bg-indigo-50 border border-indigo-200"
-                    title="Open Full Stock Page"
+                    className="p-1 rounded-md text-indigo-600 hover:bg-indigo-50 border border-indigo-200 shadow-2xs"
+                    title="Open Full Stock Deep-Dive Page"
                   >
                     <ArrowUpRight className="w-3.5 h-3.5" />
                   </Link>
                 </div>
               </div>
 
-              {/* ── ⭐ DUAL-ANCHOR PERFORMANCE (COMPACT 2-COLUMN COMPARISON) ── */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                {/* ANCHOR 1: CALL GIVEN */}
-                <div className="bg-slate-50/70 border border-indigo-100 rounded-md p-2.5 shadow-2xs space-y-1.5">
-                  <div className="flex items-center justify-between text-[11px]">
-                    <div className="flex items-center gap-1.5 font-bold text-indigo-950">
-                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-600" />
-                      <span>ANCHOR 1: CALL GIVEN</span>
+              {/* ── ROW 2: Price Graph (Left) & Stacked 4 Boxes (Right) ───────── */}
+              <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_260px] xl:grid-cols-[minmax(0,1fr)_275px] gap-2 items-stretch w-full min-w-0">
+                {/* Left: Price Chart & Moving Averages Card */}
+                <div className="bg-white border hairline rounded-lg p-2.5 sm:p-3 shadow-2xs flex flex-col justify-between min-w-0 overflow-hidden w-full">
+                  <div className="flex items-center justify-between text-xs mb-1 min-w-0">
+                    <div className="flex items-center gap-1.5 font-bold text-slate-800">
+                      <TrendingUp className="w-4 h-4 text-slate-600" />
+                      <span>Price Chart &amp; Moving Averages</span>
                     </div>
-                    <span className="text-[10px] font-mono text-slate-500">
-                      Released: {fmtDate(selectedCall.callDate)} ({daysAgo(selectedCall.callDate)})
-                    </span>
                   </div>
-
-                  <div className="flex items-center justify-between pt-1 border-t border-indigo-100/80">
-                    <div>
-                      <span className="text-[10px] uppercase font-bold text-slate-400 block">Anchor Call Price</span>
-                      <span className="text-[13px] font-bold font-mono text-slate-900">{money(selectedCall.callPrice)}</span>
-                    </div>
-
-                    <div className="text-right">
-                      <span className="text-[10px] uppercase font-bold text-slate-400 block">Return Since Call</span>
-                      <div className="flex items-center justify-end gap-1">
-                        <span className={`text-[14px] font-bold font-mono ${(selectedCall.callPerfPct ?? 0) >= 0 ? "text-emerald-700" : "text-rose-600"}`}>
-                          {pct(selectedCall.callPerfPct)}
-                        </span>
-                        {selectedCall.callPrice && (
-                          <span className="text-[10.5px] font-mono text-slate-500">
-                            ({selectedCall.cmp >= selectedCall.callPrice ? "+" : ""}{money(selectedCall.cmp - selectedCall.callPrice)})
-                          </span>
-                        )}
-                      </div>
-                    </div>
+                  <div className="w-full min-w-0 overflow-hidden pt-0.5">
+                    <PriceChart symbol={selectedCall.symbol} height={315} />
                   </div>
                 </div>
 
-                {/* ANCHOR 2: USER PURCHASE */}
-                <div className="bg-slate-50/70 border border-emerald-100 rounded-md p-2.5 shadow-2xs space-y-1.5">
-                  <div className="flex items-center justify-between text-[11px]">
-                    <div className="flex items-center gap-1.5 font-bold text-emerald-950">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
-                      <span>ANCHOR 2: STOCK PURCHASE</span>
+                {/* Right: 4 Compact Stacked Boxes */}
+                <div className="flex flex-col gap-1.5 justify-between w-full lg:w-[260px] xl:w-[275px] shrink-0 min-w-0">
+                  {/* BOX 1: ANCHOR 1 - CALL GIVEN */}
+                  <div className="bg-slate-50/90 border border-indigo-100 rounded-lg p-2 shadow-2xs flex-1 flex flex-col justify-between min-w-0">
+                    <div className="flex items-center justify-between text-[11px] gap-1 min-w-0">
+                      <div className="flex items-center gap-1.5 font-bold text-indigo-950 truncate">
+                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-600 shrink-0" />
+                        <span className="tracking-wide text-[10px] truncate">ANCHOR 1: CALL GIVEN</span>
+                      </div>
+                      <span className="text-[9px] font-mono text-slate-500 shrink-0">
+                        {fmtDate(selectedCall.callDate)} ({daysAgo(selectedCall.callDate)})
+                      </span>
                     </div>
-                    <button
-                      onClick={() => setIsEditingPurchase(!isEditingPurchase)}
-                      className="text-[10.5px] font-semibold text-emerald-800 hover:text-emerald-950 inline-flex items-center gap-1 underline underline-offset-2"
-                    >
-                      <Edit3 className="w-3 h-3" />
-                      <span>{selectedCall.purchasePrice ? "Edit" : "Log Buy"}</span>
-                    </button>
-                  </div>
 
-                  {isEditingPurchase ? (
-                    <div className="bg-white p-2 rounded border border-emerald-300 space-y-1.5">
-                      <div className="grid grid-cols-2 gap-2 text-[11px]">
-                        <div>
-                          <label className="block text-slate-500 text-[10px] font-bold">Buy Date</label>
-                          <input
-                            type="date"
-                            value={editPurchaseDate}
-                            onChange={(e) => setEditPurchaseDate(e.target.value)}
-                            className="w-full px-1.5 py-0.5 text-xs border rounded bg-white"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-slate-500 text-[10px] font-bold">Buy Price (₹)</label>
-                          <input
-                            type="number"
-                            step="0.05"
-                            value={editPurchasePrice}
-                            onChange={(e) => setEditPurchasePrice(e.target.value)}
-                            className="w-full px-1.5 py-0.5 text-xs border rounded bg-white font-mono"
-                          />
-                        </div>
-                      </div>
-                      <div className="flex items-center justify-end gap-1 pt-1">
-                        <button onClick={() => setIsEditingPurchase(false)} className="px-2 py-0.2 text-[10.5px] text-slate-600">
-                          Cancel
-                        </button>
-                        {customPurchases[selectedCall.symbol] && (
-                          <button onClick={() => clearCustomPurchase(selectedCall.symbol)} className="px-2 py-0.2 text-[10.5px] text-rose-700 bg-rose-50 border border-rose-200 rounded">
-                            Reset
-                          </button>
-                        )}
-                        <button
-                          onClick={() => {
-                            const p = parseFloat(editPurchasePrice);
-                            if (!Number.isNaN(p) && p > 0 && editPurchaseDate) saveCustomPurchase(selectedCall.symbol, editPurchaseDate, p);
-                          }}
-                          className="px-2.5 py-0.2 text-[10.5px] font-bold text-white bg-emerald-700 rounded"
-                        >
-                          Save
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex items-center justify-between pt-1 border-t border-emerald-100/80">
+                    <div className="flex items-center justify-between pt-1 mt-0.5 border-t border-indigo-100/80">
                       <div>
-                        <span className="text-[10px] uppercase font-bold text-slate-400 block">Purchase Price</span>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[13px] font-bold font-mono text-slate-900">
-                            {selectedCall.purchasePrice ? money(selectedCall.purchasePrice) : "—"}
-                          </span>
-                          <span className="text-[10px] text-slate-500">
-                            {selectedCall.purchaseDate ? `(${fmtDate(selectedCall.purchaseDate)})` : "(Not Owned)"}
-                          </span>
-                        </div>
+                        <span className="text-[8.5px] uppercase font-semibold text-slate-500 block">Anchor Price</span>
+                        <span className="text-xs sm:text-sm font-bold font-mono text-slate-900">{money(selectedCall.callPrice)}</span>
                       </div>
 
                       <div className="text-right">
-                        <span className="text-[10px] uppercase font-bold text-slate-400 block">Return Since Purchase</span>
-                        {selectedCall.purchasePerfPct != null ? (
-                          <div className="flex items-center justify-end gap-1">
-                            <span className={`text-[14px] font-bold font-mono ${selectedCall.purchasePerfPct >= 0 ? "text-emerald-700" : "text-rose-600"}`}>
-                              {pct(selectedCall.purchasePerfPct)}
+                        <span className="text-[8.5px] uppercase font-semibold text-slate-500 block">Return Since Call</span>
+                        <div className="flex items-center justify-end gap-1">
+                          <span className={`text-xs sm:text-sm font-bold font-mono ${(selectedCall.callPerfPct ?? 0) >= 0 ? "text-emerald-700" : "text-rose-600"}`}>
+                            {pct(selectedCall.callPerfPct)}
+                          </span>
+                          {selectedCall.callPrice && (
+                            <span className="text-[9px] font-mono text-slate-500">
+                              ({selectedCall.cmp >= selectedCall.callPrice ? "+" : ""}{money(selectedCall.cmp - selectedCall.callPrice)})
                             </span>
-                            {selectedCall.purchasePrice && (
-                              <span className="text-[10.5px] font-mono text-slate-500">
-                                ({selectedCall.cmp >= selectedCall.purchasePrice ? "+" : ""}{money(selectedCall.cmp - selectedCall.purchasePrice)})
-                              </span>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-[11px] text-slate-400 italic">Pending Entry</span>
-                        )}
+                          )}
+                        </div>
                       </div>
                     </div>
-                  )}
-                </div>
-              </div>
+                  </div>
 
-              {/* ── Key Decision Levels (Dense Single Bar) ───────────────────── */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-white border hairline rounded-md p-2 shadow-2xs text-[11px]">
-                <div className="px-2 py-1 bg-slate-50/70 rounded">
-                  <div className="text-[9.5px] uppercase font-bold text-slate-400">Current CMP</div>
-                  <div className="text-sm font-bold font-mono text-slate-900 mt-0.5">{money(selectedCall.cmp)}</div>
-                </div>
+                  {/* BOX 2: ANCHOR 2 - STOCK PURCHASE */}
+                  <div className="bg-slate-50/90 border border-emerald-100 rounded-lg p-2 shadow-2xs flex-1 flex flex-col justify-between min-w-0">
+                    <div className="flex items-center justify-between text-[11px] gap-1 min-w-0">
+                      <div className="flex items-center gap-1.5 font-bold text-emerald-950 truncate">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 shrink-0" />
+                        <span className="tracking-wide text-[10px] truncate">ANCHOR 2: PURCHASE</span>
+                      </div>
+                      <button
+                        onClick={() => setIsEditingPurchase(!isEditingPurchase)}
+                        className="text-[9px] font-semibold text-emerald-800 hover:text-emerald-950 inline-flex items-center gap-0.5 underline underline-offset-2 shrink-0"
+                      >
+                        <Edit3 className="w-2.5 h-2.5" />
+                        <span>{selectedCall.purchasePrice ? "Edit" : "Log Buy"}</span>
+                      </button>
+                    </div>
 
-                <div className="px-2 py-1 bg-slate-50/70 rounded">
-                  <div className="text-[9.5px] uppercase font-bold text-slate-400">Buy Below Ceiling</div>
-                  <div className="flex items-center gap-1 mt-0.5">
-                    <span className="text-sm font-bold font-mono text-slate-900">{money(selectedCall.buyBelow)}</span>
-                    {selectedCall.cmp <= selectedCall.buyBelow * 1.01 ? (
-                      <span className="text-[9px] font-bold text-emerald-700 bg-emerald-100 px-1 rounded">In Zone</span>
+                    {isEditingPurchase ? (
+                      <div className="bg-white p-1 rounded border border-emerald-300 space-y-1">
+                        <div className="grid grid-cols-2 gap-1 text-[10px]">
+                          <div>
+                            <label className="block text-slate-600 text-[8.5px]">Buy Date</label>
+                            <input
+                              type="date"
+                              value={editPurchaseDate}
+                              onChange={(e) => setEditPurchaseDate(e.target.value)}
+                              className="w-full px-1 py-0.2 text-[9.5px] border rounded bg-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-slate-600 text-[8.5px]">Buy Price (₹)</label>
+                            <input
+                              type="number"
+                              step="0.05"
+                              value={editPurchasePrice}
+                              onChange={(e) => setEditPurchasePrice(e.target.value)}
+                              className="w-full px-1 py-0.2 text-[9.5px] border rounded bg-white font-mono"
+                            />
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-end gap-1 pt-0.5">
+                          <button onClick={() => setIsEditingPurchase(false)} className="px-1.5 py-0.2 text-[9px] text-slate-600">
+                            Cancel
+                          </button>
+                          {customPurchases[selectedCall.symbol] && (
+                            <button onClick={() => clearCustomPurchase(selectedCall.symbol)} className="px-1.5 py-0.2 text-[9px] text-rose-700 bg-rose-50 border border-rose-200 rounded">
+                              Reset
+                            </button>
+                          )}
+                          <button
+                            onClick={() => {
+                              const p = parseFloat(editPurchasePrice);
+                              if (!Number.isNaN(p) && p > 0 && editPurchaseDate) saveCustomPurchase(selectedCall.symbol, editPurchaseDate, p);
+                            }}
+                            className="px-2 py-0.2 text-[9px] font-bold text-white bg-emerald-700 rounded shadow-2xs"
+                          >
+                            Save
+                          </button>
+                        </div>
+                      </div>
                     ) : (
-                      <span className="text-[9px] font-semibold text-amber-700 bg-amber-100 px-1 rounded">Wait</span>
+                      <div className="flex items-center justify-between pt-1 mt-0.5 border-t border-emerald-100/80">
+                        <div>
+                          <span className="text-[8.5px] uppercase font-semibold text-slate-500 block">Purchase Price</span>
+                          <div className="flex items-center gap-1">
+                            <span className="text-xs sm:text-sm font-bold font-mono text-slate-900">
+                              {selectedCall.purchasePrice ? money(selectedCall.purchasePrice) : "—"}
+                            </span>
+                            <span className="text-[9px] text-slate-500">
+                              {selectedCall.purchaseDate ? `(${fmtDate(selectedCall.purchaseDate)})` : "(None)"}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="text-right">
+                          <span className="text-[8.5px] uppercase font-semibold text-slate-500 block">Return Since Buy</span>
+                          {selectedCall.purchasePerfPct != null ? (
+                            <div className="flex items-center justify-end gap-1">
+                              <span className={`text-xs sm:text-sm font-bold font-mono ${selectedCall.purchasePerfPct >= 0 ? "text-emerald-700" : "text-rose-600"}`}>
+                                {pct(selectedCall.purchasePerfPct)}
+                              </span>
+                              {selectedCall.purchasePrice && (
+                                <span className="text-[9px] font-mono text-slate-500">
+                                  ({selectedCall.cmp >= selectedCall.purchasePrice ? "+" : ""}{money(selectedCall.cmp - selectedCall.purchasePrice)})
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-[9px] text-slate-400 italic">No trade logged</span>
+                          )}
+                        </div>
+                      </div>
                     )}
                   </div>
-                </div>
 
-                <div className="px-2 py-1 bg-slate-50/70 rounded">
-                  <div className="text-[9.5px] uppercase font-bold text-slate-400">12M Target</div>
-                  <div className="flex items-center gap-1 mt-0.5">
-                    <span className="text-sm font-bold font-mono text-emerald-700">{money(selectedCall.target)}</span>
-                    <span className="text-[10px] font-bold font-mono text-emerald-700">(+{selectedCall.upside}%)</span>
-                  </div>
-                </div>
-
-                <div className="px-2 py-1 bg-slate-50/70 rounded">
-                  <div className="text-[9.5px] uppercase font-bold text-slate-400">Stop Loss / Floor</div>
-                  <div className="flex items-center gap-1 mt-0.5">
-                    <span className="text-sm font-bold font-mono text-rose-600">{money(selectedCall.stopLoss)}</span>
-                    <span className="text-[9.5px] text-slate-400 font-mono">
-                      (-{Math.round(((selectedCall.cmp - selectedCall.stopLoss) / selectedCall.cmp) * 100)}%)
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* ── Sub-Tabs: Sizing, Results, Dividends, News, Audit ─────────── */}
-              <div className="bg-white border hairline rounded-md shadow-2xs overflow-hidden">
-                <div className="flex items-center gap-0.5 px-2 pt-1.5 pb-1 border-b hairline bg-slate-50/80 overflow-x-auto text-[11px]">
-                  <button
-                    onClick={() => setActiveTab("overview")}
-                    className={`px-2.5 py-1 rounded text-[11px] font-bold transition-all flex items-center gap-1 shrink-0 ${
-                      activeTab === "overview" ? "bg-indigo-700 text-white shadow-2xs" : "text-slate-600 hover:bg-slate-200/60"
-                    }`}
-                  >
-                    <Coins className="w-3 h-3" />
-                    <span>Sizing &amp; Tranches</span>
-                  </button>
-
-                  <button
-                    onClick={() => setActiveTab("results")}
-                    className={`px-2.5 py-1 rounded text-[11px] font-bold transition-all flex items-center gap-1 shrink-0 ${
-                      activeTab === "results" ? "bg-indigo-700 text-white shadow-2xs" : "text-slate-600 hover:bg-slate-200/60"
-                    }`}
-                  >
-                    <FileText className="w-3 h-3" />
-                    <span>Results ({contextData?.results?.length ?? 0})</span>
-                  </button>
-
-                  <button
-                    onClick={() => setActiveTab("dividends")}
-                    className={`px-2.5 py-1 rounded text-[11px] font-bold transition-all flex items-center gap-1 shrink-0 ${
-                      activeTab === "dividends" ? "bg-indigo-700 text-white shadow-2xs" : "text-slate-600 hover:bg-slate-200/60"
-                    }`}
-                  >
-                    <DollarSign className="w-3 h-3" />
-                    <span>Dividends ({contextData?.dividends?.length ?? 0})</span>
-                  </button>
-
-                  <button
-                    onClick={() => setActiveTab("news")}
-                    className={`px-2.5 py-1 rounded text-[11px] font-bold transition-all flex items-center gap-1 shrink-0 ${
-                      activeTab === "news" ? "bg-indigo-700 text-white shadow-2xs" : "text-slate-600 hover:bg-slate-200/60"
-                    }`}
-                  >
-                    <Newspaper className="w-3 h-3" />
-                    <span>News ({contextData?.news?.length ?? 0})</span>
-                  </button>
-
-                  <button
-                    onClick={() => setActiveTab("audit")}
-                    className={`px-2.5 py-1 rounded text-[11px] font-bold transition-all flex items-center gap-1 shrink-0 ${
-                      activeTab === "audit" ? "bg-indigo-700 text-white shadow-2xs" : "text-slate-600 hover:bg-slate-200/60"
-                    }`}
-                  >
-                    <CheckSquare className="w-3 h-3" />
-                    <span>Audit &amp; Governance</span>
-                  </button>
-                </div>
-
-                <div className="p-2.5">
-                  {/* TAB 1: OVERVIEW & SIZING */}
-                  {activeTab === "overview" && (
-                    <div className="space-y-2 text-xs">
-                      <div className="flex items-center justify-between text-[11px]">
-                        <span className="font-bold text-slate-800">
-                          ₹1L Deployment: {selectedCall.weightPct}% Allocation ({money(selectedCall.allocatedAmount)})
-                        </span>
-                        <span className="text-slate-600">
-                          Target Value: <strong className="text-emerald-700 font-mono">{money(selectedCall.projectedValue)}</strong> (+{money(selectedCall.profitRupees)})
+                  {/* BOX 3: TRANCHE 1 - MARKET ORDER (CMP) */}
+                  {selectedCall.isCurated ? (
+                    <div className="bg-slate-50/90 border border-indigo-100 rounded-lg p-2 shadow-2xs flex-1 flex flex-col justify-between min-w-0">
+                      <div className="flex items-center justify-between text-[11px] gap-1 min-w-0">
+                        <div className="flex items-center gap-1.5 font-bold text-indigo-950 truncate">
+                          <span className="w-1.5 h-1.5 rounded-full bg-indigo-600 shrink-0" />
+                          <span className="tracking-wide text-[10px] truncate">TRANCHE 1: MARKET CMP</span>
+                        </div>
+                        <span className="text-[8.5px] font-mono font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-1 py-0.2 rounded shrink-0">
+                          50% (~{money(selectedCall.t1Value)})
                         </span>
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
-                        <div className="p-2 rounded border border-indigo-100 bg-indigo-50/40">
-                          <div className="font-bold text-indigo-950 flex justify-between">
-                            <span>Tranche 1 (Market Order Today)</span>
-                            <span className="font-mono text-indigo-700">~{money(selectedCall.t1Value)}</span>
-                          </div>
-                          <p className="text-slate-600 mt-0.5">
-                            Buy <strong>{selectedCall.tranche1Shares} sh</strong> @ CMP ({money(selectedCall.cmp)}) to establish primary position.
-                          </p>
+                      <div className="flex items-center justify-between pt-1 mt-0.5 border-t border-indigo-100/80">
+                        <div>
+                          <span className="text-[8.5px] uppercase font-semibold text-slate-500 block">Buy Today</span>
+                          <span className="text-xs sm:text-sm font-bold font-mono text-slate-900">{selectedCall.tranche1Shares} shares</span>
                         </div>
-
-                        <div className="p-2 rounded border border-amber-200 bg-amber-50/40">
-                          <div className="font-bold text-amber-950 flex justify-between">
-                            <span>Tranche 2 (Dip Limit)</span>
-                            <span className="font-mono text-amber-800">~{money(selectedCall.t2Value)}</span>
-                          </div>
-                          <p className="text-slate-600 mt-0.5">
-                            Place limit GTT for <strong>{selectedCall.tranche2Shares} sh</strong> ≤ {money(selectedCall.buyBelow)} to average down.
-                          </p>
+                        <div className="text-right">
+                          <span className="text-[8.5px] uppercase font-semibold text-slate-500 block">Order Price</span>
+                          <span className="text-xs sm:text-sm font-bold font-mono text-indigo-700">@ CMP {money(selectedCall.cmp)}</span>
                         </div>
                       </div>
+                    </div>
+                  ) : (
+                    <div className={`rounded-lg p-2 shadow-2xs flex-1 flex flex-col justify-between min-w-0 ${
+                      isSellAction ? "bg-rose-50/90 border border-rose-300" : "bg-slate-50/90 border hairline"
+                    }`}>
+                      <div className="flex items-center justify-between text-[11px] gap-1 min-w-0">
+                        <div className="flex items-center gap-1.5 font-bold text-slate-800 truncate">
+                          <span className="w-1.5 h-1.5 rounded-full bg-slate-500 shrink-0" />
+                          <span className="tracking-wide text-[10px] truncate">{isSellAction ? "EXIT TRIGGER" : "ACTION GUIDELINE"}</span>
+                        </div>
+                        <span className={`px-1.5 py-0.2 rounded text-[8.5px] font-semibold border shrink-0 ${actionBadgeClass(selectedCall.actionToday)}`}>
+                          {selectedCall.actionToday}
+                        </span>
+                      </div>
 
-                      <div className="pt-1 border-t hairline">
-                        <span className="text-[10px] font-bold uppercase text-slate-500 block mb-0.5">Operating Rationale &amp; Catalyst</span>
-                        <p className="text-[11.5px] leading-relaxed text-slate-800 bg-slate-50/60 p-2 rounded border hairline">
-                          {selectedCall.rationale}
+                      <div className="pt-1 mt-0.5 border-t border-slate-200/80 text-[9.5px]">
+                        <p className="text-slate-700 line-clamp-2 leading-snug">
+                          {selectedCall.actionReason || selectedCall.rationale}
                         </p>
                       </div>
                     </div>
                   )}
 
-                  {/* TAB 2: RESULTS DECLARATIONS */}
-                  {activeTab === "results" && (
-                    <div className="space-y-1.5 text-xs">
+                  {/* BOX 4: TRANCHE 2 - DIP LIMIT (GTT) */}
+                  {selectedCall.isCurated ? (
+                    <div className="bg-slate-50/90 border border-amber-200 rounded-lg p-2 shadow-2xs flex-1 flex flex-col justify-between min-w-0">
+                      <div className="flex items-center justify-between text-[11px] gap-1 min-w-0">
+                        <div className="flex items-center gap-1.5 font-bold text-amber-950 truncate">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-600 shrink-0" />
+                          <span className="tracking-wide text-[10px] truncate">TRANCHE 2: DIP (GTT)</span>
+                        </div>
+                        <span className="text-[8.5px] font-mono font-bold text-amber-800 bg-amber-50 border border-amber-200 px-1 py-0.2 rounded shrink-0">
+                          50% (~{money(selectedCall.t2Value)})
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-1 mt-0.5 border-t border-amber-100">
+                        <div>
+                          <span className="text-[8.5px] uppercase font-semibold text-slate-500 block">Dip Buy</span>
+                          <span className="text-xs sm:text-sm font-bold font-mono text-slate-900">{selectedCall.tranche2Shares} shares</span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-[8.5px] uppercase font-semibold text-slate-500 block">Limit Price</span>
+                          <span className="text-xs sm:text-sm font-bold font-mono text-amber-800">≤ {money(selectedCall.buyBelow)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-slate-50/90 border hairline rounded-lg p-2 shadow-2xs flex-1 flex flex-col justify-between min-w-0">
+                      <div className="flex items-center justify-between text-[11px] gap-1 min-w-0">
+                        <div className="flex items-center gap-1.5 font-bold text-slate-800 truncate">
+                          <span className="w-1.5 h-1.5 rounded-full bg-slate-500 shrink-0" />
+                          <span className="tracking-wide text-[10px] truncate">PRICE CORRIDOR</span>
+                        </div>
+                        <span className="text-[9px] font-mono text-slate-600 shrink-0">
+                          Pillar {selectedCall.composite_pct}%
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-1 mt-0.5 border-t border-slate-200 text-[10px]">
+                        <div>
+                          <span className="text-[8.5px] uppercase font-semibold text-slate-400 block">Target Upside</span>
+                          <span className="font-mono font-bold text-emerald-700 text-xs">{money(selectedCall.target)} (+{selectedCall.upside}%)</span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-[8.5px] uppercase font-semibold text-slate-400 block">Bear Floor</span>
+                          <span className="font-mono font-bold text-rose-600 text-xs">{money(selectedCall.stopLoss)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* ── ROW 3: Context Tabs (Followed Below Graph Row) ──────────────────── */}
+              <div className="bg-white border hairline rounded-lg shadow-sm overflow-hidden flex flex-col">
+                <div className="flex items-center gap-1 px-3 pt-2 pb-1.5 border-b hairline bg-slate-50/90 overflow-x-auto text-xs">
+                  <button
+                    onClick={() => setActiveTab("overview")}
+                    className={`px-3 py-1 rounded-md font-medium transition-all flex items-center gap-1.5 shrink-0 ${
+                      effectiveTab === "overview" ? "bg-indigo-700 text-white shadow-xs font-semibold" : "text-slate-600 hover:bg-slate-200/60"
+                    }`}
+                  >
+                    <Building2 className="w-3.5 h-3.5" />
+                    <span>Overview</span>
+                  </button>
+
+                  <button
+                    onClick={() => setActiveTab("catalysts")}
+                    className={`px-3 py-1 rounded-md font-medium transition-all flex items-center gap-1.5 shrink-0 ${
+                      effectiveTab === "catalysts" ? "bg-indigo-700 text-white shadow-xs font-semibold" : "text-slate-600 hover:bg-slate-200/60"
+                    }`}
+                  >
+                    <Target className="w-3.5 h-3.5" />
+                    <span>Catalysts</span>
+                  </button>
+
+                  <button
+                    onClick={() => setActiveTab("results")}
+                    className={`px-3 py-1 rounded-md font-medium transition-all flex items-center gap-1.5 shrink-0 ${
+                      effectiveTab === "results" ? "bg-indigo-700 text-white shadow-xs font-semibold" : "text-slate-600 hover:bg-slate-200/60"
+                    }`}
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>Results ({contextData?.results?.length ?? 0})</span>
+                  </button>
+
+                  <button
+                    onClick={() => setActiveTab("dividends")}
+                    className={`px-3 py-1 rounded-md font-medium transition-all flex items-center gap-1.5 shrink-0 ${
+                      effectiveTab === "dividends" ? "bg-indigo-700 text-white shadow-xs font-semibold" : "text-slate-600 hover:bg-slate-200/60"
+                    }`}
+                  >
+                    <DollarSign className="w-3.5 h-3.5" />
+                    <span>Dividends ({contextData?.dividends?.length ?? 0})</span>
+                  </button>
+
+                  <button
+                    onClick={() => setActiveTab("news")}
+                    className={`px-3 py-1 rounded-md font-medium transition-all flex items-center gap-1.5 shrink-0 ${
+                      effectiveTab === "news" ? "bg-indigo-700 text-white shadow-xs font-semibold" : "text-slate-600 hover:bg-slate-200/60"
+                    }`}
+                  >
+                    <Newspaper className="w-3.5 h-3.5" />
+                    <span>News ({contextData?.news?.length ?? 0})</span>
+                  </button>
+
+                  <button
+                    onClick={() => setActiveTab("audit")}
+                    className={`px-3 py-1 rounded-md font-medium transition-all flex items-center gap-1.5 shrink-0 ${
+                      effectiveTab === "audit" ? "bg-indigo-700 text-white shadow-xs font-semibold" : "text-slate-600 hover:bg-slate-200/60"
+                    }`}
+                  >
+                    <CheckSquare className="w-3.5 h-3.5" />
+                    <span>Audit &amp; Governance</span>
+                  </button>
+                </div>
+
+                <div className="p-3.5">
+                  {/* TAB 1: COMPANY OVERVIEW (Matching exact design from attachment) */}
+                  {effectiveTab === "overview" && (
+                    <div className="space-y-3">
+                      <CompanyProfile symbol={selectedCall.symbol} />
+                    </div>
+                  )}
+
+                  {/* TAB 2: CATALYSTS & OPERATING THESIS */}
+                  {effectiveTab === "catalysts" && (
+                    <div className="space-y-3 text-xs sm:text-sm">
+                      {/* Core Investment Thesis & Operating Performance */}
+                      <div className="bg-slate-50 border hairline rounded-md p-3 space-y-1.5">
+                        <div className="flex items-center gap-1.5 text-indigo-950 font-bold text-xs uppercase tracking-wide">
+                          <Activity className="w-3.5 h-3.5 text-indigo-600" />
+                          <span>Core Investment Thesis &amp; Operating Performance</span>
+                        </div>
+                        <p className="text-xs sm:text-sm leading-relaxed text-slate-800">
+                          {selectedCall.rationale}
+                        </p>
+                        {selectedCall.operatingHighlights && selectedCall.operatingHighlights.length > 0 && (
+                          <ul className="list-disc list-inside space-y-1 pt-1 text-xs text-slate-700">
+                            {selectedCall.operatingHighlights.map((hl: string, idx: number) => (
+                              <li key={idx} className="leading-relaxed">{hl}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+
+                      {/* Forward Catalysts & Value Drivers (Next 3–12 Months) */}
+                      <div className="bg-emerald-50/50 border border-emerald-200 rounded-md p-3 space-y-1.5">
+                        <div className="flex items-center gap-1.5 text-emerald-950 font-bold text-xs uppercase tracking-wide">
+                          <Target className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Forward Catalysts &amp; Value Drivers (Next 3–12 Months)</span>
+                        </div>
+                        {selectedCall.catalysts && selectedCall.catalysts.length > 0 ? (
+                          <ul className="list-disc list-inside space-y-1 text-xs sm:text-sm text-emerald-950">
+                            {selectedCall.catalysts.map((cat: string, idx: number) => (
+                              <li key={idx} className="leading-relaxed">{cat}</li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className="text-xs text-emerald-900 leading-relaxed">
+                            Quarterly earnings inflection, continuous balance sheet deleveraging, and operational leverage expansion toward cycle-high ROCE.
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Margin of Safety & Monitorables */}
+                      <div className="bg-amber-50/40 border border-amber-200 rounded-md p-3 space-y-1">
+                        <div className="flex items-center gap-1.5 text-amber-950 font-bold text-xs uppercase tracking-wide">
+                          <ShieldAlert className="w-3.5 h-3.5 text-amber-700" />
+                          <span>Margin of Safety &amp; Risk Monitorables</span>
+                        </div>
+                        <p className="text-xs sm:text-sm text-amber-950 leading-relaxed">
+                          {selectedCall.marginOfSafety ||
+                            `Robust valuation cushion with floor anchored at ₹${selectedCall.stopLoss} (-${Math.round(((selectedCall.cmp - selectedCall.stopLoss)/selectedCall.cmp)*100)}%). Key monitorables include input cost swings, quarterly gross margin preservation, and macro liquidity conditions.`}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* TAB 3: RESULTS DECLARATIONS */}
+                  {effectiveTab === "results" && (
+                    <div className="space-y-2 text-xs sm:text-sm">
                       {contextLoading ? (
-                        <div className="py-4 text-center text-xs text-slate-400">Loading results filings…</div>
+                        <div className="py-6 text-center text-slate-400">Loading results filings…</div>
                       ) : !contextData?.results || contextData.results.length === 0 ? (
-                        <div className="py-4 text-center text-xs text-slate-400">No recent result announcements.</div>
+                        <div className="py-6 text-center text-slate-400">No recent result announcements on file.</div>
                       ) : (
-                        <div className="space-y-1 max-h-56 overflow-y-auto">
+                        <div className="space-y-2 max-h-72 overflow-y-auto">
                           {contextData.results.map((r, idx) => (
-                            <div key={idx} className="p-2 rounded border hairline bg-slate-50/50 hover:bg-slate-50 flex items-start justify-between gap-2 text-[11px]">
+                            <div key={idx} className="p-2.5 rounded-md border hairline bg-slate-50/50 hover:bg-slate-50 flex items-start justify-between gap-2.5">
                               <div className="space-y-0.5 min-w-0">
-                                <div className="font-semibold text-slate-900 leading-snug truncate">{r.title}</div>
-                                {r.headline && <p className="text-slate-600 text-[10px] line-clamp-1">{r.headline}</p>}
-                                <div className="text-[9.5px] text-slate-400 font-mono">
-                                  {fmtDate(r.published_at)} ({daysAgo(r.published_at)})
+                                <div className="font-semibold text-slate-900 line-clamp-1">{r.title}</div>
+                                {r.headline && <p className="text-xs text-slate-600 line-clamp-2">{r.headline}</p>}
+                                <div className="text-[10.5px] text-slate-400">
+                                  <span>Published: {fmtDate(r.published_at)} ({daysAgo(r.published_at)})</span>
                                 </div>
                               </div>
                               {r.pdf_url && (
@@ -1305,10 +1842,10 @@ export function CallsClient() {
                                   href={r.pdf_url}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] font-semibold shrink-0 flex items-center gap-1"
+                                  className="px-2 py-1 text-xs font-semibold rounded bg-indigo-50 text-indigo-700 hover:bg-indigo-100 flex items-center gap-1 shrink-0"
                                 >
                                   <span>PDF</span>
-                                  <ExternalLink className="w-2.5 h-2.5" />
+                                  <ExternalLink className="w-3 h-3" />
                                 </a>
                               )}
                             </div>
@@ -1318,35 +1855,33 @@ export function CallsClient() {
                     </div>
                   )}
 
-                  {/* TAB 3: DIVIDENDS */}
-                  {activeTab === "dividends" && (
-                    <div className="text-xs">
+                  {/* TAB 4: DIVIDENDS */}
+                  {effectiveTab === "dividends" && (
+                    <div className="text-xs sm:text-sm">
                       {contextLoading ? (
-                        <div className="py-4 text-center text-xs text-slate-400">Loading dividends…</div>
+                        <div className="py-6 text-center text-slate-400">Loading dividend history…</div>
                       ) : !contextData?.dividends || contextData.dividends.length === 0 ? (
-                        <div className="py-4 text-center text-xs text-slate-400">No dividend corporate actions found.</div>
+                        <div className="py-6 text-center text-slate-400">No corporate dividend records found.</div>
                       ) : (
-                        <div className="overflow-x-auto max-h-56">
-                          <table className="w-full text-[11px] text-left">
-                            <thead className="bg-slate-50 text-slate-600 font-bold border-b hairline">
-                              <tr>
-                                <th className="py-1 px-2">Ex-Date</th>
-                                <th className="py-1 px-2">Purpose</th>
-                                <th className="py-1 px-2 text-right">Dividend (₹)</th>
-                                <th className="py-1 px-2 text-right">Yield @ CMP</th>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left border-collapse">
+                            <thead>
+                              <tr className="border-b hairline text-[11px] font-bold uppercase text-slate-400">
+                                <th className="py-2 px-1.5">Ex-Date</th>
+                                <th className="py-2 px-1.5">Purpose / Dividend</th>
+                                <th className="py-2 px-1.5 text-right">Amount (₹)</th>
+                                <th className="py-2 px-1.5 text-right">Yield @ CMP</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y hairline">
                               {contextData.dividends.map((d, idx) => {
                                 const yieldPct = d.amount && selectedCall.cmp > 0 ? ((d.amount / selectedCall.cmp) * 100).toFixed(2) : "—";
                                 return (
-                                  <tr key={idx} className="hover:bg-slate-50/50">
-                                    <td className="py-1 px-2 font-mono font-medium text-slate-900">{fmtDate(d.ex_date)}</td>
-                                    <td className="py-1 px-2 text-slate-800">{d.purpose}</td>
-                                    <td className="py-1 px-2 text-right font-mono font-bold text-emerald-700">
-                                      {d.amount != null ? `₹${d.amount.toFixed(2)}` : "—"}
-                                    </td>
-                                    <td className="py-1 px-2 text-right font-mono text-slate-600">
+                                  <tr key={idx} className="hover:bg-slate-50/60">
+                                    <td className="py-2 px-1.5 font-mono text-slate-700">{fmtDate(d.ex_date)}</td>
+                                    <td className="py-2 px-1.5 font-medium text-slate-800">{d.purpose}</td>
+                                    <td className="py-2 px-1.5 text-right font-mono font-bold text-slate-900">{money(d.amount)}</td>
+                                    <td className="py-2 px-1.5 text-right font-mono text-emerald-700 font-semibold">
                                       {yieldPct !== "—" ? `${yieldPct}%` : "—"}
                                     </td>
                                   </tr>
@@ -1359,17 +1894,17 @@ export function CallsClient() {
                     </div>
                   )}
 
-                  {/* TAB 4: NEWS */}
-                  {activeTab === "news" && (
-                    <div className="text-xs">
+                  {/* TAB 5: NEWS */}
+                  {effectiveTab === "news" && (
+                    <div className="text-xs sm:text-sm">
                       {contextLoading ? (
-                        <div className="py-4 text-center text-xs text-slate-400">Loading news…</div>
+                        <div className="py-6 text-center text-slate-400">Loading live news…</div>
                       ) : !contextData?.news || contextData.news.length === 0 ? (
-                        <div className="py-4 text-center text-xs text-slate-400">No news articles found.</div>
+                        <div className="py-6 text-center text-slate-400">No news articles found for this ticker.</div>
                       ) : (
-                        <div className="space-y-1 max-h-56 overflow-y-auto">
+                        <div className="space-y-2 max-h-72 overflow-y-auto">
                           {contextData.news.map((item, idx) => (
-                            <div key={idx} className="p-1.5 rounded border hairline bg-slate-50/40 hover:bg-slate-50 flex items-start justify-between gap-2 text-[11px]">
+                            <div key={idx} className="p-2 rounded-md border hairline bg-slate-50/40 hover:bg-slate-50 flex items-start justify-between gap-2.5 text-xs">
                               <div className="space-y-0.5 min-w-0">
                                 <a
                                   href={item.url}
@@ -1379,8 +1914,8 @@ export function CallsClient() {
                                 >
                                   {item.title}
                                 </a>
-                                <div className="flex items-center gap-1.5 text-[9.5px] text-slate-400">
-                                  <span className="px-1 rounded bg-slate-200/70 font-medium text-slate-700">{item.source}</span>
+                                <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+                                  <span className="px-1.5 py-0.2 rounded bg-slate-200/80 font-medium text-slate-700">{item.source}</span>
                                   <span>{fmtDate(item.published_at)}</span>
                                   <span>•</span>
                                   <span>{daysAgo(item.published_at)}</span>
@@ -1396,99 +1931,223 @@ export function CallsClient() {
                     </div>
                   )}
 
-                  {/* TAB 5: AUDIT */}
-                  {activeTab === "audit" && (
-                    <div className="space-y-2 text-xs">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
-                        <div className="p-2 rounded border hairline bg-slate-50/50">
-                          <span className="text-[9.5px] uppercase font-bold text-slate-400 block">Statutory Audit</span>
+                  {/* TAB 6: AUDIT & GOVERNANCE */}
+                  {effectiveTab === "audit" && (
+                    <div className="space-y-3 text-xs sm:text-sm">
+                      {/* Verdict Description & Call Trigger */}
+                      <div className="bg-slate-50 border hairline rounded-lg p-3.5 space-y-2">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                              Official Verdict
+                            </span>
+                            <span className={`px-2 py-0.5 rounded text-xs font-bold border ${actionBadgeClass(contextData?.audit?.verdict || selectedCall.actionToday)}`}>
+                              {contextData?.audit?.verdict || selectedCall.actionToday}
+                            </span>
+                            {contextData?.audit?.confidence && (
+                              <span className="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200 uppercase">
+                                {contextData.audit.confidence} Conviction
+                              </span>
+                            )}
+                          </div>
+                          {contextData?.audit?.generated_at && (
+                            <span className="text-[11px] font-mono text-slate-500">
+                              Generated: {fmtDate(contextData.audit.generated_at)} ({daysAgo(contextData.audit.generated_at)})
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Trigger / Verdict Description */}
+                        <div className="pt-1 text-slate-800 leading-relaxed">
+                          <span className="text-[10px] font-bold uppercase text-slate-500 block mb-0.5">
+                            Trigger / Verdict Description
+                          </span>
+                          <p className="text-xs sm:text-sm text-slate-800 font-medium">
+                            {contextData?.audit?.trigger_text || selectedCall.actionReason || selectedCall.rationale}
+                          </p>
+                        </div>
+
+                        {/* Verdict Justification Points */}
+                        {contextData?.audit?.points && contextData.audit.points.length > 0 && (() => {
+                          const { good, bad, decision, other } = parseVerdictPoints(contextData.audit.points);
+                          return (
+                            <div className="pt-2.5 border-t hairline space-y-2.5">
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+                                Verdict Justification Points ({contextData.audit.points.length} factors evaluated)
+                              </span>
+
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                {/* Box 1: The Good */}
+                                <div className="rounded-lg border border-emerald-200/90 bg-emerald-50/40 p-3 flex flex-col justify-between">
+                                  <div>
+                                    <div className="text-xs font-bold text-emerald-900 mb-2 flex items-center justify-between">
+                                      <span className="flex items-center gap-1.5">
+                                        <span className="w-2 h-2 rounded-full bg-emerald-600 shrink-0" />
+                                        <span>What&apos;s Working (The Good)</span>
+                                      </span>
+                                      <span className="text-[10px] font-mono text-emerald-800 bg-emerald-100/80 px-1.5 py-0.2 rounded font-semibold">
+                                        {good.length} factors
+                                      </span>
+                                    </div>
+
+                                    {good.length > 0 ? (
+                                      <ul className="space-y-1.5 text-xs text-slate-700">
+                                        {good.map((p, idx) => {
+                                          const { metric, peer, reason } = cleanPointText(p, /^<b>(the good|good|strengths):?<\/b>:?\s*/i);
+                                          return (
+                                            <li key={idx} className="flex items-start gap-1.5 leading-relaxed">
+                                              <span className="text-emerald-600 font-bold shrink-0 mt-0.5">•</span>
+                                              <div>
+                                                <strong className="text-slate-900 font-semibold">{metric}</strong>
+                                                {peer && (
+                                                  <span className="text-emerald-800 font-medium"> — {peer}</span>
+                                                )}
+                                                {reason && (
+                                                  <span className="text-slate-600"> — {reason}</span>
+                                                )}
+                                              </div>
+                                            </li>
+                                          );
+                                        })}
+                                      </ul>
+                                    ) : (
+                                      <div className="text-xs text-slate-400 italic">No specific strengths recorded.</div>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {/* Box 2: The Bad */}
+                                <div className="rounded-lg border border-rose-200/90 bg-rose-50/40 p-3 flex flex-col justify-between">
+                                  <div>
+                                    <div className="text-xs font-bold text-rose-900 mb-2 flex items-center justify-between">
+                                      <span className="flex items-center gap-1.5">
+                                        <span className="w-2 h-2 rounded-full bg-rose-600 shrink-0" />
+                                        <span>Risks &amp; Headwinds (The Bad)</span>
+                                      </span>
+                                      <span className="text-[10px] font-mono text-rose-800 bg-rose-100/80 px-1.5 py-0.2 rounded font-semibold">
+                                        {bad.length} factors
+                                      </span>
+                                    </div>
+
+                                    {bad.length > 0 ? (
+                                      <ul className="space-y-1.5 text-xs text-slate-700">
+                                        {bad.map((p, idx) => {
+                                          const { metric, peer, reason } = cleanPointText(p, /^<b>(the bad|bad|risks|warnings):?<\/b>:?\s*/i);
+                                          return (
+                                            <li key={idx} className="flex items-start gap-1.5 leading-relaxed">
+                                              <span className="text-rose-500 font-bold shrink-0 mt-0.5">•</span>
+                                              <div>
+                                                <strong className="text-slate-900 font-semibold">{metric}</strong>
+                                                {peer && (
+                                                  <span className="text-rose-700 font-medium"> — {peer}</span>
+                                                )}
+                                                {reason && (
+                                                  <span className="text-slate-600"> — {reason}</span>
+                                                )}
+                                              </div>
+                                            </li>
+                                          );
+                                        })}
+                                      </ul>
+                                    ) : (
+                                      <div className="text-xs text-slate-400 italic">No critical risks recorded.</div>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Decision / Notes */}
+                              {decision.length > 0 && (
+                                <div className="p-2.5 rounded-md border border-slate-200 bg-white text-xs text-slate-700">
+                                  <span className="text-[10px] uppercase font-bold text-slate-400 block mb-0.5">Decision Note</span>
+                                  {decision.map((p, idx) => (
+                                    <p key={idx} className="italic text-slate-800">
+                                      {stripTag(p, /^<i>(decision|summary):?<\/i>:?\s*/i).replace(/<\/?(b|strong|i|em)>/gi, "")}
+                                    </p>
+                                  ))}
+                                </div>
+                              )}
+
+                              {/* Other points if any */}
+                              {other.length > 0 && (
+                                <ul className="space-y-1 text-xs text-slate-600">
+                                  {other.map((p, idx) => (
+                                    <li key={idx} className="flex items-start gap-1.5">
+                                      <span className="text-slate-400 font-bold shrink-0 mt-0.5">•</span>
+                                      <span>{p.replace(/<\/?(b|strong|i|em)>/gi, "").replace(/^(\*|-|•)\s*/, "")}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </div>
+
+                      {/* Valuation Regime & Price Corridor */}
+                      <div className="p-3.5 rounded-lg border border-indigo-100 bg-indigo-50/30 space-y-2">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
+                          <span className="font-bold text-indigo-950 text-xs uppercase tracking-wide">
+                            Valuation Regime &amp; Corridor
+                          </span>
+                          <span className="font-mono text-indigo-800 text-xs font-semibold bg-indigo-100/70 px-2 py-0.5 rounded">
+                            {formatValuationRegime(contextData?.audit?.valuation_method || selectedCall.valuation_method)}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 font-mono text-xs">
+                          <div className="p-2 rounded bg-white border border-indigo-100">
+                            <span className="text-[10px] uppercase font-bold text-slate-400 block">Buy Below</span>
+                            <strong className="text-slate-900 text-sm block mt-0.5">{money(contextData?.audit?.buy_below ?? selectedCall.buyBelow)}</strong>
+                          </div>
+                          <div className="p-2 rounded bg-white border border-indigo-100">
+                            <span className="text-[10px] uppercase font-bold text-slate-400 block">Fair Value</span>
+                            <strong className="text-indigo-900 text-sm block mt-0.5">{money(contextData?.audit?.fair_value ?? selectedCall.target)}</strong>
+                          </div>
+                          <div className="p-2 rounded bg-white border border-emerald-200">
+                            <span className="text-[10px] uppercase font-bold text-emerald-700 block">Target Price</span>
+                            <strong className="text-emerald-800 text-sm block mt-0.5">{money(contextData?.audit?.target_price ?? selectedCall.target)}</strong>
+                          </div>
+                          <div className="p-2 rounded bg-white border border-rose-200">
+                            <span className="text-[10px] uppercase font-bold text-rose-700 block">Bear Floor</span>
+                            <strong className="text-rose-700 text-sm block mt-0.5">{money(contextData?.audit?.bear_floor ?? selectedCall.stopLoss)}</strong>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Statutory Audit & Forensics */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div className="p-3 rounded-lg border hairline bg-slate-50/60">
+                          <span className="text-[10px] uppercase font-bold text-slate-400 block">Statutory Audit</span>
                           <span className="font-bold text-slate-900 block mt-0.5">
                             {contextData?.audit?.audited_filing_status || "Audited Standalone & Consolidated"}
                           </span>
-                          <p className="text-[10px] text-slate-500 mt-0.5">Unmodified clean audit opinion with no adverse qualifications.</p>
+                          <p className="text-xs text-slate-500 mt-0.5">Unmodified clean audit opinion certified with no adverse qualifications.</p>
                         </div>
 
-                        <div className="p-2 rounded border hairline bg-slate-50/50">
-                          <span className="text-[9.5px] uppercase font-bold text-slate-400 block">Forensics &amp; Accruals</span>
+                        <div className="p-3 rounded-lg border hairline bg-slate-50/60">
+                          <span className="text-[10px] uppercase font-bold text-slate-400 block">Forensics &amp; Accruals</span>
                           <span className="font-bold text-emerald-700 block mt-0.5">
                             {contextData?.audit?.forensic_status || "Low Forensic Risk / Clean Accruals"}
                           </span>
-                          <p className="text-[10px] text-slate-500 mt-0.5">Cash flow reconciles with PAT; healthy accruals.</p>
+                          <p className="text-xs text-slate-500 mt-0.5">Cash flow reconciles directly with reported PAT; pristine accruals.</p>
                         </div>
                       </div>
 
-                      <div className="p-2 rounded border border-indigo-100 bg-indigo-50/30 text-[11px]">
-                        <div className="font-bold text-indigo-950 flex justify-between">
-                          <span>Valuation Regime</span>
-                          <span className="font-mono text-indigo-700 text-[10px]">
-                            {contextData?.audit?.valuation_method || "Multi-Factor Cycle Normalized"}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-3 gap-1 pt-1 font-mono text-[10.5px]">
-                          <div>Target: <strong className="text-indigo-800">{money(selectedCall.target)}</strong></div>
-                          <div>Buy Below: <strong className="text-indigo-800">{money(selectedCall.buyBelow)}</strong></div>
-                          <div>Floor: <strong className="text-rose-700">{money(selectedCall.stopLoss)}</strong></div>
-                        </div>
+                      {/* Full Deep-Dive Link */}
+                      <div className="pt-1 flex items-center justify-between text-xs text-slate-500">
+                        <span>Revalidated from live fundamental engine &amp; quarterly filings.</span>
+                        <Link
+                          href={`/stock/${selectedCall.symbol}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-semibold text-indigo-600 hover:text-indigo-800 inline-flex items-center gap-1"
+                        >
+                          <span>Open Full Verdict Evidence &amp; Metric Drift Sheet</span>
+                          <ExternalLink className="w-3.5 h-3.5" />
+                        </Link>
                       </div>
                     </div>
                   )}
-                </div>
-              </div>
-
-              {/* ── Interactive Price Chart ──────────────────────────────────── */}
-              <div className="bg-white border hairline rounded-md p-2.5 shadow-2xs space-y-1">
-                <div className="flex items-center justify-between text-[11px]">
-                  <div className="flex items-center gap-1.5 font-bold text-slate-800">
-                    <TrendingUp className="w-3.5 h-3.5 text-slate-600" />
-                    <span>Price Chart &amp; Moving Averages</span>
-                  </div>
-                  <span className="text-[10px] text-slate-400">Scroll/drag to inspect levels</span>
-                </div>
-                <div className="w-full h-[290px] overflow-hidden">
-                  <PriceChart symbol={selectedCall.symbol} />
-                </div>
-              </div>
-
-              {/* ── Multi-Factor Pillars (Ultra-Compact Single Row) ─────────── */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-white border hairline rounded-md p-2 shadow-2xs text-[10.5px]">
-                <div className="px-2 py-1 rounded bg-slate-50/50">
-                  <div className="flex justify-between mb-0.5">
-                    <span className="text-slate-500 font-medium">Composite</span>
-                    <span className="font-bold font-mono text-slate-900">{selectedCall.composite_pct}%</span>
-                  </div>
-                  <div className="w-full bg-slate-200 rounded-full h-1 overflow-hidden">
-                    <div className="bg-indigo-600 h-1 rounded-full" style={{ width: `${selectedCall.composite_pct}%` }} />
-                  </div>
-                </div>
-
-                <div className="px-2 py-1 rounded bg-slate-50/50">
-                  <div className="flex justify-between mb-0.5">
-                    <span className="text-slate-500 font-medium">Quality</span>
-                    <span className="font-bold font-mono text-slate-900">{selectedCall.quality_pct}%</span>
-                  </div>
-                  <div className="w-full bg-slate-200 rounded-full h-1 overflow-hidden">
-                    <div className="bg-emerald-600 h-1 rounded-full" style={{ width: `${selectedCall.quality_pct}%` }} />
-                  </div>
-                </div>
-
-                <div className="px-2 py-1 rounded bg-slate-50/50">
-                  <div className="flex justify-between mb-0.5">
-                    <span className="text-slate-500 font-medium">Valuation</span>
-                    <span className="font-bold font-mono text-slate-900">{selectedCall.valuation_pct}%</span>
-                  </div>
-                  <div className="w-full bg-slate-200 rounded-full h-1 overflow-hidden">
-                    <div className="bg-cyan-600 h-1 rounded-full" style={{ width: `${selectedCall.valuation_pct}%` }} />
-                  </div>
-                </div>
-
-                <div className="px-2 py-1 rounded bg-slate-50/50">
-                  <div className="flex justify-between mb-0.5">
-                    <span className="text-slate-500 font-medium">Momentum</span>
-                    <span className="font-bold font-mono text-slate-900">{selectedCall.momentum_pct}%</span>
-                  </div>
-                  <div className="w-full bg-slate-200 rounded-full h-1 overflow-hidden">
-                    <div className="bg-purple-600 h-1 rounded-full" style={{ width: `${selectedCall.momentum_pct}%` }} />
-                  </div>
                 </div>
               </div>
             </>

@@ -200,7 +200,10 @@ export function PriceChart({
   asOfLabel,
   asOfKind = "eod",
   extraStats,
+  height = 360,
 }: {
+  /** Optional custom height in px for the candlestick area (defaults to 360px). */
+  height?: number;
   /** Split-safe daily OHLC candles, ascending by date. When omitted (and a
    *  `symbol` is given), the chart self-fetches from /api/scanner/ohlc — this
    *  is the client-side path used outside server components (e.g. watchlist). */
@@ -602,7 +605,7 @@ export function PriceChart({
       {/* 360px, was 300px. The header above it collapsed from two rows to one
           and news moved out from underneath, so the chart can spend what they
           gave back on the thing you actually read. */}
-      <div className="w-full h-[360px]">
+      <div className="w-full" style={{ height: `${height}px` }}>
         <CandleChart candles={visible} interactive weekly={weekly} alerts={alertLines} drawings={drawings} trades={trades} />
       </div>
 

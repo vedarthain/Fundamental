@@ -41,11 +41,32 @@ type ResultRow = {
   published_at: string | null;
   pdf_url: string | null;
 };
+type CompanyOverview = {
+  symbol: string;
+  company_name: string | null;
+  business_summary: string | null;
+  website: string | null;
+  employees: number | null;
+  ceo_name: string | null;
+  ceo_title: string | null;
+  listing_date: string | null;
+  sector: string | null;
+  industry: string | null;
+  market_cap_category: string | null;
+};
+
 type AuditInfo = {
+  verdict: string | null;
+  confidence: string | null;
+  points: string[];
+  trigger_text: string | null;
+  generated_at: string | null;
   valuation_method: string | null;
   target_price: number | null;
+  fair_value: number | null;
   buy_below: number | null;
   bear_floor: number | null;
+  upside_pct: number | null;
   audited_filing_status: string;
   forensic_status: string;
 };
@@ -58,6 +79,33 @@ export async function GET(req: NextRequest) {
   const symbol = req.nextUrl.searchParams.get("symbol")?.trim().toUpperCase();
   if (!symbol) {
     return NextResponse.json({ error: "symbol required" }, { status: 400 });
+  }
+
+  let overview: CompanyOverview | null = null;
+  try {
+    const uRows = await sql<any[]>`
+      SELECT symbol, company_name, business_summary, website, employees, ceo_name, ceo_title, listing_date::text, sector, industry, market_cap_category
+        FROM app.universe
+       WHERE symbol = ${symbol}
+       LIMIT 1
+    `;
+    if (uRows.length > 0) {
+      overview = {
+        symbol: uRows[0].symbol,
+        company_name: uRows[0].company_name,
+        business_summary: uRows[0].business_summary,
+        website: uRows[0].website,
+        employees: uRows[0].employees ? Number(uRows[0].employees) : null,
+        ceo_name: uRows[0].ceo_name,
+        ceo_title: uRows[0].ceo_title,
+        listing_date: uRows[0].listing_date,
+        sector: uRows[0].sector,
+        industry: uRows[0].industry,
+        market_cap_category: uRows[0].market_cap_category,
+      };
+    }
+  } catch {
+    overview = null;
   }
 
   let news: NewsRow[] = [];
@@ -118,18 +166,33 @@ export async function GET(req: NextRequest) {
   let audit: AuditInfo | null = null;
   try {
     const vRows = await sql<any[]>`
-      SELECT valuation_method, target_price::float, buy_below::float, bear_floor::float
+      SELECT verdict, confidence, points, trigger_text, generated_at::text,
+             valuation_method, target_price::float, fair_value::float, buy_below::float, bear_floor::float, upside_pct::float
         FROM app.stock_verdict
        WHERE symbol = ${symbol}
        ORDER BY generated_at DESC NULLS LAST
        LIMIT 1
     `;
     const v = vRows[0];
+    const rawPoints = v?.points;
+    const points: string[] = Array.isArray(rawPoints)
+      ? rawPoints
+      : typeof rawPoints === "string"
+        ? [rawPoints]
+        : [];
+
     audit = {
+      verdict: v?.verdict ?? null,
+      confidence: v?.confidence ?? null,
+      points,
+      trigger_text: v?.trigger_text ?? null,
+      generated_at: v?.generated_at ?? null,
       valuation_method: v?.valuation_method ?? "Multi-factor Normalized Cycle",
       target_price: v?.target_price ?? null,
+      fair_value: v?.fair_value ?? null,
       buy_below: v?.buy_below ?? null,
       bear_floor: v?.bear_floor ?? null,
+      upside_pct: v?.upside_pct ?? null,
       audited_filing_status: "Audited Standalone & Consolidated (Unmodified Clean Opinion)",
       forensic_status: "Low Forensic Risk / Healthy Accruals",
     };
@@ -139,6 +202,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json(
     {
+      overview,
       news: news.slice(0, 15),
       filings: filings.slice(0, 15),
       dividends,

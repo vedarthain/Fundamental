@@ -13,7 +13,7 @@ export default async function AdminCallsPage() {
   if (!(await isAdminRequest())) redirect("/");
 
   return (
-    <main className="mx-auto max-w-[1700px] px-2 sm:px-3 py-1.5 sm:py-2">
+    <main className="w-full max-w-full overflow-hidden px-2.5 sm:px-4 py-2 sm:py-2.5">
       <CallsClient />
     </main>
   );
