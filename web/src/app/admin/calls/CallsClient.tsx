@@ -1055,6 +1055,40 @@ export function CallsClient() {
     }
   }, [selectedCall?.symbol, selectedCall?.sector]);
 
+  // Live IST running timestamp for current session ticks
+  const [currentTimeIst, setCurrentTimeIst] = useState<string>("13:20");
+  useEffect(() => {
+    const updateTime = () => {
+      try {
+        const now = new Date();
+        const str = now.toLocaleTimeString("en-IN", {
+          timeZone: "Asia/Kolkata",
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        });
+        setCurrentTimeIst(str);
+      } catch {
+        // fallback
+      }
+    };
+    updateTime();
+    const timer = setInterval(updateTime, 30000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Price info callback from PriceChart (carries computed prev close & 1D change)
+  const [stockPriceInfo, setStockPriceInfo] = useState<{
+    prevClose: number | null;
+    dayChangePct: number | null;
+    asOfLabel: string | null;
+  } | null>(null);
+
+  // Clear stock price info when symbol changes so stale data isn't displayed
+  useEffect(() => {
+    setStockPriceInfo(null);
+  }, [selectedCall?.symbol]);
+
   useEffect(() => {
     if (selectedCall) {
       setEditPurchaseDate(selectedCall.purchaseDate || new Date().toISOString().slice(0, 10));
@@ -1615,11 +1649,42 @@ export function CallsClient() {
                   </div>
                 </div>
 
-                {/* Right: CMP, Buy/Accumulate action & Price Tags */}
+                {/* Right: CMP, Live Timestamp, 1D Change, Prev Close, Buy/Accumulate action & Price Tags */}
                 <div className="flex items-center gap-1.5 flex-wrap min-w-0">
-                  <span className="text-lg sm:text-xl font-bold font-mono text-slate-900">
-                    {money(selectedCall.cmp)}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-lg sm:text-xl font-bold font-mono text-slate-900">
+                      {money(selectedCall.cmp)}
+                    </span>
+                    <span
+                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-800 text-[10.5px] font-medium font-mono whitespace-nowrap"
+                      title="Current running session in IST"
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                      <span>Today {currentTimeIst} IST</span>
+                    </span>
+                  </div>
+
+                  {stockPriceInfo?.dayChangePct != null && (
+                    <span
+                      className={`px-1.5 py-0.5 rounded text-[11px] font-mono font-bold border ${
+                        stockPriceInfo.dayChangePct >= 0
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                          : "bg-rose-50 text-rose-700 border-rose-200"
+                      }`}
+                      title="1-Day Percentage Change"
+                    >
+                      1D: {stockPriceInfo.dayChangePct >= 0 ? "+" : ""}{stockPriceInfo.dayChangePct.toFixed(1)}%
+                    </span>
+                  )}
+
+                  {stockPriceInfo?.prevClose != null && (
+                    <span
+                      className="px-1.5 py-0.5 rounded text-[10.5px] font-mono text-slate-600 bg-slate-50 border hairline whitespace-nowrap"
+                      title="Yesterday's / Previous Trading Session Settled Close"
+                    >
+                      Prev Close: <strong className="text-slate-900 font-semibold">{money(stockPriceInfo.prevClose)}</strong>
+                    </span>
+                  )}
 
                   <span className={`px-2 py-0.5 rounded text-xs font-semibold border ${actionBadgeClass(selectedCall.actionToday)}`}>
                     {selectedCall.actionToday}
@@ -1722,7 +1787,12 @@ export function CallsClient() {
                     </div>
                   </div>
                   <div className="w-full min-w-0 overflow-hidden pt-0.5">
-                    <PriceChart symbol={selectedCall.symbol} height={315} />
+                    <PriceChart
+                      symbol={selectedCall.symbol}
+                      currentPrice={selectedCall.cmp}
+                      onPriceInfo={setStockPriceInfo}
+                      height={315}
+                    />
                   </div>
                 </div>
 

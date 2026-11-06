@@ -186,6 +186,15 @@ function fmt1d(p: number): string {
   return `${sign}${Math.abs(p) >= 10 ? Math.round(p).toString() : p.toFixed(1)}%`;
 }
 
+/** YYYY-MM-DD → "24 May '26" (compact, for the metric strip). */
+function formatShortDate(iso: string): string {
+  const d = new Date(`${iso}T12:00:00Z`);
+  if (Number.isNaN(d.getTime())) return iso;
+  const day = d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", timeZone: "UTC" });
+  const yr = d.toLocaleDateString("en-IN", { year: "2-digit", timeZone: "UTC" });
+  return `${day} '${yr}`;
+}
+
 export function PriceChart({
   candles: candlesProp,
   currentPrice,
@@ -198,8 +207,9 @@ export function PriceChart({
   rangeReturns,
   dayChangePct,
   asOfLabel,
-  asOfKind = "eod",
+  asOfKind,
   extraStats,
+  onPriceInfo,
   height = 360,
 }: {
   /** Optional custom height in px for the candlestick area (defaults to 360px). */
@@ -251,6 +261,8 @@ export function PriceChart({
    *  right of the price-alert "Add" button. Only shows when the alert controls
    *  render (signed-in). */
   extraStats?: ReactNode;
+  /** Optional callback giving computed price info back to parent components */
+  onPriceInfo?: (info: { prevClose: number | null; dayChangePct: number | null; asOfLabel: string | null }) => void;
 }) {
   const [range, setRange] = useState<Range>("1Y");
   const router = useRouter();
@@ -460,6 +472,40 @@ export function PriceChart({
   const cagrLabel =
     periodCagr != null ? `${periodCagr.toFixed(1)}% CAGR · ${spanYears.toFixed(0)}y` : RANGE_LABEL[range];
 
+  // Robust fallbacks when dayChangePct / asOfLabel are not explicitly passed as props:
+  const lastBar = candles.length > 0 ? candles[candles.length - 1] : undefined;
+  const prevBar = candles.length >= 2 ? candles[candles.length - 2] : undefined;
+  const todayIso = new Date().toISOString().slice(0, 10);
+
+  // If currentPrice is provided, lastBar is yesterday's close (unless lastBar.d is today's bar)
+  const effectivePrevClose =
+    currentPrice != null
+      ? (lastBar && lastBar.d < todayIso ? lastBar.c : prevBar?.c ?? lastBar?.c ?? null)
+      : prevBar?.c ?? null;
+
+  const effectiveDayChangePct =
+    dayChangePct ??
+    (effectivePrevClose != null && effectivePrevClose > 0 && headline != null
+      ? ((headline - effectivePrevClose) / effectivePrevClose) * 100
+      : null);
+
+  const effectiveAsOfLabel =
+    asOfLabel ??
+    (lastBar?.d ? formatShortDate(lastBar.d) : undefined);
+
+  const effectiveAsOfKind =
+    asOfKind ?? (currentPrice != null ? "live" : "eod");
+
+  useEffect(() => {
+    if (onPriceInfo) {
+      onPriceInfo({
+        prevClose: effectivePrevClose,
+        dayChangePct: effectiveDayChangePct,
+        asOfLabel: effectiveAsOfLabel ?? null,
+      });
+    }
+  }, [onPriceInfo, effectivePrevClose, effectiveDayChangePct, effectiveAsOfLabel]);
+
   if (candles.length === 0) {
     return (
       <div className="h-[260px] flex items-center justify-center muted-text text-[13px]">
@@ -470,51 +516,47 @@ export function PriceChart({
 
   return (
     <div className="w-full">
-      {/* ONE header row, where there used to be two.
-          What was removed: a 20px period-return that printed rangePctMap[range]
-          — the exact value the active range tab already shows — above a sublabel
-          that fell back to RANGE_LABEL[range], the tab's own label. Two lines
-          restating the tab you were already looking at, on every watchlist row
-          and every stock page.
-          What was NOT removed: the CAGR. For ranges over a year that sublabel
-          read "24.3% CAGR · 5y", which no tab shows and which is the only place
-          this figure appears. It is now a chip on this line. Deleting the whole
-          block as "duplicate" would have taken it with it. */}
+      {/* ONE header row, where there used to be two. */}
       <div className="flex flex-wrap items-end justify-between gap-x-3 gap-y-2 mb-2">
         <div className="min-w-0 flex items-baseline gap-2 flex-wrap">
-          <span className="text-[10px] uppercase tracking-wide muted-text shrink-0">
+          <span className="text-[10px] uppercase tracking-wide muted-text shrink-0 font-medium">
             Price history
           </span>
           {headline != null && (
             <span
               className="text-[14px] font-semibold tabular-nums"
               style={
-                dayChangePct != null
-                  ? { color: dayChangePct >= 0 ? "var(--color-delta-up)" : "var(--color-delta-down)" }
+                effectiveDayChangePct != null
+                  ? { color: effectiveDayChangePct >= 0 ? "var(--color-delta-up)" : "var(--color-delta-down)" }
                   : undefined
               }
             >
               {prefix}{headline.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
             </span>
           )}
-          {dayChangePct != null && (
+          {effectiveDayChangePct != null && (
             <span
               className="font-medium text-[10.5px] tabular-nums"
-              style={{ color: dayChangePct >= 0 ? "var(--color-delta-up)" : "var(--color-delta-down)" }}
+              style={{ color: effectiveDayChangePct >= 0 ? "var(--color-delta-up)" : "var(--color-delta-down)" }}
             >
-              1D: {fmt1d(dayChangePct)}
+              1D: {fmt1d(effectiveDayChangePct)}
             </span>
           )}
-          {asOfLabel && (
+          {effectiveAsOfLabel && (
             <span
-              className="muted-text opacity-70 whitespace-nowrap text-[10.5px] tabular-nums"
+              className="muted-text opacity-70 whitespace-nowrap text-[10.5px] tabular-nums font-mono"
               title={
-                asOfKind === "live"
+                effectiveAsOfKind === "live"
                   ? "Live intraday tick from today's session — ahead of the last candle, which is the previous close"
                   : "Settled end-of-day close — the last candle on the chart"
               }
             >
-              {asOfKind === "live" ? "LIVE" : "EOD"} · {asOfLabel}
+              {effectiveAsOfKind === "live" ? "LIVE" : "EOD"} · {effectiveAsOfLabel}
+            </span>
+          )}
+          {effectivePrevClose != null && (
+            <span className="muted-text text-[10px] tabular-nums whitespace-nowrap">
+              (Prev Close: {prefix}{effectivePrevClose.toLocaleString("en-IN", { maximumFractionDigits: 2 })})
             </span>
           )}
           {periodCagr != null && (
