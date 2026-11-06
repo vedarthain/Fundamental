@@ -192,8 +192,9 @@ type StockContext = {
 
 // Batch definitions for multi-select
 const BATCH_DEFINITIONS = [
-  { key: "week_1", label: "Week 1: Sun, 01 Nov 2026 (7:00 PM)", shortLabel: "Wk 1 (01 Nov)", dateMatch: "2026-11-01" },
+  { key: "2026-11-06", label: "Fri, 06 Nov 2026 (Today)", shortLabel: "06 Nov (Today)", dateMatch: "2026-11-06" },
   { key: "week_2", label: "Week 2: Sun, 08 Nov 2026 (7:00 PM)", shortLabel: "Wk 2 (08 Nov)", dateMatch: "2026-11-08" },
+  { key: "week_1", label: "Week 1: Sun, 01 Nov 2026 (7:00 PM)", shortLabel: "Wk 1 (01 Nov)", dateMatch: "2026-11-01" },
   { key: "2026-10-31", label: "Sat, 31 Oct 2026", shortLabel: "31 Oct", dateMatch: "2026-10-31" },
   { key: "2026-10-30", label: "Fri, 30 Oct 2026", shortLabel: "30 Oct", dateMatch: "2026-10-30" },
   { key: "2026-10-29", label: "Thu, 29 Oct 2026", shortLabel: "29 Oct", dateMatch: "2026-10-29" },
@@ -222,8 +223,8 @@ export function CallsClient() {
 
   const [loading, setLoading] = useState(true);
 
-  // Multi-Select Dates State
-  const [selectedBatches, setSelectedBatches] = useState<Set<string>>(new Set(["week_1", "2026-10-31", "2026-10-30"]));
+  // Multi-Select Dates State: default to "all" so calls and priority alerts are never hidden by default
+  const [selectedBatches, setSelectedBatches] = useState<Set<string>>(new Set(["all"]));
   const [isDateDropdownOpen, setIsDateDropdownOpen] = useState(false);
   const dateDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -883,34 +884,39 @@ export function CallsClient() {
   // Filter unified calls based on Multi-Selected Dates, Scope, Action Filter, and Search
   const filteredCalls = useMemo(() => {
     return unifiedCalls.filter((c) => {
-      if (scope === "curated" && !c.isCurated) return false;
-      if (scope === "portfolio" && !c.isPortfolio) return false;
-
-      // Action Filter (Buy Calls vs Priority Sell vs Sell Calls vs Hold Calls)
-      if (actionFilter === "BUY") {
-        const act = (c.actionToday || "").toUpperCase();
-        if (!act.includes("BUY") && !act.includes("ACCUMULATE")) return false;
-      } else if (actionFilter === "PRIORITY_SELL") {
+      // 1. Priority Sell calls: Immediate risk management alerts for held portfolio positions
+      // They must ALWAYS be visible when clicking "Priority Sell", regardless of batch date or curated scope
+      if (actionFilter === "PRIORITY_SELL") {
         const act = (c.actionToday || "").toUpperCase();
         const isSell = act.includes("SELL") || act.includes("TRIM") || act.includes("EXIT") || act.includes("CUT LOSS");
         if (!isSell || !c.isPortfolio) return false;
-      } else if (actionFilter === "SELL") {
-        const act = (c.actionToday || "").toUpperCase();
-        if (!act.includes("SELL") && !act.includes("TRIM") && !act.includes("EXIT") && !act.includes("CUT LOSS")) return false;
-      } else if (actionFilter === "HOLD") {
-        const act = (c.actionToday || "").toUpperCase();
-        if (!act.includes("HOLD") && !act.includes("WATCH")) return false;
-      }
+      } else {
+        // Standard Scope Filter (Curated Top 6 vs Portfolio vs All)
+        if (scope === "curated" && !c.isCurated) return false;
+        if (scope === "portfolio" && !c.isPortfolio) return false;
 
-      // Multi-date selection check
-      if (!selectedBatches.has("all") && selectedBatches.size > 0) {
-        let matchesDate = false;
-        for (const b of selectedBatches) {
-          if (b === "week_1" && (c.isCurated || (c.callDate && c.callDate >= "2026-10-31"))) matchesDate = true;
-          else if (b === "week_2" && (c.composite_pct ?? 0) >= 80) matchesDate = true;
-          else if (c.callDate && c.callDate === b) matchesDate = true;
+        // Action Filter (Buy Calls vs Sell Calls vs Hold Calls)
+        if (actionFilter === "BUY") {
+          const act = (c.actionToday || "").toUpperCase();
+          if (!act.includes("BUY") && !act.includes("ACCUMULATE")) return false;
+        } else if (actionFilter === "SELL") {
+          const act = (c.actionToday || "").toUpperCase();
+          if (!act.includes("SELL") && !act.includes("TRIM") && !act.includes("EXIT") && !act.includes("CUT LOSS")) return false;
+        } else if (actionFilter === "HOLD") {
+          const act = (c.actionToday || "").toUpperCase();
+          if (!act.includes("HOLD") && !act.includes("WATCH")) return false;
         }
-        if (!matchesDate) return false;
+
+        // Multi-date selection check
+        if (!selectedBatches.has("all") && selectedBatches.size > 0) {
+          let matchesDate = false;
+          for (const b of selectedBatches) {
+            if (b === "week_1" && (c.isCurated || (c.callDate && c.callDate >= "2026-10-31"))) matchesDate = true;
+            else if (b === "week_2" && (c.composite_pct ?? 0) >= 80) matchesDate = true;
+            else if (c.callDate && c.callDate === b) matchesDate = true;
+          }
+          if (!matchesDate) return false;
+        }
       }
 
       if (search.trim()) {
@@ -1015,7 +1021,7 @@ export function CallsClient() {
   };
 
   const selectAllBatches = () => setSelectedBatches(new Set(["all"]));
-  const clearAllBatches = () => setSelectedBatches(new Set(["week_1"]));
+  const clearAllBatches = () => setSelectedBatches(new Set(["all"]));
 
   const expandAll = () => setExpandedSectors(new Set(sectorGroups.map((g) => g.sector)));
   const collapseAll = () => setExpandedSectors(new Set());
