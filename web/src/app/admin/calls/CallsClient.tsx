@@ -1447,89 +1447,6 @@ export function CallsClient() {
             <RotateCcw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
           </button>
         </div>
-
-        {/* ── Holding Age Brackets Filter Strip ───────────────────────────── */}
-        <div className="flex items-center gap-1.5 flex-wrap text-xs pt-1.5 mt-1 border-t hairline w-full justify-between">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1">
-              <Clock className="w-3 h-3 text-slate-400" />
-              <span>Holding Age:</span>
-            </span>
-            <div className="flex items-center bg-slate-100 p-0.5 rounded-md border hairline text-xs gap-0.5">
-              <button
-                onClick={() => handleHoldingAgeClick("ALL")}
-                className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all ${
-                  holdingAgeFilter === "ALL" ? "bg-white text-slate-900 shadow-2xs font-semibold" : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                All
-              </button>
-              <button
-                onClick={() => handleHoldingAgeClick("< 1M")}
-                className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all flex items-center gap-1 ${
-                  holdingAgeFilter === "< 1M" ? "bg-blue-600 text-white shadow-2xs font-semibold" : "text-blue-700 hover:bg-blue-50"
-                }`}
-              >
-                <span>&lt; 1M</span>
-                <span className={`text-[9.5px] px-1 rounded-full ${holdingAgeFilter === "< 1M" ? "bg-white/20" : "bg-blue-100 text-blue-800"}`}>
-                  {holdingAgeCounts["< 1M"]}
-                </span>
-              </button>
-              <button
-                onClick={() => handleHoldingAgeClick("1M–3M")}
-                className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all flex items-center gap-1 ${
-                  holdingAgeFilter === "1M–3M" ? "bg-cyan-700 text-white shadow-2xs font-semibold" : "text-cyan-800 hover:bg-cyan-50"
-                }`}
-              >
-                <span>1M–3M</span>
-                <span className={`text-[9.5px] px-1 rounded-full ${holdingAgeFilter === "1M–3M" ? "bg-white/20" : "bg-cyan-100 text-cyan-900"}`}>
-                  {holdingAgeCounts["1M–3M"]}
-                </span>
-              </button>
-              <button
-                onClick={() => handleHoldingAgeClick("3M–6M")}
-                className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all flex items-center gap-1 ${
-                  holdingAgeFilter === "3M–6M" ? "bg-amber-600 text-white shadow-2xs font-semibold" : "text-amber-800 hover:bg-amber-50"
-                }`}
-              >
-                <span>3M–6M</span>
-                <span className={`text-[9.5px] px-1 rounded-full ${holdingAgeFilter === "3M–6M" ? "bg-white/20" : "bg-amber-100 text-amber-900"}`}>
-                  {holdingAgeCounts["3M–6M"]}
-                </span>
-              </button>
-              <button
-                onClick={() => handleHoldingAgeClick("6M–1Y")}
-                className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all flex items-center gap-1 ${
-                  holdingAgeFilter === "6M–1Y" ? "bg-purple-600 text-white shadow-2xs font-semibold" : "text-purple-800 hover:bg-purple-50"
-                }`}
-              >
-                <span>6M–1Y</span>
-                <span className={`text-[9.5px] px-1 rounded-full ${holdingAgeFilter === "6M–1Y" ? "bg-white/20" : "bg-purple-100 text-purple-900"}`}>
-                  {holdingAgeCounts["6M–1Y"]}
-                </span>
-              </button>
-              <button
-                onClick={() => handleHoldingAgeClick("> 1Y")}
-                className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all flex items-center gap-1 ${
-                  holdingAgeFilter === "> 1Y" ? "bg-emerald-600 text-white shadow-2xs font-semibold" : "text-emerald-800 hover:bg-emerald-50"
-                }`}
-              >
-                <span>&gt; 1Y</span>
-                <span className={`text-[9.5px] px-1 rounded-full ${holdingAgeFilter === "> 1Y" ? "bg-white/20" : "bg-emerald-100 text-emerald-900"}`}>
-                  {holdingAgeCounts["> 1Y"]}
-                </span>
-              </button>
-            </div>
-          </div>
-          {holdingAgeFilter !== "ALL" && (
-            <button
-              onClick={() => setHoldingAgeFilter("ALL")}
-              className="text-[10.5px] text-slate-500 hover:text-slate-800 underline"
-            >
-              Reset Age Filter
-            </button>
-          )}
-        </div>
       </div>
 
       {actionFilter === "PRIORITY_SELL" && (
@@ -1778,6 +1695,77 @@ export function CallsClient() {
                   <span className="px-1.5 py-0.5 rounded text-[10.5px] font-medium text-slate-700 bg-slate-100 border hairline">
                     {selectedCall.sector}
                   </span>
+
+                  {/* ── Holding Age Filter Strip (next to Stock Info) ───────────── */}
+                  <div className="flex items-center bg-slate-100 p-0.5 rounded-md border hairline text-xs gap-0.5 shrink-0">
+                    <span className="text-[10px] font-semibold text-slate-500 uppercase px-1 flex items-center gap-0.5">
+                      <Clock className="w-2.5 h-2.5 text-slate-400" />
+                      <span>Age:</span>
+                    </span>
+                    <button
+                      onClick={() => handleHoldingAgeClick("ALL")}
+                      className={`px-1.5 py-0.5 rounded text-[10.5px] font-medium transition-all ${
+                        holdingAgeFilter === "ALL" ? "bg-white text-slate-900 shadow-2xs font-semibold" : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      All
+                    </button>
+                    <button
+                      onClick={() => handleHoldingAgeClick("< 1M")}
+                      className={`px-1.5 py-0.5 rounded text-[10.5px] font-medium transition-all flex items-center gap-1 ${
+                        holdingAgeFilter === "< 1M" ? "bg-blue-600 text-white shadow-2xs font-semibold" : "text-blue-700 hover:bg-blue-50"
+                      }`}
+                    >
+                      <span>&lt; 1M</span>
+                      <span className={`text-[9px] px-1 rounded-full ${holdingAgeFilter === "< 1M" ? "bg-white/20" : "bg-blue-100 text-blue-800"}`}>
+                        {holdingAgeCounts["< 1M"]}
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => handleHoldingAgeClick("1M–3M")}
+                      className={`px-1.5 py-0.5 rounded text-[10.5px] font-medium transition-all flex items-center gap-1 ${
+                        holdingAgeFilter === "1M–3M" ? "bg-cyan-700 text-white shadow-2xs font-semibold" : "text-cyan-800 hover:bg-cyan-50"
+                      }`}
+                    >
+                      <span>1M–3M</span>
+                      <span className={`text-[9px] px-1 rounded-full ${holdingAgeFilter === "1M–3M" ? "bg-white/20" : "bg-cyan-100 text-cyan-900"}`}>
+                        {holdingAgeCounts["1M–3M"]}
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => handleHoldingAgeClick("3M–6M")}
+                      className={`px-1.5 py-0.5 rounded text-[10.5px] font-medium transition-all flex items-center gap-1 ${
+                        holdingAgeFilter === "3M–6M" ? "bg-amber-600 text-white shadow-2xs font-semibold" : "text-amber-800 hover:bg-amber-50"
+                      }`}
+                    >
+                      <span>3M–6M</span>
+                      <span className={`text-[9px] px-1 rounded-full ${holdingAgeFilter === "3M–6M" ? "bg-white/20" : "bg-amber-100 text-amber-900"}`}>
+                        {holdingAgeCounts["3M–6M"]}
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => handleHoldingAgeClick("6M–1Y")}
+                      className={`px-1.5 py-0.5 rounded text-[10.5px] font-medium transition-all flex items-center gap-1 ${
+                        holdingAgeFilter === "6M–1Y" ? "bg-purple-600 text-white shadow-2xs font-semibold" : "text-purple-800 hover:bg-purple-50"
+                      }`}
+                    >
+                      <span>6M–1Y</span>
+                      <span className={`text-[9px] px-1 rounded-full ${holdingAgeFilter === "6M–1Y" ? "bg-white/20" : "bg-purple-100 text-purple-900"}`}>
+                        {holdingAgeCounts["6M–1Y"]}
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => handleHoldingAgeClick("> 1Y")}
+                      className={`px-1.5 py-0.5 rounded text-[10.5px] font-medium transition-all flex items-center gap-1 ${
+                        holdingAgeFilter === "> 1Y" ? "bg-emerald-600 text-white shadow-2xs font-semibold" : "text-emerald-800 hover:bg-emerald-50"
+                      }`}
+                    >
+                      <span>&gt; 1Y</span>
+                      <span className={`text-[9px] px-1 rounded-full ${holdingAgeFilter === "> 1Y" ? "bg-white/20" : "bg-emerald-100 text-emerald-900"}`}>
+                        {holdingAgeCounts["> 1Y"]}
+                      </span>
+                    </button>
+                  </div>
                   {selectedCall.isCurated && (
                     <span className="px-1.5 py-0.5 rounded text-[10.5px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
                       ★ TOP 6
