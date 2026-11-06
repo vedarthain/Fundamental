@@ -31,6 +31,7 @@ import {
   Clock,
 } from "lucide-react";
 import { PriceChart } from "@/components/PriceChart";
+import { formatFetchedAt } from "@/components/IntradayPriceBadge";
 import { CompanyProfile } from "@/components/CompanyProfile";
 import CapTierBadge, { type CapCategory } from "@/components/CapTierBadge";
 import { parseParameterItems, getModelAnalysis, ModelCard } from "@/components/VerdictPanel";
@@ -744,6 +745,7 @@ export function CallsClient() {
         purchasePerfPct,
         isTaken,
         isCleared,
+        priceFetchedAt: g.price_fetched_at ?? null,
       });
     });
 
@@ -824,6 +826,7 @@ export function CallsClient() {
           purchasePerfPct,
           isTaken: isPortfolio,
           isCleared: false,
+          priceFetchedAt: gem?.price_fetched_at ?? port?.price_fetched_at ?? null,
         });
       }
     });
@@ -908,6 +911,7 @@ export function CallsClient() {
           purchasePerfPct,
           isTaken: true,
           isCleared: false,
+          priceFetchedAt: port.price_fetched_at ?? null,
         });
       }
     });
@@ -1054,28 +1058,6 @@ export function CallsClient() {
       }, 60);
     }
   }, [selectedCall?.symbol, selectedCall?.sector]);
-
-  // Live IST running timestamp for current session ticks
-  const [currentTimeIst, setCurrentTimeIst] = useState<string>("13:20");
-  useEffect(() => {
-    const updateTime = () => {
-      try {
-        const now = new Date();
-        const str = now.toLocaleTimeString("en-IN", {
-          timeZone: "Asia/Kolkata",
-          hour: "2-digit",
-          minute: "2-digit",
-          hour12: false,
-        });
-        setCurrentTimeIst(str);
-      } catch {
-        // fallback
-      }
-    };
-    updateTime();
-    const timer = setInterval(updateTime, 30000);
-    return () => clearInterval(timer);
-  }, []);
 
   // Price info callback from PriceChart (carries computed prev close & 1D change)
   const [stockPriceInfo, setStockPriceInfo] = useState<{
@@ -1655,13 +1637,22 @@ export function CallsClient() {
                     <span className="text-lg sm:text-xl font-bold font-mono text-slate-900">
                       {money(selectedCall.cmp)}
                     </span>
-                    <span
-                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-800 text-[10.5px] font-medium font-mono whitespace-nowrap"
-                      title="Current running session in IST"
-                    >
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                      <span>Today {currentTimeIst} IST</span>
-                    </span>
+                    {selectedCall.priceFetchedAt ? (
+                      <span
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-800 text-[10.5px] font-medium font-mono whitespace-nowrap"
+                        title={`Last price update: ${new Date(selectedCall.priceFetchedAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}`}
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                        <span>{formatFetchedAt(selectedCall.priceFetchedAt)}</span>
+                      </span>
+                    ) : (
+                      <span
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 border hairline text-slate-700 text-[10.5px] font-medium font-mono whitespace-nowrap"
+                        title="As of latest settled bar"
+                      >
+                        <span>{stockPriceInfo?.asOfLabel ? `EOD · ${stockPriceInfo.asOfLabel}` : "Market Close"}</span>
+                      </span>
+                    )}
                   </div>
 
                   {stockPriceInfo?.dayChangePct != null && (

@@ -71,11 +71,12 @@ export type ChartPriceAlert = {
   status: "armed" | "triggered";
 };
 
-export type Range = "1W" | "1M" | "3M" | "1Y" | "3Y" | "5Y" | "10Y" | "ALL";
-const RANGES: Range[] = ["1W", "1M", "3M", "1Y", "3Y", "5Y", "10Y", "ALL"];
+export type Range = "1D" | "1W" | "1M" | "3M" | "1Y" | "3Y" | "5Y" | "10Y" | "ALL";
+const RANGES: Range[] = ["1D", "1W", "1M", "3M", "1Y", "3Y", "5Y", "10Y", "ALL"];
 
 /** Lookback in calendar days per range (ALL is special-cased). */
 const RANGE_DAYS: Record<Exclude<Range, "ALL">, number> = {
+  "1D":  1,
   "1W":  7,
   "1M":  30,
   "3M":  90,
@@ -90,15 +91,23 @@ const RANGE_DAYS: Record<Exclude<Range, "ALL">, number> = {
 // exceeds the cap we suppress the % rather than print garbage. 3M / 5Y / 10Y /
 // ALL have no cap (long-horizon real multibaggers are genuinely huge).
 const RANGE_TO_CAP: Partial<Record<Range, RetWindow>> = {
-  "1W": "1w", "1M": "1m", "1Y": "1y", "3Y": "3y",
+  "1D": "1w", "1W": "1w", "1M": "1m", "1Y": "1y", "3Y": "3y",
 };
 
 /** Human label per range — used under the headline when the visible span is
  *  under a year (CAGR isn't meaningful there). */
 const RANGE_LABEL: Record<Range, string> = {
-  "1W": "1 week", "1M": "1 month", "3M": "3 months", "1Y": "1 year",
+  "1D": "1 day", "1W": "1 week", "1M": "1 month", "3M": "3 months", "1Y": "1 year",
   "3Y": "3 years", "5Y": "5 years", "10Y": "10 years", "ALL": "all time",
 };
+
+/** Clean Indian format for share volumes: 321547 → "3.22 L", 12000000 → "1.20 Cr" */
+function fmtVolReadable(vol: number): string {
+  if (vol >= 10_000_000) return `${(vol / 10_000_000).toFixed(2)} Cr`;
+  if (vol >= 100_000) return `${(vol / 100_000).toFixed(2)} L`;
+  if (vol >= 1_000) return `${(vol / 1_000).toFixed(1)} k`;
+  return vol.toLocaleString("en-IN");
+}
 
 /** Date-span label for the visible data — moves with the selected range.
  *  ≥2y → year range ("2002–2026"); shorter → "Mon YY – Mon YY". */
@@ -406,6 +415,66 @@ export function PriceChart({
     }
   }
 
+  // Robust fallbacks when dayChangePct / asOfLabel are not explicitly passed as props:
+  const lastBar = candles.length > 0 ? candles[candles.length - 1] : undefined;
+  const prevBar = candles.length >= 2 ? candles[candles.length - 2] : undefined;
+  const todayIso = new Date().toISOString().slice(0, 10);
+
+  // Headline: latest EOD close (or live LTP)
+  const headline = currentPrice ?? lastBar?.c;
+
+  // If currentPrice is provided, lastBar is yesterday's close (unless lastBar.d is today's bar)
+  const effectivePrevClose =
+    currentPrice != null
+      ? (lastBar && lastBar.d < todayIso ? lastBar.c : prevBar?.c ?? lastBar?.c ?? null)
+      : prevBar?.c ?? null;
+
+  const effectiveDayChangePct =
+    dayChangePct ??
+    (effectivePrevClose != null && effectivePrevClose > 0 && headline != null
+      ? ((headline - effectivePrevClose) / effectivePrevClose) * 100
+      : null);
+
+  const effectiveAsOfLabel =
+    asOfLabel ??
+    (lastBar?.d ? formatShortDate(lastBar.d) : undefined);
+
+  const effectiveAsOfKind =
+    asOfKind ?? (currentPrice != null ? "live" : "eod");
+
+  // Volume stats computed from candles
+  const volStats = useMemo(() => {
+    if (candles.length === 0) return null;
+    const last = candles[candles.length - 1];
+    const prev = candles.slice(-21, -1);
+    const latestVol = last?.v ?? 0;
+    const avgVol20 =
+      prev.length > 0
+        ? prev.reduce((sum, c) => sum + (c.v || 0), 0) / prev.length
+        : 0;
+    const relVol = avgVol20 > 0 ? latestVol / avgVol20 : null;
+    const turnoverCr =
+      latestVol > 0 && last?.c
+        ? (latestVol * last.c) / 10_000_000
+        : null;
+    return {
+      latestVol,
+      avgVol20,
+      relVol,
+      turnoverCr,
+    };
+  }, [candles]);
+
+  useEffect(() => {
+    if (onPriceInfo) {
+      onPriceInfo({
+        prevClose: effectivePrevClose,
+        dayChangePct: effectiveDayChangePct,
+        asOfLabel: effectiveAsOfLabel ?? null,
+      });
+    }
+  }, [onPriceInfo, effectivePrevClose, effectiveDayChangePct, effectiveAsOfLabel]);
+
   // Candles visible for the selected range, anchored on the LAST bar (not "now")
   // so a day-or-two-stale tail still fills the window. Long spans roll up to
   // weekly so the SVG stays readable.
@@ -414,6 +483,8 @@ export function PriceChart({
     let sliced: Candle[];
     if (range === "ALL") {
       sliced = candles;
+    } else if (range === "1D") {
+      sliced = candles.slice(-2);
     } else {
       const last = candles[candles.length - 1].d;
       const cutoff = new Date(last);
@@ -442,12 +513,16 @@ export function PriceChart({
   const rangePctMap = useMemo(() => {
     const m = {} as Record<Range, number | null>;
     for (const r of RANGES) {
-      // Prefer the external source of truth (header pills) so the tab and the
-      // pill can't disagree; fall back to computing off the displayed candles.
-      m[r] = rangeReturns && r in rangeReturns ? rangeReturns[r] ?? null : rangePct(candles, r);
+      if (r === "1D") {
+        m[r] = effectiveDayChangePct;
+      } else {
+        // Prefer the external source of truth (header pills) so the tab and the
+        // pill can't disagree; fall back to computing off the displayed candles.
+        m[r] = rangeReturns && r in rangeReturns ? rangeReturns[r] ?? null : rangePct(candles, r);
+      }
     }
     return m;
-  }, [candles, rangeReturns]);
+  }, [candles, rangeReturns, effectiveDayChangePct]);
 
   const alertLines: AlertLine[] = alerts.map((a) => ({
     price: a.price,
@@ -457,7 +532,6 @@ export function PriceChart({
   // Headline: latest EOD close (or live LTP) + selected-range change + CAGR.
   const first = visible[0];
   const last = visible[visible.length - 1];
-  const headline = currentPrice ?? last?.c;
   const changePct = rangePctMap[range];
   const spanYears =
     first && last
@@ -471,40 +545,6 @@ export function PriceChart({
   const subLabel = spanLabel(first, last, spanYears);
   const cagrLabel =
     periodCagr != null ? `${periodCagr.toFixed(1)}% CAGR · ${spanYears.toFixed(0)}y` : RANGE_LABEL[range];
-
-  // Robust fallbacks when dayChangePct / asOfLabel are not explicitly passed as props:
-  const lastBar = candles.length > 0 ? candles[candles.length - 1] : undefined;
-  const prevBar = candles.length >= 2 ? candles[candles.length - 2] : undefined;
-  const todayIso = new Date().toISOString().slice(0, 10);
-
-  // If currentPrice is provided, lastBar is yesterday's close (unless lastBar.d is today's bar)
-  const effectivePrevClose =
-    currentPrice != null
-      ? (lastBar && lastBar.d < todayIso ? lastBar.c : prevBar?.c ?? lastBar?.c ?? null)
-      : prevBar?.c ?? null;
-
-  const effectiveDayChangePct =
-    dayChangePct ??
-    (effectivePrevClose != null && effectivePrevClose > 0 && headline != null
-      ? ((headline - effectivePrevClose) / effectivePrevClose) * 100
-      : null);
-
-  const effectiveAsOfLabel =
-    asOfLabel ??
-    (lastBar?.d ? formatShortDate(lastBar.d) : undefined);
-
-  const effectiveAsOfKind =
-    asOfKind ?? (currentPrice != null ? "live" : "eod");
-
-  useEffect(() => {
-    if (onPriceInfo) {
-      onPriceInfo({
-        prevClose: effectivePrevClose,
-        dayChangePct: effectiveDayChangePct,
-        asOfLabel: effectiveAsOfLabel ?? null,
-      });
-    }
-  }, [onPriceInfo, effectivePrevClose, effectiveDayChangePct, effectiveAsOfLabel]);
 
   if (candles.length === 0) {
     return (
@@ -641,6 +681,46 @@ export function PriceChart({
           </button>
         </div>
       </div>
+
+      {/* Volume & Turnover details strip */}
+      {volStats && volStats.latestVol > 0 && (
+        <div className="flex items-center gap-2.5 px-2.5 py-1 mb-2 rounded bg-slate-50 border hairline text-[11px] font-mono text-slate-600 flex-wrap">
+          <div className="flex items-center gap-1">
+            <span className="text-slate-500 uppercase text-[9.5px] font-sans font-semibold">Volume:</span>
+            <strong className="text-slate-900">{fmtVolReadable(volStats.latestVol)}</strong>
+            <span className="text-[10px] text-slate-500">({volStats.latestVol.toLocaleString("en-IN")} sh)</span>
+          </div>
+          <span className="text-slate-300">|</span>
+          <div className="flex items-center gap-1">
+            <span className="text-slate-500 uppercase text-[9.5px] font-sans font-semibold">20D Avg:</span>
+            <strong className="text-slate-800">{fmtVolReadable(volStats.avgVol20)}</strong>
+          </div>
+          <span className="text-slate-300">|</span>
+          <div className="flex items-center gap-1">
+            <span className="text-slate-500 uppercase text-[9.5px] font-sans font-semibold">Rel Vol:</span>
+            <span
+              className={`px-1 py-[0.5px] rounded text-[10px] font-bold ${
+                volStats.relVol && volStats.relVol >= 1.5
+                  ? "bg-emerald-100 text-emerald-800"
+                  : volStats.relVol && volStats.relVol >= 1.0
+                    ? "bg-emerald-50 text-emerald-700"
+                    : "bg-slate-100 text-slate-600"
+              }`}
+            >
+              {volStats.relVol ? `${volStats.relVol.toFixed(2)}x` : "—"}
+            </span>
+          </div>
+          {volStats.turnoverCr != null && (
+            <>
+              <span className="text-slate-300">|</span>
+              <div className="flex items-center gap-1">
+                <span className="text-slate-500 uppercase text-[9.5px] font-sans font-semibold">Turnover:</span>
+                <strong className="text-indigo-900">₹{volStats.turnoverCr.toFixed(2)} Cr</strong>
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Candlestick + volume — split-safe OHLC, hover readout, alert + drawing
           lines (drawings are read-only inline; edit them in the enlarged view). */}

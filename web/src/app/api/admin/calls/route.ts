@@ -53,6 +53,7 @@ export type ClusterGem = {
   is_cleared: boolean;
   action_today?: "BUY / ACCUMULATE" | "SELL / EXIT" | "TRIM / TAKE PROFIT" | "HOLD & COMPOUND" | "WATCH / ACCUMULATE";
   action_reason?: string;
+  price_fetched_at?: string | null;
 };
 
 export type PortfolioActionCall = {
@@ -65,6 +66,7 @@ export type PortfolioActionCall = {
   total_qty: number;
   weighted_avg_cost: number;
   ltp: number;
+  price_fetched_at?: string | null;
   anchor_price: number | null;
   pct_move: number | null;
   // Dual Anchor 1: Call Given
@@ -219,6 +221,7 @@ export async function GET(request: Request) {
       intraday_price AS (
           SELECT DISTINCT ON (symbol) symbol, ltp
           FROM app.stock_intraday
+          WHERE ts >= CURRENT_DATE
           ORDER BY symbol, ts DESC
       ),
       user_calls AS (
@@ -238,6 +241,7 @@ export async function GET(request: Request) {
           c.name AS cluster_name,
           p.market_cap_cr,
           COALESCE(si.ltp, sm.current_price, p.current_price) AS ltp,
+          sm.price_fetched_at::text AS price_fetched_at,
           v.anchor_price,
           v.verdict,
           v.confidence,
@@ -397,6 +401,7 @@ export async function GET(request: Request) {
         is_cleared: isCleared,
         action_today: actionToday,
         action_reason: actionReason,
+        price_fetched_at: r.price_fetched_at ? String(r.price_fetched_at) : null,
       };
     });
 
@@ -417,6 +422,7 @@ export async function GET(request: Request) {
       intraday_price AS (
           SELECT DISTINCT ON (symbol) symbol, ltp
           FROM app.stock_intraday
+          WHERE ts >= CURRENT_DATE
           ORDER BY symbol, ts DESC
       )
       SELECT 
@@ -424,6 +430,7 @@ export async function GET(request: Request) {
           SUM(p.quantity) AS total_qty,
           SUM(p.quantity * p.avg_cost) / NULLIF(SUM(p.quantity), 0) AS weighted_avg_cost,
           COALESCE(MAX(si.ltp), MAX(sm.current_price), MAX(lp.current_price), MAX(p.broker_ltp)) AS ltp,
+          MAX(sm.price_fetched_at)::text AS price_fetched_at,
           SUM(p.broker_cur_value) AS cur_val,
           SUM(p.quantity * p.avg_cost) AS invested_val,
           SUM(p.broker_cur_value) - SUM(p.quantity * p.avg_cost) AS pnl,
@@ -574,6 +581,7 @@ export async function GET(request: Request) {
         strategy_desc: horizonInfo.strategy,
         is_taken: true,
         is_cleared: false,
+        price_fetched_at: r.price_fetched_at ? String(r.price_fetched_at) : null,
       };
     });
 
