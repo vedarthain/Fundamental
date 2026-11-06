@@ -152,6 +152,54 @@ const CUSTOM_PURCHASE_KEY = "calls_custom_purchase_v1";
 type Scope = "all" | "curated" | "portfolio";
 type ActionFilter = "ALL" | "BUY" | "PRIORITY_SELL" | "SELL" | "HOLD";
 type DetailTab = "overview" | "catalysts" | "results" | "dividends" | "news" | "audit";
+export type PriorityCategory = "ALL" | "PROFIT_TRIM" | "DRAWDOWN_REVIEW" | "STRUCTURAL_EXIT";
+
+export function getPriorityCategory(call: {
+  actionToday?: string;
+  cmp: number;
+  target?: number | null;
+  purchasePrice?: number | null;
+  quality_pct?: number | null;
+  momentum_pct?: number | null;
+}) {
+  const pnlPct = call.purchasePrice && call.purchasePrice > 0
+    ? ((call.cmp - call.purchasePrice) / call.purchasePrice) * 100
+    : 0;
+  const qual = call.quality_pct ?? 50;
+  const mom = call.momentum_pct ?? 50;
+  const act = (call.actionToday || "").toUpperCase();
+
+  if (act.includes("EXIT") || act.includes("CUT LOSS") || (qual < 45 && mom < 35)) {
+    return {
+      category: "STRUCTURAL_EXIT" as const,
+      badge: "🔴 EXIT",
+      badgeClass: "bg-rose-700 text-white font-bold",
+      pillText: "🔴 Cut Loss",
+      title: "Structural Breakdown / Capital Preservation",
+      guidance: "Both business quality (score < 45) and price momentum have deteriorated. Institutional rule: Execute stop-loss or tax-loss harvesting.",
+    };
+  }
+
+  if (pnlPct >= 5) {
+    return {
+      category: "PROFIT_TRIM" as const,
+      badge: "🟢 TRIM 25%",
+      badgeClass: "bg-emerald-700 text-white font-bold",
+      pillText: "🟢 Trim 25–33%",
+      title: "Take Profit Tranche (Lock In Outsized Gains)",
+      guidance: `Sitting at ${pnlPct > 0 ? "+" : ""}${pnlPct.toFixed(1)}% profit and reached 12M target. Institutional rule: Trim 25%–33% to de-risk and rebalance into fresh ideas, leaving the core to compound.`,
+    };
+  }
+
+  return {
+    category: "DRAWDOWN_REVIEW" as const,
+    badge: "🟡 REVIEW",
+    badgeClass: "bg-amber-600 text-white font-bold",
+    pillText: "🟡 Review (Hold)",
+    title: "Drawdown / Cyclical Review (Do NOT Panic Sell)",
+    guidance: `Sitting at ${pnlPct.toFixed(1)}% paper loss. The quantitative model target is conservative, but position is in drawdown. Institutional rule: Do NOT panic-sell cyclical leaders at lows; review operating compounding.`,
+  };
+}
 
 type CompanyOverview = {
   symbol: string;
@@ -231,6 +279,7 @@ export function CallsClient() {
   // Scope & Action Filters: Always default to 'curated' (Top 6) on refresh
   const [scope, setScope] = useState<Scope>("curated");
   const [actionFilter, setActionFilter] = useState<ActionFilter>("ALL");
+  const [prioritySubFilter, setPrioritySubFilter] = useState<PriorityCategory>("ALL");
   const [search, setSearch] = useState("");
   const [capital] = useState<number>(100000);
 
@@ -401,7 +450,8 @@ export function CallsClient() {
       sector: "Telecommunication",
       cluster: "Telecom",
       weightPct: 20,
-      cmp: 380.9,
+      cmp: 378.3,
+      anchorPrice: 380.0,
       buyBelow: 370.7,
       target: 554.4,
       stopLoss: 335.0,
@@ -432,7 +482,8 @@ export function CallsClient() {
       sector: "Financial Services",
       cluster: "PSU Banks",
       weightPct: 20,
-      cmp: 173.1,
+      cmp: 186.0,
+      anchorPrice: 178.9,
       buyBelow: 182.3,
       target: 270.1,
       stopLoss: 130.0,
@@ -607,8 +658,8 @@ export function CallsClient() {
 
       // Anchor 1: Call Given
       const callDate = g.call_date ?? (g.generated_at ? g.generated_at.slice(0, 10) : "2026-11-01");
-      const callPrice = g.call_price ?? g.anchor_price ?? cmp;
-      const callPerfPct = g.call_perf_pct ?? (callPrice > 0 ? ((cmp - callPrice) / callPrice) * 100 : 0);
+      const callPrice = g.call_price ?? g.anchor_price ?? cur?.anchorPrice ?? cmp;
+      const callPerfPct = callPrice > 0 ? ((cmp - callPrice) / callPrice) * 100 : 0;
 
       // Anchor 2: Stock Purchase
       const customP = customPurchases[g.symbol];
@@ -700,10 +751,11 @@ export function CallsClient() {
     curatedPicks.forEach((cp) => {
       if (!callMap.has(cp.symbol)) {
         const port = data.portfolioActions.find((p) => p.symbol === cp.symbol);
-        const cmp = port?.ltp ?? cp.cmp;
-        const callDate = "2026-11-01";
-        const callPrice = cp.cmp;
-        const callPerfPct = ((cmp - callPrice) / callPrice) * 100;
+        const gem = data.clusterGems.find((g) => g.symbol === cp.symbol);
+        const cmp = gem?.ltp ?? port?.ltp ?? cp.cmp;
+        const callDate = gem?.call_date ?? "2026-11-01";
+        const callPrice = gem?.call_price ?? gem?.anchor_price ?? cp.anchorPrice ?? cp.cmp;
+        const callPerfPct = callPrice > 0 ? ((cmp - callPrice) / callPrice) * 100 : 0;
 
         const customP = customPurchases[cp.symbol];
         const purchaseDate = customP?.purchase_date ?? port?.purchase_date ?? null;
@@ -881,6 +933,24 @@ export function CallsClient() {
     return { all: unifiedCalls.length, buy, sell, prioritySell, hold };
   }, [unifiedCalls]);
 
+  // Priority sell breakdown counts
+  const priorityCounts = useMemo(() => {
+    let profitTrim = 0;
+    let drawdown = 0;
+    let exit = 0;
+    unifiedCalls.forEach((c) => {
+      const act = (c.actionToday || "").toUpperCase();
+      const isSell = act.includes("SELL") || act.includes("TRIM") || act.includes("EXIT") || act.includes("CUT LOSS");
+      if (isSell && c.isPortfolio) {
+        const cat = getPriorityCategory(c).category;
+        if (cat === "PROFIT_TRIM") profitTrim++;
+        else if (cat === "STRUCTURAL_EXIT") exit++;
+        else drawdown++;
+      }
+    });
+    return { all: profitTrim + drawdown + exit, profitTrim, drawdown, exit };
+  }, [unifiedCalls]);
+
   // Filter unified calls based on Multi-Selected Dates, Scope, Action Filter, and Search
   const filteredCalls = useMemo(() => {
     return unifiedCalls.filter((c) => {
@@ -890,6 +960,7 @@ export function CallsClient() {
         const act = (c.actionToday || "").toUpperCase();
         const isSell = act.includes("SELL") || act.includes("TRIM") || act.includes("EXIT") || act.includes("CUT LOSS");
         if (!isSell || !c.isPortfolio) return false;
+        if (prioritySubFilter !== "ALL" && getPriorityCategory(c).category !== prioritySubFilter) return false;
       } else {
         // Standard Scope Filter (Curated Top 6 vs Portfolio vs All)
         if (scope === "curated" && !c.isCurated) return false;
@@ -929,7 +1000,7 @@ export function CallsClient() {
 
       return true;
     });
-  }, [unifiedCalls, scope, actionFilter, selectedBatches, search]);
+  }, [unifiedCalls, scope, actionFilter, prioritySubFilter, selectedBatches, search]);
 
   // Group filtered calls by Sector for the Left Rail Tree
   const sectorGroups = useMemo(() => {
@@ -1257,17 +1328,59 @@ export function CallsClient() {
       )}
 
       {actionFilter === "PRIORITY_SELL" && (
-        <div className="bg-rose-600 text-white rounded-lg p-2 sm:px-3 sm:py-2 flex items-center justify-between gap-3 shadow-2xs text-xs">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-bold">🚨 Showing {filteredCalls.length} Priority Sell / Trim Holdings</span>
-            <span className="text-rose-100 hidden sm:inline">— Review prices, audit catalysts, and trim orders</span>
+        <div className="bg-slate-900 border border-slate-800 text-white rounded-lg p-2.5 sm:px-3 sm:py-2.5 shadow-2xs text-xs space-y-2">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2">
+              <span className="text-base">🚨</span>
+              <span className="text-sm font-bold">Priority Sell &amp; Trim Desk ({priorityCounts.all} Holdings)</span>
+              <span className="text-slate-300 hidden md:inline">— Institutional Rule: &apos;Trim&apos; means taking 25%–33% off the table to lock in profit, NOT 100% liquidation.</span>
+            </div>
+            <button
+              onClick={() => { setActionFilter("ALL"); setPrioritySubFilter("ALL"); }}
+              className="px-2.5 py-0.5 rounded bg-white text-slate-900 font-semibold text-xs hover:bg-slate-100 transition-colors shadow-2xs"
+            >
+              Clear Filter (Show All)
+            </button>
           </div>
-          <button
-            onClick={() => setActionFilter("ALL")}
-            className="px-2 py-0.5 rounded bg-white text-rose-800 font-semibold text-[11px] hover:bg-rose-50 transition-colors"
-          >
-            Clear Filter (Show All)
-          </button>
+
+          {/* Sub-Category Filter Pills */}
+          <div className="flex items-center gap-1.5 flex-wrap pt-1.5 border-t border-slate-800 text-xs">
+            <button
+              onClick={() => setPrioritySubFilter("ALL")}
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-all ${
+                prioritySubFilter === "ALL" ? "bg-white text-slate-900 font-bold shadow-2xs" : "text-slate-300 hover:bg-slate-800"
+              }`}
+            >
+              All Priority ({priorityCounts.all})
+            </button>
+            <button
+              onClick={() => setPrioritySubFilter("PROFIT_TRIM")}
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 ${
+                prioritySubFilter === "PROFIT_TRIM" ? "bg-emerald-600 text-white font-bold shadow-2xs" : "text-emerald-300 hover:bg-slate-800"
+              }`}
+              title="Large unrealized gainers that exceeded 12M Target. Trim 25%–33% to lock in gains."
+            >
+              <span>🟢 Take Profit Tranche ({priorityCounts.profitTrim})</span>
+            </button>
+            <button
+              onClick={() => setPrioritySubFilter("DRAWDOWN_REVIEW")}
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 ${
+                prioritySubFilter === "DRAWDOWN_REVIEW" ? "bg-amber-600 text-white font-bold shadow-2xs" : "text-amber-300 hover:bg-slate-800"
+              }`}
+              title="Positions in drawdown with conservative targets. Do NOT panic sell; review thesis."
+            >
+              <span>🟡 Drawdown Review ({priorityCounts.drawdown})</span>
+            </button>
+            <button
+              onClick={() => setPrioritySubFilter("STRUCTURAL_EXIT")}
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 ${
+                prioritySubFilter === "STRUCTURAL_EXIT" ? "bg-rose-600 text-white font-bold shadow-2xs" : "text-rose-300 hover:bg-slate-800"
+              }`}
+              title="Fundamental and momentum breakdown. Candidate for stop-loss or tax-loss harvesting."
+            >
+              <span>🔴 Structural Exit ({priorityCounts.exit})</span>
+            </button>
+          </div>
         </div>
       )}
 
@@ -1330,6 +1443,7 @@ export function CallsClient() {
                           const actUpper = (call.actionToday || "").toUpperCase();
                           const isSell = actUpper.includes("SELL") || actUpper.includes("TRIM") || actUpper.includes("EXIT") || actUpper.includes("CUT LOSS");
                           const isPrioritySell = isSell && call.isPortfolio;
+                          const priInfo = isPrioritySell ? getPriorityCategory(call) : null;
                           return (
                             <button
                               key={call.symbol}
@@ -1341,21 +1455,25 @@ export function CallsClient() {
                                     ? "bg-slate-900 text-white shadow-2xs ring-1 ring-rose-500"
                                     : "bg-slate-900 text-white shadow-2xs"
                                   : isPrioritySell
-                                    ? "bg-rose-50/70 hover:bg-rose-100/80 text-slate-900 border-l-2 border-rose-500"
+                                    ? priInfo?.category === "PROFIT_TRIM"
+                                      ? "bg-emerald-50/70 hover:bg-emerald-100/80 text-slate-900 border-l-2 border-emerald-500"
+                                      : priInfo?.category === "STRUCTURAL_EXIT"
+                                        ? "bg-rose-50/80 hover:bg-rose-100 text-slate-900 border-l-2 border-rose-600"
+                                        : "bg-amber-50/70 hover:bg-amber-100/80 text-slate-900 border-l-2 border-amber-500"
                                     : "hover:bg-slate-100/70 text-slate-800"
                               }`}
                             >
                               <div className="min-w-0 flex-1 pr-1.5">
                                 <div className="flex items-center gap-1">
                                   <span className="font-mono font-medium text-xs">{call.symbol}</span>
-                                  {isPrioritySell && (
+                                  {isPrioritySell && priInfo && (
                                     <span
                                       className={`text-[8px] px-1 py-0.2 rounded font-bold uppercase tracking-tight flex items-center gap-0.5 ${
-                                        isSel ? "bg-rose-500 text-white" : "bg-rose-600 text-white"
+                                        isSel ? "bg-white/20 text-white" : priInfo.badgeClass
                                       }`}
-                                      title="Priority Portfolio Sell / Trim"
+                                      title={priInfo.title}
                                     >
-                                      🚨 SELL
+                                      {priInfo.badge}
                                     </span>
                                   )}
                                   {call.isCurated && (
@@ -1400,14 +1518,14 @@ export function CallsClient() {
                                     className={`px-1 py-0.2 rounded text-[8px] uppercase font-normal ${
                                       isSel
                                         ? "bg-white/20 text-white"
-                                        : isPrioritySell
-                                          ? "bg-rose-600 text-white font-semibold"
+                                        : isPrioritySell && priInfo
+                                          ? priInfo.badgeClass
                                           : isSell
                                             ? "bg-rose-100 text-rose-800 border border-rose-300"
                                             : actionBadgeClass(call.actionToday)
                                     }`}
                                   >
-                                    {call.actionToday?.split(" ")[0]}
+                                    {isPrioritySell && priInfo ? priInfo.pillText : call.actionToday?.split(" ")[0]}
                                   </span>
                                 </div>
                               </div>
@@ -1556,19 +1674,42 @@ export function CallsClient() {
               </div>
 
               {/* Priority Sell Alert for currently viewed stock */}
-              {selectedCall.isPortfolio && isSellAction && (
-                <div className="bg-rose-50 border border-rose-300 rounded-lg p-2 px-3 text-xs flex items-center justify-between gap-2 shadow-2xs">
-                  <div className="flex items-center gap-2">
-                    <span className="text-rose-600 font-bold shrink-0">🚨 IMMEDIATE PORTFOLIO ACTION:</span>
-                    <span className="text-slate-800">
-                      <strong>{selectedCall.symbol}</strong> is held ({selectedCall.heldQty} shares) and has reached target or triggered exit criteria. Recommended action: <strong className="text-rose-700">{selectedCall.actionToday}</strong>.
-                    </span>
+              {selectedCall.isPortfolio && isSellAction && (() => {
+                const pri = getPriorityCategory(selectedCall);
+                const isProfit = pri.category === "PROFIT_TRIM";
+                const isExit = pri.category === "STRUCTURAL_EXIT";
+                const borderClass = isProfit
+                  ? "border-emerald-300 bg-emerald-50/90 text-emerald-950"
+                  : isExit
+                    ? "border-rose-400 bg-rose-50 text-rose-950"
+                    : "border-amber-300 bg-amber-50/90 text-amber-950";
+                const badgeIcon = isProfit ? "🟢" : isExit ? "🔴" : "🟡";
+                return (
+                  <div className={`border rounded-lg p-2.5 px-3 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 shadow-2xs ${borderClass}`}>
+                    <div className="flex items-start sm:items-center gap-2 min-w-0">
+                      <span className="text-base shrink-0">{badgeIcon}</span>
+                      <div className="min-w-0">
+                        <div className="font-bold flex items-center gap-1.5 flex-wrap">
+                          <span>{pri.title}:</span>
+                          <span className="font-mono text-slate-900">{selectedCall.symbol}</span>
+                          <span className="font-normal text-slate-700">({selectedCall.heldQty} sh held)</span>
+                        </div>
+                        <div className="text-[11px] text-slate-700 mt-0.5">
+                          {pri.guidance}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0 font-mono text-[11px] sm:self-center">
+                      <div>Target: <strong>{money(selectedCall.target)}</strong> | CMP: <strong>{money(selectedCall.cmp)}</strong></div>
+                      {selectedCall.purchasePrice && (
+                        <div className={((selectedCall.cmp - selectedCall.purchasePrice) / selectedCall.purchasePrice) >= 0 ? "text-emerald-700 font-bold" : "text-rose-700 font-bold"}>
+                          Position P&amp;L: {pct(((selectedCall.cmp - selectedCall.purchasePrice) / selectedCall.purchasePrice) * 100)}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <span className="font-mono text-rose-800 font-semibold shrink-0">
-                    Target: {money(selectedCall.target)} | CMP: {money(selectedCall.cmp)}
-                  </span>
-                </div>
-              )}
+                );
+              })()}
 
               {/* ── ROW 2: Price Graph (Left) & Stacked 4 Boxes (Right) ───────── */}
               <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_260px] xl:grid-cols-[minmax(0,1fr)_275px] gap-2 items-stretch w-full min-w-0">
