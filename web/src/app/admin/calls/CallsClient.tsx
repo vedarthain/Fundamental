@@ -1985,7 +1985,7 @@ export function CallsClient() {
               })()}
 
               {/* ── ROW 2: Price Graph (Left) & Stacked 4 Boxes (Right) ───────── */}
-              <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_260px] xl:grid-cols-[minmax(0,1fr)_275px] gap-2 items-stretch w-full min-w-0">
+              <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_295px] xl:grid-cols-[minmax(0,1fr)_320px] gap-2 items-stretch w-full min-w-0">
                 {/* Left: Price Chart & Moving Averages Card */}
                 <div className="bg-white border hairline rounded-lg p-2.5 sm:p-3 shadow-2xs flex flex-col justify-between min-w-0 overflow-hidden w-full">
                   <div className="flex items-center justify-between text-xs mb-1 min-w-0">
@@ -2005,15 +2005,15 @@ export function CallsClient() {
                 </div>
 
                 {/* Right: 4 Compact Stacked Boxes */}
-                <div className="flex flex-col gap-1.5 justify-between w-full lg:w-[260px] xl:w-[275px] shrink-0 min-w-0">
+                <div className="flex flex-col gap-1.5 justify-between w-full lg:w-[295px] xl:w-[320px] shrink-0 min-w-0">
                   {/* BOX 1: ANCHOR 1 - CALL GIVEN */}
-                  <div className="bg-slate-50/90 border border-indigo-100 rounded-lg p-2 shadow-2xs flex-1 flex flex-col justify-between min-w-0">
-                    <div className="flex items-center justify-between text-[11px] gap-1 min-w-0">
+                  <div className="bg-slate-50/90 border border-indigo-100 rounded-lg p-2.5 shadow-2xs flex-1 flex flex-col justify-between min-w-0">
+                    <div className="flex items-center justify-between text-[11px] gap-1.5 min-w-0">
                       <div className="flex items-center gap-1 font-bold text-indigo-950 shrink-0">
                         <span className="w-1.5 h-1.5 rounded-full bg-indigo-600 shrink-0" />
                         <span className="tracking-wide text-[10px] whitespace-nowrap">ANCHOR 1: CALL GIVEN</span>
                       </div>
-                      <div className="flex items-center gap-1 shrink-0">
+                      <div className="flex items-center gap-1.5 shrink-0">
                         {selectedCall.timeline && (
                           <span
                             className="text-[8.5px] font-mono font-bold px-1.5 py-0.2 rounded border bg-indigo-100 text-indigo-900 border-indigo-200 shrink-0"
@@ -2022,16 +2022,28 @@ export function CallsClient() {
                             🎯 {selectedCall.timeline}
                           </span>
                         )}
-                        <span className="text-[9px] font-mono text-slate-500 shrink-0">
-                          {fmtDate(selectedCall.callDate)} ({daysAgo(selectedCall.callDate)})
-                        </span>
+                        {selectedCall.callDate && (
+                          <span
+                            className="text-[9px] font-mono text-slate-500 shrink-0"
+                            title={`Call given on ${fmtDate(selectedCall.callDate)}`}
+                          >
+                            {daysAgo(selectedCall.callDate)}
+                          </span>
+                        )}
                       </div>
                     </div>
 
                     <div className="flex items-center justify-between pt-1 mt-0.5 border-t border-indigo-100/80">
                       <div>
                         <span className="text-[8.5px] uppercase font-semibold text-slate-500 block">Anchor Price</span>
-                        <span className="text-xs sm:text-sm font-bold font-mono text-slate-900">{money(selectedCall.callPrice)}</span>
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs sm:text-sm font-bold font-mono text-slate-900">{money(selectedCall.callPrice)}</span>
+                          {selectedCall.callDate && (
+                            <span className="text-[9px] font-mono text-slate-500" title={`Call given on ${fmtDate(selectedCall.callDate)}`}>
+                              ({fmtDate(selectedCall.callDate)})
+                            </span>
+                          )}
+                        </div>
                       </div>
 
                       <div className="text-right">
@@ -2051,13 +2063,13 @@ export function CallsClient() {
                   </div>
 
                   {/* BOX 2: ANCHOR 2 - STOCK PURCHASE */}
-                  <div className="bg-slate-50/90 border border-emerald-100 rounded-lg p-2 shadow-2xs flex-1 flex flex-col justify-between min-w-0">
-                    <div className="flex items-center justify-between text-[11px] gap-1 min-w-0">
+                  <div className="bg-slate-50/90 border border-emerald-100 rounded-lg p-2.5 shadow-2xs flex-1 flex flex-col justify-between min-w-0">
+                    <div className="flex items-center justify-between text-[11px] gap-1.5 min-w-0">
                       <div className="flex items-center gap-1 font-bold text-emerald-950 shrink-0">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 shrink-0" />
                         <span className="tracking-wide text-[10px] whitespace-nowrap">ANCHOR 2: PURCHASE</span>
                       </div>
-                      <div className="flex items-center gap-1 shrink-0">
+                      <div className="flex items-center gap-1.5 shrink-0">
                         {purchaseDuration && (
                           <span className={`text-[8.5px] font-mono px-1 py-0.2 rounded border ${purchaseDuration.badgeClass}`}>
                             ⏱️ {purchaseDuration.label}
@@ -2155,13 +2167,13 @@ export function CallsClient() {
 
                   {/* BOX 3: TRANCHE 1 - MARKET ORDER (CMP) */}
                   {selectedCall.isCurated ? (
-                    <div className="bg-slate-50/90 border border-indigo-100 rounded-lg p-2 shadow-2xs flex-1 flex flex-col justify-between min-w-0">
-                      <div className="flex items-center justify-between text-[11px] gap-1 min-w-0">
+                    <div className="bg-slate-50/90 border border-indigo-100 rounded-lg p-2.5 shadow-2xs flex-1 flex flex-col justify-between min-w-0">
+                      <div className="flex items-center justify-between text-[11px] gap-1.5 min-w-0">
                         <div className="flex items-center gap-1.5 font-bold text-indigo-950 truncate">
                           <span className="w-1.5 h-1.5 rounded-full bg-indigo-600 shrink-0" />
                           <span className="tracking-wide text-[10px] truncate">TRANCHE 1: MARKET CMP</span>
                         </div>
-                        <span className="text-[8.5px] font-mono font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-1 py-0.2 rounded shrink-0">
+                        <span className="text-[8.5px] font-mono font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.2 rounded shrink-0">
                           50% (~{money(selectedCall.t1Value)})
                         </span>
                       </div>
@@ -2178,10 +2190,10 @@ export function CallsClient() {
                       </div>
                     </div>
                   ) : (
-                    <div className={`rounded-lg p-2 shadow-2xs flex-1 flex flex-col justify-between min-w-0 ${
+                    <div className={`rounded-lg p-2.5 shadow-2xs flex-1 flex flex-col justify-between min-w-0 ${
                       isSellAction ? "bg-rose-50/90 border border-rose-300" : "bg-slate-50/90 border hairline"
                     }`}>
-                      <div className="flex items-center justify-between text-[11px] gap-1 min-w-0">
+                      <div className="flex items-center justify-between text-[11px] gap-1.5 min-w-0">
                         <div className="flex items-center gap-1.5 font-bold text-slate-800 truncate">
                           <span className="w-1.5 h-1.5 rounded-full bg-slate-500 shrink-0" />
                           <span className="tracking-wide text-[10px] truncate">{isSellAction ? "EXIT TRIGGER" : "ACTION GUIDELINE"}</span>
@@ -2201,13 +2213,13 @@ export function CallsClient() {
 
                   {/* BOX 4: TRANCHE 2 - DIP LIMIT (GTT) */}
                   {selectedCall.isCurated ? (
-                    <div className="bg-slate-50/90 border border-amber-200 rounded-lg p-2 shadow-2xs flex-1 flex flex-col justify-between min-w-0">
-                      <div className="flex items-center justify-between text-[11px] gap-1 min-w-0">
+                    <div className="bg-slate-50/90 border border-amber-200 rounded-lg p-2.5 shadow-2xs flex-1 flex flex-col justify-between min-w-0">
+                      <div className="flex items-center justify-between text-[11px] gap-1.5 min-w-0">
                         <div className="flex items-center gap-1.5 font-bold text-amber-950 truncate">
                           <span className="w-1.5 h-1.5 rounded-full bg-amber-600 shrink-0" />
                           <span className="tracking-wide text-[10px] truncate">TRANCHE 2: DIP (GTT)</span>
                         </div>
-                        <span className="text-[8.5px] font-mono font-bold text-amber-800 bg-amber-50 border border-amber-200 px-1 py-0.2 rounded shrink-0">
+                        <span className="text-[8.5px] font-mono font-bold text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-0.2 rounded shrink-0">
                           50% (~{money(selectedCall.t2Value)})
                         </span>
                       </div>
@@ -2224,8 +2236,8 @@ export function CallsClient() {
                       </div>
                     </div>
                   ) : (
-                    <div className="bg-slate-50/90 border hairline rounded-lg p-2 shadow-2xs flex-1 flex flex-col justify-between min-w-0">
-                      <div className="flex items-center justify-between text-[11px] gap-1 min-w-0">
+                    <div className="bg-slate-50/90 border hairline rounded-lg p-2.5 shadow-2xs flex-1 flex flex-col justify-between min-w-0">
+                      <div className="flex items-center justify-between text-[11px] gap-1.5 min-w-0">
                         <div className="flex items-center gap-1.5 font-bold text-slate-800 truncate">
                           <span className="w-1.5 h-1.5 rounded-full bg-slate-500 shrink-0" />
                           <span className="tracking-wide text-[10px] truncate">PRICE CORRIDOR</span>
