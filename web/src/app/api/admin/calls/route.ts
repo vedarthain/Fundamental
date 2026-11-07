@@ -306,10 +306,12 @@ export async function GET(request: Request) {
         AND (
           p.symbol IN ('INDUSTOWER', 'UNIONBANK', 'SHAREINDIA', 'NATCOPHARM', 'ALLDIGI', 'APOLLOTYRE', 'ORIENTTECH', 'MAXESTATES', 'PITTIENG', 'GRAVITA')
           OR (p.composite_pct >= 60 AND p.quality_pct >= 50 AND v.buy_below IS NOT NULL)
-          OR v.verdict ILIKE '%SELL%'
-          OR v.verdict ILIKE '%EXIT%'
-          OR v.verdict ILIKE '%TRIM%'
-          OR (v.upside_pct IS NOT NULL AND v.upside_pct < -5)
+          OR (ph.quantity > 0 AND (
+            v.verdict ILIKE '%SELL%'
+            OR v.verdict ILIKE '%EXIT%'
+            OR v.verdict ILIKE '%TRIM%'
+            OR (v.upside_pct IS NOT NULL AND v.upside_pct < -5)
+          ))
         )
       ORDER BY (p.symbol IN ('INDUSTOWER', 'UNIONBANK', 'SHAREINDIA', 'NATCOPHARM', 'ALLDIGI', 'APOLLOTYRE')) DESC, v.generated_at DESC, p.composite_pct DESC
       LIMIT 600
@@ -350,10 +352,10 @@ export async function GET(request: Request) {
       if (isTopCurated) {
         actionToday = "BUY / ACCUMULATE";
         actionReason = "Top High-Conviction Institutional Alpha Recommendation.";
-      } else if (vLower.includes("sell") || vLower.includes("exit") || (r.bear_floor && ltp <= Number(r.bear_floor) && qual < 50)) {
+      } else if (isPortfolio && (vLower.includes("sell") || vLower.includes("exit") || (r.bear_floor && ltp <= Number(r.bear_floor) && qual < 50))) {
         actionToday = "SELL / EXIT";
         actionReason = `Exit alert: ${r.verdict || "Breached bear floor with deterioration in quality"}.`;
-      } else if (vLower.includes("trim") || (r.target_price && ltp >= Number(r.target_price)) || upside < -5) {
+      } else if (isPortfolio && (vLower.includes("trim") || (r.target_price && ltp >= Number(r.target_price)) || upside < -5)) {
         actionToday = "TRIM / TAKE PROFIT";
         actionReason = `Profit booking / trim: LTP (₹${ltp.toFixed(1)}) reached fundamental target (₹${Number(r.target_price ?? 0).toFixed(1)}).`;
       } else if (buyBelow > 0 && ltp <= buyBelow * 1.02) {

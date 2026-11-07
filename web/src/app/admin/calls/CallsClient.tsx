@@ -1164,18 +1164,19 @@ export function CallsClient() {
   const actionCounts = useMemo(() => {
     let buy = 0;
     let sell = 0;
-    let prioritySell = 0;
     let hold = 0;
     unifiedCalls.forEach((c) => {
       const act = (c.actionToday || "").toUpperCase();
       const isSell = act.includes("SELL") || act.includes("TRIM") || act.includes("EXIT") || act.includes("CUT LOSS");
-      if (act.includes("BUY") || act.includes("ACCUMULATE")) buy++;
-      else if (isSell) {
+      if (act.includes("BUY") || act.includes("ACCUMULATE")) {
+        buy++;
+      } else if (isSell && c.isPortfolio) {
         sell++;
-        if (c.isPortfolio) prioritySell++;
-      } else hold++;
+      } else if (act.includes("HOLD") || act.includes("WATCH")) {
+        hold++;
+      }
     });
-    return { all: unifiedCalls.length, buy, sell, prioritySell, hold };
+    return { all: buy + sell + hold, buy, sell, prioritySell: sell, hold };
   }, [unifiedCalls]);
 
   // Priority sell breakdown counts
@@ -1242,7 +1243,8 @@ export function CallsClient() {
           if (!act.includes("BUY") && !act.includes("ACCUMULATE")) return false;
         } else if (actionFilter === "SELL") {
           const act = (c.actionToday || "").toUpperCase();
-          if (!act.includes("SELL") && !act.includes("TRIM") && !act.includes("EXIT") && !act.includes("CUT LOSS")) return false;
+          const isSell = act.includes("SELL") || act.includes("TRIM") || act.includes("EXIT") || act.includes("CUT LOSS");
+          if (!isSell || !c.isPortfolio) return false;
         } else if (actionFilter === "HOLD") {
           const act = (c.actionToday || "").toUpperCase();
           if (!act.includes("HOLD") && !act.includes("WATCH")) return false;
@@ -1602,13 +1604,10 @@ export function CallsClient() {
           <h1 className="text-base sm:text-lg font-bold tracking-tight text-slate-900 font-sans">
             Calls Desk &amp; Verdicts
           </h1>
-          <span className="px-2 py-0.5 rounded text-[10.5px] font-mono font-medium bg-emerald-50 text-emerald-800 border border-emerald-300">
-            SUN 7 PM IST
-          </span>
         </div>
 
-        {/* Action Type Filters (All vs Buy Calls vs Sell Calls vs Hold) */}
-        <div className="flex items-center gap-1.5 flex-wrap">
+        {/* Action Type Filters, Scope Switchers, Search & Batches */}
+        <div className="flex items-center gap-1.5 flex-wrap flex-1 justify-end">
           <div className="flex items-center bg-slate-100 p-0.5 rounded-md border hairline text-xs">
             <button
               onClick={() => setActionFilter("ALL")}
@@ -1628,22 +1627,15 @@ export function CallsClient() {
               <span>Buy ({actionCounts.buy})</span>
             </button>
             <button
-              onClick={() => setActionFilter("PRIORITY_SELL")}
-              className={`px-2.5 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 ${
-                actionFilter === "PRIORITY_SELL" ? "bg-rose-600 text-white shadow-2xs font-bold ring-2 ring-rose-400" : "text-rose-700 hover:text-rose-900 bg-rose-50/70 hover:bg-rose-100"
-              }`}
-              title="Immediate sell/trim priority calls for held portfolio positions"
-            >
-              <span>🚨</span>
-              <span>Priority Sell ({actionCounts.prioritySell})</span>
-            </button>
-            <button
               onClick={() => setActionFilter("SELL")}
               className={`px-2.5 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 ${
-                actionFilter === "SELL" ? "bg-rose-600 text-white shadow-2xs font-semibold" : "text-rose-700 hover:text-rose-900"
+                actionFilter === "SELL" || actionFilter === "PRIORITY_SELL"
+                  ? "bg-rose-600 text-white shadow-2xs font-bold ring-2 ring-rose-400"
+                  : "text-rose-700 hover:text-rose-900 bg-rose-50/70 hover:bg-rose-100"
               }`}
+              title="Sell and trim alerts for your held portfolio positions"
             >
-              <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+              <span>🚨</span>
               <span>Sell Calls ({actionCounts.sell})</span>
             </button>
             <button
@@ -1657,8 +1649,59 @@ export function CallsClient() {
             </button>
           </div>
 
-          {/* Multi-Select Date Picker Dropdown */}
-          <div className="relative" ref={dateDropdownRef}>
+          {/* Scope switchers */}
+          <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-md border hairline text-xs">
+            <button
+              onClick={() => setScope("curated")}
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 ${
+                scope === "curated" ? "bg-indigo-700 text-white shadow-2xs font-semibold" : "text-indigo-800 hover:bg-indigo-100"
+              }`}
+            >
+              <Coins className="w-3 h-3 text-amber-400" />
+              <span>Top</span>
+            </button>
+            <button
+              onClick={() => setScope("all")}
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                scope === "all" ? "bg-slate-900 text-white shadow-2xs font-semibold" : "text-slate-700 hover:bg-slate-200"
+              }`}
+            >
+              All Calls
+            </button>
+            <button
+              onClick={() => setScope("portfolio")}
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 ${
+                scope === "portfolio" ? "bg-slate-900 text-white shadow-2xs font-semibold" : "text-slate-700 hover:bg-slate-200"
+              }`}
+            >
+              <Wallet className="w-3 h-3" />
+              <span>Held ({unifiedCalls.filter((c) => c.isPortfolio).length})</span>
+            </button>
+          </div>
+
+          {/* Search bar */}
+          <div className="relative">
+            <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Find stock…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-7 pr-2 py-0.5 text-xs rounded border hairline bg-white focus:outline-none focus:ring-1 focus:ring-slate-400 w-28 sm:w-36 shadow-2xs"
+            />
+          </div>
+
+          <button
+            onClick={() => fetchData()}
+            disabled={loading}
+            className="p-1 rounded text-slate-600 hover:bg-slate-100 border hairline shadow-2xs transition-colors"
+            title="Refresh Calls Feed"
+          >
+            <RotateCcw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+          </button>
+
+          {/* Multi-Select Date Picker Dropdown (Moved to Right Side Edge) */}
+          <div className="relative ml-1" ref={dateDropdownRef}>
             <button
               type="button"
               onClick={() => setIsDateDropdownOpen(!isDateDropdownOpen)}
@@ -1722,57 +1765,6 @@ export function CallsClient() {
               </div>
             )}
           </div>
-
-          {/* Scope switchers */}
-          <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-md border hairline text-xs">
-            <button
-              onClick={() => setScope("curated")}
-              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 ${
-                scope === "curated" ? "bg-indigo-700 text-white shadow-2xs font-semibold" : "text-indigo-800 hover:bg-indigo-100"
-              }`}
-            >
-              <Coins className="w-3 h-3 text-amber-400" />
-              <span>Top</span>
-            </button>
-            <button
-              onClick={() => setScope("all")}
-              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-                scope === "all" ? "bg-slate-900 text-white shadow-2xs font-semibold" : "text-slate-700 hover:bg-slate-200"
-              }`}
-            >
-              All Calls
-            </button>
-            <button
-              onClick={() => setScope("portfolio")}
-              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 ${
-                scope === "portfolio" ? "bg-slate-900 text-white shadow-2xs font-semibold" : "text-slate-700 hover:bg-slate-200"
-              }`}
-            >
-              <Wallet className="w-3 h-3" />
-              <span>Held ({unifiedCalls.filter((c) => c.isPortfolio).length})</span>
-            </button>
-          </div>
-
-          {/* Search bar */}
-          <div className="relative">
-            <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Find stock…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-7 pr-2 py-0.5 text-xs rounded border hairline bg-white focus:outline-none focus:ring-1 focus:ring-slate-400 w-28 sm:w-36 shadow-2xs"
-            />
-          </div>
-
-          <button
-            onClick={() => fetchData()}
-            disabled={loading}
-            className="p-1 rounded text-slate-600 hover:bg-slate-100 border hairline shadow-2xs transition-colors"
-            title="Refresh Calls Feed"
-          >
-            <RotateCcw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
-          </button>
         </div>
 
         {/* ── Holding Age Brackets Filter Strip ───────────────────────────── */}
@@ -2015,6 +2007,7 @@ export function CallsClient() {
                                     const actUpper = (call.actionToday || "").toUpperCase();
                                     const isSell = actUpper.includes("SELL") || actUpper.includes("TRIM") || actUpper.includes("EXIT") || actUpper.includes("CUT LOSS");
                                     const isPrioritySell = isSell && call.isPortfolio;
+                                    const pnl = call.isPortfolio && call.purchasePerfPct != null ? call.purchasePerfPct : call.callPerfPct;
                                     return (
                                       <button
                                         key={call.symbol}
@@ -2027,7 +2020,7 @@ export function CallsClient() {
                                             : "hover:bg-slate-100 text-slate-800"
                                         }`}
                                       >
-                                        <div className="flex items-center gap-1.5 min-w-0 flex-1 pr-2">
+                                        <div className="flex items-center gap-1.5 min-w-0">
                                           {isPrioritySell && (
                                             <span
                                               className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0 animate-pulse"
@@ -2046,12 +2039,20 @@ export function CallsClient() {
                                           <span className="font-mono text-xs font-bold shrink-0">
                                             {call.symbol}
                                           </span>
-                                          <span className={`text-[10.5px] truncate font-normal ${isSel ? "text-slate-300" : "text-slate-500"}`}>
-                                            {call.name}
-                                          </span>
                                         </div>
 
-                                        <div className="text-right shrink-0">
+                                        <div className="flex items-center gap-2 text-right shrink-0">
+                                          {pnl != null && (
+                                            <span
+                                              className={`text-[11px] font-mono font-semibold ${
+                                                pnl >= 0
+                                                  ? isSel ? "text-emerald-400" : "text-emerald-700"
+                                                  : isSel ? "text-rose-400" : "text-rose-600"
+                                              }`}
+                                            >
+                                              {pct(pnl, 1)}
+                                            </span>
+                                          )}
                                           <span className="font-mono text-xs font-semibold">
                                             {money(call.cmp, 2)}
                                           </span>
@@ -2184,21 +2185,6 @@ export function CallsClient() {
                     {selectedCall.actionToday}
                   </span>
 
-                  {/* Buy Below Tag */}
-                  <span className="px-1.5 py-0.5 rounded text-[10.5px] font-mono text-slate-700 bg-slate-50 border hairline">
-                    Buy ≤ <strong className="text-slate-900 font-bold">{money(selectedCall.buyBelow)}</strong>
-                  </span>
-
-                  {/* Target Tag */}
-                  <span className="px-1.5 py-0.5 rounded text-[10.5px] font-mono text-emerald-800 bg-emerald-50 border border-emerald-200">
-                    Target <strong className="text-emerald-900 font-bold">{money(selectedCall.target)}</strong> (+{selectedCall.upside}%)
-                  </span>
-
-                  {/* Floor Tag */}
-                  <span className="px-1.5 py-0.5 rounded text-[10.5px] font-mono text-rose-700 bg-rose-50 border border-rose-200">
-                    Floor <strong className="text-rose-900 font-bold">{money(selectedCall.stopLoss)}</strong>
-                  </span>
-
                   <button
                     onClick={() => handleTakeCall(selectedCall.symbol)}
                     disabled={selectedCall.isTaken}
@@ -2274,10 +2260,27 @@ export function CallsClient() {
               <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_295px] xl:grid-cols-[minmax(0,1fr)_320px] gap-2 items-stretch w-full min-w-0">
                 {/* Left: Price Chart & Moving Averages Card */}
                 <div className="bg-white border hairline rounded-lg p-2.5 sm:p-3 shadow-2xs flex flex-col justify-between min-w-0 overflow-hidden w-full">
-                  <div className="flex items-center justify-between text-xs mb-1 min-w-0">
-                    <div className="flex items-center gap-1.5 font-bold text-slate-800">
+                  <div className="flex items-center justify-between text-xs mb-1 min-w-0 flex-wrap gap-1.5">
+                    <div className="flex items-center gap-1.5 font-bold text-slate-800 shrink-0">
                       <TrendingUp className="w-4 h-4 text-slate-600" />
                       <span>Price Chart &amp; Moving Averages</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                      {selectedCall.buyBelow != null && selectedCall.buyBelow > 0 && (
+                        <span className="px-1.5 py-0.5 rounded text-[10.5px] font-mono text-slate-700 bg-slate-50 border hairline">
+                          Buy ≤ <strong className="text-slate-900 font-bold">{money(selectedCall.buyBelow)}</strong>
+                        </span>
+                      )}
+                      {selectedCall.target != null && selectedCall.target > 0 && (
+                        <span className="px-1.5 py-0.5 rounded text-[10.5px] font-mono text-emerald-800 bg-emerald-50 border border-emerald-200">
+                          Target <strong className="text-emerald-900 font-bold">{money(selectedCall.target)}</strong> (+{selectedCall.upside}%)
+                        </span>
+                      )}
+                      {selectedCall.stopLoss != null && selectedCall.stopLoss > 0 && (
+                        <span className="px-1.5 py-0.5 rounded text-[10.5px] font-mono text-rose-700 bg-rose-50 border border-rose-200">
+                          Floor <strong className="text-rose-900 font-bold">{money(selectedCall.stopLoss)}</strong>
+                        </span>
+                      )}
                     </div>
                   </div>
                   <div className="w-full min-w-0 overflow-hidden pt-0.5">
