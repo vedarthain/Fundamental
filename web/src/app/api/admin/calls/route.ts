@@ -234,11 +234,11 @@ export async function GET(request: Request) {
       SELECT 
           p.symbol,
           COALESCE(u.company_name, p.company_name) AS company_name,
-          COALESCE(u.sector, 'Other') AS sector,
+          COALESCE(mc.name, u.sector, 'Other') AS sector,
           COALESCE(u.industry, 'General') AS industry,
           u.market_cap_category,
           p.cluster_id,
-          c.name AS cluster_name,
+          COALESCE(c.name, c2.name, 'General') AS cluster_name,
           p.market_cap_cr,
           COALESCE(
               CASE WHEN si.ts IS NOT NULL AND sm.price_fetched_at IS NOT NULL AND sm.price_fetched_at > si.ts
@@ -280,6 +280,9 @@ export async function GET(request: Request) {
       JOIN latest_verdict v ON v.symbol = p.symbol
       LEFT JOIN app.universe u ON u.symbol = p.symbol
       LEFT JOIN app.cluster c ON c.id = p.cluster_id
+      LEFT JOIN app.cluster_assignment ca ON ca.symbol = p.symbol
+      LEFT JOIN app.cluster c2 ON c2.id = ca.cluster_id
+      LEFT JOIN app.meta_cluster mc ON mc.id = COALESCE(c.meta_cluster_id, c2.meta_cluster_id)
       LEFT JOIN app.screener_meta sm ON sm.symbol = p.symbol
       LEFT JOIN intraday_price si ON si.symbol = p.symbol
       LEFT JOIN user_calls uc ON uc.symbol = p.symbol
@@ -466,7 +469,7 @@ export async function GET(request: Request) {
                THEN ((SUM(p.broker_cur_value) - SUM(p.quantity * p.avg_cost)) / SUM(p.quantity * p.avg_cost)) * 100 
                ELSE NULL END AS pnl_pct,
           COALESCE(u.company_name, p.symbol) AS company_name,
-          COALESCE(u.sector, 'Other') AS sector,
+          COALESCE(mc.name, u.sector, 'Other') AS sector,
           COALESCE(u.industry, 'General') AS industry,
           u.market_cap_category,
           c.name AS cluster_name,
@@ -489,6 +492,7 @@ export async function GET(request: Request) {
       LEFT JOIN app.universe u ON u.symbol = p.symbol
       LEFT JOIN app.cluster_assignment ca ON ca.symbol = p.symbol
       LEFT JOIN app.cluster c ON c.id = ca.cluster_id
+      LEFT JOIN app.meta_cluster mc ON mc.id = c.meta_cluster_id
       LEFT JOIN app.screener_meta sm ON sm.symbol = p.symbol
       LEFT JOIN latest_panel lp ON lp.symbol = p.symbol
       LEFT JOIN intraday_price si ON si.symbol = p.symbol
@@ -500,7 +504,7 @@ export async function GET(request: Request) {
           GROUP BY symbol
       ) pt ON pt.symbol = p.symbol
       WHERE p.quantity > 0
-      GROUP BY p.symbol, u.company_name, u.sector, u.industry, u.market_cap_category, c.name, pt.first_buy_date,
+      GROUP BY p.symbol, u.company_name, mc.name, u.sector, u.industry, u.market_cap_category, c.name, pt.first_buy_date,
                lp.composite_pct, lp.quality_pct, lp.valuation_pct, lp.momentum_pct,
                v.verdict, v.confidence, v.target_price, v.fair_value, v.buy_below, v.bear_floor, v.upside_pct, v.valuation_method, v.generated_at, v.anchor_price
       ORDER BY v.generated_at DESC NULLS LAST

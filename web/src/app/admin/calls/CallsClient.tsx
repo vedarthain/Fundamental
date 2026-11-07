@@ -531,7 +531,7 @@ export function CallsClient() {
     {
       symbol: "INDUSTOWER",
       name: "Indus Towers Ltd.",
-      sector: "Telecommunication",
+      sector: "Tech & Communication",
       cluster: "Telecom",
       weightPct: 15,
       cmp: 378.3,
@@ -564,7 +564,7 @@ export function CallsClient() {
     {
       symbol: "UNIONBANK",
       name: "Union Bank of India",
-      sector: "Financial Services",
+      sector: "Financials",
       cluster: "PSU Banks",
       weightPct: 15,
       cmp: 186.0,
@@ -597,7 +597,7 @@ export function CallsClient() {
     {
       symbol: "BBTC",
       name: "Bombay Burmah Trading Corporation Ltd.",
-      sector: "Fast Moving Consumer Goods",
+      sector: "Consumer",
       cluster: "Packaged Foods & Dairy",
       weightPct: 15,
       cmp: 1284.3,
@@ -630,8 +630,8 @@ export function CallsClient() {
     {
       symbol: "SHAREINDIA",
       name: "Share India Securities Ltd.",
-      sector: "Financial Services",
-      cluster: "Capital Markets",
+      sector: "Financials",
+      cluster: "Brokers",
       weightPct: 15,
       cmp: 182.4,
       anchorPrice: 171.68,
@@ -664,7 +664,7 @@ export function CallsClient() {
       symbol: "NATCOPHARM",
       name: "Natco Pharma Ltd.",
       sector: "Healthcare",
-      cluster: "Pharma CDMO",
+      cluster: "Pharma CDMO, CRAMS & APIs",
       weightPct: 15,
       cmp: 790.5,
       anchorPrice: 791.85,
@@ -696,8 +696,8 @@ export function CallsClient() {
     {
       symbol: "ALLDIGI",
       name: "Alldigi Tech Ltd.",
-      sector: "Services",
-      cluster: "Commercial Services",
+      sector: "Industrials",
+      cluster: "Commercial B2B Services & Supplies",
       weightPct: 15,
       cmp: 831.65,
       anchorPrice: 772.25,
@@ -729,8 +729,8 @@ export function CallsClient() {
     {
       symbol: "APOLLOTYRE",
       name: "Apollo Tyres Ltd.",
-      sector: "Automobile and Auto Components",
-      cluster: "Auto Components",
+      sector: "Industrials",
+      cluster: "Tyres & Rubber Products",
       weightPct: 10,
       cmp: 400.4,
       anchorPrice: 384.15,
@@ -827,10 +827,10 @@ export function CallsClient() {
       callMap.set(g.symbol, {
         symbol: g.symbol,
         name: g.company_name || cur?.name || g.symbol,
-        sector: g.sector || cur?.sector || "General",
-        industry: g.industry || cur?.cluster || "General",
+        sector: cur?.sector || g.sector || "General",
+        industry: cur?.cluster || g.industry || "General",
         market_cap_category: g.market_cap_category || "mid_cap",
-        cluster: g.cluster_name || cur?.cluster || "General",
+        cluster: cur?.cluster || g.cluster_name || "General",
         marketCapCr: g.market_cap_cr ?? 0,
         cmp,
         buyBelow,
@@ -1891,8 +1891,18 @@ export function CallsClient() {
                                     </span>
                                   )}
                                 </div>
-                                <div className={`text-[10px] truncate ${isSel ? "text-slate-300" : "text-slate-500"} font-normal`}>
-                                  {call.name}
+                                <div className={`text-[10px] truncate ${isSel ? "text-slate-300" : "text-slate-500"} font-normal flex items-center gap-1`}>
+                                  <span className="truncate">{call.name}</span>
+                                  {call.cluster && (
+                                    <span
+                                      className={`text-[8.5px] px-1 py-0.2 rounded font-mono truncate shrink-0 max-w-[110px] ${
+                                        isSel ? "bg-white/15 text-slate-200" : "bg-slate-100 text-slate-600 border hairline"
+                                      }`}
+                                      title={`Cluster: ${call.cluster}`}
+                                    >
+                                      {call.cluster}
+                                    </span>
+                                  )}
                                 </div>
                               </div>
 
@@ -1966,9 +1976,14 @@ export function CallsClient() {
                     {selectedCall.name}
                   </span>
                   <CapTierBadge category={selectedCall.market_cap_category as CapCategory} />
-                  <span className="px-1.5 py-0.5 rounded text-[10.5px] font-medium text-slate-700 bg-slate-100 border hairline">
+                  <span className="px-1.5 py-0.5 rounded text-[10.5px] font-medium text-slate-700 bg-slate-100 border hairline" title="Sector (meta_cluster)">
                     {selectedCall.sector}
                   </span>
+                  {selectedCall.cluster && selectedCall.cluster !== selectedCall.sector && (
+                    <span className="px-1.5 py-0.5 rounded text-[10.5px] font-medium text-indigo-700 bg-indigo-50 border border-indigo-200" title="Industry Cluster (app.cluster)">
+                      {selectedCall.cluster}
+                    </span>
+                  )}
                   {selectedCall.isCurated && (
                     <span className="px-1.5 py-0.5 rounded text-[10.5px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
                       ★ TOP
@@ -3246,6 +3261,11 @@ export function CallsClient() {
                                           }`}
                                         >
                                           <span>{c.symbol}</span>
+                                          {c.cluster && (
+                                            <span className="text-[9.5px] opacity-75 font-sans">
+                                              ({c.cluster})
+                                            </span>
+                                          )}
                                           <span className="text-[10px] opacity-80">{money(c.cmp, 2)}</span>
                                           <span className={`text-[10px] font-semibold ${isCurSel ? "text-amber-300" : "text-emerald-700"}`}>
                                             +{c.upside}%
