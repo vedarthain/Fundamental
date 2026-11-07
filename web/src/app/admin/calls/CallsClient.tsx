@@ -28,7 +28,6 @@ import {
   Target,
   Activity,
   Info,
-  Clock,
   PieChart,
   Layers,
 } from "lucide-react";
@@ -452,7 +451,6 @@ export function CallsClient() {
   const [scope, setScope] = useState<Scope>("curated");
   const [actionFilter, setActionFilter] = useState<ActionFilter>("ALL");
   const [prioritySubFilter, setPrioritySubFilter] = useState<PriorityCategory>("ALL");
-  const [holdingAgeFilter, setHoldingAgeFilter] = useState<"ALL" | HoldingAgeTier>("ALL");
   const [search, setSearch] = useState("");
   const [capital] = useState<number>(100000);
 
@@ -1197,31 +1195,7 @@ export function CallsClient() {
     return { all: profitTrim + drawdown + exit, profitTrim, drawdown, exit };
   }, [unifiedCalls]);
 
-  // Holding age bracket breakdown counts (for actual portfolio holdings)
-  const holdingAgeCounts = useMemo(() => {
-    const counts: Record<HoldingAgeTier, number> = {
-      "< 1M": 0,
-      "1M–3M": 0,
-      "3M–6M": 0,
-      "6M–1Y": 0,
-      "> 1Y": 0,
-    };
-    unifiedCalls.forEach((c) => {
-      if (c.isPortfolio && c.holdingDuration?.tier) {
-        counts[c.holdingDuration.tier as HoldingAgeTier] = (counts[c.holdingDuration.tier as HoldingAgeTier] || 0) + 1;
-      }
-    });
-    return counts;
-  }, [unifiedCalls]);
-
-  const handleHoldingAgeClick = (tier: "ALL" | HoldingAgeTier) => {
-    setHoldingAgeFilter(tier);
-    if (tier !== "ALL") {
-      setScope("portfolio");
-    }
-  };
-
-  // Filter unified calls based on Multi-Selected Dates, Scope, Action Filter, Holding Age, and Search
+  // Filter unified calls based on Multi-Selected Dates, Scope, Action Filter, and Search
   const filteredCalls = useMemo(() => {
     return unifiedCalls.filter((c) => {
       // 1. Priority Sell calls: Immediate risk management alerts for held portfolio positions
@@ -1231,7 +1205,6 @@ export function CallsClient() {
         const isSell = act.includes("SELL") || act.includes("TRIM") || act.includes("EXIT") || act.includes("CUT LOSS");
         if (!isSell || !c.isPortfolio) return false;
         if (prioritySubFilter !== "ALL" && getPriorityCategory(c).category !== prioritySubFilter) return false;
-        if (holdingAgeFilter !== "ALL" && (!c.isPortfolio || c.holdingDuration?.tier !== holdingAgeFilter)) return false;
       } else {
         // Standard Scope Filter (Curated Top vs Portfolio vs All)
         if (scope === "curated" && !c.isCurated) return false;
@@ -1248,11 +1221,6 @@ export function CallsClient() {
         } else if (actionFilter === "HOLD") {
           const act = (c.actionToday || "").toUpperCase();
           if (!act.includes("HOLD") && !act.includes("WATCH")) return false;
-        }
-
-        // Holding Age Filter (< 1M, 1M–3M, 3M–6M, 6M–1Y, > 1Y)
-        if (holdingAgeFilter !== "ALL") {
-          if (!c.isPortfolio || c.holdingDuration?.tier !== holdingAgeFilter) return false;
         }
 
         // Multi-date selection check
@@ -1278,7 +1246,7 @@ export function CallsClient() {
 
       return true;
     });
-  }, [unifiedCalls, scope, actionFilter, prioritySubFilter, holdingAgeFilter, selectedBatches, search]);
+  }, [unifiedCalls, scope, actionFilter, prioritySubFilter, selectedBatches, search]);
 
   // Group filtered calls by Sector and Cluster for the Left Rail Tree
   const sectorGroups = useMemo(() => {
@@ -1765,89 +1733,6 @@ export function CallsClient() {
               </div>
             )}
           </div>
-        </div>
-
-        {/* ── Holding Age Brackets Filter Strip ───────────────────────────── */}
-        <div className="flex items-center gap-1.5 flex-wrap text-xs pt-1.5 mt-1 border-t hairline w-full justify-between">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1">
-              <Clock className="w-3 h-3 text-slate-400" />
-              <span>Holding Age:</span>
-            </span>
-            <div className="flex items-center bg-slate-100 p-0.5 rounded-md border hairline text-xs gap-0.5">
-              <button
-                onClick={() => handleHoldingAgeClick("ALL")}
-                className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all ${
-                  holdingAgeFilter === "ALL" ? "bg-white text-slate-900 shadow-2xs font-semibold" : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                All
-              </button>
-              <button
-                onClick={() => handleHoldingAgeClick("< 1M")}
-                className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all flex items-center gap-1 ${
-                  holdingAgeFilter === "< 1M" ? "bg-blue-600 text-white shadow-2xs font-semibold" : "text-blue-700 hover:bg-blue-50"
-                }`}
-              >
-                <span>&lt; 1M</span>
-                <span className={`text-[9.5px] px-1 rounded-full ${holdingAgeFilter === "< 1M" ? "bg-white/20" : "bg-blue-100 text-blue-800"}`}>
-                  {holdingAgeCounts["< 1M"]}
-                </span>
-              </button>
-              <button
-                onClick={() => handleHoldingAgeClick("1M–3M")}
-                className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all flex items-center gap-1 ${
-                  holdingAgeFilter === "1M–3M" ? "bg-cyan-700 text-white shadow-2xs font-semibold" : "text-cyan-800 hover:bg-cyan-50"
-                }`}
-              >
-                <span>1M–3M</span>
-                <span className={`text-[9.5px] px-1 rounded-full ${holdingAgeFilter === "1M–3M" ? "bg-white/20" : "bg-cyan-100 text-cyan-900"}`}>
-                  {holdingAgeCounts["1M–3M"]}
-                </span>
-              </button>
-              <button
-                onClick={() => handleHoldingAgeClick("3M–6M")}
-                className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all flex items-center gap-1 ${
-                  holdingAgeFilter === "3M–6M" ? "bg-amber-600 text-white shadow-2xs font-semibold" : "text-amber-800 hover:bg-amber-50"
-                }`}
-              >
-                <span>3M–6M</span>
-                <span className={`text-[9.5px] px-1 rounded-full ${holdingAgeFilter === "3M–6M" ? "bg-white/20" : "bg-amber-100 text-amber-900"}`}>
-                  {holdingAgeCounts["3M–6M"]}
-                </span>
-              </button>
-              <button
-                onClick={() => handleHoldingAgeClick("6M–1Y")}
-                className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all flex items-center gap-1 ${
-                  holdingAgeFilter === "6M–1Y" ? "bg-purple-600 text-white shadow-2xs font-semibold" : "text-purple-800 hover:bg-purple-50"
-                }`}
-              >
-                <span>6M–1Y</span>
-                <span className={`text-[9.5px] px-1 rounded-full ${holdingAgeFilter === "6M–1Y" ? "bg-white/20" : "bg-purple-100 text-purple-900"}`}>
-                  {holdingAgeCounts["6M–1Y"]}
-                </span>
-              </button>
-              <button
-                onClick={() => handleHoldingAgeClick("> 1Y")}
-                className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all flex items-center gap-1 ${
-                  holdingAgeFilter === "> 1Y" ? "bg-emerald-600 text-white shadow-2xs font-semibold" : "text-emerald-800 hover:bg-emerald-50"
-                }`}
-              >
-                <span>&gt; 1Y</span>
-                <span className={`text-[9.5px] px-1 rounded-full ${holdingAgeFilter === "> 1Y" ? "bg-white/20" : "bg-emerald-100 text-emerald-900"}`}>
-                  {holdingAgeCounts["> 1Y"]}
-                </span>
-              </button>
-            </div>
-          </div>
-          {holdingAgeFilter !== "ALL" && (
-            <button
-              onClick={() => setHoldingAgeFilter("ALL")}
-              className="text-[10.5px] text-slate-500 hover:text-slate-800 underline"
-            >
-              Reset Age Filter
-            </button>
-          )}
         </div>
       </div>
 
