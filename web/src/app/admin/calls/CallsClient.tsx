@@ -1908,8 +1908,8 @@ export function CallsClient() {
         </div>
       )}
 
-      {/* ── Two-Pane Workstation: Compressed Left Rail + Right Workstation ──── */}
-      <div className="grid grid-cols-1 lg:grid-cols-[195px_minmax(0,1fr)] xl:grid-cols-[210px_minmax(0,1fr)] gap-2 items-start w-full min-w-0">
+      {/* ── Two-Pane Workstation: Left Rail + Right Workstation ──── */}
+      <div className="grid grid-cols-1 lg:grid-cols-[260px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)] gap-2 items-start w-full min-w-0">
         {/* ── Left Rail: Compressed, Non-Bold, Neutral Styling ───────────────── */}
         <div className="w-full rounded-lg border hairline bg-white lg:sticky lg:top-2 lg:max-h-[calc(100vh-4rem)] flex flex-col overflow-hidden shadow-2xs">
           <div className="px-2.5 py-1.5 border-b hairline flex items-center justify-between shrink-0 bg-slate-50">
@@ -2014,13 +2014,13 @@ export function CallsClient() {
                                         id={`stock-rail-${call.symbol}`}
                                         type="button"
                                         onClick={() => setSelectedSymbol(call.symbol)}
-                                        className={`w-full flex items-center justify-between pl-6 pr-2.5 py-1.5 text-left transition-all ${
+                                        className={`w-full flex items-center justify-between pl-5 pr-2 py-1.5 text-left transition-all ${
                                           isSel
                                             ? "bg-slate-900 text-white shadow-2xs font-medium"
                                             : "hover:bg-slate-100 text-slate-800"
                                         }`}
                                       >
-                                        <div className="flex items-center gap-1.5 min-w-0">
+                                        <div className="flex items-center gap-1.5 min-w-0 flex-1 mr-1.5">
                                           {isPrioritySell && (
                                             <span
                                               className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0 animate-pulse"
@@ -2036,24 +2036,28 @@ export function CallsClient() {
                                               ★
                                             </span>
                                           )}
-                                          <span className="font-mono text-xs font-bold shrink-0">
+                                          <span className="font-mono text-xs font-bold truncate">
                                             {call.symbol}
                                           </span>
                                         </div>
 
-                                        <div className="flex items-center gap-2 text-right shrink-0">
+                                        <div className="flex items-center gap-1.5 text-right shrink-0">
                                           {pnl != null && (
                                             <span
-                                              className={`text-[11px] font-mono font-semibold ${
+                                              className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded whitespace-nowrap ${
                                                 pnl >= 0
-                                                  ? isSel ? "text-emerald-400" : "text-emerald-700"
-                                                  : isSel ? "text-rose-400" : "text-rose-600"
+                                                  ? isSel
+                                                    ? "bg-emerald-400/20 text-emerald-300 border border-emerald-400/40"
+                                                    : "bg-emerald-50 text-emerald-800 border border-emerald-300"
+                                                  : isSel
+                                                    ? "bg-rose-400/20 text-rose-300 border border-rose-400/40"
+                                                    : "bg-rose-50 text-rose-800 border border-rose-300"
                                               }`}
                                             >
                                               {pct(pnl, 1)}
                                             </span>
                                           )}
-                                          <span className="font-mono text-xs font-semibold">
+                                          <span className="font-mono text-xs font-semibold whitespace-nowrap">
                                             {money(call.cmp, 2)}
                                           </span>
                                         </div>
@@ -2247,7 +2251,7 @@ export function CallsClient() {
                     <div className="text-right shrink-0 font-mono text-[11px] sm:self-center">
                       <div>Target: <strong>{money(selectedCall.target)}</strong> | CMP: <strong>{money(selectedCall.cmp)}</strong></div>
                       {selectedCall.purchasePrice && (
-                        <div className={((selectedCall.cmp - selectedCall.purchasePrice) / selectedCall.purchasePrice) >= 0 ? "text-emerald-700 font-bold" : "text-rose-700 font-bold"}>
+                        <div className={((selectedCall.cmp - selectedCall.purchasePrice) / selectedCall.purchasePrice) >= 0 ? "text-emerald-800 font-bold" : "text-rose-700 font-bold"}>
                           Position P&amp;L: {pct(((selectedCall.cmp - selectedCall.purchasePrice) / selectedCall.purchasePrice) * 100)}
                         </div>
                       )}
@@ -2338,7 +2342,7 @@ export function CallsClient() {
                       <div className="text-right">
                         <span className="text-[8.5px] uppercase font-semibold text-slate-500 block">Return Since Call</span>
                         <div className="flex items-center justify-end gap-1">
-                          <span className={`text-xs sm:text-sm font-bold font-mono ${(selectedCall.callPerfPct ?? 0) >= 0 ? "text-emerald-700" : "text-rose-600"}`}>
+                          <span className={`text-xs sm:text-sm font-bold font-mono ${(selectedCall.callPerfPct ?? 0) >= 0 ? "text-emerald-800 font-bold" : "text-rose-700 font-bold"}`}>
                             {pct(selectedCall.callPerfPct)}
                           </span>
                           {selectedCall.callPrice && (
@@ -2447,7 +2451,7 @@ export function CallsClient() {
                           <span className="text-[8.5px] uppercase font-semibold text-slate-500 block">Return Since Buy</span>
                           {selectedCall.isPortfolio && selectedCall.purchasePerfPct != null && selectedCall.purchasePrice ? (
                             <div className="flex items-center justify-end gap-1">
-                              <span className={`text-xs sm:text-sm font-bold font-mono ${selectedCall.purchasePerfPct >= 0 ? "text-emerald-700" : "text-rose-600"}`}>
+                              <span className={`text-xs sm:text-sm font-bold font-mono ${selectedCall.purchasePerfPct >= 0 ? "text-emerald-800 font-bold" : "text-rose-700 font-bold"}`}>
                                 {pct(selectedCall.purchasePerfPct)}
                               </span>
                               {selectedCall.purchasePrice && (
