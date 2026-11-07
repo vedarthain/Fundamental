@@ -181,6 +181,97 @@ function formatValuationRegime(method: string | null | undefined): string {
   }
 }
 
+interface SectorTheme {
+  name: string;
+  dotColor: string;
+  badgeClass: string;
+  barColor: string;
+  subtleClass: string;
+}
+
+function getSectorTheme(sectorName?: string | null): SectorTheme {
+  const norm = (sectorName || "").toLowerCase().trim();
+  if (norm.includes("finan") || norm.includes("bank") || norm.includes("bfsi")) {
+    return {
+      name: sectorName || "Financials",
+      dotColor: "#4f46e5",
+      badgeClass: "bg-indigo-50 text-indigo-700 border-indigo-200",
+      barColor: "bg-indigo-600",
+      subtleClass: "text-indigo-700 bg-indigo-50/70 border-indigo-200/60",
+    };
+  }
+  if (norm.includes("tech") || norm.includes("communication") || norm.includes("telecom") || norm.includes("it")) {
+    return {
+      name: sectorName || "Tech & Communication",
+      dotColor: "#7c3aed",
+      badgeClass: "bg-violet-50 text-violet-700 border-violet-200",
+      barColor: "bg-violet-600",
+      subtleClass: "text-violet-700 bg-violet-50/70 border-violet-200/60",
+    };
+  }
+  if (norm.includes("health") || norm.includes("pharma") || norm.includes("med")) {
+    return {
+      name: sectorName || "Healthcare",
+      dotColor: "#059669",
+      badgeClass: "bg-emerald-50 text-emerald-700 border-emerald-200",
+      barColor: "bg-emerald-600",
+      subtleClass: "text-emerald-700 bg-emerald-50/70 border-emerald-200/60",
+    };
+  }
+  if (norm.includes("consumer") || norm.includes("fmcg") || norm.includes("retail")) {
+    return {
+      name: sectorName || "Consumer",
+      dotColor: "#d97706",
+      badgeClass: "bg-amber-50 text-amber-800 border-amber-200",
+      barColor: "bg-amber-600",
+      subtleClass: "text-amber-800 bg-amber-50/70 border-amber-200/60",
+    };
+  }
+  if (norm.includes("industr") || norm.includes("auto") || norm.includes("capital")) {
+    return {
+      name: sectorName || "Industrials",
+      dotColor: "#0284c7",
+      badgeClass: "bg-sky-50 text-sky-800 border-sky-200",
+      barColor: "bg-sky-600",
+      subtleClass: "text-sky-800 bg-sky-50/70 border-sky-200/60",
+    };
+  }
+  if (norm.includes("material") || norm.includes("chem") || norm.includes("metal")) {
+    return {
+      name: sectorName || "Materials",
+      dotColor: "#e11d48",
+      badgeClass: "bg-rose-50 text-rose-800 border-rose-200",
+      barColor: "bg-rose-600",
+      subtleClass: "text-rose-800 bg-rose-50/70 border-rose-200/60",
+    };
+  }
+  if (norm.includes("realt") || norm.includes("estate") || norm.includes("infra") || norm.includes("construct")) {
+    return {
+      name: sectorName || "Real Estate & Infra",
+      dotColor: "#ea580c",
+      badgeClass: "bg-orange-50 text-orange-800 border-orange-200",
+      barColor: "bg-orange-600",
+      subtleClass: "text-orange-800 bg-orange-50/70 border-orange-200/60",
+    };
+  }
+  if (norm.includes("energy") || norm.includes("power") || norm.includes("util") || norm.includes("oil") || norm.includes("gas")) {
+    return {
+      name: sectorName || "Energy & Utilities",
+      dotColor: "#0d9488",
+      badgeClass: "bg-teal-50 text-teal-800 border-teal-200",
+      barColor: "bg-teal-600",
+      subtleClass: "text-teal-800 bg-teal-50/70 border-teal-200/60",
+    };
+  }
+  return {
+    name: sectorName || "Other",
+    dotColor: "#64748b",
+    badgeClass: "bg-slate-50 text-slate-700 border-slate-200",
+    barColor: "bg-slate-600",
+    subtleClass: "text-slate-700 bg-slate-50 border-slate-200",
+  };
+}
+
 function stripTag(text: string, tagRegex: RegExp): string {
   return text.replace(tagRegex, "").trim();
 }
@@ -1818,13 +1909,18 @@ export function CallsClient() {
                       onClick={() => toggleSector(g.sector)}
                       className="w-full flex items-center justify-between px-2 py-1 text-left text-xs font-normal text-slate-700 hover:bg-slate-100 transition-colors"
                     >
-                      <div className="flex items-center gap-1 min-w-0">
+                      <div className="flex items-center gap-1.5 min-w-0">
                         {isSecOpen ? (
                           <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" />
                         ) : (
                           <ChevronRight className="w-3 h-3 text-slate-400 shrink-0" />
                         )}
-                        <span className="truncate text-slate-700 font-normal">{g.sector}</span>
+                        <span
+                          className="w-2 h-2 rounded-full shrink-0 shadow-2xs"
+                          style={{ backgroundColor: getSectorTheme(g.sector).dotColor }}
+                          title={g.sector}
+                        />
+                        <span className="truncate text-slate-800 font-medium">{g.sector}</span>
                       </div>
                       <span className="px-1 py-0.2 rounded text-[9.5px] font-mono font-normal bg-slate-200/60 text-slate-600 shrink-0">
                         {g.count}
@@ -1895,8 +1991,10 @@ export function CallsClient() {
                                   <span className="truncate">{call.name}</span>
                                   {call.cluster && (
                                     <span
-                                      className={`text-[8.5px] px-1 py-0.2 rounded font-mono truncate shrink-0 max-w-[110px] ${
-                                        isSel ? "bg-white/15 text-slate-200" : "bg-slate-100 text-slate-600 border hairline"
+                                      className={`text-[8.5px] px-1.5 py-0.2 rounded font-mono truncate shrink-0 max-w-[110px] ${
+                                        isSel
+                                          ? "bg-purple-900/60 text-purple-200 border border-purple-400/40"
+                                          : "bg-purple-50 text-purple-700 border border-purple-200/80"
                                       }`}
                                       title={`Cluster: ${call.cluster}`}
                                     >
@@ -1976,33 +2074,6 @@ export function CallsClient() {
                     {selectedCall.name}
                   </span>
                   <CapTierBadge category={selectedCall.market_cap_category as CapCategory} />
-                  <span className="px-1.5 py-0.5 rounded text-[10.5px] font-medium text-slate-700 bg-slate-100 border hairline" title="Sector (meta_cluster)">
-                    {selectedCall.sector}
-                  </span>
-                  {selectedCall.cluster && selectedCall.cluster !== selectedCall.sector && (
-                    <span className="px-1.5 py-0.5 rounded text-[10.5px] font-medium text-indigo-700 bg-indigo-50 border border-indigo-200" title="Industry Cluster (app.cluster)">
-                      {selectedCall.cluster}
-                    </span>
-                  )}
-                  {selectedCall.isCurated && (
-                    <span className="px-1.5 py-0.5 rounded text-[10.5px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
-                      ★ TOP
-                    </span>
-                  )}
-                  {selectedCall.isPortfolio && (
-                    <span className="px-1.5 py-0.5 rounded text-[10.5px] font-medium bg-blue-50 text-blue-800 border border-blue-200">
-                      Held: {selectedCall.heldQty} sh
-                    </span>
-                  )}
-                  {selectedCall.isPortfolio && selectedCall.holdingDuration && (
-                    <span
-                      className={`px-1.5 py-0.5 rounded text-[10.5px] font-medium border flex items-center gap-1 ${selectedCall.holdingDuration.badgeClass}`}
-                      title={`Holding age: ${selectedCall.holdingDuration.days} days (${selectedCall.holdingDuration.tier} bracket)`}
-                    >
-                      <Clock className="w-3 h-3" />
-                      <span>Held: {selectedCall.holdingDuration.label}</span>
-                    </span>
-                  )}
                   {selectedCall.isPortfolio && isSellAction && (
                     <span className="px-2 py-0.5 rounded text-[10.5px] font-bold bg-rose-600 text-white shadow-2xs flex items-center gap-1">
                       <span>🚨 PRIORITY TRIM / EXIT</span>
@@ -2328,17 +2399,27 @@ export function CallsClient() {
                     ) : (
                       <div className="flex items-center justify-between pt-1 mt-0.5 border-t border-emerald-100/80">
                         <div>
-                          <span className="text-[8.5px] uppercase font-semibold text-slate-500 block">Purchase Price</span>
-                          <div className="flex items-center gap-1">
+                          <span className="text-[8.5px] uppercase font-semibold text-slate-500 block">Purchase Price &amp; Qty</span>
+                          <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="text-xs sm:text-sm font-bold font-mono text-slate-900">
                               {selectedCall.isPortfolio && selectedCall.purchasePrice ? money(selectedCall.purchasePrice) : "—"}
                             </span>
+                            {selectedCall.isPortfolio && selectedCall.heldQty != null && selectedCall.heldQty > 0 && (
+                              <span className="text-[10px] font-mono font-bold px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-900 border border-emerald-300">
+                                {selectedCall.heldQty} sh
+                              </span>
+                            )}
                             <span className="text-[9px] text-slate-500">
                               {selectedCall.isPortfolio && selectedCall.purchasePrice && selectedCall.purchaseDate
                                 ? `(${fmtDate(selectedCall.purchaseDate)})`
                                 : "(Not held)"}
                             </span>
                           </div>
+                          {selectedCall.isPortfolio && (selectedCall.investedVal || (selectedCall.heldQty && selectedCall.purchasePrice)) ? (
+                            <div className="text-[9px] text-slate-500 font-mono mt-0.5">
+                              Invested: <span className="font-semibold text-slate-700">{money(selectedCall.investedVal ?? (selectedCall.heldQty! * selectedCall.purchasePrice!))}</span>
+                            </div>
+                          ) : null}
                         </div>
 
                         <div className="text-right">
@@ -3129,23 +3210,13 @@ export function CallsClient() {
                         </div>
 
                         <div className="h-4 w-full rounded-md overflow-hidden flex bg-slate-100 border hairline">
-                          {sectorDensityData.list.map((sec, idx) => {
-                            const colors = [
-                              "bg-indigo-600",
-                              "bg-emerald-600",
-                              "bg-sky-600",
-                              "bg-amber-600",
-                              "bg-violet-600",
-                              "bg-teal-600",
-                              "bg-rose-600",
-                              "bg-slate-600",
-                            ];
-                            const color = colors[idx % colors.length];
+                          {sectorDensityData.list.map((sec) => {
+                            const secTheme = getSectorTheme(sec.sector);
                             return (
                               <div
                                 key={sec.sector}
                                 style={{ width: `${Math.max(sec.calculatedWeight, 2)}%` }}
-                                className={`${color} h-full transition-all relative group cursor-pointer`}
+                                className={`${secTheme.barColor} h-full transition-all relative group cursor-pointer`}
                                 title={`${sec.sector}: ${sec.calculatedWeight.toFixed(1)}% (${sec.calls.length} stocks)`}
                               />
                             );
@@ -3154,22 +3225,12 @@ export function CallsClient() {
 
                         {/* Legend */}
                         <div className="flex flex-wrap gap-2 pt-1 text-[11px]">
-                          {sectorDensityData.list.map((sec, idx) => {
-                            const badgeColors = [
-                              "bg-indigo-50 text-indigo-700 border-indigo-200",
-                              "bg-emerald-50 text-emerald-700 border-emerald-200",
-                              "bg-sky-50 text-sky-700 border-sky-200",
-                              "bg-amber-50 text-amber-700 border-amber-200",
-                              "bg-violet-50 text-violet-700 border-violet-200",
-                              "bg-teal-50 text-teal-700 border-teal-200",
-                              "bg-rose-50 text-rose-700 border-rose-200",
-                              "bg-slate-50 text-slate-700 border-slate-200",
-                            ];
-                            const badge = badgeColors[idx % badgeColors.length];
+                          {sectorDensityData.list.map((sec) => {
+                            const secTheme = getSectorTheme(sec.sector);
                             return (
                               <span
                                 key={sec.sector}
-                                className={`px-2 py-0.5 rounded-full border text-[10.5px] font-medium flex items-center gap-1.5 ${badge}`}
+                                className={`px-2 py-0.5 rounded-full border text-[10.5px] font-medium flex items-center gap-1.5 ${secTheme.badgeClass}`}
                               >
                                 <span className="font-semibold">{sec.sector}:</span>
                                 <span className="font-mono">{sec.calculatedWeight.toFixed(1)}%</span>
@@ -3187,6 +3248,7 @@ export function CallsClient() {
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                           {sectorDensityData.list.map((sec) => {
+                            const secTheme = getSectorTheme(sec.sector);
                             const isOver = sec.calculatedWeight > 30;
                             const isMod = sec.calculatedWeight >= 20 && sec.calculatedWeight <= 30;
                             return (
@@ -3203,6 +3265,10 @@ export function CallsClient() {
                                 <div className="flex items-start justify-between gap-2">
                                   <div>
                                     <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span
+                                        className="w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs"
+                                        style={{ backgroundColor: secTheme.dotColor }}
+                                      />
                                       <h4 className="font-bold text-slate-900 text-xs sm:text-sm">
                                         {sec.sector}
                                       </h4>
@@ -3262,8 +3328,8 @@ export function CallsClient() {
                                         >
                                           <span>{c.symbol}</span>
                                           {c.cluster && (
-                                            <span className="text-[9.5px] opacity-75 font-sans">
-                                              ({c.cluster})
+                                            <span className={`text-[9px] px-1 py-0.2 rounded font-mono ${isCurSel ? "bg-white/20 text-white" : "bg-purple-50 text-purple-700 border border-purple-200/60"}`}>
+                                              {c.cluster}
                                             </span>
                                           )}
                                           <span className="text-[10px] opacity-80">{money(c.cmp, 2)}</span>
