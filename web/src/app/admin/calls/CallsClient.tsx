@@ -1892,7 +1892,8 @@ export function CallsClient() {
                                     const actUpper = (call.actionToday || "").toUpperCase();
                                     const isSell = actUpper.includes("SELL") || actUpper.includes("TRIM") || actUpper.includes("EXIT") || actUpper.includes("CUT LOSS");
                                     const isPrioritySell = isSell && call.isPortfolio;
-                                    const pnl = call.isPortfolio && call.purchasePerfPct != null ? call.purchasePerfPct : call.callPerfPct;
+                                    const isHolding = Boolean(call.isPortfolio && call.purchasePerfPct != null);
+                                    const pnl = isHolding ? call.purchasePerfPct : call.callPerfPct;
                                     return (
                                       <button
                                         key={call.symbol}
@@ -1904,6 +1905,11 @@ export function CallsClient() {
                                             ? "bg-slate-900 text-white shadow-2xs font-medium"
                                             : "hover:bg-slate-100 text-slate-800"
                                         }`}
+                                        title={
+                                          isHolding
+                                            ? `Held in portfolio | Position P&L: ${pct(call.purchasePerfPct)} | Avg Cost: ${money(call.purchasePrice)} | CMP: ${money(call.cmp)}`
+                                            : `Call Price: ${money(call.callPrice)} | Return: ${pct(call.callPerfPct)} | CMP: ${money(call.cmp)}`
+                                        }
                                       >
                                         <div className="flex items-center gap-1.5 min-w-0 flex-1 mr-1.5">
                                           {isPrioritySell && (
@@ -1930,13 +1936,17 @@ export function CallsClient() {
                                           {pnl != null && (
                                             <span
                                               className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded whitespace-nowrap ${
-                                                pnl >= 0
-                                                  ? isSel
-                                                    ? "bg-emerald-400/20 text-emerald-300 border border-emerald-400/40"
-                                                    : "bg-emerald-50 text-emerald-800 border border-emerald-300"
+                                                isHolding
+                                                  ? pnl >= 0
+                                                    ? isSel
+                                                      ? "bg-emerald-400/20 text-emerald-300 border border-emerald-400/40"
+                                                      : "bg-emerald-50 text-emerald-800 border border-emerald-300"
+                                                    : isSel
+                                                      ? "bg-rose-400/20 text-rose-300 border border-rose-400/40"
+                                                      : "bg-rose-50 text-rose-800 border border-rose-300"
                                                   : isSel
-                                                    ? "bg-rose-400/20 text-rose-300 border border-rose-400/40"
-                                                    : "bg-rose-50 text-rose-800 border border-rose-300"
+                                                    ? "bg-blue-400/20 text-blue-300 border border-blue-400/40"
+                                                    : "bg-blue-50 text-blue-800 border border-blue-300"
                                               }`}
                                             >
                                               {pct(pnl, 1)}
