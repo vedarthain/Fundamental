@@ -468,6 +468,16 @@ export function CallsClient() {
   // Expanded sectors set for tree (in 'all'/'portfolio' only 1 sector open initially; in 'curated' (Top) all are uncollapsed by default)
   const [expandedSectors, setExpandedSectors] = useState<Set<string>>(new Set());
   const [collapsedCuratedSectors, setCollapsedCuratedSectors] = useState<Set<string>>(new Set());
+  const [collapsedClusters, setCollapsedClusters] = useState<Set<string>>(new Set());
+
+  const toggleCluster = (clusterKey: string) => {
+    setCollapsedClusters((prev) => {
+      const next = new Set(prev);
+      if (next.has(clusterKey)) next.delete(clusterKey);
+      else next.add(clusterKey);
+      return next;
+    });
+  };
   const [hasInitializedSectors, setHasInitializedSectors] = useState(false);
 
   // Call status overrides
@@ -1268,29 +1278,62 @@ export function CallsClient() {
     });
   }, [unifiedCalls, scope, actionFilter, prioritySubFilter, holdingAgeFilter, selectedBatches, search]);
 
-  // Group filtered calls by Sector for the Left Rail Tree
+  // Group filtered calls by Sector and Cluster for the Left Rail Tree
   const sectorGroups = useMemo(() => {
-    const map = new Map<string, typeof filteredCalls>();
+    const secMap = new Map<string, typeof filteredCalls>();
     filteredCalls.forEach((c) => {
       const sec = c.sector || "Other";
-      if (!map.has(sec)) map.set(sec, []);
-      map.get(sec)!.push(c);
+      if (!secMap.has(sec)) secMap.set(sec, []);
+      secMap.get(sec)!.push(c);
     });
 
-    const groups: { sector: string; count: number; calls: typeof filteredCalls }[] = [];
-    map.forEach((calls, sector) => {
-      calls.sort((a, b) => {
-        const aAct = (a.actionToday || "").toUpperCase();
-        const bAct = (b.actionToday || "").toUpperCase();
-        const aIsPri = (aAct.includes("SELL") || aAct.includes("TRIM") || aAct.includes("EXIT") || aAct.includes("CUT LOSS")) && a.isPortfolio;
-        const bIsPri = (bAct.includes("SELL") || bAct.includes("TRIM") || bAct.includes("EXIT") || bAct.includes("CUT LOSS")) && b.isPortfolio;
-        if (aIsPri && !bIsPri) return -1;
-        if (!aIsPri && bIsPri) return 1;
-        if (a.isCurated && !b.isCurated) return -1;
-        if (!a.isCurated && b.isCurated) return 1;
-        return (b.composite_pct ?? 0) - (a.composite_pct ?? 0);
+    type CallItem = (typeof filteredCalls)[number];
+    const groups: {
+      sector: string;
+      count: number;
+      calls: CallItem[];
+      clusters: {
+        cluster: string;
+        count: number;
+        calls: CallItem[];
+      }[];
+    }[] = [];
+
+    secMap.forEach((secCalls, sector) => {
+      const clusterMap = new Map<string, CallItem[]>();
+      secCalls.forEach((c) => {
+        const clus = c.cluster || "General";
+        if (!clusterMap.has(clus)) clusterMap.set(clus, []);
+        clusterMap.get(clus)!.push(c);
       });
-      groups.push({ sector, count: calls.length, calls });
+
+      const clusters: { cluster: string; count: number; calls: CallItem[] }[] = [];
+      clusterMap.forEach((clusCalls, cluster) => {
+        clusCalls.sort((a, b) => {
+          if (a.isCurated && !b.isCurated) return -1;
+          if (!a.isCurated && b.isCurated) return 1;
+          const aAct = (a.actionToday || "").toUpperCase();
+          const bAct = (b.actionToday || "").toUpperCase();
+          const aIsPri = (aAct.includes("SELL") || aAct.includes("TRIM") || aAct.includes("EXIT") || aAct.includes("CUT LOSS")) && a.isPortfolio;
+          const bIsPri = (bAct.includes("SELL") || bAct.includes("TRIM") || bAct.includes("EXIT") || bAct.includes("CUT LOSS")) && b.isPortfolio;
+          if (aIsPri && !bIsPri) return -1;
+          if (!aIsPri && bIsPri) return 1;
+          return a.symbol.localeCompare(b.symbol);
+        });
+        clusters.push({ cluster, count: clusCalls.length, calls: clusCalls });
+      });
+
+      clusters.sort((a, b) => a.cluster.localeCompare(b.cluster));
+
+      // Flatten sorted calls for this sector so keyboard navigation visits every stock in order
+      const sortedSecCalls = clusters.flatMap((cl) => cl.calls);
+
+      groups.push({
+        sector,
+        count: secCalls.length,
+        calls: sortedSecCalls,
+        clusters,
+      });
     });
 
     groups.sort((a, b) => a.sector.localeCompare(b.sector));
@@ -1302,7 +1345,7 @@ export function CallsClient() {
     return filteredCalls.find((c) => c.symbol === selectedSymbol) || filteredCalls[0] || null;
   }, [filteredCalls, selectedSymbol]);
 
-  // Initial state & dynamic auto-expansion: ALWAYS open the selected stock's sector in left rail
+  // Initial state & dynamic auto-expansion: ALWAYS open the selected stock's sector and cluster in left rail
   useEffect(() => {
     if (selectedCall?.sector) {
       if (scope === "curated") {
@@ -1320,6 +1363,15 @@ export function CallsClient() {
           return next;
         });
       }
+      if (selectedCall.cluster) {
+        const clusKey = `${selectedCall.sector}::${selectedCall.cluster}`;
+        setCollapsedClusters((prev) => {
+          if (!prev.has(clusKey)) return prev;
+          const next = new Set(prev);
+          next.delete(clusKey);
+          return next;
+        });
+      }
       // Scroll the selected stock in the left rail into view smoothly
       setTimeout(() => {
         const el = document.getElementById(`stock-rail-${selectedCall.symbol}`);
@@ -1328,7 +1380,7 @@ export function CallsClient() {
         }
       }, 60);
     }
-  }, [selectedCall?.symbol, selectedCall?.sector, scope]);
+  }, [selectedCall?.symbol, selectedCall?.sector, selectedCall?.cluster, scope]);
 
   // Price info callback from PriceChart (carries computed prev close & 1D change)
   const [stockPriceInfo, setStockPriceInfo] = useState<{
@@ -1396,6 +1448,7 @@ export function CallsClient() {
     } else {
       setExpandedSectors(new Set(sectorGroups.map((g) => g.sector)));
     }
+    setCollapsedClusters(new Set());
   };
 
   const collapseAll = () => {
@@ -1404,6 +1457,7 @@ export function CallsClient() {
     } else {
       setExpandedSectors(new Set());
     }
+    setCollapsedClusters(new Set());
   };
 
   // Keyboard Arrow Key Navigation (ArrowDown/ArrowRight = Next stock, ArrowUp/ArrowLeft = Prev stock)
@@ -1928,122 +1982,86 @@ export function CallsClient() {
                     </button>
 
                     {isSecOpen && (
-                      <div className="p-0.5 space-y-0.5 border-t hairline bg-white">
-                        {g.calls.map((call) => {
-                          const isSel = selectedCall?.symbol === call.symbol;
-                          const callMove = call.callPerfPct;
-                          const actUpper = (call.actionToday || "").toUpperCase();
-                          const isSell = actUpper.includes("SELL") || actUpper.includes("TRIM") || actUpper.includes("EXIT") || actUpper.includes("CUT LOSS");
-                          const isPrioritySell = isSell && call.isPortfolio;
-                          const priInfo = isPrioritySell ? getPriorityCategory(call) : null;
+                      <div className="border-t hairline bg-white divide-y divide-slate-100">
+                        {g.clusters.map((cl) => {
+                          const clusterKey = `${g.sector}::${cl.cluster}`;
+                          const isClusOpen = !collapsedClusters.has(clusterKey);
                           return (
-                            <button
-                              key={call.symbol}
-                              id={`stock-rail-${call.symbol}`}
-                              onClick={() => setSelectedSymbol(call.symbol)}
-                              className={`w-full flex items-center justify-between px-2 py-1 rounded text-left transition-all ${
-                                isSel
-                                  ? isPrioritySell
-                                    ? "bg-slate-900 text-white shadow-2xs ring-1 ring-rose-500"
-                                    : "bg-slate-900 text-white shadow-2xs"
-                                  : isPrioritySell
-                                    ? priInfo?.category === "PROFIT_TRIM"
-                                      ? "bg-emerald-50/70 hover:bg-emerald-100/80 text-slate-900 border-l-2 border-emerald-500"
-                                      : priInfo?.category === "STRUCTURAL_EXIT"
-                                        ? "bg-rose-50/80 hover:bg-rose-100 text-slate-900 border-l-2 border-rose-600"
-                                        : "bg-amber-50/70 hover:bg-amber-100/80 text-slate-900 border-l-2 border-amber-500"
-                                    : "hover:bg-slate-100/70 text-slate-800"
-                              }`}
-                            >
-                              <div className="min-w-0 flex-1 pr-1.5">
-                                <div className="flex items-center gap-1">
-                                  <span className="font-mono font-medium text-xs">{call.symbol}</span>
-                                  {isPrioritySell && priInfo && (
-                                    <span
-                                      className={`text-[8px] px-1 py-0.2 rounded font-bold uppercase tracking-tight flex items-center gap-0.5 ${
-                                        isSel ? "bg-white/20 text-white" : priInfo.badgeClass
-                                      }`}
-                                      title={priInfo.title}
-                                    >
-                                      {priInfo.badge}
-                                    </span>
+                            <div key={cl.cluster} className="bg-white">
+                              {/* Level 2: Cluster Subheader */}
+                              <button
+                                type="button"
+                                onClick={() => toggleCluster(clusterKey)}
+                                className="w-full flex items-center justify-between pl-4 pr-2 py-1 text-left text-[11px] font-medium text-slate-700 bg-slate-50/70 hover:bg-slate-100 transition-colors border-b border-slate-100/60"
+                              >
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  {isClusOpen ? (
+                                    <ChevronDown className="w-2.5 h-2.5 text-purple-600 shrink-0" />
+                                  ) : (
+                                    <ChevronRight className="w-2.5 h-2.5 text-slate-400 shrink-0" />
                                   )}
-                                  {call.isCurated && (
-                                    <span
-                                      className={`text-[8.5px] px-1 rounded font-normal ${
-                                        isSel ? "bg-amber-400 text-slate-950 font-medium" : "bg-amber-100 text-amber-900"
-                                      }`}
-                                    >
-                                      TOP
-                                    </span>
-                                  )}
-                                  {call.isPortfolio && !isPrioritySell && (
-                                    <span
-                                      className={`text-[8.5px] px-1 rounded font-normal ${
-                                        isSel ? "bg-blue-400 text-slate-950" : "bg-blue-50 text-blue-900 border border-blue-200"
-                                      }`}
-                                    >
-                                      P
-                                    </span>
-                                  )}
+                                  <span className="truncate text-purple-950 font-semibold">{cl.cluster}</span>
                                 </div>
-                                <div className={`text-[10px] truncate ${isSel ? "text-slate-300" : "text-slate-500"} font-normal flex items-center gap-1`}>
-                                  <span className="truncate">{call.name}</span>
-                                  {call.cluster && (
-                                    <span
-                                      className={`text-[8.5px] px-1.5 py-0.2 rounded font-mono truncate shrink-0 max-w-[110px] ${
-                                        isSel
-                                          ? "bg-purple-900/60 text-purple-200 border border-purple-400/40"
-                                          : "bg-purple-50 text-purple-700 border border-purple-200/80"
-                                      }`}
-                                      title={`Cluster: ${call.cluster}`}
-                                    >
-                                      {call.cluster}
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
+                                <span className="text-[9.5px] font-mono text-purple-700 font-medium">
+                                  {cl.count}
+                                </span>
+                              </button>
 
-                              <div className="text-right shrink-0">
-                                <div className="font-mono font-normal text-xs">{money(call.cmp, 2)}</div>
-                                <div className="flex items-center justify-end gap-1 mt-0.5">
-                                  {call.isPortfolio && call.holdingDuration && (
-                                    <span
-                                      className={`text-[8px] font-mono px-1 py-0.2 rounded border ${
-                                        isSel ? call.holdingDuration.badgeClassDark : call.holdingDuration.badgeClass
-                                      }`}
-                                      title={`Holding duration: ${call.holdingDuration.days} days (${call.holdingDuration.tier} bracket)`}
-                                    >
-                                      {call.holdingDuration.shortLabel}
-                                    </span>
-                                  )}
-                                  {callMove != null ? (
-                                    <span
-                                      className={`text-[9.5px] font-mono font-normal ${
-                                        callMove >= 0
-                                          ? isSel ? "text-emerald-400" : "text-emerald-700"
-                                          : isSel ? "text-rose-400" : "text-rose-600"
-                                      }`}
-                                    >
-                                      {pct(callMove)}
-                                    </span>
-                                  ) : null}
-                                  <span
-                                    className={`px-1 py-0.2 rounded text-[8px] uppercase font-normal ${
-                                      isSel
-                                        ? "bg-white/20 text-white"
-                                        : isPrioritySell && priInfo
-                                          ? priInfo.badgeClass
-                                          : isSell
-                                            ? "bg-rose-100 text-rose-800 border border-rose-300"
-                                            : actionBadgeClass(call.actionToday)
-                                    }`}
-                                  >
-                                    {isPrioritySell && priInfo ? priInfo.pillText : call.actionToday?.split(" ")[0]}
-                                  </span>
+                              {/* Level 3: Stock Name & Price */}
+                              {isClusOpen && (
+                                <div className="divide-y divide-slate-50">
+                                  {cl.calls.map((call) => {
+                                    const isSel = selectedCall?.symbol === call.symbol;
+                                    const actUpper = (call.actionToday || "").toUpperCase();
+                                    const isSell = actUpper.includes("SELL") || actUpper.includes("TRIM") || actUpper.includes("EXIT") || actUpper.includes("CUT LOSS");
+                                    const isPrioritySell = isSell && call.isPortfolio;
+                                    return (
+                                      <button
+                                        key={call.symbol}
+                                        id={`stock-rail-${call.symbol}`}
+                                        type="button"
+                                        onClick={() => setSelectedSymbol(call.symbol)}
+                                        className={`w-full flex items-center justify-between pl-6 pr-2.5 py-1.5 text-left transition-all ${
+                                          isSel
+                                            ? "bg-slate-900 text-white shadow-2xs font-medium"
+                                            : "hover:bg-slate-100 text-slate-800"
+                                        }`}
+                                      >
+                                        <div className="flex items-center gap-1.5 min-w-0 flex-1 pr-2">
+                                          {isPrioritySell && (
+                                            <span
+                                              className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0 animate-pulse"
+                                              title="Priority Sell / Trim"
+                                            />
+                                          )}
+                                          {call.isCurated && (
+                                            <span
+                                              className={`text-[8.5px] font-bold px-1 rounded shrink-0 ${
+                                                isSel ? "bg-amber-400 text-slate-950" : "bg-amber-100 text-amber-900 border border-amber-300"
+                                              }`}
+                                            >
+                                              ★
+                                            </span>
+                                          )}
+                                          <span className="font-mono text-xs font-bold shrink-0">
+                                            {call.symbol}
+                                          </span>
+                                          <span className={`text-[10.5px] truncate font-normal ${isSel ? "text-slate-300" : "text-slate-500"}`}>
+                                            {call.name}
+                                          </span>
+                                        </div>
+
+                                        <div className="text-right shrink-0">
+                                          <span className="font-mono text-xs font-semibold">
+                                            {money(call.cmp, 2)}
+                                          </span>
+                                        </div>
+                                      </button>
+                                    );
+                                  })}
                                 </div>
-                              </div>
-                            </button>
+                              )}
+                            </div>
                           );
                         })}
                       </div>
