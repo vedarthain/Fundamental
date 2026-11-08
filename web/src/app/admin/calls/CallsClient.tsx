@@ -915,6 +915,72 @@ export function CallsClient() {
       ],
       marginOfSafety: "Firm technical and fundamental support around the ₹380–₹395 zone. Substantial replacement market revenue cushioning cyclic downturns.",
     },
+    {
+      symbol: "TRANSRAILL",
+      name: "Transrail Lighting Ltd.",
+      sector: "Industrials",
+      cluster: "Electrical Equipment & Power T&D",
+      weightPct: 15,
+      cmp: 595.45,
+      anchorPrice: 595.45,
+      callDate: "2026-11-08",
+      buyBelow: 605.0,
+      target: 797.5,
+      stopLoss: 485.0,
+      upside: 33.9,
+      scores: "100 / 88 / 79",
+      horizon: "6M" as IdeaHorizon,
+      horizonLabel: "🏛️ 6M Fresh Anchor",
+      timeline: "5–6M",
+      role: "6M Power T&D Capex Anchor",
+      rationale: "Integrated EPC & power transmission tower manufacturing leader with backward-integrated conductors/monopoles, multi-year unexecuted order book (>₹10,000 Cr), and high ROCE (>24%).",
+      companyOverview: "Transrail Lighting Limited is one of India's premier engineering, procurement, and construction (EPC) companies specializing in power transmission and distribution (T&D), integrated with in-house manufacturing of galvanized lattice towers, conductors, and monopoles across 4 large-scale facilities.",
+      operatingHighlights: [
+        "Backward-integrated manufacturing of high-voltage towers and conductors shielding operating EBITDA margins (12–13%) from raw material volatility.",
+        "Multi-year order book visibility exceeding 2.5x trailing annual revenues across domestic HVDC corridors and international power grids.",
+        "Superior capital efficiency with ROCE > 24% and disciplined working capital cycle.",
+        "Strong execution track record across 55+ countries in Africa, Asia, and the Americas.",
+      ],
+      catalysts: [
+        "Accelerated national grid evacuation capex for renewable energy parks (Green Energy Corridors).",
+        "Margin expansion from rising share of higher-margin international T&D and substation turnkey orders.",
+        "Deleveraging balance sheet post-listing driving lower finance costs and PAT acceleration (>30% YoY).",
+      ],
+      marginOfSafety: "Trading at an attractive PEG < 0.8x with 2.5+ years of locked-in sovereign/utility order backlog. Bear floor anchored at ₹485.",
+    },
+    {
+      symbol: "BANKBARODA",
+      name: "Bank of Baroda",
+      sector: "Financials",
+      cluster: "PSU Banks",
+      weightPct: 15,
+      cmp: 292.15,
+      anchorPrice: 292.15,
+      callDate: "2026-11-08",
+      buyBelow: 302.9,
+      target: 416.8,
+      stopLoss: 213.6,
+      upside: 42.7,
+      scores: "95 / 72 / 69",
+      horizon: "1Y" as IdeaHorizon,
+      horizonLabel: "🏛️ 1Y Fresh Anchor",
+      timeline: "9–12M",
+      role: "1Y PSU Banking Value Anchor",
+      rationale: "Tier-1 PSU bank delivering sector-leading ROE (>16%), pristine asset quality with Net NPA < 0.65%, strong retail & corporate loan book expansion, and deep valuation comfort (<0.95x FY27E Book).",
+      companyOverview: "Bank of Baroda is India's second-largest public sector bank by asset base, operating over 8,200 domestic branches and a major international presence across 17 countries, serving over 165 million global customers across retail, MSME, agri, and corporate banking.",
+      operatingHighlights: [
+        "Best-in-class asset quality among PSU peers with Net NPA below 0.65% and Provision Coverage Ratio (PCR) > 93%.",
+        "Consistent RoA > 1.15% and RoE > 16.5% backed by disciplined credit underwriting and international book yields.",
+        "Retail and MSME (RAM) credit growing at 15%+ YoY, improving structural asset yield mix.",
+        "Robust Capital Adequacy (CRAR > 16.3%) supporting self-funded credit growth without equity dilution.",
+      ],
+      catalysts: [
+        "Re-rating toward 1.25x–1.35x Adjusted Book Value as RoA sustains above 1.15% across credit cycles.",
+        "Strong treasury and recovery income from resolved corporate accounts boosting non-interest income.",
+        "Consistent dividend yield (~2.8%–3.2%) providing downside cushion for institutional holders.",
+      ],
+      marginOfSafety: "Trading below 1.0x forward Adjusted Book Value despite private-bank-like RoE (>16%). Bear floor anchored at ₹213.60.",
+    },
   ], []);
 
   const curatedSymbolMap = useMemo(() => {
@@ -1364,6 +1430,10 @@ export function CallsClient() {
         clusCalls.sort((a, b) => {
           if (a.isCurated && !b.isCurated) return -1;
           if (!a.isCurated && b.isCurated) return 1;
+          // Within Curated (Top), put Fresh Unbought Anchors (!isPortfolio) first
+          if (a.isCurated && b.isCurated && a.isPortfolio !== b.isPortfolio) {
+            return a.isPortfolio ? 1 : -1;
+          }
           const aAct = (a.actionToday || "").toUpperCase();
           const bAct = (b.actionToday || "").toUpperCase();
           const aIsPri = (aAct.includes("SELL") || aAct.includes("TRIM") || aAct.includes("EXIT") || aAct.includes("CUT LOSS")) && a.isPortfolio;
@@ -1375,7 +1445,13 @@ export function CallsClient() {
         clusters.push({ cluster, count: clusCalls.length, calls: clusCalls });
       });
 
-      clusters.sort((a, b) => a.cluster.localeCompare(b.cluster));
+      clusters.sort((a, b) => {
+        const aHasFresh = a.calls.some((c) => c.isCurated && !c.isPortfolio);
+        const bHasFresh = b.calls.some((c) => c.isCurated && !c.isPortfolio);
+        if (aHasFresh && !bHasFresh) return -1;
+        if (!aHasFresh && bHasFresh) return 1;
+        return a.cluster.localeCompare(b.cluster);
+      });
 
       // Flatten sorted calls for this sector so keyboard navigation visits every stock in order
       const sortedSecCalls = clusters.flatMap((cl) => cl.calls);
@@ -1388,7 +1464,13 @@ export function CallsClient() {
       });
     });
 
-    groups.sort((a, b) => a.sector.localeCompare(b.sector));
+    groups.sort((a, b) => {
+      const aHasFresh = a.calls.some((c) => c.isCurated && !c.isPortfolio);
+      const bHasFresh = b.calls.some((c) => c.isCurated && !c.isPortfolio);
+      if (aHasFresh && !bHasFresh) return -1;
+      if (!aHasFresh && bHasFresh) return 1;
+      return a.sector.localeCompare(b.sector);
+    });
     return groups;
   }, [filteredCalls]);
 
@@ -3836,6 +3918,18 @@ export function CallsClient() {
                                           <span className="font-mono text-xs font-bold truncate">
                                             {call.symbol}
                                           </span>
+                                          {call.isCurated && !call.isPortfolio && (
+                                            <span
+                                              className={`text-[8px] font-mono font-bold px-1 py-0.2 rounded shrink-0 ${
+                                                isSel
+                                                  ? "bg-emerald-400 text-slate-950"
+                                                  : "bg-emerald-100 text-emerald-900 border border-emerald-300"
+                                              }`}
+                                              title="Fresh Anchor — Not yet bought in portfolio"
+                                            >
+                                              FRESH
+                                            </span>
+                                          )}
                                         </div>
 
                                         <div className="flex items-center gap-1.5 text-right shrink-0">
