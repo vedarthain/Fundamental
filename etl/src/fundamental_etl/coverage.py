@@ -112,7 +112,18 @@ SELECT
         -- 4. Tried, and failing. Distinguished from never_attempted because the
         --    remedies differ: this one needs a cookie rotation or a parser fix,
         --    that one just needs the queue to actually drain.
-        WHEN sm.last_status IS DISTINCT FROM 'ok' THEN 'fetch_failing'
+        --
+        --    EXCEPT: Newly listed or young companies (<90 days) whose Screener page
+        --    loads cleanly but has no Excel export button yet (Screener has not yet
+        --    published an Excel financial sheet for brand-new listings). These fall
+        --    through to arm 5 (gated_insufficient_history), where they belong.
+        WHEN sm.last_status IS DISTINCT FROM 'ok'
+         AND NOT (
+             sm.last_error LIKE 'Export button missing%'
+             AND (u.listing_date IS NULL
+                  OR u.listing_date >= %(snap)s::date - INTERVAL '90 days'
+                  OR u.maturity_tier = 'insufficient')
+         ) THEN 'fetch_failing'
 
         -- 5. Excluded from the metrics plan by maturity_tier, so there is no
         --    metrics row to carry a score_status and arm 2 can never see it.
@@ -144,7 +155,13 @@ SELECT
             'newest financials ' || COALESCE(fresh.newest::text, 'none')
             || ', ' || COALESCE((%(snap)s::date - fresh.newest)::text, '?') || ' days stale'
         WHEN sm.symbol IS NULL THEN 'no screener_meta row — fetch never attempted'
-        WHEN sm.last_status IS DISTINCT FROM 'ok' THEN
+        WHEN sm.last_status IS DISTINCT FROM 'ok'
+         AND NOT (
+             sm.last_error LIKE 'Export button missing%'
+             AND (u.listing_date IS NULL
+                  OR u.listing_date >= %(snap)s::date - INTERVAL '90 days'
+                  OR u.maturity_tier = 'insufficient')
+         ) THEN
             'last_status=' || COALESCE(sm.last_status, 'null')
             || ', failures=' || COALESCE(sm.consecutive_failures::text, '?')
         WHEN u.maturity_tier IS NULL
@@ -154,6 +171,9 @@ SELECT
             || COALESCE((SELECT COUNT(DISTINCT period_end)::text
                            FROM app.fundamentals_annual a WHERE a.symbol = u.symbol), '0')
             || ' annual periods'
+            || CASE WHEN sm.last_error LIKE 'Export button missing%'
+                    THEN ' (new listing, Screener export not yet available)'
+                    ELSE '' END
         -- Name WHICH of the two no_metrics causes this is. They need different
         -- remedies and the bucket cannot tell them apart on its own.
         WHEN m.symbol IS NULL THEN
