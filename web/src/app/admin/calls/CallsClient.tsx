@@ -495,7 +495,7 @@ export function CallsClient() {
   // Corpus Growth & Dynamic Investment Planner State
   const [corpusMonthlyInflow, setCorpusMonthlyInflow] = useState<number>(100000); // ₹1 Lakh / month
   const [corpusStepUpPct, setCorpusStepUpPct] = useState<number>(10); // 10% annual step-up
-  const [corpusCagrPct, setCorpusCagrPct] = useState<number>(16); // 16% expected returns
+  const [corpusCagrPct, setCorpusCagrPct] = useState<number>(25); // 25% expected returns
   const [corpusTargetHorizonYears, setCorpusTargetHorizonYears] = useState<number>(5); // 5Y horizon
   const [corpusManualBaseOverride, setCorpusManualBaseOverride] = useState<number | null>(null);
   const [isEditingBaseCorpus, setIsEditingBaseCorpus] = useState(false);
@@ -3191,22 +3191,36 @@ export function CallsClient() {
               <div className="space-y-1.5 p-2 rounded-md bg-slate-50/70 border hairline">
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-slate-700">Expected Portfolio CAGR</span>
-                  <span className="font-mono font-bold text-emerald-700 text-xs">
+                  <span className="font-mono font-bold text-emerald-700 text-xs bg-emerald-50 border border-emerald-200 px-1.5 py-0.2 rounded">
                     {corpusCagrPct}% p.a.
                   </span>
                 </div>
-                <div className="flex items-center gap-1 flex-wrap">
-                  {[12, 16, 20, 24].map((val) => (
+                <div className="flex items-center gap-2 pt-0.5">
+                  <span className="text-[10px] font-mono text-slate-400">10%</span>
+                  <input
+                    type="range"
+                    min={10}
+                    max={50}
+                    step={1}
+                    value={corpusCagrPct}
+                    onChange={(e) => setCorpusCagrPct(Number(e.target.value))}
+                    className="w-full h-1.5 bg-emerald-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
+                    title={`Slide CAGR from 10% to 50% (Current: ${corpusCagrPct}%)`}
+                  />
+                  <span className="text-[10px] font-mono text-slate-500 font-semibold">50%</span>
+                </div>
+                <div className="flex items-center gap-1 flex-wrap pt-0.5">
+                  {[15, 20, 25, 30, 40, 50].map((val) => (
                     <button
                       key={val}
                       onClick={() => setCorpusCagrPct(val)}
-                      className={`px-2 py-0.5 rounded text-[11px] font-mono font-medium transition-all ${
+                      className={`px-2 py-0.5 rounded text-[10.5px] font-mono font-medium transition-all ${
                         corpusCagrPct === val
                           ? "bg-emerald-700 text-white font-bold shadow-2xs"
                           : "bg-white text-slate-700 border hairline hover:bg-slate-100"
                       }`}
                     >
-                      {val === 12 ? "12% (Index)" : val === 16 ? "16% (Target)" : val === 20 ? "20% (Alpha)" : "24% (Super)"}
+                      {val === 25 ? "25% (Base)" : `${val}%`}
                     </button>
                   ))}
                 </div>
@@ -3427,30 +3441,54 @@ export function CallsClient() {
 
           {/* ── 10-Year Compounding Simulation & Crossover Trajectory ─────── */}
           <div className="bg-white border hairline rounded-lg p-3 sm:p-4 shadow-2xs space-y-3">
-            <div className="flex items-center justify-between border-b hairline pb-2 flex-wrap gap-2">
+            <div className="flex items-center justify-between border-b hairline pb-2.5 flex-wrap gap-3">
               <div>
-                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5 flex-wrap">
                   <BarChart3 className="w-4 h-4 text-emerald-600" />
                   <span>10-Year Compounding Trajectory &amp; The Compounding Crossover</span>
+                  <span className="px-2 py-0.5 rounded text-[10.5px] font-mono font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">
+                    @ {corpusCagrPct}% Annual Growth
+                  </span>
                 </h3>
                 <p className="text-[11px] text-slate-500 mt-0.5">
                   Year-by-year trajectory showing when portfolio returns overtake your fresh salary savings!
                 </p>
               </div>
 
-              {/* Quick Milestone Highlights */}
-              <div className="flex items-center gap-2 flex-wrap">
-                <div className="bg-slate-50 border hairline px-2.5 py-1 rounded text-right">
-                  <span className="text-[9.5px] uppercase font-bold text-slate-400 block">3-Year Target</span>
-                  <strong className="text-xs font-mono text-slate-900">{fmtLakhs(corpusSimulation.summary3Y?.endCorpus)}</strong>
+              {/* Inline CAGR Slider (10% to 50%) + Quick Milestone Highlights */}
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="bg-slate-50 border hairline rounded-md px-3 py-1.5 flex items-center gap-2.5">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 whitespace-nowrap">
+                    Growth Rate: <strong className="font-mono text-emerald-700 text-xs">{corpusCagrPct}%</strong>
+                  </div>
+                  <div className="flex items-center gap-1.5 w-36 sm:w-44">
+                    <span className="text-[9.5px] font-mono text-slate-400">10%</span>
+                    <input
+                      type="range"
+                      min={10}
+                      max={50}
+                      step={1}
+                      value={corpusCagrPct}
+                      onChange={(e) => setCorpusCagrPct(Number(e.target.value))}
+                      className="w-full h-1.5 bg-emerald-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
+                    />
+                    <span className="text-[9.5px] font-mono text-slate-600 font-bold">50%</span>
+                  </div>
                 </div>
-                <div className="bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded text-right">
-                  <span className="text-[9.5px] uppercase font-bold text-emerald-700 block">5-Year Target</span>
-                  <strong className="text-xs font-mono text-emerald-900">{fmtLakhs(corpusSimulation.summary5Y?.endCorpus)}</strong>
-                </div>
-                <div className="bg-indigo-50 border border-indigo-200 px-2.5 py-1 rounded text-right">
-                  <span className="text-[9.5px] uppercase font-bold text-indigo-700 block">10-Year Target</span>
-                  <strong className="text-xs font-mono text-indigo-900">{fmtLakhs(corpusSimulation.summary10Y?.endCorpus)}</strong>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="bg-slate-50 border hairline px-2.5 py-1 rounded text-right">
+                    <span className="text-[9.5px] uppercase font-bold text-slate-400 block">3-Year Target</span>
+                    <strong className="text-xs font-mono text-slate-900">{fmtLakhs(corpusSimulation.summary3Y?.endCorpus)}</strong>
+                  </div>
+                  <div className="bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded text-right">
+                    <span className="text-[9.5px] uppercase font-bold text-emerald-700 block">5-Year Target</span>
+                    <strong className="text-xs font-mono text-emerald-900">{fmtLakhs(corpusSimulation.summary5Y?.endCorpus)}</strong>
+                  </div>
+                  <div className="bg-indigo-50 border border-indigo-200 px-2.5 py-1 rounded text-right">
+                    <span className="text-[9.5px] uppercase font-bold text-indigo-700 block">10-Year Target</span>
+                    <strong className="text-xs font-mono text-indigo-900">{fmtLakhs(corpusSimulation.summary10Y?.endCorpus)}</strong>
+                  </div>
                 </div>
               </div>
             </div>
