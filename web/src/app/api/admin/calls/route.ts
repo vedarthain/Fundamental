@@ -102,6 +102,30 @@ export type PortfolioActionCall = {
   is_cleared: boolean;
 };
 
+export type MonthlyTradeItem = {
+  symbol: string;
+  company_name: string | null;
+  broker: string;
+  trade_date: string;
+  side: "buy" | "sell";
+  quantity: number;
+  price: number;
+  amount: number;
+};
+
+export type MonthlyAuditRow = {
+  month_key: string; // e.g. "2026-11"
+  month_label: string; // e.g. "Nov 2026"
+  full_month_label: string; // e.g. "November 2026"
+  total_bought: number;
+  total_sold: number;
+  buy_stocks_count: number;
+  sell_stocks_count: number;
+  total_trades_count: number;
+  buys: MonthlyTradeItem[];
+  sells: MonthlyTradeItem[];
+};
+
 function determineIdeaHorizon(args: {
   actionToday?: string;
   upsidePct?: number | null;
@@ -647,6 +671,146 @@ export async function GET(request: Request) {
       };
     });
 
+    // 3. Monthly Actuals Audit Ledger (from app.portfolio_transaction & app.portfolio_holding)
+    let monthlyAudit: MonthlyAuditRow[] = [];
+    let fullCorpusTotals = {
+      totalRows: portfolioActions.length,
+      totalInvested: portfolioActions.reduce((acc, p) => acc + p.invested_val, 0),
+      totalCurrent: portfolioActions.reduce((acc, p) => acc + p.cur_val, 0),
+    };
+
+    try {
+      const [rawTx, rawFullHoldings] = await Promise.all([
+        sql<{
+          month_key: string;
+          trade_date: string;
+          broker: string;
+          symbol: string;
+          company_name: string | null;
+          side: "buy" | "sell";
+          quantity: number;
+          price: number;
+          amount: number;
+        }[]>`
+          SELECT
+            to_char(t.trade_date, 'YYYY-MM') AS month_key,
+            t.trade_date::text AS trade_date,
+            COALESCE(t.broker, 'broker') AS broker,
+            t.symbol,
+            COALESCE(u.company_name, t.symbol) AS company_name,
+            t.side,
+            SUM(t.quantity)::float AS quantity,
+            (SUM(t.quantity * t.price) / NULLIF(SUM(t.quantity), 0))::float AS price,
+            SUM(t.quantity * t.price)::float AS amount
+          FROM app.portfolio_transaction t
+          LEFT JOIN app.universe u ON u.symbol = t.symbol
+          WHERE t.symbol IS NOT NULL
+          GROUP BY 1, 2, 3, 4, 5, 6
+          ORDER BY t.trade_date DESC, SUM(t.quantity * t.price) DESC
+        `,
+        sql<{
+          total_rows: number;
+          total_invested: number;
+          total_cur_value: number;
+        }[]>`
+          SELECT
+            COUNT(*)::int AS total_rows,
+            COALESCE(SUM(quantity * avg_cost), 0)::float AS total_invested,
+            COALESCE(SUM(broker_cur_value), 0)::float AS total_cur_value
+          FROM app.portfolio_holding
+          WHERE quantity > 0
+        `,
+      ]);
+
+      if (rawFullHoldings && rawFullHoldings[0] && rawFullHoldings[0].total_cur_value > 0) {
+        fullCorpusTotals = {
+          totalRows: Number(rawFullHoldings[0].total_rows || 0),
+          totalInvested: Number(rawFullHoldings[0].total_invested || 0),
+          totalCurrent: Number(rawFullHoldings[0].total_cur_value || 0),
+        };
+      }
+
+      const monthMap = new Map<string, MonthlyAuditRow>();
+
+      const formatMonthLabels = (mk: string) => {
+        const [y, m] = mk.split("-").map(Number);
+        if (!y || !m) return { short: mk, full: mk };
+        const d = new Date(y, m - 1, 1);
+        return {
+          short: d.toLocaleDateString("en-IN", { month: "short", year: "numeric" }),
+          full: d.toLocaleDateString("en-IN", { month: "long", year: "numeric" }),
+        };
+      };
+
+      // Ensure current month exists first
+      const now = new Date();
+      const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+      const curLabels = formatMonthLabels(currentMonthKey);
+      monthMap.set(currentMonthKey, {
+        month_key: currentMonthKey,
+        month_label: curLabels.short,
+        full_month_label: curLabels.full,
+        total_bought: 0,
+        total_sold: 0,
+        buy_stocks_count: 0,
+        sell_stocks_count: 0,
+        total_trades_count: 0,
+        buys: [],
+        sells: [],
+      });
+
+      for (const tx of rawTx) {
+        if (!tx.month_key) continue;
+        let row = monthMap.get(tx.month_key);
+        if (!row) {
+          const lbl = formatMonthLabels(tx.month_key);
+          row = {
+            month_key: tx.month_key,
+            month_label: lbl.short,
+            full_month_label: lbl.full,
+            total_bought: 0,
+            total_sold: 0,
+            buy_stocks_count: 0,
+            sell_stocks_count: 0,
+            total_trades_count: 0,
+            buys: [],
+            sells: [],
+          };
+          monthMap.set(tx.month_key, row);
+        }
+
+        const item: MonthlyTradeItem = {
+          symbol: tx.symbol,
+          company_name: tx.company_name,
+          broker: tx.broker,
+          trade_date: tx.trade_date,
+          side: tx.side === "sell" ? "sell" : "buy",
+          quantity: Number(tx.quantity || 0),
+          price: Number(tx.price || 0),
+          amount: Number(tx.amount || 0),
+        };
+
+        row.total_trades_count += 1;
+        if (item.side === "buy") {
+          row.total_bought += item.amount;
+          row.buys.push(item);
+        } else {
+          row.total_sold += item.amount;
+          row.sells.push(item);
+        }
+      }
+
+      monthlyAudit = Array.from(monthMap.values())
+        .map((r) => ({
+          ...r,
+          buy_stocks_count: new Set(r.buys.map((b) => b.symbol)).size,
+          sell_stocks_count: new Set(r.sells.map((s) => s.symbol)).size,
+        }))
+        .sort((a, b) => b.month_key.localeCompare(a.month_key));
+    } catch {
+      // Non-fatal fallback
+    }
+
     const summary = {
       totalGems: clusterGems.filter((g) => g.is_gem).length,
       totalClusterCalls: clusterGems.length,
@@ -655,8 +819,9 @@ export async function GET(request: Request) {
       portfolioHoldCount: portfolioActions.filter((p) => p.action_today === "HOLD & COMPOUND").length,
       portfolioAccumulateCount: portfolioActions.filter((p) => p.action_today === "ACCUMULATE / ADD").length,
       portfolioExitCount: portfolioActions.filter((p) => p.action_today === "EXIT / CUT LOSS").length,
-      totalInvestedCr: portfolioActions.reduce((acc, p) => acc + p.invested_val, 0) / 1e7,
-      totalCurrentCr: portfolioActions.reduce((acc, p) => acc + p.cur_val, 0) / 1e7,
+      totalInvestedCr: fullCorpusTotals.totalInvested / 1e7,
+      totalCurrentCr: fullCorpusTotals.totalCurrent / 1e7,
+      fullHoldingsCount: fullCorpusTotals.totalRows,
       horizonCounts: {
         "1M": clusterGems.filter((g) => g.horizon === "1M").length,
         "3M": clusterGems.filter((g) => g.horizon === "3M").length,
@@ -677,6 +842,7 @@ export async function GET(request: Request) {
       availableDates,
       clusterGems,
       portfolioActions,
+      monthlyAudit,
     }, {
       headers: { "Cache-Control": "no-store" },
     });
