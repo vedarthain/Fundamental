@@ -220,7 +220,10 @@ export function PriceChart({
   extraStats,
   onPriceInfo,
   height = 360,
+  isPortfolio = false,
 }: {
+  /** Optional indicator whether stock is in user's portfolio — renders P badge on chart */
+  isPortfolio?: boolean;
   /** Optional custom height in px for the candlestick area (defaults to 360px). */
   height?: number;
   /** Split-safe daily OHLC candles, ascending by date. When omitted (and a
@@ -577,6 +580,14 @@ export function PriceChart({
               }
             >
               {prefix}{headline.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+            </span>
+          )}
+          {isPortfolio && (
+            <span
+              className="px-1.5 py-0.2 rounded text-[10px] font-bold font-mono bg-blue-600 text-white shadow-2xs inline-flex items-center"
+              title="Held in Portfolio"
+            >
+              P
             </span>
           )}
           {effectiveDayChangePct != null && (
@@ -992,30 +1003,34 @@ function BuyMarkerCaption({
   prefix: string;
   className?: string;
 }) {
-  const buys = trades?.filter((t) => t.side === "B") ?? [];
+  const buys = trades?.filter((t) => t.side === "B" || t.side === "P") ?? [];
   if (buys.length === 0) return null;
   return (
     <div className={`flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] ${className ?? ""}`}>
-      {buys.map((t, i) => (
-        <span key={`buy-${i}-${t.d}`} className="inline-flex items-center gap-1 tabular-nums">
-          <span
-            className="inline-block h-2 w-2 rounded-full"
-            style={{ backgroundColor: "#16a34a", opacity: t.derived ? 0.6 : 1 }}
-            aria-hidden
-          />
-          <span className="font-semibold" style={{ color: "#16a34a" }}>
-            {t.derived ? "≈ " : ""}Bought {t.qty}
+      {buys.map((t, i) => {
+        const isPort = t.side === "P";
+        const col = isPort ? "#2563eb" : "#16a34a";
+        return (
+          <span key={`buy-${i}-${t.d}`} className="inline-flex items-center gap-1 tabular-nums">
+            <span
+              className="inline-block h-2 w-2 rounded-full"
+              style={{ backgroundColor: col, opacity: t.derived ? 0.6 : 1 }}
+              aria-hidden
+            />
+            <span className="font-semibold" style={{ color: col }}>
+              {isPort ? "Portfolio Holding" : `${t.derived ? "≈ " : ""}Bought`} {t.qty > 1 ? `${t.qty} sh` : ""}
+            </span>
+            <span className="muted-text">@</span>
+            <span className="font-medium">
+              {prefix}{t.price.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+            </span>
+            <span className="muted-text">
+              · {new Date(`${t.d}T00:00:00`).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
+              {t.derived ? " (approx)" : ""}
+            </span>
           </span>
-          <span className="muted-text">@</span>
-          <span className="font-medium">
-            {prefix}{t.price.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
-          </span>
-          <span className="muted-text">
-            · {new Date(`${t.d}T00:00:00`).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
-            {t.derived ? " (approx)" : ""}
-          </span>
-        </span>
-      ))}
+        );
+      })}
     </div>
   );
 }

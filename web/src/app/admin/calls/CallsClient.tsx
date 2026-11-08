@@ -35,6 +35,7 @@ import {
   ArrowUpDown,
 } from "lucide-react";
 import { PriceChart } from "@/components/PriceChart";
+import type { TradeMark } from "@/app/tools/scanner/CandleChart";
 import { formatFetchedAt } from "@/components/IntradayPriceBadge";
 import { CompanyProfile } from "@/components/CompanyProfile";
 import CapTierBadge, { type CapCategory } from "@/components/CapTierBadge";
@@ -462,8 +463,8 @@ export function CallsClient() {
   const [search, setSearch] = useState("");
   const [capital] = useState<number>(100000);
 
-  // Selected Stock & Detail Tab: default to top pick INDUSTOWER
-  const [selectedSymbol, setSelectedSymbol] = useState<string>("INDUSTOWER");
+  // Selected Stock & Detail Tab: dynamically defaults to the top scrip of active view
+  const [selectedSymbol, setSelectedSymbol] = useState<string>("");
   const [activeTab, setActiveTab] = useState<DetailTab>("overview");
   const [densityScope, setDensityScope] = useState<"curated" | "portfolio" | "all">("curated");
 
@@ -1266,9 +1267,9 @@ export function CallsClient() {
 
       if (search.trim()) {
         const q = search.trim().toLowerCase();
-        const mSym = c.symbol.toLowerCase().includes(q);
-        const mName = c.name.toLowerCase().includes(q);
-        const mSec = c.sector.toLowerCase().includes(q);
+        const mSym = (c.symbol || "").toLowerCase().includes(q);
+        const mName = (c.name || "").toLowerCase().includes(q);
+        const mSec = (c.sector || "").toLowerCase().includes(q);
         if (!mSym && !mName && !mSec) return false;
       }
 
@@ -1367,6 +1368,49 @@ export function CallsClient() {
   const selectedCall = useMemo(() => {
     return filteredCalls.find((c) => c.symbol === selectedSymbol) || filteredCalls[0] || null;
   }, [filteredCalls, selectedSymbol]);
+
+  // Whenever the active view filter/scope changes, automatically navigate to the top scrip of that view
+  const prevFilterKey = useRef<string>("");
+  useEffect(() => {
+    const key = `${scope}::${actionFilter}::${prioritySubFilter}::${Array.from(selectedBatches).sort().join(",")}`;
+    if (prevFilterKey.current !== key) {
+      prevFilterKey.current = key;
+      const topScrip = sectorGroups[0]?.calls[0]?.symbol || filteredCalls[0]?.symbol;
+      if (topScrip) {
+        setSelectedSymbol(topScrip);
+      }
+    }
+  }, [scope, actionFilter, prioritySubFilter, selectedBatches, sectorGroups, filteredCalls]);
+
+  // Fallback: If selectedSymbol is not set or not in current filteredCalls, pick the top scrip
+  useEffect(() => {
+    if (filteredCalls.length > 0) {
+      const exists = filteredCalls.some((c) => c.symbol === selectedSymbol);
+      if (!exists || !selectedSymbol) {
+        const topScrip = sectorGroups[0]?.calls[0]?.symbol || filteredCalls[0]?.symbol;
+        if (topScrip) {
+          setSelectedSymbol(topScrip);
+        }
+      }
+    }
+  }, [filteredCalls, sectorGroups, selectedSymbol]);
+
+  // Chart trade markers for selected stock (displays P on graph for portfolio holdings)
+  const chartTrades = useMemo<TradeMark[]>(() => {
+    if (!selectedCall || !selectedCall.isPortfolio) return [];
+    if (selectedCall.purchasePrice) {
+      return [
+        {
+          d: selectedCall.purchaseDate || new Date().toISOString().slice(0, 10),
+          side: "P",
+          price: selectedCall.purchasePrice,
+          qty: selectedCall.heldQty || selectedCall.totalShares || 1,
+          derived: !selectedCall.purchaseDate,
+        },
+      ];
+    }
+    return [];
+  }, [selectedCall]);
 
   // Initial state & dynamic auto-expansion: ALWAYS open the selected stock's sector and cluster in left rail
   useEffect(() => {
@@ -2383,27 +2427,6 @@ export function CallsClient() {
                     {selectedCall.actionToday}
                   </span>
 
-                  <button
-                    onClick={() => handleTakeCall(selectedCall.symbol)}
-                    disabled={selectedCall.isTaken}
-                    className={`px-2 py-0.5 rounded-md text-xs font-semibold transition-colors flex items-center gap-1 ${
-                      selectedCall.isTaken
-                        ? "bg-emerald-50 text-emerald-800 border border-emerald-300"
-                        : "bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs"
-                    }`}
-                  >
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    <span>{selectedCall.isTaken ? "Taken" : "Take Call"}</span>
-                  </button>
-
-                  <button
-                    onClick={() => handleExitCall(selectedCall.symbol)}
-                    disabled={selectedCall.isCleared}
-                    className="px-2 py-0.5 rounded-md text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 border hairline shadow-2xs"
-                  >
-                    {selectedCall.isCleared ? "Closed" : "Close"}
-                  </button>
-
                   <Link
                     href={`/stock/${selectedCall.symbol}`}
                     target="_blank"
@@ -2462,8 +2485,21 @@ export function CallsClient() {
                     <div className="flex items-center gap-1.5 font-bold text-slate-800 shrink-0">
                       <TrendingUp className="w-4 h-4 text-slate-600" />
                       <span>Price Chart &amp; Moving Averages</span>
+                      {selectedCall.isPortfolio && (
+                        <span
+                          className="px-1.5 py-0.2 rounded text-[10px] font-bold font-mono bg-blue-600 text-white shadow-2xs inline-flex items-center gap-0.5"
+                          title="Held in Portfolio"
+                        >
+                          P
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                      {selectedCall.stopLoss != null && selectedCall.stopLoss > 0 && (
+                        <span className="px-1.5 py-0.5 rounded text-[10.5px] font-mono text-rose-700 bg-rose-50 border border-rose-200">
+                          Floor <strong className="text-rose-900 font-bold">{money(selectedCall.stopLoss)}</strong>
+                        </span>
+                      )}
                       {selectedCall.buyBelow != null && selectedCall.buyBelow > 0 && (
                         <span className="px-1.5 py-0.5 rounded text-[10.5px] font-mono text-slate-700 bg-slate-50 border hairline">
                           Buy ≤ <strong className="text-slate-900 font-bold">{money(selectedCall.buyBelow)}</strong>
@@ -2474,11 +2510,6 @@ export function CallsClient() {
                           Target <strong className="text-emerald-900 font-bold">{money(selectedCall.target)}</strong> (+{selectedCall.upside}%)
                         </span>
                       )}
-                      {selectedCall.stopLoss != null && selectedCall.stopLoss > 0 && (
-                        <span className="px-1.5 py-0.5 rounded text-[10.5px] font-mono text-rose-700 bg-rose-50 border border-rose-200">
-                          Floor <strong className="text-rose-900 font-bold">{money(selectedCall.stopLoss)}</strong>
-                        </span>
-                      )}
                     </div>
                   </div>
                   <div className="w-full min-w-0 overflow-hidden pt-0.5">
@@ -2487,6 +2518,8 @@ export function CallsClient() {
                       currentPrice={selectedCall.cmp}
                       onPriceInfo={setStockPriceInfo}
                       height={315}
+                      isPortfolio={selectedCall.isPortfolio}
+                      trades={chartTrades}
                     />
                   </div>
                 </div>
@@ -2752,12 +2785,12 @@ export function CallsClient() {
 
                       <div className="flex items-center justify-between pt-1 mt-0.5 border-t border-slate-200 text-[10px]">
                         <div>
-                          <span className="text-[8.5px] uppercase font-semibold text-slate-400 block">Target Upside</span>
-                          <span className="font-mono font-bold text-emerald-700 text-xs">{money(selectedCall.target)} (+{selectedCall.upside}%)</span>
-                        </div>
-                        <div className="text-right">
                           <span className="text-[8.5px] uppercase font-semibold text-slate-400 block">Bear Floor</span>
                           <span className="font-mono font-bold text-rose-600 text-xs">{money(selectedCall.stopLoss)}</span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-[8.5px] uppercase font-semibold text-slate-400 block">Target Upside</span>
+                          <span className="font-mono font-bold text-emerald-700 text-xs">{money(selectedCall.target)} (+{selectedCall.upside}%)</span>
                         </div>
                       </div>
                     </div>
@@ -3257,6 +3290,10 @@ export function CallsClient() {
                           </span>
                         </div>
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 font-mono text-xs">
+                          <div className="p-2 rounded bg-white border border-rose-200">
+                            <span className="text-[10px] uppercase font-bold text-rose-700 block">Bear Floor</span>
+                            <strong className="text-rose-700 text-sm block mt-0.5">{money(contextData?.audit?.bear_floor ?? selectedCall.stopLoss)}</strong>
+                          </div>
                           <div className="p-2 rounded bg-white border border-indigo-100">
                             <span className="text-[10px] uppercase font-bold text-slate-400 block">Buy Below</span>
                             <strong className="text-slate-900 text-sm block mt-0.5">{money(contextData?.audit?.buy_below ?? selectedCall.buyBelow)}</strong>
@@ -3266,12 +3303,8 @@ export function CallsClient() {
                             <strong className="text-indigo-900 text-sm block mt-0.5">{money(contextData?.audit?.fair_value ?? selectedCall.target)}</strong>
                           </div>
                           <div className="p-2 rounded bg-white border border-emerald-200">
-                            <span className="text-[10px] uppercase font-bold text-emerald-700 block">Target Price</span>
+                            <span className="text-[10px] uppercase font-bold text-emerald-700 block">Target Upside</span>
                             <strong className="text-emerald-800 text-sm block mt-0.5">{money(contextData?.audit?.target_price ?? selectedCall.target)}</strong>
-                          </div>
-                          <div className="p-2 rounded bg-white border border-rose-200">
-                            <span className="text-[10px] uppercase font-bold text-rose-700 block">Bear Floor</span>
-                            <strong className="text-rose-700 text-sm block mt-0.5">{money(contextData?.audit?.bear_floor ?? selectedCall.stopLoss)}</strong>
                           </div>
                         </div>
                       </div>

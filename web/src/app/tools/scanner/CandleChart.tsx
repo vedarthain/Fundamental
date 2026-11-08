@@ -98,7 +98,7 @@ export type ChartTool = "none" | "measure" | "hline" | "trend" | "erase" | "aler
 // DATE (not a pixel/price) and drawn against the bar's own high/low, so it stays
 // correctly placed regardless of split-adjustment or timeframe. Side "B"=buy is
 // pinned just below the bar's low; "S"=sell just above the bar's high.
-export type TradeMark = { d: string; side: "B" | "S"; price: number; qty: number; derived?: boolean };
+export type TradeMark = { d: string; side: "B" | "S" | "P"; price: number; qty: number; derived?: boolean };
 
 // A user price alert to draw as a horizontal line. armed = green (waiting),
 // triggered = orange (crossed). Rendered on every chart, like an hline, but
@@ -107,6 +107,7 @@ export type AlertLine = { price: number; status: "armed" | "triggered" };
 const EMPTY_TRADES: TradeMark[] = [];
 const BUY_COL = "#16a34a";
 const SELL_COL = "#dc2626";
+const PORT_COL = "#2563eb";
 
 // Shared price/x geometry — the single source of truth used by both renderChart
 // (to draw) and the click handler (to invert a pixel back to a price/date).
@@ -627,22 +628,26 @@ function renderChart(
             const idx = idxForDate(data, t.d);
             const c = data[idx];
             if (!c) return null;
-            const buy = t.side === "B";
+            const isPort = t.side === "P";
+            const buy = t.side === "B" || isPort;
             const barY = buy ? yP(c.l) : yP(c.h);
             const cy = buy
               ? Math.min(barY + off, priceBot - 8)
               : Math.max(barY - off, priceTop + 8);
-            return { t, x: cx(idx), barY, cy, buy, col: buy ? BUY_COL : SELL_COL };
+            const col = isPort ? PORT_COL : (buy ? BUY_COL : SELL_COL);
+            return { t, x: cx(idx), barY, cy, buy, col, isPort };
           })
           .filter((m): m is NonNullable<typeof m> => m !== null);
         return drawn.map((m, i) => {
-          const { t, x, barY, cy, buy, col } = m;
+          const { t, x, barY, cy, buy, col, isPort } = m;
           const derived = t.derived === true;
           // Synthetic (snapshot-inferred) buys read differently: "≈" + a note the
           // date is a guess, and they're drawn faded/hollow so a real trade stands out.
-          const tip = derived
-            ? `≈ Buy ${t.qty} @ ${fmtPrice(t.price)} · ${t.d} (inferred from holding — date approx.)`
-            : `${buy ? "Buy" : "Sell"} ${t.qty} @ ${fmtPrice(t.price)} · ${t.d}`;
+          const tip = isPort
+            ? `Portfolio Holding: ${t.qty} sh @ ${fmtPrice(t.price)} · ${t.d}`
+            : derived
+              ? `≈ Buy ${t.qty} @ ${fmtPrice(t.price)} · ${t.d} (inferred from holding — date approx.)`
+              : `${buy ? "Buy" : "Sell"} ${t.qty} @ ${fmtPrice(t.price)} · ${t.d}`;
           return (
             <g key={`tx-${i}-${t.d}-${t.side}`} opacity={derived ? 0.75 : 1}>
               <line
@@ -671,15 +676,10 @@ function renderChart(
         });
       })()}
 
-      {/* Latest buy standing — a dashed horizontal line from the most recent
-          real buy's bar out to the right edge, so it reads at a glance
-          whether today's price sits above (green) or below (red) that buy,
-          the same way the alert lines above show where a target sits. Only
-          the single newest "B" trade; older ones already have their own dot
-          + caption and don't need a second reference line cluttering the
-          chart. */}
+      {/* Latest buy / portfolio holding standing — a dashed horizontal line from the most recent
+          real buy or portfolio holding bar out to the right edge */}
       {(() => {
-        const realBuys = trades.filter((t) => t.side === "B");
+        const realBuys = trades.filter((t) => t.side === "B" || t.side === "P");
         if (realBuys.length === 0) return null;
         const latest = realBuys.reduce((a, b) => (b.d > a.d ? b : a));
         const idx = idxForDate(data, latest.d);
@@ -688,7 +688,8 @@ function renderChart(
         if (y < priceTop - 1 || y > priceBot + 1) return null;
         const lastClose = data[data.length - 1]?.c;
         const up = lastClose == null || lastClose >= latest.price;
-        const color = up ? BUY_COL : SELL_COL;
+        const isPortTrade = latest.side === "P";
+        const color = isPortTrade ? PORT_COL : (up ? BUY_COL : SELL_COL);
         const tag = fmtPrice(latest.price);
         const tw = 6.6 * tag.length + 22;
         const ty = y - priceTop < 12 ? y + 12 : y - 5;
@@ -699,7 +700,7 @@ function renderChart(
               stroke={color} strokeWidth={1.2} strokeDasharray="4 3" opacity={0.85}
             />
             <rect x={plotR - tw} y={ty - 9} width={tw} height={12} rx={2} fill={color} opacity={0.92} />
-            <text x={plotR - tw + 3} y={ty} textAnchor="start" fontSize={9.5} fontWeight={800} fill="#fff">B</text>
+            <text x={plotR - tw + 3} y={ty} textAnchor="start" fontSize={9.5} fontWeight={800} fill="#fff">{latest.side}</text>
             <text x={plotR - 3} y={ty} textAnchor="end" fontSize={9.5} fontWeight={700} fill="#fff">{tag}</text>
           </g>
         );
