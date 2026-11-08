@@ -468,7 +468,10 @@ COLUMNS: dict[str, tuple[str, str]] = {
     "promoter_pct": ("Promoter holding", PCT),
     "fii_pct": ("Foreign institutional holding", PCT),
     "dii_pct": ("Domestic institutional holding", PCT),
+    "inst_flow_2q": ("Institutional flow, 2-quarter change", PCT),
     "shareholders": ("Shareholders on the register", COUNT),
+    # --- technicals -------------------------------------------------------
+    "tech_net_score_scaled": ("Technical composite score (0-1)", INDEX),
 }
 
 
