@@ -30,6 +30,9 @@ import {
   Info,
   PieChart,
   Layers,
+  LayoutDashboard,
+  Table as TableIcon,
+  ArrowUpDown,
 } from "lucide-react";
 import { PriceChart } from "@/components/PriceChart";
 import { formatFetchedAt } from "@/components/IntradayPriceBadge";
@@ -441,6 +444,11 @@ export function CallsClient() {
   } | null>(null);
 
   const [loading, setLoading] = useState(true);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Multi-Select Dates State: default to "all" so calls and priority alerts are never hidden by default
   const [selectedBatches, setSelectedBatches] = useState<Set<string>>(new Set(["all"]));
@@ -458,6 +466,11 @@ export function CallsClient() {
   const [selectedSymbol, setSelectedSymbol] = useState<string>("INDUSTOWER");
   const [activeTab, setActiveTab] = useState<DetailTab>("overview");
   const [densityScope, setDensityScope] = useState<"curated" | "portfolio" | "all">("curated");
+
+  // View Mode: Detail Workstation vs Master Table Sheet (Option 2)
+  const [viewMode, setViewMode] = useState<"detail" | "table">("detail");
+  const [tableSortKey, setTableSortKey] = useState<"symbol" | "cmp" | "target" | "upside" | "weight" | "quality">("weight");
+  const [tableSortAsc, setTableSortAsc] = useState<boolean>(false);
 
   // Stock context data
   const [contextData, setContextData] = useState<StockContext | null>(null);
@@ -1263,6 +1276,31 @@ export function CallsClient() {
     });
   }, [unifiedCalls, scope, actionFilter, prioritySubFilter, selectedBatches, search]);
 
+  // Sorted table calls for Master Table View (Option 2)
+  const sortedTableCalls = useMemo(() => {
+    const list = [...filteredCalls];
+    list.sort((a, b) => {
+      let diff = 0;
+      if (tableSortKey === "symbol") diff = a.symbol.localeCompare(b.symbol);
+      else if (tableSortKey === "cmp") diff = a.cmp - b.cmp;
+      else if (tableSortKey === "target") diff = (a.target || 0) - (b.target || 0);
+      else if (tableSortKey === "upside") diff = (a.upside || 0) - (b.upside || 0);
+      else if (tableSortKey === "weight") diff = (a.weightPct || 0) - (b.weightPct || 0);
+      else if (tableSortKey === "quality") diff = (a.quality_pct || 0) - (b.quality_pct || 0);
+      return tableSortAsc ? diff : -diff;
+    });
+    return list;
+  }, [filteredCalls, tableSortKey, tableSortAsc]);
+
+  const handleTableSort = (key: typeof tableSortKey) => {
+    if (tableSortKey === key) {
+      setTableSortAsc((prev) => !prev);
+    } else {
+      setTableSortKey(key);
+      setTableSortAsc(false); // default descending
+    }
+  };
+
   // Group filtered calls by Sector and Cluster for the Left Rail Tree
   const sectorGroups = useMemo(() => {
     const secMap = new Map<string, typeof filteredCalls>();
@@ -1591,51 +1629,18 @@ export function CallsClient() {
 
         {/* Action Type Filters, Scope Switchers, Search & Batches */}
         <div className="flex items-center gap-1.5 flex-wrap flex-1 justify-end">
-          <div className="flex items-center bg-slate-100 p-0.5 rounded-md border hairline text-xs">
+          {/* Unified Filter Strip: All, Top, Buy, Sell, Hold, Portfolio */}
+          <div className="flex items-center bg-slate-100 p-0.5 rounded-md border hairline text-xs flex-wrap gap-0.5">
             <button
-              onClick={() => setActionFilter("ALL")}
+              onClick={() => { setScope("all"); setActionFilter("ALL"); }}
               className={`px-2.5 py-1 rounded text-xs font-medium transition-all ${
-                actionFilter === "ALL" ? "bg-white text-slate-900 shadow-2xs font-semibold" : "text-slate-600 hover:text-slate-900"
+                scope === "all" && actionFilter === "ALL" ? "bg-white text-slate-900 shadow-2xs font-semibold" : "text-slate-600 hover:text-slate-900"
               }`}
             >
               All ({actionCounts.all})
             </button>
             <button
-              onClick={() => setActionFilter("BUY")}
-              className={`px-2.5 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 ${
-                actionFilter === "BUY" ? "bg-emerald-600 text-white shadow-2xs font-semibold" : "text-emerald-700 hover:text-emerald-900"
-              }`}
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-              <span>Buy ({actionCounts.buy})</span>
-            </button>
-            <button
-              onClick={() => setActionFilter("SELL")}
-              className={`px-2.5 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 ${
-                actionFilter === "SELL" || actionFilter === "PRIORITY_SELL"
-                  ? "bg-rose-600 text-white shadow-2xs font-bold ring-2 ring-rose-400"
-                  : "text-rose-700 hover:text-rose-900 bg-rose-50/70 hover:bg-rose-100"
-              }`}
-              title="Sell and trim alerts for your held portfolio positions"
-            >
-              <span>🚨</span>
-              <span>Sell Calls ({actionCounts.sell})</span>
-            </button>
-            <button
-              onClick={() => setActionFilter("HOLD")}
-              className={`px-2.5 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 ${
-                actionFilter === "HOLD" ? "bg-blue-600 text-white shadow-2xs font-semibold" : "text-blue-700 hover:text-blue-900"
-              }`}
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
-              <span>Hold ({actionCounts.hold})</span>
-            </button>
-          </div>
-
-          {/* Scope switchers */}
-          <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-md border hairline text-xs">
-            <button
-              onClick={() => setScope("curated")}
+              onClick={() => { setScope("curated"); setActionFilter("ALL"); }}
               className={`px-2.5 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 ${
                 scope === "curated" ? "bg-indigo-700 text-white shadow-2xs font-semibold" : "text-indigo-800 hover:bg-indigo-100"
               }`}
@@ -1644,21 +1649,71 @@ export function CallsClient() {
               <span>Top</span>
             </button>
             <button
-              onClick={() => setScope("all")}
-              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-                scope === "all" ? "bg-slate-900 text-white shadow-2xs font-semibold" : "text-slate-700 hover:bg-slate-200"
+              onClick={() => { setScope("all"); setActionFilter("BUY"); }}
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 ${
+                actionFilter === "BUY" ? "bg-emerald-600 text-white shadow-2xs font-semibold" : "text-emerald-700 hover:text-emerald-900"
               }`}
             >
-              All Calls
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              <span>Buy ({actionCounts.buy})</span>
             </button>
             <button
-              onClick={() => setScope("portfolio")}
+              onClick={() => { setScope("all"); setActionFilter("SELL"); }}
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 ${
+                actionFilter === "SELL" || actionFilter === "PRIORITY_SELL"
+                  ? "bg-rose-600 text-white shadow-2xs font-bold ring-2 ring-rose-400"
+                  : "text-rose-700 hover:text-rose-900 bg-rose-50/70 hover:bg-rose-100"
+              }`}
+              title="Sell and trim alerts for your held portfolio positions"
+            >
+              <span>🚨</span>
+              <span>Sell ({actionCounts.sell})</span>
+            </button>
+            <button
+              onClick={() => { setScope("all"); setActionFilter("HOLD"); }}
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 ${
+                actionFilter === "HOLD" ? "bg-blue-600 text-white shadow-2xs font-semibold" : "text-blue-700 hover:text-blue-900"
+              }`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+              <span>Hold ({actionCounts.hold})</span>
+            </button>
+            <button
+              onClick={() => { setScope("portfolio"); setActionFilter("ALL"); }}
               className={`px-2.5 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 ${
                 scope === "portfolio" ? "bg-slate-900 text-white shadow-2xs font-semibold" : "text-slate-700 hover:bg-slate-200"
               }`}
             >
               <Wallet className="w-3 h-3" />
-              <span>Held ({unifiedCalls.filter((c) => c.isPortfolio).length})</span>
+              <span>Portfolio ({unifiedCalls.filter((c) => c.isPortfolio).length})</span>
+            </button>
+          </div>
+
+          {/* View Mode Switcher: Detail vs Table (Option 2) */}
+          <div className="flex items-center bg-slate-100 p-0.5 rounded-md border hairline text-xs">
+            <button
+              onClick={() => setViewMode("detail")}
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 ${
+                viewMode === "detail"
+                  ? "bg-white text-slate-900 shadow-2xs font-semibold"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+              title="Interactive detail workstation with charts, moving averages, and filings"
+            >
+              <LayoutDashboard className="w-3 h-3" />
+              <span>Detail</span>
+            </button>
+            <button
+              onClick={() => setViewMode("table")}
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 ${
+                viewMode === "table"
+                  ? "bg-indigo-700 text-white shadow-2xs font-semibold"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+              title="Master deployment table sheet with sorting and allocation targets"
+            >
+              <TableIcon className="w-3 h-3" />
+              <span>Table</span>
             </button>
           </div>
 
@@ -1676,11 +1731,12 @@ export function CallsClient() {
 
           <button
             onClick={() => fetchData()}
-            disabled={loading}
+            disabled={mounted && loading}
+            suppressHydrationWarning
             className="p-1 rounded text-slate-600 hover:bg-slate-100 border hairline shadow-2xs transition-colors"
             title="Refresh Calls Feed"
           >
-            <RotateCcw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+            <RotateCcw className={`w-3.5 h-3.5 ${mounted && loading ? "animate-spin" : ""}`} />
           </button>
 
           {/* Multi-Select Date Picker Dropdown (Moved to Right Side Edge) */}
@@ -1808,8 +1864,236 @@ export function CallsClient() {
         </div>
       )}
 
-      {/* ── Two-Pane Workstation: Left Rail + Right Workstation ──── */}
-      <div className="grid grid-cols-1 lg:grid-cols-[260px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)] gap-2 items-start w-full min-w-0">
+      {/* ── View Mode: Detail Workstation vs Master Table (Option 2) ──── */}
+      {viewMode === "table" ? (
+        <div className="w-full bg-white border hairline rounded-lg shadow-2xs overflow-hidden flex flex-col">
+          {/* Master Table Header */}
+          <div className="px-3.5 py-3 border-b hairline bg-slate-50/90 flex items-center justify-between flex-wrap gap-2">
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <TableIcon className="w-4 h-4 text-indigo-600 shrink-0" />
+                <h2 className="text-sm sm:text-base font-bold text-slate-900">
+                  {scope === "curated"
+                    ? "Top Institutional Deployment Sheet (100% Capital)"
+                    : scope === "portfolio"
+                    ? `Held Portfolio Master Table (${sortedTableCalls.length} Stocks)`
+                    : `Screened Institutional Calls Matrix (${sortedTableCalls.length} Stocks)`}
+                </h2>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 font-mono font-bold">
+                  {sortedTableCalls.length} stocks
+                </span>
+                {scope === "curated" && (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 font-mono font-bold">
+                    100% Capital (₹1,00,000)
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                Click any row or &apos;Detail&apos; button to inspect live technical chart, moving averages, and research thesis.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setViewMode("detail")}
+                className="px-2.5 py-1 text-xs font-semibold rounded border hairline bg-white text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 shadow-2xs transition-colors"
+              >
+                <LayoutDashboard className="w-3.5 h-3.5 text-slate-500" />
+                <span>Switch to Detail View</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Master Table */}
+          <div className="overflow-x-auto w-full">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="border-b hairline bg-slate-100/80 text-[10.5px] uppercase tracking-wider text-slate-600 font-semibold select-none">
+                  <th className="py-2.5 px-3 text-center w-10">#</th>
+                  <th
+                    className="py-2.5 px-3 cursor-pointer hover:bg-slate-200/70 transition-colors"
+                    onClick={() => handleTableSort("symbol")}
+                    title="Sort by Stock Symbol"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>Stock</span>
+                      <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                    </div>
+                  </th>
+                  <th className="py-2.5 px-3">Sector &amp; Cluster</th>
+                  <th
+                    className="py-2.5 px-3 text-right cursor-pointer hover:bg-slate-200/70 transition-colors"
+                    onClick={() => handleTableSort("cmp")}
+                    title="Sort by Current Market Price"
+                  >
+                    <div className="flex items-center justify-end gap-1">
+                      <span>CMP (₹)</span>
+                      <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                    </div>
+                  </th>
+                  <th className="py-2.5 px-3 text-right">Buy Below (₹)</th>
+                  <th
+                    className="py-2.5 px-3 text-right cursor-pointer hover:bg-slate-200/70 transition-colors"
+                    onClick={() => handleTableSort("target")}
+                    title="Sort by 12M Target Price"
+                  >
+                    <div className="flex items-center justify-end gap-1">
+                      <span>Target (₹)</span>
+                      <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                    </div>
+                  </th>
+                  <th
+                    className="py-2.5 px-3 text-right cursor-pointer hover:bg-slate-200/70 transition-colors"
+                    onClick={() => handleTableSort("upside")}
+                    title="Sort by Upside Potential"
+                  >
+                    <div className="flex items-center justify-end gap-1">
+                      <span>Upside</span>
+                      <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                    </div>
+                  </th>
+                  <th
+                    className="py-2.5 px-3 text-center cursor-pointer hover:bg-slate-200/70 transition-colors"
+                    onClick={() => handleTableSort("quality")}
+                    title="Sort by Institutional Quality & Composite Score"
+                  >
+                    <div className="flex items-center justify-center gap-1">
+                      <span>Comp / Qual</span>
+                      <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                    </div>
+                  </th>
+                  <th
+                    className="py-2.5 px-3 text-center cursor-pointer hover:bg-slate-200/70 transition-colors"
+                    onClick={() => handleTableSort("weight")}
+                    title="Sort by Portfolio Allocation Weight"
+                  >
+                    <div className="flex items-center justify-center gap-1">
+                      <span>Weight &amp; Allocation</span>
+                      <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                    </div>
+                  </th>
+                  <th className="py-2.5 px-3">Horizon</th>
+                  <th className="py-2.5 px-3">Strategic Role &amp; Rationale</th>
+                  <th className="py-2.5 px-3 text-center w-20">Inspect</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y hairline">
+                {sortedTableCalls.map((c, idx) => {
+                  const secTheme = getSectorTheme(c.sector);
+                  const isSelected = selectedSymbol === c.symbol;
+                  const upsidePct = c.upside ?? (c.target && c.cmp ? ((c.target - c.cmp) / c.cmp) * 100 : 0);
+
+                  return (
+                    <tr
+                      key={c.symbol}
+                      onClick={() => {
+                        setSelectedSymbol(c.symbol);
+                        setViewMode("detail");
+                      }}
+                      className={`cursor-pointer transition-colors hover:bg-indigo-50/60 ${
+                        isSelected ? "bg-indigo-50/70 font-medium" : idx % 2 === 0 ? "bg-white" : "bg-slate-50/40"
+                      }`}
+                    >
+                      <td className="py-2.5 px-3 text-center text-slate-400 font-mono text-[11px]">{idx + 1}</td>
+                      <td className="py-2.5 px-3 font-sans">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-bold font-mono text-slate-900 text-xs sm:text-sm">{c.symbol}</span>
+                          {c.isCurated && (
+                            <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-100 text-amber-900 border border-amber-300">
+                              ★ TOP
+                            </span>
+                          )}
+                          {c.isPortfolio && (
+                            <span className="text-[9px] font-semibold px-1.5 py-0.2 rounded bg-blue-50 text-blue-800 border border-blue-200">
+                              Held
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-slate-500 truncate max-w-[190px]">{c.name}</div>
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: secTheme.dotColor }} />
+                          <span className="text-[11px] font-medium text-slate-800">{c.sector}</span>
+                        </div>
+                        {c.cluster && (
+                          <div className="text-[10px] text-slate-500 pl-3.5 font-sans truncate max-w-[180px]">{c.cluster}</div>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900 text-xs sm:text-sm">
+                        {money(c.cmp, 2)}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono text-[11px] text-slate-600">
+                        {c.buyBelow && c.buyBelow > 0 ? money(c.buyBelow, 2) : "—"}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono font-semibold text-emerald-800 text-xs sm:text-sm">
+                        {c.target && c.target > 0 ? money(c.target, 2) : "—"}
+                      </td>
+                      <td className="py-2.5 px-3 text-right">
+                        <span className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-mono font-bold ${
+                          upsidePct >= 25 ? "bg-emerald-100 text-emerald-900 border border-emerald-300" :
+                          upsidePct >= 10 ? "bg-emerald-50 text-emerald-800 border border-emerald-200" :
+                          upsidePct >= 0 ? "bg-slate-100 text-slate-800" :
+                          "bg-rose-100 text-rose-900 border border-rose-300"
+                        }`}>
+                          {pct(upsidePct, 1)}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3 text-center">
+                        <span className="font-mono text-[10.5px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-800 font-semibold border hairline">
+                          {c.composite_pct ?? "—"} / {c.quality_pct ?? "—"}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3 text-center">
+                        {c.weightPct ? (
+                          <div>
+                            <span className="text-xs font-bold font-mono text-indigo-900 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200/80">
+                              {c.weightPct}%
+                            </span>
+                            <div className="text-[10px] text-slate-500 font-mono mt-0.5">
+                              {c.allocatedAmount ? money(c.allocatedAmount, 0) : ""}
+                              {c.totalShares ? ` · ${c.totalShares} sh` : ""}
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="text-slate-400 text-[10px]">—</span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-3">
+                        {c.horizonLabel ? (
+                          <span className="text-[10.5px] font-semibold text-slate-800 whitespace-nowrap">
+                            {c.horizonLabel}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 text-[10px]">—</span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-3 text-[11px] text-slate-600 max-w-sm line-clamp-2">
+                        {c.role || c.rationale || c.actionReason || "—"}
+                      </td>
+                      <td className="py-2.5 px-3 text-center">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedSymbol(c.symbol);
+                            setViewMode("detail");
+                          }}
+                          className="px-2 py-1 text-[10.5px] font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded border border-indigo-200 transition-colors shadow-2xs inline-flex items-center gap-0.5"
+                          title="Open chart, anchors and deep dive"
+                        >
+                          <span>Detail</span>
+                          <ArrowUpRight className="w-3 h-3" />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-[260px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)] gap-2 items-start w-full min-w-0">
         {/* ── Left Rail: Compressed, Non-Bold, Neutral Styling ───────────────── */}
         <div className="w-full rounded-lg border hairline bg-white lg:sticky lg:top-2 lg:max-h-[calc(100vh-4rem)] flex flex-col overflow-hidden shadow-2xs">
           <div className="px-2.5 py-1.5 border-b hairline flex items-center justify-between shrink-0 bg-slate-50">
@@ -3311,6 +3595,7 @@ export function CallsClient() {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }
