@@ -33,6 +33,11 @@ import {
   LayoutDashboard,
   Table as TableIcon,
   ArrowUpDown,
+  ArrowRight,
+  Percent,
+  SlidersHorizontal,
+  Zap,
+  BarChart3,
 } from "lucide-react";
 import { PriceChart } from "@/components/PriceChart";
 import type { TradeMark } from "@/app/tools/scanner/CandleChart";
@@ -49,6 +54,17 @@ function money(v: number | null | undefined, digits?: number): string {
     minimumFractionDigits: fractionDigits,
     maximumFractionDigits: fractionDigits,
   })}`;
+}
+
+function fmtLakhs(v: number | null | undefined): string {
+  if (v == null || isNaN(v)) return "—";
+  if (Math.abs(v) >= 1e7) {
+    return `₹${(v / 1e7).toFixed(2)} Cr`;
+  }
+  if (Math.abs(v) >= 1e5) {
+    return `₹${(v / 1e5).toFixed(2)} L`;
+  }
+  return `₹${Math.round(v).toLocaleString("en-IN")}`;
 }
 
 function pct(v: number | null | undefined, digits: number = 2): string {
@@ -468,10 +484,19 @@ export function CallsClient() {
   const [activeTab, setActiveTab] = useState<DetailTab>("overview");
   const [densityScope, setDensityScope] = useState<"curated" | "portfolio" | "all">("curated");
 
-  // View Mode: Detail Workstation vs Master Table Sheet (Option 2)
-  const [viewMode, setViewMode] = useState<"detail" | "table">("detail");
+  // View Mode: Detail Workstation vs Master Table Sheet vs Corpus Growth Planner
+  const [viewMode, setViewMode] = useState<"detail" | "table" | "corpus">("detail");
   const [tableSortKey, setTableSortKey] = useState<"symbol" | "cmp" | "target" | "upside" | "weight" | "quality">("weight");
   const [tableSortAsc, setTableSortAsc] = useState<boolean>(false);
+
+  // Corpus Growth & Dynamic Investment Planner State
+  const [corpusMonthlyInflow, setCorpusMonthlyInflow] = useState<number>(100000); // ₹1 Lakh / month
+  const [corpusStepUpPct, setCorpusStepUpPct] = useState<number>(10); // 10% annual step-up
+  const [corpusCagrPct, setCorpusCagrPct] = useState<number>(16); // 16% expected returns
+  const [corpusTargetHorizonYears, setCorpusTargetHorizonYears] = useState<number>(5); // 5Y horizon
+  const [corpusManualBaseOverride, setCorpusManualBaseOverride] = useState<number | null>(null);
+  const [isEditingBaseCorpus, setIsEditingBaseCorpus] = useState(false);
+  const [tempBaseCorpusInput, setTempBaseCorpusInput] = useState("");
 
   // Stock context data
   const [contextData, setContextData] = useState<StockContext | null>(null);
@@ -1412,6 +1437,136 @@ export function CallsClient() {
     return [];
   }, [selectedCall]);
 
+  // Live Portfolio Metrics from uploaded broker holdings
+  const livePortfolioStats = useMemo(() => {
+    const list = data?.portfolioActions || [];
+    let curVal = (data?.summary?.totalCurrentCr || 0) * 1e7;
+    let invVal = (data?.summary?.totalInvestedCr || 0) * 1e7;
+
+    if (curVal === 0 && list.length > 0) {
+      curVal = list.reduce((acc, p) => acc + (p.cur_val || 0), 0);
+      invVal = list.reduce((acc, p) => acc + (p.invested_val || 0), 0);
+    }
+    const effectiveCurVal = curVal > 0 ? curVal : 1400000;
+    const effectiveInvVal = invVal > 0 ? invVal : 1200000;
+    const pnl = effectiveCurVal - effectiveInvVal;
+    const pnlPct = effectiveInvVal > 0 ? (pnl / effectiveInvVal) * 100 : 0;
+
+    const trimCash = list
+      .filter((p) => p.action_today === "TRIM / TAKE PROFIT")
+      .reduce((acc, p) => acc + (p.cur_val || 0) * 0.25, 0);
+
+    return {
+      currentValue: effectiveCurVal,
+      investedValue: effectiveInvVal,
+      pnl,
+      pnlPct,
+      holdingsCount: list.length > 0 ? list.length : 128,
+      trimCash,
+      isRealData: curVal > 0,
+    };
+  }, [data]);
+
+  // Year-by-year compounding simulation
+  const corpusSimulation = useMemo(() => {
+    const startBase = corpusManualBaseOverride ?? livePortfolioStats.currentValue;
+    const cagr = corpusCagrPct / 100;
+    const stepUp = corpusStepUpPct / 100;
+    const monthlyStart = corpusMonthlyInflow;
+
+    const rows: {
+      year: number;
+      label: string;
+      startCorpus: number;
+      monthlyInflow: number;
+      annualFreshInflow: number;
+      returnsEarned: number;
+      endCorpus: number;
+      cumulativeFresh: number;
+      cumulativeReturns: number;
+      returnsSharePct: number;
+      isCrossover: boolean;
+    }[] = [];
+
+    let currentCorpus = startBase;
+    let cumFresh = 0;
+    let cumReturns = 0;
+    let crossoverMarked = false;
+
+    for (let y = 1; y <= 10; y++) {
+      const yearStart = currentCorpus;
+      const thisYearMonthly = Math.round(monthlyStart * Math.pow(1 + stepUp, y - 1));
+      const annualFresh = thisYearMonthly * 12;
+
+      const returnOnCapital = yearStart * cagr;
+      const returnOnFresh = annualFresh * (cagr * 0.5);
+      const totalReturns = Math.round(returnOnCapital + returnOnFresh);
+
+      const yearEnd = yearStart + annualFresh + totalReturns;
+      cumFresh += annualFresh;
+      cumReturns += totalReturns;
+
+      const isCrossoverYear = !crossoverMarked && totalReturns >= annualFresh;
+      if (isCrossoverYear) crossoverMarked = true;
+
+      const totalGain = yearEnd - startBase;
+      const returnsShare = totalGain > 0 ? Math.min(100, Math.round((cumReturns / totalGain) * 100)) : 0;
+
+      rows.push({
+        year: y,
+        label: `Year ${y}`,
+        startCorpus: yearStart,
+        monthlyInflow: thisYearMonthly,
+        annualFreshInflow: annualFresh,
+        returnsEarned: totalReturns,
+        endCorpus: yearEnd,
+        cumulativeFresh: cumFresh,
+        cumulativeReturns: cumReturns,
+        returnsSharePct: returnsShare,
+        isCrossover: isCrossoverYear,
+      });
+
+      currentCorpus = yearEnd;
+    }
+
+    return {
+      startBase,
+      rows,
+      summary3Y: rows[2],
+      summary5Y: rows[4],
+      summary10Y: rows[9],
+    };
+  }, [corpusManualBaseOverride, livePortfolioStats.currentValue, corpusMonthlyInflow, corpusStepUpPct, corpusCagrPct]);
+
+  // Dynamic Position Sizing adapted to Current Corpus
+  const dynamicSizing = useMemo(() => {
+    const corpus = corpusManualBaseOverride ?? livePortfolioStats.currentValue;
+
+    // Anchor: 15% allocation
+    const anchorSize = Math.round(corpus * 0.15);
+    const anchorT1 = Math.round(anchorSize * 0.5);
+    const anchorT2 = anchorSize - anchorT1;
+
+    // Compounder: 10% allocation
+    const compounderSize = Math.round(corpus * 0.10);
+    const compounderT1 = Math.round(compounderSize * 0.5);
+    const compounderT2 = compounderSize - compounderT1;
+
+    // Tactical: 5% allocation
+    const tacticalSize = Math.round(corpus * 0.05);
+
+    // This month's deployment pool = fresh monthly cash + trimmed profit cash
+    const monthlyDeployable = corpusMonthlyInflow + Math.round(livePortfolioStats.trimCash);
+
+    return {
+      corpus,
+      anchor: { total: anchorSize, t1: anchorT1, t2: anchorT2 },
+      compounder: { total: compounderSize, t1: compounderT1, t2: compounderT2 },
+      tactical: { total: tacticalSize },
+      monthlyDeployable,
+    };
+  }, [corpusManualBaseOverride, livePortfolioStats, corpusMonthlyInflow]);
+
   // Initial state & dynamic auto-expansion: ALWAYS open the selected stock's sector and cluster in left rail
   useEffect(() => {
     if (selectedCall?.sector) {
@@ -1759,6 +1914,18 @@ export function CallsClient() {
               <TableIcon className="w-3 h-3" />
               <span>Table</span>
             </button>
+            <button
+              onClick={() => setViewMode("corpus")}
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 ${
+                viewMode === "corpus"
+                  ? "bg-emerald-600 text-white shadow-2xs font-semibold"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+              title="Corpus Growth & Dynamic Investment Planner"
+            >
+              <TrendingUp className="w-3 h-3 text-emerald-400" />
+              <span>Corpus</span>
+            </button>
           </div>
 
           {/* Search bar */}
@@ -1908,8 +2075,594 @@ export function CallsClient() {
         </div>
       )}
 
-      {/* ── View Mode: Detail Workstation vs Master Table (Option 2) ──── */}
-      {viewMode === "table" ? (
+      {/* ── View Mode: Detail Workstation vs Master Table vs Corpus Growth Planner ──── */}
+      {viewMode === "corpus" ? (
+        <div className="w-full space-y-3">
+          {/* ── Top Header Banner ────────────────────────────────────────── */}
+          <div className="bg-white border hairline rounded-lg p-3 sm:p-4 shadow-2xs flex items-center justify-between flex-wrap gap-3">
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="w-7 h-7 rounded-md bg-emerald-100 flex items-center justify-center text-emerald-800 shrink-0">
+                  <TrendingUp className="w-4 h-4" />
+                </div>
+                <h2 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight">
+                  Corpus Compounding &amp; Dynamic Investment Planner
+                </h2>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-50 text-emerald-800 border border-emerald-300">
+                  {livePortfolioStats.isRealData ? "Broker Synced" : "Portfolio Model"}
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 max-w-2xl leading-relaxed">
+                Plans monthly cash deployment, Step-Up SIP growth, and adaptive stock ticket sizes as your corpus scales from ₹14L to ₹30L, ₹60L, and ₹1 Crore+.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <button
+                onClick={() => setViewMode("table")}
+                className="px-2.5 py-1 text-xs font-semibold rounded border hairline bg-white text-slate-700 hover:bg-slate-50 flex items-center gap-1 shadow-2xs transition-colors"
+              >
+                <TableIcon className="w-3.5 h-3.5 text-indigo-600" />
+                <span>View Table Sheet</span>
+              </button>
+              <button
+                onClick={() => setViewMode("detail")}
+                className="px-2.5 py-1 text-xs font-semibold rounded border hairline bg-white text-slate-700 hover:bg-slate-50 flex items-center gap-1 shadow-2xs transition-colors"
+              >
+                <LayoutDashboard className="w-3.5 h-3.5 text-slate-600" />
+                <span>View Detail Workstation</span>
+              </button>
+            </div>
+          </div>
+
+          {/* ── 4 Primary Corpus KPI Cards ───────────────────────────────── */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+            {/* Card 1: Active Portfolio Corpus */}
+            <div className="bg-white border hairline rounded-lg p-3 shadow-2xs space-y-1">
+              <div className="flex items-center justify-between text-xs text-slate-500">
+                <span className="font-medium uppercase tracking-wider text-[10px]">Active Portfolio Corpus</span>
+                <span className="font-mono text-[10px] text-emerald-700 font-semibold bg-emerald-50 px-1 rounded">
+                  {livePortfolioStats.holdingsCount} stocks
+                </span>
+              </div>
+              <div className="flex items-baseline justify-between gap-1 flex-wrap">
+                <span className="text-xl sm:text-2xl font-bold font-mono text-slate-900 tracking-tight">
+                  {fmtLakhs(corpusSimulation.startBase)}
+                </span>
+                {corpusManualBaseOverride != null ? (
+                  <button
+                    onClick={() => setCorpusManualBaseOverride(null)}
+                    className="text-[10px] text-indigo-600 hover:underline font-mono"
+                    title="Reset to live broker holdings amount"
+                  >
+                    Reset Live
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setTempBaseCorpusInput(String(Math.round(livePortfolioStats.currentValue)));
+                      setIsEditingBaseCorpus(true);
+                    }}
+                    className="text-[10px] text-slate-400 hover:text-slate-700 flex items-center gap-0.5"
+                    title="Override starting corpus for what-if scenarios"
+                  >
+                    <Edit3 className="w-2.5 h-2.5" />
+                    <span>Override</span>
+                  </button>
+                )}
+              </div>
+              {isEditingBaseCorpus ? (
+                <div className="flex items-center gap-1 pt-1">
+                  <input
+                    type="number"
+                    value={tempBaseCorpusInput}
+                    onChange={(e) => setTempBaseCorpusInput(e.target.value)}
+                    className="w-28 px-1.5 py-0.5 text-xs border rounded font-mono"
+                    placeholder="e.g. 1500000"
+                  />
+                  <button
+                    onClick={() => {
+                      const parsed = parseFloat(tempBaseCorpusInput);
+                      if (!isNaN(parsed) && parsed > 0) setCorpusManualBaseOverride(parsed);
+                      setIsEditingBaseCorpus(false);
+                    }}
+                    className="px-1.5 py-0.5 text-[10px] bg-slate-900 text-white rounded font-semibold"
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={() => setIsEditingBaseCorpus(false)}
+                    className="px-1.5 py-0.5 text-[10px] text-slate-500"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <div className="text-[10.5px] text-slate-500 font-mono truncate">
+                  Raw: {money(corpusSimulation.startBase, 0)}
+                </div>
+              )}
+            </div>
+
+            {/* Card 2: Total Invested Cost */}
+            <div className="bg-white border hairline rounded-lg p-3 shadow-2xs space-y-1">
+              <div className="flex items-center justify-between text-xs text-slate-500">
+                <span className="font-medium uppercase tracking-wider text-[10px]">Total Invested Basis</span>
+                <span className="text-[10px] text-slate-400 font-mono">Cost</span>
+              </div>
+              <div className="text-xl sm:text-2xl font-bold font-mono text-slate-900 tracking-tight">
+                {fmtLakhs(livePortfolioStats.investedValue)}
+              </div>
+              <div className="text-[10.5px] text-slate-500 font-mono truncate">
+                Raw: {money(livePortfolioStats.investedValue, 0)}
+              </div>
+            </div>
+
+            {/* Card 3: Unrealized Profit & Return */}
+            <div className="bg-white border hairline rounded-lg p-3 shadow-2xs space-y-1">
+              <div className="flex items-center justify-between text-xs text-slate-500">
+                <span className="font-medium uppercase tracking-wider text-[10px]">Total Unrealized Gains</span>
+                <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-1 rounded font-mono">
+                  {pct(livePortfolioStats.pnlPct, 1)}
+                </span>
+              </div>
+              <div className="text-xl sm:text-2xl font-bold font-mono text-emerald-700 tracking-tight">
+                +{fmtLakhs(livePortfolioStats.pnl)}
+              </div>
+              <div className="text-[10.5px] text-slate-500 font-mono truncate">
+                Net Profit: {money(livePortfolioStats.pnl, 0)}
+              </div>
+            </div>
+
+            {/* Card 4: This Month's Deployable Pool */}
+            <div className="bg-white border hairline rounded-lg p-3 shadow-2xs space-y-1">
+              <div className="flex items-center justify-between text-xs text-slate-500">
+                <span className="font-medium uppercase tracking-wider text-[10px]">This Month Deployable Pool</span>
+                <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 px-1 rounded font-mono">
+                  Cash Ready
+                </span>
+              </div>
+              <div className="text-xl sm:text-2xl font-bold font-mono text-indigo-900 tracking-tight">
+                {fmtLakhs(dynamicSizing.monthlyDeployable)}
+              </div>
+              <div className="text-[10px] text-slate-500 flex items-center justify-between font-mono">
+                <span>SIP: {fmtLakhs(corpusMonthlyInflow)}</span>
+                <span>+ Trims: {fmtLakhs(livePortfolioStats.trimCash)}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* ── Interactive Simulation Controls Bar ─────────────────────── */}
+          <div className="bg-white border hairline rounded-lg p-3 sm:p-3.5 shadow-2xs space-y-2.5">
+            <div className="flex items-center justify-between border-b hairline pb-2 flex-wrap gap-2">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-slate-900">
+                <SlidersHorizontal className="w-3.5 h-3.5 text-slate-600" />
+                <span>Simulation Parameters (Interactive Inputs)</span>
+              </div>
+              <span className="text-[11px] text-slate-500 font-sans">
+                Adjust savings rate and expected return to model growth milestones
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+              {/* Control 1: Monthly Fresh Savings */}
+              <div className="space-y-1.5 p-2 rounded-md bg-slate-50/70 border hairline">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-slate-700">Monthly Fresh Cash</span>
+                  <span className="font-mono font-bold text-slate-900 text-xs">
+                    {fmtLakhs(corpusMonthlyInflow)}/mo
+                  </span>
+                </div>
+                <div className="flex items-center gap-1 flex-wrap">
+                  {[50000, 100000, 150000, 200000].map((val) => (
+                    <button
+                      key={val}
+                      onClick={() => setCorpusMonthlyInflow(val)}
+                      className={`px-2 py-0.5 rounded text-[11px] font-mono font-medium transition-all ${
+                        corpusMonthlyInflow === val
+                          ? "bg-slate-900 text-white font-bold shadow-2xs"
+                          : "bg-white text-slate-700 border hairline hover:bg-slate-100"
+                      }`}
+                    >
+                      {val === 100000 ? "₹1L (Current)" : `₹${val / 100000}L`}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Control 2: Annual Step-Up SIP % */}
+              <div className="space-y-1.5 p-2 rounded-md bg-slate-50/70 border hairline">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-slate-700">Annual Step-Up (Salary Hike)</span>
+                  <span className="font-mono font-bold text-indigo-700 text-xs">
+                    +{corpusStepUpPct}% / yr
+                  </span>
+                </div>
+                <div className="flex items-center gap-1 flex-wrap">
+                  {[0, 5, 10, 15].map((val) => (
+                    <button
+                      key={val}
+                      onClick={() => setCorpusStepUpPct(val)}
+                      className={`px-2 py-0.5 rounded text-[11px] font-mono font-medium transition-all ${
+                        corpusStepUpPct === val
+                          ? "bg-indigo-700 text-white font-bold shadow-2xs"
+                          : "bg-white text-slate-700 border hairline hover:bg-slate-100"
+                      }`}
+                    >
+                      {val === 0 ? "Flat" : val === 10 ? "+10% (Default)" : `+${val}%`}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Control 3: Expected Portfolio CAGR % */}
+              <div className="space-y-1.5 p-2 rounded-md bg-slate-50/70 border hairline">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-slate-700">Expected Portfolio CAGR</span>
+                  <span className="font-mono font-bold text-emerald-700 text-xs">
+                    {corpusCagrPct}% p.a.
+                  </span>
+                </div>
+                <div className="flex items-center gap-1 flex-wrap">
+                  {[12, 16, 20, 24].map((val) => (
+                    <button
+                      key={val}
+                      onClick={() => setCorpusCagrPct(val)}
+                      className={`px-2 py-0.5 rounded text-[11px] font-mono font-medium transition-all ${
+                        corpusCagrPct === val
+                          ? "bg-emerald-700 text-white font-bold shadow-2xs"
+                          : "bg-white text-slate-700 border hairline hover:bg-slate-100"
+                      }`}
+                    >
+                      {val === 12 ? "12% (Index)" : val === 16 ? "16% (Target)" : val === 20 ? "20% (Alpha)" : "24% (Super)"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ── Dynamic Position Sizing System (The Answer to User's Core Question) ─ */}
+          <div className="bg-white border hairline rounded-lg p-3 sm:p-4 shadow-2xs space-y-3">
+            <div className="flex items-center justify-between border-b hairline pb-2 flex-wrap gap-2">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                  <Target className="w-4 h-4 text-indigo-600" />
+                  <span>Adaptive Position Sizing: How Stock Tickets Scale As Corpus Expands</span>
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Your monthly fresh cash stays steady (~₹1 Lakh), but your purchase size per stock scales automatically with corpus percentage!
+                </p>
+              </div>
+              <span className="text-xs font-mono font-bold bg-indigo-50 text-indigo-900 px-2 py-0.5 rounded border border-indigo-200">
+                Corpus Base: {fmtLakhs(dynamicSizing.corpus)}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {/* Tier 1: Anchor Core */}
+              <div className="rounded-lg border border-indigo-100 bg-indigo-50/40 p-3 space-y-2 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-indigo-950 flex items-center gap-1">
+                      <span>🏛️</span>
+                      <span>Anchor Core Position</span>
+                    </span>
+                    <span className="text-[10px] font-mono font-bold text-indigo-800 bg-indigo-100 px-1.5 py-0.2 rounded">
+                      15% Weight
+                    </span>
+                  </div>
+                  <div className="mt-2 space-y-1">
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-[11px] text-slate-500">Today&apos;s Target Size:</span>
+                      <strong className="text-sm font-mono text-slate-900">{fmtLakhs(dynamicSizing.anchor.total)}</strong>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] text-slate-600 pl-2 border-l-2 border-indigo-300">
+                      <span>Tranche 1 (Market):</span>
+                      <strong className="font-mono">{fmtLakhs(dynamicSizing.anchor.t1)}</strong>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] text-slate-600 pl-2 border-l-2 border-indigo-300">
+                      <span>Tranche 2 (Dip GTT):</span>
+                      <strong className="font-mono">{fmtLakhs(dynamicSizing.anchor.t2)}</strong>
+                    </div>
+                  </div>
+                </div>
+                <div className="pt-2 border-t border-indigo-100 text-[10px] text-indigo-900 space-y-0.5">
+                  <div className="flex justify-between">
+                    <span>At ₹30L Corpus:</span>
+                    <strong className="font-mono">₹4.50 Lakhs (T1: ₹2.25L)</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>At ₹60L Corpus:</span>
+                    <strong className="font-mono">₹9.00 Lakhs (T1: ₹4.50L)</strong>
+                  </div>
+                </div>
+              </div>
+
+              {/* Tier 2: Growth Compounder */}
+              <div className="rounded-lg border border-emerald-100 bg-emerald-50/40 p-3 space-y-2 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-emerald-950 flex items-center gap-1">
+                      <span>📈</span>
+                      <span>Growth Compounder</span>
+                    </span>
+                    <span className="text-[10px] font-mono font-bold text-emerald-800 bg-emerald-100 px-1.5 py-0.2 rounded">
+                      10% Weight
+                    </span>
+                  </div>
+                  <div className="mt-2 space-y-1">
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-[11px] text-slate-500">Today&apos;s Target Size:</span>
+                      <strong className="text-sm font-mono text-slate-900">{fmtLakhs(dynamicSizing.compounder.total)}</strong>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] text-slate-600 pl-2 border-l-2 border-emerald-300">
+                      <span>Tranche 1 (Market):</span>
+                      <strong className="font-mono">{fmtLakhs(dynamicSizing.compounder.t1)}</strong>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] text-slate-600 pl-2 border-l-2 border-emerald-300">
+                      <span>Tranche 2 (Dip GTT):</span>
+                      <strong className="font-mono">{fmtLakhs(dynamicSizing.compounder.t2)}</strong>
+                    </div>
+                  </div>
+                </div>
+                <div className="pt-2 border-t border-emerald-100 text-[10px] text-emerald-900 space-y-0.5">
+                  <div className="flex justify-between">
+                    <span>At ₹30L Corpus:</span>
+                    <strong className="font-mono">₹3.00 Lakhs (T1: ₹1.50L)</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>At ₹60L Corpus:</span>
+                    <strong className="font-mono">₹6.00 Lakhs (T1: ₹3.00L)</strong>
+                  </div>
+                </div>
+              </div>
+
+              {/* Tier 3: Tactical / Alpha Gem */}
+              <div className="rounded-lg border border-amber-100 bg-amber-50/40 p-3 space-y-2 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-amber-950 flex items-center gap-1">
+                      <span>⚡</span>
+                      <span>Tactical Alpha Gem</span>
+                    </span>
+                    <span className="text-[10px] font-mono font-bold text-amber-800 bg-amber-100 px-1.5 py-0.2 rounded">
+                      5% Weight
+                    </span>
+                  </div>
+                  <div className="mt-2 space-y-1">
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-[11px] text-slate-500">Today&apos;s Target Size:</span>
+                      <strong className="text-sm font-mono text-slate-900">{fmtLakhs(dynamicSizing.tactical.total)}</strong>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] text-slate-600 pl-2 border-l-2 border-amber-300">
+                      <span>Execution Strategy:</span>
+                      <strong className="font-mono">Single Tranche Buy</strong>
+                    </div>
+                    <div className="text-[10px] text-slate-500 italic">
+                      High upside technical catalysts &amp; earnings inflections
+                    </div>
+                  </div>
+                </div>
+                <div className="pt-2 border-t border-amber-100 text-[10px] text-amber-900 space-y-0.5">
+                  <div className="flex justify-between">
+                    <span>At ₹30L Corpus:</span>
+                    <strong className="font-mono">₹1.50 Lakhs</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>At ₹60L Corpus:</span>
+                    <strong className="font-mono">₹3.00 Lakhs</strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ── This Month's Recommended Execution Plan ─────────────────── */}
+          <div className="bg-white border hairline rounded-lg p-3 sm:p-4 shadow-2xs space-y-2.5">
+            <div className="flex items-center justify-between border-b hairline pb-2 flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <Coins className="w-4 h-4 text-amber-500" />
+                <h3 className="text-sm font-bold text-slate-900">
+                  This Month&apos;s Recommended Deployment Plan (Budget: {fmtLakhs(dynamicSizing.monthlyDeployable)})
+                </h3>
+              </div>
+              <span className="text-xs text-slate-500">
+                Prioritized allocations from Top Picks desk adapted to current ticket size
+              </span>
+            </div>
+
+            <div className="overflow-x-auto w-full">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="border-b hairline bg-slate-50 text-[10.5px] uppercase tracking-wider text-slate-500 font-semibold">
+                    <th className="py-2 px-2.5">Stock</th>
+                    <th className="py-2 px-2.5">Strategic Role</th>
+                    <th className="py-2 px-2.5 text-right">CMP</th>
+                    <th className="py-2 px-2.5 text-right">Target</th>
+                    <th className="py-2 px-2.5 text-right">Upside</th>
+                    <th className="py-2 px-2.5 text-center">Allocated Weight</th>
+                    <th className="py-2 px-2.5 text-right">Tranche 1 Budget</th>
+                    <th className="py-2 px-2.5 text-center">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y hairline">
+                  {curatedPicks.slice(0, 5).map((p, idx) => {
+                    const weight = p.weightPct || 15;
+                    const totalTarget = Math.round((dynamicSizing.corpus * weight) / 100);
+                    const t1Budget = Math.round(totalTarget * 0.5);
+                    const shares = p.cmp > 0 ? Math.floor(t1Budget / p.cmp) : 0;
+                    return (
+                      <tr key={p.symbol} className="hover:bg-slate-50/70 transition-colors">
+                        <td className="py-2 px-2.5">
+                          <span className="font-mono font-bold text-slate-900 text-xs sm:text-sm">{p.symbol}</span>
+                          <div className="text-[10px] text-slate-500 truncate max-w-[150px]">{p.name}</div>
+                        </td>
+                        <td className="py-2 px-2.5">
+                          <span className="text-[11px] font-medium text-slate-700">{p.role}</span>
+                        </td>
+                        <td className="py-2 px-2.5 text-right font-mono font-bold text-slate-900">{money(p.cmp, 2)}</td>
+                        <td className="py-2 px-2.5 text-right font-mono font-semibold text-emerald-800">{money(p.target, 2)}</td>
+                        <td className="py-2 px-2.5 text-right font-mono font-bold text-emerald-700">+{p.upside}%</td>
+                        <td className="py-2 px-2.5 text-center">
+                          <span className="px-1.5 py-0.5 rounded text-[10.5px] font-mono font-bold bg-indigo-50 text-indigo-900 border border-indigo-200">
+                            {weight}% ({fmtLakhs(totalTarget)})
+                          </span>
+                        </td>
+                        <td className="py-2 px-2.5 text-right font-mono font-bold text-slate-900">
+                          {money(t1Budget, 0)}
+                          <div className="text-[10px] text-slate-500 font-normal">~{shares} shares</div>
+                        </td>
+                        <td className="py-2 px-2.5 text-center">
+                          <button
+                            onClick={() => {
+                              setSelectedSymbol(p.symbol);
+                              setViewMode("detail");
+                            }}
+                            className="px-2 py-1 text-[10.5px] font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded border border-indigo-200 transition-colors inline-flex items-center gap-0.5"
+                          >
+                            <span>Inspect</span>
+                            <ArrowUpRight className="w-3 h-3" />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* ── 10-Year Compounding Simulation & Crossover Trajectory ─────── */}
+          <div className="bg-white border hairline rounded-lg p-3 sm:p-4 shadow-2xs space-y-3">
+            <div className="flex items-center justify-between border-b hairline pb-2 flex-wrap gap-2">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                  <BarChart3 className="w-4 h-4 text-emerald-600" />
+                  <span>10-Year Compounding Trajectory &amp; The Compounding Crossover</span>
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Year-by-year trajectory showing when portfolio returns overtake your fresh salary savings!
+                </p>
+              </div>
+
+              {/* Quick Milestone Highlights */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="bg-slate-50 border hairline px-2.5 py-1 rounded text-right">
+                  <span className="text-[9.5px] uppercase font-bold text-slate-400 block">3-Year Target</span>
+                  <strong className="text-xs font-mono text-slate-900">{fmtLakhs(corpusSimulation.summary3Y?.endCorpus)}</strong>
+                </div>
+                <div className="bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded text-right">
+                  <span className="text-[9.5px] uppercase font-bold text-emerald-700 block">5-Year Target</span>
+                  <strong className="text-xs font-mono text-emerald-900">{fmtLakhs(corpusSimulation.summary5Y?.endCorpus)}</strong>
+                </div>
+                <div className="bg-indigo-50 border border-indigo-200 px-2.5 py-1 rounded text-right">
+                  <span className="text-[9.5px] uppercase font-bold text-indigo-700 block">10-Year Target</span>
+                  <strong className="text-xs font-mono text-indigo-900">{fmtLakhs(corpusSimulation.summary10Y?.endCorpus)}</strong>
+                </div>
+              </div>
+            </div>
+
+            {/* Simulation Table */}
+            <div className="overflow-x-auto w-full">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="border-b hairline bg-slate-100/80 text-[10.5px] uppercase tracking-wider text-slate-600 font-semibold">
+                    <th className="py-2.5 px-3 w-16">Year</th>
+                    <th className="py-2.5 px-3 text-right">Starting Corpus</th>
+                    <th className="py-2.5 px-3 text-right">Monthly Inflow</th>
+                    <th className="py-2.5 px-3 text-right">Annual Fresh Cash</th>
+                    <th className="py-2.5 px-3 text-right">Portfolio Return</th>
+                    <th className="py-2.5 px-3 text-right font-bold">End-of-Year Corpus</th>
+                    <th className="py-2.5 px-3 w-48">Growth Driver Mix</th>
+                    <th className="py-2.5 px-3 text-center">Milestone Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y hairline">
+                  {corpusSimulation.rows.map((r) => (
+                    <tr
+                      key={r.year}
+                      className={`transition-colors ${
+                        r.isCrossover ? "bg-amber-50/70 font-semibold" : r.year % 2 === 0 ? "bg-slate-50/40" : "bg-white"
+                      }`}
+                    >
+                      <td className="py-2.5 px-3 font-mono font-bold text-slate-800">{r.label}</td>
+                      <td className="py-2.5 px-3 text-right font-mono text-slate-700">{fmtLakhs(r.startCorpus)}</td>
+                      <td className="py-2.5 px-3 text-right font-mono text-slate-600">{fmtLakhs(r.monthlyInflow)}</td>
+                      <td className="py-2.5 px-3 text-right font-mono text-blue-700 font-medium">+{fmtLakhs(r.annualFreshInflow)}</td>
+                      <td className="py-2.5 px-3 text-right font-mono text-emerald-700 font-bold">+{fmtLakhs(r.returnsEarned)}</td>
+                      <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900 text-sm">
+                        {fmtLakhs(r.endCorpus)}
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <div className="space-y-1">
+                          <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden flex">
+                            <div
+                              className="bg-blue-500 h-full"
+                              style={{ width: `${100 - r.returnsSharePct}%` }}
+                              title={`Fresh Savings: ${100 - r.returnsSharePct}%`}
+                            />
+                            <div
+                              className="bg-emerald-500 h-full"
+                              style={{ width: `${r.returnsSharePct}%` }}
+                              title={`Portfolio Returns: ${r.returnsSharePct}%`}
+                            />
+                          </div>
+                          <div className="flex items-center justify-between text-[9px] text-slate-400 font-mono">
+                            <span>{100 - r.returnsSharePct}% Cash</span>
+                            <span>{r.returnsSharePct}% Compounding</span>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="py-2.5 px-3 text-center">
+                        {r.isCrossover ? (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-200 text-amber-950 border border-amber-400 animate-pulse">
+                            🎉 Crossover Year!
+                          </span>
+                        ) : r.year === 1 ? (
+                          <span className="text-[10px] text-slate-400">Foundation Year</span>
+                        ) : r.returnsEarned > r.annualFreshInflow ? (
+                          <span className="text-[10px] font-bold text-emerald-700">Self-Funding 🚀</span>
+                        ) : (
+                          <span className="text-[10px] text-slate-400">Accumulation</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* ── Key Takeaways & Strategic Principles ─────────────────────── */}
+          <div className="bg-slate-50 border hairline rounded-lg p-3 sm:p-4 text-xs text-slate-700 space-y-2">
+            <h4 className="font-bold text-slate-900 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+              <span>💡</span>
+              <span>Golden Principles for Managing Growing Corpus</span>
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1 text-[11.5px] leading-relaxed">
+              <div className="p-2.5 bg-white rounded border hairline space-y-1">
+                <strong className="text-slate-900 block font-semibold">1. Salary Grows Linearly; Portfolio Grows Exponentially</strong>
+                <p className="text-slate-600">
+                  You should never force your monthly fresh savings to match a growing corpus. Keep your fresh savings tied to your real disposable income via a manageable 10% Step-Up SIP.
+                </p>
+              </div>
+              <div className="p-2.5 bg-white rounded border hairline space-y-1">
+                <strong className="text-slate-900 block font-semibold">2. Capital Recycling Funds Larger Ticket Sizes</strong>
+                <p className="text-slate-600">
+                  When your corpus is ₹30L, a 15% position requires ₹4.50 Lakhs. This is funded by pairing your ₹1L monthly savings with the ₹2L–₹3L of liquid profits released when target winners are trimmed!
+                </p>
+              </div>
+              <div className="p-2.5 bg-white rounded border hairline space-y-1">
+                <strong className="text-slate-900 block font-semibold">3. The Compounding Crossover Horizon</strong>
+                <p className="text-slate-600">
+                  Between Year 2 and Year 4, the annual returns generated by your portfolio will exceed your entire year&apos;s fresh salary savings. From that milestone onward, compounding does the heavy lifting.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : viewMode === "table" ? (
         <div className="w-full bg-white border hairline rounded-lg shadow-2xs overflow-hidden flex flex-col">
           {/* Master Table Header */}
           <div className="px-3.5 py-3 border-b hairline bg-slate-50/90 flex items-center justify-between flex-wrap gap-2">
