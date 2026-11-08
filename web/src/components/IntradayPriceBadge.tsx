@@ -19,6 +19,44 @@
 export function formatFetchedAt(iso: string): string {
   try {
     const dt = new Date(iso);
+    if (isNaN(dt.getTime())) return iso;
+
+    // Get time and day in Asia/Kolkata
+    const istStr = dt.toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
+    const istDate = new Date(istStr);
+
+    const dayOfWeek = istDate.getDay(); // 0 = Sun, 6 = Sat
+    const hour = istDate.getHours();
+    const minute = istDate.getMinutes();
+    const totalMinutes = hour * 60 + minute;
+
+    // Market session is Mon-Fri 09:15 to 15:30 IST (555 to 930 mins)
+    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+    const isAfterClose = totalMinutes > 930; // after 15:30 IST
+    const isBeforeOpen = totalMinutes < 555; // before 09:15 IST
+
+    // If fetched outside market trading hours (e.g. weekend or night batch),
+    // anchor the display to the actual settled trading session's close (15:30 IST)
+    if (isWeekend || isAfterClose || isBeforeOpen) {
+      const sessionDate = new Date(istDate);
+      if (dayOfWeek === 6) {
+        // Saturday -> Friday close
+        sessionDate.setDate(sessionDate.getDate() - 1);
+      } else if (dayOfWeek === 0) {
+        // Sunday -> Friday close
+        sessionDate.setDate(sessionDate.getDate() - 2);
+      } else if (isBeforeOpen) {
+        // Weekday morning before open -> previous trading day's close
+        sessionDate.setDate(sessionDate.getDate() - (dayOfWeek === 1 ? 3 : 1));
+      }
+      const dateStr = sessionDate.toLocaleDateString("en-IN", {
+        day: "2-digit",
+        month: "short",
+      });
+      return `${dateStr} 15:30 IST`;
+    }
+
+    // Active market hours (09:15 - 15:30 IST)
     const now = new Date();
     const isToday =
       dt.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }) ===
