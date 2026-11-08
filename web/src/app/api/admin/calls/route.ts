@@ -230,6 +230,25 @@ export async function GET(request: Request) {
                  bool_or(cleared_at IS NOT NULL) AS has_cleared_call
           FROM app.stock_call
           GROUP BY symbol
+      ),
+      active_buys AS (
+          WITH cum AS (
+              SELECT symbol, trade_date, side, quantity,
+                     SUM(CASE WHEN side = 'buy' THEN quantity ELSE -quantity END) 
+                       OVER (PARTITION BY symbol ORDER BY trade_date, id) as cum_qty
+              FROM app.portfolio_transaction
+          ),
+          last_flat AS (
+              SELECT symbol, MAX(trade_date) as last_zero_date
+              FROM cum
+              WHERE cum_qty <= 0
+              GROUP BY symbol
+          )
+          SELECT c.symbol, MIN(c.trade_date) as first_buy_date
+          FROM cum c
+          LEFT JOIN last_flat lf ON lf.symbol = c.symbol
+          WHERE c.side = 'buy' AND (lf.last_zero_date IS NULL OR c.trade_date > lf.last_zero_date)
+          GROUP BY c.symbol
       )
       SELECT 
           p.symbol,
@@ -296,12 +315,7 @@ export async function GET(request: Request) {
           WHERE quantity > 0
           GROUP BY symbol
       ) ph ON ph.symbol = p.symbol
-      LEFT JOIN (
-          SELECT symbol, MIN(trade_date) as first_buy_date
-          FROM app.portfolio_transaction
-          WHERE side = 'buy'
-          GROUP BY symbol
-      ) pt ON pt.symbol = p.symbol
+      LEFT JOIN active_buys pt ON pt.symbol = p.symbol
       WHERE v.target_price IS NOT NULL
         AND (
           p.symbol IN ('INDUSTOWER', 'UNIONBANK', 'SHAREINDIA', 'NATCOPHARM', 'ALLDIGI', 'APOLLOTYRE', 'ORIENTTECH', 'MAXESTATES', 'PITTIENG', 'GRAVITA')
@@ -444,6 +458,25 @@ export async function GET(request: Request) {
           FROM app.stock_intraday
           WHERE ts >= CURRENT_DATE
           ORDER BY symbol, ts DESC
+      ),
+      active_buys AS (
+          WITH cum AS (
+              SELECT symbol, trade_date, side, quantity,
+                     SUM(CASE WHEN side = 'buy' THEN quantity ELSE -quantity END) 
+                       OVER (PARTITION BY symbol ORDER BY trade_date, id) as cum_qty
+              FROM app.portfolio_transaction
+          ),
+          last_flat AS (
+              SELECT symbol, MAX(trade_date) as last_zero_date
+              FROM cum
+              WHERE cum_qty <= 0
+              GROUP BY symbol
+          )
+          SELECT c.symbol, MIN(c.trade_date) as first_buy_date
+          FROM cum c
+          LEFT JOIN last_flat lf ON lf.symbol = c.symbol
+          WHERE c.side = 'buy' AND (lf.last_zero_date IS NULL OR c.trade_date > lf.last_zero_date)
+          GROUP BY c.symbol
       )
       SELECT 
           p.symbol,
@@ -499,12 +532,7 @@ export async function GET(request: Request) {
       LEFT JOIN latest_panel lp ON lp.symbol = p.symbol
       LEFT JOIN intraday_price si ON si.symbol = p.symbol
       LEFT JOIN latest_verdict v ON v.symbol = p.symbol
-      LEFT JOIN (
-          SELECT symbol, MIN(trade_date) as first_buy_date
-          FROM app.portfolio_transaction
-          WHERE side = 'buy'
-          GROUP BY symbol
-      ) pt ON pt.symbol = p.symbol
+      LEFT JOIN active_buys pt ON pt.symbol = p.symbol
       WHERE p.quantity > 0
       GROUP BY p.symbol, u.company_name, mc.name, u.sector, u.industry, u.market_cap_category, c.name, pt.first_buy_date,
                lp.composite_pct, lp.quality_pct, lp.valuation_pct, lp.momentum_pct,

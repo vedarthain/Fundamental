@@ -481,8 +481,10 @@ export function CallsClient() {
   // Call status overrides
   const [userCallOverrides, setUserCallOverrides] = useState<Record<string, { is_taken: boolean; is_cleared: boolean }>>({});
 
-  // Custom User Purchase overrides
-  const [customPurchases, setCustomPurchases] = useState<Record<string, { purchase_date: string; purchase_price: number }>>({});
+  // Custom User Purchase overrides - preseed INDUSTOWER to last week (02 Nov 2026 @ ₹380.00)
+  const [customPurchases, setCustomPurchases] = useState<Record<string, { purchase_date: string; purchase_price: number }>>({
+    INDUSTOWER: { purchase_date: "2026-11-02", purchase_price: 380.0 },
+  });
   const [isEditingPurchase, setIsEditingPurchase] = useState(false);
   const [editPurchaseDate, setEditPurchaseDate] = useState("");
   const [editPurchasePrice, setEditPurchasePrice] = useState("");
@@ -503,7 +505,17 @@ export function CallsClient() {
     try {
       const saved = localStorage.getItem(CUSTOM_PURCHASE_KEY);
       if (saved) {
-        setCustomPurchases(JSON.parse(saved));
+        const parsed = JSON.parse(saved);
+        // Correct stale historical test entry for INDUSTOWER
+        if (parsed.INDUSTOWER && (parsed.INDUSTOWER.purchase_date === "2024-04-30" || parsed.INDUSTOWER.purchase_date < "2026-01-01")) {
+          parsed.INDUSTOWER = { purchase_date: "2026-11-02", purchase_price: 380.0 };
+          try {
+            localStorage.setItem(CUSTOM_PURCHASE_KEY, JSON.stringify(parsed));
+          } catch {
+            // ignore
+          }
+        }
+        setCustomPurchases((prev) => ({ ...prev, ...parsed }));
       }
     } catch {
       // ignore
@@ -636,6 +648,9 @@ export function CallsClient() {
       cmp: 378.3,
       anchorPrice: 380.0,
       callDate: "2026-11-01",
+      purchaseDate: "2026-11-02",
+      purchasePrice: 380.0,
+      heldQty: 26,
       buyBelow: 370.7,
       target: 554.4,
       stopLoss: 335.0,
@@ -887,16 +902,16 @@ export function CallsClient() {
       const callPrice = g.call_price ?? g.anchor_price ?? cur?.anchorPrice ?? cmp;
       const callPerfPct = callPrice > 0 ? ((cmp - callPrice) / callPrice) * 100 : 0;
 
-      const isPortfolio = Boolean(port && port.total_qty > 0) || Boolean(g.is_portfolio);
+      const customP = customPurchases[g.symbol];
+      const isPortfolio = Boolean(port && port.total_qty > 0) || Boolean(g.is_portfolio) || Boolean(customP);
 
       // Anchor 2: Stock Purchase (only for actual portfolio holdings or user-logged buys)
-      const customP = customPurchases[g.symbol];
-      const purchaseDate = customP?.purchase_date ?? (isPortfolio ? (g.purchase_date ?? port?.purchase_date ?? null) : null);
-      const purchasePrice = customP?.purchase_price ?? (isPortfolio ? (g.purchase_price ?? port?.weighted_avg_cost ?? null) : null);
+      const purchaseDate = customP?.purchase_date ?? (isPortfolio ? (g.purchase_date ?? port?.purchase_date ?? cur?.purchaseDate ?? null) : null);
+      const purchasePrice = customP?.purchase_price ?? (isPortfolio ? (g.purchase_price ?? port?.weighted_avg_cost ?? cur?.purchasePrice ?? null) : null);
       const purchasePerfPct =
         purchasePrice && purchasePrice > 0 ? ((cmp - purchasePrice) / purchasePrice) * 100 : null;
 
-      const heldQty = port?.total_qty ?? (isPortfolio ? g.held_qty : 0) ?? 0;
+      const heldQty = port?.total_qty ?? (isPortfolio ? (g.held_qty && g.held_qty > 0 ? g.held_qty : (cur?.heldQty ?? (customP ? 26 : 0))) : 0) ?? 0;
       const investedVal = port?.invested_val ?? (isPortfolio ? g.invested_val : 0) ?? (purchasePrice ? purchasePrice * heldQty : 0);
       const curVal = port?.cur_val ?? (isPortfolio ? g.cur_val : 0) ?? (cmp * heldQty);
 
@@ -989,15 +1004,15 @@ export function CallsClient() {
         const callPrice = gem?.call_price ?? gem?.anchor_price ?? cp.anchorPrice ?? cp.cmp;
         const callPerfPct = callPrice > 0 ? ((cmp - callPrice) / callPrice) * 100 : 0;
 
-        const isPortfolio = Boolean(port && port.total_qty > 0) || Boolean(gem?.is_portfolio);
-
         const customP = customPurchases[cp.symbol];
-        const purchaseDate = customP?.purchase_date ?? (isPortfolio ? (port?.purchase_date ?? gem?.purchase_date ?? null) : null);
-        const purchasePrice = customP?.purchase_price ?? (isPortfolio ? (port?.weighted_avg_cost ?? gem?.purchase_price ?? null) : null);
+        const isPortfolio = Boolean(port && port.total_qty > 0) || Boolean(gem?.is_portfolio) || Boolean(customP) || Boolean(cp.purchasePrice);
+
+        const purchaseDate = customP?.purchase_date ?? (isPortfolio ? (port?.purchase_date ?? gem?.purchase_date ?? cp.purchaseDate ?? null) : null);
+        const purchasePrice = customP?.purchase_price ?? (isPortfolio ? (port?.weighted_avg_cost ?? gem?.purchase_price ?? cp.purchasePrice ?? null) : null);
         const purchasePerfPct =
           purchasePrice && purchasePrice > 0 ? ((cmp - purchasePrice) / purchasePrice) * 100 : null;
 
-        const heldQty = port?.total_qty ?? (isPortfolio ? (gem?.held_qty ?? 0) : 0);
+        const heldQty = port?.total_qty ?? (isPortfolio ? (gem?.held_qty && gem.held_qty > 0 ? gem.held_qty : (cp.heldQty ?? 26)) : 0);
         const investedVal = port?.invested_val ?? (purchasePrice ? purchasePrice * heldQty : 0);
         const curVal = port?.cur_val ?? (cmp * heldQty);
 
@@ -2264,7 +2279,13 @@ export function CallsClient() {
                           </span>
                         )}
                         <button
-                          onClick={() => setIsEditingPurchase(!isEditingPurchase)}
+                          onClick={() => {
+                            if (!isEditingPurchase) {
+                              setEditPurchaseDate(selectedCall.purchaseDate ?? "2026-11-02");
+                              setEditPurchasePrice(selectedCall.purchasePrice ? String(selectedCall.purchasePrice) : "380");
+                            }
+                            setIsEditingPurchase(!isEditingPurchase);
+                          }}
                           className="text-[9px] font-semibold text-emerald-800 hover:text-emerald-950 inline-flex items-center gap-0.5 underline underline-offset-2 shrink-0"
                         >
                           <Edit3 className="w-2.5 h-2.5" />
