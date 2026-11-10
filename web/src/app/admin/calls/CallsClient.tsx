@@ -3258,22 +3258,22 @@ export function CallsClient() {
                       1.5% Corpus / 15% SIP
                     </span>
                   </div>
-                  <div className="mt-2 space-y-1.5">
+                  <div className="mt-2 space-y-1">
                     <div className="flex items-baseline justify-between">
-                      <span className="text-xs font-medium text-slate-600">Today&apos;s Target Size:</span>
-                      <strong className="text-sm sm:text-base font-mono text-slate-900">{fmtLakhs(dynamicSizing.anchor.total)}</strong>
+                      <span className="text-[11px] text-slate-500">Today&apos;s Target Size:</span>
+                      <strong className="text-sm font-mono text-slate-900">{fmtLakhs(dynamicSizing.anchor.total)}</strong>
                     </div>
-                    <div className="flex items-center justify-between text-xs font-semibold text-slate-700 pl-2 border-l-2 border-indigo-400">
+                    <div className="flex items-center justify-between text-[11px] text-slate-600 pl-2 border-l-2 border-indigo-300">
                       <span>Tranche 1 (Market):</span>
-                      <strong className="font-mono text-indigo-900">{fmtLakhs(dynamicSizing.anchor.t1)}</strong>
+                      <strong className="font-mono">{fmtLakhs(dynamicSizing.anchor.t1)}</strong>
                     </div>
-                    <div className="flex items-center justify-between text-xs font-semibold text-slate-700 pl-2 border-l-2 border-indigo-400">
+                    <div className="flex items-center justify-between text-[11px] text-slate-600 pl-2 border-l-2 border-indigo-300">
                       <span>Tranche 2 (Dip GTT):</span>
-                      <strong className="font-mono text-indigo-900">{fmtLakhs(dynamicSizing.anchor.t2)}</strong>
+                      <strong className="font-mono">{fmtLakhs(dynamicSizing.anchor.t2)}</strong>
                     </div>
                   </div>
                 </div>
-                <div className="pt-2 border-t border-indigo-100 text-[11px] text-indigo-900 space-y-0.5">
+                <div className="pt-2 border-t border-indigo-100 text-[10px] text-indigo-900 space-y-0.5">
                   <div className="flex justify-between">
                     <span>At ₹30L Corpus:</span>
                     <strong className="font-mono">₹45,000 (T1: ₹22.5k)</strong>
@@ -3297,22 +3297,22 @@ export function CallsClient() {
                       1.0% Corpus / 12% SIP
                     </span>
                   </div>
-                  <div className="mt-2 space-y-1.5">
+                  <div className="mt-2 space-y-1">
                     <div className="flex items-baseline justify-between">
-                      <span className="text-xs font-medium text-slate-600">Today&apos;s Target Size:</span>
-                      <strong className="text-sm sm:text-base font-mono text-slate-900">{fmtLakhs(dynamicSizing.compounder.total)}</strong>
+                      <span className="text-[11px] text-slate-500">Today&apos;s Target Size:</span>
+                      <strong className="text-sm font-mono text-slate-900">{fmtLakhs(dynamicSizing.compounder.total)}</strong>
                     </div>
-                    <div className="flex items-center justify-between text-xs font-semibold text-slate-700 pl-2 border-l-2 border-emerald-400">
+                    <div className="flex items-center justify-between text-[11px] text-slate-600 pl-2 border-l-2 border-emerald-300">
                       <span>Tranche 1 (Market):</span>
-                      <strong className="font-mono text-emerald-900">{fmtLakhs(dynamicSizing.compounder.t1)}</strong>
+                      <strong className="font-mono">{fmtLakhs(dynamicSizing.compounder.t1)}</strong>
                     </div>
-                    <div className="flex items-center justify-between text-xs font-semibold text-slate-700 pl-2 border-l-2 border-emerald-400">
+                    <div className="flex items-center justify-between text-[11px] text-slate-600 pl-2 border-l-2 border-emerald-300">
                       <span>Tranche 2 (Dip GTT):</span>
-                      <strong className="font-mono text-emerald-900">{fmtLakhs(dynamicSizing.compounder.t2)}</strong>
+                      <strong className="font-mono">{fmtLakhs(dynamicSizing.compounder.t2)}</strong>
                     </div>
                   </div>
                 </div>
-                <div className="pt-2 border-t border-emerald-100 text-[11px] text-emerald-900 space-y-0.5">
+                <div className="pt-2 border-t border-emerald-100 text-[10px] text-emerald-900 space-y-0.5">
                   <div className="flex justify-between">
                     <span>At ₹30L Corpus:</span>
                     <strong className="font-mono">₹30,000 (T1: ₹15k)</strong>
@@ -4173,7 +4173,7 @@ export function CallsClient() {
               })()}
 
               {/* ── ROW 2: Price Graph (Left) & Stacked 4 Boxes (Right) ───────── */}
-              <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_330px] xl:grid-cols-[minmax(0,1fr)_360px] gap-2 items-stretch w-full min-w-0">
+              <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_270px] xl:grid-cols-[minmax(0,1fr)_285px] gap-2 items-stretch w-full min-w-0">
                 {/* Left: Price Chart & Moving Averages Card */}
                 <div className="bg-white border hairline rounded-lg p-2.5 sm:p-3 shadow-2xs flex flex-col justify-between min-w-0 overflow-hidden w-full">
                   <div className="flex items-center justify-between text-xs mb-1 min-w-0 flex-wrap gap-1.5">
@@ -4191,17 +4191,17 @@ export function CallsClient() {
                     </div>
                     <div className="flex items-center gap-1.5 flex-wrap shrink-0">
                       {selectedCall.stopLoss != null && selectedCall.stopLoss > 0 && (
-                        <span className="px-1.5 py-0.5 rounded text-[11px] font-mono text-rose-700 bg-rose-50 border border-rose-200">
+                        <span className="px-1.5 py-0.5 rounded text-[10.5px] font-mono text-rose-700 bg-rose-50 border border-rose-200">
                           Floor <strong className="text-rose-900 font-bold">{money(selectedCall.stopLoss)}</strong>
                         </span>
                       )}
                       {selectedCall.buyBelow != null && selectedCall.buyBelow > 0 && (
-                        <span className="px-1.5 py-0.5 rounded text-[11px] font-mono text-slate-700 bg-slate-50 border hairline">
+                        <span className="px-1.5 py-0.5 rounded text-[10.5px] font-mono text-slate-700 bg-slate-50 border hairline">
                           Buy ≤ <strong className="text-slate-900 font-bold">{money(selectedCall.buyBelow)}</strong>
                         </span>
                       )}
                       {selectedCall.target != null && selectedCall.target > 0 && (
-                        <span className="px-1.5 py-0.5 rounded text-[11px] font-mono text-emerald-800 bg-emerald-50 border border-emerald-200">
+                        <span className="px-1.5 py-0.5 rounded text-[10.5px] font-mono text-emerald-800 bg-emerald-50 border border-emerald-200">
                           Target <strong className="text-emerald-900 font-bold">{money(selectedCall.target)}</strong> (+{selectedCall.upside}%)
                         </span>
                       )}
@@ -4212,26 +4212,26 @@ export function CallsClient() {
                       symbol={selectedCall.symbol}
                       currentPrice={selectedCall.cmp}
                       onPriceInfo={setStockPriceInfo}
-                      height={330}
+                      height={315}
                       isPortfolio={selectedCall.isPortfolio}
                       trades={chartTrades}
                     />
                   </div>
                 </div>
 
-                {/* Right: 4 Stacked Boxes with Larger, High-Visibility Labels */}
-                <div className="flex flex-col gap-2 justify-between w-full lg:w-[330px] xl:w-[360px] shrink-0 min-w-0">
+                {/* Right: 4 Compact Stacked Boxes */}
+                <div className="flex flex-col gap-1.5 justify-between w-full lg:w-[270px] xl:w-[285px] shrink-0 min-w-0">
                   {/* BOX 1: ANCHOR 1 - CALL GIVEN */}
-                  <div className="bg-slate-50/90 border border-indigo-200 rounded-lg p-3 shadow-2xs flex-1 flex flex-col justify-between min-w-0">
-                    <div className="flex items-center justify-between gap-1.5 min-w-0">
-                      <div className="flex items-center gap-1.5 font-bold text-indigo-950 shrink-0">
-                        <span className="w-2 h-2 rounded-full bg-indigo-600 shrink-0" />
-                        <span className="tracking-wide text-xs sm:text-[13px] whitespace-nowrap">ANCHOR 1: CALL GIVEN</span>
+                  <div className="bg-slate-50/90 border border-indigo-100 rounded-lg p-2 shadow-2xs flex-1 flex flex-col justify-between min-w-0">
+                    <div className="flex items-center justify-between text-[11px] gap-1 min-w-0">
+                      <div className="flex items-center gap-1 font-bold text-indigo-950 shrink-0">
+                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-600 shrink-0" />
+                        <span className="tracking-wide text-[10px] whitespace-nowrap">ANCHOR 1: CALL GIVEN</span>
                       </div>
-                      <div className="flex items-center gap-1.5 shrink-0">
+                      <div className="flex items-center gap-1 shrink-0">
                         {selectedCall.timeline && (
                           <span
-                            className="text-[10.5px] font-mono font-bold px-1.5 py-0.5 rounded border bg-indigo-100 text-indigo-900 border-indigo-300 shrink-0"
+                            className="text-[10.5px] font-mono font-bold px-1.5 py-0.2 rounded border bg-indigo-100 text-indigo-900 border-indigo-200 shrink-0"
                             title={`Target Horizon: ${selectedCall.timeline} to reach target of ${money(selectedCall.target)}`}
                           >
                             🎯 {selectedCall.timeline}
@@ -4239,7 +4239,7 @@ export function CallsClient() {
                         )}
                         {selectedCall.callDate && (
                           <span
-                            className="text-[11px] font-mono font-medium text-slate-600 shrink-0"
+                            className="text-[10px] font-mono text-slate-500 shrink-0"
                             title={`Call given on ${fmtDate(selectedCall.callDate)}`}
                           >
                             {daysAgo(selectedCall.callDate)}
@@ -4248,13 +4248,13 @@ export function CallsClient() {
                       </div>
                     </div>
 
-                    <div className="flex items-center justify-between pt-1.5 mt-1 border-t border-indigo-100">
+                    <div className="flex items-center justify-between pt-1 mt-0.5 border-t border-indigo-100/80">
                       <div>
-                        <span className="text-[11px] uppercase font-bold text-slate-600 block">Anchor Price</span>
-                        <div className="flex items-baseline gap-1.5 mt-0.5">
-                          <span className="text-sm sm:text-base font-bold font-mono text-slate-900">{money(selectedCall.callPrice)}</span>
+                        <span className="text-[8.5px] uppercase font-semibold text-slate-500 block">Anchor Price</span>
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs sm:text-sm font-bold font-mono text-slate-900">{money(selectedCall.callPrice)}</span>
                           {selectedCall.callDate && (
-                            <span className="text-[11px] font-mono text-slate-600" title={`Call given on ${fmtDate(selectedCall.callDate)}`}>
+                            <span className="text-[9px] font-mono text-slate-500" title={`Call given on ${fmtDate(selectedCall.callDate)}`}>
                               ({fmtDate(selectedCall.callDate)})
                             </span>
                           )}
@@ -4262,13 +4262,13 @@ export function CallsClient() {
                       </div>
 
                       <div className="text-right">
-                        <span className="text-[11px] uppercase font-bold text-slate-600 block">Return Since Call</span>
-                        <div className="flex items-baseline justify-end gap-1 mt-0.5">
-                          <span className={`text-sm sm:text-base font-bold font-mono ${(selectedCall.callPerfPct ?? 0) >= 0 ? "text-emerald-800" : "text-rose-700"}`}>
+                        <span className="text-[8.5px] uppercase font-semibold text-slate-500 block">Return Since Call</span>
+                        <div className="flex items-center justify-end gap-1">
+                          <span className={`text-xs sm:text-sm font-bold font-mono ${(selectedCall.callPerfPct ?? 0) >= 0 ? "text-emerald-800 font-bold" : "text-rose-700 font-bold"}`}>
                             {pct(selectedCall.callPerfPct)}
                           </span>
                           {selectedCall.callPrice && (
-                            <span className="text-[11px] font-mono text-slate-600">
+                            <span className="text-[9px] font-mono text-slate-500">
                               ({selectedCall.cmp >= selectedCall.callPrice ? "+" : ""}{money(selectedCall.cmp - selectedCall.callPrice)})
                             </span>
                           )}
@@ -4278,15 +4278,15 @@ export function CallsClient() {
                   </div>
 
                   {/* BOX 2: ANCHOR 2 - STOCK PURCHASE */}
-                  <div className="bg-slate-50/90 border border-emerald-200 rounded-lg p-3 shadow-2xs flex-1 flex flex-col justify-between min-w-0">
-                    <div className="flex items-center justify-between gap-1.5 min-w-0">
-                      <div className="flex items-center gap-1.5 font-bold text-emerald-950 shrink-0">
-                        <span className="w-2 h-2 rounded-full bg-emerald-600 shrink-0" />
-                        <span className="tracking-wide text-xs sm:text-[13px] whitespace-nowrap">ANCHOR 2: PURCHASE</span>
+                  <div className="bg-slate-50/90 border border-emerald-100 rounded-lg p-2 shadow-2xs flex-1 flex flex-col justify-between min-w-0">
+                    <div className="flex items-center justify-between text-[11px] gap-1 min-w-0">
+                      <div className="flex items-center gap-1 font-bold text-emerald-950 shrink-0">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 shrink-0" />
+                        <span className="tracking-wide text-[10px] whitespace-nowrap">ANCHOR 2: PURCHASE</span>
                       </div>
-                      <div className="flex items-center gap-1.5 shrink-0">
+                      <div className="flex items-center gap-1 shrink-0">
                         {purchaseDuration && (
-                          <span className={`text-[10.5px] font-mono font-semibold px-1.5 py-0.5 rounded border ${purchaseDuration.badgeClass}`}>
+                          <span className={`text-[10.5px] font-mono font-bold px-1.5 py-0.2 rounded border ${purchaseDuration.badgeClass}`}>
                             ⏱️ {purchaseDuration.label}
                           </span>
                         )}
@@ -4298,43 +4298,43 @@ export function CallsClient() {
                             }
                             setIsEditingPurchase(!isEditingPurchase);
                           }}
-                          className="text-[11px] font-bold text-emerald-800 hover:text-emerald-950 inline-flex items-center gap-1 underline underline-offset-2 shrink-0"
+                          className="text-[9.5px] font-semibold text-emerald-800 hover:text-emerald-950 inline-flex items-center gap-0.5 underline underline-offset-2 shrink-0"
                         >
-                          <Edit3 className="w-3 h-3" />
+                          <Edit3 className="w-2.5 h-2.5" />
                           <span>{selectedCall.isPortfolio && selectedCall.purchasePrice ? "Edit" : "Log Buy"}</span>
                         </button>
                       </div>
                     </div>
 
                     {isEditingPurchase ? (
-                      <div className="bg-white p-1.5 rounded border border-emerald-300 space-y-1.5 mt-1">
-                        <div className="grid grid-cols-2 gap-1.5 text-xs">
+                      <div className="bg-white p-1 rounded border border-emerald-300 space-y-1">
+                        <div className="grid grid-cols-2 gap-1 text-[10px]">
                           <div>
-                            <label className="block text-slate-600 text-[10px] font-semibold">Buy Date</label>
+                            <label className="block text-slate-600 text-[8.5px]">Buy Date</label>
                             <input
                               type="date"
                               value={editPurchaseDate}
                               onChange={(e) => setEditPurchaseDate(e.target.value)}
-                              className="w-full px-1.5 py-0.5 text-[11px] border rounded bg-white"
+                              className="w-full px-1 py-0.2 text-[9.5px] border rounded bg-white"
                             />
                           </div>
                           <div>
-                            <label className="block text-slate-600 text-[10px] font-semibold">Buy Price (₹)</label>
+                            <label className="block text-slate-600 text-[8.5px]">Buy Price (₹)</label>
                             <input
                               type="number"
                               step="0.05"
                               value={editPurchasePrice}
                               onChange={(e) => setEditPurchasePrice(e.target.value)}
-                              className="w-full px-1.5 py-0.5 text-[11px] border rounded bg-white font-mono"
+                              className="w-full px-1 py-0.2 text-[9.5px] border rounded bg-white font-mono"
                             />
                           </div>
                         </div>
-                        <div className="flex items-center justify-end gap-1.5 pt-0.5">
-                          <button onClick={() => setIsEditingPurchase(false)} className="px-2 py-0.5 text-[10.5px] text-slate-600">
+                        <div className="flex items-center justify-end gap-1 pt-0.5">
+                          <button onClick={() => setIsEditingPurchase(false)} className="px-1.5 py-0.2 text-[9px] text-slate-600">
                             Cancel
                           </button>
                           {customPurchases[selectedCall.symbol] && (
-                            <button onClick={() => clearCustomPurchase(selectedCall.symbol)} className="px-2 py-0.5 text-[10.5px] text-rose-700 bg-rose-50 border border-rose-200 rounded">
+                            <button onClick={() => clearCustomPurchase(selectedCall.symbol)} className="px-1.5 py-0.2 text-[9px] text-rose-700 bg-rose-50 border border-rose-200 rounded">
                               Reset
                             </button>
                           )}
@@ -4343,53 +4343,53 @@ export function CallsClient() {
                               const p = parseFloat(editPurchasePrice);
                               if (!Number.isNaN(p) && p > 0 && editPurchaseDate) saveCustomPurchase(selectedCall.symbol, editPurchaseDate, p);
                             }}
-                            className="px-2.5 py-0.5 text-[10.5px] font-bold text-white bg-emerald-700 rounded shadow-2xs"
+                            className="px-2 py-0.2 text-[9px] font-bold text-white bg-emerald-700 rounded shadow-2xs"
                           >
                             Save
                           </button>
                         </div>
                       </div>
                     ) : (
-                      <div className="flex items-center justify-between pt-1.5 mt-1 border-t border-emerald-100">
+                      <div className="flex items-center justify-between pt-1 mt-0.5 border-t border-emerald-100/80">
                         <div>
-                          <span className="text-[11px] uppercase font-bold text-slate-600 block">Purchase Price &amp; Qty</span>
-                          <div className="flex items-baseline gap-1.5 flex-wrap mt-0.5">
-                            <span className="text-sm sm:text-base font-bold font-mono text-slate-900">
+                          <span className="text-[8.5px] uppercase font-semibold text-slate-500 block">Purchase Price &amp; Qty</span>
+                          <div className="flex items-center gap-1 flex-wrap">
+                            <span className="text-xs sm:text-sm font-bold font-mono text-slate-900">
                               {selectedCall.isPortfolio && selectedCall.purchasePrice ? money(selectedCall.purchasePrice) : "—"}
                             </span>
                             {selectedCall.isPortfolio && selectedCall.heldQty != null && selectedCall.heldQty > 0 && (
-                              <span className="text-[11px] font-mono font-bold px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-900 border border-emerald-300">
+                              <span className="text-[10.5px] font-mono font-bold px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-900 border border-emerald-300">
                                 {selectedCall.heldQty} sh
                               </span>
                             )}
-                            <span className="text-[11px] text-slate-600">
+                            <span className="text-[9px] text-slate-500">
                               {selectedCall.isPortfolio && selectedCall.purchasePrice && selectedCall.purchaseDate
                                 ? `(${fmtDate(selectedCall.purchaseDate)})`
                                 : "(Not held)"}
                             </span>
                           </div>
                           {selectedCall.isPortfolio && (selectedCall.investedVal || (selectedCall.heldQty && selectedCall.purchasePrice)) ? (
-                            <div className="text-[11px] text-slate-600 font-mono mt-0.5">
-                              Invested: <span className="font-bold text-slate-800">{money(selectedCall.investedVal ?? (selectedCall.heldQty! * selectedCall.purchasePrice!))}</span>
+                            <div className="text-[9px] text-slate-500 font-mono mt-0.5">
+                              Invested: <span className="font-semibold text-slate-700">{money(selectedCall.investedVal ?? (selectedCall.heldQty! * selectedCall.purchasePrice!))}</span>
                             </div>
                           ) : null}
                         </div>
 
                         <div className="text-right">
-                          <span className="text-[11px] uppercase font-bold text-slate-600 block">Return Since Buy</span>
+                          <span className="text-[8.5px] uppercase font-semibold text-slate-500 block">Return Since Buy</span>
                           {selectedCall.isPortfolio && selectedCall.purchasePerfPct != null && selectedCall.purchasePrice ? (
-                            <div className="flex items-baseline justify-end gap-1 mt-0.5">
-                              <span className={`text-sm sm:text-base font-bold font-mono ${selectedCall.purchasePerfPct >= 0 ? "text-emerald-800" : "text-rose-700"}`}>
+                            <div className="flex items-center justify-end gap-1">
+                              <span className={`text-xs sm:text-sm font-bold font-mono ${selectedCall.purchasePerfPct >= 0 ? "text-emerald-800 font-bold" : "text-rose-700 font-bold"}`}>
                                 {pct(selectedCall.purchasePerfPct)}
                               </span>
                               {selectedCall.purchasePrice && (
-                                <span className="text-[11px] font-mono text-slate-600">
+                                <span className="text-[9px] font-mono text-slate-500">
                                   ({selectedCall.cmp >= selectedCall.purchasePrice ? "+" : ""}{money(selectedCall.cmp - selectedCall.purchasePrice)})
                                 </span>
                               )}
                             </div>
                           ) : (
-                            <span className="text-[11px] font-mono text-slate-500 mt-0.5 block">Not in portfolio</span>
+                            <span className="text-[9.5px] font-mono text-slate-400">Not in portfolio</span>
                           )}
                         </div>
                       </div>
@@ -4398,43 +4398,43 @@ export function CallsClient() {
 
                   {/* BOX 3: TRANCHE 1 - MARKET ORDER (CMP) */}
                   {selectedCall.isCurated ? (
-                    <div className="bg-slate-50/90 border border-indigo-200 rounded-lg p-3 shadow-2xs flex-1 flex flex-col justify-between min-w-0">
-                      <div className="flex items-center justify-between gap-1.5 min-w-0">
-                        <div className="flex items-center gap-1.5 font-bold text-indigo-950 truncate">
-                          <span className="w-2 h-2 rounded-full bg-indigo-600 shrink-0" />
-                          <span className="tracking-wide text-xs sm:text-[13px] truncate">TRANCHE 1: MARKET CMP</span>
+                    <div className="bg-slate-50/90 border border-indigo-100 rounded-lg p-2 shadow-2xs flex-1 flex flex-col justify-between min-w-0">
+                      <div className="flex items-center justify-between text-[11px] gap-1 min-w-0">
+                        <div className="flex items-center gap-1 font-bold text-indigo-950 truncate">
+                          <span className="w-1.5 h-1.5 rounded-full bg-indigo-600 shrink-0" />
+                          <span className="tracking-wide text-[10px] truncate">TRANCHE 1: MARKET CMP</span>
                         </div>
-                        <span className="text-[11px] font-mono font-bold text-indigo-800 bg-indigo-100 border border-indigo-300 px-2 py-0.5 rounded shrink-0">
+                        <span className="text-[10.5px] font-mono font-bold text-indigo-800 bg-indigo-50 border border-indigo-200 px-1.5 py-0.2 rounded shrink-0">
                           50% (~{money(selectedCall.t1Value)})
                         </span>
                       </div>
 
-                      <div className="flex items-center justify-between pt-1.5 mt-1 border-t border-indigo-100">
+                      <div className="flex items-center justify-between pt-1 mt-0.5 border-t border-indigo-100/80">
                         <div>
-                          <span className="text-[11px] uppercase font-bold text-slate-600 block">Buy Today</span>
-                          <span className="text-sm sm:text-base font-bold font-mono text-slate-900 mt-0.5 block">{selectedCall.tranche1Shares} shares</span>
+                          <span className="text-[8.5px] uppercase font-semibold text-slate-500 block">Buy Today</span>
+                          <span className="text-xs sm:text-sm font-bold font-mono text-slate-900">{selectedCall.tranche1Shares} shares</span>
                         </div>
                         <div className="text-right">
-                          <span className="text-[11px] uppercase font-bold text-slate-600 block">Order Price</span>
-                          <span className="text-sm sm:text-base font-bold font-mono text-indigo-800 mt-0.5 block">@ CMP {money(selectedCall.cmp)}</span>
+                          <span className="text-[8.5px] uppercase font-semibold text-slate-500 block">Order Price</span>
+                          <span className="text-xs sm:text-sm font-bold font-mono text-indigo-700">@ CMP {money(selectedCall.cmp)}</span>
                         </div>
                       </div>
                     </div>
                   ) : (
-                    <div className={`rounded-lg p-3 shadow-2xs flex-1 flex flex-col justify-between min-w-0 ${
+                    <div className={`rounded-lg p-2 shadow-2xs flex-1 flex flex-col justify-between min-w-0 ${
                       isSellAction ? "bg-rose-50/90 border border-rose-300" : "bg-slate-50/90 border hairline"
                     }`}>
-                      <div className="flex items-center justify-between gap-1.5 min-w-0">
-                        <div className="flex items-center gap-1.5 font-bold text-slate-800 truncate">
-                          <span className="w-2 h-2 rounded-full bg-slate-500 shrink-0" />
-                          <span className="tracking-wide text-xs sm:text-[13px] truncate">{isSellAction ? "EXIT TRIGGER" : "ACTION GUIDELINE"}</span>
+                      <div className="flex items-center justify-between text-[11px] gap-1 min-w-0">
+                        <div className="flex items-center gap-1 font-bold text-slate-800 truncate">
+                          <span className="w-1.5 h-1.5 rounded-full bg-slate-500 shrink-0" />
+                          <span className="tracking-wide text-[10px] truncate">{isSellAction ? "EXIT TRIGGER" : "ACTION GUIDELINE"}</span>
                         </div>
-                        <span className={`px-2 py-0.5 rounded text-[10.5px] font-semibold border shrink-0 ${actionBadgeClass(selectedCall.actionToday)}`}>
+                        <span className={`px-1.5 py-0.2 rounded text-[10px] font-semibold border shrink-0 ${actionBadgeClass(selectedCall.actionToday)}`}>
                           {selectedCall.actionToday}
                         </span>
                       </div>
 
-                      <div className="pt-1.5 mt-1 border-t border-slate-200/80 text-xs">
+                      <div className="pt-1 mt-0.5 border-t border-slate-200/80 text-[9.5px]">
                         <p className="text-slate-700 line-clamp-2 leading-snug">
                           {selectedCall.actionReason || selectedCall.rationale}
                         </p>
@@ -4444,48 +4444,48 @@ export function CallsClient() {
 
                   {/* BOX 4: TRANCHE 2 - DIP LIMIT (GTT) */}
                   {selectedCall.isCurated ? (
-                    <div className="bg-slate-50/90 border border-amber-300 rounded-lg p-3 shadow-2xs flex-1 flex flex-col justify-between min-w-0">
-                      <div className="flex items-center justify-between gap-1.5 min-w-0">
-                        <div className="flex items-center gap-1.5 font-bold text-amber-950 truncate">
-                          <span className="w-2 h-2 rounded-full bg-amber-600 shrink-0" />
-                          <span className="tracking-wide text-xs sm:text-[13px] truncate">TRANCHE 2: DIP (GTT)</span>
+                    <div className="bg-slate-50/90 border border-amber-200 rounded-lg p-2 shadow-2xs flex-1 flex flex-col justify-between min-w-0">
+                      <div className="flex items-center justify-between text-[11px] gap-1 min-w-0">
+                        <div className="flex items-center gap-1 font-bold text-amber-950 truncate">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-600 shrink-0" />
+                          <span className="tracking-wide text-[10px] truncate">TRANCHE 2: DIP (GTT)</span>
                         </div>
-                        <span className="text-[11px] font-mono font-bold text-amber-900 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded shrink-0">
+                        <span className="text-[10.5px] font-mono font-bold text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-0.2 rounded shrink-0">
                           50% (~{money(selectedCall.t2Value)})
                         </span>
                       </div>
 
-                      <div className="flex items-center justify-between pt-1.5 mt-1 border-t border-amber-200/80">
+                      <div className="flex items-center justify-between pt-1 mt-0.5 border-t border-amber-100">
                         <div>
-                          <span className="text-[11px] uppercase font-bold text-slate-600 block">Dip Buy</span>
-                          <span className="text-sm sm:text-base font-bold font-mono text-slate-900 mt-0.5 block">{selectedCall.tranche2Shares} shares</span>
+                          <span className="text-[8.5px] uppercase font-semibold text-slate-500 block">Dip Buy</span>
+                          <span className="text-xs sm:text-sm font-bold font-mono text-slate-900">{selectedCall.tranche2Shares} shares</span>
                         </div>
                         <div className="text-right">
-                          <span className="text-[11px] uppercase font-bold text-slate-600 block">Limit Price</span>
-                          <span className="text-sm sm:text-base font-bold font-mono text-amber-900 mt-0.5 block">≤ {money(selectedCall.buyBelow)}</span>
+                          <span className="text-[8.5px] uppercase font-semibold text-slate-500 block">Limit Price</span>
+                          <span className="text-xs sm:text-sm font-bold font-mono text-amber-800">≤ {money(selectedCall.buyBelow)}</span>
                         </div>
                       </div>
                     </div>
                   ) : (
-                    <div className="bg-slate-50/90 border hairline rounded-lg p-3 shadow-2xs flex-1 flex flex-col justify-between min-w-0">
-                      <div className="flex items-center justify-between gap-1.5 min-w-0">
-                        <div className="flex items-center gap-1.5 font-bold text-slate-800 truncate">
-                          <span className="w-2 h-2 rounded-full bg-slate-500 shrink-0" />
-                          <span className="tracking-wide text-xs sm:text-[13px] truncate">PRICE CORRIDOR</span>
+                    <div className="bg-slate-50/90 border hairline rounded-lg p-2 shadow-2xs flex-1 flex flex-col justify-between min-w-0">
+                      <div className="flex items-center justify-between text-[11px] gap-1 min-w-0">
+                        <div className="flex items-center gap-1 font-bold text-slate-800 truncate">
+                          <span className="w-1.5 h-1.5 rounded-full bg-slate-500 shrink-0" />
+                          <span className="tracking-wide text-[10px] truncate">PRICE CORRIDOR</span>
                         </div>
-                        <span className="text-[11px] font-mono font-semibold text-slate-600 shrink-0">
+                        <span className="text-[10.5px] font-mono font-semibold text-slate-600 shrink-0">
                           Pillar {selectedCall.composite_pct}%
                         </span>
                       </div>
 
-                      <div className="flex items-center justify-between pt-1.5 mt-1 border-t border-slate-200 text-xs">
+                      <div className="flex items-center justify-between pt-1 mt-0.5 border-t border-slate-200 text-[10px]">
                         <div>
-                          <span className="text-[11px] uppercase font-bold text-slate-500 block">Bear Floor</span>
-                          <span className="font-mono font-bold text-rose-600 text-sm sm:text-base mt-0.5 block">{money(selectedCall.stopLoss)}</span>
+                          <span className="text-[8.5px] uppercase font-semibold text-slate-400 block">Bear Floor</span>
+                          <span className="font-mono font-bold text-rose-600 text-xs">{money(selectedCall.stopLoss)}</span>
                         </div>
                         <div className="text-right">
-                          <span className="text-[11px] uppercase font-bold text-slate-500 block">Target Upside</span>
-                          <span className="font-mono font-bold text-emerald-700 text-sm sm:text-base mt-0.5 block">{money(selectedCall.target)} (+{selectedCall.upside}%)</span>
+                          <span className="text-[8.5px] uppercase font-semibold text-slate-400 block">Target Upside</span>
+                          <span className="font-mono font-bold text-emerald-700 text-xs">{money(selectedCall.target)} (+{selectedCall.upside}%)</span>
                         </div>
                       </div>
                     </div>
