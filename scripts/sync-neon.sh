@@ -220,6 +220,45 @@ copy_replace app.cluster_stocks_panel_cache "$NEON_APP_URL" "$LOCAL_APP" \
   "snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_stocks_panel_cache)" \
   "snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_stocks_panel_cache)"
 
+# ----- company_overview (+ FK parents in app.announcement) ----------------
+# Overviews are now built locally via Ollama (build-overview-from-filing.mjs --ollama)
+# and pushed to Neon. Ensure referenced app.announcement rows exist on Neon first
+# (company_overview.source_filing_id -> app.announcement.id FK), then upsert
+# overviews where local generated_at is newer or equal.
+echo "▶ syncing app.company_overview (+ FK announcement parents)..."
+OV_FIDS="SELECT source_filing_id FROM app.company_overview WHERE source_filing_id IS NOT NULL AND $UNIVERSE_FILTER"
+OV_ANN_TMP="$TMP_DIR/overview_announcements.tsv"
+psql "$LOCAL_APP" -c "\COPY (SELECT * FROM app.announcement WHERE id IN ($OV_FIDS)) TO STDOUT" > "$OV_ANN_TMP"
+if [[ -s "$OV_ANN_TMP" ]]; then
+  psql "$NEON_APP_URL" -v ON_ERROR_STOP=1 <<SQL
+DROP TABLE IF EXISTS _ov_ann;
+CREATE TEMP TABLE _ov_ann (LIKE app.announcement INCLUDING ALL);
+\COPY _ov_ann FROM '$OV_ANN_TMP';
+INSERT INTO app.announcement SELECT * FROM _ov_ann ON CONFLICT (id) DO NOTHING;
+SQL
+fi
+
+OV_TMP="$TMP_DIR/company_overview.tsv"
+psql "$LOCAL_APP" -c "\COPY (SELECT * FROM app.company_overview WHERE $UNIVERSE_FILTER) TO STDOUT" > "$OV_TMP"
+if [[ -s "$OV_TMP" ]]; then
+  psql "$NEON_APP_URL" -v ON_ERROR_STOP=1 <<SQL
+DROP TABLE IF EXISTS _ov;
+CREATE TEMP TABLE _ov (LIKE app.company_overview INCLUDING ALL);
+\COPY _ov FROM '$OV_TMP';
+INSERT INTO app.company_overview SELECT * FROM _ov
+  ON CONFLICT (symbol) DO UPDATE SET
+    rows               = EXCLUDED.rows,
+    source             = EXCLUDED.source,
+    model              = EXCLUDED.model,
+    source_sha256      = EXCLUDED.source_sha256,
+    latest_fy          = EXCLUDED.latest_fy,
+    source_filing_id   = EXCLUDED.source_filing_id,
+    source_filing_date = EXCLUDED.source_filing_date,
+    generated_at       = EXCLUDED.generated_at
+  WHERE EXCLUDED.generated_at >= app.company_overview.generated_at;
+SQL
+fi
+
 # ----- golden price history: incremental ---------------------------------
 echo "▶ syncing golden.price_history (incremental)..."
 GOLDEN_FILTER=$(psql "$LOCAL_APP" -tAc "

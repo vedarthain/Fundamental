@@ -469,11 +469,59 @@ function cliTableOnce(system, user) {
 }
 
 /**
+ * Fourth extractor: local Ollama instance (--ollama), zero external API cost.
+ * Uses the same SYSTEM contract and parseTable as the other extractors.
+ */
+const DEFAULT_OLLAMA_HOST = process.env.OLLAMA_HOST || "http://127.0.0.1:11434";
+const DEFAULT_OLLAMA_MODEL = process.env.OLLAMA_MODEL || "qwen2.5:14b";
+const OLLAMA_MAX_CHARS = Number(process.env.OLLAMA_MAX_CHARS || 42_000);
+
+async function ollamaTable(system, user, ollamaModel) {
+  const res = await fetch(`${DEFAULT_OLLAMA_HOST}/api/generate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      model: ollamaModel,
+      system,
+      prompt: user,
+      stream: false,
+      keep_alive: "60m",
+      options: {
+        temperature: 0,
+        num_ctx: 16384,
+        num_predict: 2000,
+      },
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`ollama ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  }
+  const body = await res.json();
+  return (body.response ?? "").trim();
+}
+
+function loadEnvLocal() {
+  for (const p of [".env.local", "web/.env.local"]) {
+    try {
+      const content = readFileSync(p, "utf8");
+      for (const line of content.split(/\r?\n/)) {
+        const m = /^\s*([A-Z0-9_]+)\s*=\s*(.+?)\s*$/.exec(line);
+        if (m && !process.env[m[1]]) {
+          process.env[m[1]] = m[2].replace(/^['"]|['"]$/g, "");
+        }
+      }
+    } catch {
+      // ignore missing env file
+    }
+  }
+}
+
+/**
  * Front-section text. -layout preserves the multi-column structure of a
  * designed annual report; without it the "Business segments" spread interleaves
  * into unreadable word salad.
  */
-function proseOf(path) {
+function proseOf(path, maxChars = MAX_CHARS) {
   const run = (args) =>
     execFileSync("pdftotext", ["-layout", ...args, path, "-"],
       { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
@@ -512,21 +560,41 @@ function proseOf(path) {
       if (slid.length > txt.length) txt = slid;
     }
   }
-  return txt.slice(0, MAX_CHARS);
+  return txt.slice(0, maxChars);
 }
 
 async function main() {
+  loadEnvLocal();
   const args = process.argv.slice(2);
   const apply = args.includes("--apply");
+  const useProd = args.includes("--prod");
   const useStale = args.includes("--stale");
   const useGemini = args.includes("--gemini");
   const useCli = args.includes("--cli");
-  // Three extractors, three labels. The CLI path shipped reusing MODEL, so 45
+  const useOllama = args.includes("--ollama");
+  const ollamaModelIdx = args.indexOf("--ollama-model");
+  const ollamaModel = ollamaModelIdx !== -1 && args[ollamaModelIdx + 1]
+    ? args[ollamaModelIdx + 1]
+    : DEFAULT_OLLAMA_MODEL;
+
+  if (useProd) {
+    if (!process.env.NEON_APP_URL) throw new Error("NEON_APP_URL not set in environment or .env.local (required by --prod)");
+    process.env.APP_DB_URL = process.env.NEON_APP_URL;
+    process.env.FUNDAMENTAL_ALLOW_REMOTE_DB = "1";
+  }
+
+  // Four extractors, four labels. The CLI path shipped reusing MODEL, so 45
   // rows went in stamped "claude-haiku-4-5" as though the metered API had
   // written them — the one column that says WHICH extractor produced a row was
   // describing the wrong one. A provenance column that is only right for two
   // of three paths cannot be used to audit any of them.
-  const activeModel = useGemini ? GEMINI_MODEL : useCli ? CLI_MODEL : MODEL;
+  const activeModel = useOllama
+    ? `ollama:${ollamaModel}`
+    : useGemini
+      ? GEMINI_MODEL
+      : useCli
+        ? CLI_MODEL
+        : MODEL;
   const missingIdx = args.indexOf("--missing");
   const missingN = missingIdx === -1 ? 0 : Number(args[missingIdx + 1]);
   if (missingIdx !== -1 && !(missingN > 0)) {
@@ -543,9 +611,9 @@ async function main() {
   if (limitIdx !== -1 && !(limitN > 0)) {
     throw new Error("--limit needs a positive count, e.g. --limit 25");
   }
-  // The counts that follow --missing and --limit are arguments, not symbols.
+  // The arguments that follow --missing, --limit, and --ollama-model are values, not symbols.
   const countIdxs = new Set(
-    [missingIdx, limitIdx].filter((i) => i !== -1).map((i) => i + 1),
+    [missingIdx, limitIdx, ollamaModelIdx].filter((i) => i !== -1).map((i) => i + 1),
   );
   let symbols = args.filter((a, i) => !a.startsWith("--") && !countIdxs.has(i));
 
@@ -553,7 +621,9 @@ async function main() {
   // Only the key for the extractor actually in use. Demanding both would make
   // --gemini unusable on a machine that has no Anthropic credit — which is the
   // situation --gemini exists for.
-  if (useGemini) {
+  if (useOllama) {
+    // Local Ollama server needs no API key
+  } else if (useGemini) {
     if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY not set");
   } else if (useCli) {
     // --cli authenticates through the installed Claude Code CLI's own session,
@@ -571,7 +641,7 @@ async function main() {
   }
 
   const db = postgres(process.env.APP_DB_URL, { max: 1, idle_timeout: 20 });
-  const client = useGemini ? null : new Anthropic();
+  const client = (useGemini || useOllama || useCli) ? null : new Anthropic();
 
   if (useStale) {
     // TWO REASONS, AND THE FIRST ONE IS THE LOAD-BEARING ONE.
@@ -673,9 +743,9 @@ async function main() {
     }
   }
   if (!symbols.length) {
-    console.error("usage: node scripts/build-overview-from-filing.mjs SYM [SYM...] [--apply]\n" +
-                  "       node scripts/build-overview-from-filing.mjs --stale [--limit N] [--apply]\n" +
-                  "       node scripts/build-overview-from-filing.mjs --missing N [--apply]");
+    console.error("usage: node scripts/build-overview-from-filing.mjs SYM [SYM...] [--ollama] [--prod] [--apply]\n" +
+                  "       node scripts/build-overview-from-filing.mjs --stale [--limit N] [--ollama] [--prod] [--apply]\n" +
+                  "       node scripts/build-overview-from-filing.mjs --missing N [--ollama] [--prod] [--apply]");
     await db.end();
     process.exit(2);
   }
@@ -726,7 +796,7 @@ async function main() {
 
       // Extract, then drop the file immediately. Holding it until the run ends
       // is what made this unable to scale past a few dozen symbols.
-      const text = proseOf(rep.path);
+      const text = proseOf(rep.path, useOllama ? OLLAMA_MAX_CHARS : MAX_CHARS);
       rmSync(rep.path, { force: true });
       if (text.length < 2000) {
         // A scanned/image-only report. pdftotext returns almost nothing and the
@@ -751,7 +821,9 @@ async function main() {
       // raised against a healthy pipeline, which is how alerts stop being read.
       let raw;
       try {
-        if (useCli) {
+        if (useOllama) {
+          raw = await ollamaTable(SYSTEM, prompt, ollamaModel);
+        } else if (useCli) {
           raw = cliTable(SYSTEM, prompt);
         } else if (useGemini) {
           raw = await geminiTable(SYSTEM, prompt);

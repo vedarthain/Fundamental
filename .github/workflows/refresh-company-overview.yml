@@ -44,9 +44,10 @@
 
 name: Refresh Company Overviews
 
+# Scheduled cron disabled: company overviews change only once a year when new
+# Annual Reports are filed and are refreshed locally via Ollama (--ollama --prod)
+# rather than on GitHub Actions. Kept workflow_dispatch for manual runs only.
 on:
-  schedule:
-    - cron: '0 19 * * *'
   workflow_dispatch:
     inputs:
       limit:
