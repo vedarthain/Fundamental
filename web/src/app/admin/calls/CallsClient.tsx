@@ -1581,7 +1581,7 @@ export function CallsClient() {
     let cumReturns = 0;
     let crossoverMarked = false;
 
-    for (let y = 1; y <= 10; y++) {
+    for (let y = 1; y <= 15; y++) {
       const yearStart = currentCorpus;
       const isSelfFundedPhase = y > corpusSipStopYear;
       const thisYearMonthly = isSelfFundedPhase ? 0 : Math.round(monthlyStart * Math.pow(1 + stepUp, y - 1));
@@ -1630,6 +1630,7 @@ export function CallsClient() {
       summary3Y: rows[2],
       summary5Y: rows[4],
       summary10Y: rows[9],
+      summary15Y: rows[14],
     };
   }, [corpusManualBaseOverride, livePortfolioStats.currentValue, corpusMonthlyInflow, corpusStepUpPct, corpusCagrPct, corpusSipStopYear]);
 
@@ -3202,14 +3203,14 @@ export function CallsClient() {
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-slate-700">External SIP Window</span>
                   <span className="font-mono font-bold text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-0.2 rounded text-[11px]">
-                    {corpusSipStopYear < 10 ? `Stop After Yr ${corpusSipStopYear}` : "All 10 Yrs"}
+                    {corpusSipStopYear < 15 ? `Stop After Yr ${corpusSipStopYear}` : "All 15 Yrs"}
                   </span>
                 </div>
                 <div className="flex items-center gap-1 flex-wrap">
                   {[
                     { yrs: 4, label: "4 Yrs (Yr 5+ Self-Funded)" },
                     { yrs: 5, label: "5 Yrs" },
-                    { yrs: 10, label: "All 10 Yrs" },
+                    { yrs: 15, label: "All 15 Yrs" },
                   ].map((opt) => (
                     <button
                       key={opt.yrs}
@@ -3225,9 +3226,9 @@ export function CallsClient() {
                   ))}
                 </div>
                 <div className="text-[10px] text-slate-500">
-                  {corpusSipStopYear < 10
-                    ? `Yr ${corpusSipStopYear + 1}–10: ₹0 salary added; 100% market profits reinvested`
-                    : "Continuous salary SIP across all 10 years"}
+                  {corpusSipStopYear < 15
+                    ? `Yr ${corpusSipStopYear + 1}–15: ₹0 salary added; 100% market profits reinvested`
+                    : "Continuous salary SIP across all 15 years"}
                 </div>
               </div>
 
@@ -3483,26 +3484,26 @@ export function CallsClient() {
             </div>
           </div>
 
-          {/* ── 10-Year Compounding Simulation & Crossover Trajectory ─────── */}
+          {/* ── 15-Year Compounding Simulation & Crossover Trajectory ─────── */}
           <div className="bg-white border hairline rounded-lg p-3 sm:p-4 shadow-2xs space-y-3">
             <div className="flex items-center justify-between border-b hairline pb-2.5 flex-wrap gap-3">
               <div>
                 <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5 flex-wrap">
                   <BarChart3 className="w-4 h-4 text-emerald-600" />
-                  <span>10-Year Compounding Trajectory &amp; The Compounding Crossover</span>
+                  <span>15-Year Compounding Trajectory &amp; The Compounding Crossover</span>
                   <span className="px-2 py-0.5 rounded text-[10.5px] font-mono font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">
                     @ {corpusCagrPct}% Annual Growth
                   </span>
                   <span className="px-2 py-0.5 rounded text-[10.5px] font-mono font-bold bg-amber-100 text-amber-950 border border-amber-300">
-                    {corpusSipStopYear < 10
-                      ? `SIP Yrs 1–${corpusSipStopYear} → Yr ${corpusSipStopYear + 1}+ 100% Profit Reinvested`
-                      : "SIP All 10 Yrs"}
+                    {corpusSipStopYear < 15
+                      ? `SIP Yrs 1–${corpusSipStopYear} → Yr ${corpusSipStopYear + 1}–15 100% Profit Reinvested`
+                      : "SIP All 15 Yrs"}
                   </span>
                 </h3>
                 <p className="text-[11px] text-slate-500 mt-0.5">
-                  {corpusSipStopYear < 10
-                    ? `After Year ${corpusSipStopYear}, external salary inflow stops (₹0/mo) and 100% of your annual portfolio profit is reinvested into new Calls Desk stocks!`
-                    : "Year-by-year trajectory showing when portfolio returns overtake your fresh salary savings!"}
+                  {corpusSipStopYear < 15
+                    ? `After Year ${corpusSipStopYear}, external salary inflow stops (₹0/mo) and 100% of your annual portfolio profit is reinvested into new Calls Desk stocks through Year 15!`
+                    : "Year-by-year 15-year trajectory showing when portfolio returns overtake your fresh salary savings!"}
                 </p>
               </div>
 
@@ -3515,7 +3516,7 @@ export function CallsClient() {
                   {[
                     { yrs: 4, label: "Stop After Yr 4" },
                     { yrs: 5, label: "Stop After Yr 5" },
-                    { yrs: 10, label: "All 10 Yrs" },
+                    { yrs: 15, label: "All 15 Yrs" },
                   ].map((opt) => (
                     <button
                       key={opt.yrs}
@@ -3562,6 +3563,10 @@ export function CallsClient() {
                   <div className="bg-indigo-50 border border-indigo-200 px-2.5 py-1 rounded text-right">
                     <span className="text-[9.5px] uppercase font-bold text-indigo-700 block">10-Year Target</span>
                     <strong className="text-xs font-mono text-indigo-900">{fmtLakhs(corpusSimulation.summary10Y?.endCorpus)}</strong>
+                  </div>
+                  <div className="bg-purple-50 border border-purple-200 px-2.5 py-1 rounded text-right">
+                    <span className="text-[9.5px] uppercase font-bold text-purple-700 block">15-Year Target</span>
+                    <strong className="text-xs font-mono text-purple-950">{fmtLakhs(corpusSimulation.summary15Y?.endCorpus)}</strong>
                   </div>
                 </div>
               </div>
