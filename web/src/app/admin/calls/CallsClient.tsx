@@ -496,6 +496,7 @@ export function CallsClient() {
   const [corpusMonthlyInflow, setCorpusMonthlyInflow] = useState<number>(100000); // ₹1 Lakh / month
   const [corpusStepUpPct, setCorpusStepUpPct] = useState<number>(10); // 10% annual step-up
   const [corpusCagrPct, setCorpusCagrPct] = useState<number>(25); // 25% expected returns
+  const [corpusSipStopYear, setCorpusSipStopYear] = useState<number>(4); // Stop external salary SIP after Year 4 (Year 5+ = 100% Profit Reinvestment Only)
   const [corpusTargetHorizonYears, setCorpusTargetHorizonYears] = useState<number>(5); // 5Y horizon
   const [corpusManualBaseOverride, setCorpusManualBaseOverride] = useState<number | null>(null);
   const [isEditingBaseCorpus, setIsEditingBaseCorpus] = useState(false);
@@ -1566,11 +1567,13 @@ export function CallsClient() {
       monthlyInflow: number;
       annualFreshInflow: number;
       returnsEarned: number;
+      monthlyProfitReinvested: number;
       endCorpus: number;
       cumulativeFresh: number;
       cumulativeReturns: number;
       returnsSharePct: number;
       isCrossover: boolean;
+      isSelfFundedPhase: boolean;
     }[] = [];
 
     let currentCorpus = startBase;
@@ -1580,18 +1583,21 @@ export function CallsClient() {
 
     for (let y = 1; y <= 10; y++) {
       const yearStart = currentCorpus;
-      const thisYearMonthly = Math.round(monthlyStart * Math.pow(1 + stepUp, y - 1));
+      const isSelfFundedPhase = y > corpusSipStopYear;
+      const thisYearMonthly = isSelfFundedPhase ? 0 : Math.round(monthlyStart * Math.pow(1 + stepUp, y - 1));
       const annualFresh = thisYearMonthly * 12;
 
       const returnOnCapital = yearStart * cagr;
       const returnOnFresh = annualFresh * (cagr * 0.5);
       const totalReturns = Math.round(returnOnCapital + returnOnFresh);
+      const monthlyProfitReinvested = Math.round(totalReturns / 12);
 
+      // 100% of totalReturns (market profit) is reinvested back into yearEnd corpus
       const yearEnd = yearStart + annualFresh + totalReturns;
       cumFresh += annualFresh;
       cumReturns += totalReturns;
 
-      const isCrossoverYear = !crossoverMarked && totalReturns >= annualFresh;
+      const isCrossoverYear = !crossoverMarked && totalReturns >= annualFresh && !isSelfFundedPhase;
       if (isCrossoverYear) crossoverMarked = true;
 
       const totalGain = yearEnd - startBase;
@@ -1604,11 +1610,13 @@ export function CallsClient() {
         monthlyInflow: thisYearMonthly,
         annualFreshInflow: annualFresh,
         returnsEarned: totalReturns,
+        monthlyProfitReinvested,
         endCorpus: yearEnd,
         cumulativeFresh: cumFresh,
         cumulativeReturns: cumReturns,
         returnsSharePct: returnsShare,
         isCrossover: isCrossoverYear,
+        isSelfFundedPhase,
       });
 
       currentCorpus = yearEnd;
@@ -1617,11 +1625,13 @@ export function CallsClient() {
     return {
       startBase,
       rows,
+      totalExternalSipAdded: cumFresh,
+      totalMarketProfitsReinvested: cumReturns,
       summary3Y: rows[2],
       summary5Y: rows[4],
       summary10Y: rows[9],
     };
-  }, [corpusManualBaseOverride, livePortfolioStats.currentValue, corpusMonthlyInflow, corpusStepUpPct, corpusCagrPct]);
+  }, [corpusManualBaseOverride, livePortfolioStats.currentValue, corpusMonthlyInflow, corpusStepUpPct, corpusCagrPct, corpusSipStopYear]);
 
   // Dynamic Position Sizing adapted to Current Corpus (~1.5% Core Anchor per stock / 15% of Monthly ₹1L SIP)
   const dynamicSizing = useMemo(() => {
@@ -3136,7 +3146,7 @@ export function CallsClient() {
               </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
               {/* Control 1: Monthly Fresh Savings */}
               <div className="space-y-1.5 p-2 rounded-md bg-slate-50/70 border hairline">
                 <div className="flex items-center justify-between">
@@ -3187,7 +3197,41 @@ export function CallsClient() {
                 </div>
               </div>
 
-              {/* Control 3: Expected Portfolio CAGR % */}
+              {/* Control 3: External SIP Window (Self-Funding Switch) */}
+              <div className="space-y-1.5 p-2 rounded-md bg-slate-50/70 border hairline">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-slate-700">External SIP Window</span>
+                  <span className="font-mono font-bold text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-0.2 rounded text-[11px]">
+                    {corpusSipStopYear < 10 ? `Stop After Yr ${corpusSipStopYear}` : "All 10 Yrs"}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1 flex-wrap">
+                  {[
+                    { yrs: 4, label: "4 Yrs (Yr 5+ Self-Funded)" },
+                    { yrs: 5, label: "5 Yrs" },
+                    { yrs: 10, label: "All 10 Yrs" },
+                  ].map((opt) => (
+                    <button
+                      key={opt.yrs}
+                      onClick={() => setCorpusSipStopYear(opt.yrs)}
+                      className={`px-2 py-0.5 rounded text-[10.5px] font-mono font-medium transition-all ${
+                        corpusSipStopYear === opt.yrs
+                          ? "bg-amber-600 text-white font-bold shadow-2xs"
+                          : "bg-white text-slate-700 border hairline hover:bg-slate-100"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="text-[10px] text-slate-500">
+                  {corpusSipStopYear < 10
+                    ? `Yr ${corpusSipStopYear + 1}–10: ₹0 salary added; 100% market profits reinvested`
+                    : "Continuous salary SIP across all 10 years"}
+                </div>
+              </div>
+
+              {/* Control 4: Expected Portfolio CAGR % */}
               <div className="space-y-1.5 p-2 rounded-md bg-slate-50/70 border hairline">
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-slate-700">Expected Portfolio CAGR</span>
@@ -3449,19 +3493,49 @@ export function CallsClient() {
                   <span className="px-2 py-0.5 rounded text-[10.5px] font-mono font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">
                     @ {corpusCagrPct}% Annual Growth
                   </span>
+                  <span className="px-2 py-0.5 rounded text-[10.5px] font-mono font-bold bg-amber-100 text-amber-950 border border-amber-300">
+                    {corpusSipStopYear < 10
+                      ? `SIP Yrs 1–${corpusSipStopYear} → Yr ${corpusSipStopYear + 1}+ 100% Profit Reinvested`
+                      : "SIP All 10 Yrs"}
+                  </span>
                 </h3>
                 <p className="text-[11px] text-slate-500 mt-0.5">
-                  Year-by-year trajectory showing when portfolio returns overtake your fresh salary savings!
+                  {corpusSipStopYear < 10
+                    ? `After Year ${corpusSipStopYear}, external salary inflow stops (₹0/mo) and 100% of your annual portfolio profit is reinvested into new Calls Desk stocks!`
+                    : "Year-by-year trajectory showing when portfolio returns overtake your fresh salary savings!"}
                 </p>
               </div>
 
-              {/* Inline CAGR Slider (10% to 50%) + Quick Milestone Highlights */}
-              <div className="flex items-center gap-3 flex-wrap">
+              {/* Inline SIP Window Toggle + CAGR Slider (10% to 50%) + Quick Milestone Highlights */}
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <div className="bg-slate-50 border hairline rounded-md px-2.5 py-1 flex items-center gap-1.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 whitespace-nowrap">
+                    Salary SIP:
+                  </span>
+                  {[
+                    { yrs: 4, label: "Stop After Yr 4" },
+                    { yrs: 5, label: "Stop After Yr 5" },
+                    { yrs: 10, label: "All 10 Yrs" },
+                  ].map((opt) => (
+                    <button
+                      key={opt.yrs}
+                      onClick={() => setCorpusSipStopYear(opt.yrs)}
+                      className={`px-2 py-0.5 rounded text-[10px] font-mono font-semibold transition-all ${
+                        corpusSipStopYear === opt.yrs
+                          ? "bg-amber-600 text-white shadow-2xs"
+                          : "bg-white text-slate-600 border hairline hover:bg-slate-100"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+
                 <div className="bg-slate-50 border hairline rounded-md px-3 py-1.5 flex items-center gap-2.5">
                   <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 whitespace-nowrap">
                     Growth Rate: <strong className="font-mono text-emerald-700 text-xs">{corpusCagrPct}%</strong>
                   </div>
-                  <div className="flex items-center gap-1.5 w-36 sm:w-44">
+                  <div className="flex items-center gap-1.5 w-32 sm:w-40">
                     <span className="text-[9.5px] font-mono text-slate-400">10%</span>
                     <input
                       type="range"
@@ -3502,7 +3576,7 @@ export function CallsClient() {
                     <th className="py-2.5 px-3 text-right">Starting Corpus</th>
                     <th className="py-2.5 px-3 text-right">Monthly Inflow</th>
                     <th className="py-2.5 px-3 text-right">Annual Fresh Cash</th>
-                    <th className="py-2.5 px-3 text-right">Portfolio Return</th>
+                    <th className="py-2.5 px-3 text-right">Portfolio Return (100% Reinvested)</th>
                     <th className="py-2.5 px-3 text-right font-bold">End-of-Year Corpus</th>
                     <th className="py-2.5 px-3 w-48">Growth Driver Mix</th>
                     <th className="py-2.5 px-3 text-center">Milestone Status</th>
@@ -3513,14 +3587,44 @@ export function CallsClient() {
                     <tr
                       key={r.year}
                       className={`transition-colors ${
-                        r.isCrossover ? "bg-amber-50/70 font-semibold" : r.year % 2 === 0 ? "bg-slate-50/40" : "bg-white"
+                        r.isCrossover
+                          ? "bg-amber-50/70 font-semibold"
+                          : r.isSelfFundedPhase
+                            ? "bg-emerald-50/25"
+                            : r.year % 2 === 0
+                              ? "bg-slate-50/40"
+                              : "bg-white"
                       }`}
                     >
                       <td className="py-2.5 px-3 font-mono font-bold text-slate-800">{r.label}</td>
                       <td className="py-2.5 px-3 text-right font-mono text-slate-700">{fmtLakhs(r.startCorpus)}</td>
-                      <td className="py-2.5 px-3 text-right font-mono text-slate-600">{fmtLakhs(r.monthlyInflow)}</td>
-                      <td className="py-2.5 px-3 text-right font-mono text-blue-700 font-medium">+{fmtLakhs(r.annualFreshInflow)}</td>
-                      <td className="py-2.5 px-3 text-right font-mono text-emerald-700 font-bold">+{fmtLakhs(r.returnsEarned)}</td>
+                      <td className="py-2.5 px-3 text-right font-mono">
+                        {r.isSelfFundedPhase ? (
+                          <div className="space-y-0.5">
+                            <span className="text-slate-400 font-semibold block">₹0 / mo (Salary)</span>
+                            <span className="inline-block px-1.5 py-0.2 rounded text-[9.5px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">
+                              ♻️ +{fmtLakhs(r.monthlyProfitReinvested)}/mo Profit
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-slate-600">{fmtLakhs(r.monthlyInflow)}</span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono">
+                        {r.isSelfFundedPhase ? (
+                          <span className="text-slate-400 font-medium text-[11px]">₹0 (Self-Funded)</span>
+                        ) : (
+                          <span className="text-blue-700 font-medium">+{fmtLakhs(r.annualFreshInflow)}</span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono">
+                        <div className="text-emerald-700 font-bold">+{fmtLakhs(r.returnsEarned)}</div>
+                        <div className="text-[9.5px] text-emerald-600 font-sans">
+                          {r.isSelfFundedPhase
+                            ? `100% Reinvested (~${fmtLakhs(r.monthlyProfitReinvested)}/mo)`
+                            : "100% Reinvested in Corpus"}
+                        </div>
+                      </td>
                       <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900 text-sm">
                         {fmtLakhs(r.endCorpus)}
                       </td>
@@ -3530,12 +3634,12 @@ export function CallsClient() {
                             <div
                               className="bg-blue-500 h-full"
                               style={{ width: `${100 - r.returnsSharePct}%` }}
-                              title={`Fresh Savings: ${100 - r.returnsSharePct}%`}
+                              title={`Cumulative Fresh Salary Savings: ${100 - r.returnsSharePct}%`}
                             />
                             <div
                               className="bg-emerald-500 h-full"
                               style={{ width: `${r.returnsSharePct}%` }}
-                              title={`Portfolio Returns: ${r.returnsSharePct}%`}
+                              title={`Cumulative Reinvested Profits: ${r.returnsSharePct}%`}
                             />
                           </div>
                           <div className="flex items-center justify-between text-[9px] text-slate-400 font-mono">
@@ -3548,6 +3652,10 @@ export function CallsClient() {
                         {r.isCrossover ? (
                           <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-200 text-amber-950 border border-amber-400 animate-pulse">
                             🎉 Crossover Year!
+                          </span>
+                        ) : r.isSelfFundedPhase ? (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">
+                            ♻️ 100% Profit Reinvested 🚀
                           </span>
                         ) : r.year === 1 ? (
                           <span className="text-[10px] text-slate-400">Foundation Year</span>
