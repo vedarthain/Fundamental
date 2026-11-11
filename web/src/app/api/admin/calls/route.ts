@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { isAdminRequest } from "@/lib/auth";
-import { sql } from "@/lib/db";
+import { sql, golden } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -342,7 +342,7 @@ export async function GET(request: Request) {
       LEFT JOIN active_buys pt ON pt.symbol = p.symbol
       WHERE v.target_price IS NOT NULL
         AND (
-          p.symbol IN ('INDUSTOWER', 'UNIONBANK', 'BBTC', 'ALLDIGI', 'APOLLOTYRE', 'FMGOETZE', 'SHARDACROP', 'ORIENTTECH', 'MAXESTATES', 'PITTIENG', 'GRAVITA')
+          p.symbol IN ('INDUSTOWER', 'UNIONBANK', 'BBTC', 'ALLDIGI', 'APOLLOTYRE', 'FMGOETZE', 'SHARDACROP', 'TRANSRAILL', 'BANKBARODA', 'ORIENTTECH', 'MAXESTATES', 'PITTIENG', 'GRAVITA')
           OR (p.composite_pct >= 60 AND p.quality_pct >= 50 AND v.buy_below IS NOT NULL)
           OR (ph.quantity > 0 AND (
             v.verdict ILIKE '%SELL%'
@@ -351,19 +351,69 @@ export async function GET(request: Request) {
             OR (v.upside_pct IS NOT NULL AND v.upside_pct < -5)
           ))
         )
-      ORDER BY (p.symbol IN ('INDUSTOWER', 'UNIONBANK', 'BBTC', 'ALLDIGI', 'APOLLOTYRE', 'FMGOETZE', 'SHARDACROP')) DESC, v.generated_at DESC, p.composite_pct DESC
+      ORDER BY (p.symbol IN ('INDUSTOWER', 'UNIONBANK', 'BBTC', 'ALLDIGI', 'APOLLOTYRE', 'FMGOETZE', 'SHARDACROP', 'TRANSRAILL', 'BANKBARODA')) DESC, v.generated_at DESC, p.composite_pct DESC
       LIMIT 600
     `;
 
+    // Authoritative Upstox EOD closes from golden.price_history (matches PriceChart 100%)
+    const goldenRows = await golden<{ symbol: string; close: number; bar_date: string }[]>`
+      SELECT DISTINCT ON (symbol)
+        symbol,
+        COALESCE(adj_close, close)::float8 AS close,
+        date::text AS bar_date
+      FROM golden.price_history
+      WHERE interval = '1d'
+        AND COALESCE(adj_close, close) IS NOT NULL
+        AND date >= CURRENT_DATE - 16
+      ORDER BY symbol, date DESC
+    `.catch(() => [] as { symbol: string; close: number; bar_date: string }[]);
+
+    const goldenMap = new Map<string, { close: number; barDate: string; eodIso: string }>();
+    for (const gr of goldenRows) {
+      const bareSym = gr.symbol.replace(/\.NS$/, "");
+      // 15:30 IST = 10:00 UTC
+      goldenMap.set(bareSym, {
+        close: Number(gr.close),
+        barDate: gr.bar_date,
+        eodIso: `${gr.bar_date}T10:00:00.000Z`,
+      });
+    }
+
+    const resolveLatestPrice = (sym: string, appLtpRaw: unknown, appTsRaw: unknown): { ltp: number; fetchedAt: string | null } => {
+      const appLtp = Number(appLtpRaw ?? 0);
+      const appTs = appTsRaw ? String(appTsRaw) : null;
+      const g = goldenMap.get(sym);
+      if (!g || !(g.close > 0)) {
+        return { ltp: appLtp, fetchedAt: appTs };
+      }
+      if (appLtp > 0 && appTs) {
+        const appDateMs = new Date(appTs).getTime();
+        const eodDateMs = new Date(g.eodIso).getTime();
+        // Only prefer app's intraday price if it was fetched strictly after the latest Upstox EOD bar close
+        if (!isNaN(appDateMs) && !isNaN(eodDateMs) && appDateMs > eodDateMs) {
+          return { ltp: appLtp, fetchedAt: appTs };
+        }
+      }
+      return { ltp: Math.round(g.close * 100) / 100, fetchedAt: g.eodIso };
+    };
+
     const clusterGems: ClusterGem[] = rawGems.map((r) => {
-      const ltp = Number(r.ltp ?? 0);
-      const buyBelow = Number(r.buy_below ?? 0);
-      const upside = Number(r.upside_pct ?? 0);
+      const resolvedPx = resolveLatestPrice(r.symbol, r.ltp, r.price_fetched_at);
+      const ltp = resolvedPx.ltp;
+
+      // Normalize BANKBARODA if the DB verdict row still holds the stale ₹292.15 anchor
+      const isBankBarodaStaleAnchor = r.symbol === "BANKBARODA" && Number(r.anchor_price ?? 0) > 280;
+      const buyBelow = isBankBarodaStaleAnchor ? 262.0 : Number(r.buy_below ?? 0);
+      const targetPriceVal = isBankBarodaStaleAnchor ? 335.0 : (r.target_price ? Number(r.target_price) : null);
+      const bearFloorVal = isBankBarodaStaleAnchor ? 224.0 : (r.bear_floor ? Number(r.bear_floor) : null);
+      const upside = targetPriceVal && ltp > 0
+        ? Math.round(((targetPriceVal - ltp) / ltp) * 1000) / 10
+        : Number(r.upside_pct ?? 0);
       const comp = Number(r.composite_pct ?? 0);
       const qual = Number(r.quality_pct ?? 0);
       const mom = Number(r.momentum_pct ?? 50);
       const mcap = Number(r.market_cap_cr ?? 0);
-      const anchor = r.anchor_price ? Number(r.anchor_price) : null;
+      const anchor = isBankBarodaStaleAnchor ? 256.4 : (r.anchor_price ? Number(r.anchor_price) : null);
       const pctMove = anchor && anchor > 0 ? ((ltp - anchor) / anchor) * 100 : null;
 
       // Dual Anchors
@@ -385,17 +435,17 @@ export async function GET(request: Request) {
       let actionToday: "BUY / ACCUMULATE" | "SELL / EXIT" | "TRIM / TAKE PROFIT" | "HOLD & COMPOUND" | "WATCH / ACCUMULATE" = "BUY / ACCUMULATE";
       let actionReason = "Strong composite score and upside potential inside institutional buy zone.";
 
-      const isTopCurated = ["INDUSTOWER", "UNIONBANK", "BBTC", "ALLDIGI", "APOLLOTYRE", "FMGOETZE", "SHARDACROP", "ORIENTTECH", "MAXESTATES", "PITTIENG", "GRAVITA"].includes(r.symbol);
+      const isTopCurated = ["INDUSTOWER", "UNIONBANK", "BBTC", "ALLDIGI", "APOLLOTYRE", "FMGOETZE", "SHARDACROP", "TRANSRAILL", "BANKBARODA", "ORIENTTECH", "MAXESTATES", "PITTIENG", "GRAVITA"].includes(r.symbol);
       const vLower = (r.verdict ?? "").toLowerCase();
       if (isTopCurated) {
         actionToday = "BUY / ACCUMULATE";
         actionReason = "Top High-Conviction Institutional Alpha Recommendation.";
-      } else if (isPortfolio && (vLower.includes("sell") || vLower.includes("exit") || (r.bear_floor && ltp <= Number(r.bear_floor) && qual < 50))) {
+      } else if (isPortfolio && (vLower.includes("sell") || vLower.includes("exit") || (bearFloorVal && ltp <= bearFloorVal && qual < 50))) {
         actionToday = "SELL / EXIT";
         actionReason = `Exit alert: ${r.verdict || "Breached bear floor with deterioration in quality"}.`;
-      } else if (isPortfolio && (vLower.includes("trim") || (r.target_price && ltp >= Number(r.target_price)) || upside < -5)) {
+      } else if (isPortfolio && (vLower.includes("trim") || (targetPriceVal && ltp >= targetPriceVal) || upside < -5)) {
         actionToday = "TRIM / TAKE PROFIT";
-        actionReason = `Profit booking / trim: LTP (₹${ltp.toFixed(1)}) reached fundamental target (₹${Number(r.target_price ?? 0).toFixed(1)}).`;
+        actionReason = `Profit booking / trim: LTP (₹${ltp.toFixed(1)}) reached fundamental target (₹${Number(targetPriceVal ?? 0).toFixed(1)}).`;
       } else if (buyBelow > 0 && ltp <= buyBelow * 1.02) {
         actionToday = "BUY / ACCUMULATE";
         actionReason = `Trading within institutional accumulate zone (≤ ₹${buyBelow.toFixed(1)}).`;
@@ -438,11 +488,11 @@ export async function GET(request: Request) {
         cur_val: r.cur_val ? Number(r.cur_val) : null,
         verdict: r.verdict,
         confidence: r.confidence,
-        target_price: r.target_price ? Number(r.target_price) : null,
+        target_price: targetPriceVal,
         fair_value: r.fair_value ? Number(r.fair_value) : null,
-        buy_below: r.buy_below ? Number(r.buy_below) : null,
-        bear_floor: r.bear_floor ? Number(r.bear_floor) : null,
-        upside_pct: r.upside_pct ? Number(r.upside_pct) : null,
+        buy_below: buyBelow > 0 ? buyBelow : null,
+        bear_floor: bearFloorVal,
+        upside_pct: upside,
         valuation_method: r.valuation_method,
         generated_at: r.generated_at ? new Date(r.generated_at).toISOString() : null,
         composite_pct: comp,
@@ -459,7 +509,7 @@ export async function GET(request: Request) {
         is_cleared: isCleared,
         action_today: actionToday,
         action_reason: actionReason,
-        price_fetched_at: r.price_fetched_at ? String(r.price_fetched_at) : null,
+        price_fetched_at: resolvedPx.fetchedAt,
       };
     });
 
@@ -565,12 +615,15 @@ export async function GET(request: Request) {
     `;
 
     const portfolioActions: PortfolioActionCall[] = rawPortfolio.map((r) => {
-      const ltp = Number(r.ltp ?? 0);
+      const resolvedPx = resolveLatestPrice(r.symbol, r.ltp, r.price_fetched_at);
+      const ltp = resolvedPx.ltp;
       const avgCost = Number(r.weighted_avg_cost ?? 0);
       const target = r.target_price ? Number(r.target_price) : null;
       const buyBelow = r.buy_below ? Number(r.buy_below) : null;
       const bearFloor = r.bear_floor ? Number(r.bear_floor) : null;
-      const upside = r.upside_pct ? Number(r.upside_pct) : 0;
+      const upside = target && ltp > 0
+        ? Math.round(((target - ltp) / ltp) * 1000) / 10
+        : (r.upside_pct ? Number(r.upside_pct) : 0);
       const pnlPct = r.pnl_pct ? Number(r.pnl_pct) : 0;
       const qual = r.quality_pct ? Number(r.quality_pct) : 50;
       const mom = r.momentum_pct ? Number(r.momentum_pct) : 50;
@@ -656,7 +709,7 @@ export async function GET(request: Request) {
         target_price: target,
         buy_below: buyBelow,
         bear_floor: bearFloor,
-        upside_pct: r.upside_pct ? Number(r.upside_pct) : null,
+        upside_pct: upside,
         valuation_method: r.valuation_method,
         generated_at: r.generated_at ? new Date(r.generated_at).toISOString() : null,
         action_today: actionToday,
@@ -667,7 +720,7 @@ export async function GET(request: Request) {
         strategy_desc: horizonInfo.strategy,
         is_taken: true,
         is_cleared: false,
-        price_fetched_at: r.price_fetched_at ? String(r.price_fetched_at) : null,
+        price_fetched_at: resolvedPx.fetchedAt,
       };
     });
 
