@@ -922,24 +922,24 @@ export function CallsClient() {
       sector: "Industrials",
       cluster: "Electrical Equipment & Power T&D",
       weightPct: 15,
-      cmp: 595.45,
-      anchorPrice: 595.45,
+      cmp: 450.0,
+      anchorPrice: 440.35,
       callDate: "2026-11-08",
-      buyBelow: 605.0,
-      target: 797.5,
-      stopLoss: 485.0,
-      upside: 33.9,
+      buyBelow: 448.0,
+      target: 630.0,
+      stopLoss: 398.0,
+      upside: 40.0,
       scores: "100 / 88 / 79",
       horizon: "6M" as IdeaHorizon,
       horizonLabel: "🏛️ 6M Fresh Anchor",
       timeline: "5–6M",
       role: "6M Power T&D Capex Anchor",
-      rationale: "Integrated EPC & power transmission tower manufacturing leader with backward-integrated conductors/monopoles, multi-year unexecuted order book (>₹10,000 Cr), and high ROCE (>24%).",
+      rationale: "Integrated EPC & power transmission tower manufacturing leader with backward-integrated conductors/monopoles, multi-year unexecuted order book (>₹10,000 Cr), and high ROCE (>33%).",
       companyOverview: "Transrail Lighting Limited is one of India's premier engineering, procurement, and construction (EPC) companies specializing in power transmission and distribution (T&D), integrated with in-house manufacturing of galvanized lattice towers, conductors, and monopoles across 4 large-scale facilities.",
       operatingHighlights: [
         "Backward-integrated manufacturing of high-voltage towers and conductors shielding operating EBITDA margins (12–13%) from raw material volatility.",
         "Multi-year order book visibility exceeding 2.5x trailing annual revenues across domestic HVDC corridors and international power grids.",
-        "Superior capital efficiency with ROCE > 24% and disciplined working capital cycle.",
+        "Superior capital efficiency with ROCE > 33% and disciplined working capital cycle.",
         "Strong execution track record across 55+ countries in Africa, Asia, and the Americas.",
       ],
       catalysts: [
@@ -947,7 +947,7 @@ export function CallsClient() {
         "Margin expansion from rising share of higher-margin international T&D and substation turnkey orders.",
         "Deleveraging balance sheet post-listing driving lower finance costs and PAT acceleration (>30% YoY).",
       ],
-      marginOfSafety: "Trading at an attractive PEG < 0.8x with 2.5+ years of locked-in sovereign/utility order backlog. Bear floor anchored at ₹485.",
+      marginOfSafety: "Trading at ~14x P/E and PEG < 0.6x with 2.5+ years of locked-in sovereign/utility order backlog. Multi-week institutional support base at ₹420–₹429; bear floor anchored at ₹398.00.",
     },
     {
       symbol: "BANKBARODA",
@@ -955,19 +955,19 @@ export function CallsClient() {
       sector: "Financials",
       cluster: "PSU Banks",
       weightPct: 15,
-      cmp: 260.01,
-      anchorPrice: 256.40,
+      cmp: 273.62,
+      anchorPrice: 263.50,
       callDate: "2026-11-08",
-      buyBelow: 262.0,
+      buyBelow: 263.50,
       target: 335.0,
       stopLoss: 224.0,
-      upside: 28.8,
+      upside: 22.4,
       scores: "95 / 72 / 69",
       horizon: "1Y" as IdeaHorizon,
       horizonLabel: "🏛️ 1Y Fresh Anchor",
       timeline: "9–12M",
       role: "1Y PSU Banking Value Anchor",
-      rationale: "Tier-1 PSU bank delivering sector-leading ROE (>16%), pristine asset quality with Net NPA < 0.65%, strong retail & corporate loan book expansion, and deep valuation comfort (<0.95x FY27E Book).",
+      rationale: "Tier-1 PSU bank delivering sector-leading ROE (>16%), pristine asset quality with Net NPA < 0.65%, strong retail & corporate loan book expansion, and deep valuation comfort (~1.0x FY27E Book).",
       companyOverview: "Bank of Baroda is India's second-largest public sector bank by asset base, operating over 8,200 domestic branches and a major international presence across 17 countries, serving over 165 million global customers across retail, MSME, agri, and corporate banking.",
       operatingHighlights: [
         "Best-in-class asset quality among PSU peers with Net NPA below 0.65% and Provision Coverage Ratio (PCR) > 93%.",
@@ -980,7 +980,7 @@ export function CallsClient() {
         "Strong treasury and recovery income from resolved corporate accounts boosting non-interest income.",
         "Consistent dividend yield (~2.8%–3.2%) providing downside cushion for institutional holders.",
       ],
-      marginOfSafety: "Trading below 1.0x forward Adjusted Book Value despite private-bank-like RoE (>16%). Multi-month institutional support at ₹238 and bear floor anchored at ₹224.00.",
+      marginOfSafety: "Trading around 1.0x forward Adjusted Book Value despite private-bank-like RoE (>16%). Breakout retest support at ₹262–₹265, multi-month demand at ₹238, and bear floor anchored at ₹224.00.",
     },
   ], []);
 
@@ -1001,14 +1001,14 @@ export function CallsClient() {
       const port = data.portfolioActions.find((p) => p.symbol === g.symbol);
 
       const cmp = g.ltp ?? cur?.cmp ?? 0;
-      const target = g.target_price ?? cur?.target ?? 0;
-      const buyBelow = g.buy_below ?? cur?.buyBelow ?? 0;
-      const stopLoss = g.bear_floor ?? cur?.stopLoss ?? Math.round(cmp * 0.82);
-      const upside = g.upside_pct ?? (target > 0 && cmp > 0 ? ((target - cmp) / cmp) * 100 : cur?.upside ?? 0);
+      const target = cur?.target ?? g.target_price ?? 0;
+      const buyBelow = cur?.buyBelow ?? g.buy_below ?? 0;
+      const stopLoss = cur?.stopLoss ?? g.bear_floor ?? Math.round(cmp * 0.82);
+      const upside = target > 0 && cmp > 0 ? ((target - cmp) / cmp) * 100 : (g.upside_pct ?? cur?.upside ?? 0);
 
       // Anchor 1: Call Given
       const callDate = cur?.callDate ?? g.call_date ?? (g.generated_at ? g.generated_at.slice(0, 10) : "2026-11-01");
-      const callPrice = g.call_price ?? g.anchor_price ?? cur?.anchorPrice ?? cmp;
+      const callPrice = cur?.anchorPrice ?? g.call_price ?? g.anchor_price ?? cmp;
       const callPerfPct = callPrice > 0 ? ((cmp - callPrice) / callPrice) * 100 : 0;
 
       const customP = customPurchases[g.symbol];
@@ -1841,10 +1841,10 @@ export function CallsClient() {
         alreadyBought: 0,
         targetAllocation: 15000,
         toInvestNow: 15000,
-        executionRule: "Buy in Zone ₹590–₹605 (or 2× ₹7.5k)",
-        cmp: 595.45,
-        target: 797.5,
-        upside: 33.9,
+        executionRule: "Buy in Zone ₹438–₹450 (or 50% CMP / 50% GTT ≤ ₹436)",
+        cmp: 450.0,
+        target: 630.0,
+        upside: 40.0,
         badge: "FRESH ANCHOR",
         badgeColor: "bg-emerald-100 text-emerald-900 border-emerald-300",
       },
@@ -1855,10 +1855,10 @@ export function CallsClient() {
         alreadyBought: 0,
         targetAllocation: 15000,
         toInvestNow: 15000,
-        executionRule: "Accumulate in Zone ≤ ₹302.90",
-        cmp: 292.15,
-        target: 416.8,
-        upside: 42.7,
+        executionRule: "30% Starter @ ₹274 · 70% GTT Retest ≤ ₹263.50",
+        cmp: 273.62,
+        target: 335.0,
+        upside: 22.4,
         badge: "FRESH ANCHOR",
         badgeColor: "bg-emerald-100 text-emerald-900 border-emerald-300",
       },
@@ -1870,9 +1870,9 @@ export function CallsClient() {
         targetAllocation: 12000,
         toInvestNow: 12000,
         executionRule: "GTT Limit Trigger ≤ ₹651.80 (Wait for Dip)",
-        cmp: 1126.2,
-        target: 1479.1,
-        upside: 31.3,
+        cmp: 714.05,
+        target: 900.0,
+        upside: 26.0,
         badge: "GTT DIP LIMIT",
         badgeColor: "bg-indigo-100 text-indigo-900 border-indigo-300",
       },

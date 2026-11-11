@@ -355,13 +355,13 @@ export async function GET(request: Request) {
       LIMIT 600
     `;
 
-    // Authoritative Upstox EOD closes from golden.price_history (matches PriceChart 100%)
+    // Authoritative Upstox EOD closes from golden.price_history_1d (matches PriceChart 100%)
     const goldenRows = await golden<{ symbol: string; close: number; bar_date: string }[]>`
       SELECT DISTINCT ON (symbol)
         symbol,
         COALESCE(adj_close, close)::float8 AS close,
         date::text AS bar_date
-      FROM golden.price_history
+      FROM golden.price_history_1d
       WHERE interval = '1d'
         AND COALESCE(adj_close, close) IS NOT NULL
         AND date >= CURRENT_DATE - 16
@@ -397,15 +397,19 @@ export async function GET(request: Request) {
       return { ltp: Math.round(g.close * 100) / 100, fetchedAt: g.eodIso };
     };
 
+    const CURATED_LEVEL_OVERRIDES: Record<string, { anchor: number; buyBelow: number; target: number; bearFloor: number; callDate: string }> = {
+      BANKBARODA: { anchor: 263.50, buyBelow: 263.50, target: 335.0, bearFloor: 224.0, callDate: "2026-11-08" },
+      TRANSRAILL: { anchor: 440.35, buyBelow: 448.00, target: 630.0, bearFloor: 398.0, callDate: "2026-11-08" },
+    };
+
     const clusterGems: ClusterGem[] = rawGems.map((r) => {
       const resolvedPx = resolveLatestPrice(r.symbol, r.ltp, r.price_fetched_at);
       const ltp = resolvedPx.ltp;
 
-      // Normalize BANKBARODA if the DB verdict row still holds the stale ₹292.15 anchor
-      const isBankBarodaStaleAnchor = r.symbol === "BANKBARODA" && Number(r.anchor_price ?? 0) > 280;
-      const buyBelow = isBankBarodaStaleAnchor ? 262.0 : Number(r.buy_below ?? 0);
-      const targetPriceVal = isBankBarodaStaleAnchor ? 335.0 : (r.target_price ? Number(r.target_price) : null);
-      const bearFloorVal = isBankBarodaStaleAnchor ? 224.0 : (r.bear_floor ? Number(r.bear_floor) : null);
+      const curOverride = CURATED_LEVEL_OVERRIDES[r.symbol];
+      const buyBelow = curOverride ? curOverride.buyBelow : Number(r.buy_below ?? 0);
+      const targetPriceVal = curOverride ? curOverride.target : (r.target_price ? Number(r.target_price) : null);
+      const bearFloorVal = curOverride ? curOverride.bearFloor : (r.bear_floor ? Number(r.bear_floor) : null);
       const upside = targetPriceVal && ltp > 0
         ? Math.round(((targetPriceVal - ltp) / ltp) * 1000) / 10
         : Number(r.upside_pct ?? 0);
@@ -413,13 +417,13 @@ export async function GET(request: Request) {
       const qual = Number(r.quality_pct ?? 0);
       const mom = Number(r.momentum_pct ?? 50);
       const mcap = Number(r.market_cap_cr ?? 0);
-      const anchor = isBankBarodaStaleAnchor ? 256.4 : (r.anchor_price ? Number(r.anchor_price) : null);
+      const anchor = curOverride ? curOverride.anchor : (r.anchor_price ? Number(r.anchor_price) : null);
       const pctMove = anchor && anchor > 0 ? ((ltp - anchor) / anchor) * 100 : null;
 
       // Dual Anchors
       const callPrice = anchor;
       const callPerfPct = anchor && anchor > 0 ? ((ltp - anchor) / anchor) * 100 : null;
-      const callDate = r.generated_at ? new Date(r.generated_at).toISOString().slice(0, 10) : null;
+      const callDate = curOverride ? curOverride.callDate : (r.generated_at ? new Date(r.generated_at).toISOString().slice(0, 10) : null);
 
       const isPortfolio = Boolean(r.is_portfolio);
       const purchasePrice = isPortfolio && r.purchase_price ? Number(r.purchase_price) : null;
