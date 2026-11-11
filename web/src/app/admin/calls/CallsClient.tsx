@@ -1899,6 +1899,20 @@ export function CallsClient() {
     const totalStockRemaining = fmGoetzeRemaining + transrailRemaining + bankBarodaRemaining + shardaCropRemaining;
     const liquidBuffer = Math.max(0, Math.round(activeMonth.remainingToInvest - totalStockRemaining));
 
+    const getStockMetrics = (sym: string, defaultCmp: number, defaultTarget: number, defaultUpside: number) => {
+      const call = unifiedCalls.find((c) => c.symbol === sym);
+      const cur = curatedSymbolMap.get(sym);
+      const cmp = call?.cmp ?? cur?.cmp ?? defaultCmp;
+      const target = cur?.target ?? call?.target ?? defaultTarget;
+      const upside = target > 0 && cmp > 0 ? Math.round(((target - cmp) / cmp) * 1000) / 10 : (call?.upside ?? cur?.upside ?? defaultUpside);
+      return { cmp, target, upside };
+    };
+
+    const fmMetrics = getStockMetrics("FMGOETZE", 466.4, 603.6, 29.4);
+    const trMetrics = getStockMetrics("TRANSRAILL", 450.0, 630.0, 40.0);
+    const bobMetrics = getStockMetrics("BANKBARODA", 273.62, 335.0, 22.4);
+    const scMetrics = getStockMetrics("SHARDACROP", 714.05, 900.0, 26.0);
+
     const remainingQueue = [
       ...(fmGoetzeRemaining > 0
         ? [
@@ -1910,9 +1924,9 @@ export function CallsClient() {
               targetAllocation: 15000,
               toInvestNow: fmGoetzeRemaining,
               executionRule: "GTT Limit ≤ ₹457.10 (Buy Below)",
-              cmp: 466.4,
-              target: 603.6,
-              upside: 29.4,
+              cmp: fmMetrics.cmp,
+              target: fmMetrics.target,
+              upside: fmMetrics.upside,
               badge: "TOP-UP TRANCHE 2",
               badgeColor: "bg-amber-100 text-amber-900 border-amber-300",
             },
@@ -1928,9 +1942,9 @@ export function CallsClient() {
               targetAllocation: 15000,
               toInvestNow: transrailRemaining,
               executionRule: transrailBought > 0 ? "GTT Limit ≤ ₹434 (Tranche 2 Dip Retest)" : "Buy in Zone ₹438–₹450 (or 50% CMP / 50% GTT ≤ ₹436)",
-              cmp: 450.0,
-              target: 630.0,
-              upside: 40.0,
+              cmp: trMetrics.cmp,
+              target: trMetrics.target,
+              upside: trMetrics.upside,
               badge: transrailBought > 0 ? "TOP-UP TRANCHE 2" : "FRESH ANCHOR",
               badgeColor: transrailBought > 0 ? "bg-amber-100 text-amber-900 border-amber-300" : "bg-emerald-100 text-emerald-900 border-emerald-300",
             },
@@ -1946,9 +1960,9 @@ export function CallsClient() {
               targetAllocation: 15000,
               toInvestNow: bankBarodaRemaining,
               executionRule: bankBarodaBought > 0 ? "GTT Limit Retest ≤ ₹263.50" : "30% Starter @ ₹274 · 70% GTT Retest ≤ ₹263.50",
-              cmp: 273.62,
-              target: 335.0,
-              upside: 22.4,
+              cmp: bobMetrics.cmp,
+              target: bobMetrics.target,
+              upside: bobMetrics.upside,
               badge: bankBarodaBought > 0 ? "TOP-UP TRANCHE 2" : "FRESH ANCHOR",
               badgeColor: bankBarodaBought > 0 ? "bg-amber-100 text-amber-900 border-amber-300" : "bg-emerald-100 text-emerald-900 border-emerald-300",
             },
@@ -1964,9 +1978,9 @@ export function CallsClient() {
               targetAllocation: 12000,
               toInvestNow: shardaCropRemaining,
               executionRule: "GTT Limit Trigger ≤ ₹651.80 (Wait for Dip)",
-              cmp: 714.05,
-              target: 900.0,
-              upside: 26.0,
+              cmp: scMetrics.cmp,
+              target: scMetrics.target,
+              upside: scMetrics.upside,
               badge: "GTT DIP LIMIT",
               badgeColor: "bg-indigo-100 text-indigo-900 border-indigo-300",
             },
@@ -2776,8 +2790,27 @@ export function CallsClient() {
                                   {b.broker}
                                 </span>
                               </td>
-                              <td className="py-2 px-2 text-right font-mono text-slate-700">
-                                {b.quantity} sh × {money(b.price, 2)}
+                              <td className="py-2 px-2 text-right font-mono">
+                                <div className="text-slate-800 font-medium">
+                                  {b.quantity} sh × {money(b.price, 2)}
+                                </div>
+                                {(() => {
+                                  const liveCall = unifiedCalls.find((c) => c.symbol === b.symbol);
+                                  const liveCmp = liveCall?.cmp ?? 0;
+                                  if (liveCmp > 0) {
+                                    const pnlPct = ((liveCmp - b.price) / b.price) * 100;
+                                    const isProfitable = pnlPct >= 0;
+                                    return (
+                                      <div className="text-[10px] text-slate-500 flex items-center justify-end gap-1">
+                                        <span className="font-semibold text-slate-700">LTP {money(liveCmp, 2)}</span>
+                                        <span className={`font-semibold ${isProfitable ? "text-emerald-700" : "text-rose-600"}`}>
+                                          ({isProfitable ? "+" : ""}{pnlPct.toFixed(1)}%)
+                                        </span>
+                                      </div>
+                                    );
+                                  }
+                                  return null;
+                                })()}
                               </td>
                               <td className="py-2 px-2.5 text-right font-mono font-bold text-emerald-800">
                                 {money(b.amount, 0)}
@@ -2899,6 +2932,11 @@ export function CallsClient() {
                             <span className="font-mono font-bold text-xs sm:text-sm text-slate-900">
                               {item.symbol === "LIQUID_RESERVE" ? "🛡️ LIQUID PULLBACK BUFFER" : item.symbol}
                             </span>
+                            {item.cmp > 0 && (
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-900 text-white shadow-2xs">
+                                LTP {money(item.cmp, 2)}
+                              </span>
+                            )}
                             <span className={`px-1.5 py-0.2 rounded text-[9.5px] font-mono font-bold border ${item.badgeColor}`}>
                               {item.badge}
                             </span>
@@ -2906,6 +2944,9 @@ export function CallsClient() {
                           <div className="text-[11px] text-slate-600 font-medium mt-0.5">{item.role}</div>
                         </div>
                         <div className="text-right shrink-0">
+                          <span className="text-[9px] uppercase tracking-wider font-semibold text-slate-500 block">
+                            Deploy Now
+                          </span>
                           <div className="font-mono font-bold text-sm text-slate-900">
                             {money(item.toInvestNow, 0)}
                           </div>
@@ -2923,8 +2964,8 @@ export function CallsClient() {
                         </span>
                         {item.cmp > 0 && (
                           <span className="font-mono text-slate-500">
-                            CMP: <strong className="text-slate-800">{money(item.cmp, 2)}</strong> → Target:{" "}
-                            <strong className="text-emerald-700">{money(item.target, 1)}</strong> (+{item.upside}%)
+                            LTP: <strong className="text-slate-900 font-bold">{money(item.cmp, 2)}</strong> → Target:{" "}
+                            <strong className="text-emerald-700 font-semibold">{money(item.target, 1)}</strong> (+{item.upside}%)
                           </span>
                         )}
                       </div>
