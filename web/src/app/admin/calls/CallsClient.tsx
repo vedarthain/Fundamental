@@ -1913,6 +1913,34 @@ export function CallsClient() {
     const bobMetrics = getStockMetrics("BANKBARODA", 273.62, 335.0, 22.4);
     const scMetrics = getStockMetrics("SHARDACROP", 714.05, 900.0, 26.0);
 
+    const fmTrigger = 457.1;
+    const fmShares = Math.floor(fmGoetzeRemaining / fmTrigger) || 18;
+    const fmCmp = fmMetrics.cmp;
+    const fmDistPct = Math.round(((fmCmp - fmTrigger) / fmTrigger) * 1000) / 10;
+    const fmPullback = Math.round(((fmCmp - fmTrigger) / fmCmp) * 1000) / 10;
+    const fmInZone = fmCmp <= fmTrigger;
+
+    const trTrigger = transrailBought > 0 ? 434.0 : 445.0;
+    const trShares = Math.floor(transrailRemaining / trTrigger) || 17;
+    const trCmp = trMetrics.cmp;
+    const trDistPct = Math.round(((trCmp - trTrigger) / trTrigger) * 1000) / 10;
+    const trPullback = Math.round(((trCmp - trTrigger) / trCmp) * 1000) / 10;
+    const trInZone = transrailBought > 0 ? trCmp <= trTrigger : trCmp <= 450.0;
+
+    const bobCmp = bobMetrics.cmp;
+    const bobStarterAmt = Math.round(bankBarodaRemaining * 0.3);
+    const bobStarterShares = Math.max(1, Math.floor(bobStarterAmt / (bobCmp || 274)));
+    const bobCoreAmt = bankBarodaRemaining - bobStarterAmt;
+    const bobCoreShares = Math.max(1, Math.floor(bobCoreAmt / 263.5));
+    const bobTotalShares = bobStarterShares + bobCoreShares;
+
+    const scTrigger = 651.8;
+    const scShares = Math.floor(shardaCropRemaining / scTrigger) || 18;
+    const scCmp = scMetrics.cmp;
+    const scDistPct = Math.round(((scCmp - scTrigger) / scTrigger) * 1000) / 10;
+    const scPullback = Math.round(((scCmp - scTrigger) / scCmp) * 1000) / 10;
+    const scInZone = scCmp <= scTrigger;
+
     const remainingQueue = [
       ...(fmGoetzeRemaining > 0
         ? [
@@ -1923,12 +1951,17 @@ export function CallsClient() {
               alreadyBought: fmGoetzeBought,
               targetAllocation: 15000,
               toInvestNow: fmGoetzeRemaining,
+              approxShares: fmShares,
               executionRule: "GTT Limit ≤ ₹457.10 (Buy Below)",
-              cmp: fmMetrics.cmp,
+              cmp: fmCmp,
               target: fmMetrics.target,
               upside: fmMetrics.upside,
-              badge: "TOP-UP TRANCHE 2",
-              badgeColor: "bg-amber-100 text-amber-900 border-amber-300",
+              actionBadge: fmInZone ? "🟢 READY TO BUY (IN ZONE)" : "🟡 SET GTT (WAIT FOR DIP)",
+              actionBadgeColor: fmInZone ? "bg-emerald-100 text-emerald-900 border-emerald-300" : "bg-amber-100 text-amber-900 border-amber-300",
+              brokerAction: `Place GTT Limit: ${fmShares} sh @ ≤ ₹457.10`,
+              timingDistance: fmInZone
+                ? `LTP is inside entry zone (≤ ₹457.10). Ready to execute.`
+                : `LTP is +${fmDistPct}% above trigger limit. Wait for -${fmPullback}% dip (do NOT chase at CMP).`,
             },
           ]
         : []),
@@ -1941,12 +1974,25 @@ export function CallsClient() {
               alreadyBought: transrailBought,
               targetAllocation: 15000,
               toInvestNow: transrailRemaining,
+              approxShares: trShares,
               executionRule: transrailBought > 0 ? "GTT Limit ≤ ₹434 (Tranche 2 Dip Retest)" : "Buy in Zone ₹438–₹450 (or 50% CMP / 50% GTT ≤ ₹436)",
-              cmp: trMetrics.cmp,
+              cmp: trCmp,
               target: trMetrics.target,
               upside: trMetrics.upside,
-              badge: transrailBought > 0 ? "TOP-UP TRANCHE 2" : "FRESH ANCHOR",
-              badgeColor: transrailBought > 0 ? "bg-amber-100 text-amber-900 border-amber-300" : "bg-emerald-100 text-emerald-900 border-emerald-300",
+              actionBadge: transrailBought > 0
+                ? (trInZone ? "🟢 READY TO TOP-UP" : "🟡 SET GTT (TRANCHE 2 DIP)")
+                : (trInZone ? "🟢 READY TO BUY (IN ZONE)" : "🟡 SET GTT LIMIT"),
+              actionBadgeColor: trInZone ? "bg-emerald-100 text-emerald-900 border-emerald-300" : "bg-amber-100 text-amber-900 border-amber-300",
+              brokerAction: transrailBought > 0
+                ? `Place GTT Limit: ${trShares} sh @ ≤ ₹434.00`
+                : `Buy ${trShares} sh in Zone ₹438–₹450 (or 50% CMP / 50% GTT ≤ ₹436)`,
+              timingDistance: transrailBought > 0
+                ? (trInZone
+                    ? `LTP is at/below Tranche 2 dip level (₹434). Execute top-up now.`
+                    : `Tranche 1 filled (17 sh @ ₹449.45). LTP is +${trDistPct}% above Tranche 2 limit. Set GTT for -${trPullback}% dip.`)
+                : (trInZone
+                    ? `LTP is inside anchor entry zone (₹438–₹450). Ready to buy.`
+                    : `LTP is above entry zone. Place GTT order.`),
             },
           ]
         : []),
@@ -1959,12 +2005,19 @@ export function CallsClient() {
               alreadyBought: bankBarodaBought,
               targetAllocation: 15000,
               toInvestNow: bankBarodaRemaining,
+              approxShares: bobTotalShares,
               executionRule: bankBarodaBought > 0 ? "GTT Limit Retest ≤ ₹263.50" : "30% Starter @ ₹274 · 70% GTT Retest ≤ ₹263.50",
-              cmp: bobMetrics.cmp,
+              cmp: bobCmp,
               target: bobMetrics.target,
               upside: bobMetrics.upside,
-              badge: bankBarodaBought > 0 ? "TOP-UP TRANCHE 2" : "FRESH ANCHOR",
-              badgeColor: bankBarodaBought > 0 ? "bg-amber-100 text-amber-900 border-amber-300" : "bg-emerald-100 text-emerald-900 border-emerald-300",
+              actionBadge: bankBarodaBought > 0 ? "🟡 SET GTT RETEST" : "🔵 SPLIT ACTION TODAY (30 / 70)",
+              actionBadgeColor: bankBarodaBought > 0 ? "bg-amber-100 text-amber-900 border-amber-300" : "bg-indigo-100 text-indigo-900 border-indigo-300",
+              brokerAction: bankBarodaBought > 0
+                ? `Place GTT Limit: ${Math.floor(bankBarodaRemaining / 263.5)} sh @ ≤ ₹263.50`
+                : `Step 1: ${bobStarterShares} sh Starter @ ~₹274 today • Step 2: GTT Limit ${bobCoreShares} sh @ ≤ ₹263.50`,
+              timingDistance: bankBarodaBought > 0
+                ? `Set GTT limit order for retest dip at ₹263.50.`
+                : `LTP (~₹${bobCmp.toFixed(2)}) is right at Starter (~₹274). Deploy 30% starter today; set GTT for remaining 70% @ ≤ ₹263.50 retest.`,
             },
           ]
         : []),
@@ -1977,12 +2030,17 @@ export function CallsClient() {
               alreadyBought: shardaCropBought,
               targetAllocation: 12000,
               toInvestNow: shardaCropRemaining,
+              approxShares: scShares,
               executionRule: "GTT Limit Trigger ≤ ₹651.80 (Wait for Dip)",
-              cmp: scMetrics.cmp,
+              cmp: scCmp,
               target: scMetrics.target,
               upside: scMetrics.upside,
-              badge: "GTT DIP LIMIT",
-              badgeColor: "bg-indigo-100 text-indigo-900 border-indigo-300",
+              actionBadge: scInZone ? "🟢 READY TO BUY (DIP MET)" : "🟡 SET GTT (WAIT FOR DIP)",
+              actionBadgeColor: scInZone ? "bg-emerald-100 text-emerald-900 border-emerald-300" : "bg-amber-100 text-amber-900 border-amber-300",
+              brokerAction: `Place GTT Limit: ${scShares} sh @ ≤ ₹651.80`,
+              timingDistance: scInZone
+                ? `LTP is at/below dip trigger (≤ ₹651.80). Execute buy.`
+                : `LTP is +${scDistPct}% above trigger limit. Wait for cyclical dip (-${scPullback}%) — do NOT chase at CMP.`,
             },
           ]
         : []),
@@ -1993,12 +2051,15 @@ export function CallsClient() {
         alreadyBought: 0,
         targetAllocation: liquidBuffer,
         toInvestNow: liquidBuffer,
+        approxShares: 0,
         executionRule: "Hold in Broker Liquid / Overnight ETF",
         cmp: 0,
         target: 0,
         upside: 0,
-        badge: "CASH BUFFER",
-        badgeColor: "bg-slate-100 text-slate-800 border-slate-300",
+        actionBadge: "🛡️ HOLD DRY POWDER",
+        actionBadgeColor: "bg-slate-100 text-slate-800 border-slate-300",
+        brokerAction: "Park in Liquid ETF (e.g. LIQUIDBEES) or keep Cash Balance",
+        timingDistance: "Retained as unallocated buffer to capitalize on unexpected market volatility or flash dips.",
       },
     ];
 
@@ -2902,15 +2963,15 @@ export function CallsClient() {
                       </span>
                     </h3>
                     <p className="text-[11px] text-slate-500">
-                      Exact Tranche 2 top-ups &amp; fresh ₹15k anchor entries to complete this month&apos;s deployment.
+                      Exact broker order instructions: when to buy immediately vs. when to set GTT limit orders for dips.
                     </p>
                   </div>
                   <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-100 text-amber-900 border border-amber-300">
-                    To Deploy: {money(monthlyAuditData.activeMonth.remainingToInvest, 0)}
+                    Remaining Budget: {money(monthlyAuditData.activeMonth.remainingToInvest, 0)}
                   </span>
                 </div>
 
-                <div className="space-y-2">
+                <div className="space-y-2.5">
                   {monthlyAuditData.remainingQueue.map((item) => (
                     <div
                       key={item.symbol}
@@ -2920,12 +2981,13 @@ export function CallsClient() {
                           setViewMode("detail");
                         }
                       }}
-                      className={`p-2.5 rounded-lg border transition-colors ${
+                      className={`p-3 rounded-lg border transition-all ${
                         item.symbol !== "LIQUID_RESERVE"
-                          ? "border-slate-200 hover:border-indigo-300 hover:bg-slate-50/70 cursor-pointer"
-                          : "border-dashed border-slate-300 bg-slate-50/50"
+                          ? "border-slate-200 hover:border-indigo-300 bg-white hover:bg-slate-50/70 cursor-pointer shadow-2xs"
+                          : "border-dashed border-slate-300 bg-slate-50/60"
                       }`}
                     >
+                      {/* Top Row: Stock + LTP + Action Status Badge & Planned Allocation */}
                       <div className="flex items-start justify-between gap-2">
                         <div>
                           <div className="flex items-center gap-1.5 flex-wrap">
@@ -2937,18 +2999,25 @@ export function CallsClient() {
                                 LTP {money(item.cmp, 2)}
                               </span>
                             )}
-                            <span className={`px-1.5 py-0.2 rounded text-[9.5px] font-mono font-bold border ${item.badgeColor}`}>
-                              {item.badge}
+                            <span className={`px-2 py-0.5 rounded text-[9.5px] font-mono font-bold border ${item.actionBadgeColor}`}>
+                              {item.actionBadge}
                             </span>
                           </div>
                           <div className="text-[11px] text-slate-600 font-medium mt-0.5">{item.role}</div>
                         </div>
+
+                        {/* Right: Planned Allocation & Approx Shares */}
                         <div className="text-right shrink-0">
                           <span className="text-[9px] uppercase tracking-wider font-semibold text-slate-500 block">
-                            Deploy Now
+                            Planned Allocation
                           </span>
                           <div className="font-mono font-bold text-sm text-slate-900">
                             {money(item.toInvestNow, 0)}
+                            {item.approxShares > 0 && (
+                              <span className="text-[10.5px] text-slate-500 font-normal ml-1">
+                                (~{item.approxShares} sh)
+                              </span>
+                            )}
                           </div>
                           {item.alreadyBought > 0 && (
                             <div className="text-[10px] font-mono text-emerald-700">
@@ -2958,26 +3027,42 @@ export function CallsClient() {
                         </div>
                       </div>
 
-                      <div className="mt-1.5 pt-1.5 border-t border-slate-100 flex items-center justify-between text-[10.5px] text-slate-600 flex-wrap gap-1">
-                        <span className="font-mono font-semibold text-indigo-900 bg-indigo-50 px-1.5 py-0.2 rounded">
-                          Rule: {item.executionRule}
-                        </span>
-                        {item.cmp > 0 && (
+                      {/* Middle: Exact Broker Action Today Box */}
+                      <div className="mt-2.5 p-2 rounded bg-slate-50/90 border border-slate-200/90 space-y-1">
+                        <div className="flex items-center justify-between text-[10.5px] flex-wrap gap-1">
+                          <span className="font-semibold text-slate-800 flex items-center gap-1">
+                            <Target className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                            <span>Broker Action Today:</span>
+                          </span>
+                          <span className="font-mono font-bold text-indigo-900 text-[11px] bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
+                            {item.brokerAction}
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-slate-600 flex items-start gap-1 font-mono pt-0.5">
+                          <Info className="w-3 h-3 text-slate-400 shrink-0 mt-0.5" />
+                          <span>{item.timingDistance}</span>
+                        </div>
+                      </div>
+
+                      {/* Bottom: Target Upside */}
+                      {item.cmp > 0 && (
+                        <div className="mt-2 pt-1.5 border-t border-slate-100 flex items-center justify-between text-[10.5px] text-slate-600 flex-wrap gap-1">
                           <span className="font-mono text-slate-500">
                             LTP: <strong className="text-slate-900 font-bold">{money(item.cmp, 2)}</strong> → Target:{" "}
                             <strong className="text-emerald-700 font-semibold">{money(item.target, 1)}</strong> (+{item.upside}%)
                           </span>
-                        )}
-                      </div>
+                          <span className="text-[10px] text-indigo-600 hover:text-indigo-800 font-medium">
+                            View Thesis &amp; Chart →
+                          </span>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
               </div>
 
               <div className="pt-2 border-t hairline text-[11px] text-slate-600 bg-amber-50/60 p-2 rounded border border-amber-200/80">
-                <strong className="text-amber-950">Why FMGOETZE shows ₹6.6k vs ₹15k Anchor:</strong> You bought{" "}
-                <strong className="font-mono">14 sh @ ₹471.75 (₹6,604.50)</strong> on 08 Nov as <strong>Tranche 1</strong>. Keep a GTT limit order for the remaining{" "}
-                <strong className="font-mono">~₹8,395 (18 sh)</strong> at <strong>Buy Below ≤ ₹457.10</strong> to complete your ₹15,000 Anchor without chasing above the buy zone.
+                <strong className="text-amber-950">Discipline on GTT Limits:</strong> When a stock is above its buy zone, never chase at market price. Set your GTT Limit orders in Upstox/Groww with the exact trigger prices listed above. The orders will automatically execute when market dips provide favorable risk-reward entries.
               </div>
             </div>
           </div>
