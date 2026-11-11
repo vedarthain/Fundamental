@@ -50,7 +50,9 @@ import type { ClusterGem, PortfolioActionCall, IdeaHorizon, MonthlyAuditRow, Mon
 function money(v: number | null | undefined, digits?: number): string {
   if (v == null) return "—";
   const fractionDigits = digits ?? (Number.isInteger(v) ? 0 : 2);
-  return `₹${v.toLocaleString("en-IN", {
+  const sign = v < 0 ? "-" : "";
+  const abs = Math.abs(v);
+  return `${sign}₹${abs.toLocaleString("en-IN", {
     minimumFractionDigits: fractionDigits,
     maximumFractionDigits: fractionDigits,
   })}`;
@@ -58,13 +60,28 @@ function money(v: number | null | undefined, digits?: number): string {
 
 function fmtLakhs(v: number | null | undefined): string {
   if (v == null || isNaN(v)) return "—";
-  if (Math.abs(v) >= 1e7) {
-    return `₹${(v / 1e7).toFixed(2)} Cr`;
+  const sign = v < 0 ? "-" : "";
+  const abs = Math.abs(v);
+  if (abs >= 1e7) {
+    return `${sign}₹${(abs / 1e7).toFixed(2)} Cr`;
   }
-  if (Math.abs(v) >= 1e5) {
-    return `₹${(v / 1e5).toFixed(2)} L`;
+  if (abs >= 1e5) {
+    return `${sign}₹${(abs / 1e5).toFixed(2)} L`;
   }
-  return `₹${Math.round(v).toLocaleString("en-IN")}`;
+  return `${sign}₹${Math.round(abs).toLocaleString("en-IN")}`;
+}
+
+function fmtLakhsSigned(v: number | null | undefined): string {
+  if (v == null || isNaN(v)) return "—";
+  const sign = v >= 0 ? "+" : "-";
+  const abs = Math.abs(v);
+  if (abs >= 1e7) {
+    return `${sign}₹${(abs / 1e7).toFixed(2)} Cr`;
+  }
+  if (abs >= 1e5) {
+    return `${sign}₹${(abs / 1e5).toFixed(2)} L`;
+  }
+  return `${sign}₹${Math.round(abs).toLocaleString("en-IN")}`;
 }
 
 function pct(v: number | null | undefined, digits: number = 2): string {
@@ -338,6 +355,7 @@ function cleanPointText(raw: string, tagRegex: RegExp): { metric: string; peer?:
 }
 
 const CUSTOM_PURCHASE_KEY = "calls_custom_purchase_v1";
+const CALLS_VIEW_STATE_KEY = "calls_view_state_v1";
 
 type Scope = "all" | "curated" | "portfolio";
 type ActionFilter = "ALL" | "BUY" | "PRIORITY_SELL" | "SELL" | "HOLD";
@@ -564,6 +582,48 @@ export function CallsClient() {
       // ignore
     }
   }, []);
+
+  // Load workstation view state from localStorage (preserves viewMode, selectedSymbol, scope, activeTab on refresh)
+  useEffect(() => {
+    try {
+      const savedState = localStorage.getItem(CALLS_VIEW_STATE_KEY);
+      if (savedState) {
+        const parsed = JSON.parse(savedState);
+        if (parsed.viewMode && ["detail", "table", "audit", "corpus"].includes(parsed.viewMode)) {
+          setViewMode(parsed.viewMode);
+        }
+        if (parsed.selectedSymbol && typeof parsed.selectedSymbol === "string") {
+          setSelectedSymbol(parsed.selectedSymbol);
+        }
+        if (parsed.scope && ["all", "curated", "portfolio"].includes(parsed.scope)) {
+          setScope(parsed.scope);
+        }
+        if (parsed.activeTab && typeof parsed.activeTab === "string") {
+          setActiveTab(parsed.activeTab);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Save workstation view state when changed
+  useEffect(() => {
+    if (!mounted) return;
+    try {
+      localStorage.setItem(
+        CALLS_VIEW_STATE_KEY,
+        JSON.stringify({
+          viewMode,
+          selectedSymbol,
+          scope,
+          activeTab,
+        })
+      );
+    } catch {
+      // ignore
+    }
+  }, [viewMode, selectedSymbol, scope, activeTab, mounted]);
 
   const saveCustomPurchase = (sym: string, date: string, price: number) => {
     setCustomPurchases((prev) => {
@@ -1485,26 +1545,34 @@ export function CallsClient() {
   useEffect(() => {
     const key = `${scope}::${actionFilter}::${prioritySubFilter}::${Array.from(selectedBatches).sort().join(",")}`;
     if (prevFilterKey.current !== key) {
+      const isInitial = prevFilterKey.current === "";
       prevFilterKey.current = key;
-      const topScrip = sectorGroups[0]?.calls[0]?.symbol || filteredCalls[0]?.symbol;
-      if (topScrip) {
-        setSelectedSymbol(topScrip);
-      }
-    }
-  }, [scope, actionFilter, prioritySubFilter, selectedBatches, sectorGroups, filteredCalls]);
-
-  // Fallback: If selectedSymbol is not set or not in current filteredCalls, pick the top scrip
-  useEffect(() => {
-    if (filteredCalls.length > 0) {
-      const exists = filteredCalls.some((c) => c.symbol === selectedSymbol);
-      if (!exists || !selectedSymbol) {
+      // Do NOT overwrite user's selectedSymbol on initial mount / page refresh!
+      if (!isInitial) {
         const topScrip = sectorGroups[0]?.calls[0]?.symbol || filteredCalls[0]?.symbol;
         if (topScrip) {
           setSelectedSymbol(topScrip);
         }
       }
     }
-  }, [filteredCalls, sectorGroups, selectedSymbol]);
+  }, [scope, actionFilter, prioritySubFilter, selectedBatches, sectorGroups, filteredCalls]);
+
+  // Fallback: If selectedSymbol is not set, pick the top scrip
+  useEffect(() => {
+    if (filteredCalls.length > 0) {
+      if (!selectedSymbol) {
+        const topScrip = sectorGroups[0]?.calls[0]?.symbol || filteredCalls[0]?.symbol;
+        if (topScrip) {
+          setSelectedSymbol(topScrip);
+        }
+      } else if (data != null && !filteredCalls.some((c) => c.symbol === selectedSymbol)) {
+        const topScrip = sectorGroups[0]?.calls[0]?.symbol || filteredCalls[0]?.symbol;
+        if (topScrip) {
+          setSelectedSymbol(topScrip);
+        }
+      }
+    }
+  }, [filteredCalls, sectorGroups, selectedSymbol, data]);
 
   // Chart trade markers for selected stock (displays P on graph for portfolio holdings)
   const chartTrades = useMemo<TradeMark[]>(() => {
@@ -1670,12 +1738,13 @@ export function CallsClient() {
         month_key: "2026-11",
         month_label: "Nov 2026",
         full_month_label: "November 2026",
-        total_bought: 49456.57,
+        total_bought: 57097.22,
         total_sold: 12183.7,
-        buy_stocks_count: 6,
+        buy_stocks_count: 7,
         sell_stocks_count: 2,
-        total_trades_count: 8,
+        total_trades_count: 9,
         buys: [
+          { symbol: "TRANSRAILL", company_name: "Transrail Lighting Ltd", trade_date: "2026-11-11", broker: "groww", side: "buy", quantity: 17, price: 449.45, amount: 7640.65 },
           { symbol: "INDUSTOWER", company_name: "Indus Towers Ltd", trade_date: "2026-11-04", broker: "groww", side: "buy", quantity: 26, price: 391.4, amount: 10176.4 },
           { symbol: "UNIONBANK", company_name: "Union Bank of India", trade_date: "2026-11-06", broker: "groww", side: "buy", quantity: 53, price: 186.75, amount: 9897.75 },
           { symbol: "BBTC", company_name: "Bombay Burmah Trading Corp", trade_date: "2026-11-08", broker: "groww", side: "buy", quantity: 6, price: 1290.0, amount: 7740.0 },
@@ -1815,6 +1884,21 @@ export function CallsClient() {
       activeMonth.buys.find((b) => b.symbol === "FMGOETZE")?.amount || 0;
     const fmGoetzeRemaining = Math.max(0, 15000 - Math.round(fmGoetzeBought));
 
+    const transrailBought =
+      activeMonth.buys.find((b) => b.symbol === "TRANSRAILL")?.amount || 0;
+    const transrailRemaining = Math.max(0, 15000 - Math.round(transrailBought));
+
+    const bankBarodaBought =
+      activeMonth.buys.find((b) => b.symbol === "BANKBARODA")?.amount || 0;
+    const bankBarodaRemaining = Math.max(0, 15000 - Math.round(bankBarodaBought));
+
+    const shardaCropBought =
+      activeMonth.buys.find((b) => b.symbol === "SHARDACROP")?.amount || 0;
+    const shardaCropRemaining = Math.max(0, 12000 - Math.round(shardaCropBought));
+
+    const totalStockRemaining = fmGoetzeRemaining + transrailRemaining + bankBarodaRemaining + shardaCropRemaining;
+    const liquidBuffer = Math.max(0, Math.round(activeMonth.remainingToInvest - totalStockRemaining));
+
     const remainingQueue = [
       ...(fmGoetzeRemaining > 0
         ? [
@@ -1834,55 +1918,67 @@ export function CallsClient() {
             },
           ]
         : []),
-      {
-        symbol: "TRANSRAILL",
-        name: "Transrail Lighting Ltd",
-        role: "Anchor Core #1 — T&D Power Capex Leader",
-        alreadyBought: 0,
-        targetAllocation: 15000,
-        toInvestNow: 15000,
-        executionRule: "Buy in Zone ₹438–₹450 (or 50% CMP / 50% GTT ≤ ₹436)",
-        cmp: 450.0,
-        target: 630.0,
-        upside: 40.0,
-        badge: "FRESH ANCHOR",
-        badgeColor: "bg-emerald-100 text-emerald-900 border-emerald-300",
-      },
-      {
-        symbol: "BANKBARODA",
-        name: "Bank of Baroda",
-        role: "Anchor Core #2 — PSU Banking Value Anchor",
-        alreadyBought: 0,
-        targetAllocation: 15000,
-        toInvestNow: 15000,
-        executionRule: "30% Starter @ ₹274 · 70% GTT Retest ≤ ₹263.50",
-        cmp: 273.62,
-        target: 335.0,
-        upside: 22.4,
-        badge: "FRESH ANCHOR",
-        badgeColor: "bg-emerald-100 text-emerald-900 border-emerald-300",
-      },
-      {
-        symbol: "SHARDACROP",
-        name: "Sharda Cropchem Ltd",
-        role: "Growth Compounder — Global Agrochem Recovery",
-        alreadyBought: 0,
-        targetAllocation: 12000,
-        toInvestNow: 12000,
-        executionRule: "GTT Limit Trigger ≤ ₹651.80 (Wait for Dip)",
-        cmp: 714.05,
-        target: 900.0,
-        upside: 26.0,
-        badge: "GTT DIP LIMIT",
-        badgeColor: "bg-indigo-100 text-indigo-900 border-indigo-300",
-      },
+      ...(transrailRemaining > 0
+        ? [
+            {
+              symbol: "TRANSRAILL",
+              name: "Transrail Lighting Ltd",
+              role: transrailBought > 0 ? "Tranche 2 Dip Top-Up (Complete ₹15k Anchor)" : "Anchor Core #1 — T&D Power Capex Leader",
+              alreadyBought: transrailBought,
+              targetAllocation: 15000,
+              toInvestNow: transrailRemaining,
+              executionRule: transrailBought > 0 ? "GTT Limit ≤ ₹434 (Tranche 2 Dip Retest)" : "Buy in Zone ₹438–₹450 (or 50% CMP / 50% GTT ≤ ₹436)",
+              cmp: 450.0,
+              target: 630.0,
+              upside: 40.0,
+              badge: transrailBought > 0 ? "TOP-UP TRANCHE 2" : "FRESH ANCHOR",
+              badgeColor: transrailBought > 0 ? "bg-amber-100 text-amber-900 border-amber-300" : "bg-emerald-100 text-emerald-900 border-emerald-300",
+            },
+          ]
+        : []),
+      ...(bankBarodaRemaining > 0
+        ? [
+            {
+              symbol: "BANKBARODA",
+              name: "Bank of Baroda",
+              role: bankBarodaBought > 0 ? "Tranche 2 Retest Top-Up (Complete ₹15k Anchor)" : "Anchor Core #2 — PSU Banking Value Anchor",
+              alreadyBought: bankBarodaBought,
+              targetAllocation: 15000,
+              toInvestNow: bankBarodaRemaining,
+              executionRule: bankBarodaBought > 0 ? "GTT Limit Retest ≤ ₹263.50" : "30% Starter @ ₹274 · 70% GTT Retest ≤ ₹263.50",
+              cmp: 273.62,
+              target: 335.0,
+              upside: 22.4,
+              badge: bankBarodaBought > 0 ? "TOP-UP TRANCHE 2" : "FRESH ANCHOR",
+              badgeColor: bankBarodaBought > 0 ? "bg-amber-100 text-amber-900 border-amber-300" : "bg-emerald-100 text-emerald-900 border-emerald-300",
+            },
+          ]
+        : []),
+      ...(shardaCropRemaining > 0
+        ? [
+            {
+              symbol: "SHARDACROP",
+              name: "Sharda Cropchem Ltd",
+              role: "Growth Compounder — Global Agrochem Recovery",
+              alreadyBought: shardaCropBought,
+              targetAllocation: 12000,
+              toInvestNow: shardaCropRemaining,
+              executionRule: "GTT Limit Trigger ≤ ₹651.80 (Wait for Dip)",
+              cmp: 714.05,
+              target: 900.0,
+              upside: 26.0,
+              badge: "GTT DIP LIMIT",
+              badgeColor: "bg-indigo-100 text-indigo-900 border-indigo-300",
+            },
+          ]
+        : []),
       {
         symbol: "LIQUID_RESERVE",
         name: "Opportunistic Pullback Buffer",
         role: "Dry Powder for Mid-Month Intraday Dips",
         alreadyBought: 0,
-        targetAllocation: Math.max(0, Math.round(activeMonth.remainingToInvest - (fmGoetzeRemaining + 42000))),
-        toInvestNow: Math.max(0, Math.round(activeMonth.remainingToInvest - (fmGoetzeRemaining + 42000))),
+        targetAllocation: liquidBuffer,
+        toInvestNow: liquidBuffer,
         executionRule: "Hold in Broker Liquid / Overnight ETF",
         cmp: 0,
         target: 0,
@@ -3105,15 +3201,22 @@ export function CallsClient() {
             <div className="bg-white border hairline rounded-lg p-3 shadow-2xs space-y-1">
               <div className="flex items-center justify-between text-xs text-slate-500">
                 <span className="font-medium uppercase tracking-wider text-[10px]">Total Unrealized Gains</span>
-                <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-1 rounded font-mono">
+                <span className={`text-[10px] font-bold px-1 rounded font-mono ${
+                  livePortfolioStats.pnl >= 0 ? "text-emerald-800 bg-emerald-50" : "text-rose-800 bg-rose-50"
+                }`}>
                   {pct(livePortfolioStats.pnlPct, 1)}
                 </span>
               </div>
-              <div className="text-xl sm:text-2xl font-bold font-mono text-emerald-700 tracking-tight">
-                +{fmtLakhs(livePortfolioStats.pnl)}
+              <div className={`text-xl sm:text-2xl font-bold font-mono tracking-tight ${
+                livePortfolioStats.pnl >= 0 ? "text-emerald-700" : "text-rose-700"
+              }`}>
+                {fmtLakhsSigned(livePortfolioStats.pnl)}
               </div>
               <div className="text-[10.5px] text-slate-500 font-mono truncate">
-                Net Profit: {money(livePortfolioStats.pnl, 0)}
+                {livePortfolioStats.pnl >= 0 ? "Net Profit: " : "Net Loss: "}
+                <span className={livePortfolioStats.pnl >= 0 ? "text-emerald-700 font-semibold" : "text-rose-700 font-semibold"}>
+                  {money(livePortfolioStats.pnl, 0)}
+                </span>
               </div>
             </div>
 

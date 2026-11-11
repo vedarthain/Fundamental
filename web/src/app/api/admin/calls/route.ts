@@ -762,7 +762,7 @@ export async function GET(request: Request) {
           FROM app.portfolio_transaction t
           LEFT JOIN app.universe u ON u.symbol = t.symbol
           WHERE t.symbol IS NOT NULL
-          GROUP BY 1, 2, 3, 4, 5, 6
+          GROUP BY to_char(t.trade_date, 'YYYY-MM'), t.trade_date, COALESCE(t.broker, 'broker'), t.symbol, COALESCE(u.company_name, t.symbol), t.side
           ORDER BY t.trade_date DESC, SUM(t.quantity * t.price) DESC
         `,
         sql<{
