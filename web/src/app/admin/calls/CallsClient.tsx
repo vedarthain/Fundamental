@@ -3503,6 +3503,7 @@ export function CallsClient() {
                     {/* Stock List with exact Profit/Loss % */}
                     <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1">
                       {portfolioDistribution.selectedGroup.stocks.map((stock) => {
+                        const isMfEtf = stock.symbol === "MUTUAL_FUNDS_ETFS" || !stock.symbol;
                         const stockCurVal = stock.curVal || (stock.cmp * (stock.heldQty || 1));
                         const stockInvested = stock.investedVal || ((stock.purchasePrice || stock.cmp) * (stock.heldQty || 1));
                         const stockPnlRs = stockCurVal - stockInvested;
@@ -3511,21 +3512,25 @@ export function CallsClient() {
 
                         return (
                           <div
-                            key={stock.symbol}
+                            key={stock.symbol || "mfs"}
                             onClick={() => {
-                              setSelectedSymbol(stock.symbol);
-                              setViewMode("detail");
+                              if (!isMfEtf) {
+                                setSelectedSymbol(stock.symbol);
+                                setViewMode("detail");
+                              }
                             }}
-                            className="p-2.5 rounded-lg border border-slate-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/30 transition-all cursor-pointer shadow-2xs space-y-1.5"
+                            className={`p-2.5 rounded-lg border border-slate-200 bg-white transition-all shadow-2xs space-y-1.5 ${
+                              isMfEtf ? "cursor-default" : "hover:border-indigo-300 hover:bg-indigo-50/30 cursor-pointer"
+                            }`}
                           >
                             <div className="flex items-start justify-between gap-1">
                               <div>
                                 <div className="flex items-center gap-1.5 font-mono font-bold text-xs sm:text-sm text-slate-900">
-                                  <span>{stock.symbol}</span>
-                                  <ArrowUpRight className="w-3 h-3 text-slate-400" />
+                                  <span>{isMfEtf ? "MUTUAL FUNDS & ETFS" : stock.symbol}</span>
+                                  {!isMfEtf && <ArrowUpRight className="w-3 h-3 text-slate-400" />}
                                 </div>
-                                <div className="text-[10.5px] text-slate-500 truncate max-w-[180px]">
-                                  {stock.name || stock.company_name}
+                                <div className="text-[10.5px] text-slate-500 truncate max-w-[200px]">
+                                  {isMfEtf ? "27 Funds (Gold, Silver, Sectoral & Index ETFs)" : (stock.name || stock.company_name)}
                                 </div>
                               </div>
 
@@ -3548,10 +3553,14 @@ export function CallsClient() {
 
                             <div className="pt-1 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-600 font-mono flex-wrap gap-1">
                               <span>
-                                {stock.heldQty || 1} sh @ Avg {money(stock.purchasePrice || stock.cmp, 2)}
+                                {isMfEtf
+                                  ? `${stock.heldQty || 6151} units @ Avg ${money(stock.purchasePrice || stock.cmp, 2)}`
+                                  : `${stock.heldQty || 1} sh @ Avg ${money(stock.purchasePrice || stock.cmp, 2)}`}
                               </span>
                               <span>
-                                LTP {money(stock.cmp, 2)} • Val {money(stockCurVal, 0)}
+                                {isMfEtf
+                                  ? `Val ${money(stockCurVal, 0)}`
+                                  : `LTP ${money(stock.cmp, 2)} • Val ${money(stockCurVal, 0)}`}
                               </span>
                             </div>
                           </div>
@@ -5056,14 +5065,33 @@ export function CallsClient() {
                     </div>
                   </div>
                   <div className="w-full min-w-0 overflow-hidden pt-0.5">
-                    <PriceChart
-                      symbol={selectedCall.symbol}
-                      currentPrice={selectedCall.cmp}
-                      onPriceInfo={setStockPriceInfo}
-                      height={315}
-                      isPortfolio={selectedCall.isPortfolio}
-                      trades={chartTrades}
-                    />
+                    {selectedCall.symbol === "MUTUAL_FUNDS_ETFS" ? (
+                      <div className="h-[315px] flex flex-col items-center justify-center bg-slate-50 border hairline rounded p-6 text-center space-y-2">
+                        <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 text-lg font-bold">
+                          💼
+                        </div>
+                        <h4 className="font-bold text-sm text-slate-900">
+                          Mutual Funds &amp; Commodity/Index ETFs Aggregate
+                        </h4>
+                        <p className="text-xs text-slate-500 max-w-md">
+                          Combined holdings of 27 passive funds and ETFs (including Gold, Silver, Sectoral &amp; Nifty/Midcap Index Funds) imported from broker tradebook.
+                        </p>
+                        <div className="pt-2 flex items-center gap-3 text-xs font-mono">
+                          <span className="text-slate-700 font-semibold">Total Units: {selectedCall.heldQty?.toLocaleString("en-IN") || "6,151"}</span>
+                          <span className="text-slate-700 font-semibold">Invested: {money(selectedCall.investedVal, 0)}</span>
+                          <span className="text-emerald-700 font-bold">Current: {money(selectedCall.curVal, 0)}</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <PriceChart
+                        symbol={selectedCall.symbol}
+                        currentPrice={selectedCall.cmp}
+                        onPriceInfo={setStockPriceInfo}
+                        height={315}
+                        isPortfolio={selectedCall.isPortfolio}
+                        trades={chartTrades}
+                      />
+                    )}
                   </div>
                 </div>
 

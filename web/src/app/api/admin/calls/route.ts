@@ -622,9 +622,16 @@ export async function GET(request: Request) {
     `;
 
     const portfolioActions: PortfolioActionCall[] = rawPortfolio.map((r) => {
+      const isMutualFundOrEtf = !r.symbol || r.symbol === "MUTUAL_FUNDS_ETFS";
+      const sym = isMutualFundOrEtf ? "MUTUAL_FUNDS_ETFS" : r.symbol;
+      const compName = isMutualFundOrEtf ? "Mutual Funds & Commodity/Index ETFs" : (r.company_name || r.symbol);
+      const secName = isMutualFundOrEtf ? "Mutual Funds & ETFs" : (r.sector || "General");
+      const clusName = isMutualFundOrEtf ? "Mutual Funds & Commodity/Index ETFs" : (r.cluster_name ?? "General");
+      const indName = isMutualFundOrEtf ? "Mutual Funds & Commodity/Index ETFs" : (r.industry || "General");
+
       const resolvedPx = resolveLatestPrice(r.symbol, r.ltp, r.price_fetched_at);
-      const ltp = resolvedPx.ltp;
       const avgCost = Number(r.weighted_avg_cost ?? 0);
+      const ltp = isMutualFundOrEtf ? avgCost : resolvedPx.ltp;
       const target = r.target_price ? Number(r.target_price) : null;
       const buyBelow = r.buy_below ? Number(r.buy_below) : null;
       const bearFloor = r.bear_floor ? Number(r.bear_floor) : null;
@@ -651,8 +658,11 @@ export async function GET(request: Request) {
       let reason = "Core business compounding intact toward 12M forward target.";
       let timeline = "9–12 Months";
 
-      // Precise institutional rules
-      if (target && ltp >= target) {
+      if (isMutualFundOrEtf) {
+        actionToday = "HOLD & COMPOUND";
+        reason = "Passive index funds, commodity ETFs (Gold & Silver), and mutual funds holding.";
+        timeline = ">1Y";
+      } else if (target && ltp >= target) {
         actionToday = "TRIM / TAKE PROFIT";
         reason = `LTP (₹${ltp.toFixed(1)}) has exceeded 12M Target (₹${target.toFixed(1)}). Take profit on strength.`;
         timeline = "Immediate (1–2 Wks)";
@@ -687,12 +697,12 @@ export async function GET(request: Request) {
       });
 
       return {
-        symbol: r.symbol,
-        company_name: r.company_name,
-        sector: r.sector || "General",
-        industry: r.industry || "General",
-        market_cap_category: r.market_cap_category,
-        cluster_name: r.cluster_name ?? "General",
+        symbol: sym,
+        company_name: compName,
+        sector: secName,
+        industry: indName,
+        market_cap_category: isMutualFundOrEtf ? "large_cap" : r.market_cap_category,
+        cluster_name: clusName,
         total_qty: Number(r.total_qty ?? 0),
         weighted_avg_cost: avgCost,
         ltp,
