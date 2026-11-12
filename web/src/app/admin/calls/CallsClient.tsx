@@ -1834,7 +1834,36 @@ export function CallsClient() {
       },
     ];
 
-    const rawMonths = data?.monthlyAudit && data.monthlyAudit.length > 0 ? data.monthlyAudit : fallbackMonths;
+    const sourceMonths = data?.monthlyAudit && data.monthlyAudit.length > 0 ? data.monthlyAudit : fallbackMonths;
+    // Deduplicate any trades that share the same trade_date, symbol, side, quantity, price
+    const rawMonths = sourceMonths.map((m) => {
+      const seen = new Set<string>();
+      const dedupedBuys = (m.buys || []).filter((b) => {
+        const k = `${b.trade_date}|${b.symbol}|${b.side}|${b.quantity}|${b.price}`;
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+      const seenSells = new Set<string>();
+      const dedupedSells = (m.sells || []).filter((s) => {
+        const k = `${s.trade_date}|${s.symbol}|${s.side}|${s.quantity}|${s.price}`;
+        if (seenSells.has(k)) return false;
+        seenSells.add(k);
+        return true;
+      });
+      const totalBought = dedupedBuys.reduce((sum, b) => sum + b.amount, 0);
+      const totalSold = dedupedSells.reduce((sum, s) => sum + s.amount, 0);
+      return {
+        ...m,
+        buys: dedupedBuys,
+        sells: dedupedSells,
+        total_bought: totalBought,
+        total_sold: totalSold,
+        buy_stocks_count: new Set(dedupedBuys.map((b) => b.symbol)).size,
+        sell_stocks_count: new Set(dedupedSells.map((s) => s.symbol)).size,
+        total_trades_count: dedupedBuys.length + dedupedSells.length,
+      };
+    });
     const baseCorpus = corpusManualBaseOverride ?? livePortfolioStats.currentValue;
 
     // Walk backward from current month to estimate historical active corpus at each month
@@ -1892,19 +1921,19 @@ export function CallsClient() {
 
     // Build Remaining Cash Action Queue for the selected month
     const fmGoetzeBought =
-      activeMonth.buys.find((b) => b.symbol === "FMGOETZE")?.amount || 0;
+      activeMonth.buys.filter((b) => b.symbol === "FMGOETZE").reduce((acc, b) => acc + b.amount, 0);
     const fmGoetzeRemaining = Math.max(0, 15000 - Math.round(fmGoetzeBought));
 
     const transrailBought =
-      activeMonth.buys.find((b) => b.symbol === "TRANSRAILL")?.amount || 0;
+      activeMonth.buys.filter((b) => b.symbol === "TRANSRAILL").reduce((acc, b) => acc + b.amount, 0);
     const transrailRemaining = Math.max(0, 15000 - Math.round(transrailBought));
 
     const bankBarodaBought =
-      activeMonth.buys.find((b) => b.symbol === "BANKBARODA")?.amount || 0;
+      activeMonth.buys.filter((b) => b.symbol === "BANKBARODA").reduce((acc, b) => acc + b.amount, 0);
     const bankBarodaRemaining = Math.max(0, 15000 - Math.round(bankBarodaBought));
 
     const gravitaBought =
-      activeMonth.buys.find((b) => b.symbol === "GRAVITA")?.amount || 0;
+      activeMonth.buys.filter((b) => b.symbol === "GRAVITA").reduce((acc, b) => acc + b.amount, 0);
     const gravitaRemaining = Math.max(0, 12000 - Math.round(gravitaBought));
 
     const totalStockRemaining = fmGoetzeRemaining + transrailRemaining + bankBarodaRemaining + gravitaRemaining;

@@ -261,6 +261,7 @@ export async function GET(request: Request) {
                      SUM(CASE WHEN side = 'buy' THEN quantity ELSE -quantity END) 
                        OVER (PARTITION BY symbol ORDER BY trade_date, id) as cum_qty
               FROM app.portfolio_transaction
+              WHERE NOT (source_file = 'manual-entry' AND matched_at IS NOT NULL)
           ),
           last_flat AS (
               SELECT symbol, MAX(trade_date) as last_zero_date
@@ -544,6 +545,7 @@ export async function GET(request: Request) {
                      SUM(CASE WHEN side = 'buy' THEN quantity ELSE -quantity END) 
                        OVER (PARTITION BY symbol ORDER BY trade_date, id) as cum_qty
               FROM app.portfolio_transaction
+              WHERE NOT (source_file = 'manual-entry' AND matched_at IS NOT NULL)
           ),
           last_flat AS (
               SELECT symbol, MAX(trade_date) as last_zero_date
@@ -763,6 +765,21 @@ export async function GET(request: Request) {
           FROM app.portfolio_transaction t
           LEFT JOIN app.universe u ON u.symbol = t.symbol
           WHERE t.symbol IS NOT NULL
+            AND NOT (
+              t.source_file = 'manual-entry'
+              AND (
+                t.matched_at IS NOT NULL
+                OR EXISTS (
+                  SELECT 1 FROM app.portfolio_transaction x
+                  WHERE x.user_id = t.user_id
+                    AND x.symbol = t.symbol
+                    AND x.trade_date = t.trade_date
+                    AND x.side = t.side
+                    AND x.quantity = t.quantity
+                    AND x.source_file <> 'manual-entry'
+                )
+              )
+            )
           GROUP BY to_char(t.trade_date, 'YYYY-MM'), t.trade_date, COALESCE(t.broker, 'broker'), t.symbol, COALESCE(u.company_name, t.symbol), t.side
           ORDER BY t.trade_date DESC, SUM(t.quantity * t.price) DESC
         `,
