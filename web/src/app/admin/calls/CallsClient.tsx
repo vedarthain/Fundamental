@@ -542,6 +542,10 @@ export function CallsClient() {
   // Call status overrides
   const [userCallOverrides, setUserCallOverrides] = useState<Record<string, { is_taken: boolean; is_cleared: boolean }>>({});
 
+  // Audit Tab: Portfolio Holdings Distribution Chart State
+  const [auditChartMode, setAuditChartMode] = useState<"cluster" | "sector">("cluster");
+  const [selectedAuditSliceKey, setSelectedAuditSliceKey] = useState<string | null>(null);
+
   // Custom User Purchase overrides - preseed INDUSTOWER to last week (02 Nov 2026 @ ₹380.00)
   const [customPurchases, setCustomPurchases] = useState<Record<string, { purchase_date: string; purchase_price: number }>>({
     INDUSTOWER: { purchase_date: "2026-11-02", purchase_price: 380.0 },
@@ -1899,11 +1903,11 @@ export function CallsClient() {
       activeMonth.buys.find((b) => b.symbol === "BANKBARODA")?.amount || 0;
     const bankBarodaRemaining = Math.max(0, 15000 - Math.round(bankBarodaBought));
 
-    const shardaCropBought =
-      activeMonth.buys.find((b) => b.symbol === "SHARDACROP")?.amount || 0;
-    const shardaCropRemaining = Math.max(0, 12000 - Math.round(shardaCropBought));
+    const gravitaBought =
+      activeMonth.buys.find((b) => b.symbol === "GRAVITA")?.amount || 0;
+    const gravitaRemaining = Math.max(0, 12000 - Math.round(gravitaBought));
 
-    const totalStockRemaining = fmGoetzeRemaining + transrailRemaining + bankBarodaRemaining + shardaCropRemaining;
+    const totalStockRemaining = fmGoetzeRemaining + transrailRemaining + bankBarodaRemaining + gravitaRemaining;
     const liquidBuffer = Math.max(0, Math.round(activeMonth.remainingToInvest - totalStockRemaining));
 
     const getStockMetrics = (sym: string, defaultCmp: number, defaultTarget: number, defaultUpside: number) => {
@@ -1918,7 +1922,7 @@ export function CallsClient() {
     const fmMetrics = getStockMetrics("FMGOETZE", 466.4, 603.6, 29.4);
     const trMetrics = getStockMetrics("TRANSRAILL", 450.0, 630.0, 40.0);
     const bobMetrics = getStockMetrics("BANKBARODA", 273.62, 335.0, 22.4);
-    const scMetrics = getStockMetrics("SHARDACROP", 714.05, 900.0, 26.0);
+    const grMetrics = getStockMetrics("GRAVITA", 1493.9, 2100.0, 40.6);
 
     const fmTrigger = 457.1;
     const fmShares = Math.floor(fmGoetzeRemaining / fmTrigger) || 18;
@@ -1942,12 +1946,12 @@ export function CallsClient() {
     const bobTotalShares = bobStarterShares + bobCoreShares;
     const bobInZone = bankBarodaBought === 0 && bobCmp <= 276.0;
 
-    const scTrigger = 651.8;
-    const scShares = Math.floor(shardaCropRemaining / scTrigger) || 18;
-    const scCmp = scMetrics.cmp;
-    const scDistPct = Math.round(((scCmp - scTrigger) / scTrigger) * 1000) / 10;
-    const scPullback = Math.round(((scCmp - scTrigger) / scCmp) * 1000) / 10;
-    const scInZone = scCmp <= scTrigger;
+    const grTrigger = 1495.0;
+    const grShares = Math.max(1, Math.floor(gravitaRemaining / (grMetrics.cmp || 1493.9))) || 8;
+    const grCmp = grMetrics.cmp;
+    const grDistPct = Math.round(((grCmp - grTrigger) / grTrigger) * 1000) / 10;
+    const grPullback = Math.round(((grCmp - grTrigger) / grCmp) * 1000) / 10;
+    const grInZone = grCmp <= 1520.0;
 
     const remainingQueue = [
       ...(fmGoetzeRemaining > 0
@@ -2041,30 +2045,30 @@ export function CallsClient() {
             },
           ]
         : []),
-      ...(shardaCropRemaining > 0
+      ...(gravitaRemaining > 0
         ? [
             {
-              symbol: "SHARDACROP",
-              name: "Sharda Cropchem Ltd",
-              role: "Growth Compounder — Global Agrochem Recovery",
-              alreadyBought: shardaCropBought,
+              symbol: "GRAVITA",
+              name: "Gravita India Ltd.",
+              role: "Circular Economy Leader — Global Battery & Metals Recycling",
+              alreadyBought: gravitaBought,
               targetAllocation: 12000,
-              toInvestNow: shardaCropRemaining,
-              approxShares: scShares,
-              executionRule: "GTT Limit Trigger ≤ ₹651.80 (Wait for Dip)",
-              cmp: scCmp,
-              target: scMetrics.target,
-              upside: scMetrics.upside,
-              isReadyToBuy: scInZone,
-              triggerPrice: scTrigger,
-              distPct: scDistPct,
-              pullbackNeeded: scPullback,
-              actionBadge: scInZone ? "🟢 READY TO BUY (DIP MET)" : "🟡 AWAITING DIP (GTT ARMED)",
-              actionBadgeColor: scInZone ? "bg-emerald-600 text-white border-emerald-700 shadow-2xs font-bold" : "bg-amber-100 text-amber-900 border-amber-300",
-              brokerAction: `Place GTT Limit: ${scShares} sh @ ≤ ₹651.80`,
-              timingDistance: scInZone
-                ? `LTP is at/below dip trigger (≤ ₹651.80). Execute buy.`
-                : `LTP is +${scDistPct}% above trigger limit. Wait for cyclical dip (-${scPullback}%) — do NOT chase at CMP.`,
+              toInvestNow: gravitaRemaining,
+              approxShares: grShares,
+              executionRule: "Buy in Zone ₹1,450–₹1,500 (or Starter @ CMP)",
+              cmp: grCmp,
+              target: grMetrics.target,
+              upside: grMetrics.upside,
+              isReadyToBuy: grInZone,
+              triggerPrice: grTrigger,
+              distPct: grDistPct,
+              pullbackNeeded: grPullback > 0 ? grPullback : 0,
+              actionBadge: grInZone ? "🟢 READY TO BUY TODAY (IN ZONE)" : "🟡 AWAITING DIP (GTT ARMED)",
+              actionBadgeColor: grInZone ? "bg-emerald-600 text-white border-emerald-700 shadow-2xs font-bold" : "bg-amber-100 text-amber-900 border-amber-300",
+              brokerAction: `Buy ${grShares} sh in Zone ₹1,450–₹1,500 (or Starter @ CMP)`,
+              timingDistance: grInZone
+                ? `LTP (~₹${grCmp.toFixed(2)}) is inside institutional buy zone (≤ ₹1,500). Actionable today.`
+                : `LTP is +${grDistPct}% above trigger limit. Place GTT for pullback.`,
             },
           ]
         : []),
@@ -2098,6 +2102,159 @@ export function CallsClient() {
       remainingQueue,
     };
   }, [data?.monthlyAudit, corpusManualBaseOverride, livePortfolioStats.currentValue, corpusMonthlyInflow, selectedAuditMonth]);
+
+  // Audit Tab: Portfolio Holdings Distribution (Clusters & Sectors)
+  const portfolioDistribution = useMemo(() => {
+    const held = unifiedCalls.filter(
+      (c) => c.isPortfolio && ((c.heldQty && c.heldQty > 0) || (c.investedVal && c.investedVal > 0))
+    );
+    const totalVal = held.reduce((acc, c) => acc + (c.curVal || (c.cmp * (c.heldQty || 1))), 0);
+    const totalInvested = held.reduce(
+      (acc, c) => acc + (c.investedVal || ((c.purchasePrice || c.cmp) * (c.heldQty || 1))),
+      0
+    );
+    const totalPnlRs = totalVal - totalInvested;
+    const totalPnlPct = totalInvested > 0 ? (totalPnlRs / totalInvested) * 100 : 0;
+
+    const PALETTE = [
+      "#4f46e5", // Indigo
+      "#0284c7", // Sky
+      "#059669", // Emerald
+      "#d97706", // Amber
+      "#e11d48", // Rose
+      "#7c3aed", // Violet
+      "#0d9488", // Teal
+      "#ea580c", // Orange
+      "#6366f1", // Indigo soft
+      "#84cc16", // Lime
+      "#ec4899", // Pink
+      "#3b82f6", // Blue
+      "#10b981", // Green
+      "#f59e0b", // Yellow
+      "#64748b", // Slate
+    ];
+
+    const uniqueClusters = new Set(held.map((c) => (c.cluster || c.industry || "General").trim()));
+    const uniqueSectors = new Set(held.map((c) => (c.sector || "General").trim()));
+
+    const groupMap = new Map<
+      string,
+      {
+        key: string;
+        label: string;
+        color: string;
+        stocks: any[];
+        curVal: number;
+        investedVal: number;
+        pnlRs: number;
+        pnlPct: number;
+        weightPct: number;
+      }
+    >();
+
+    held.forEach((c) => {
+      const rawKey = auditChartMode === "cluster" ? (c.cluster || c.industry || "General") : (c.sector || "General");
+      const key = rawKey.trim() || "General";
+      const stockCurVal = c.curVal || (c.cmp * (c.heldQty || 1));
+      const stockInvested = c.investedVal || ((c.purchasePrice || c.cmp) * (c.heldQty || 1));
+
+      const existing = groupMap.get(key) || {
+        key,
+        label: key,
+        color: PALETTE[groupMap.size % PALETTE.length],
+        stocks: [] as any[],
+        curVal: 0,
+        investedVal: 0,
+        pnlRs: 0,
+        pnlPct: 0,
+        weightPct: 0,
+      };
+
+      existing.stocks.push(c);
+      existing.curVal += stockCurVal;
+      existing.investedVal += stockInvested;
+      existing.pnlRs = existing.curVal - existing.investedVal;
+      existing.pnlPct = existing.investedVal > 0 ? (existing.pnlRs / existing.investedVal) * 100 : 0;
+      groupMap.set(key, existing);
+    });
+
+    const groups = Array.from(groupMap.values());
+    groups.forEach((g) => {
+      g.weightPct = totalVal > 0 ? (g.curVal / totalVal) * 100 : 0;
+      g.stocks.sort((a, b) => {
+        const valA = a.curVal || (a.cmp * (a.heldQty || 1));
+        const valB = b.curVal || (b.cmp * (b.heldQty || 1));
+        return valB - valA;
+      });
+    });
+
+    groups.sort((a, b) => b.curVal - a.curVal);
+
+    groups.forEach((g, idx) => {
+      g.color = PALETTE[idx % PALETTE.length];
+    });
+
+    const selectedGroup = groups.find((g) => g.key === selectedAuditSliceKey) || groups[0] || null;
+
+    return {
+      heldCount: held.length,
+      totalVal,
+      totalInvested,
+      totalPnlRs,
+      totalPnlPct,
+      groups,
+      clustersCount: uniqueClusters.size,
+      sectorsCount: uniqueSectors.size,
+      selectedGroup,
+    };
+  }, [unifiedCalls, auditChartMode, selectedAuditSliceKey]);
+
+  // Donut chart arc paths calculation
+  const donutArcs = useMemo(() => {
+    const groups = portfolioDistribution.groups;
+    if (groups.length === 0) return [];
+
+    let accumulatedAngle = -90; // Start at 12 o'clock
+    const radius = 95;
+    const innerRadius = 58;
+
+    return groups.map((g) => {
+      const angle = Math.min(359.99, Math.max(0.4, (g.weightPct / 100) * 360));
+      const startAngle = accumulatedAngle;
+      const endAngle = accumulatedAngle + angle;
+      accumulatedAngle += (g.weightPct / 100) * 360;
+
+      const startRad = (startAngle * Math.PI) / 180;
+      const endRad = (endAngle * Math.PI) / 180;
+
+      const x1 = Math.cos(startRad) * radius;
+      const y1 = Math.sin(startRad) * radius;
+      const x2 = Math.cos(endRad) * radius;
+      const y2 = Math.sin(endRad) * radius;
+
+      const ix1 = Math.cos(endRad) * innerRadius;
+      const iy1 = Math.sin(endRad) * innerRadius;
+      const ix2 = Math.cos(startRad) * innerRadius;
+      const iy2 = Math.sin(startRad) * innerRadius;
+
+      const largeArcFlag = angle > 180 ? 1 : 0;
+
+      const path = [
+        `M ${x1} ${y1}`,
+        `A ${radius} ${radius} 0 ${largeArcFlag} 1 ${x2} ${y2}`,
+        `L ${ix1} ${iy1}`,
+        `A ${innerRadius} ${innerRadius} 0 ${largeArcFlag} 0 ${ix2} ${iy2}`,
+        "Z",
+      ].join(" ");
+
+      return {
+        ...g,
+        path,
+        startAngle,
+        endAngle,
+      };
+    });
+  }, [portfolioDistribution.groups]);
 
   // Initial state & dynamic auto-expansion: ALWAYS open the selected stock's sector and cluster in left rail
   useEffect(() => {
@@ -3116,13 +3273,270 @@ export function CallsClient() {
             </div>
           </div>
 
-          {/* ── BLOCK 3: Month-over-Month Actual Corpus & Deployment Ledger ── */}
+          {/* ── BLOCK 3: Portfolio Holdings Distribution (Interactive Pie Chart & Cluster Breakdown) ── */}
+          <div className="bg-white border hairline rounded-lg p-3.5 sm:p-4 shadow-2xs space-y-3">
+            <div className="flex items-center justify-between border-b hairline pb-2.5 flex-wrap gap-2">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                  <PieChart className="w-4 h-4 text-indigo-600" />
+                  <span>
+                    Block 3 • Portfolio Holdings Distribution &amp; Cluster Exposure
+                  </span>
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Live distribution of your actual holdings across business clusters and broad sectors. Click any slice or badge to view all owned stocks and their real-time profit/loss on the right.
+                </p>
+              </div>
+
+              {/* Toggle Switch: By Clusters vs By Sectors */}
+              <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border hairline text-xs">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuditChartMode("cluster");
+                    setSelectedAuditSliceKey(null);
+                  }}
+                  className={`px-3 py-1 rounded-md text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                    auditChartMode === "cluster"
+                      ? "bg-indigo-700 text-white shadow-2xs"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>By Clusters ({portfolioDistribution.clustersCount})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuditChartMode("sector");
+                    setSelectedAuditSliceKey(null);
+                  }}
+                  className={`px-3 py-1 rounded-md text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                    auditChartMode === "sector"
+                      ? "bg-indigo-700 text-white shadow-2xs"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  <Building2 className="w-3.5 h-3.5" />
+                  <span>By Sectors ({portfolioDistribution.sectorsCount})</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Main Layout: Left = Donut Chart + Category Cards (7 cols), Right = Right Extreme Stocks Drilldown with P&L (5 cols) */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+              {/* Left Column (7 cols): Donut Chart & Category Cards */}
+              <div className="lg:col-span-7 space-y-3">
+                <div className="flex flex-col sm:flex-row items-center gap-4 bg-slate-50/50 p-3 rounded-lg border border-slate-200/70">
+                  {/* SVG Donut */}
+                  <div className="relative shrink-0 flex items-center justify-center">
+                    <svg width="210" height="210" viewBox="-110 -110 220 220">
+                      {donutArcs.map((arc) => {
+                        const isSelected = portfolioDistribution.selectedGroup?.key === arc.key;
+                        return (
+                          <path
+                            key={arc.key}
+                            d={arc.path}
+                            fill={arc.color}
+                            onClick={() => setSelectedAuditSliceKey(arc.key)}
+                            className={`cursor-pointer transition-all duration-200 ${
+                              isSelected
+                                ? "opacity-100 stroke-white stroke-[3px] filter drop-shadow-md scale-[1.03]"
+                                : "opacity-85 hover:opacity-100 stroke-white stroke-[1.5px]"
+                            }`}
+                          >
+                            <title>{`${arc.label}: ${arc.weightPct.toFixed(1)}% (${money(arc.curVal, 0)})`}</title>
+                          </path>
+                        );
+                      })}
+                    </svg>
+
+                    {/* Donut Center Metrics */}
+                    <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-center">
+                      <span className="text-[9.5px] uppercase font-bold text-slate-400 tracking-wider">
+                        Total Holdings
+                      </span>
+                      <span className="text-base font-extrabold font-mono text-slate-900">
+                        {fmtLakhs(portfolioDistribution.totalVal)}
+                      </span>
+                      <span className="text-[10px] font-mono font-semibold text-slate-500">
+                        {portfolioDistribution.heldCount} Stocks
+                      </span>
+                      <span className={`text-[10px] font-mono font-bold mt-0.5 ${
+                        portfolioDistribution.totalPnlRs >= 0 ? "text-emerald-700" : "text-rose-600"
+                      }`}>
+                        {portfolioDistribution.totalPnlRs >= 0 ? "+" : ""}{portfolioDistribution.totalPnlPct.toFixed(1)}% P&amp;L
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Summary / Instruction */}
+                  <div className="flex-1 space-y-1 text-xs">
+                    <div className="font-semibold text-slate-800 flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                      <span>{auditChartMode === "cluster" ? "Cluster" : "Sector"} Exposure Guide</span>
+                    </div>
+                    <p className="text-[11.5px] text-slate-600 leading-relaxed">
+                      Showing your held portfolio distributed into <strong>{portfolioDistribution.groups.length} {auditChartMode === "cluster" ? "business clusters" : "broad sectors"}</strong>. Click on any slice or badge below to inspect that group&apos;s stocks on the right.
+                    </p>
+                    {portfolioDistribution.selectedGroup && (
+                      <div className="pt-1 text-[11px] text-indigo-900 font-medium">
+                        Currently Selected: <strong className="font-bold underline text-indigo-700">{portfolioDistribution.selectedGroup.label}</strong> ({portfolioDistribution.selectedGroup.stocks.length} stocks, {portfolioDistribution.selectedGroup.weightPct.toFixed(1)}% of portfolio)
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Legend Pill Cards */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 max-h-56 overflow-y-auto pr-1">
+                  {portfolioDistribution.groups.map((g) => {
+                    const isSelected = portfolioDistribution.selectedGroup?.key === g.key;
+                    return (
+                      <div
+                        key={g.key}
+                        onClick={() => setSelectedAuditSliceKey(g.key)}
+                        className={`p-2 rounded-lg border text-left cursor-pointer transition-all ${
+                          isSelected
+                            ? "border-indigo-500 bg-indigo-50/80 ring-2 ring-indigo-400/50 shadow-xs"
+                            : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/80"
+                        }`}
+                      >
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: g.color }} />
+                          <span className="text-[11px] font-bold text-slate-800 truncate" title={g.label}>
+                            {g.label}
+                          </span>
+                        </div>
+                        <div className="flex items-baseline justify-between mt-1 text-[10.5px] font-mono">
+                          <span className="font-bold text-slate-900">{g.weightPct.toFixed(1)}%</span>
+                          <span className={g.pnlRs >= 0 ? "text-emerald-700 font-semibold" : "text-rose-600 font-semibold"}>
+                            {g.pnlRs >= 0 ? "+" : ""}{g.pnlPct.toFixed(1)}%
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-slate-500 font-mono truncate">
+                          {money(g.curVal, 0)} ({g.stocks.length} sh)
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Right Extreme Column (5 cols): Stocks Owned in Selected Cluster with P&L % */}
+              <div className="lg:col-span-5 bg-slate-50/70 border border-slate-200 rounded-lg p-3 space-y-2.5 flex flex-col justify-between min-h-[360px]">
+                {portfolioDistribution.selectedGroup ? (
+                  <div className="space-y-2.5">
+                    {/* Header of selected cluster */}
+                    <div className="border-b border-slate-200 pb-2">
+                      <div className="flex items-center justify-between gap-1 flex-wrap">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="w-3 h-3 rounded-full shrink-0"
+                            style={{ backgroundColor: portfolioDistribution.selectedGroup.color }}
+                          />
+                          <h4 className="font-bold text-xs sm:text-sm text-slate-900">
+                            {portfolioDistribution.selectedGroup.label}
+                          </h4>
+                        </div>
+                        <span className="px-2 py-0.5 rounded text-[10.5px] font-mono font-bold bg-white border border-slate-300 text-slate-800 shadow-2xs">
+                          {portfolioDistribution.selectedGroup.stocks.length} {portfolioDistribution.selectedGroup.stocks.length === 1 ? "Stock" : "Stocks"}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between text-[11px] text-slate-600 mt-1 font-mono flex-wrap gap-1">
+                        <span>
+                          Value: <strong className="text-slate-900">{money(portfolioDistribution.selectedGroup.curVal, 0)}</strong> ({portfolioDistribution.selectedGroup.weightPct.toFixed(1)}% of Portfolio)
+                        </span>
+                        <span className={`font-bold px-1.5 py-0.2 rounded ${
+                          portfolioDistribution.selectedGroup.pnlRs >= 0
+                            ? "bg-emerald-100 text-emerald-900 border border-emerald-300"
+                            : "bg-rose-100 text-rose-900 border border-rose-300"
+                        }`}>
+                          Net P&amp;L: {portfolioDistribution.selectedGroup.pnlRs >= 0 ? "+" : ""}{portfolioDistribution.selectedGroup.pnlPct.toFixed(1)}% ({money(portfolioDistribution.selectedGroup.pnlRs, 0)})
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Stock List with exact Profit/Loss % */}
+                    <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1">
+                      {portfolioDistribution.selectedGroup.stocks.map((stock) => {
+                        const stockCurVal = stock.curVal || (stock.cmp * (stock.heldQty || 1));
+                        const stockInvested = stock.investedVal || ((stock.purchasePrice || stock.cmp) * (stock.heldQty || 1));
+                        const stockPnlRs = stockCurVal - stockInvested;
+                        const stockPnlPct = stockInvested > 0 ? (stockPnlRs / stockInvested) * 100 : (stock.purchasePerfPct ?? 0);
+                        const isProfitable = stockPnlPct >= 0;
+
+                        return (
+                          <div
+                            key={stock.symbol}
+                            onClick={() => {
+                              setSelectedSymbol(stock.symbol);
+                              setViewMode("detail");
+                            }}
+                            className="p-2.5 rounded-lg border border-slate-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/30 transition-all cursor-pointer shadow-2xs space-y-1.5"
+                          >
+                            <div className="flex items-start justify-between gap-1">
+                              <div>
+                                <div className="flex items-center gap-1.5 font-mono font-bold text-xs sm:text-sm text-slate-900">
+                                  <span>{stock.symbol}</span>
+                                  <ArrowUpRight className="w-3 h-3 text-slate-400" />
+                                </div>
+                                <div className="text-[10.5px] text-slate-500 truncate max-w-[180px]">
+                                  {stock.name || stock.company_name}
+                                </div>
+                              </div>
+
+                              {/* Profit or Loss Percentage Badge */}
+                              <div className="text-right shrink-0">
+                                <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-mono font-bold border ${
+                                  isProfitable
+                                    ? "bg-emerald-50 text-emerald-800 border-emerald-300"
+                                    : "bg-rose-50 text-rose-800 border-rose-300"
+                                }`}>
+                                  {isProfitable ? "+" : ""}{stockPnlPct.toFixed(1)}%
+                                </span>
+                                <div className={`text-[10px] font-mono font-semibold ${
+                                  isProfitable ? "text-emerald-700" : "text-rose-600"
+                                }`}>
+                                  {isProfitable ? "+" : ""}{money(stockPnlRs, 0)}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="pt-1 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-600 font-mono flex-wrap gap-1">
+                              <span>
+                                {stock.heldQty || 1} sh @ Avg {money(stock.purchasePrice || stock.cmp, 2)}
+                              </span>
+                              <span>
+                                LTP {money(stock.cmp, 2)} • Val {money(stockCurVal, 0)}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-8 text-center text-xs text-slate-400">
+                    No cluster selected. Click any slice in the chart to inspect stocks.
+                  </div>
+                )}
+
+                <div className="pt-2 border-t border-slate-200 text-[10.5px] text-slate-500 flex items-center justify-between">
+                  <span>Click any stock above to open full chart &amp; thesis</span>
+                  <span className="font-mono text-indigo-700 font-semibold">100% Real-Time P&amp;L</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ── BLOCK 4: Month-over-Month Actual Corpus & Deployment Ledger ── */}
           <div className="bg-white border hairline rounded-lg p-3.5 sm:p-4 shadow-2xs space-y-3">
             <div className="flex items-center justify-between border-b hairline pb-2 flex-wrap gap-2">
               <div>
                 <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
                   <BarChart3 className="w-4 h-4 text-indigo-600" />
-                  <span>Block 3 • Month-over-Month Actual Corpus Growth &amp; Deployment Audit Ledger</span>
+                  <span>Block 4 • Month-over-Month Actual Corpus Growth &amp; Deployment Audit Ledger</span>
                 </h3>
                 <p className="text-[11px] text-slate-500 mt-0.5">
                   Historical monthly audit from real broker transactions. As your corpus grows from ₹12.8L → ₹25L → ₹50L, your 1.5% Anchor Ticket automatically scales up. Click any row to inspect that month&apos;s trades above.
