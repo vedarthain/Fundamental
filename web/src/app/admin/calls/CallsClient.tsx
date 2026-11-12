@@ -882,37 +882,37 @@ export function CallsClient() {
       marginOfSafety: "Debt-free balance sheet with high institutional quality score of 99. Solid support floor anchored at ₹301.40.",
     },
     {
-      symbol: "SHARDACROP",
-      name: "Sharda Cropchem Ltd.",
+      symbol: "GRAVITA",
+      name: "Gravita India Ltd.",
       sector: "Materials",
-      cluster: "Agrochemicals & Fertilizers",
+      cluster: "Circular Economy & Metals Recycling",
       weightPct: 10,
-      cmp: 685.6,
-      anchorPrice: 685.6,
-      callDate: "2026-11-08",
-      buyBelow: 651.8,
-      target: 900.0,
-      stopLoss: 465.6,
-      upside: 35.3,
-      scores: "100 / 67 / 31",
-      horizon: "6M" as IdeaHorizon,
-      horizonLabel: "📈 6M Global Agchem",
-      timeline: "4–6M",
-      role: "6M Global Agchem Compounder",
-      rationale: "Asset-light global agrochemical and non-agrochemical distributor with 2,900+ international product registrations across Europe and NAFTA, zero net debt, and accelerating volume recovery in crop protection.",
-      companyOverview: "Sharda Cropchem Limited is a fast-growing global agrochemicals marketing and distribution enterprise. Operating on an asset-light virtual manufacturing model, it focuses on identifying generic off-patent molecules, securing product registrations in regulated international markets (Europe, NAFTA, LATAM, RoW), and distributing formulations through local partners.",
+      cmp: 1493.9,
+      anchorPrice: 1493.9,
+      callDate: "2026-11-12",
+      buyBelow: 1520.0,
+      target: 2100.0,
+      stopLoss: 1180.0,
+      upside: 40.6,
+      scores: "98 / 82 / 65",
+      horizon: "1Y" as IdeaHorizon,
+      horizonLabel: "🏛️ 1Y Alpha",
+      timeline: "9–12M",
+      role: "Circular Economy Leader — Global Battery & Metals Recycling",
+      rationale: "India's largest non-ferrous metal and battery recycling leader benefiting from mandatory Battery Waste Management Rules (BWMR), 100% LME price hedging, zero commodity risk, and >25% ROCE.",
+      companyOverview: "Gravita India Limited is India's leading multinational non-ferrous recycling and circular economy champion with operations spanning India, Africa, Central America, and Europe. It specializes in lead recycling, aluminium recycling, plastic recycling, and rubber recycling with turnkey engineering solutions. Operating on a 100% back-to-back margin-hedging framework on the London Metal Exchange (LME), the business earns consistent value-added conversion spreads regardless of commodity price volatility.",
       operatingHighlights: [
-        "Extensive intellectual property portfolio comprising 2,900+ active product registrations in high-margin regulated markets.",
-        "Asset-light virtual manufacturing business model yielding negative working capital requirements and superior ROCE (>20%).",
-        "Debt-free balance sheet with robust cash balances providing high structural cushion.",
-        "Diversified revenue footprint across Europe (45%), NAFTA (35%), and Latin America (15%), insulating from regional monsoons.",
+        "Pan-global recycling footprint across 11 manufacturing plants with cumulative capacity exceeding 300,000 MTPA.",
+        "Strict 100% back-to-back LME hedging policy removing commodity price risks and locking in predictable per-tonne conversion margins.",
+        "Rigorous regulatory tailwinds under Battery Waste Management Rules (BWMR) and Extended Producer Responsibility (EPR), mandating formal recyclers to process OEM scrap.",
+        "Superior capital allocation track record delivering sustained ROCE >25% and ROE >22% alongside steady net debt reduction.",
       ],
       catalysts: [
-        "Destocking cycle completion in European agrochemicals unlocking pent-up order backlogs.",
-        "Continuous pipeline of 1,000+ pending product registrations providing multi-year visibility on new market entries.",
-        "Strong operating cash flow rebound driving expanded dividend payout and potential buyback.",
+        "Aggressive ongoing capacity expansion toward 500,000 MTPA by FY27 targeting 25%+ CAGR volume growth.",
+        "Commercial rollout of lithium-ion battery recycling and rubber pyrolysis plants commanding higher EBITDA margins (>12%).",
+        "Mandatory EPR credit trading in India driving high-margin ancillary royalty income from tier-1 automotive and battery OEMs.",
       ],
-      marginOfSafety: "Pristine debt-free balance sheet, massive registration asset base, institutional composite percentile 100, and bear floor at ₹465.60.",
+      marginOfSafety: "Rock-solid 25%+ ROCE balance sheet, 100% commodity price hedging insulation, composite institutional score of 98, and strong technical consolidation base around ₹1,420–₹1,450 with bear floor at ₹1,180.",
     },
     {
       symbol: "ALLDIGI",
@@ -1951,7 +1951,7 @@ export function CallsClient() {
     const grCmp = grMetrics.cmp;
     const grDistPct = Math.round(((grCmp - grTrigger) / grTrigger) * 1000) / 10;
     const grPullback = Math.round(((grCmp - grTrigger) / grCmp) * 1000) / 10;
-    const grInZone = grCmp <= 1520.0;
+    const grInZone = grCmp <= 1530.0;
 
     const remainingQueue = [
       ...(fmGoetzeRemaining > 0
@@ -2055,19 +2055,19 @@ export function CallsClient() {
               targetAllocation: 12000,
               toInvestNow: gravitaRemaining,
               approxShares: grShares,
-              executionRule: "Buy in Zone ₹1,450–₹1,500 (or Starter @ CMP)",
+              executionRule: "Buy in Zone ₹1,450–₹1,520 (or Starter @ CMP)",
               cmp: grCmp,
               target: grMetrics.target,
               upside: grMetrics.upside,
               isReadyToBuy: grInZone,
               triggerPrice: grTrigger,
               distPct: grDistPct,
-              pullbackNeeded: grPullback > 0 ? grPullback : 0,
+              pullbackNeeded: grPullback > 0 && !grInZone ? grPullback : 0,
               actionBadge: grInZone ? "🟢 READY TO BUY TODAY (IN ZONE)" : "🟡 AWAITING DIP (GTT ARMED)",
               actionBadgeColor: grInZone ? "bg-emerald-600 text-white border-emerald-700 shadow-2xs font-bold" : "bg-amber-100 text-amber-900 border-amber-300",
-              brokerAction: `Buy ${grShares} sh in Zone ₹1,450–₹1,500 (or Starter @ CMP)`,
+              brokerAction: `Buy ${grShares} sh at CMP / Zone ₹1,450–₹1,520`,
               timingDistance: grInZone
-                ? `LTP (~₹${grCmp.toFixed(2)}) is inside institutional buy zone (≤ ₹1,500). Actionable today.`
+                ? `LTP (~₹${grCmp.toFixed(2)}) is inside institutional buy zone (≤ ₹1,520). Actionable today.`
                 : `LTP is +${grDistPct}% above trigger limit. Place GTT for pullback.`,
             },
           ]
@@ -2283,11 +2283,17 @@ export function CallsClient() {
           return next;
         });
       }
-      // Scroll the selected stock in the left rail into view smoothly
+      // Scroll the selected stock in the left rail into view smoothly without scrolling window
       setTimeout(() => {
         const el = document.getElementById(`stock-rail-${selectedCall.symbol}`);
-        if (el) {
-          el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        const rail = document.getElementById("calls-left-rail-scroll");
+        if (el && rail) {
+          const elTop = el.offsetTop;
+          const railTop = rail.scrollTop;
+          const railHeight = rail.clientHeight;
+          if (elTop < railTop || elTop > railTop + railHeight - 50) {
+            rail.scrollTo({ top: Math.max(0, elTop - 40), behavior: "smooth" });
+          }
         }
       }, 60);
     }
@@ -4654,7 +4660,7 @@ export function CallsClient() {
             </div>
           </div>
 
-          <div className="overflow-y-auto flex-1 min-h-0 p-1 space-y-1">
+          <div id="calls-left-rail-scroll" className="overflow-y-auto flex-1 min-h-0 p-1 space-y-1">
             {sectorGroups.length === 0 ? (
               <div className="text-center py-8 px-2 text-slate-400 text-xs">
                 No calls found.

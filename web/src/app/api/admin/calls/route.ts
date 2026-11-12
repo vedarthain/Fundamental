@@ -400,6 +400,7 @@ export async function GET(request: Request) {
     const CURATED_LEVEL_OVERRIDES: Record<string, { anchor: number; buyBelow: number; target: number; bearFloor: number; callDate: string }> = {
       BANKBARODA: { anchor: 263.50, buyBelow: 263.50, target: 335.0, bearFloor: 224.0, callDate: "2026-11-08" },
       TRANSRAILL: { anchor: 440.35, buyBelow: 448.00, target: 630.0, bearFloor: 398.0, callDate: "2026-11-08" },
+      GRAVITA: { anchor: 1493.90, buyBelow: 1520.00, target: 2100.0, bearFloor: 1180.0, callDate: "2026-11-12" },
     };
 
     const clusterGems: ClusterGem[] = rawGems.map((r) => {
