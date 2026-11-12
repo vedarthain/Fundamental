@@ -1975,12 +1975,12 @@ export function CallsClient() {
     const bobTotalShares = bobStarterShares + bobCoreShares;
     const bobInZone = bankBarodaBought === 0 && bobCmp <= 276.0;
 
-    const grTrigger = 1495.0;
-    const grShares = Math.max(1, Math.floor(gravitaRemaining / (grMetrics.cmp || 1493.9))) || 8;
+    const grTrigger = gravitaBought > 0 ? 1440.0 : 1495.0;
+    const grShares = Math.max(1, Math.floor(gravitaRemaining / (grMetrics.cmp || 1493.9))) || 5;
     const grCmp = grMetrics.cmp;
     const grDistPct = Math.round(((grCmp - grTrigger) / grTrigger) * 1000) / 10;
     const grPullback = Math.round(((grCmp - grTrigger) / grCmp) * 1000) / 10;
-    const grInZone = grCmp <= 1530.0;
+    const grInZone = gravitaBought === 0 ? grCmp <= 1520.0 : grCmp <= grTrigger;
 
     const remainingQueue = [
       ...(fmGoetzeRemaining > 0
@@ -2079,25 +2079,33 @@ export function CallsClient() {
             {
               symbol: "GRAVITA",
               name: "Gravita India Ltd.",
-              role: "Circular Economy Leader — Global Battery & Metals Recycling",
+              role: gravitaBought > 0 ? "Tranche 2 Dip Top-Up (Complete ₹12k Position)" : "Circular Economy Leader — Global Battery & Metals Recycling",
               alreadyBought: gravitaBought,
               targetAllocation: 12000,
               toInvestNow: gravitaRemaining,
               approxShares: grShares,
-              executionRule: "Buy in Zone ₹1,450–₹1,520 (or Starter @ CMP)",
+              executionRule: gravitaBought > 0 ? "GTT Limit ≤ ₹1,440 (Tranche 2 Retest Dip)" : "Buy in Zone ₹1,450–₹1,520 (or Starter @ CMP)",
               cmp: grCmp,
               target: grMetrics.target,
               upside: grMetrics.upside,
               isReadyToBuy: grInZone,
               triggerPrice: grTrigger,
               distPct: grDistPct,
-              pullbackNeeded: grPullback > 0 && !grInZone ? grPullback : 0,
-              actionBadge: grInZone ? "🟢 READY TO BUY TODAY (IN ZONE)" : "🟡 AWAITING DIP (GTT ARMED)",
+              pullbackNeeded: grPullback > 0 ? grPullback : 0,
+              actionBadge: gravitaBought > 0
+                ? (grInZone ? "🟢 READY TO TOP-UP" : "🟡 AWAITING DIP (GTT ARMED)")
+                : (grInZone ? "🟢 READY TO BUY (IN ZONE)" : "🟡 AWAITING DIP (GTT ARMED)"),
               actionBadgeColor: grInZone ? "bg-emerald-600 text-white border-emerald-700 shadow-2xs font-bold" : "bg-amber-100 text-amber-900 border-amber-300",
-              brokerAction: `Buy ${grShares} sh at CMP / Zone ₹1,450–₹1,520`,
-              timingDistance: grInZone
-                ? `LTP (~₹${grCmp.toFixed(2)}) is inside institutional buy zone (≤ ₹1,520). Actionable today.`
-                : `LTP is +${grDistPct}% above trigger limit. Place GTT for pullback.`,
+              brokerAction: gravitaBought > 0
+                ? `Place GTT Limit: ${grShares} sh @ ≤ ₹1,440.00`
+                : `Buy ${grShares} sh at CMP / Zone ₹1,450–₹1,520`,
+              timingDistance: gravitaBought > 0
+                ? (grInZone
+                    ? `LTP is at/below Tranche 2 dip level (₹1,440). Ready to top-up.`
+                    : `Tranche 1 filled (3 sh @ ₹1,524). LTP is +${grDistPct}% above Tranche 2 limit. Set GTT for -${grPullback}% dip.`)
+                : (grInZone
+                    ? `LTP (~₹${grCmp.toFixed(2)}) is inside institutional buy zone (≤ ₹1,520). Actionable today.`
+                    : `LTP is +${grDistPct}% above trigger limit. Place GTT for pullback.`),
             },
           ]
         : []),
