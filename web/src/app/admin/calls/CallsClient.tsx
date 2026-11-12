@@ -1350,12 +1350,17 @@ export function CallsClient() {
     unifiedCalls.forEach((c) => {
       const act = (c.actionToday || "").toUpperCase();
       const isSell = act.includes("SELL") || act.includes("TRIM") || act.includes("EXIT") || act.includes("CUT LOSS");
+      // Buy recommendations across screened universe
       if (act.includes("BUY") || act.includes("ACCUMULATE")) {
         buy++;
-      } else if (isSell && c.isPortfolio) {
-        sell++;
-      } else if (act.includes("HOLD") || act.includes("WATCH")) {
-        hold++;
+      }
+      // Sell & Hold strictly apply to portfolio positions (you can only sell or hold what you own)
+      if (c.isPortfolio) {
+        if (isSell) {
+          sell++;
+        } else {
+          hold++;
+        }
       }
     });
     return { all: buy + sell + hold, buy, sell, prioritySell: sell, hold };
@@ -1404,7 +1409,9 @@ export function CallsClient() {
           if (!isSell || !c.isPortfolio) return false;
         } else if (actionFilter === "HOLD") {
           const act = (c.actionToday || "").toUpperCase();
-          if (!act.includes("HOLD") && !act.includes("WATCH")) return false;
+          const isSell = act.includes("SELL") || act.includes("TRIM") || act.includes("EXIT") || act.includes("CUT LOSS");
+          // Hold only applies to held portfolio positions that are healthy compounders
+          if (!c.isPortfolio || isSell) return false;
         }
 
         // Multi-date selection check
@@ -1933,6 +1940,7 @@ export function CallsClient() {
     const bobCoreAmt = bankBarodaRemaining - bobStarterAmt;
     const bobCoreShares = Math.max(1, Math.floor(bobCoreAmt / 263.5));
     const bobTotalShares = bobStarterShares + bobCoreShares;
+    const bobInZone = bankBarodaBought === 0 && bobCmp <= 276.0;
 
     const scTrigger = 651.8;
     const scShares = Math.floor(shardaCropRemaining / scTrigger) || 18;
@@ -1956,8 +1964,12 @@ export function CallsClient() {
               cmp: fmCmp,
               target: fmMetrics.target,
               upside: fmMetrics.upside,
-              actionBadge: fmInZone ? "🟢 READY TO BUY (IN ZONE)" : "🟡 SET GTT (WAIT FOR DIP)",
-              actionBadgeColor: fmInZone ? "bg-emerald-100 text-emerald-900 border-emerald-300" : "bg-amber-100 text-amber-900 border-amber-300",
+              isReadyToBuy: fmInZone,
+              triggerPrice: fmTrigger,
+              distPct: fmDistPct,
+              pullbackNeeded: fmPullback,
+              actionBadge: fmInZone ? "🟢 READY TO BUY (IN ZONE)" : "🟡 AWAITING DIP (GTT ARMED)",
+              actionBadgeColor: fmInZone ? "bg-emerald-600 text-white border-emerald-700 shadow-2xs font-bold" : "bg-amber-100 text-amber-900 border-amber-300",
               brokerAction: `Place GTT Limit: ${fmShares} sh @ ≤ ₹457.10`,
               timingDistance: fmInZone
                 ? `LTP is inside entry zone (≤ ₹457.10). Ready to execute.`
@@ -1979,10 +1991,14 @@ export function CallsClient() {
               cmp: trCmp,
               target: trMetrics.target,
               upside: trMetrics.upside,
+              isReadyToBuy: trInZone,
+              triggerPrice: trTrigger,
+              distPct: trDistPct,
+              pullbackNeeded: trPullback,
               actionBadge: transrailBought > 0
-                ? (trInZone ? "🟢 READY TO TOP-UP" : "🟡 SET GTT (TRANCHE 2 DIP)")
-                : (trInZone ? "🟢 READY TO BUY (IN ZONE)" : "🟡 SET GTT LIMIT"),
-              actionBadgeColor: trInZone ? "bg-emerald-100 text-emerald-900 border-emerald-300" : "bg-amber-100 text-amber-900 border-amber-300",
+                ? (trInZone ? "🟢 READY TO TOP-UP" : "🟡 AWAITING DIP (GTT ARMED)")
+                : (trInZone ? "🟢 READY TO BUY (IN ZONE)" : "🟡 AWAITING DIP (GTT ARMED)"),
+              actionBadgeColor: trInZone ? "bg-emerald-600 text-white border-emerald-700 shadow-2xs font-bold" : "bg-amber-100 text-amber-900 border-amber-300",
               brokerAction: transrailBought > 0
                 ? `Place GTT Limit: ${trShares} sh @ ≤ ₹434.00`
                 : `Buy ${trShares} sh in Zone ₹438–₹450 (or 50% CMP / 50% GTT ≤ ₹436)`,
@@ -2010,14 +2026,18 @@ export function CallsClient() {
               cmp: bobCmp,
               target: bobMetrics.target,
               upside: bobMetrics.upside,
-              actionBadge: bankBarodaBought > 0 ? "🟡 SET GTT RETEST" : "🔵 SPLIT ACTION TODAY (30 / 70)",
-              actionBadgeColor: bankBarodaBought > 0 ? "bg-amber-100 text-amber-900 border-amber-300" : "bg-indigo-100 text-indigo-900 border-indigo-300",
+              isReadyToBuy: bobInZone,
+              triggerPrice: bankBarodaBought > 0 ? 263.5 : 274.0,
+              distPct: Math.round(((bobCmp - 274) / 274) * 1000) / 10,
+              pullbackNeeded: 0,
+              actionBadge: bankBarodaBought > 0 ? "🟡 SET GTT RETEST" : "🟢 READY TO BUY TODAY (30% STARTER)",
+              actionBadgeColor: bobInZone ? "bg-emerald-600 text-white border-emerald-700 shadow-2xs font-bold" : "bg-indigo-100 text-indigo-900 border-indigo-300",
               brokerAction: bankBarodaBought > 0
                 ? `Place GTT Limit: ${Math.floor(bankBarodaRemaining / 263.5)} sh @ ≤ ₹263.50`
                 : `Step 1: ${bobStarterShares} sh Starter @ ~₹274 today • Step 2: GTT Limit ${bobCoreShares} sh @ ≤ ₹263.50`,
               timingDistance: bankBarodaBought > 0
                 ? `Set GTT limit order for retest dip at ₹263.50.`
-                : `LTP (~₹${bobCmp.toFixed(2)}) is right at Starter (~₹274). Deploy 30% starter today; set GTT for remaining 70% @ ≤ ₹263.50 retest.`,
+                : `LTP (~₹${bobCmp.toFixed(2)}) is inside Starter zone (~₹274). Execute 30% starter today; set GTT for remaining 70% @ ≤ ₹263.50.`,
             },
           ]
         : []),
@@ -2035,8 +2055,12 @@ export function CallsClient() {
               cmp: scCmp,
               target: scMetrics.target,
               upside: scMetrics.upside,
-              actionBadge: scInZone ? "🟢 READY TO BUY (DIP MET)" : "🟡 SET GTT (WAIT FOR DIP)",
-              actionBadgeColor: scInZone ? "bg-emerald-100 text-emerald-900 border-emerald-300" : "bg-amber-100 text-amber-900 border-amber-300",
+              isReadyToBuy: scInZone,
+              triggerPrice: scTrigger,
+              distPct: scDistPct,
+              pullbackNeeded: scPullback,
+              actionBadge: scInZone ? "🟢 READY TO BUY (DIP MET)" : "🟡 AWAITING DIP (GTT ARMED)",
+              actionBadgeColor: scInZone ? "bg-emerald-600 text-white border-emerald-700 shadow-2xs font-bold" : "bg-amber-100 text-amber-900 border-amber-300",
               brokerAction: `Place GTT Limit: ${scShares} sh @ ≤ ₹651.80`,
               timingDistance: scInZone
                 ? `LTP is at/below dip trigger (≤ ₹651.80). Execute buy.`
@@ -2056,6 +2080,10 @@ export function CallsClient() {
         cmp: 0,
         target: 0,
         upside: 0,
+        isReadyToBuy: false,
+        triggerPrice: 0,
+        distPct: 0,
+        pullbackNeeded: 0,
         actionBadge: "🛡️ HOLD DRY POWDER",
         actionBadgeColor: "bg-slate-100 text-slate-800 border-slate-300",
         brokerAction: "Park in Liquid ETF (e.g. LIQUIDBEES) or keep Cash Balance",
@@ -2361,7 +2389,17 @@ export function CallsClient() {
               <span>Buy ({actionCounts.buy})</span>
             </button>
             <button
-              onClick={() => { setScope("all"); setActionFilter("SELL"); }}
+              onClick={() => { setScope("portfolio"); setActionFilter("HOLD"); }}
+              className={`px-2 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 whitespace-nowrap ${
+                actionFilter === "HOLD" ? "bg-blue-600 text-white shadow-2xs font-semibold" : "text-blue-700 hover:text-blue-900"
+              }`}
+              title="Healthy holdings in your portfolio to continue holding"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+              <span>Hold ({actionCounts.hold})</span>
+            </button>
+            <button
+              onClick={() => { setScope("portfolio"); setActionFilter("SELL"); }}
               className={`px-2 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 whitespace-nowrap ${
                 actionFilter === "SELL" || actionFilter === "PRIORITY_SELL"
                   ? "bg-rose-600 text-white shadow-2xs font-bold ring-2 ring-rose-400"
@@ -2371,15 +2409,6 @@ export function CallsClient() {
             >
               <span>🚨</span>
               <span>Sell ({actionCounts.sell})</span>
-            </button>
-            <button
-              onClick={() => { setScope("all"); setActionFilter("HOLD"); }}
-              className={`px-2 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 whitespace-nowrap ${
-                actionFilter === "HOLD" ? "bg-blue-600 text-white shadow-2xs font-semibold" : "text-blue-700 hover:text-blue-900"
-              }`}
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
-              <span>Hold ({actionCounts.hold})</span>
             </button>
             <button
               onClick={() => { setScope("portfolio"); setActionFilter("ALL"); }}
@@ -2982,9 +3011,11 @@ export function CallsClient() {
                         }
                       }}
                       className={`p-3 rounded-lg border transition-all ${
-                        item.symbol !== "LIQUID_RESERVE"
-                          ? "border-slate-200 hover:border-indigo-300 bg-white hover:bg-slate-50/70 cursor-pointer shadow-2xs"
-                          : "border-dashed border-slate-300 bg-slate-50/60"
+                        item.isReadyToBuy
+                          ? "border-emerald-500 bg-emerald-50/40 hover:bg-emerald-50/70 shadow-sm ring-2 ring-emerald-400/50"
+                          : item.symbol !== "LIQUID_RESERVE"
+                            ? "border-amber-200/90 bg-white hover:bg-amber-50/30 shadow-2xs"
+                            : "border-dashed border-slate-300 bg-slate-50/60"
                       }`}
                     >
                       {/* Top Row: Stock + LTP + Action Status Badge & Planned Allocation */}
@@ -2995,7 +3026,9 @@ export function CallsClient() {
                               {item.symbol === "LIQUID_RESERVE" ? "🛡️ LIQUID PULLBACK BUFFER" : item.symbol}
                             </span>
                             {item.cmp > 0 && (
-                              <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-900 text-white shadow-2xs">
+                              <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold shadow-2xs ${
+                                item.isReadyToBuy ? "bg-emerald-700 text-white ring-1 ring-emerald-500" : "bg-slate-900 text-white"
+                              }`}>
                                 LTP {money(item.cmp, 2)}
                               </span>
                             )}
@@ -3028,18 +3061,34 @@ export function CallsClient() {
                       </div>
 
                       {/* Middle: Exact Broker Action Today Box */}
-                      <div className="mt-2.5 p-2 rounded bg-slate-50/90 border border-slate-200/90 space-y-1">
+                      <div className={`mt-2.5 p-2 rounded border space-y-1 ${
+                        item.isReadyToBuy
+                          ? "bg-emerald-100/80 border-emerald-300"
+                          : "bg-slate-50/90 border-slate-200/90"
+                      }`}>
                         <div className="flex items-center justify-between text-[10.5px] flex-wrap gap-1">
-                          <span className="font-semibold text-slate-800 flex items-center gap-1">
-                            <Target className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                          <span className={`font-semibold flex items-center gap-1 ${
+                            item.isReadyToBuy ? "text-emerald-950 font-bold" : "text-slate-800"
+                          }`}>
+                            <Target className={`w-3.5 h-3.5 shrink-0 ${
+                              item.isReadyToBuy ? "text-emerald-700" : "text-indigo-600"
+                            }`} />
                             <span>Broker Action Today:</span>
                           </span>
-                          <span className="font-mono font-bold text-indigo-900 text-[11px] bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
+                          <span className={`font-mono font-bold text-[11px] px-2 py-0.5 rounded border ${
+                            item.isReadyToBuy
+                              ? "bg-emerald-700 text-white border-emerald-800 shadow-2xs"
+                              : "bg-indigo-50 text-indigo-900 border-indigo-200"
+                          }`}>
                             {item.brokerAction}
                           </span>
                         </div>
-                        <div className="text-[10px] text-slate-600 flex items-start gap-1 font-mono pt-0.5">
-                          <Info className="w-3 h-3 text-slate-400 shrink-0 mt-0.5" />
+                        <div className={`text-[10px] flex items-start gap-1 font-mono pt-0.5 ${
+                          item.isReadyToBuy ? "text-emerald-900 font-semibold" : "text-slate-600"
+                        }`}>
+                          <Info className={`w-3 h-3 shrink-0 mt-0.5 ${
+                            item.isReadyToBuy ? "text-emerald-600" : "text-slate-400"
+                          }`} />
                           <span>{item.timingDistance}</span>
                         </div>
                       </div>
