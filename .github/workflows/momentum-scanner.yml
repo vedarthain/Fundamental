@@ -60,7 +60,7 @@ jobs:
           set +e
           BODY=$(mktemp)
           CODE=$(curl -sS -o "$BODY" -w "%{http_code}" --max-time 120 \
-            "https://equityroots.in/api/cron/momentum-signals" \
+            "https://www.equityroots.in/api/cron/momentum-signals" \
             -H "Authorization: Bearer $TOKEN")
           echo "HTTP $CODE"; cat "$BODY"; echo
           if [ "$CODE" != "200" ]; then
@@ -77,11 +77,11 @@ jobs:
           set +e
           BODY=$(mktemp)
           CODE=$(curl -sS -o "$BODY" -w "%{http_code}" --max-time 120 \
-            "https://equityroots.in/api/cron/trend-leaders" \
+            "https://www.equityroots.in/api/cron/trend-leaders" \
             -H "Authorization: Bearer $TOKEN")
           echo "HTTP $CODE"; cat "$BODY"; echo
           if [ "$CODE" != "200" ]; then
-            echo "::error::trend-leaders failed (HTTP $CODE) — check REVALIDATE_TOKEN matches Vercel."
+            echo "::error::trend-leaders failed (HTTP $CODE) — check REVALIDATE_TOKEN."
             exit 1
           fi
           grep -q '"ok":true' "$BODY" || { echo "::error::trend-leaders returned ok:false"; exit 1; }
@@ -94,7 +94,7 @@ jobs:
           set +e
           BODY=$(mktemp)
           CODE=$(curl -sS -o "$BODY" -w "%{http_code}" --max-time 120 \
-            "https://equityroots.in/api/cron/support-floor" \
+            "https://www.equityroots.in/api/cron/support-floor" \
             -H "Authorization: Bearer $TOKEN")
           echo "HTTP $CODE"; cat "$BODY"; echo
           if [ "$CODE" != "200" ]; then
