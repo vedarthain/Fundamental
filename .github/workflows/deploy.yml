@@ -1,0 +1,25 @@
+name: Deploy to DigitalOcean Web Droplet
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - '.github/workflows/deploy.yml'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: root
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            cd /var/www/Fundamental
+            git pull origin main
+            cd web
+            NODE_OPTIONS="--max-old-space-size=2048" npm run build
+            pm2 restart equityroots --update-env
