@@ -138,13 +138,13 @@ function istDateKey(): string {
  *  Freshness: revalidate 900s bounds staleness to 15 min; the IST date in the key
  *  guarantees a clean rollover at day boundary; and the EOD price refresh purges
  *  the "panel-cache" tag, so a fresh close lands immediately after the pipeline. */
-export async function loadQuotes(symbols: string[]): Promise<Map<string, Quote>> {
+export async function loadQuotes(symbols: string[], lean = false): Promise<Map<string, Quote>> {
   const bareSyms = Array.from(new Set(symbols.map(bare))).filter(Boolean).sort();
   if (bareSyms.length === 0) return new Map<string, Quote>();
   const dateKey = istDateKey();
   const cached = unstable_cache(
-    () => fetchQuotes(bareSyms),
-    ["watchlist-quotes", dateKey, bareSyms.join(",")],
+    () => fetchQuotes(bareSyms, lean),
+    ["watchlist-quotes", dateKey, lean ? "lean" : "full", bareSyms.join(",")],
     { revalidate: 900, tags: ["watchlist-quotes", "panel-cache"] },
   );
   const rec = await cached();
@@ -153,7 +153,7 @@ export async function loadQuotes(symbols: string[]): Promise<Map<string, Quote>>
 
 /** The uncached golden fetch. Returns a plain Record (cache-serialisable). Never
  *  throws — a golden hiccup yields {} and the UI renders "—". */
-async function fetchQuotes(bareSymsSorted: string[]): Promise<Record<string, Quote>> {
+async function fetchQuotes(bareSymsSorted: string[], lean = false): Promise<Record<string, Quote>> {
   const out = new Map<string, Quote>();
   const bareSyms = bareSymsSorted;
   if (bareSyms.length === 0) return {};
@@ -161,64 +161,70 @@ async function fetchQuotes(bareSymsSorted: string[]): Promise<Record<string, Quo
   const cands = [...bareSyms, ...bareSyms.map((s) => `${s}.NS`)];
 
   try {
-    const [last2, hilo, vols, rets] = await Promise.all([
-      golden<{ symbol: string; c: string; d: string; rn: string }[]>`
-        SELECT symbol, c, d, rn FROM (
-          SELECT symbol, COALESCE(adj_close, close)::text AS c, date::text AS d,
-                 row_number() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
-          FROM golden.price_history
-          WHERE interval = '1d' AND COALESCE(adj_close, close) IS NOT NULL
+    const last2Promise = golden<{ symbol: string; c: string; d: string; rn: string }[]>`
+      SELECT symbol, c, d, rn FROM (
+        SELECT symbol, COALESCE(adj_close, close)::text AS c, date::text AS d,
+               row_number() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
+        FROM golden.price_history_1d
+        WHERE COALESCE(adj_close, close) IS NOT NULL
+          AND symbol = ANY(${cands})
+          AND date >= CURRENT_DATE - 16
+      ) t WHERE rn <= 2
+    `;
+
+    const hiloPromise = golden<{ symbol: string; hi: string; lo: string }[]>`
+      SELECT symbol,
+             MAX(COALESCE(adj_close, close))::text AS hi,
+             MIN(COALESCE(adj_close, close))::text AS lo
+      FROM golden.price_history_1d
+      WHERE COALESCE(adj_close, close) IS NOT NULL
+        AND symbol = ANY(${cands})
+        AND date >= CURRENT_DATE - 365
+      GROUP BY symbol
+    `;
+
+    const volsPromise = lean
+      ? Promise.resolve([] as { symbol: string; vol: string | null; close: string | null; avgvol: string | null }[])
+      : golden<{
+          symbol: string;
+          vol: string | null;
+          close: string | null;
+          avgvol: string | null;
+        }[]>`
+          SELECT symbol,
+                 (array_agg(volume ORDER BY date DESC))[1]::text AS vol,
+                 (array_agg(close  ORDER BY date DESC))[1]::text AS close,
+                 AVG(volume)::text AS avgvol
+          FROM golden.price_history_1d
+          WHERE volume IS NOT NULL
             AND symbol = ANY(${cands})
-            AND date >= CURRENT_DATE - 16
-        ) t WHERE rn <= 2
-      `,
-      golden<{ symbol: string; hi: string; lo: string }[]>`
-        SELECT symbol,
-               MAX(COALESCE(adj_close, close))::text AS hi,
-               MIN(COALESCE(adj_close, close))::text AS lo
-        FROM golden.price_history
-        WHERE interval = '1d' AND COALESCE(adj_close, close) IS NOT NULL
-          AND symbol = ANY(${cands})
-          AND date >= CURRENT_DATE - 365
-        GROUP BY symbol
-      `,
-      // Volume context: latest session volume + turnover-basis close and the
-      // ~30-trading-day average volume (≈45 calendar days). Only core OHLCV
-      // columns here so this can't fail on a golden that lacks the (newer)
-      // delivery columns — delivery % is fetched separately below.
-      golden<{
-        symbol: string;
-        vol: string | null;
-        close: string | null;
-        avgvol: string | null;
-      }[]>`
-        SELECT symbol,
-               (array_agg(volume ORDER BY date DESC))[1]::text AS vol,
-               (array_agg(close  ORDER BY date DESC))[1]::text AS close,
-               AVG(volume)::text AS avgvol
-        FROM golden.price_history
-        WHERE interval = '1d' AND volume IS NOT NULL
-          AND symbol = ANY(${cands})
-          AND date >= CURRENT_DATE - 45
-        GROUP BY symbol
-      `,
-      // Trailing-window return anchors — the SAME method the price chart uses
-      // (rangePct): for each window, the nearest adjusted close ON OR BEFORE
-      // (symbol's latest bar − N calendar days); plus the first-ever bar as the
-      // ALL anchor and the young-stock fallback. Computed off the full history
-      // (no date floor) so 5Y/10Y/ALL have real anchors. One row per symbol; the
-      // per-window return is finished in JS so it can reuse returnGuards' caps.
-      golden<{
-        symbol: string;
-        first_c: string | null;
-        c_1w: string | null;
-        c_1m: string | null;
-        c_3m: string | null;
-        c_1y: string | null;
-        c_3y: string | null;
-        c_5y: string | null;
-        c_10y: string | null;
-      }[]>`
+            AND date >= CURRENT_DATE - 45
+          GROUP BY symbol
+        `;
+
+    const retsPromise = lean
+      ? Promise.resolve([] as {
+          symbol: string;
+          first_c: string | null;
+          c_1w: string | null;
+          c_1m: string | null;
+          c_3m: string | null;
+          c_1y: string | null;
+          c_3y: string | null;
+          c_5y: string | null;
+          c_10y: string | null;
+        }[])
+      : golden<{
+          symbol: string;
+          first_c: string | null;
+          c_1w: string | null;
+          c_1m: string | null;
+          c_3m: string | null;
+          c_1y: string | null;
+          c_3y: string | null;
+          c_5y: string | null;
+          c_10y: string | null;
+        }[]>`
         -- latest / firstbar look like cheap one-row-per-symbol aggregates, but
         -- MAX(date) and DISTINCT ON both made Postgres read EVERY daily bar for
         -- every symbol (~700k rows for a 176-name list, sorting to temp) — no
@@ -288,8 +294,13 @@ async function fetchQuotes(bareSymsSorted: string[]): Promise<Record<string, Quo
             AND ph.date <= l.ld - 1825 ORDER BY ph.date DESC LIMIT 1) a5y  ON true
         LEFT JOIN LATERAL (SELECT COALESCE(adj_close, close) AS c FROM golden.price_history ph
           WHERE ph.symbol = l.symbol AND ph.interval = '1d' AND COALESCE(ph.adj_close, ph.close) IS NOT NULL
-            AND ph.date <= l.ld - 3650 ORDER BY ph.date DESC LIMIT 1) a10y ON true
-      `,
+      `;
+
+    const [last2, hilo, vols, rets] = await Promise.all([
+      last2Promise,
+      hiloPromise,
+      volsPromise,
+      retsPromise,
     ]);
 
     // Delivery % lives in a separate, isolated query: delivery_qty/delivery_pct

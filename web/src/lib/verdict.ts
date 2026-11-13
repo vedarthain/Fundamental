@@ -496,17 +496,8 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
     clusterProgress: [],
   };
 
-  let tracked: {
-    symbol: string;
-    company_name: string | null;
-    sector: string | null;
-    industry: string | null;
-    cluster_id: string | null;
-    cluster_name: string | null;
-    added_at: Date | null;
-  }[] = [];
-  try {
-    tracked = await sql`
+  const [trackedRes, vrowsRes, nRows, pHoldings, wRows] = await Promise.all([
+    sql`
       WITH latest AS (SELECT MAX(snapshot_date) AS d FROM app.scores)
       SELECT s.symbol,
              u.company_name,
@@ -523,21 +514,8 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
        WHERE s.snapshot_date = (SELECT d FROM latest)
        GROUP BY s.symbol, u.company_name, u.sector, u.industry, ca.cluster_id, c.name
        ORDER BY s.symbol
-    `;
-  } catch {
-    return empty;
-  }
-
-  let vrows: {
-    symbol: string; generated_at: Date; verdict: string;
-    confidence: "high" | "medium" | "low"; evidence: unknown;
-    price_asof: Date | null; anchor_price: number | null;
-    target_price: number | null; fair_value: number | null; buy_below: number | null;
-    bear_floor: number | null; upside_pct: number | null;
-    valuation_method: string | null;
-  }[] = [];
-  try {
-    vrows = await sql`
+    `.catch(() => null),
+    sql`
       SELECT v.symbol, v.generated_at, v.verdict, v.confidence, v.evidence,
              v.price_asof, v.anchor_price::float AS anchor_price,
              v.target_price::float AS target_price,
@@ -549,10 +527,42 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
         FROM app.stock_verdict v
         JOIN app.universe u ON u.symbol = v.symbol AND u.is_active
        ORDER BY v.generated_at DESC
-    `;
-  } catch {
-    return { ...empty, trackedCount: tracked.length };
-  }
+    `.catch(() => null),
+    sql<{ symbol: string }[]>`
+      SELECT symbol FROM app.index_constituent WHERE index_code = 'NIFTY500'
+    `.catch(() => [] as { symbol: string }[]),
+    sql<{ symbol: string }[]>`
+      SELECT DISTINCT symbol
+        FROM app.portfolio_holding
+       WHERE symbol IS NOT NULL AND symbol != ''
+    `.catch(() => [] as { symbol: string }[]),
+    sql<{ symbol: string }[]>`
+      SELECT DISTINCT symbol
+        FROM app.user_watchlist
+       WHERE symbol IS NOT NULL AND symbol != ''
+    `.catch(() => [] as { symbol: string }[]),
+  ]);
+
+  if (!trackedRes) return empty;
+  const tracked = trackedRes as unknown as {
+    symbol: string;
+    company_name: string | null;
+    sector: string | null;
+    industry: string | null;
+    cluster_id: string | null;
+    cluster_name: string | null;
+    added_at: Date | null;
+  }[];
+
+  if (!vrowsRes) return { ...empty, trackedCount: tracked.length };
+  const vrows = vrowsRes as unknown as {
+    symbol: string; generated_at: Date; verdict: string;
+    confidence: "high" | "medium" | "low"; evidence: unknown;
+    price_asof: Date | null; anchor_price: number | null;
+    target_price: number | null; fair_value: number | null; buy_below: number | null;
+    bear_floor: number | null; upside_pct: number | null;
+    valuation_method: string | null;
+  }[];
 
   const newest = new Map<string, (typeof vrows)[number]>();
   const previous = new Map<string, (typeof vrows)[number]>();
@@ -569,12 +579,16 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
   const allSymbols = [...new Set([...trackedSet, ...verdictSymbols])];
 
   const universeInfo = new Map<string, { company_name: string | null; sector: string | null; industry: string | null }>();
-  if (allSymbols.length > 0) {
+  for (const t of tracked) {
+    universeInfo.set(t.symbol, { company_name: t.company_name, sector: t.sector, industry: t.industry });
+  }
+  const missingUniverse = verdictSymbols.filter((s) => !universeInfo.has(s));
+  if (missingUniverse.length > 0) {
     try {
       const urows = await sql<{ symbol: string; company_name: string | null; sector: string | null; industry: string | null }[]>`
         SELECT symbol, company_name, sector, industry
           FROM app.universe
-         WHERE symbol = ANY(${allSymbols})
+         WHERE symbol = ANY(${missingUniverse})
       `;
       for (const u of urows) {
         universeInfo.set(u.symbol, { company_name: u.company_name, sector: u.sector, industry: u.industry });
@@ -584,73 +598,36 @@ export async function loadVerdictQueue(weeks = 12): Promise<VerdictQueue> {
     }
   }
 
-  // NOT app.universe.is_nifty500 — that boolean was seeded once and never
-  // maintained (0 rows true in prod as of 2026-10-30; §5's "seeded and never
-  // maintained" bug). app.index_constituent is the current, actively-loaded
-  // membership table (scripts/fetch-index-constituents.py), ~501 symbols for
-  // NIFTY500.
   const nifty500Symbols = new Set<string>();
-  try {
-    const nRows = await sql<{ symbol: string }[]>`
-      SELECT symbol FROM app.index_constituent WHERE index_code = 'NIFTY500'
-    `;
-    for (const r of nRows) nifty500Symbols.add(r.symbol);
-  } catch {
-    // non-fatal
-  }
+  for (const r of nRows) nifty500Symbols.add(r.symbol);
 
   const portfolioSymbols = new Set<string>();
-  try {
-    const pHoldings = await sql<{ symbol: string }[]>`
-      SELECT DISTINCT symbol
-        FROM app.portfolio_holding
-       WHERE symbol IS NOT NULL AND symbol != ''
-    `;
-    for (const r of pHoldings) portfolioSymbols.add(r.symbol);
-  } catch {
-    // non-fatal
-  }
+  for (const r of pHoldings) portfolioSymbols.add(r.symbol);
 
   const watchlistSymbols = new Set<string>();
-  try {
-    const wRows = await sql<{ symbol: string }[]>`
-      SELECT DISTINCT symbol
-        FROM app.user_watchlist
-       WHERE symbol IS NOT NULL AND symbol != ''
-    `;
-    for (const r of wRows) watchlistSymbols.add(r.symbol);
-  } catch {
-    // non-fatal
-  }
+  for (const r of wRows) watchlistSymbols.add(r.symbol);
 
   // Weekly cluster_metrics for the symbols that have a verdict, so drift can be
   // asked of the past and not only of today. Scoped to those symbols because
   // the whole universe × 12 weeks of JSONB is a payload nothing here reads.
   const since = new Date(Date.now() - weeks * 7 * 86_400_000).toISOString().slice(0, 10);
-  let hist: { symbol: string; snapshot_date: Date;
-              cluster_metrics: Record<string, EvidenceValue> | null }[] = [];
-  if (verdictSymbols.length > 0) {
-    try {
-      hist = await sql`
-        SELECT symbol, snapshot_date, cluster_metrics
-          FROM app.metrics_snapshot
-         WHERE symbol = ANY(${verdictSymbols})
-           AND snapshot_date >= ${since}::date
-         ORDER BY snapshot_date
-      `;
-    } catch {
-      hist = [];
-    }
-  }
+
+  const [hist, ltps] = await Promise.all([
+    verdictSymbols.length > 0
+      ? sql<{ symbol: string; snapshot_date: Date; cluster_metrics: Record<string, EvidenceValue> | null }[]>`
+          SELECT symbol, snapshot_date, cluster_metrics
+            FROM app.metrics_snapshot
+           WHERE symbol = ANY(${verdictSymbols})
+             AND snapshot_date >= ${since}::date
+           ORDER BY snapshot_date
+        `.catch(() => [] as { symbol: string; snapshot_date: Date; cluster_metrics: Record<string, EvidenceValue> | null }[])
+      : Promise.resolve([] as { symbol: string; snapshot_date: Date; cluster_metrics: Record<string, EvidenceValue> | null }[]),
+    latestCloseBySymbol(allSymbols),
+  ]);
 
   const live = new Map<string, Record<string, EvidenceValue>>();
   for (const h of hist) live.set(h.symbol, h.cluster_metrics ?? {}); // last wins = newest
 
-  // One batched golden read for every symbol on the page — tracked ones and
-  // dormant ones alike, since both render a move. `latestCloseBySymbol` already
-  // swallows a golden outage and returns an empty map, which degrades to "no
-  // LTP" rather than to a failed queue.
-  const ltps = await latestCloseBySymbol(allSymbols);
   const priceOf = (
     sym: string,
     anchor: number | null,

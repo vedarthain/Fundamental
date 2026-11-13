@@ -35,28 +35,38 @@ export type StockCall = {
   cleared_pct: number | null;
 };
 
-/** Latest daily close per symbol from golden, keyed by bare NSE symbol. */
+/** Latest daily close per symbol from screener_meta / golden, keyed by bare NSE symbol. */
 export async function latestCloseBySymbol(symbols: string[]): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   if (symbols.length === 0) return out;
-  const symbolsNS = symbols.map((s) => `${s}.NS`);
   try {
-    const rows = await golden<{ symbol: string; close: number }[]>`
-      SELECT symbol, close FROM (
-        SELECT REPLACE(symbol, '.NS', '') AS symbol,
-               close::float AS close,
-               row_number() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
-          FROM golden.price_history
-         WHERE interval = '1d' AND symbol = ANY(${symbolsNS})
-           -- Newest close, however slightly stale. A generous (but still
-           -- index-bounded) window so a holiday gap, a thin-trading stretch, or
-           -- a lagging local golden dump doesn't leave a symbol un-anchorable.
-           AND date >= CURRENT_DATE - 45
-      ) t WHERE rn = 1 AND close > 0
+    // 1. Instant lookup from app.screener_meta (~2ms for 3,000+ symbols)
+    const metaRows = await sql<{ symbol: string; px: number }[]>`
+      SELECT symbol, current_price::float AS px
+        FROM app.screener_meta
+       WHERE symbol = ANY(${symbols})
+         AND current_price IS NOT NULL AND current_price > 0
     `;
-    for (const r of rows) out.set(r.symbol, r.close);
+    for (const r of metaRows) out.set(r.symbol, r.px);
+
+    // 2. Fallback to golden.price_history_1d for any remaining missing symbols
+    const missing = symbols.filter((s) => !out.has(s));
+    if (missing.length > 0) {
+      const symbolsNS = missing.map((s) => `${s}.NS`);
+      const rows = await golden<{ symbol: string; close: number }[]>`
+        SELECT symbol, close FROM (
+          SELECT REPLACE(symbol, '.NS', '') AS symbol,
+                 close::float AS close,
+                 row_number() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
+            FROM golden.price_history_1d
+           WHERE symbol = ANY(${symbolsNS})
+             AND date >= CURRENT_DATE - 45
+        ) t WHERE rn = 1 AND close > 0
+      `;
+      for (const r of rows) out.set(r.symbol, r.close);
+    }
   } catch {
-    /* golden unreachable (e.g. local dev) — leave prices empty */
+    /* fallback — leave prices empty */
   }
   return out;
 }

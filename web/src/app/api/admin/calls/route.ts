@@ -217,157 +217,267 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const dateParam = searchParams.get("date"); // e.g. "2026-10-31"
 
-    // Fetch distinct available dates for call date dropdown
-    const availableDatesRows = await sql<{ d: string }[]>`
-      SELECT DISTINCT to_char(generated_at, 'YYYY-MM-DD') AS d
-      FROM app.stock_verdict
-      WHERE generated_at IS NOT NULL
-      ORDER BY d DESC
-      LIMIT 30
-    `;
+    // Fetch available dates, screened candidate gems, and portfolio holdings concurrently
+    const [availableDatesRows, rawGems, rawPortfolio] = await Promise.all([
+      sql<{ d: string }[]>`
+        SELECT DISTINCT to_char(generated_at, 'YYYY-MM-DD') AS d
+        FROM app.stock_verdict
+        WHERE generated_at IS NOT NULL
+        ORDER BY d DESC
+        LIMIT 30
+      `,
+      sql<any[]>`
+        WITH latest_verdict AS (
+            SELECT DISTINCT ON (symbol)
+                symbol, verdict, confidence, target_price, fair_value, buy_below, bear_floor, upside_pct, valuation_method, generated_at, anchor_price
+            FROM app.stock_verdict
+            WHERE ${dateParam && dateParam !== "ALL" ? sql`date(generated_at) = ${dateParam}::date` : sql`true`}
+            ORDER BY symbol, generated_at DESC
+        ),
+        latest_panel AS (
+            SELECT DISTINCT ON (symbol)
+                symbol, company_name, cluster_id, market_cap_cr, current_price, composite_pct, quality_pct, valuation_pct, momentum_pct
+            FROM app.cluster_stocks_panel_cache
+            ORDER BY symbol, snapshot_date DESC
+        ),
+        intraday_price AS (
+            SELECT DISTINCT ON (symbol) symbol, ltp, ts
+            FROM app.stock_intraday
+            WHERE ts >= CURRENT_DATE
+            ORDER BY symbol, ts DESC
+        ),
+        user_calls AS (
+            SELECT symbol,
+                   bool_or(cleared_at IS NULL) AS has_active_call,
+                   bool_or(cleared_at IS NOT NULL) AS has_cleared_call
+            FROM app.stock_call
+            GROUP BY symbol
+        ),
+        active_buys AS (
+            WITH cum AS (
+                SELECT symbol, trade_date, side, quantity,
+                       SUM(CASE WHEN side = 'buy' THEN quantity ELSE -quantity END) 
+                         OVER (PARTITION BY symbol ORDER BY trade_date, id) as cum_qty
+                FROM app.portfolio_transaction
+                WHERE NOT (source_file = 'manual-entry' AND matched_at IS NOT NULL)
+            ),
+            last_flat AS (
+                SELECT symbol, MAX(trade_date) as last_zero_date
+                FROM cum
+                WHERE cum_qty <= 0
+                GROUP BY symbol
+            )
+            SELECT c.symbol, MIN(c.trade_date) as first_buy_date
+            FROM cum c
+            LEFT JOIN last_flat lf ON lf.symbol = c.symbol
+            WHERE c.side = 'buy' AND (lf.last_zero_date IS NULL OR c.trade_date > lf.last_zero_date)
+            GROUP BY c.symbol
+        )
+        SELECT 
+            p.symbol,
+            COALESCE(u.company_name, p.company_name) AS company_name,
+            COALESCE(mc.name, u.sector, 'Other') AS sector,
+            COALESCE(u.industry, 'General') AS industry,
+            u.market_cap_category,
+            p.cluster_id,
+            COALESCE(c.name, c2.name, 'General') AS cluster_name,
+            p.market_cap_cr,
+            COALESCE(
+                CASE WHEN si.ts IS NOT NULL AND sm.price_fetched_at IS NOT NULL AND sm.price_fetched_at > si.ts
+                     THEN sm.current_price
+                     ELSE COALESCE(si.ltp, sm.current_price)
+                END,
+                p.current_price
+            ) AS ltp,
+            COALESCE(
+                CASE WHEN si.ts IS NOT NULL AND sm.price_fetched_at IS NOT NULL AND sm.price_fetched_at > si.ts
+                     THEN sm.price_fetched_at::text
+                     ELSE COALESCE(si.ts::text, sm.price_fetched_at::text)
+                END,
+                sm.price_fetched_at::text
+            ) AS price_fetched_at,
+            v.anchor_price,
+            v.verdict,
+            v.confidence,
+            v.target_price,
+            v.fair_value,
+            v.buy_below,
+            v.bear_floor,
+            v.upside_pct,
+            v.valuation_method,
+            v.generated_at,
+            p.composite_pct,
+            p.quality_pct,
+            p.valuation_pct,
+            p.momentum_pct,
+            ph.quantity AS held_qty,
+            ph.avg_cost AS purchase_price,
+            CASE WHEN ph.quantity > 0 THEN COALESCE(pt.first_buy_date, ph.fallback_buy_date) ELSE NULL END AS purchase_date,
+            ph.broker_cur_value AS cur_val,
+            (ph.quantity * ph.avg_cost) AS invested_val,
+            EXISTS(SELECT 1 FROM app.portfolio_holding x WHERE x.symbol = p.symbol AND x.quantity > 0) AS is_portfolio,
+            COALESCE(uc.has_active_call, false) AS is_call_active,
+            COALESCE(uc.has_cleared_call, false) AS is_call_cleared
+        FROM latest_panel p
+        JOIN latest_verdict v ON v.symbol = p.symbol
+        LEFT JOIN app.universe u ON u.symbol = p.symbol
+        LEFT JOIN app.cluster c ON c.id = p.cluster_id
+        LEFT JOIN app.cluster_assignment ca ON ca.symbol = p.symbol
+        LEFT JOIN app.cluster c2 ON c2.id = ca.cluster_id
+        LEFT JOIN app.meta_cluster mc ON mc.id = COALESCE(c.meta_cluster_id, c2.meta_cluster_id)
+        LEFT JOIN app.screener_meta sm ON sm.symbol = p.symbol
+        LEFT JOIN intraday_price si ON si.symbol = p.symbol
+        LEFT JOIN user_calls uc ON uc.symbol = p.symbol
+        LEFT JOIN (
+            SELECT symbol, 
+                   SUM(quantity) as quantity, 
+                   SUM(quantity * avg_cost)/NULLIF(SUM(quantity), 0) as avg_cost, 
+                   SUM(broker_cur_value) as broker_cur_value,
+                   MIN(COALESCE(first_seen_at::date, imported_at::date)) as fallback_buy_date
+            FROM app.portfolio_holding
+            WHERE quantity > 0
+            GROUP BY symbol
+        ) ph ON ph.symbol = p.symbol
+        LEFT JOIN active_buys pt ON pt.symbol = p.symbol
+        WHERE v.target_price IS NOT NULL
+          AND (
+            p.symbol IN ('INDUSTOWER', 'UNIONBANK', 'BBTC', 'ALLDIGI', 'APOLLOTYRE', 'FMGOETZE', 'SHARDACROP', 'TRANSRAILL', 'BANKBARODA', 'ORIENTTECH', 'MAXESTATES', 'PITTIENG', 'GRAVITA')
+            OR (p.composite_pct >= 60 AND p.quality_pct >= 50 AND v.buy_below IS NOT NULL)
+            OR (ph.quantity > 0 AND (
+              v.verdict ILIKE '%SELL%'
+              OR v.verdict ILIKE '%EXIT%'
+              OR v.verdict ILIKE '%TRIM%'
+              OR (v.upside_pct IS NOT NULL AND v.upside_pct < -5)
+            ))
+          )
+        ORDER BY (p.symbol IN ('INDUSTOWER', 'UNIONBANK', 'BBTC', 'ALLDIGI', 'APOLLOTYRE', 'FMGOETZE', 'SHARDACROP', 'TRANSRAILL', 'BANKBARODA')) DESC, v.generated_at DESC, p.composite_pct DESC
+        LIMIT 600
+      `,
+      sql<any[]>`
+        WITH latest_verdict AS (
+            SELECT DISTINCT ON (symbol)
+                symbol, verdict, confidence, target_price, fair_value, buy_below, bear_floor, upside_pct, valuation_method, generated_at, anchor_price
+            FROM app.stock_verdict
+            ORDER BY symbol, generated_at DESC
+        ),
+        latest_panel AS (
+            SELECT DISTINCT ON (symbol)
+                symbol, current_price, composite_pct, quality_pct, valuation_pct, momentum_pct
+            FROM app.cluster_stocks_panel_cache
+            ORDER BY symbol, snapshot_date DESC
+        ),
+        intraday_price AS (
+            SELECT DISTINCT ON (symbol) symbol, ltp, ts
+            FROM app.stock_intraday
+            WHERE ts >= CURRENT_DATE
+            ORDER BY symbol, ts DESC
+        ),
+        active_buys AS (
+            WITH cum AS (
+                SELECT symbol, trade_date, side, quantity,
+                       SUM(CASE WHEN side = 'buy' THEN quantity ELSE -quantity END) 
+                         OVER (PARTITION BY symbol ORDER BY trade_date, id) as cum_qty
+                FROM app.portfolio_transaction
+                WHERE NOT (source_file = 'manual-entry' AND matched_at IS NOT NULL)
+            ),
+            last_flat AS (
+                SELECT symbol, MAX(trade_date) as last_zero_date
+                FROM cum
+                WHERE cum_qty <= 0
+                GROUP BY symbol
+            )
+            SELECT c.symbol, MIN(c.trade_date) as first_buy_date
+            FROM cum c
+            LEFT JOIN last_flat lf ON lf.symbol = c.symbol
+            WHERE c.side = 'buy' AND (lf.last_zero_date IS NULL OR c.trade_date > lf.last_zero_date)
+            GROUP BY c.symbol
+        )
+        SELECT 
+            p.symbol,
+            SUM(p.quantity) AS total_qty,
+            SUM(p.quantity * p.avg_cost) / NULLIF(SUM(p.quantity), 0) AS weighted_avg_cost,
+            COALESCE(
+                MAX(CASE WHEN si.ts IS NOT NULL AND sm.price_fetched_at IS NOT NULL AND sm.price_fetched_at > si.ts
+                         THEN sm.current_price
+                         ELSE COALESCE(si.ltp, sm.current_price)
+                END),
+                MAX(lp.current_price),
+                MAX(p.broker_ltp)
+            ) AS ltp,
+            COALESCE(
+                MAX(CASE WHEN si.ts IS NOT NULL AND sm.price_fetched_at IS NOT NULL AND sm.price_fetched_at > si.ts
+                         THEN sm.price_fetched_at::text
+                         ELSE COALESCE(si.ts::text, sm.price_fetched_at::text)
+                END),
+                MAX(sm.price_fetched_at)::text
+            ) AS price_fetched_at,
+            SUM(p.broker_cur_value) AS cur_val,
+            SUM(p.quantity * p.avg_cost) AS invested_val,
+            SUM(p.broker_cur_value) - SUM(p.quantity * p.avg_cost) AS pnl,
+            CASE WHEN SUM(p.quantity * p.avg_cost) > 0 
+                 THEN ((SUM(p.broker_cur_value) - SUM(p.quantity * p.avg_cost)) / SUM(p.quantity * p.avg_cost)) * 100 
+                 ELSE NULL END AS pnl_pct,
+            COALESCE(u.company_name, p.symbol) AS company_name,
+            COALESCE(mc.name, u.sector, 'Other') AS sector,
+            COALESCE(u.industry, 'General') AS industry,
+            u.market_cap_category,
+            c.name AS cluster_name,
+            COALESCE(pt.first_buy_date, MIN(p.first_seen_at)::date, MIN(p.imported_at)::date) AS purchase_date,
+            lp.composite_pct,
+            lp.quality_pct,
+            lp.valuation_pct,
+            lp.momentum_pct,
+            v.verdict,
+            v.confidence,
+            v.target_price,
+            v.fair_value,
+            v.buy_below,
+            v.bear_floor,
+            v.upside_pct,
+            v.valuation_method,
+            v.generated_at,
+            v.anchor_price
+        FROM app.portfolio_holding p
+        LEFT JOIN app.universe u ON u.symbol = p.symbol
+        LEFT JOIN app.cluster_assignment ca ON ca.symbol = p.symbol
+        LEFT JOIN app.cluster c ON c.id = ca.cluster_id
+        LEFT JOIN app.meta_cluster mc ON mc.id = c.meta_cluster_id
+        LEFT JOIN app.screener_meta sm ON sm.symbol = p.symbol
+        LEFT JOIN latest_panel lp ON lp.symbol = p.symbol
+        LEFT JOIN intraday_price si ON si.symbol = p.symbol
+        LEFT JOIN latest_verdict v ON v.symbol = p.symbol
+        LEFT JOIN active_buys pt ON pt.symbol = p.symbol
+        WHERE p.quantity > 0
+        GROUP BY p.symbol, u.company_name, mc.name, u.sector, u.industry, u.market_cap_category, c.name, pt.first_buy_date,
+                 lp.composite_pct, lp.quality_pct, lp.valuation_pct, lp.momentum_pct,
+                 v.verdict, v.confidence, v.target_price, v.fair_value, v.buy_below, v.bear_floor, v.upside_pct, v.valuation_method, v.generated_at, v.anchor_price
+        ORDER BY v.generated_at DESC NULLS LAST
+      `,
+    ]);
     const availableDates = availableDatesRows.map((r) => r.d).filter(Boolean);
 
-    // 1. Fetch Cluster Calls / Screened Candidates with dual anchors, sector and generated_at
-    const rawGems = await sql<any[]>`
-      WITH latest_verdict AS (
-          SELECT DISTINCT ON (symbol)
-              symbol, verdict, confidence, target_price, fair_value, buy_below, bear_floor, upside_pct, valuation_method, generated_at, anchor_price
-          FROM app.stock_verdict
-          WHERE ${dateParam && dateParam !== "ALL" ? sql`date(generated_at) = ${dateParam}::date` : sql`true`}
-          ORDER BY symbol, generated_at DESC
-      ),
-      latest_panel AS (
-          SELECT DISTINCT ON (symbol)
-              symbol, company_name, cluster_id, market_cap_cr, current_price, composite_pct, quality_pct, valuation_pct, momentum_pct
-          FROM app.cluster_stocks_panel_cache
-          ORDER BY symbol, snapshot_date DESC
-      ),
-      intraday_price AS (
-          SELECT DISTINCT ON (symbol) symbol, ltp, ts
-          FROM app.stock_intraday
-          WHERE ts >= CURRENT_DATE
-          ORDER BY symbol, ts DESC
-      ),
-      user_calls AS (
-          SELECT symbol,
-                 bool_or(cleared_at IS NULL) AS has_active_call,
-                 bool_or(cleared_at IS NOT NULL) AS has_cleared_call
-          FROM app.stock_call
-          GROUP BY symbol
-      ),
-      active_buys AS (
-          WITH cum AS (
-              SELECT symbol, trade_date, side, quantity,
-                     SUM(CASE WHEN side = 'buy' THEN quantity ELSE -quantity END) 
-                       OVER (PARTITION BY symbol ORDER BY trade_date, id) as cum_qty
-              FROM app.portfolio_transaction
-              WHERE NOT (source_file = 'manual-entry' AND matched_at IS NOT NULL)
-          ),
-          last_flat AS (
-              SELECT symbol, MAX(trade_date) as last_zero_date
-              FROM cum
-              WHERE cum_qty <= 0
-              GROUP BY symbol
-          )
-          SELECT c.symbol, MIN(c.trade_date) as first_buy_date
-          FROM cum c
-          LEFT JOIN last_flat lf ON lf.symbol = c.symbol
-          WHERE c.side = 'buy' AND (lf.last_zero_date IS NULL OR c.trade_date > lf.last_zero_date)
-          GROUP BY c.symbol
-      )
-      SELECT 
-          p.symbol,
-          COALESCE(u.company_name, p.company_name) AS company_name,
-          COALESCE(mc.name, u.sector, 'Other') AS sector,
-          COALESCE(u.industry, 'General') AS industry,
-          u.market_cap_category,
-          p.cluster_id,
-          COALESCE(c.name, c2.name, 'General') AS cluster_name,
-          p.market_cap_cr,
-          COALESCE(
-              CASE WHEN si.ts IS NOT NULL AND sm.price_fetched_at IS NOT NULL AND sm.price_fetched_at > si.ts
-                   THEN sm.current_price
-                   ELSE COALESCE(si.ltp, sm.current_price)
-              END,
-              p.current_price
-          ) AS ltp,
-          COALESCE(
-              CASE WHEN si.ts IS NOT NULL AND sm.price_fetched_at IS NOT NULL AND sm.price_fetched_at > si.ts
-                   THEN sm.price_fetched_at::text
-                   ELSE COALESCE(si.ts::text, sm.price_fetched_at::text)
-              END,
-              sm.price_fetched_at::text
-          ) AS price_fetched_at,
-          v.anchor_price,
-          v.verdict,
-          v.confidence,
-          v.target_price,
-          v.fair_value,
-          v.buy_below,
-          v.bear_floor,
-          v.upside_pct,
-          v.valuation_method,
-          v.generated_at,
-          p.composite_pct,
-          p.quality_pct,
-          p.valuation_pct,
-          p.momentum_pct,
-          ph.quantity AS held_qty,
-          ph.avg_cost AS purchase_price,
-          CASE WHEN ph.quantity > 0 THEN COALESCE(pt.first_buy_date, ph.fallback_buy_date) ELSE NULL END AS purchase_date,
-          ph.broker_cur_value AS cur_val,
-          (ph.quantity * ph.avg_cost) AS invested_val,
-          EXISTS(SELECT 1 FROM app.portfolio_holding x WHERE x.symbol = p.symbol AND x.quantity > 0) AS is_portfolio,
-          COALESCE(uc.has_active_call, false) AS is_call_active,
-          COALESCE(uc.has_cleared_call, false) AS is_call_cleared
-      FROM latest_panel p
-      JOIN latest_verdict v ON v.symbol = p.symbol
-      LEFT JOIN app.universe u ON u.symbol = p.symbol
-      LEFT JOIN app.cluster c ON c.id = p.cluster_id
-      LEFT JOIN app.cluster_assignment ca ON ca.symbol = p.symbol
-      LEFT JOIN app.cluster c2 ON c2.id = ca.cluster_id
-      LEFT JOIN app.meta_cluster mc ON mc.id = COALESCE(c.meta_cluster_id, c2.meta_cluster_id)
-      LEFT JOIN app.screener_meta sm ON sm.symbol = p.symbol
-      LEFT JOIN intraday_price si ON si.symbol = p.symbol
-      LEFT JOIN user_calls uc ON uc.symbol = p.symbol
-      LEFT JOIN (
-          SELECT symbol, 
-                 SUM(quantity) as quantity, 
-                 SUM(quantity * avg_cost)/NULLIF(SUM(quantity), 0) as avg_cost, 
-                 SUM(broker_cur_value) as broker_cur_value,
-                 MIN(COALESCE(first_seen_at::date, imported_at::date)) as fallback_buy_date
-          FROM app.portfolio_holding
-          WHERE quantity > 0
-          GROUP BY symbol
-      ) ph ON ph.symbol = p.symbol
-      LEFT JOIN active_buys pt ON pt.symbol = p.symbol
-      WHERE v.target_price IS NOT NULL
-        AND (
-          p.symbol IN ('INDUSTOWER', 'UNIONBANK', 'BBTC', 'ALLDIGI', 'APOLLOTYRE', 'FMGOETZE', 'SHARDACROP', 'TRANSRAILL', 'BANKBARODA', 'ORIENTTECH', 'MAXESTATES', 'PITTIENG', 'GRAVITA')
-          OR (p.composite_pct >= 60 AND p.quality_pct >= 50 AND v.buy_below IS NOT NULL)
-          OR (ph.quantity > 0 AND (
-            v.verdict ILIKE '%SELL%'
-            OR v.verdict ILIKE '%EXIT%'
-            OR v.verdict ILIKE '%TRIM%'
-            OR (v.upside_pct IS NOT NULL AND v.upside_pct < -5)
-          ))
-        )
-      ORDER BY (p.symbol IN ('INDUSTOWER', 'UNIONBANK', 'BBTC', 'ALLDIGI', 'APOLLOTYRE', 'FMGOETZE', 'SHARDACROP', 'TRANSRAILL', 'BANKBARODA')) DESC, v.generated_at DESC, p.composite_pct DESC
-      LIMIT 600
-    `;
+    // Authoritative Upstox EOD closes from golden.price_history_1d for target symbols
+    const targetSymbols = [
+      ...new Set([
+        ...rawGems.map((r: any) => r.symbol),
+        ...rawPortfolio.map((r: any) => r.symbol),
+      ]),
+    ].filter(Boolean);
+    const targetCands = targetSymbols.flatMap((s) => [s, `${s}.NS`]);
 
-    // Authoritative Upstox EOD closes from golden.price_history_1d (matches PriceChart 100%)
-    const goldenRows = await golden<{ symbol: string; close: number; bar_date: string }[]>`
-      SELECT DISTINCT ON (symbol)
-        symbol,
-        COALESCE(adj_close, close)::float8 AS close,
-        date::text AS bar_date
-      FROM golden.price_history_1d
-      WHERE interval = '1d'
-        AND COALESCE(adj_close, close) IS NOT NULL
-        AND date >= CURRENT_DATE - 16
-      ORDER BY symbol, date DESC
-    `.catch(() => [] as { symbol: string; close: number; bar_date: string }[]);
+    const goldenRows = targetCands.length > 0
+      ? await golden<{ symbol: string; close: number; bar_date: string }[]>`
+          SELECT DISTINCT ON (symbol)
+            symbol,
+            COALESCE(adj_close, close)::float8 AS close,
+            date::text AS bar_date
+          FROM golden.price_history_1d
+          WHERE COALESCE(adj_close, close) IS NOT NULL
+            AND symbol = ANY(${targetCands})
+            AND date >= CURRENT_DATE - 16
+          ORDER BY symbol, date DESC
+        `.catch(() => [] as { symbol: string; close: number; bar_date: string }[])
+      : [];
 
     const goldenMap = new Map<string, { close: number; barDate: string; eodIso: string }>();
     for (const gr of goldenRows) {
@@ -519,108 +629,7 @@ export async function GET(request: Request) {
       };
     });
 
-    // 2. Fetch Portfolio Holdings with Action Sweeps & Dual Anchors
-    const rawPortfolio = await sql<any[]>`
-      WITH latest_verdict AS (
-          SELECT DISTINCT ON (symbol)
-              symbol, verdict, confidence, target_price, fair_value, buy_below, bear_floor, upside_pct, valuation_method, generated_at, anchor_price
-          FROM app.stock_verdict
-          ORDER BY symbol, generated_at DESC
-      ),
-      latest_panel AS (
-          SELECT DISTINCT ON (symbol)
-              symbol, current_price, composite_pct, quality_pct, valuation_pct, momentum_pct
-          FROM app.cluster_stocks_panel_cache
-          ORDER BY symbol, snapshot_date DESC
-      ),
-      intraday_price AS (
-          SELECT DISTINCT ON (symbol) symbol, ltp, ts
-          FROM app.stock_intraday
-          WHERE ts >= CURRENT_DATE
-          ORDER BY symbol, ts DESC
-      ),
-      active_buys AS (
-          WITH cum AS (
-              SELECT symbol, trade_date, side, quantity,
-                     SUM(CASE WHEN side = 'buy' THEN quantity ELSE -quantity END) 
-                       OVER (PARTITION BY symbol ORDER BY trade_date, id) as cum_qty
-              FROM app.portfolio_transaction
-              WHERE NOT (source_file = 'manual-entry' AND matched_at IS NOT NULL)
-          ),
-          last_flat AS (
-              SELECT symbol, MAX(trade_date) as last_zero_date
-              FROM cum
-              WHERE cum_qty <= 0
-              GROUP BY symbol
-          )
-          SELECT c.symbol, MIN(c.trade_date) as first_buy_date
-          FROM cum c
-          LEFT JOIN last_flat lf ON lf.symbol = c.symbol
-          WHERE c.side = 'buy' AND (lf.last_zero_date IS NULL OR c.trade_date > lf.last_zero_date)
-          GROUP BY c.symbol
-      )
-      SELECT 
-          p.symbol,
-          SUM(p.quantity) AS total_qty,
-          SUM(p.quantity * p.avg_cost) / NULLIF(SUM(p.quantity), 0) AS weighted_avg_cost,
-          COALESCE(
-              MAX(CASE WHEN si.ts IS NOT NULL AND sm.price_fetched_at IS NOT NULL AND sm.price_fetched_at > si.ts
-                       THEN sm.current_price
-                       ELSE COALESCE(si.ltp, sm.current_price)
-              END),
-              MAX(lp.current_price),
-              MAX(p.broker_ltp)
-          ) AS ltp,
-          COALESCE(
-              MAX(CASE WHEN si.ts IS NOT NULL AND sm.price_fetched_at IS NOT NULL AND sm.price_fetched_at > si.ts
-                       THEN sm.price_fetched_at::text
-                       ELSE COALESCE(si.ts::text, sm.price_fetched_at::text)
-              END),
-              MAX(sm.price_fetched_at)::text
-          ) AS price_fetched_at,
-          SUM(p.broker_cur_value) AS cur_val,
-          SUM(p.quantity * p.avg_cost) AS invested_val,
-          SUM(p.broker_cur_value) - SUM(p.quantity * p.avg_cost) AS pnl,
-          CASE WHEN SUM(p.quantity * p.avg_cost) > 0 
-               THEN ((SUM(p.broker_cur_value) - SUM(p.quantity * p.avg_cost)) / SUM(p.quantity * p.avg_cost)) * 100 
-               ELSE NULL END AS pnl_pct,
-          COALESCE(u.company_name, p.symbol) AS company_name,
-          COALESCE(mc.name, u.sector, 'Other') AS sector,
-          COALESCE(u.industry, 'General') AS industry,
-          u.market_cap_category,
-          c.name AS cluster_name,
-          COALESCE(pt.first_buy_date, MIN(p.first_seen_at)::date, MIN(p.imported_at)::date) AS purchase_date,
-          lp.composite_pct,
-          lp.quality_pct,
-          lp.valuation_pct,
-          lp.momentum_pct,
-          v.verdict,
-          v.confidence,
-          v.target_price,
-          v.fair_value,
-          v.buy_below,
-          v.bear_floor,
-          v.upside_pct,
-          v.valuation_method,
-          v.generated_at,
-          v.anchor_price
-      FROM app.portfolio_holding p
-      LEFT JOIN app.universe u ON u.symbol = p.symbol
-      LEFT JOIN app.cluster_assignment ca ON ca.symbol = p.symbol
-      LEFT JOIN app.cluster c ON c.id = ca.cluster_id
-      LEFT JOIN app.meta_cluster mc ON mc.id = c.meta_cluster_id
-      LEFT JOIN app.screener_meta sm ON sm.symbol = p.symbol
-      LEFT JOIN latest_panel lp ON lp.symbol = p.symbol
-      LEFT JOIN intraday_price si ON si.symbol = p.symbol
-      LEFT JOIN latest_verdict v ON v.symbol = p.symbol
-      LEFT JOIN active_buys pt ON pt.symbol = p.symbol
-      WHERE p.quantity > 0
-      GROUP BY p.symbol, u.company_name, mc.name, u.sector, u.industry, u.market_cap_category, c.name, pt.first_buy_date,
-               lp.composite_pct, lp.quality_pct, lp.valuation_pct, lp.momentum_pct,
-               v.verdict, v.confidence, v.target_price, v.fair_value, v.buy_below, v.bear_floor, v.upside_pct, v.valuation_method, v.generated_at, v.anchor_price
-      ORDER BY v.generated_at DESC NULLS LAST
-    `;
-
+    // 2. Portfolio Holdings with Action Sweeps & Dual Anchors (already fetched in parallel above)
     const portfolioActions: PortfolioActionCall[] = rawPortfolio.map((r) => {
       const isMutualFundOrEtf = !r.symbol || r.symbol === "MUTUAL_FUNDS_ETFS";
       const sym = isMutualFundOrEtf ? "MUTUAL_FUNDS_ETFS" : r.symbol;

@@ -410,7 +410,7 @@ export async function GET(req: NextRequest) {
     // watchlist size, then merged in Node.
     loadPersistenceForSymbols(symbols),
     // Fresh daily quote (LTP, 1D move, 52W high/low) from golden.
-    loadQuotes(symbols),
+    loadQuotes(symbols, lean),
     // Per-user cost-basis snapshot + note. Empty when signed out.
     session
       ? loadMeta(session.userId, symbols)
