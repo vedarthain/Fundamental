@@ -61,7 +61,14 @@ const LINKS: NavLink[] = [
     ],
   },
   { href: "/news",    label: "News"    },
-  { href: "/ideas",   label: "Ideas"   },
+  {
+    href: "/ideas",
+    label: "Ideas",
+    submenu: [
+      { href: "/ideas", label: "Trends", description: "Scored weekly ideas — compounders, breakouts, and value in clusters" },
+      { href: "/ideas?view=results", label: "Results Corner", description: "Declared quarterly results for NSE stocks sorted by date" },
+    ],
+  },
   {
     href: "/tools",
     label: "Tools",
@@ -443,9 +450,16 @@ function PopupSheet({
         <>
           <PopupLink
             href="/ideas"
-            label="Ideas"
-            sublabel="Auto-generated weekly stock ideas"
-            active={isActive(pathname, "/ideas")}
+            label="Ideas — Trends"
+            sublabel="Compounders, breakouts, and value"
+            active={pathname === "/ideas"}
+            onClose={onClose}
+          />
+          <PopupLink
+            href="/ideas?view=results"
+            label="Results Corner"
+            sublabel="Declared quarterly results for NSE stocks"
+            active={pathname === "/ideas"}
             onClose={onClose}
           />
           {(TOOLS_LINK.submenu ?? []).map((item) => (

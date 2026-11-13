@@ -32,7 +32,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { TrendingUp, Rocket, ChevronLeft, ChevronRight } from "lucide-react";
+import { TrendingUp, FileText, ChevronLeft, ChevronRight } from "lucide-react";
 
 export type NavItem = {
   key: string;
@@ -53,7 +53,7 @@ export type NavPill = { key: string; label: string; active: boolean; href: strin
  *  React element across the boundary. */
 const VIEW_ICON: Record<string, React.ReactNode> = {
   trends: <TrendingUp size={15} strokeWidth={2.2} />,
-  ipo: <Rocket size={15} strokeWidth={2.2} />,
+  results: <FileText size={15} strokeWidth={2.2} />,
 };
 
 export function IdeasNav({

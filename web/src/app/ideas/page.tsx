@@ -28,6 +28,7 @@ import { Sparkline, type SparkPoint } from "@/components/Sparkline";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { isIpoStatus } from "./IpoTracker";
 import { IdeasNav, type NavItem } from "./IdeasNav";
+import { ResultsCornerClient, type DeclaredResult } from "./ResultsCornerClient";
 
 // Score data changes weekly. 6h ISR cache avoids waking Neon on every visit.
 export const revalidate = 21600;
@@ -451,20 +452,21 @@ function ideasHref(
  * that can never light up is the honest shape of a link out.
  */
 function viewItems(sp: Record<string, string | undefined>): NavItem[] {
+  const isResults = sp.view === "results";
   return [
     {
       key: "trends",
       label: "Trends",
       sub: "Scored ideas",
-      active: true,
+      active: !isResults,
       href: ideasHref(sp, { view: null, ipo: null }),
     },
     {
-      key: "ipo",
-      label: "IPO tracker",
-      sub: "In Segments",
-      active: false,
-      href: "/ipo",
+      key: "results",
+      label: "Results Corner",
+      sub: "Declared results",
+      active: isResults,
+      href: ideasHref(sp, { view: "results", ipo: null }),
     },
   ];
 }
@@ -662,6 +664,123 @@ const cachedUpcomingEvents = unstable_cache(
   async (tier: IdxTier) => loadUpcomingEvents(tier),
   ["ideas:events:v3"],
   { revalidate: 3600, tags: ["events", "ideas"] },
+);
+
+async function loadDeclaredResults(tier: IdxTier): Promise<DeclaredResult[]> {
+  try {
+    return await sql<DeclaredResult[]>`
+      WITH ranked_quarters AS (
+        SELECT
+          symbol,
+          period_end,
+          sales,
+          expenses,
+          operating_profit,
+          profit_before_tax,
+          net_profit,
+          source_fetched_at,
+          ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY period_end DESC) AS rn
+        FROM app.fundamentals_quarterly
+        WHERE sales IS NOT NULL OR net_profit IS NOT NULL
+      ),
+      quarter_pairs AS (
+        SELECT
+          c.symbol,
+          c.period_end AS curr_period,
+          c.sales AS curr_sales,
+          c.operating_profit AS curr_op,
+          c.net_profit AS curr_np,
+          c.source_fetched_at AS curr_fetched_at,
+          y.period_end AS yago_period,
+          y.sales AS yago_sales,
+          y.operating_profit AS yago_op,
+          y.net_profit AS yago_np,
+          q.sales AS qoq_sales,
+          q.net_profit AS qoq_np
+        FROM ranked_quarters c
+        LEFT JOIN ranked_quarters y ON y.symbol = c.symbol AND y.rn = 5
+        LEFT JOIN ranked_quarters q ON q.symbol = c.symbol AND q.rn = 2
+        WHERE c.rn = 1
+      ),
+      latest_filings AS (
+        SELECT DISTINCT ON (a.symbol)
+          a.symbol,
+          a.title,
+          a.headline,
+          a.published_at,
+          a.pdf_url
+        FROM app.announcement a
+        JOIN quarter_pairs qp ON qp.symbol = a.symbol
+        WHERE (a.category = 'Result'
+           OR a.subcategory ILIKE '%result%'
+           OR a.subcategory ILIKE '%financial%'
+           OR a.title ILIKE '%financial result%'
+           OR a.title ILIKE '%outcome%board%result%')
+           AND a.published_at::date >= qp.curr_period
+        ORDER BY a.symbol, a.published_at DESC
+      )
+      SELECT
+        u.symbol,
+        COALESCE(u.company_name, u.symbol) AS company_name,
+        COALESCE(u.sector, 'General') AS sector,
+        COALESCE(u.industry, 'General') AS industry,
+        u.market_cap_category,
+        COALESCE(sm.current_price, 0)::float AS ltp,
+        COALESCE(sm.market_cap_cr, 0)::float AS market_cap_cr,
+        COALESCE(sm.change_p, 0)::float AS change_p,
+        sc.composite_pct,
+        sc.quality_pct,
+        sc.valuation_pct,
+        sc.momentum_pct,
+        qp.curr_period::text AS period_end,
+        qp.curr_sales::float,
+        qp.curr_op::float,
+        qp.curr_np::float,
+        qp.yago_sales::float,
+        qp.yago_np::float,
+        qp.qoq_sales::float,
+        qp.qoq_np::float,
+        CASE
+          WHEN qp.yago_sales IS NOT NULL AND qp.yago_sales > 0
+          THEN ROUND(((qp.curr_sales - qp.yago_sales) / qp.yago_sales * 100)::numeric, 1)::float
+          ELSE NULL
+        END AS sales_yoy,
+        CASE
+          WHEN qp.yago_np IS NOT NULL AND qp.yago_np > 0
+          THEN ROUND(((qp.curr_np - qp.yago_np) / qp.yago_np * 100)::numeric, 1)::float
+          WHEN qp.yago_np IS NOT NULL AND qp.yago_np < 0 AND qp.curr_np > 0
+          THEN 999.0
+          ELSE NULL
+        END AS np_yoy,
+        CASE
+          WHEN qp.curr_sales IS NOT NULL AND qp.curr_sales > 0
+          THEN ROUND(((qp.curr_op / qp.curr_sales) * 100)::numeric, 1)::float
+          ELSE NULL
+        END AS opm_pct,
+        lf.title AS filing_title,
+        lf.published_at::text AS published_at,
+        lf.pdf_url,
+        COALESCE(lf.published_at::date, qp.curr_fetched_at::date, qp.curr_period)::text AS declaration_date
+      FROM quarter_pairs qp
+      JOIN app.universe u ON u.symbol = qp.symbol AND u.is_active
+      LEFT JOIN app.screener_meta sm ON sm.symbol = qp.symbol
+      LEFT JOIN app.scores sc ON sc.symbol = qp.symbol AND sc.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
+      LEFT JOIN latest_filings lf ON lf.symbol = qp.symbol
+      WHERE (qp.curr_sales IS NOT NULL OR qp.curr_np IS NOT NULL)
+      ${idxCond("qp.symbol", tier)}
+      ORDER BY declaration_date DESC, lf.published_at DESC NULLS LAST, qp.curr_period DESC
+      LIMIT 800
+    `;
+  } catch (err) {
+    console.error("loadDeclaredResults error:", err);
+    return [];
+  }
+}
+
+const cachedDeclaredResults = unstable_cache(
+  async (tier: IdxTier) => loadDeclaredResults(tier),
+  ["ideas:results_corner:v2"],
+  { revalidate: 3600, tags: ["announcements", "ideas", "results"] },
 );
 
 // ---------------------------------------------------------------------------
@@ -882,7 +1001,33 @@ export default async function IdeasPage({
   // buckets, score movers, result winners and the calendar. Default = Nifty 50
   // (the highlighted pill): the cleanest, most recognizable slice. Opt wider via
   // ?idx=nifty100|nifty200|nifty500|all.
-  const idxTier: IdxTier = isIdxTier(sp.idx) ? sp.idx : "nifty50";
+  const idxTier: IdxTier = isIdxTier(sp.idx) ? sp.idx : (sp.view === "results" ? "nifty500" : "nifty50");
+
+  if (sp.view === "results") {
+    const results = await cachedDeclaredResults(idxTier);
+    const idxItems = IDX_TIERS.map((t) => ({
+      key: t.key,
+      label: t.label,
+      active: t.key === idxTier,
+      href: ideasHref(sp, { idx: t.key }),
+    }));
+
+    return (
+      <IdeasShell
+        nav={
+          <IdeasNav
+            views={viewItems(sp)}
+            contextLabel="Universe"
+            universe={idxItems}
+            groups={[]}
+          />
+        }
+      >
+        <ResultsCornerClient results={results} />
+      </IdeasShell>
+    );
+  }
+
   // Active tab — one bucket at a time. Defaults to "strength" so first load
   // shows the biggest positive-trend stocks.
   const activeTab: TabKey = isTabKey(sp.bucket) ? sp.bucket : "strength";
