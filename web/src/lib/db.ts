@@ -24,20 +24,39 @@ function makePool(connStr: string) {
   });
 }
 
-export const sql = (() => {
+function getAppPool(): ReturnType<typeof postgres> {
   if (!globalThis.__nse_app_pool) {
     const url = process.env.APP_DB_URL;
     if (!url) throw new Error("APP_DB_URL missing from environment (.env.local)");
     globalThis.__nse_app_pool = makePool(url);
   }
   return globalThis.__nse_app_pool;
-})();
+}
 
-export const golden = (() => {
+function getGoldenPool(): ReturnType<typeof postgres> {
   if (!globalThis.__nse_golden_pool) {
     const url = process.env.GOLDEN_DB_URL;
     if (!url) throw new Error("GOLDEN_DB_URL missing from environment (.env.local)");
     globalThis.__nse_golden_pool = makePool(url);
   }
   return globalThis.__nse_golden_pool;
-})();
+}
+
+export const sql: ReturnType<typeof postgres> = new Proxy((() => {}) as unknown as ReturnType<typeof postgres>, {
+  apply(_target, _thisArg, argArray) {
+    return Reflect.apply(getAppPool(), _thisArg, argArray);
+  },
+  get(_target, prop) {
+    return Reflect.get(getAppPool(), prop);
+  },
+});
+
+export const golden: ReturnType<typeof postgres> = new Proxy((() => {}) as unknown as ReturnType<typeof postgres>, {
+  apply(_target, _thisArg, argArray) {
+    return Reflect.apply(getGoldenPool(), _thisArg, argArray);
+  },
+  get(_target, prop) {
+    return Reflect.get(getGoldenPool(), prop);
+  },
+});
+

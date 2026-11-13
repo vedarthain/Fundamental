@@ -27,6 +27,10 @@ jobs:
           npm ci
 
       - name: Compile Next.js in Cloud
+        env:
+          APP_DB_URL: "postgresql://dummy:dummy@localhost:5432/app"
+          GOLDEN_DB_URL: "postgresql://dummy:dummy@localhost:5432/golden"
+          SESSION_SECRET: "dummy_session_secret_for_build_only_123456"
         run: |
           cd web
           npm run build
