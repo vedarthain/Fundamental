@@ -15,11 +15,12 @@ jobs:
         uses: appleboy/ssh-action@v1.0.3
         env:
           UPSTOX_ANALYTICS_TOKEN: ${{ secrets.UPSTOX_ANALYTICS_TOKEN }}
+          REVALIDATE_TOKEN: ${{ secrets.REVALIDATE_TOKEN }}
         with:
           host: ${{ secrets.DO_HOST }}
           username: root
           key: ${{ secrets.DO_SSH_KEY }}
-          envs: UPSTOX_ANALYTICS_TOKEN
+          envs: UPSTOX_ANALYTICS_TOKEN,REVALIDATE_TOKEN
           script: |
             cd /var/www/Fundamental
             git pull origin main
@@ -43,3 +44,5 @@ jobs:
             fi
             NODE_OPTIONS="--max-old-space-size=2048" npm run build
             pm2 restart equityroots --update-env
+            sleep 5
+            curl -s -X POST "http://localhost:3000/api/cron/intraday-equity?token=$REVALIDATE_TOKEN&force=1" || true

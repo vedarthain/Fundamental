@@ -51,7 +51,15 @@ function authOk(req: NextRequest): boolean {
   return timingSafeEqual(Buffer.from(given), Buffer.from(expected));
 }
 
+export async function GET(req: NextRequest) {
+  return handle(req);
+}
+
 export async function POST(req: NextRequest) {
+  return handle(req);
+}
+
+async function handle(req: NextRequest) {
   if (!authOk(req)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
@@ -59,7 +67,9 @@ export async function POST(req: NextRequest) {
   // Market-hours guard FIRST — before any DB access. Off-hours fires no-op
   // here so they never wake Neon (the biggest lever on compute-hours, since
   // the Launch plan's autosuspend can't go below 5 min).
-  if (!withinPingerWindow()) {
+  // `force=1` allows manual runs by admin off-hours (e.g. post-close EOD catchup).
+  const force = req.nextUrl.searchParams.get("force") === "1";
+  if (!force && !withinPingerWindow()) {
     return NextResponse.json({ ok: false, reason: "closed" });
   }
 
