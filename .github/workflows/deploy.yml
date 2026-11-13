@@ -26,6 +26,21 @@ jobs:
           cd web
           npm ci
 
+      - name: Generate version metadata
+        run: |
+          COMMIT_MSG=$(git log -1 --pretty=%B | head -n 1 | tr -d '"\n')
+          cat <<EOF > web/public/version.json
+          {
+            "commit": "${{ github.sha }}",
+            "commitShort": "${GITHUB_SHA:0:7}",
+            "commitMessage": "$COMMIT_MSG",
+            "branch": "${{ github.ref_name }}",
+            "builtAt": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+            "runId": "${{ github.run_id }}",
+            "runNumber": "${{ github.run_number }}"
+          }
+          EOF
+
       - name: Compile Next.js in Cloud
         env:
           APP_DB_URL: "postgresql://dummy:dummy@localhost:5432/app"
@@ -37,7 +52,7 @@ jobs:
 
       - name: Package .next artifact
         run: |
-          tar -czf next-build.tar.gz --exclude='.next/cache' --exclude='.next/dev' -C web .next
+          tar -czf next-build.tar.gz --exclude='.next/cache' --exclude='.next/dev' -C web .next public/version.json
 
       - name: Upload build archive to Droplet
         uses: appleboy/scp-action@v0.1.7
