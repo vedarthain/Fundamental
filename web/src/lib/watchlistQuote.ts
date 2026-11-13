@@ -99,22 +99,29 @@ export async function loadCloseAsOf(
   const asof: string[] = [];
   for (const p of clean) {
     const b = bare(p.symbol);
-    syms.push(`${b}.NS`, b);
-    asof.push(p.date, p.date);
+    syms.push(`${b}.NS`);
+    asof.push(p.date);
   }
   try {
     const rows = await golden<{ symbol: string; c: string; d: string }[]>`
-      SELECT DISTINCT ON (ph.symbol) ph.symbol,
-             COALESCE(ph.adj_close, ph.close)::text AS c,
-             ph.date::text AS d
-        FROM unnest(${syms}::text[], ${asof}::date[]) AS q(sym, asof)
-        JOIN golden.price_history ph
-          ON ph.symbol = q.sym AND ph.interval = '1d'
-         AND COALESCE(ph.adj_close, ph.close) IS NOT NULL
-         AND ph.date <= q.asof
-         AND ph.date >  q.asof - 30
-       ORDER BY ph.symbol, ph.date DESC
-    `;
+      WITH q AS (
+        SELECT DISTINCT sym, asof FROM unnest(${syms}::text[], ${asof}::date[]) AS u(sym, asof)
+      )
+      SELECT q.sym AS symbol, ph.c, ph.d
+        FROM q
+        CROSS JOIN LATERAL (
+          SELECT COALESCE(p.adj_close, p.close)::text AS c,
+                 p.date::text AS d
+            FROM golden.price_history_1d p
+           WHERE p.symbol = q.sym
+             AND p.interval = '1d'
+             AND COALESCE(p.adj_close, p.close) IS NOT NULL
+             AND p.date <= q.asof
+             AND p.date >  q.asof - 30
+           ORDER BY p.date DESC
+           LIMIT 1
+        ) ph
+    `.catch(() => [] as { symbol: string; c: string; d: string }[]);
     for (const r of rows) out.set(bare(r.symbol), { close: Number(r.c), date: r.d });
   } catch {
     // Non-fatal — unhealed rows simply keep their null close_on_add.

@@ -14,6 +14,7 @@
  */
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { unstable_cache } from "next/cache";
 import { sql } from "@/lib/db";
 import {
   ArrowUpRight, ArrowDownRight,
@@ -642,6 +643,27 @@ async function loadUpcomingEvents(tier: IdxTier): Promise<UpcomingEvent[]> {
   }
 }
 
+const CACHE_TAGS = ["ideas", "panel-cache"];
+const SIX_HOURS = 21600;
+
+const cachedIdeas = unstable_cache(
+  async (tier: IdxTier) => loadIdeas(tier),
+  ["ideas:data:v3"],
+  { revalidate: SIX_HOURS, tags: CACHE_TAGS },
+);
+
+const cachedResultWinners = unstable_cache(
+  async (tier: IdxTier) => loadResultWinners(tier),
+  ["ideas:winners:v3"],
+  { revalidate: SIX_HOURS, tags: CACHE_TAGS },
+);
+
+const cachedUpcomingEvents = unstable_cache(
+  async (tier: IdxTier) => loadUpcomingEvents(tier),
+  ["ideas:events:v3"],
+  { revalidate: 3600, tags: ["events", "ideas"] },
+);
+
 // ---------------------------------------------------------------------------
 // Section assignment
 // ---------------------------------------------------------------------------
@@ -873,9 +895,9 @@ export default async function IdeasPage({
   const calPage = Math.max(1, Number.parseInt(sp.cal ?? "1", 10) || 1);
 
   const [{ stocks, snapshots, windowBack }, resultWinners, upcoming] = await Promise.all([
-    loadIdeas(idxTier),
-    loadResultWinners(idxTier),
-    loadUpcomingEvents(idxTier),
+    cachedIdeas(idxTier),
+    cachedResultWinners(idxTier),
+    cachedUpcomingEvents(idxTier),
   ]);
 
   // Score movers — biggest composite shifts over the ~4-week comparison window
@@ -888,7 +910,7 @@ export default async function IdeasPage({
   // One extra query, and only when the selected tier yielded nothing.
   let moversTierLabel: string | null = null;
   if (movers.up.length + movers.down.length === 0 && (idxTier === "nifty50" || idxTier === "nifty100")) {
-    const fb = await loadIdeas("nifty200");
+    const fb = await cachedIdeas("nifty200");
     const fbMovers = buildScoreMovers(fb.stocks);
     if (fbMovers.up.length + fbMovers.down.length > 0) {
       movers = fbMovers;

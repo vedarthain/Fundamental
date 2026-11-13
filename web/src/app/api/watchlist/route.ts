@@ -403,7 +403,28 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  const [rows, snapshotDate, persistence, quotes, meta, glance, verdicts, scorecardKeys] = await Promise.all([
+  const sessionP = session
+    ? Promise.all([
+        heldFromList != null
+          ? Promise.resolve(heldFromList)
+          : loadPortfolioSymbols(session.userId).catch(() => [] as string[]),
+        sql<{ symbol: string; d: string; side: string; price: number; qty: number }[]>`
+          SELECT symbol,
+                 trade_date::text AS d,
+                 side,
+                 (SUM(price * quantity) / NULLIF(SUM(quantity), 0))::float8 AS price,
+                 SUM(quantity)::float8 AS qty
+            FROM app.portfolio_transaction
+           WHERE user_id = ${session.userId} AND symbol IS NOT NULL
+           GROUP BY symbol, trade_date, side
+           ORDER BY symbol, trade_date
+        `.catch(() => [] as { symbol: string; d: string; side: string; price: number; qty: number }[]),
+        loadHeldPositions(session.userId).catch(() => ({}) as Record<string, { qty: number; avgCost: number | null }>),
+        loadCurrentLegBuyDates(session.userId).catch(() => ({}) as Record<string, string>),
+      ])
+    : Promise.resolve(null);
+
+  const [rows, snapshotDate, persistence, quotes, meta, glance, verdicts, scorecardKeys, sessionData] = await Promise.all([
     loadRows(symbols),
     loadSnapshotDate(),
     // Multi-snapshot trend per symbol. Two cheap reads regardless of
@@ -421,6 +442,7 @@ export async function GET(req: NextRequest) {
     lean ? Promise.resolve(new Map<string, StockVerdict>()) : loadVerdicts(symbols),
     // Scorecard-driven fundamental rows — which metrics matter for this cluster.
     lean ? Promise.resolve(new Map<string, MetricKey[]>()) : loadScorecardKeys(symbols),
+    sessionP,
   ]);
 
   // Portfolio ownership for the "P" badge (signed-in only). heldSet = currently
@@ -434,34 +456,8 @@ export async function GET(req: NextRequest) {
   // earliest Buy date derived from them for the "Bought <date>" chip.
   const tradesBySym: Record<string, TradeMark[]> = {};
   const boughtOn = new Map<string, string>();
-  if (session) {
-    const [held, trades, pos, legBuys] = await Promise.all([
-      // Reuse the list already fetched during symbol resolution when available
-      // (the no-args signed-in path); the ?symbols= path fetches it fresh.
-      heldFromList != null
-        ? Promise.resolve(heldFromList)
-        : loadPortfolioSymbols(session.userId).catch(() => [] as string[]),
-      // Lightweight trade markers: one app-DB read, grouped by (symbol, day,
-      // side). Price is the raw executed avg — NOT split-reconciled — because the
-      // marker only needs to show WHEN a buy happened, not sit exactly on the
-      // adjusted candle. This deliberately avoids the golden reconciliation hops
-      // loadPortfolioTrades does, keeping the watchlist off the golden DB here.
-      sql<{ symbol: string; d: string; side: string; price: number; qty: number }[]>`
-        SELECT symbol,
-               trade_date::text AS d,
-               side,
-               (SUM(price * quantity) / NULLIF(SUM(quantity), 0))::float8 AS price,
-               SUM(quantity)::float8 AS qty
-          FROM app.portfolio_transaction
-         WHERE user_id = ${session.userId} AND symbol IS NOT NULL
-         GROUP BY symbol, trade_date, side
-         ORDER BY symbol, trade_date
-      `.catch(() => [] as { symbol: string; d: string; side: string; price: number; qty: number }[]),
-      loadHeldPositions(session.userId).catch(() => ({}) as Record<string, { qty: number; avgCost: number | null }>),
-      // First buy of the CURRENT leg — shared with the portfolio rather than
-      // re-derived here. See the bug note on currentLegBuyDateRows.
-      loadCurrentLegBuyDates(session.userId).catch(() => ({}) as Record<string, string>),
-    ]);
+  if (session && sessionData) {
+    const [held, trades, pos, legBuys] = sessionData;
     heldSet = new Set(held.map((s) => s.toUpperCase()));
     positions = pos;
     // From the raw trade log we take only two cheap facts: the traded set (drives
@@ -530,33 +526,32 @@ export async function GET(req: NextRequest) {
       .filter(([, m]) => m.close_on_add == null && m.added_at)
       .map(([symbol, m]) => ({ symbol, date: (m.added_at as string).slice(0, 10) }));
     if (needsHeal.length > 0) {
-      const healed = await loadCloseAsOf(needsHeal);
-      const upSyms: string[] = [];
-      const upCloses: number[] = [];
-      const upDates: string[] = [];
-      for (const { symbol } of needsHeal) {
-        const h = healed.get(symbol);
-        if (!h) continue;
-        const m = meta.get(symbol);
-        if (!m) continue;
-        m.close_on_add = h.close;        // patch the in-memory map for this response
-        m.close_on_add_date = h.date;
-        upSyms.push(symbol);
-        upCloses.push(h.close);
-        upDates.push(h.date);
-      }
-      if (upSyms.length > 0) {
-        // Persist so the heal is one-time, not recomputed on every load. Guard
-        // on IS NULL so a concurrent legit snapshot is never overwritten.
-        await sql`
-          UPDATE app.user_watchlist AS w
-             SET close_on_add = v.cl, close_on_add_date = v.dt
-            FROM unnest(${upSyms}::text[], ${upCloses}::numeric[], ${upDates}::date[])
-                 AS v(sym, cl, dt)
-           WHERE w.user_id = ${session.userId} AND w.symbol = v.sym
-             AND w.close_on_add IS NULL
-        `.catch(() => {});
-      }
+      // Self-heal asynchronously in background so it never blocks the watchlist load response
+      void (async () => {
+        try {
+          const healed = await loadCloseAsOf(needsHeal);
+          const upSyms: string[] = [];
+          const upCloses: number[] = [];
+          const upDates: string[] = [];
+          for (const { symbol } of needsHeal) {
+            const h = healed.get(symbol);
+            if (!h) continue;
+            upSyms.push(symbol);
+            upCloses.push(h.close);
+            upDates.push(h.date);
+          }
+          if (upSyms.length > 0) {
+            await sql`
+              UPDATE app.user_watchlist AS w
+                 SET close_on_add = v.cl, close_on_add_date = v.dt
+                FROM unnest(${upSyms}::text[], ${upCloses}::numeric[], ${upDates}::date[])
+                     AS v(sym, cl, dt)
+               WHERE w.user_id = ${session.userId} AND w.symbol = v.sym
+                 AND w.close_on_add IS NULL
+            `.catch(() => {});
+          }
+        } catch {}
+      })();
     }
   }
 
