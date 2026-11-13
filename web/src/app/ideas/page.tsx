@@ -28,7 +28,7 @@ import { Sparkline, type SparkPoint } from "@/components/Sparkline";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { isIpoStatus } from "./IpoTracker";
 import { IdeasNav, type NavItem } from "./IdeasNav";
-import { ResultsCornerClient, type DeclaredResult } from "./ResultsCornerClient";
+import { ResultsCornerClient, type DeclaredResult, type ResultsCalendarEvent } from "./ResultsCornerClient";
 
 // Score data changes weekly. 6h ISR cache avoids waking Neon on every visit.
 export const revalidate = 21600;
@@ -727,7 +727,6 @@ async function loadDeclaredResults(tier: IdxTier): Promise<DeclaredResult[]> {
         u.market_cap_category,
         COALESCE(sm.current_price, 0)::float AS ltp,
         COALESCE(sm.market_cap_cr, 0)::float AS market_cap_cr,
-        COALESCE(sm.change_p, 0)::float AS change_p,
         sc.composite_pct,
         sc.quality_pct,
         sc.valuation_pct,
@@ -779,8 +778,119 @@ async function loadDeclaredResults(tier: IdxTier): Promise<DeclaredResult[]> {
 
 const cachedDeclaredResults = unstable_cache(
   async (tier: IdxTier) => loadDeclaredResults(tier),
-  ["ideas:results_corner:v2"],
+  ["ideas:results_corner:v3"],
   { revalidate: 3600, tags: ["announcements", "ideas", "results"] },
+);
+
+async function loadResultsCalendar(tier: IdxTier): Promise<ResultsCalendarEvent[]> {
+  try {
+    return await sql<ResultsCalendarEvent[]>`
+      WITH raw_meetings AS (
+        -- 1. From app.corporate_action (board_meeting)
+        SELECT 
+          ca.symbol,
+          ca.ex_date AS meeting_date,
+          ca.purpose AS agenda,
+          NULL::text AS pdf_url,
+          ca.fetched_at AS intimation_date
+        FROM app.corporate_action ca
+        WHERE ca.action_type = 'board_meeting'
+          AND ca.ex_date IS NOT NULL
+
+        UNION ALL
+
+        -- 2. From app.announcement (SEBI Regulation 29 intimations)
+        SELECT 
+          a.symbol,
+          to_date(substring(a.headline from 'scheduled (?:on|to be held on) ([0-9]{1,2}/[0-9]{1,2}/[0-9]{4})'), 'DD/MM/YYYY') AS meeting_date,
+          COALESCE(NULLIF(a.title, ''), 'Board Meeting to consider Financial Results') AS agenda,
+          a.pdf_url,
+          a.published_at AS intimation_date
+        FROM app.announcement a
+        WHERE (a.category = 'Board Meeting' OR a.title ILIKE '%board meeting%')
+          AND a.headline ILIKE '%scheduled%'
+          AND substring(a.headline from 'scheduled (?:on|to be held on) ([0-9]{1,2}/[0-9]{1,2}/[0-9]{4})') IS NOT NULL
+      ),
+      deduped_meetings AS (
+        SELECT DISTINCT ON (symbol, meeting_date)
+          symbol,
+          meeting_date,
+          agenda,
+          pdf_url,
+          intimation_date
+        FROM raw_meetings
+        WHERE meeting_date IS NOT NULL
+        ORDER BY symbol, meeting_date, (pdf_url IS NOT NULL) DESC, intimation_date DESC
+      ),
+      ranked_q AS (
+        SELECT 
+          symbol,
+          period_end,
+          sales,
+          operating_profit,
+          net_profit,
+          ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY period_end DESC) as rn
+        FROM app.fundamentals_quarterly
+        WHERE sales IS NOT NULL OR net_profit IS NOT NULL
+      ),
+      q_pairs AS (
+        SELECT 
+          c.symbol,
+          c.period_end as last_period,
+          c.sales as last_sales,
+          c.operating_profit as last_op,
+          c.net_profit as last_np,
+          ROUND(((c.sales - y.sales) / NULLIF(y.sales, 0) * 100)::numeric, 1)::float as sales_yoy,
+          ROUND(((c.net_profit - y.net_profit) / NULLIF(ABS(y.net_profit), 0) * 100)::numeric, 1)::float as np_yoy,
+          ROUND(((c.operating_profit / NULLIF(c.sales, 0)) * 100)::numeric, 1)::float as opm_pct
+        FROM ranked_q c
+        LEFT JOIN ranked_q y ON y.symbol = c.symbol AND y.rn = 5
+        WHERE c.rn = 1
+      )
+      SELECT 
+        dm.symbol,
+        u.company_name,
+        COALESCE(u.sector, 'General') AS sector,
+        COALESCE(u.industry, 'General') AS industry,
+        u.market_cap_category,
+        dm.meeting_date::text,
+        dm.agenda,
+        dm.pdf_url,
+        COALESCE(sm.current_price, 0)::float as ltp,
+        COALESCE(sm.market_cap_cr, 0)::float as market_cap_cr,
+        sc.composite_pct,
+        sc.quality_pct,
+        sc.valuation_pct,
+        sc.momentum_pct,
+        ms.pe_ttm::float as pe,
+        qp.last_period::text,
+        qp.last_sales::float as last_sales,
+        qp.last_np::float as last_np,
+        qp.sales_yoy,
+        qp.np_yoy,
+        qp.opm_pct
+      FROM deduped_meetings dm
+      JOIN app.universe u ON u.symbol = dm.symbol AND u.is_active
+      LEFT JOIN app.screener_meta sm ON sm.symbol = dm.symbol
+      LEFT JOIN app.scores_latest sc ON sc.symbol = dm.symbol
+      LEFT JOIN app.metrics_snapshot ms ON ms.symbol = dm.symbol AND ms.snapshot_date = (SELECT MAX(snapshot_date) FROM app.metrics_snapshot)
+      LEFT JOIN q_pairs qp ON qp.symbol = dm.symbol
+      WHERE dm.meeting_date >= CURRENT_DATE - INTERVAL '60 days'
+        AND dm.meeting_date <= CURRENT_DATE + INTERVAL '60 days'
+      ${idxCond("dm.symbol", tier)}
+      ORDER BY dm.meeting_date DESC
+      LIMIT 1000
+    `;
+  } catch (err) {
+    console.error("loadResultsCalendar error:", err);
+    return [];
+  }
+}
+
+const cachedResultsCalendar = unstable_cache(
+  async (tier: IdxTier) => loadResultsCalendar(tier),
+  ["ideas:results_calendar:v1"],
+  { revalidate: 3600, tags: ["announcements", "ideas", "calendar", "results"] },
 );
 
 // ---------------------------------------------------------------------------
@@ -1004,7 +1114,10 @@ export default async function IdeasPage({
   const idxTier: IdxTier = isIdxTier(sp.idx) ? sp.idx : (sp.view === "results" ? "nifty500" : "nifty50");
 
   if (sp.view === "results") {
-    const results = await cachedDeclaredResults(idxTier);
+    const [calendarEvents, declaredResults] = await Promise.all([
+      cachedResultsCalendar(idxTier),
+      cachedDeclaredResults(idxTier),
+    ]);
     const idxItems = IDX_TIERS.map((t) => ({
       key: t.key,
       label: t.label,
@@ -1023,7 +1136,10 @@ export default async function IdeasPage({
           />
         }
       >
-        <ResultsCornerClient results={results} />
+        <ResultsCornerClient
+          calendarEvents={calendarEvents}
+          declaredResults={declaredResults}
+        />
       </IdeasShell>
     );
   }
