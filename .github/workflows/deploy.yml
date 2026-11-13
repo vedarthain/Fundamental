@@ -118,6 +118,16 @@ jobs:
             # Reload Next.js with zero downtime / fast PM2 reload
             pm2 restart equityroots --update-env
 
+            # Ensure PM2 log rotation is active (10MB max size, 7 retained files, gzip compression)
+            if ! pm2 list | grep -q "pm2-logrotate"; then
+              echo "Installing and configuring pm2-logrotate..."
+              pm2 install pm2-logrotate || true
+              pm2 set pm2-logrotate:max_size 10M || true
+              pm2 set pm2-logrotate:retain 7 || true
+              pm2 set pm2-logrotate:compress true || true
+              pm2 save || true
+            fi
+
             # Allow 5s for PM2 to boot, then warm up / refresh price cache
             sleep 5
             curl -s -X POST "http://localhost:3000/api/cron/intraday-equity?token=$REVALIDATE_TOKEN&force=1" || true

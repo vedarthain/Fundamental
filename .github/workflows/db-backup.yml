@@ -1,0 +1,89 @@
+# Daily PostgreSQL Database Backup Workflow
+# Dumps fundamental_app and golden_db over the private DigitalOcean VPC,
+# compresses them with gzip, and enforces a 7-day rolling retention.
+
+name: Daily Database Backup
+
+on:
+  schedule:
+    # Daily at 02:00 UTC = 07:30 IST (before market open)
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      retention_days:
+        description: 'Number of days to retain backups'
+        required: false
+        default: '7'
+
+concurrency:
+  group: db-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Run Database Backup on Droplet
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: root
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            set -e
+            cd /var/www/Fundamental
+
+            # Ensure postgresql-client (pg_dump) is available
+            if ! command -v pg_dump >/dev/null 2>&1; then
+              echo "Installing postgresql-client..."
+              apt-get update -qq && apt-get install -y -qq postgresql-client
+            fi
+
+            # Load database connection strings from droplet env files
+            for env_path in web/.env.production web/.env.local web/.env .env.production .env.local .env; do
+              if [ -f "$env_path" ] && grep -q "APP_DB_URL" "$env_path"; then
+                set -a
+                # shellcheck disable=SC1090
+                . "$env_path"
+                set +a
+                break
+              fi
+            done
+
+            if [ -z "$APP_DB_URL" ]; then
+              echo "Error: APP_DB_URL not found in environment files."
+              exit 1
+            fi
+
+            BACKUP_DIR="/var/backups/postgres"
+            mkdir -p "$BACKUP_DIR"
+            TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+            RETENTION="${{ github.event.inputs.retention_days || '7' }}"
+
+            echo "=== Starting database backup: $TIMESTAMP ==="
+
+            # 1. Backup fundamental_app
+            APP_BACKUP="${BACKUP_DIR}/fundamental_app_${TIMESTAMP}.sql.gz"
+            echo "Dumping fundamental_app -> $APP_BACKUP..."
+            pg_dump "$APP_DB_URL" --no-owner --no-acl | gzip -9 > "$APP_BACKUP"
+            echo "✓ fundamental_app dump completed: $(du -h "$APP_BACKUP" | cut -f1)"
+
+            # 2. Backup golden_db (if configured)
+            if [ -n "$GOLDEN_DB_URL" ]; then
+              GOLDEN_BACKUP="${BACKUP_DIR}/golden_db_${TIMESTAMP}.sql.gz"
+              echo "Dumping golden_db -> $GOLDEN_BACKUP..."
+              pg_dump "$GOLDEN_DB_URL" --no-owner --no-acl | gzip -9 > "$GOLDEN_BACKUP"
+              echo "✓ golden_db dump completed: $(du -h "$GOLDEN_BACKUP" | cut -f1)"
+            fi
+
+            # 3. Clean up backups older than retention days
+            echo "=== Pruning backups older than $RETENTION days ==="
+            find "$BACKUP_DIR" -type f -name "*.sql.gz" -mtime +"$RETENTION" -exec echo "Removing stale backup: {}" \; -delete
+
+            # 4. Show backup inventory and disk space
+            echo "=== Current Backups ==="
+            ls -lh "$BACKUP_DIR"
+            echo "=== Droplet Disk Usage ==="
+            df -h /
+            echo "Database backup completed successfully."
