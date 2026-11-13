@@ -13,13 +13,33 @@ jobs:
     steps:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          UPSTOX_ANALYTICS_TOKEN: ${{ secrets.UPSTOX_ANALYTICS_TOKEN }}
         with:
           host: ${{ secrets.DO_HOST }}
           username: root
           key: ${{ secrets.DO_SSH_KEY }}
+          envs: UPSTOX_ANALYTICS_TOKEN
           script: |
             cd /var/www/Fundamental
             git pull origin main
             cd web
+            if [ -n "$UPSTOX_ANALYTICS_TOKEN" ]; then
+              touch .env.production
+              if grep -q "^UPSTOX_ANALYTICS_TOKEN=" .env.production; then
+                sed -i "s|^UPSTOX_ANALYTICS_TOKEN=.*|UPSTOX_ANALYTICS_TOKEN=$UPSTOX_ANALYTICS_TOKEN|" .env.production
+              else
+                echo "UPSTOX_ANALYTICS_TOKEN=$UPSTOX_ANALYTICS_TOKEN" >> .env.production
+              fi
+              for env_file in .env.local .env; do
+                if [ -f "$env_file" ]; then
+                  if grep -q "^UPSTOX_ANALYTICS_TOKEN=" "$env_file"; then
+                    sed -i "s|^UPSTOX_ANALYTICS_TOKEN=.*|UPSTOX_ANALYTICS_TOKEN=$UPSTOX_ANALYTICS_TOKEN|" "$env_file"
+                  else
+                    echo "UPSTOX_ANALYTICS_TOKEN=$UPSTOX_ANALYTICS_TOKEN" >> "$env_file"
+                  fi
+                fi
+              done
+            fi
             NODE_OPTIONS="--max-old-space-size=2048" npm run build
             pm2 restart equityroots --update-env
