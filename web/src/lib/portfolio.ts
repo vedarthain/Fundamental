@@ -750,12 +750,18 @@ function makeReconciler() {
       WITH pairs AS (
         SELECT DISTINCT ns_sym, td FROM unnest(${ns}::text[], ${ds}::date[]) AS u(ns_sym, td)
       )
-      SELECT DISTINCT ON (p.ns_sym, p.td)
-             p.ns_sym AS ns, p.td::text AS td, ph.close::float8 AS close
+      SELECT p.ns_sym AS ns, p.td::text AS td, ph.close::float8 AS close
         FROM pairs p
-        JOIN golden.price_history ph
-          ON ph.symbol = p.ns_sym AND ph.interval = '1d' AND ph.date <= p.td
-       ORDER BY p.ns_sym, p.td, ph.date DESC
+        CROSS JOIN LATERAL (
+          SELECT ph.close
+            FROM golden.price_history ph
+           WHERE ph.symbol = p.ns_sym
+             AND ph.interval = '1d'
+             AND ph.date <= p.td
+             AND ph.date >= (p.td - 30)
+           ORDER BY ph.date DESC
+           LIMIT 1
+        ) ph
     `.catch(() => [] as { ns: string; td: string; close: number }[]);
     for (const r of found) {
       const bare = r.ns.replace(/\.NS$/, "").toUpperCase();
@@ -831,20 +837,26 @@ export async function loadSnapshotDerivedBuys(
   const nsSyms = snapOnly.map((s) => `${s.symbol.toUpperCase()}.NS`);
   const targets = snapOnly.map((s) => snapAdj(s));
   const imps = snapOnly.map((s) => s.imp);
-  // One batched golden query: DISTINCT ON picks, per symbol, the on/before-import
+  // One batched golden query: LATERAL picks, per symbol, the on/before-import
   // bar whose adjusted close is closest to the avg cost paid.
   const hits = await golden<{ symbol: string; d: string }[]>`
     WITH t AS (
-      SELECT unnest(${nsSyms}::text[])   AS ns_sym,
+      SELECT unnest(${nsSyms}::text[])    AS ns_sym,
              unnest(${targets}::float8[]) AS target,
              unnest(${imps}::date[])      AS imp
     )
-    SELECT DISTINCT ON (t.ns_sym) t.ns_sym AS symbol, ph.date::text AS d
+    SELECT t.ns_sym AS symbol, ph.d
       FROM t
-      JOIN golden.price_history_1d ph
-        ON ph.symbol = t.ns_sym AND ph.interval = '1d'
-     WHERE ph.date <= t.imp AND ph.adj_close IS NOT NULL
-     ORDER BY t.ns_sym, abs(ph.adj_close - t.target) ASC
+      CROSS JOIN LATERAL (
+        SELECT ph.date::text AS d
+          FROM golden.price_history_1d ph
+         WHERE ph.symbol = t.ns_sym
+           AND ph.interval = '1d'
+           AND ph.date <= t.imp
+           AND ph.adj_close IS NOT NULL
+         ORDER BY abs(ph.adj_close - t.target) ASC
+         LIMIT 1
+      ) ph
   `.catch(() => [] as { symbol: string; d: string }[]);
   const dateByNs = new Map(hits.map((h) => [h.symbol, h.d]));
   const out: Record<string, TradeMark[]> = {};
