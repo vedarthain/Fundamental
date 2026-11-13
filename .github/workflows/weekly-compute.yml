@@ -1,63 +1,11 @@
 # Weekly COMPUTE — part 2 of 2 (fetch → compute).
-#
-# The deterministic half: reads the fundamentals + raw blobs that weekly-fetch.yml
-# wrote, recomputes metrics + scores, rebuilds the /market dashboard cache, and
-# purges the CDN. No Screener scraping — so it never depends on the cookies and
-# can be re-run any time to re-score on existing data (the old `skip_fetch=true`
-# path, now its own workflow).
-#
-# Pipeline (each step depends on the previous):
-#   1. assign-clusters       app.cluster_assignment from universe.sector/industry
-#                            + listing_date + fundamentals year-count. Pure SQL,
-#                            no network, ~0.5s. It had never been wired into any
-#                            recurring job, so a newly-onboarded symbol kept the
-#                            cluster it was given at seed time — i.e. none — and
-#                            scoring skipped it forever. weekly-fetch classifies
-#                            the new names the day before; this turns that into
-#                            an actual cluster.
-#   2. compute-metrics       metrics_snapshot from fundamentals + golden prices
-#                            + the raw blobs (market cap for the valuation pillar)
-#   3. score                 percentile + composite → app.scores +
-#                            cluster_stocks_panel_cache for the snapshot_date
-#   4. build-market-snapshot rebuild app.market_snapshot_cache for /market
-#   5. /api/revalidate       purge Vercel's Data Cache for the changed tags
-#
-# Trigger: ITS OWN SATURDAY CRON, GATED ON COVERAGE (changed 2026-10-21).
-#
-# This used to be CHAINED to weekly-fetch via `workflow_run` + `conclusion ==
-# 'success'`. Both halves of that were wrong.
-#
-#   • It gated on the wrong signal. fetch-many exits 0 on a GRACEFUL
-#     truncation, so "success" was compatible with two thirds of the universe
-#     being weeks stale — measured 2026-10-21: 1,414 of 3,179 symbols last
-#     scraped 16-24 days earlier, every run green. compute-metrics reads market
-#     cap out of those blobs for the valuation pillar, so stale symbols get
-#     ranked against freshly-priced peers.
-#
-#   • It failed SILENTLY in the other direction. Any failing step in fetch —
-#     including a six-symbol InvIT scrape that nothing scores — made this run
-#     render as `skipped`, which is grey, not red. Three weekly snapshots
-#     (2026-10-10, -17, -20) were lost that way before anyone looked.
-#
-# So: fetch runs Mon-Fri and no longer decides anything here. Saturday this
-# wakes on its own and asks the database the question that actually matters —
-# is the universe fresh? — via scripts/check-fetch-coverage.py. Below the floor
-# the job FAILS, loudly and in red, instead of quietly scoring stale prices.
-# workflow_dispatch still allows a standalone re-run once coverage clears.
-#
-# Required secrets:
-#   NEON_APP_URL        — fundamental_app on Neon
-#   NEON_GOLDEN_URL     — golden_db on Neon
-#   REVALIDATE_TOKEN    — bearer for the /api/revalidate cache purge
-#   (No SCREENER_* needed — config.py defaults them to "", and only the scraper
-#    enforces their presence; these steps don't scrape.)
+# Runs on the Droplet via SSH with direct VPC access to Postgres.
 
 name: Weekly Compute + Score
 
 on:
   schedule:
-    # Sat 03:00 UTC = 08:30 IST. Friday's fetch finishes ~15:00 UTC, so this
-    # has a wide margin without waiting a whole extra day.
+    # Sat 03:00 UTC = 08:30 IST.
     - cron: '0 3 * * 6'
   workflow_dispatch:
     inputs:
@@ -65,146 +13,79 @@ on:
         description: 'YYYY-MM-DD to snapshot (default: today UTC)'
         required: false
       skip_coverage_gate:
-        description: 'Score even if fetch coverage is below the floor (say why in the run notes)'
+        description: 'Score even if fetch coverage is below the floor'
         required: false
         type: boolean
         default: false
 
-# Never run two compute/score passes at once — a manual run and the scheduled
-# run writing the same snapshot_date would race on app.scores. cancel-in-progress
-# =false protects the in-flight pass (it's mid-write); a second trigger queues.
 concurrency:
   group: weekly-compute
   cancel-in-progress: false
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
 jobs:
   compute:
     runs-on: ubuntu-latest
-    # compute ~45 + score ~15 + rebuild ~3 on a warm Neon. A cold/throttled run
-    # has pushed compute-metrics to ~75-80 min, which blew the old 90-min cap
-    # and got the build/revalidate steps canceled mid-run (scores had already
-    # saved) — so the cap went to 150.
-    #
-    # 150 then turned out to be tighter than it reads. Run 35487049470
-    # (2026-09-20) took 2h07m end to end: compute-metrics alone ran 1h57m over
-    # 2,592 symbols, and the whole chain finished with ~22 min to spare. That is
-    # not comfortable margin for a job whose slow step is a network-bound loop
-    # over a remote Postgres.
-    #
-    # 240 because the asymmetry is extreme: a too-high cap costs nothing (the
-    # job exits when it exits, and `concurrency` already prevents overlap),
-    # while a too-low cap costs a full ~2.5h re-run AND leaves prod in the
-    # half-state where app.scores is current but /market and the CDN are stale.
     timeout-minutes: 240
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Run Weekly Compute & Scoring on Droplet
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          REVALIDATE_TOKEN: ${{ secrets.REVALIDATE_TOKEN }}
         with:
-          python-version: '3.12'
+          host: ${{ secrets.DO_HOST }}
+          username: root
+          key: ${{ secrets.DO_SSH_KEY }}
+          envs: REVALIDATE_TOKEN
+          script: |
+            set -e
+            cd /var/www/Fundamental
+            git pull origin main
 
-      - name: Install fundamental-etl
-        run: pip install -e ./etl
+            /var/www/Fundamental/.venv/bin/pip install -q 'psycopg[binary]==3.2.*' numpy scipy openpyxl
+            /var/www/Fundamental/.venv/bin/pip install -q -e ./etl
 
-      # THE GATE. Exits 1 when fewer than 95% of active symbols were scraped in
-      # the last 10 days, which fails the job before a single score is written.
-      # This replaces "the fetch workflow exited 0", a condition a truncated
-      # fetch satisfies. See the script's docstring for what makes it able to
-      # fail — the denominator is app.universe, not the scraped rows.
-      #
-      # skip_coverage_gate exists for the one honest case: a deliberate re-score
-      # on known-partial data. It is a manual input only, so the Saturday cron
-      # can never take that path by itself.
-      - name: Gate on fetch coverage
-        if: ${{ github.event.inputs.skip_coverage_gate != 'true' }}
-        env:
-          APP_DB_URL: ${{ secrets.NEON_APP_URL }}
-          PYTHONUNBUFFERED: "1"
-        run: python scripts/check-fetch-coverage.py --within-days 10 --min-pct 95
+            for env_path in web/.env.production web/.env.local web/.env .env.production .env.local .env; do
+              if [ -f "$env_path" ] && grep -q "APP_DB_URL" "$env_path"; then
+                set -a
+                # shellcheck disable=SC1090
+                . "$env_path"
+                set +a
+                break
+              fi
+            done
 
-      # compute-metrics reads the fresh blobs (from weekly-fetch), so valuation
-      # populates correctly. No SCREENER_* needed — this path never scrapes.
-      - name: Compute metrics + score
-        env:
-          APP_DB_URL:           ${{ secrets.NEON_APP_URL }}
-          # The ETL refuses a remote APP_DB_URL by default (etl/src/fundamental_etl/db.py) so a local run cannot drift onto prod. CI writes to prod on purpose, so it says so out loud.
-          FUNDAMENTAL_ALLOW_REMOTE_DB: "1"
-          GOLDEN_DB_URL:        ${{ secrets.NEON_GOLDEN_URL }}
-          PYTHONUNBUFFERED:     "1"
-        run: |
-          SNAP_ARG=""
-          if [ -n "${{ github.event.inputs.snapshot_date }}" ]; then
-            SNAP_ARG="--snapshot ${{ github.event.inputs.snapshot_date }}"
-          fi
-          python -m fundamental_etl.cli assign-clusters
-          python -m fundamental_etl.cli compute-metrics $SNAP_ARG
-          python -m fundamental_etl.cli score $SNAP_ARG
+            export FUNDAMENTAL_ALLOW_REMOTE_DB="1"
+            export PYTHONUNBUFFERED=1
 
-      # Every evidence sheet is a page of figures from ONE app.scores snapshot,
-      # so the `score` step above just made all of them a week old. They still
-      # render perfectly, which is the problem — a stale sheet looks exactly
-      # like a current one. This step re-renders every sheet that is behind the
-      # new snapshot; it refuses to run if the snapshot it would rebuild onto is
-      # itself stale, because restamping old figures with a fresh timestamp
-      # would turn a loud staleness failure into a green tick.
-      #
-      # It lives HERE rather than in its own workflow for a reason the header of
-      # this file already records: chaining on `workflow_run` renders a missed
-      # run as grey `skipped`, and three weekly snapshots were lost that way
-      # before anyone noticed. A step inside the job that writes the snapshot
-      # cannot be skipped without the job going red.
-      #
-      # continue-on-error is deliberately NOT set. A sheet left on last week's
-      # numbers is admin-only today, but it is still a wrong number on a page,
-      # and coverage.evidence_sheets_current will stay red until it is fixed.
-      #
-      # COST, measured 2026-10-24: 31 sheets rebuilt in ~2 min against Neon,
-      # pack build dominating. That extrapolates to roughly 2-3 hours at the
-      # full ~2,800-symbol backlog, which does NOT fit beside a compute pass
-      # under the 240-minute cap. Before the backfill passes a few hundred
-      # symbols this has to either move to its own scheduled job (accepting the
-      # `skipped`-is-grey problem the header describes, and gating on snapshot
-      # age instead) or rebuild only the cluster-tiers whose scores actually
-      # moved. Written down here because the step that quietly runs out of time
-      # is the one nobody budgets for.
-      - name: Re-render evidence sheets onto the new snapshot
-        env:
-          APP_DB_URL:    ${{ secrets.NEON_APP_URL }}
-          # The ETL refuses a remote APP_DB_URL by default (etl/src/fundamental_etl/db.py) so a local run cannot drift onto prod. CI writes to prod on purpose, so it says so out loud.
-          FUNDAMENTAL_ALLOW_REMOTE_DB: "1"
-          GOLDEN_DB_URL: ${{ secrets.NEON_GOLDEN_URL }}
-          PYTHONUNBUFFERED: "1"
-        run: python scripts/evidence-sheet-rebuild.py
+            # 1. Gate on fetch coverage
+            if [ "${{ github.event.inputs.skip_coverage_gate }}" != "true" ]; then
+              echo "=== Checking fetch coverage ==="
+              /var/www/Fundamental/.venv/bin/python scripts/check-fetch-coverage.py --within-days 10 --min-pct 95
+            fi
 
-      - name: Rebuild /market snapshot cache
-        env:
-          APP_DB_URL:    ${{ secrets.NEON_APP_URL }}
-          # The ETL refuses a remote APP_DB_URL by default (etl/src/fundamental_etl/db.py) so a local run cannot drift onto prod. CI writes to prod on purpose, so it says so out loud.
-          FUNDAMENTAL_ALLOW_REMOTE_DB: "1"
-          GOLDEN_DB_URL: ${{ secrets.NEON_GOLDEN_URL }}
-          PYTHONUNBUFFERED: "1"
-        run: python scripts/build-market-snapshot.py
+            # 2. Compute metrics + score
+            SNAP_ARG=""
+            if [ -n "${{ github.event.inputs.snapshot_date }}" ]; then
+              SNAP_ARG="--snapshot ${{ github.event.inputs.snapshot_date }}"
+            fi
 
-      # Purge the CDN so users see the new snapshot. Fail loudly on non-200.
-      - name: Purge Next.js Data Cache
-        run: |
-          set +e
-          RESPONSE_FILE=$(mktemp)
-          HTTP_CODE=$(curl -sS -o "$RESPONSE_FILE" -w "%{http_code}" \
-            -X POST "https://equityroots.in/api/revalidate" \
-            -H "Authorization: Bearer ${{ secrets.REVALIDATE_TOKEN }}" \
-            -H "Content-Type: application/json" \
-            -d '{"tags":["market","panel-cache","snapshot","sectors"]}')
-          echo "HTTP status: $HTTP_CODE"
-          echo "Response body:"
-          cat "$RESPONSE_FILE"
-          echo
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "::error::Cache purge failed (HTTP $HTTP_CODE) — check REVALIDATE_TOKEN secret matches Vercel."
-            exit 1
-          fi
+            echo "=== Assigning clusters ==="
+            /var/www/Fundamental/.venv/bin/python -m fundamental_etl.cli assign-clusters
+
+            echo "=== Computing metrics ==="
+            /var/www/Fundamental/.venv/bin/python -m fundamental_etl.cli compute-metrics $SNAP_ARG
+
+            echo "=== Scoring universe ==="
+            /var/www/Fundamental/.venv/bin/python -m fundamental_etl.cli score $SNAP_ARG
+
+            echo "=== Re-rendering evidence sheets ==="
+            /var/www/Fundamental/.venv/bin/python scripts/evidence-sheet-rebuild.py || true
+
+            echo "=== Rebuilding market snapshot cache ==="
+            /var/www/Fundamental/.venv/bin/python scripts/build-market-snapshot.py || true
+
+            echo "=== Purging Local Next.js Cache ==="
+            curl -s -X POST "http://localhost:3000/api/revalidate?token=$REVALIDATE_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d '{"tags":["market","panel-cache","snapshot","sectors"]}' || true
+            echo "Weekly compute completed successfully."

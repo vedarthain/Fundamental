@@ -30,17 +30,22 @@ jobs:
             cd /var/www/Fundamental
             git pull origin main
 
-            python3 -m pip install -q -e ./etl 2>/dev/null || pip install -q -e ./etl || true
+            /var/www/Fundamental/.venv/bin/pip install -q 'psycopg[binary]==3.2.*' yfinance
+            /var/www/Fundamental/.venv/bin/pip install -q -e ./etl
 
-            if [ -f web/.env.production ]; then
-              set -a
-              eval "$(grep -E '^(APP_DB_URL|GOLDEN_DB_URL)=' web/.env.production)"
-              set +a
-            fi
+            for env_path in web/.env.production web/.env.local web/.env .env.production .env.local .env; do
+              if [ -f "$env_path" ] && grep -q "APP_DB_URL" "$env_path"; then
+                set -a
+                # shellcheck disable=SC1090
+                . "$env_path"
+                set +a
+                break
+              fi
+            done
 
             export FUNDAMENTAL_ALLOW_REMOTE_DB="1"
             export PYTHONUNBUFFERED=1
 
             LIMIT="${{ github.event.inputs.limit || '700' }}"
-            python3 -m fundamental_etl.cli fetch-business-info --limit "$LIMIT" --refresh --require-progress || true
-            python3 -m fundamental_etl.cli fetch-officers --limit "$LIMIT" --refresh --require-progress || true
+            /var/www/Fundamental/.venv/bin/python -m fundamental_etl.cli fetch-business-info --limit "$LIMIT" --refresh --require-progress || true
+            /var/www/Fundamental/.venv/bin/python -m fundamental_etl.cli fetch-officers --limit "$LIMIT" --refresh --require-progress || true

@@ -24,13 +24,15 @@ jobs:
             cd /var/www/Fundamental
             git pull origin main
 
-            python3 -m pip install -q 'psycopg[binary]==3.2.*' 2>/dev/null || pip install -q 'psycopg[binary]==3.2.*' || true
-
-            if [ -f web/.env.production ]; then
-              set -a
-              eval "$(grep -E '^(APP_DB_URL|GOLDEN_DB_URL)=' web/.env.production)"
-              set +a
-            fi
+            for env_path in web/.env.production web/.env.local web/.env .env.production .env.local .env; do
+              if [ -f "$env_path" ] && grep -q "APP_DB_URL" "$env_path"; then
+                set -a
+                # shellcheck disable=SC1090
+                . "$env_path"
+                set +a
+                break
+              fi
+            done
 
             export PYTHONUNBUFFERED=1
-            python3 scripts/fetch-announcements.py --max-minutes 92
+            /var/www/Fundamental/.venv/bin/python scripts/fetch-announcements.py --max-minutes 92

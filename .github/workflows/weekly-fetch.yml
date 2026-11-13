@@ -84,158 +84,60 @@ env:
 jobs:
   fetch:
     runs-on: ubuntu-latest
-    # Fetch is capped at --max-runtime-min 180 (graceful exit 0), but that cap
-    # only governs the fetch STEP. Run 37139452710 (2026-10-03) was killed at
-    # exactly 200m01s with the fetch still mid-scrape: install + sync-universe +
-    # classify had already burned 33 minutes before fetch started, so the job
-    # ceiling fired 13 minutes BEFORE the step's own graceful exit could. A
-    # timeout that pre-empts the graceful exit turns a clean partial run into a
-    # cancelled one — the budget must cover setup + 180 + the tail steps, not
-    # just 180. 33 (setup) + 180 (fetch) + ~15 (dividends, prune) = ~230; 300
-    # leaves room for a slow runner without approaching GitHub's 360 hard cap.
-    # A throttled/halted scrape still resumes next run via skip_recent_hours.
     timeout-minutes: 300
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Run Weekly Fetch Pipeline on Droplet
+        uses: appleboy/ssh-action@v1.0.3
         with:
-          python-version: '3.12'
+          host: ${{ secrets.DO_HOST }}
+          username: root
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            set -e
+            cd /var/www/Fundamental
+            git pull origin main
 
-      - name: Install fundamental-etl
-        run: pip install -e ./etl
+            /var/www/Fundamental/.venv/bin/pip install -q 'psycopg[binary]==3.2.*' openpyxl
+            /var/www/Fundamental/.venv/bin/pip install -q -e ./etl
 
-      # Onboard new NSE listings BEFORE the scrape so a fresh IPO enters
-      # app.universe here and gets its fundamentals in the same run (then
-      # weekly-compute scores it the next day). golden already carries the IPO
-      # from the daily bhavcopy; this only diffs golden's live-NSE master into
-      # app.universe. --deactivate is intentionally omitted: retiring a name is
-      # a human decision (merger vs. trading halt vs. stale bhavcopy day).
-      #
-      # --retire-non-equity IS passed, and is a different kind of retirement
-      # from --deactivate. It does not guess from silence on the tape; it asks
-      # NSE's own listed-equity master and requires a CONJUNCTION — absent from
-      # EQUITY_L.csv AND zero rows in app.fundamentals_annual. That selects
-      # ETFs and -RE rights entitlements, which have no fundamentals and never
-      # will, and cannot select a real company: the 17 delisted-but-real names
-      # (EDUCOMP, ORTEL, SELMC …) all carry 10-19 years of annuals and fail the
-      # second clause. They are reported on every run and never retired.
-      #
-      # Weekly rather than monthly because the inflow is weekly: these arrive
-      # through the same door as new listings. The ISIN filter admits a
-      # candidate with no ISIN anywhere so a day-1 IPO is never dropped, and
-      # ETFs with no ISIN walk in behind it — 40 had accumulated by the time we
-      # looked, all sitting permanently in the 'insufficient' tier. Running this
-      # only monthly would let them sit on the site for up to four weeks.
-      #
-      # Safe when the CSV fetch fails: sync-universe logs loudly, sets
-      # master_ok=False, prints a skip notice and retires NOTHING that run.
-      - name: Sync universe (onboard new NSE listings)
-        env:
-          APP_DB_URL:     ${{ secrets.NEON_APP_URL }}
-          # The ETL refuses a remote APP_DB_URL by default (etl/src/fundamental_etl/db.py) so a local run cannot drift onto prod. CI writes to prod on purpose, so it says so out loud.
-          FUNDAMENTAL_ALLOW_REMOTE_DB: "1"
-          GOLDEN_DB_URL:  ${{ secrets.NEON_GOLDEN_URL }}
-          PYTHONUNBUFFERED: "1"
-        run: python -m fundamental_etl.cli sync-universe --retire-non-equity
+            for env_path in web/.env.production web/.env.local web/.env .env.production .env.local .env; do
+              if [ -f "$env_path" ] && grep -q "APP_DB_URL" "$env_path"; then
+                set -a
+                # shellcheck disable=SC1090
+                . "$env_path"
+                set +a
+                break
+              fi
+            done
 
-      # Classify whatever sync-universe just onboarded. This is the step that
-      # was missing for five months: sync-universe can only enrich a new listing
-      # by LEFT JOINing golden.stocks, and golden.stocks has not been enriched
-      # since its original seed (refresh-ltp.py inserts skeleton rows to satisfy
-      # the price_history FK and leaves sector/industry NULL). So every symbol
-      # onboarded after the seed arrived unclassified, never got a cluster, and
-      # silently dropped out of scoring — 484 of them by the time we found it.
-      #
-      # Paired with sync-universe rather than placed later because the two are
-      # one logical operation: onboard the name, then say what it is. Default
-      # scope is only the rows where sector OR industry IS NULL, so on a normal
-      # week it selects nothing and exits in seconds — it does work only when a
-      # genuinely new listing appears.
-      - name: Classify new listings (sector/industry)
-        env:
-          APP_DB_URL:           ${{ secrets.NEON_APP_URL }}
-          # The ETL refuses a remote APP_DB_URL by default (etl/src/fundamental_etl/db.py) so a local run cannot drift onto prod. CI writes to prod on purpose, so it says so out loud.
-          FUNDAMENTAL_ALLOW_REMOTE_DB: "1"
-          GOLDEN_DB_URL:        ${{ secrets.NEON_GOLDEN_URL }}
-          PYTHONUNBUFFERED:     "1"
-        run: python -m fundamental_etl.cli fetch-classification
+            export FUNDAMENTAL_ALLOW_REMOTE_DB="1"
+            export PYTHONUNBUFFERED=1
 
-      # Scrape Screener → fundamentals + raw blobs on Neon. Expiry HALTS the
-      # run (rotate cue → freshness-check alerts). --max-runtime-min caps a
-      # throttled week so it stops gracefully; unscraped symbols resume next
-      # run. force_full_fetch=true re-scrapes EVERY symbol (--skip-recent-hours 0).
-      #
-      # THE --limit IS KEYED ON WHICH CRON FIRED. Mon-Thu ('0 13 * * 1-4') take
-      # 700; Friday ('0 13 * * 5') passes no limit and drains the remainder.
-      # github.event.schedule is EMPTY on workflow_dispatch, so a manual run is
-      # unlimited too — which is what you want when catching up by hand.
-      #
-      # --skip-recent-hours is set ONCE, as a single expression, rather than
-      # appended a second time for force_full_fetch. Passing the flag twice
-      # would leave the winner up to the option parser's last-wins behaviour;
-      # the override reads better and cannot be ambiguous.
-      - name: Fetch fundamentals from Screener
-        env:
-          APP_DB_URL:           ${{ secrets.NEON_APP_URL }}
-          # The ETL refuses a remote APP_DB_URL by default (etl/src/fundamental_etl/db.py) so a local run cannot drift onto prod. CI writes to prod on purpose, so it says so out loud.
-          FUNDAMENTAL_ALLOW_REMOTE_DB: "1"
-          GOLDEN_DB_URL:        ${{ secrets.NEON_GOLDEN_URL }}
-          PYTHONUNBUFFERED:     "1"
-        run: >
-          python -m fundamental_etl.cli fetch-many --max-runtime-min 180
-          --skip-recent-hours ${{ github.event.inputs.force_full_fetch == 'true' && '0' || '120' }}
-          ${{ github.event.schedule == '0 13 * * 1-4' && '--limit 700' || '' }}
+            echo "=== 1. Sync universe (onboard new NSE listings) ==="
+            /var/www/Fundamental/.venv/bin/python -m fundamental_etl.cli sync-universe --retire-non-equity
 
-      # Dividend-only register (InvITs/REITs) — a tiny curated list scraped the
-      # same way, but written to app.dividend_only[_annual] OUTSIDE the scored
-      # universe. Kept separate from fetch-many so a Screener hiccup on these
-      # never eats into the main fetch's runtime budget.
-      #
-      # continue-on-error BECAUSE THIS STEP MUST NOT DECIDE WHETHER THE WEEK
-      # GETS A SNAPSHOT. weekly-compute.yml chains off this workflow with
-      # `if: workflow_run.conclusion == 'success'`, so ANY failing step here
-      # skips the snapshot — and it skips it SILENTLY, as a grey run rather
-      # than a red one, which is why the loss went unnoticed for two weeks.
-      # On 2026-10-20 the main fetch succeeded (1,161 symbols, auth_failed=0)
-      # and then these SIX trusts died on a transport error
-      # (ConnectError [Errno -9]), failing the job and skipping compute for a
-      # third week.
-      #
-      # These names are outside app.universe by construction; nothing in
-      # scoring, ranking or the panel caches reads app.dividend_only[_annual].
-      # A stale week of distributions on six trusts is cosmetic. A missing
-      # weekly snapshot across ~3,100 scored companies is not. The step still
-      # shows a red X when it fails, so this hides nothing — it only stops a
-      # six-symbol side quest from holding the snapshot hostage.
-      - name: Fetch dividend-only names (InvITs/REITs)
-        continue-on-error: true
-        env:
-          APP_DB_URL:           ${{ secrets.NEON_APP_URL }}
-          # The ETL refuses a remote APP_DB_URL by default (etl/src/fundamental_etl/db.py) so a local run cannot drift onto prod. CI writes to prod on purpose, so it says so out loud.
-          FUNDAMENTAL_ALLOW_REMOTE_DB: "1"
-          GOLDEN_DB_URL:        ${{ secrets.NEON_GOLDEN_URL }}
-          PYTHONUNBUFFERED:     "1"
-        run: python -m fundamental_etl.cli fetch-dividend-only
+            echo "=== 2. Classify new listings (sector/industry) ==="
+            /var/www/Fundamental/.venv/bin/python -m fundamental_etl.cli fetch-classification
 
-      # Keep only the latest raw blob per symbol — bounds Neon storage.
-      - name: Prune old raw blobs
-        env:
-          APP_DB_URL: ${{ secrets.NEON_APP_URL }}
-          # The ETL refuses a remote APP_DB_URL by default (etl/src/fundamental_etl/db.py) so a local run cannot drift onto prod. CI writes to prod on purpose, so it says so out loud.
-          FUNDAMENTAL_ALLOW_REMOTE_DB: "1"
-        run: |
-          python -c "
-          import os, psycopg
-          with psycopg.connect(os.environ['APP_DB_URL']) as c, c.cursor() as cur:
-              cur.execute('''
-                  DELETE FROM app.screener_export_raw r
-                  USING (SELECT symbol, max(fetched_at) AS mx
-                           FROM app.screener_export_raw GROUP BY symbol) k
-                  WHERE r.symbol = k.symbol AND r.fetched_at < k.mx
-              ''')
-              print('pruned old blobs:', cur.rowcount)
-              c.commit()
-          "
+            echo "=== 3. Fetch fundamentals from Screener ==="
+            SKIP_HOURS="${{ github.event.inputs.force_full_fetch == 'true' && '0' || '120' }}"
+            LIMIT_FLAG="${{ github.event.schedule == '0 13 * * 1-4' && '--limit 700' || '' }}"
+            /var/www/Fundamental/.venv/bin/python -m fundamental_etl.cli fetch-many --max-runtime-min 180 --skip-recent-hours "$SKIP_HOURS" $LIMIT_FLAG
+
+            echo "=== 4. Fetch dividend-only names (InvITs/REITs) ==="
+            /var/www/Fundamental/.venv/bin/python -m fundamental_etl.cli fetch-dividend-only || true
+
+            echo "=== 5. Prune old raw blobs ==="
+            /var/www/Fundamental/.venv/bin/python -c "
+            import os, psycopg
+            with psycopg.connect(os.environ['APP_DB_URL']) as c, c.cursor() as cur:
+                cur.execute('''
+                    DELETE FROM app.screener_export_raw r
+                    USING (SELECT symbol, max(fetched_at) AS mx
+                             FROM app.screener_export_raw GROUP BY symbol) k
+                    WHERE r.symbol = k.symbol AND r.fetched_at < k.mx
+                ''')
+                print('pruned old blobs:', cur.rowcount)
+                c.commit()
+            "
+            echo "Weekly fetch completed successfully."

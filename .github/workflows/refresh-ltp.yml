@@ -35,26 +35,26 @@ jobs:
             cd /var/www/Fundamental
             git pull origin main
 
-            # Ensure psycopg is available
-            python3 -m pip install -q 'psycopg[binary]==3.2.*' 2>/dev/null || pip install -q 'psycopg[binary]==3.2.*' || true
-
-            # Export production DB environment
-            if [ -f web/.env.production ]; then
-              set -a
-              eval "$(grep -E '^(APP_DB_URL|GOLDEN_DB_URL|UPSTOX_ANALYTICS_TOKEN)=' web/.env.production)"
-              set +a
-            fi
+            for env_path in web/.env.production web/.env.local web/.env .env.production .env.local .env; do
+              if [ -f "$env_path" ] && grep -q "APP_DB_URL" "$env_path"; then
+                set -a
+                # shellcheck disable=SC1090
+                . "$env_path"
+                set +a
+                break
+              fi
+            done
 
             export PYTHONUNBUFFERED=1
 
             echo "=== 1. Refreshing LTP + OHLC from Bhavcopy ==="
-            python3 scripts/refresh-ltp.py
+            /var/www/Fundamental/.venv/bin/python scripts/refresh-ltp.py
 
             echo "=== 2. Refreshing NSE Indices ==="
-            python3 scripts/fetch-indices.py || true
+            /var/www/Fundamental/.venv/bin/python scripts/fetch-indices.py || true
 
             echo "=== 3. Refreshing FII / DII Flows ==="
-            python3 scripts/fetch-fii-dii.py || true
+            /var/www/Fundamental/.venv/bin/python scripts/fetch-fii-dii.py || true
 
             echo "=== 4. Purging Local Next.js Cache ==="
             curl -s -X POST "http://localhost:3000/api/revalidate?token=$REVALIDATE_TOKEN" \

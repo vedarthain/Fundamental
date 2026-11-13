@@ -38,24 +38,32 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Run Universe Sync & Retire on Droplet
+        uses: appleboy/ssh-action@v1.0.3
         with:
-          python-version: '3.12'
+          host: ${{ secrets.DO_HOST }}
+          username: root
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            set -e
+            cd /var/www/Fundamental
+            git pull origin main
 
-      - name: Install fundamental-etl
-        run: pip install -e ./etl
+            /var/www/Fundamental/.venv/bin/pip install -q 'psycopg[binary]==3.2.*'
+            /var/www/Fundamental/.venv/bin/pip install -q -e ./etl
 
-      - name: Sync universe (onboard new + retire 60d-dark)
-        env:
-          APP_DB_URL:       ${{ secrets.NEON_APP_URL }}
-          # The ETL refuses a remote APP_DB_URL by default (etl/src/fundamental_etl/db.py) so a local run cannot drift onto prod. CI writes to prod on purpose, so it says so out loud.
-          FUNDAMENTAL_ALLOW_REMOTE_DB: "1"
-          GOLDEN_DB_URL:    ${{ secrets.NEON_GOLDEN_URL }}
-          PYTHONUNBUFFERED: "1"
-        run: python -m fundamental_etl.cli sync-universe --deactivate --deactivate-days 60
+            for env_path in web/.env.production web/.env.local web/.env .env.production .env.local .env; do
+              if [ -f "$env_path" ] && grep -q "APP_DB_URL" "$env_path"; then
+                set -a
+                # shellcheck disable=SC1090
+                . "$env_path"
+                set +a
+                break
+              fi
+            done
+
+            export FUNDAMENTAL_ALLOW_REMOTE_DB="1"
+            export PYTHONUNBUFFERED=1
+            /var/www/Fundamental/.venv/bin/python -m fundamental_etl.cli sync-universe --deactivate --deactivate-days 60

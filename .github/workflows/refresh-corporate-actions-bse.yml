@@ -1,12 +1,5 @@
 # Corporate actions — Official Exchange Pipeline from BSE (100% Free).
-#
-# Primary corporate actions engine:
-#   - Ingests dividends, splits, bonus issues, rights, and buybacks directly from BSE's official API
-#   - 100% FREE with zero external subscription costs (replaces paid indianapi.in)
-#   - Runs twice weekly (Tue & Fri 10:47 IST) on the Droplet via SSH
-#
-# Cadence: Tue + Fri 05:17 UTC = 10:47 IST. Off-the-hour to dodge GitHub's
-# top-of-hour scheduler contention. ON CONFLICT makes every run idempotent.
+# Runs on the Droplet via SSH with direct VPC access to Postgres.
 
 name: Refresh Corporate Actions (Exchange Feed)
 
@@ -31,16 +24,15 @@ jobs:
             cd /var/www/Fundamental
             git pull origin main
 
-            # Ensure psycopg is available
-            python3 -m pip install -q 'psycopg[binary]==3.2.*' 2>/dev/null || pip install -q 'psycopg[binary]==3.2.*' || true
-
-            # Export production DB environment
-            if [ -f web/.env.production ]; then
-              set -a
-              # Export APP_DB_URL, GOLDEN_DB_URL, and related envs
-              eval "$(grep -E '^(APP_DB_URL|GOLDEN_DB_URL|UPSTOX_ANALYTICS_TOKEN)=' web/.env.production)"
-              set +a
-            fi
+            for env_path in web/.env.production web/.env.local web/.env .env.production .env.local .env; do
+              if [ -f "$env_path" ] && grep -q "APP_DB_URL" "$env_path"; then
+                set -a
+                # shellcheck disable=SC1090
+                . "$env_path"
+                set +a
+                break
+              fi
+            done
 
             export PYTHONUNBUFFERED=1
-            python3 scripts/fetch-corporate-actions.py
+            /var/www/Fundamental/.venv/bin/python scripts/fetch-corporate-actions.py

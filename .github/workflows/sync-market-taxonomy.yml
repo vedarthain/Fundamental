@@ -25,18 +25,22 @@ jobs:
             cd /var/www/Fundamental
             git pull origin main
 
-            python3 -m pip install -q 'psycopg[binary]==3.2.*' 'openpyxl==3.1.*' 2>/dev/null || pip install -q 'psycopg[binary]==3.2.*' 'openpyxl==3.1.*' || true
+            /var/www/Fundamental/.venv/bin/pip install -q 'psycopg[binary]==3.2.*' 'openpyxl==3.1.*'
 
-            if [ -f web/.env.production ]; then
-              set -a
-              eval "$(grep -E '^(APP_DB_URL|GOLDEN_DB_URL)=' web/.env.production)"
-              set +a
-            fi
+            for env_path in web/.env.production web/.env.local web/.env .env.production .env.local .env; do
+              if [ -f "$env_path" ] && grep -q "APP_DB_URL" "$env_path"; then
+                set -a
+                # shellcheck disable=SC1090
+                . "$env_path"
+                set +a
+                break
+              fi
+            done
 
             export PYTHONUNBUFFERED=1
 
             echo "=== 1. Refreshing AMFI market-cap tiers ==="
-            python3 scripts/fetch-amfi-categorization.py
+            /var/www/Fundamental/.venv/bin/python scripts/fetch-amfi-categorization.py
 
             echo "=== 2. Refreshing NSE index constituents ==="
-            python3 scripts/fetch-index-constituents.py
+            /var/www/Fundamental/.venv/bin/python scripts/fetch-index-constituents.py
