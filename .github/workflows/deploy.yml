@@ -8,10 +8,44 @@ on:
       - '.github/workflows/deploy.yml'
 
 jobs:
-  deploy:
+  build-and-deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Deploy via SSH
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: 'web/package-lock.json'
+
+      - name: Install dependencies
+        run: |
+          cd web
+          npm ci
+
+      - name: Compile Next.js in Cloud
+        run: |
+          cd web
+          npm run build
+
+      - name: Package .next artifact
+        run: |
+          tar -czf next-build.tar.gz --exclude='.next/cache' --exclude='.next/dev' -C web .next
+
+      - name: Upload build archive to Droplet
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: root
+          key: ${{ secrets.DO_SSH_KEY }}
+          source: 'next-build.tar.gz'
+          target: '/tmp'
+          overwrite: true
+
+      - name: Unpack build and Restart PM2
         uses: appleboy/ssh-action@v1.0.3
         env:
           UPSTOX_ANALYTICS_TOKEN: ${{ secrets.UPSTOX_ANALYTICS_TOKEN }}
@@ -22,9 +56,12 @@ jobs:
           key: ${{ secrets.DO_SSH_KEY }}
           envs: UPSTOX_ANALYTICS_TOKEN,REVALIDATE_TOKEN
           script: |
+            set -e
             cd /var/www/Fundamental
             git pull origin main
             cd web
+
+            # Sync Upstox Analytics Token into .env files
             if [ -n "$UPSTOX_ANALYTICS_TOKEN" ]; then
               touch .env.production
               if grep -q "^UPSTOX_ANALYTICS_TOKEN=" .env.production; then
@@ -42,7 +79,25 @@ jobs:
                 fi
               done
             fi
-            NODE_OPTIONS="--max-old-space-size=2048" npm run build
+
+            # Install any new runtime production dependencies
+            npm install --omit=dev --no-audit --prefer-offline
+
+            # Locate and extract cloud-compiled Next.js build
+            ARCHIVE=$(find /tmp -name "next-build.tar.gz" -print -quit)
+            if [ -n "$ARCHIVE" ] && [ -f "$ARCHIVE" ]; then
+              echo "Extracting $ARCHIVE..."
+              rm -rf .next
+              tar -xzf "$ARCHIVE" -C .
+              rm -f "$ARCHIVE"
+            else
+              echo "Error: Build archive not found in /tmp"
+              exit 1
+            fi
+
+            # Reload Next.js with zero downtime / fast PM2 reload
             pm2 restart equityroots --update-env
+
+            # Allow 5s for PM2 to boot, then warm up / refresh price cache
             sleep 5
             curl -s -X POST "http://localhost:3000/api/cron/intraday-equity?token=$REVALIDATE_TOKEN&force=1" || true
