@@ -24,19 +24,19 @@ jobs:
             cd /var/www/Fundamental
             git pull origin main
 
-            # Setup isolated Python virtual environment on droplet if not present
-            if [ ! -d "/var/www/Fundamental/.venv" ]; then
-              apt-get update -y && apt-get install -y python3-venv python3-pip
-              python3 -m venv /var/www/Fundamental/.venv
-            fi
+            # Load environment from whatever .env file has APP_DB_URL
+            for env_path in web/.env.production web/.env.local web/.env .env.production .env.local .env; do
+              if [ -f "$env_path" ] && grep -q "APP_DB_URL" "$env_path"; then
+                echo "Loading environment from $env_path"
+                set -a
+                # shellcheck disable=SC1090
+                . "$env_path"
+                set +a
+                break
+              fi
+            done
 
-            /var/www/Fundamental/.venv/bin/pip install -q 'psycopg[binary]==3.2.*' 'requests'
-
-            if [ -f web/.env.production ]; then
-              set -a
-              eval "$(grep -E '^(APP_DB_URL|GOLDEN_DB_URL)=' web/.env.production)"
-              set +a
-            fi
+            echo "APP_DB_URL is set: $([ -n "$APP_DB_URL" ] && echo 'YES' || echo 'NO')"
 
             export PYTHONUNBUFFERED=1
             /var/www/Fundamental/.venv/bin/python scripts/fetch-upstox-instruments.py
