@@ -3,12 +3,10 @@
 # Primary corporate actions engine:
 #   - Ingests dividends, splits, bonus issues, rights, and buybacks directly from BSE's official API
 #   - 100% FREE with zero external subscription costs (replaces paid indianapi.in)
-#   - Runs twice weekly (Tue & Fri 10:47 IST) to keep newly declared actions up-to-date
+#   - Runs twice weekly (Tue & Fri 10:47 IST) on the Droplet via SSH
 #
 # Cadence: Tue + Fri 05:17 UTC = 10:47 IST. Off-the-hour to dodge GitHub's
 # top-of-hour scheduler contention. ON CONFLICT makes every run idempotent.
-#
-# Required secret: NEON_APP_URL. (BSE needs no API key.)
 
 name: Refresh Corporate Actions (Exchange Feed)
 
@@ -17,28 +15,32 @@ on:
     - cron: '17 5 * * 2,5'   # Tue & Fri, 05:17 UTC = 10:47 IST
   workflow_dispatch: {}
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    # ~1,630 mapped symbols at ~0.4s throttle + latency ≈ 25–35 min; 55 margin.
     timeout-minutes: 55
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Run BSE Corporate Actions Fetch on Droplet
+        uses: appleboy/ssh-action@v1.0.3
         with:
-          python-version: '3.12'
+          host: ${{ secrets.DO_HOST }}
+          username: root
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            set -e
+            cd /var/www/Fundamental
+            git pull origin main
 
-      - name: Install psycopg
-        run: pip install 'psycopg[binary]==3.2.*'
+            # Ensure psycopg is available
+            python3 -m pip install -q 'psycopg[binary]==3.2.*' 2>/dev/null || pip install -q 'psycopg[binary]==3.2.*' || true
 
-      - name: Fetch dividends from BSE
-        env:
-          APP_DB_URL:       ${{ secrets.NEON_APP_URL }}
-          PYTHONUNBUFFERED: "1"
-        run: python scripts/fetch-corporate-actions.py
+            # Export production DB environment
+            if [ -f web/.env.production ]; then
+              set -a
+              # Export APP_DB_URL, GOLDEN_DB_URL, and related envs
+              eval "$(grep -E '^(APP_DB_URL|GOLDEN_DB_URL|UPSTOX_ANALYTICS_TOKEN)=' web/.env.production)"
+              set +a
+            fi
+
+            export PYTHONUNBUFFERED=1
+            python3 scripts/fetch-corporate-actions.py

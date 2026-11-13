@@ -1,15 +1,5 @@
 # Market Taxonomy Sync — AMFI Cap Tiers & NSE Index Constituents
-#
-# Combines:
-#   1. AMFI Market-Cap Tier Categorisation (Large, Mid, Small Cap) from AMFI
-#   2. NSE Index Constituent Membership (Nifty 50, 100, 200, 500, Midcap, Smallcap)
-#
-# Cadence:
-#   Both AMFI and NSE rebalance twice a year (Jan/Jul and Mar/Sep).
-#   Runs semi-annually on Jan 1 & Jul 1, or on-demand via workflow_dispatch.
-#
-# Required secret:
-#   NEON_APP_URL — Postgres URL for fundamental_app
+# Runs on the Droplet via SSH with direct VPC access to Postgres.
 
 name: Sync market taxonomy (AMFI & Indices)
 
@@ -19,37 +9,34 @@ on:
     - cron: '0 5 1 1,7 *'
   workflow_dispatch: {}
 
-concurrency:
-  group: sync-market-taxonomy
-  cancel-in-progress: false
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Run Market Taxonomy Sync on Droplet
+        uses: appleboy/ssh-action@v1.0.3
         with:
-          python-version: '3.12'
+          host: ${{ secrets.DO_HOST }}
+          username: root
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            set -e
+            cd /var/www/Fundamental
+            git pull origin main
 
-      - name: Install dependencies
-        run: pip install 'psycopg[binary]==3.2.*' 'openpyxl==3.1.*'
+            python3 -m pip install -q 'psycopg[binary]==3.2.*' 'openpyxl==3.1.*' 2>/dev/null || pip install -q 'psycopg[binary]==3.2.*' 'openpyxl==3.1.*' || true
 
-      - name: Refresh AMFI market-cap tiers
-        env:
-          APP_DB_URL: ${{ secrets.NEON_APP_URL }}
-          PYTHONUNBUFFERED: "1"
-        run: python scripts/fetch-amfi-categorization.py
+            if [ -f web/.env.production ]; then
+              set -a
+              eval "$(grep -E '^(APP_DB_URL|GOLDEN_DB_URL)=' web/.env.production)"
+              set +a
+            fi
 
-      - name: Refresh NSE index constituents
-        env:
-          APP_DB_URL: ${{ secrets.NEON_APP_URL }}
-          PYTHONUNBUFFERED: "1"
-        run: python scripts/fetch-index-constituents.py
+            export PYTHONUNBUFFERED=1
+
+            echo "=== 1. Refreshing AMFI market-cap tiers ==="
+            python3 scripts/fetch-amfi-categorization.py
+
+            echo "=== 2. Refreshing NSE index constituents ==="
+            python3 scripts/fetch-index-constituents.py

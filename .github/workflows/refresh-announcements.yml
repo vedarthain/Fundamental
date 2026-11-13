@@ -1,30 +1,5 @@
 # Corporate announcements refresh — per-stock exchange filings from BSE.
-#
-# scripts/fetch-announcements.py maps each NSE symbol → BSE scrip code (ISIN)
-# and pulls the last 30 days of announcements (SEBI disclosures, newspaper
-# publications, investor presentations, board outcomes, …) into app.announcement.
-# BSE's API is FREE, so this costs no indianapi quota.
-#
-# CADENCE: WEEKLY, Sunday 22:00 UTC = Monday 03:30 IST (changed 2026-10-28,
-# from daily).
-#
-# Daily was never required: every run asks for the last 30 days per symbol, not
-# for yesterday, so a missed run is backfilled by the next one. Thirty chances
-# per filing is more than the job needs, and BSE blocks GitHub's data-centre
-# addresses from time to time (403 on 2026-09-19, -09-24, -10-28 — the same
-# request succeeds from a residential IP), so a third of those chances get
-# spent on nothing.
-#
-# WEEKLY IS THE FLOOR, NOT A PREFERENCE. Do not take this to monthly. The
-# window is 30 days (FETCH_DAYS in scripts/fetch-announcements.py); at monthly
-# cadence a single failed run puts the filings it missed permanently out of
-# reach, because by the next run they are older than the window and nothing
-# ever asks for them again. That is not hypothetical — the script's own
-# docstring records 246 symbols left with no annual report on file for exactly
-# that reason, which in turn left them with no company overview. Weekly keeps
-# four runs inside every 30-day window, so one failure costs nothing.
-#
-# Required secret: NEON_APP_URL.
+# Runs on the Droplet via SSH with direct VPC access to Postgres.
 
 name: Refresh announcements
 
@@ -33,103 +8,29 @@ on:
     - cron: '0 22 * * 0'   # Sun 22:00 UTC = Mon 03:30 IST
   workflow_dispatch: {}
 
-permissions:
-  contents: read
-  issues: write
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    # Budget sized from MEASURED runs, not from the throttle. The comment here
-    # used to read "~2,100 calls at ~0.4s throttle + latency ≈ 30–40 min"; the
-    # last five real runs took 51, 59, 51 and 59 minutes — ~1.7s per symbol
-    # once BSE's own latency is counted. The throttle is the floor, not the cost.
-    #
-    # The mapped universe then grew. sync-universe now backfills
-    # app.universe.isin from EQUITY_L (cli.py, section 2c-isin), which took 443
-    # active symbols from invisible-to-this-job to fetchable and lifted the
-    # mapped set by ~396. At the measured rate that is ~72 min of work, over the
-    # old 68-minute self-stop, so every run would have abandoned a rotating
-    # ~150 symbols.
-    #
-    # Nothing would have looked broken. The sweep is resumable and exits 0, so
-    # the only symptom would have been announcements quietly running a day or
-    # two behind for a slice of the universe that changed every night — a job
-    # that cannot fail while not doing its job, which is CLAUDE.md section 5.
-    #
-    # 100/92 restores a complete daily sweep with real headroom. The script
-    # still self-stops at --max-minutes so it exits cleanly with progress saved
-    # rather than being hard-cancelled, and is still resumable
-    # (least-recently-fetched first) if BSE has a slow night.
     timeout-minutes: 100
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Run BSE Announcements Sweep on Droplet
+        uses: appleboy/ssh-action@v1.0.3
         with:
-          python-version: '3.12'
+          host: ${{ secrets.DO_HOST }}
+          username: root
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            set -e
+            cd /var/www/Fundamental
+            git pull origin main
 
-      - name: Install psycopg
-        run: pip install 'psycopg[binary]==3.2.*'
+            python3 -m pip install -q 'psycopg[binary]==3.2.*' 2>/dev/null || pip install -q 'psycopg[binary]==3.2.*' || true
 
-      - name: Fetch announcements from BSE
-        env:
-          APP_DB_URL:       ${{ secrets.NEON_APP_URL }}
-          PYTHONUNBUFFERED: "1"
-        run: python scripts/fetch-announcements.py --max-minutes 92
+            if [ -f web/.env.production ]; then
+              set -a
+              eval "$(grep -E '^(APP_DB_URL|GOLDEN_DB_URL)=' web/.env.production)"
+              set +a
+            fi
 
-      # This job failed on 2026-09-19 and again on 2026-09-24 — both times with
-      # a 403 from api.bseindia.com, both times telling nobody. It was noticed
-      # five days later, by hand, while looking at something else.
-      #
-      # app.announcement is no longer just a feed on the stock page: it is the
-      # input to scripts/build-overview-from-filing.mjs, which builds company
-      # overviews from the BSE annual report PDFs listed in it. This cron went
-      # load-bearing without gaining any supervision, so a silent stall now
-      # means overviews silently stop being refreshable too.
-      #
-      # cancelled() is included because the 100-minute job timeout is a real
-      # outcome here, not a hypothetical — the sweep already takes ~55 min and
-      # the mapped universe grows.
-      - name: Raise a loud alert on failure
-        if: failure() || cancelled()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # Title changed with the move to weekly, so this opens a fresh issue
-          # rather than commenting on the daily-era one (#16). That is the
-          # intent: the old thread is a log of a cadence that no longer exists.
-          TITLE="🚨 Weekly BSE announcements refresh FAILED"
-          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          BODY=$(printf '%s\n' \
-            "The weekly announcements sweep did not complete cleanly at $(date -u '+%Y-%m-%d %H:%M UTC')." \
-            "" \
-            "ON WEEKLY CADENCE A FAILURE MATTERS MORE THAN IT USED TO. The fetch window is 30 days, so there are four runs per window instead of thirty. Two consecutive failures still lose nothing; four in a row start putting filings permanently out of reach. Re-run by hand rather than waiting for next Sunday." \
-            "" \
-            "Status: ${{ job.status }}. A 'cancelled' status means the 100-min job timeout fired." \
-            "" \
-            "Run log: $RUN_URL" \
-            "" \
-            "**Most likely cause:** api.bseindia.com answering 403. It did exactly this on 2026-09-19 and 2026-09-24. Note that www.bseindia.com (the PDF and XBRL host) is a DIFFERENT host and is usually unaffected — only filing DISCOVERY breaks." \
-            "" \
-            "The script now fails deliberately in three cases, all of which used to exit 0:" \
-            "- more than 5% of per-symbol fetches errored (healthy baseline is 0%)" \
-            "- fewer than 50% of active symbols mapped to a BSE scrip code (a truncated scrip master)" \
-            "- zero symbols attempted" \
-            "" \
-            "**Impact:** app.announcement is stale. That feeds the stock-page filings list AND scripts/build-overview-from-filing.mjs, so company overviews cannot be rebuilt from primary filings until this is fixed." \
-            "" \
-            "The sweep is idempotent and resumable (least-recently-fetched first) — once BSE is reachable, just re-run the workflow.")
-          EXISTING=$(gh issue list --state open --search "$TITLE in:title" --json number --jq '.[0].number // empty')
-          if [ -n "$EXISTING" ]; then
-            gh issue comment "$EXISTING" --body "$BODY"
-            echo "Appended to existing alert issue #$EXISTING"
-          else
-            gh issue create --title "$TITLE" --body "$BODY"
-            echo "Opened a new alert issue"
-          fi
+            export PYTHONUNBUFFERED=1
+            python3 scripts/fetch-announcements.py --max-minutes 92

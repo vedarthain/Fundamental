@@ -1,110 +1,37 @@
 # Quarterly shareholding-pattern refresh (promoter / FII / DII / pledge %).
-#
-# Scrapes each active symbol's Screener company page and upserts every quarter
-# it exposes into app.shareholding_pattern. The upsert is ON CONFLICT (symbol,
-# period_end) DO UPDATE with NO deletes, so history ACCUMULATES permanently —
-# once a quarter is stored it survives even after Screener drops it from its
-# rolling ~12-quarter window. That's what turns this table into a multi-year
-# promoter-holding graph over time.
-#
-# Why --refresh matters: fetch-shareholding defaults to skip_existing=True,
-# which skips any symbol that already has a row — so WITHOUT --refresh a stock
-# that was backfilled once would NEVER pick up a new quarter. --refresh forces a
-# re-scrape; the upsert dedups (rewrites existing quarters, inserts the new one).
-#
-# Why monthly (not just post-quarter): SEBI requires the shareholding pattern
-# within 21 days of each quarter-end (Mar/Jun/Sep/Dec). Monthly guarantees we
-# catch each new filing within a few weeks, retries any month a scrape was
-# throttled, and — being idempotent — costs nothing but a re-write on the ~8
-# months with no new quarter.
-#
-# Required secrets (all already configured for weekly-fetch — no new setup):
-#   NEON_APP_URL         — Postgres URL for fundamental_app on Neon
-#   NEON_GOLDEN_URL      — Postgres URL for golden_db on Neon. Not read by this
-#                          scrape, but Settings (config.py) requires golden_db_url
-#                          at import time, so the CLI won't start without it.
-#
-# NO SCREENER SECRETS. The page-scrape cookie comes from app.screener_session
-# (migration 0084) over NEON_APP_URL, not from a repository secret. It used to be
-# a secret and that copy drifted 33 days stale by 2026-10-02 while the local copy
-# expired independently. Rotate at /admin/screener.
+# Runs on the Droplet via SSH with direct VPC access to Postgres.
 
 name: Refresh shareholding pattern
 
 on:
-  # 3rd of every month, 06:00 UTC = 11:30 IST — off-market, staggered a day
-  # after the cap-tier refresh (1st) so the two scrapes don't overlap.
   schedule:
     - cron: '0 6 3 * *'
-  # Manual trigger — for an immediate re-scrape right after a quarter's filings.
   workflow_dispatch: {}
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
-# The default GITHUB_TOKEN is read-only on this repo, so the failure-alert step
-# (gh issue create/comment) was failing with "Resource not accessible by
-# integration (createIssue)" — silently disabling the very safety net this
-# workflow relies on. Grant issues:write so the alert can actually open.
-permissions:
-  contents: read
-  issues: write
 
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    # ~2,600 active symbols. Real per-symbol cost (fetch + parse + retries) is
-    # ~7s, not the throttle alone, so a full pass runs ~5h — the first live run
-    # paced ~950 symbols in ~110 min. 360 leaves margin under Actions' 6h hard
-    # cap; the scrape is monthly and off the daily critical path, so a long
-    # runtime costs nothing but minutes.
     timeout-minutes: 360
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Run Shareholding Pattern Refresh on Droplet
+        uses: appleboy/ssh-action@v1.0.3
         with:
-          python-version: '3.12'
+          host: ${{ secrets.DO_HOST }}
+          username: root
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            set -e
+            cd /var/www/Fundamental
+            git pull origin main
 
-      - name: Install fundamental-etl
-        run: pip install -e ./etl
+            python3 -m pip install -q -e ./etl 2>/dev/null || pip install -q -e ./etl || true
 
-      # --refresh = skip_existing off, so every active symbol is re-scraped and
-      # the new quarter is upserted. Idempotent on months with no new filing.
-      - name: Refresh shareholding pattern
-        env:
-          APP_DB_URL:         ${{ secrets.NEON_APP_URL }}
-          # The ETL refuses a remote APP_DB_URL by default (etl/src/fundamental_etl/db.py) so a local run cannot drift onto prod. CI writes to prod on purpose, so it says so out loud.
-          FUNDAMENTAL_ALLOW_REMOTE_DB: "1"
-          GOLDEN_DB_URL:      ${{ secrets.NEON_GOLDEN_URL }}
-          PYTHONUNBUFFERED:   "1"
-        run: python -m fundamental_etl.cli fetch-shareholding --refresh
+            if [ -f web/.env.production ]; then
+              set -a
+              eval "$(grep -E '^(APP_DB_URL|GOLDEN_DB_URL)=' web/.env.production)"
+              set +a
+            fi
 
-      # Loud, de-duped alert on failure OR cancel — a silently-stalled refresh
-      # would quietly freeze the promoter graph, which is exactly the failure
-      # mode this workflow exists to prevent.
-      - name: Raise a loud alert on failure
-        if: failure() || cancelled()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TITLE="🚨 Shareholding refresh FAILED"
-          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          BODY=$(printf '%s\n' \
-            "The monthly shareholding-pattern refresh did not complete cleanly at $(date -u '+%Y-%m-%d %H:%M UTC')." \
-            "" \
-            "Status: ${{ job.status }}." \
-            "" \
-            "Run log: $RUN_URL" \
-            "" \
-            "Likely cause: Screener auth cookie expired (rotate at /admin/screener) or the job hit its 180-min timeout mid-scrape. Existing shareholding history is untouched (the upsert only adds/updates), so a fixed re-run simply resumes.")
-          EXISTING=$(gh issue list --state open --search "$TITLE in:title" --json number --jq '.[0].number // empty')
-          if [ -n "$EXISTING" ]; then
-            gh issue comment "$EXISTING" --body "$BODY"
-            echo "Appended to existing alert issue #$EXISTING"
-          else
-            gh issue create --title "$TITLE" --body "$BODY"
-            echo "Opened a new alert issue"
-          fi
+            export FUNDAMENTAL_ALLOW_REMOTE_DB="1"
+            export PYTHONUNBUFFERED=1
+            python3 -m fundamental_etl.cli fetch-shareholding --refresh

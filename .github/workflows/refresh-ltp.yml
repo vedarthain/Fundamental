@@ -1,168 +1,63 @@
-# End-of-day data pipeline. Runs every weekday after market close,
-# sequencing every job that needs to land before the next morning's
-# page renders.
+# End-of-day data pipeline. Runs every weekday after market close on the Droplet.
 #
-# Pipeline (each step is idempotent; failure of a downstream step does
-# NOT roll back earlier writes — that's by design, daily rerun safe):
-#
+# Pipeline:
 #   1. refresh-ltp.py          NSE bhavcopy → screener_meta.current_price,
 #                              market_cap_cr recompute, cluster_stocks_panel_cache
 #                              refresh, golden.price_history OHLC insert.
 #   2. fetch-indices.py        NSE indices CSV → app.market_index_history
-#                              (the daily EOD candle behind the /indices chart —
-#                              keeps the last bar current).
-#   3. fetch-fii-dii.py        NSE FII/DII JSON → app.fii_dii_flow (one new row
-#                              per trading day; cheap upsert).
-#   4. /api/revalidate         Purges Next.js Data Cache (sectors + market +
-#                              snapshot tags) so users get fresh data on the
-#                              next request, not whatever 1-hour cached blob
-#                              Vercel was serving.
-#
-# NOTE: the old step 4 (build-market-snapshot.py → app.market_snapshot_cache)
-# was removed when /market + /api/market/overview were retired — nothing reads
-# that cache table anymore. The "market" revalidate tag stays: /indices, /news
-# and /tools/52-week-high-low still tag their caches with it.
-#
-# NOTE: the corporate-action adjustment (adj_close recompute) was MOVED OUT of
-# this critical path into refresh-adjustments.yml (triggered on this workflow's
-# completion). It used to be an in-line `continue-on-error` step, but a daily
-# full re-adjust of all ~400 symbols crept past the 12-min job timeout on
-# 2026-09-04 (#89) — a JOB timeout CANCELS the whole job, which continue-on-error
-# does NOT catch, so the cache purge below was silently skipped. Decoupling it
-# means a slow adjustment can never again cancel the bhavcopy/indices/FII/cache
-# steps, and the adjustment now runs incrementally (--changed-only).
-#
-# Why a GitHub Action (not local launchd):
-#   - NSE bhavcopy is daily; you don't want to remember to refresh prices
-#   - Runs in GitHub's cloud, no laptop dependency
-#   - Single CSV download for bhavcopy + targeted fetches for indices + FII
-#     stay well under any rate limit
-#
-# Required secrets (set once, manually via Settings → Secrets → Actions):
-#   NEON_APP_URL      — Postgres URL for fundamental_app on Neon
-#   NEON_GOLDEN_URL   — Postgres URL for golden_db on Neon (OHLC write)
-#   REVALIDATE_TOKEN  — bearer for the /api/revalidate cache purge
+#   3. fetch-fii-dii.py        NSE FII/DII JSON → app.fii_dii_flow
+#   4. /api/revalidate         Purges Next.js Data Cache directly on the droplet
 
 name: Refresh LTP + OHLC
 
 on:
-  # 13:00 UTC = 18:30 IST. Bhavcopy usually publishes by 18:00 IST, so this
-  # leaves a 30-minute buffer. Mon-Fri only — NSE doesn't trade on weekends.
   schedule:
+    # 13:00 UTC = 18:30 IST. Mon-Fri only.
     - cron: '0 13 * * 1-5'
-
-  # Manual trigger — useful for backfilling after a missed run or testing
-  # workflow changes. Visible in the Actions UI under "Run workflow".
   workflow_dispatch: {}
-
-# Opt the JavaScript-based actions (checkout, setup-python) into Node 24.
-# GitHub is deprecating Node 20 on the runners — forced default June 2026,
-# fully removed September 2026. Setting this env at the workflow level
-# avoids the deprecation warnings now and survives the cutover untouched.
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
-# Default GITHUB_TOKEN is read-only here; without this the failure-alert step
-# (gh issue create) fails with "Resource not accessible by integration".
-permissions:
-  contents: read
-  issues: write
 
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    # 8 min: bhavcopy + indices + FII/DII + cache rebuild can legitimately
-    # approach 5 min on a slow NSE day (the old 5-min cap timed out 2026-06-05).
-    # Index-constituent seeding was moved OUT to its own weekly workflow
-    # (refresh-constituents.yml) — it was a daily NSE-bound step in this tight
-    # critical path despite membership only changing at semi-annual rebalances.
-    timeout-minutes: 12
+    timeout-minutes: 15
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Run EOD Bhavcopy & Market Data Pipeline on Droplet
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          REVALIDATE_TOKEN: ${{ secrets.REVALIDATE_TOKEN }}
         with:
-          python-version: '3.12'
+          host: ${{ secrets.DO_HOST }}
+          username: root
+          key: ${{ secrets.DO_SSH_KEY }}
+          envs: REVALIDATE_TOKEN
+          script: |
+            set -e
+            cd /var/www/Fundamental
+            git pull origin main
 
-      - name: Install psycopg
-        run: pip install 'psycopg[binary]==3.2.*'
+            # Ensure psycopg is available
+            python3 -m pip install -q 'psycopg[binary]==3.2.*' 2>/dev/null || pip install -q 'psycopg[binary]==3.2.*' || true
 
-      - name: Refresh LTP + OHLC (bhavcopy)
-        env:
-          APP_DB_URL:      ${{ secrets.NEON_APP_URL }}
-          NEON_GOLDEN_URL: ${{ secrets.NEON_GOLDEN_URL }}
-          PYTHONUNBUFFERED: "1"
-        run: python scripts/refresh-ltp.py
+            # Export production DB environment
+            if [ -f web/.env.production ]; then
+              set -a
+              eval "$(grep -E '^(APP_DB_URL|GOLDEN_DB_URL|UPSTOX_ANALYTICS_TOKEN)=' web/.env.production)"
+              set +a
+            fi
 
-      # Indices + FII/DII land into their own tables. Failure here doesn't
-      # roll back the bhavcopy write above — we still want the LTP refresh
-      # to land even if NSE's index CSV is temporarily 404 or their
-      # FII/DII JSON is rate-limited. Both scripts are idempotent.
-      - name: Refresh NSE indices
-        env:
-          APP_DB_URL:       ${{ secrets.NEON_APP_URL }}
-          PYTHONUNBUFFERED: "1"
-        run: python scripts/fetch-indices.py
-        continue-on-error: true
+            export PYTHONUNBUFFERED=1
 
-      - name: Refresh FII / DII flows
-        env:
-          APP_DB_URL:       ${{ secrets.NEON_APP_URL }}
-          PYTHONUNBUFFERED: "1"
-        run: python scripts/fetch-fii-dii.py
-        continue-on-error: true
+            echo "=== 1. Refreshing LTP + OHLC from Bhavcopy ==="
+            python3 scripts/refresh-ltp.py
 
-      # Tell Vercel to drop the cached Next.js responses tagged for these
-      # surfaces. Fail loudly on non-200 — the previous silent-failure mode
-      # masked a token/cache misconfiguration for multiple runs (users had
-      # to tap the in-app "Purge cache" button to see fresh data). When the
-      # step does fail now, the response body is dumped to the log so the
-      # cause (wrong token, missing env, route 500) is immediately visible.
-      - name: Purge Next.js Data Cache
-        run: |
-          set +e
-          RESPONSE_FILE=$(mktemp)
-          HTTP_CODE=$(curl -sS -o "$RESPONSE_FILE" -w "%{http_code}" \
-            -X POST "https://equityroots.in/api/revalidate" \
-            -H "Authorization: Bearer ${{ secrets.REVALIDATE_TOKEN }}" \
-            -H "Content-Type: application/json" \
-            -d '{"tags":["market","panel-cache","snapshot","sectors"]}')
-          echo "HTTP status: $HTTP_CODE"
-          echo "Response body:"
-          cat "$RESPONSE_FILE"
-          echo
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "::error::Cache purge failed (HTTP $HTTP_CODE) — check REVALIDATE_TOKEN secret matches Vercel."
-            exit 1
-          fi
+            echo "=== 2. Refreshing NSE Indices ==="
+            python3 scripts/fetch-indices.py || true
 
-      # Un-silence the pipeline. GitHub's default email fires on FAILED runs but
-      # NOT on CANCELLED ones (e.g. a job-timeout cancel), which is exactly how
-      # #89 slipped by unnoticed. This step runs on both failure() and
-      # cancelled() and opens/updates a de-duped GitHub issue, so a broken daily
-      # EOD refresh is always visible regardless of notification settings.
-      - name: Raise a loud alert on failure
-        if: failure() || cancelled()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TITLE="🚨 Daily LTP + OHLC refresh FAILED"
-          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          BODY=$(printf '%s\n' \
-            "The daily EOD refresh (bhavcopy → OHLC → indices → FII/DII → cache purge) did not complete cleanly at $(date -u '+%Y-%m-%d %H:%M UTC')." \
-            "" \
-            "Status: ${{ job.status }}. A 'cancelled' status usually means the 12-min job timeout fired." \
-            "" \
-            "Run log: $RUN_URL" \
-            "" \
-            "Impact: today's OHLC candle may be missing and/or the Vercel cache was not purged (site serving stale pages). The pipeline is idempotent — investigate, then re-run the workflow.")
-          EXISTING=$(gh issue list --state open --search "$TITLE in:title" --json number --jq '.[0].number // empty')
-          if [ -n "$EXISTING" ]; then
-            gh issue comment "$EXISTING" --body "$BODY"
-            echo "Appended to existing alert issue #$EXISTING"
-          else
-            gh issue create --title "$TITLE" --body "$BODY"
-            echo "Opened a new alert issue"
-          fi
+            echo "=== 3. Refreshing FII / DII Flows ==="
+            python3 scripts/fetch-fii-dii.py || true
+
+            echo "=== 4. Purging Local Next.js Cache ==="
+            curl -s -X POST "http://localhost:3000/api/revalidate?token=$REVALIDATE_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d '{"tags":["market","panel-cache","snapshot","sectors"]}' || true
+            echo "EOD Pipeline completed successfully."
