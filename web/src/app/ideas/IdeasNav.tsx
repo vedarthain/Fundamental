@@ -124,11 +124,44 @@ export function IdeasNav({
               </Link>
             ))}
           </nav>
+
+          {/* Universe section towards the end of Column 1 */}
+          {universe && (
+            <div className="mt-4 pt-3 border-t hairline">
+              <div className="px-1 pb-1.5 text-[10px] uppercase tracking-wide muted-text">
+                Universe
+              </div>
+              <div className="flex flex-wrap gap-1 px-0.5">
+                {universe.map((p) => (
+                  <Link
+                    key={p.key}
+                    href={p.href}
+                    scroll={false}
+                    className="px-2 py-0.5 rounded-full text-[11px] border transition-colors whitespace-nowrap"
+                    style={
+                      p.active
+                        ? {
+                            borderColor: "var(--color-accent-300)",
+                            backgroundColor: "var(--color-accent-50)",
+                            color: "var(--color-accent-700)",
+                            fontWeight: 600,
+                          }
+                        : {
+                            borderColor: "var(--color-border-default)",
+                            backgroundColor: "transparent",
+                            color: "var(--color-muted)",
+                          }
+                    }
+                  >
+                    {p.label}
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
         </aside>
       ) : (
-        /* Collapsed: icons only, still navigable. A collapse that hides the
-           destinations as well as their labels would make the reader expand it
-           every time, which is just a slower expanded rail. */
+        /* Collapsed: icons only, still navigable. */
         <aside className="shrink-0 self-start md:sticky md:top-[84px]">
           <div className="flex md:flex-col items-center gap-1">
             <button
@@ -163,68 +196,46 @@ export function IdeasNav({
                 {VIEW_ICON[v.key]}
               </Link>
             ))}
+            {universe && (
+              <div className="mt-1 pt-1.5 border-t hairline flex flex-col items-center">
+                {universe.find((u) => u.active) && (
+                  <span
+                    className="text-[9px] font-bold uppercase tracking-wider px-1 py-0.5 rounded bg-[var(--color-accent-50)] text-[var(--color-accent-700)] border border-[var(--color-accent-200)]"
+                    title={`Universe: ${universe.find((u) => u.active)?.label}`}
+                  >
+                    {universe.find((u) => u.active)?.label.replace("Nifty ", "N")}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </aside>
       )}
 
-      {/* Column 2 — the tabs within the chosen view. */}
-      <aside className="w-full md:w-[206px] md:shrink-0 md:sticky md:top-[84px] md:border-l hairline md:pl-4">
-        <div className="px-1 mb-1.5 text-[10px] uppercase tracking-wide muted-text">
-          {contextLabel}
-        </div>
-        <nav className="flex flex-col gap-2" role="tablist" aria-orientation="vertical">
-          {groups.map((g, gi) => (
-            <div key={g.eyebrow}>
-              {/* The eyebrow is suppressed when there is only one group: on the
-                  IPO view the column header already says "Status", and repeating
-                  it one line below is noise. */}
-              {groups.length > 1 && (
-                <div className="px-1 pb-1 text-[9.5px] uppercase tracking-wide muted-text opacity-70">
-                  {g.eyebrow}
-                </div>
-              )}
-              <div className={`flex flex-col gap-0.5 ${gi > 0 ? "" : ""}`}>
-                {g.items.map((it) => (
-                  <NavTab key={it.key} item={it} />
-                ))}
-              </div>
-            </div>
-          ))}
-        </nav>
-        {universe && (
-          <div className="mt-3 pt-3 border-t hairline">
-            <div className="px-1 pb-1.5 text-[10px] uppercase tracking-wide muted-text">
-              Universe
-            </div>
-            <div className="flex flex-wrap gap-1 px-1">
-              {universe.map((p) => (
-                <Link
-                  key={p.key}
-                  href={p.href}
-                  scroll={false}
-                  className="px-2 py-0.5 rounded-full text-[11px] border transition-colors whitespace-nowrap"
-                  style={
-                    p.active
-                      ? {
-                          borderColor: "var(--color-accent-300)",
-                          backgroundColor: "var(--color-accent-50)",
-                          color: "var(--color-accent-700)",
-                          fontWeight: 600,
-                        }
-                      : {
-                          borderColor: "var(--color-border-default)",
-                          backgroundColor: "transparent",
-                          color: "var(--color-muted)",
-                        }
-                  }
-                >
-                  {p.label}
-                </Link>
-              ))}
-            </div>
+      {/* Column 2 — only rendered when groups exist (hidden when empty on Results Corner). */}
+      {groups.length > 0 && (
+        <aside className="w-full md:w-[206px] md:shrink-0 md:sticky md:top-[84px] md:border-l hairline md:pl-4">
+          <div className="px-1 mb-1.5 text-[10px] uppercase tracking-wide muted-text">
+            {contextLabel}
           </div>
-        )}
-      </aside>
+          <nav className="flex flex-col gap-2" role="tablist" aria-orientation="vertical">
+            {groups.map((g, gi) => (
+              <div key={g.eyebrow}>
+                {groups.length > 1 && (
+                  <div className="px-1 pb-1 text-[9.5px] uppercase tracking-wide muted-text opacity-70">
+                    {g.eyebrow}
+                  </div>
+                )}
+                <div className="flex flex-col gap-0.5">
+                  {g.items.map((it) => (
+                    <NavTab key={it.key} item={it} />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </nav>
+        </aside>
+      )}
     </>
   );
 }
