@@ -29,16 +29,25 @@ COMMIT = "--commit" in sys.argv
 RECOMPUTE_ALL = "--recompute-all" in sys.argv
 
 def get_db_url():
-    if os.environ.get("DB_URL"):
-        return os.environ["DB_URL"]
-    # default: prod Neon from etl/.env.local
+    for var in ["DB_URL", "APP_DB_URL", "NEON_APP_URL"]:
+        if os.environ.get(var):
+            return os.environ[var]
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    envf = os.path.join(root, "etl", ".env.local")
-    with open(envf) as f:
-        for line in f:
-            if line.startswith("NEON_APP_URL="):
-                return line.split("=", 1)[1].strip().strip('"').strip("'")
-    raise RuntimeError("no DB_URL / NEON_APP_URL")
+    for rel_path in [
+        os.path.join(root, "web", ".env.production"),
+        os.path.join(root, "web", ".env.local"),
+        os.path.join(root, ".env.production"),
+        os.path.join(root, ".env.local"),
+        os.path.join(root, "etl", ".env.local"),
+        os.path.join(root, ".env"),
+    ]:
+        if os.path.exists(rel_path):
+            with open(rel_path) as f:
+                for line in f:
+                    for key in ["APP_DB_URL=", "DB_URL=", "NEON_APP_URL="]:
+                        if line.startswith(key):
+                            return line.split("=", 1)[1].strip().strip('"').strip("'")
+    raise RuntimeError("no DB_URL / APP_DB_URL / NEON_APP_URL found in environment or .env files")
 
 # ---------- reference universe ----------
 def load_universe(cur):

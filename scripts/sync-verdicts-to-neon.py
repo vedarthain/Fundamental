@@ -30,15 +30,16 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def get_neon_url() -> str:
-    url = os.environ.get("NEON_APP_URL")
+    url = os.environ.get("APP_DB_URL") or os.environ.get("NEON_APP_URL")
     if url:
         return url.strip().strip("\"'")
-    for env_file in [ROOT / ".env.local", ROOT / "web" / ".env.local"]:
+    for env_file in [ROOT / "web" / ".env.production", ROOT / "web" / ".env.local", ROOT / ".env.production", ROOT / ".env.local", ROOT / ".env"]:
         if env_file.exists():
             for line in env_file.read_text().splitlines():
-                if line.startswith("NEON_APP_URL="):
-                    return line.split("=", 1)[1].strip().strip("\"'")
-    raise ValueError("NEON_APP_URL not found in environment or .env.local")
+                for key in ["APP_DB_URL=", "NEON_APP_URL="]:
+                    if line.startswith(key):
+                        return line.split("=", 1)[1].strip().strip("\"'")
+    raise ValueError("APP_DB_URL / NEON_APP_URL not found in environment or .env files")
 
 
 def get_revalidate_token() -> str | None:

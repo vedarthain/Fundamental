@@ -135,18 +135,20 @@ DATA_SOURCE = "nse_bhavcopy"
 # ----------------------- Helpers ------------------------------------------
 
 def env_url(name: str, required: bool = True) -> str | None:
-    """Read a Postgres URL from env, fall back to .env.local for local runs."""
+    """Read a Postgres URL from env, fall back to .env files for local/droplet runs."""
     v = os.environ.get(name)
     if v:
         return v
-    env_path = Path(__file__).resolve().parent.parent / ".env.local"
-    if env_path.exists():
-        for line in env_path.read_text().splitlines():
-            if line.startswith(name + "="):
-                return line.split("=", 1)[1].strip().strip('"').strip("'")
+    root = Path(__file__).resolve().parent.parent
+    for fname in ["web/.env.production", "web/.env.local", "web/.env", ".env.production", ".env.local", ".env"]:
+        p = root / fname
+        if p.exists():
+            for line in p.read_text().splitlines():
+                if line.startswith(name + "="):
+                    return line.split("=", 1)[1].strip().strip('"').strip("'")
     if required:
         raise SystemExit(
-            f"{name} not set — pass as env var, or add to .env.local for local runs."
+            f"{name} not set — pass as env var, or add to .env files."
         )
     return None
 
@@ -601,9 +603,9 @@ def main() -> None:
     # Step 2: insert today's OHLC bar into golden.price_history (if configured)
     # The OHLC write is optional so local dev still works without a Neon golden
     # URL configured. In CI, NEON_GOLDEN_URL is always set as a repo secret.
-    golden_url = env_url("NEON_GOLDEN_URL", required=False)
+    golden_url = env_url("GOLDEN_DB_URL", required=False) or env_url("NEON_GOLDEN_URL", required=False)
     if not golden_url:
-        print("  NEON_GOLDEN_URL not set — skipping OHLC INSERT into golden.price_history")
+        print("  GOLDEN_DB_URL / NEON_GOLDEN_URL not set — skipping OHLC INSERT into golden.price_history")
         return
     with connect_with_retry(golden_url) as conn:
         # Pre-step: ensure EVERY bhavcopy symbol exists in golden.stocks. This
