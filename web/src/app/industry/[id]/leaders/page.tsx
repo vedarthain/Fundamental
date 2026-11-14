@@ -77,10 +77,10 @@ export default async function LeadersPage({
 
   if (all.length === 0) {
     return (
-      <div className="mx-auto max-w-[1200px] px-6 py-10">
+      <div className="mx-auto max-w-[1200px] px-4 sm:px-6 py-4 sm:py-5">
         <Breadcrumb cluster={cluster} />
-        <h1 className="font-display text-[36px] mt-3 tracking-tight">{cluster.industry_name} · Leaders</h1>
-        <div className="card p-12 mt-8 text-center muted-text">
+        <h1 className="font-display text-[18px] md:text-[20px] font-semibold mt-2 tracking-tight">{cluster.industry_name} · Leaders</h1>
+        <div className="card p-12 mt-6 text-center muted-text">
           No stocks scored in this {tier === "all" ? "cluster" : `cluster's ${tierLabel(tier)} tier`} yet.
         </div>
       </div>
@@ -93,17 +93,17 @@ export default async function LeadersPage({
   const topComposite = topBy(all, "composite_pct", 10);
 
   return (
-    <div className="mx-auto max-w-[1300px] px-6 py-10">
+    <div className="mx-auto max-w-[1300px] px-4 sm:px-6 py-4 sm:py-5">
       <Breadcrumb cluster={cluster} />
 
-      <header className="mt-3 max-w-[760px]">
-        <div className="text-[12px] uppercase tracking-wide muted-text">
+      <header className="mt-2 pb-2.5 mb-3 border-b hairline">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] muted-text">
           {cluster.sector_name}
         </div>
-        <h1 className="font-display text-[36px] mt-1 tracking-tight leading-tight">
+        <h1 className="font-display text-[18px] md:text-[20px] font-semibold mt-0.5 tracking-tight leading-tight">
           {cluster.industry_name} · Leaders
         </h1>
-        <p className="mt-3 text-[14.5px] muted-text">
+        <p className="mt-0.5 text-[12px] muted-text">
           Top 10 within this peer cluster across each pillar plus overall Industry Score.
           {tier !== "all" && (
             <> Filtered to <strong className="ink-text">{tierLabel(tier)}</strong>.</>

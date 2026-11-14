@@ -323,11 +323,11 @@ export default function AllStocksClient({
     <>
       {/* Title on the left, search + trend on the right — filling the wide
           band beside the heading so the table can start higher up. */}
-      <header className="flex flex-wrap items-end justify-between gap-x-8 gap-y-4">
+      <header className="flex flex-wrap items-end justify-between gap-x-8 gap-y-3 pb-2.5 mb-3 border-b hairline">
         <div className="max-w-[620px]">
-          <div className="eyebrow mb-2">Full universe</div>
-          <h1 className="font-display text-[32px] tracking-tight leading-tight">All stocks</h1>
-          <p className="mt-1.5 text-[12.5px] muted-text">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] muted-text mb-0.5">Full universe</div>
+          <h1 className="font-display text-[18px] md:text-[20px] font-semibold tracking-tight leading-tight">All stocks</h1>
+          <p className="mt-0.5 text-[12px] muted-text">
             Every scored NSE name — returns, fundamental score, industry rank and a price trend ·{" "}
             {sorted.length} names{snapDate && <> · panel {snapDate}</>}
           </p>

@@ -84,28 +84,23 @@ export default async function ScreenPage({
   const { q, v, m } = params.weights;
 
   return (
-    <div className="theme-indigo mx-auto max-w-[1300px] px-6 py-10">
-      <div className="flex flex-wrap items-start justify-between gap-4">
+    <div className="theme-indigo mx-auto max-w-[1300px] px-4 sm:px-6 py-4 sm:py-5">
+      <div className="flex flex-wrap items-start justify-between gap-4 pb-2.5 mb-3 border-b hairline">
         <header className="max-w-[680px]">
-          <div className="text-[12px] uppercase tracking-wide muted-text flex items-center gap-2">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] muted-text flex items-center gap-1.5 mb-0.5">
             <Link href="/tools" className="hover:underline">Tools</Link>
             <span aria-hidden style={{ color: "var(--color-border-default)" }}>›</span>
             <span>Investing Trials</span>
           </div>
-          <h1 className="font-display text-[36px] tracking-tight leading-tight mt-1">
+          <h1 className="font-display text-[18px] md:text-[20px] font-semibold tracking-tight leading-tight">
             Your lens, <em className="accent">your ranking</em>
           </h1>
-          <p className="mt-3 text-[15px] muted-text">
-            Set your own Quality / Valuation / Momentum weights. Every stock is re-blended
-            using your weights across all clusters — no re-percentiling. Use this to find
-            stocks that fit your investing style, not the platform default.
+          <p className="mt-0.5 text-[12px] muted-text">
+            Set custom Quality / Valuation / Momentum weights across all clusters · Active: Q{" "}
+            <span className="tabular-nums ink-text">{q}</span> · V{" "}
+            <span className="tabular-nums ink-text">{v}</span> · M{" "}
+            <span className="tabular-nums ink-text">{m}</span> · {total.toLocaleString("en-IN")} stocks
           </p>
-          <div className="mt-3 text-[12px] muted-text">
-            Active weights: Q <span className="tabular-nums ink-text">{q}</span> ·
-            V <span className="tabular-nums ink-text">{v}</span> ·
-            M <span className="tabular-nums ink-text">{m}</span>
-            {" "}· {total.toLocaleString("en-IN")} stocks
-          </div>
         </header>
 
         {/* Context callout */}

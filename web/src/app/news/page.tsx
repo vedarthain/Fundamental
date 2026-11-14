@@ -311,6 +311,15 @@ export default async function NewsPage() {
 
   return (
     <div className="px-3 md:px-4 py-3">
+      <header className="pb-2 mb-3 border-b hairline">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] muted-text mb-0.5">Markets</div>
+        <h1 className="font-display text-[18px] md:text-[20px] font-semibold tracking-tight leading-tight">
+          Market News
+        </h1>
+        <p className="text-[12px] muted-text mt-0.5">
+          Latest NSE headlines aggregated by category and tagged to mentioned stocks.
+        </p>
+      </header>
       {news.length === 0 ? (
         <div className="card p-6 muted-text text-[13px]">No headlines yet.</div>
       ) : (

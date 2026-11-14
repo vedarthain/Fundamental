@@ -67,13 +67,12 @@ export default async function ValidationPage({
   const report = await getValidationReport();
 
   return (
-    <div className="mx-auto max-w-[1000px] px-4 md:px-6 py-6 md:py-8">
-      <header className="mb-4">
-        <div className="text-[11px] uppercase tracking-wide muted-text mb-1">Private · not advice</div>
-        <h1 className="font-display text-[26px] tracking-tight">Score validation</h1>
-        <p className="muted-text text-[12.5px] mt-1">
-          Does the fundamental score predict forward returns? Archive:{" "}
-          <span className="ink-text">{report.archiveStart ?? "—"} → {report.archiveEnd ?? "—"}</span>{" "}
+    <div className="mx-auto max-w-[1000px] px-4 md:px-6 py-4 md:py-5">
+      <header className="pb-2.5 mb-3 border-b hairline">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] muted-text mb-0.5">Private · not advice</div>
+        <h1 className="font-display text-[18px] md:text-[20px] font-semibold tracking-tight">Score validation</h1>
+        <p className="muted-text text-[12px] mt-0.5">
+          Archive: <span className="ink-text">{report.archiveStart ?? "—"} → {report.archiveEnd ?? "—"}</span>{" "}
           · {report.totalSnapshots} snapshots · {report.universeLatest.toLocaleString("en-IN")} stocks scored latest.
         </p>
       </header>

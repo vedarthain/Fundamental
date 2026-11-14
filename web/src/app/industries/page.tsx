@@ -195,16 +195,20 @@ export default async function IndustriesPage() {
   const { rows, sectors, stocksByIndustry, snapshotDate } = await loadIndustries();
 
   return (
-    <div className="theme-indigo mx-auto max-w-[1500px] px-6 pt-3 pb-8">
-      {/* No <h1> and no standfirst. The tree is three columns of labels that
-          already say what the page is, and a 34px heading plus a 760px blurb
-          cost ~110px of the first screen — the fold landed mid-table. <title>
-          in metadata is what search engines read.
-
-          The breadcrumb is passed INTO the client rather than rendered above
-          it, so it shares the filter row instead of owning a line of its own.
-          Two 20px lines holding four words between them was the last of the
-          wasted vertical space above the table. */}
+    <div className="theme-indigo mx-auto max-w-[1500px] px-4 sm:px-6 pt-3 pb-8">
+      <header className="pb-2.5 mb-3 border-b hairline flex flex-wrap items-baseline justify-between gap-2">
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] muted-text mb-0.5">Segments</div>
+          <h1 className="font-display text-[18px] md:text-[20px] font-semibold tracking-tight leading-tight">
+            Industries &amp; Peer Clusters
+          </h1>
+        </div>
+        {snapshotDate && (
+          <span className="text-[11.5px] muted-text tabular-nums">
+            {rows.length} clusters · snapshot {snapshotDate}
+          </span>
+        )}
+      </header>
 
       {rows.length === 0 ? (
         <p className="mt-8 text-[14px] muted-text">

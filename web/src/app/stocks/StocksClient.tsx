@@ -18,8 +18,8 @@ export default function StocksClient({
   const [n500Only, setN500Only] = useState(false);
 
   return (
-    <div className="theme-indigo mx-auto max-w-[1560px] px-6 pt-10 pb-10">
-      <div className="mb-5 flex flex-wrap items-center gap-3">
+    <div className="theme-indigo mx-auto max-w-[1560px] px-4 sm:px-6 py-4 sm:py-5">
+      <div className="mb-3 flex flex-wrap items-center gap-3">
         <span className="text-[11px] uppercase tracking-wide muted-text">Universe</span>
         <div
           className="inline-flex items-center gap-1 rounded-lg p-1 border hairline"

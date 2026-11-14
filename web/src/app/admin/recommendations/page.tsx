@@ -83,15 +83,12 @@ export default async function RecommendationsPage({
   const k = report.knobs;
 
   return (
-    <div className="mx-auto max-w-[1100px] px-4 md:px-6 py-6 md:py-8">
-      <header className="mb-4">
-        <div className="text-[11px] uppercase tracking-wide muted-text mb-1">Private · paper only · not advice</div>
-        <h1 className="font-display text-[26px] tracking-tight">Recommendation desk</h1>
-        <p className="muted-text text-[12.5px] mt-1">
-          Locked monthly cohorts — top {k.topN} by a 5-leg absolute key, entry at first close,
-          −{(k.hardStopPct * 100).toFixed(0)}% hard stop / {(k.trailPct * 100).toFixed(0)}% trailing stop,
-          {" "}{k.horizonTd} trading-day (~1yr) horizon. Outcomes settle from OHLC on every view.
-          Headline stats cover the current strategy (v{report.headlineVersion}); legacy cohorts show per-cohort.
+    <div className="mx-auto max-w-[1100px] px-4 md:px-6 py-4 md:py-5">
+      <header className="pb-2.5 mb-3 border-b hairline">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] muted-text mb-0.5">Private · paper only · not advice</div>
+        <h1 className="font-display text-[18px] md:text-[20px] font-semibold tracking-tight">Recommendation desk</h1>
+        <p className="muted-text text-[12px] mt-0.5">
+          Top {k.topN} cohorts (−{(k.hardStopPct * 100).toFixed(0)}% hard / {(k.trailPct * 100).toFixed(0)}% trailing stop, {k.horizonTd}td horizon · v{report.headlineVersion}).
         </p>
       </header>
 

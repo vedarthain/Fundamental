@@ -137,29 +137,29 @@ export default async function ClusterPage({
   const { meta, snapshot, stocks } = data;
 
   return (
-    <div className="mx-auto max-w-[1200px] px-6 py-10">
-      <Link href="/sectors" className="text-[12px] muted-text hover:text-[var(--color-accent-600)]">
+    <div className="mx-auto max-w-[1200px] px-4 sm:px-6 py-4 sm:py-5">
+      <Link href="/sectors" className="text-[11.5px] muted-text hover:text-[var(--color-accent-600)]">
         ← All sectors
       </Link>
-      <header className="mt-3 flex items-start justify-between gap-8">
+      <header className="mt-2 pb-2.5 mb-3 border-b hairline flex items-start justify-between gap-4">
         <div className="max-w-[760px]">
-          <div className="text-[12px] muted-text uppercase tracking-wide">
+          <div className="text-[10px] font-semibold muted-text uppercase tracking-[0.14em]">
             {meta.sector_name}
           </div>
-          <h1 className="font-display text-[36px] mt-1 leading-tight tracking-tight">
+          <h1 className="font-display text-[18px] md:text-[20px] font-semibold mt-0.5 leading-tight tracking-tight">
             {meta.industry_name}
           </h1>
           {meta.description && (
-            <p className="mt-3 text-[15px] muted-text">{meta.description}</p>
+            <p className="mt-0.5 text-[12px] muted-text line-clamp-1">{meta.description}</p>
           )}
-          <div className="mt-3 text-[12px] muted-text">
+          <div className="mt-1 text-[11.5px] muted-text">
             {stocks.length} stocks scored
             {snapshot && <> · snapshot {snapshot}</>}
           </div>
         </div>
         <Link
           href={`/industry/${meta.industry_id}/leaders`}
-          className="shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-md text-[13px] border hairline bg-[var(--color-card)] hover:bg-[var(--color-paper)] hover:border-[var(--color-accent-300)] transition-colors"
+          className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] border hairline bg-[var(--color-card)] hover:bg-[var(--color-paper)] hover:border-[var(--color-accent-300)] transition-colors"
         >
           <span>View Leaders</span>
           <span className="muted-text">→</span>

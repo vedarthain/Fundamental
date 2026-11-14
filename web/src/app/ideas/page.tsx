@@ -25,6 +25,7 @@ import {
 import { band, bandColor, tierLabel, hasScoreableHistory } from "@/lib/score";
 import { getOIAlerts } from "@/lib/oi-alerts";
 import { Sparkline, type SparkPoint } from "@/components/Sparkline";
+import PageHeader from "@/components/PageHeader";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { isIpoStatus } from "./IpoTracker";
 import { IdeasNav, type NavItem } from "./IdeasNav";
@@ -1317,32 +1318,15 @@ export default async function IdeasPage({
         />
       }
     >
-      {/* What the deleted <h1> block carried that the nav does not: which
-          snapshot this is and what it is compared against. Kept, but as one
-          caption line rather than a screen of masthead — a scoring surface
-          whose snapshot date is invisible is a surface you cannot date a claim
-          against. */}
-      {snapshots.length > 0 && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] muted-text">
-          <span>
-            Snapshot <span className="tabular-nums ink-text">{snapshots[0]}</span>
-            {windowBack >= 2 && (
-              <>
-                {" "}vs{" "}
-                <span className="tabular-nums ink-text">
-                  {snapshots[Math.min(windowBack, snapshots.length) - 1]}
-                </span>
-              </>
-            )}
-          </span>
-          <span>·</span>
-          <span>
-            {totalIdeas.toLocaleString("en-IN")} idea{totalIdeas === 1 ? "" : "s"} surfaced
-          </span>
-          <span>·</span>
-          <span>{idxLabel}</span>
-        </div>
-      )}
+      <PageHeader
+        eyebrow="Weekly Feed"
+        title="Ideas"
+        subtitle={
+          snapshots.length > 0
+            ? `Snapshot ${snapshots[0]}${windowBack >= 2 ? ` vs ${snapshots[Math.min(windowBack, snapshots.length) - 1]}` : ""} · ${totalIdeas.toLocaleString("en-IN")} idea${totalIdeas === 1 ? "" : "s"} surfaced · ${idxLabel}`
+            : "Weekly conviction feed of stocks building strength or breaking out."
+        }
+      />
 
       {/* Banners */}
       {snapshots.length === 0 && <FirstSnapshotBanner />}

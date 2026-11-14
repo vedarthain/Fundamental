@@ -65,6 +65,14 @@ export default async function WatchlistPage() {
 
   return (
     <div className="mx-auto max-w-[1600px] px-4 md:px-6 py-3 md:py-4">
+      <header className="pb-2 mb-3 border-b hairline">
+        <h1 className="font-display text-[18px] md:text-[20px] font-semibold tracking-tight leading-tight">
+          Watchlist
+        </h1>
+        <p className="text-[12px] muted-text mt-0.5">
+          Tracked NSE stocks, peer-relative scores, and live moves.
+        </p>
+      </header>
       <WatchlistClient isAdmin={isAdmin} />
     </div>
   );

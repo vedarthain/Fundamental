@@ -1119,10 +1119,9 @@ export default function GraphClient({
               Sector and industry carry the sector's hue (lib/sectorColor) so the
               family you're paging through is legible without reading the word. */}
           <div className="min-w-0 flex-1 flex items-baseline gap-x-2">
-            {/* Kept as sr-only rather than deleted: every other scanner tab has
-                a visible h1, so dropping this one outright would leave Graph as
-                the only tab with no document heading at all. Costs no pixels. */}
-            <h1 className="sr-only">Charts by industry</h1>
+            <h1 className="font-display text-[16px] md:text-[18px] font-semibold tracking-tight leading-tight shrink-0 mr-2">
+              Charts by industry
+            </h1>
             {/* Two lines, split on the seam between WHERE you are and HOW FAR
                 through it you are. On one line the counters trailed off the end
                 of a long industry name and were the first thing to truncate;

@@ -6,7 +6,6 @@ import {
   Search,
   FileText,
   Calendar,
-  Sparkles,
   Building2,
   Table as TableIcon,
   LayoutGrid,
@@ -21,6 +20,7 @@ import {
   Layers,
 } from "lucide-react";
 import CapTierBadge, { type CapCategory } from "@/components/CapTierBadge";
+import PageHeader from "@/components/PageHeader";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { band, bandColor } from "@/lib/score";
 
@@ -334,37 +334,26 @@ export function ResultsCornerClient({
   }, [declaredResults, search, declaredFilter, declaredSort]);
 
   return (
-    <div className="space-y-6">
-      {/* ── Top Header & Mode Switcher ────────────────────────────────────── */}
-      <div className="card p-5 border hairline">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div>
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-[var(--color-accent-50)] text-[var(--color-accent-700)] border border-[var(--color-accent-200)] mb-1.5">
-              <Sparkles size={11} strokeWidth={2.5} />
-              Corporate Actions &amp; Earnings Tracker
-            </div>
-            <h1 className="font-display text-[22px] sm:text-[25px] font-semibold tracking-tight text-[var(--color-ink)]">
-              Results Corner
-            </h1>
-            <p className="text-[13px] muted-text mt-1 max-w-2xl leading-relaxed">
-              Announcement of results dates, scheduled corporate board meetings &amp; quarterly financial performance track record for NSE stocks.
-            </p>
-          </div>
-
-          {/* Segmented Switcher */}
-          <div className="inline-flex p-1 rounded-lg bg-[var(--color-paper)] border hairline shrink-0 self-start lg:self-center">
+    <div className="space-y-4">
+      {/* ── Compact Header & Mode Switcher ───────────────────────────────── */}
+      <PageHeader
+        eyebrow="Corporate Actions & Earnings"
+        title="Results Corner"
+        subtitle="Board meeting dates, results calendar & quarterly financial track record for NSE stocks."
+        right={
+          <div className="inline-flex p-0.5 rounded-md bg-[var(--color-paper)] border hairline shrink-0">
             <button
               type="button"
               onClick={() => { setSection("calendar"); setSearch(""); }}
-              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-md text-[13px] font-medium transition-all ${
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-[12px] font-medium transition-all ${
                 section === "calendar"
                   ? "bg-[var(--color-card)] text-[var(--color-accent-700)] shadow-sm font-semibold"
                   : "text-[var(--color-muted)] hover:text-[var(--color-ink)]"
               }`}
             >
-              <Calendar size={14} strokeWidth={2.2} />
+              <Calendar size={13} strokeWidth={2.2} />
               Results Calendar
-              <span className={`text-[11px] px-1.5 py-0.2 rounded-full tabular-nums ${
+              <span className={`text-[10.5px] px-1.5 rounded-full tabular-nums ${
                 section === "calendar" ? "bg-[var(--color-accent-100)] text-[var(--color-accent-800)]" : "bg-[var(--color-card)]"
               }`}>
                 {calendarEvents.length}
@@ -374,53 +363,38 @@ export function ResultsCornerClient({
             <button
               type="button"
               onClick={() => { setSection("declared"); setSearch(""); }}
-              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-md text-[13px] font-medium transition-all ${
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-[12px] font-medium transition-all ${
                 section === "declared"
                   ? "bg-[var(--color-card)] text-[var(--color-accent-700)] shadow-sm font-semibold"
                   : "text-[var(--color-muted)] hover:text-[var(--color-ink)]"
               }`}
             >
-              <FileText size={14} strokeWidth={2.2} />
+              <FileText size={13} strokeWidth={2.2} />
               Declared Results
-              <span className={`text-[11px] px-1.5 py-0.2 rounded-full tabular-nums ${
+              <span className={`text-[10.5px] px-1.5 rounded-full tabular-nums ${
                 section === "declared" ? "bg-[var(--color-accent-100)] text-[var(--color-accent-800)]" : "bg-[var(--color-card)]"
               }`}>
                 {declaredResults.length}
               </span>
             </button>
           </div>
-        </div>
+        }
+      />
 
-        {/* Quick Highlights Bar */}
-        {section === "calendar" && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 pt-4 border-t hairline">
-            <div className="px-3 py-2 rounded-md bg-[var(--color-paper)]/70">
-              <div className="text-[11px] font-medium muted-text uppercase tracking-wider">Scheduled Today</div>
-              <div className="text-[17px] font-semibold tabular-nums text-[var(--color-ink)] mt-0.5">
-                {calendarStats.today} <span className="text-[11.5px] font-normal muted-text">meetings</span>
-              </div>
-            </div>
-            <div className="px-3 py-2 rounded-md bg-[var(--color-paper)]/70">
-              <div className="text-[11px] font-medium muted-text uppercase tracking-wider">Next 7 Days</div>
-              <div className="text-[17px] font-semibold tabular-nums text-[var(--color-ink)] mt-0.5">
-                {calendarStats.next7} <span className="text-[11.5px] font-normal muted-text">companies</span>
-              </div>
-            </div>
-            <div className="px-3 py-2 rounded-md bg-[var(--color-paper)]/70">
-              <div className="text-[11px] font-medium muted-text uppercase tracking-wider">Quarterly Results</div>
-              <div className="text-[17px] font-semibold tabular-nums text-[var(--color-ink)] mt-0.5">
-                {calendarStats.resultsOnly} <span className="text-[11.5px] font-normal muted-text">notices</span>
-              </div>
-            </div>
-            <div className="px-3 py-2 rounded-md bg-[var(--color-paper)]/70">
-              <div className="text-[11px] font-medium muted-text uppercase tracking-wider">Tracking Window</div>
-              <div className="text-[17px] font-semibold tabular-nums text-[var(--color-ink)] mt-0.5">
-                ±60 Days <span className="text-[11.5px] font-normal muted-text">calendar</span>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
+      {section === "calendar" && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] muted-text -mt-2">
+          <span>
+            Today: <strong className="text-[var(--color-ink)] tabular-nums">{calendarStats.today}</strong> meetings
+          </span>
+          <span>
+            Next 7d: <strong className="text-[var(--color-ink)] tabular-nums">{calendarStats.next7}</strong> companies
+          </span>
+          <span>
+            Quarterly results: <strong className="text-[var(--color-ink)] tabular-nums">{calendarStats.resultsOnly}</strong> notices
+          </span>
+          <span>Window: ±60d</span>
+        </div>
+      )}
 
       {/* ── Toolbar: Search, Filters & View Toggle ───────────────────────── */}
       <div className="space-y-3">

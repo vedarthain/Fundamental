@@ -202,19 +202,21 @@ export default function FallenLeadersClient({ n500Only }: { n500Only: boolean })
   return (
     <>
       <header className="max-w-[720px]">
-        <div className="eyebrow mb-3 flex items-center gap-2">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] muted-text mb-0.5 flex items-center gap-1.5">
           <span
-            className="inline-flex items-center justify-center w-6 h-6 rounded-md shrink-0"
+            className="inline-flex items-center justify-center w-5 h-5 rounded shrink-0"
             style={{ background: "color-mix(in srgb, var(--color-accent-600) 12%, transparent)", color: "var(--color-accent-700)" }}
           >
-            <IconFalling size={14} />
+            <IconFalling size={12} />
           </span>
           Quality screen
         </div>
-        <h1 className="font-display text-[36px] tracking-tight leading-tight">Fallen Leaders</h1>
-        <p className="mt-2 text-[12.5px] muted-text">
-          Strong businesses, temporarily beaten down · {sorted.length} names
-        </p>
+        <div className="pb-2.5 mb-3 border-b hairline">
+          <h1 className="font-display text-[18px] md:text-[20px] font-semibold tracking-tight leading-tight">Fallen Leaders</h1>
+          <p className="mt-0.5 text-[12px] muted-text">
+            Strong businesses, temporarily beaten down · {sorted.length} names
+          </p>
+        </div>
       </header>
 
       {/* Recovery Watch toggle */}

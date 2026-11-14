@@ -77,12 +77,20 @@ export default async function IpoPage({
   const n = ipoCounts(data.rows);
 
   return (
-    <div className="mx-auto max-w-[1600px] px-5 pt-6 pb-10">
-      <div className="text-[12px] uppercase tracking-wide muted-text flex items-center gap-2 flex-wrap">
-        <Link href="/sectors" className="hover:underline">Segments</Link>
-        <span aria-hidden style={{ color: "var(--color-border-default)" }}>›</span>
-        <span>IPO tracker</span>
-      </div>
+    <div className="mx-auto max-w-[1600px] px-4 sm:px-5 pt-4 pb-8">
+      <header className="pb-2.5 mb-3 border-b hairline">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] muted-text flex items-center gap-1.5 flex-wrap mb-0.5">
+          <Link href="/sectors" className="hover:underline">Segments</Link>
+          <span aria-hidden style={{ color: "var(--color-border-default)" }}>›</span>
+          <span>IPO tracker</span>
+        </div>
+        <h1 className="font-display text-[18px] md:text-[20px] font-semibold tracking-tight leading-tight">
+          IPO Tracker
+        </h1>
+        <p className="text-[12px] muted-text mt-0.5">
+          Mainboard and SME issues — open, upcoming, closed and recently listed with price bands and lot sizes.
+        </p>
+      </header>
 
       {/* A horizontal status row, not the two-column rail /ideas uses. That rail
           exists to separate "which view" from "which tab within it"; with the

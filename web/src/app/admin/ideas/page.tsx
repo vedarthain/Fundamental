@@ -77,11 +77,11 @@ export default async function AdminIdeasPage({
   const unhandled = ideas.filter((i) => !i.handled).length;
 
   return (
-    <div className="mx-auto max-w-[900px] px-4 md:px-6 py-6 md:py-8">
-      <header className="mb-6 flex items-baseline justify-between gap-4 flex-wrap">
+    <div className="mx-auto max-w-[900px] px-4 md:px-6 py-4 md:py-5">
+      <header className="pb-2.5 mb-4 border-b hairline flex items-baseline justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="font-display text-[26px] tracking-tight">User ideas</h1>
-          <p className="muted-text text-[12.5px] mt-1">
+          <h1 className="font-display text-[18px] md:text-[20px] font-semibold tracking-tight">User ideas</h1>
+          <p className="muted-text text-[12px] mt-0.5">
             {ideas.length} total · {unhandled} unhandled
           </p>
         </div>

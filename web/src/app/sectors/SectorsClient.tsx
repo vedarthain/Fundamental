@@ -254,14 +254,14 @@ function Hero(props: {
   onViewChange: (v: "browse" | "heatmap") => void;
 }) {
   return (
-    <section className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+    <section className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2 pb-2.5 mb-3 border-b hairline">
       <div>
-        <h1 className="font-display text-[26px] md:text-[30px] leading-[1.1] tracking-tight">
+        <h1 className="font-display text-[18px] md:text-[20px] font-semibold leading-tight tracking-tight">
           Where the Indian market is{" "}
           <em className="text-[var(--color-accent-600)] not-italic">strong</em>,
           and where it isn&apos;t.
         </h1>
-        <div className="mt-1 flex items-center gap-x-3 text-[12px] muted-text tabular-nums flex-wrap">
+        <div className="mt-0.5 flex items-center gap-x-3 text-[11.5px] muted-text tabular-nums flex-wrap">
           <span>{props.stockCount.toLocaleString("en-IN")} stocks</span>
           <span>·</span>
           <span>{props.clusterCount} peer groups</span>

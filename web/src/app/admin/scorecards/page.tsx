@@ -45,16 +45,14 @@ export default async function ScorecardListPage() {
   }
 
   return (
-    <div className="mx-auto max-w-[1200px] px-6 py-10">
+    <div className="mx-auto max-w-[1200px] px-4 sm:px-6 py-4 sm:py-5">
       <AdminHeader />
-      <header className="mt-3 max-w-[760px]">
-        <h1 className="font-display text-[36px] tracking-tight leading-tight">
+      <header className="mt-2 pb-2.5 mb-3 border-b hairline">
+        <h1 className="font-display text-[18px] md:text-[20px] font-semibold tracking-tight leading-tight">
           Cluster scorecards
         </h1>
-        <p className="mt-3 text-[14px] muted-text">
-          Edit pillar weights and per-component weights for any peer cluster.
-          Saving creates a new versioned row in <code className="text-[12px]">app.cluster_scorecard</code>;
-          it takes effect on the next scoring run (re-run <code className="text-[12px]">etl score</code>).
+        <p className="mt-0.5 text-[12px] muted-text">
+          Edit pillar and component weights for any peer cluster (<code className="text-[11px]">app.cluster_scorecard</code>).
         </p>
       </header>
 

@@ -21,17 +21,15 @@ export default function ArchitecturePage() {
 
 function Header() {
   return (
-    <div className="space-y-3">
-      <p className="text-xs font-mono tracking-widest uppercase text-[var(--color-muted)]">
+    <div className="pb-2.5 mb-3 border-b hairline">
+      <p className="text-[10px] font-semibold font-mono tracking-[0.14em] uppercase text-[var(--color-muted)] mb-0.5">
         Internal Reference · Low-Level Design
       </p>
-      <h1 className="text-3xl font-bold text-[var(--color-ink)]">
+      <h1 className="font-display text-[18px] md:text-[20px] font-semibold text-[var(--color-ink)]">
         System Architecture
       </h1>
-      <p className="text-[var(--color-muted)] max-w-2xl leading-relaxed">
-        End-to-end data flow from Screener.in scraping through the ETL scoring
-        engine, Neon cloud sync, and Vercel web deployment. Each node below
-        maps to real code and infrastructure.
+      <p className="text-[12px] text-[var(--color-muted)] mt-0.5">
+        End-to-end data flow from Screener.in scraping through ETL scoring, Neon sync, and Vercel deployment.
       </p>
     </div>
   );

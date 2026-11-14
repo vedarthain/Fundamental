@@ -86,10 +86,10 @@ export default async function AdminUsersPage({
   const maxDay = Math.max(1, ...daily.map((d) => d.signups));
 
   return (
-    <div className="mx-auto max-w-[900px] px-4 md:px-6 py-6 md:py-8">
-      <header className="mb-6">
-        <h1 className="font-display text-[26px] tracking-tight">Users</h1>
-        <p className="muted-text text-[12.5px] mt-1">Signups &amp; activity · IST-day boundaries</p>
+    <div className="mx-auto max-w-[900px] px-4 md:px-6 py-4 md:py-5">
+      <header className="pb-2.5 mb-4 border-b hairline">
+        <h1 className="font-display text-[18px] md:text-[20px] font-semibold tracking-tight">Users</h1>
+        <p className="muted-text text-[12px] mt-0.5">Signups &amp; activity · IST-day boundaries</p>
       </header>
 
       {/* Stat cards */}

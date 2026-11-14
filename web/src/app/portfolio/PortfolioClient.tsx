@@ -231,13 +231,12 @@ export function PortfolioClient({
 
   return (
     <>
-      <header className="mb-4">
-        <h1 className="font-display text-[26px] md:text-[30px] leading-[1.1] tracking-tight">
+      <header className="pb-2.5 mb-3 border-b hairline">
+        <h1 className="font-display text-[18px] md:text-[20px] font-semibold leading-tight tracking-tight">
           Your portfolio
         </h1>
-        <p className="muted-text text-[13px] mt-1">
-          Holdings imported from your brokers, re-priced live and scored on Q/V/M.
-          Current holdings only — values derived at read time, not tax-accurate.
+        <p className="muted-text text-[12px] mt-0.5">
+          Broker holdings re-priced live and scored on Q/V/M · current holdings only.
         </p>
       </header>
 

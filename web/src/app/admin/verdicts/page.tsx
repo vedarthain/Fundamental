@@ -15,6 +15,7 @@
 import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 import { isAdminRequest } from "@/lib/auth";
+import PageHeader from "@/components/PageHeader";
 import { VerdictDetailClient } from "./VerdictDetailClient";
 
 export const dynamic = "force-dynamic";
@@ -46,6 +47,11 @@ export default async function AdminVerdictsPage({
       className="mx-auto max-w-[1600px] px-3 sm:px-4 py-2 sm:py-3"
       style={{ zoom: 1.06 }}
     >
+      <PageHeader
+        eyebrow="Admin · Audit"
+        title="Verdicts & Thesis Audit"
+        subtitle="Inspect AI verdicts, valuation drift, and sector/cluster coverage across the universe."
+      />
       <VerdictDetailClient initialParams={sp} />
     </main>
   );

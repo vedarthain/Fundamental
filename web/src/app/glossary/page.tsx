@@ -1567,16 +1567,13 @@ function ScoreLimitsNote() {
 
 function Hero() {
   return (
-    <header className="max-w-[760px]">
-      <div className="text-[12px] uppercase tracking-wide muted-text">Glossary</div>
-      <h1 className="font-display text-[42px] tracking-tight leading-[1.05] mt-2">
-        Every ratio, <em className="accent">demystified</em>.
+    <header className="pb-2.5 mb-4 border-b hairline">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] muted-text mb-0.5">Glossary</div>
+      <h1 className="font-display text-[18px] md:text-[20px] font-semibold tracking-tight leading-tight">
+        Every ratio, <em className="accent">demystified</em>
       </h1>
-      <p className="mt-4 text-[15px] leading-relaxed muted-text max-w-[640px]">
-        A working reference for the ratios the platform uses — formulas,
-        plain-English meaning, when high is good vs bad, and the common
-        traps. Read in order or jump to whatever you came for via the
-        sidebar.
+      <p className="mt-0.5 text-[12px] muted-text max-w-[680px]">
+        Working reference for the platform ratios — formulas, plain-English meaning, and common traps.
       </p>
     </header>
   );

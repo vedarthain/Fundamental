@@ -147,27 +147,24 @@ export default async function UniverseChangesPage() {
     : "—";
 
   return (
-    <div className="theme-indigo mx-auto max-w-[900px] px-6 py-10">
-      <div className="text-[12px] uppercase tracking-wide muted-text flex items-center gap-2 flex-wrap">
-        <Link href="/tools" className="hover:underline">Tools</Link>
-        <span aria-hidden style={{ color: "var(--color-border-default)" }}>›</span>
-        <span>Universe changes</span>
-      </div>
+    <div className="theme-indigo mx-auto max-w-[900px] px-4 sm:px-6 py-4 sm:py-5">
+      <header className="pb-2.5 mb-3 border-b hairline">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] muted-text flex items-center gap-1.5 flex-wrap mb-0.5">
+          <Link href="/tools" className="hover:underline">Tools</Link>
+          <span aria-hidden style={{ color: "var(--color-border-default)" }}>›</span>
+          <span>Universe changes</span>
+        </div>
 
-      <h1 className="font-display text-[36px] tracking-tight leading-tight mt-1">
-        What&apos;s <em className="accent">joined</em> and{" "}
-        <em className="accent">left</em> the universe
-      </h1>
-      <p className="mt-3 text-[15px] muted-text max-w-[640px]">
-        Every week the fetch job reconciles our roster against NSE&apos;s live
-        listing master — onboarding fresh listings and retiring names that have
-        gone dark. This is the append-only record of those changes; no week is
-        ever overwritten. Genuinely new listings are kept separate from older
-        companies we simply started tracking, and each name carries whether we
-        can score it yet.
-      </p>
+        <h1 className="font-display text-[18px] md:text-[20px] font-semibold tracking-tight leading-tight">
+          What&apos;s <em className="accent">joined</em> and{" "}
+          <em className="accent">left</em> the universe
+        </h1>
+        <p className="mt-0.5 text-[12px] muted-text">
+          Weekly append-only record of NSE listings onboarded and retired names.
+        </p>
+      </header>
 
-      <div className="mt-4 flex flex-wrap gap-4 text-[13px] muted-text">
+      <div className="flex flex-wrap gap-4 text-[12.5px] muted-text">
         <span>
           <span className="font-medium tabular-nums" style={{ color: "var(--color-score-excellent)" }}>
             {totals.added.toLocaleString("en-IN")}

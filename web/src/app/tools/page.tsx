@@ -99,19 +99,18 @@ const TOOLS: ToolCard[] = [
 
 export default function ToolsLanding() {
   return (
-    <div className="theme-indigo mx-auto max-w-[1100px] px-6 py-10">
-      <header className="max-w-[640px]">
-        <div className="eyebrow mb-3">Specialized features</div>
-        <h1 className="font-display text-[36px] tracking-tight leading-tight">
+    <div className="theme-indigo mx-auto max-w-[1100px] px-4 sm:px-6 py-4 sm:py-5">
+      <header className="pb-2.5 mb-4 border-b hairline">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] muted-text mb-0.5">Specialized features</div>
+        <h1 className="font-display text-[18px] md:text-[20px] font-semibold tracking-tight leading-tight">
           Tools
         </h1>
-        <p className="muted-text mt-3 text-[15px] leading-[1.55]">
-          Purpose-built tools for specific analysis jobs. If you just want
-          to browse the universe by sector and industry, use{" "}
+        <p className="muted-text mt-0.5 text-[12px]">
+          Purpose-built tools for specific analysis jobs. Browse by sector and industry on{" "}
           <Link href="/sectors" className="underline hover:no-underline">
             Sectors
           </Link>
-          {" "}instead — that&apos;s the navigation surface.
+          .
         </p>
       </header>
 

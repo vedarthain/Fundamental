@@ -592,14 +592,13 @@ export default async function ScreenerPage({
               <span>stocks tracked</span>
             </Link>
           </div>
-          <h1 className="font-display text-[36px] tracking-tight leading-tight mt-1">
+          <h1 className="font-display text-[18px] md:text-[20px] font-semibold tracking-tight leading-tight mt-0.5">
             Stocks ranked by <em className="accent">Industry Score</em>
           </h1>
-          <p className="mt-3 text-[15px] muted-text">
-            Every stock ranked within its peer cluster using sector-tuned Quality, Valuation,
-            and Momentum weights. Filter by sector, industry, maturity, or market cap.
+          <p className="mt-0.5 text-[12px] muted-text">
+            Every stock ranked within its peer cluster using sector-tuned Quality, Valuation, and Momentum weights.
           </p>
-          <div className="mt-3 text-[12px] muted-text">
+          <div className="mt-1.5 text-[11.5px] muted-text">
             {total.toLocaleString("en-IN")} matches
             {latestPrice && (
               <>

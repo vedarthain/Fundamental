@@ -85,13 +85,15 @@ export default function RotationClient({
           </span>
           {eyebrow}
         </div>
-        <h1 className="font-display text-[36px] tracking-tight leading-tight">{title}</h1>
-        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-          {dateLabel && (
-            <p className="text-[12.5px] muted-text">
-              <span className="ink-text font-medium">{dateLabel}</span> · {rows.length} {noun}
-            </p>
-          )}
+        <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 mb-3 border-b hairline">
+          <div>
+            <h1 className="font-display text-[18px] md:text-[20px] font-semibold tracking-tight leading-tight">{title}</h1>
+            {dateLabel && (
+              <p className="text-[12px] muted-text mt-0.5">
+                <span className="ink-text font-medium">{dateLabel}</span> · {rows.length} {noun}
+              </p>
+            )}
+          </div>
           {datePicker}
         </div>
       </header>

@@ -1050,6 +1050,11 @@ export function VerdictDetailClient({
     const newIndustryKey = ind ? `${newSector}//${ind.industry}` : null;
     const prevAuto = autoOpenedRef.current;
 
+    if (prevAuto.sector === null) {
+      autoOpenedRef.current = { sector: newSector, industryKey: newIndustryKey };
+      return; // initial load: keep all sectors collapsed
+    }
+
     if (prevAuto.sector === newSector && prevAuto.industryKey === newIndustryKey) {
       return; // same cluster as last time — nothing to open or close
     }
@@ -1389,7 +1394,7 @@ export function VerdictDetailClient({
         <div className="rounded-md border hairline lg:sticky lg:top-3 lg:max-h-[calc(100vh-2rem)] flex flex-col overflow-hidden">
           <div className="px-2 py-1.5 border-b hairline flex items-center justify-between gap-2 shrink-0">
             <span className="text-[11px] font-semibold uppercase tracking-wide muted-text">
-              Sectors &amp; industries
+              Sectors &amp; clusters
             </span>
             <span className="text-[10px] muted-text tabular-nums">
               {tree.length} · {tree.reduce((n, s) => n + s.industries.length, 0)}
@@ -1459,6 +1464,7 @@ export function VerdictDetailClient({
                                   <button
                                     key={e.symbol}
                                     onClick={() => setSymbol(e.symbol)}
+                                    title={e.company_name ?? e.symbol}
                                     className={`w-full flex items-center justify-between gap-1 text-left px-1.5 py-[3px] text-[11.5px] rounded font-mono ${
                                       symbol === e.symbol
                                         ? "bg-slate-800 text-white"

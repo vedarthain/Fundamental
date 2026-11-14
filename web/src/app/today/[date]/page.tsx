@@ -172,18 +172,18 @@ function Disclaimer() {
 function Hero({ insight }: { insight: Awaited<ReturnType<typeof loadInsight>> }) {
   const formattedDate = formatNiceDate(insight.date);
   return (
-    <header className="mb-8">
-      <div className="flex items-center gap-2 mb-3">
-        <span className="text-[11px] uppercase tracking-wide muted-text font-semibold">
+    <header className="pb-2.5 mb-4 border-b hairline">
+      <div className="flex items-center gap-2 mb-0.5">
+        <span className="text-[10px] uppercase tracking-[0.14em] muted-text font-semibold">
           {insight.isToday ? "Today's Signal" : "Past Signal"}
         </span>
         <span className="muted-text">·</span>
-        <span className="text-[11px] tabular-nums muted-text">{formattedDate}</span>
+        <span className="text-[10.5px] tabular-nums muted-text">{formattedDate}</span>
       </div>
-      <h1 className="font-display text-[28px] md:text-[34px] leading-tight tracking-tight mb-2">
+      <h1 className="font-display text-[18px] md:text-[20px] font-semibold leading-tight tracking-tight">
         {insight.title}
       </h1>
-      <p className="muted-text text-[14.5px] leading-relaxed max-w-[640px]">
+      <p className="muted-text text-[12px] mt-0.5">
         {insight.subtitle}
       </p>
     </header>

@@ -52,18 +52,16 @@ export default async function FeedbackPage() {
   const publicIdeas = await loadPublic();
 
   return (
-    <div className="mx-auto max-w-[720px] px-4 md:px-6 py-8 md:py-12">
-      <header className="mb-6">
-        <div className="text-[11px] uppercase tracking-wide muted-text mb-2">
+    <div className="mx-auto max-w-[720px] px-4 md:px-6 py-4 md:py-6">
+      <header className="pb-2.5 mb-4 border-b hairline">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] muted-text mb-0.5">
           Feedback & roadmap
         </div>
-        <h1 className="font-display text-[28px] md:text-[32px] leading-tight tracking-tight">
+        <h1 className="font-display text-[18px] md:text-[20px] font-semibold leading-tight tracking-tight">
           What should we build next?
         </h1>
-        <p className="muted-text text-[14px] mt-3 leading-relaxed">
-          Found a bug? Want a feature? Confused by something? Type it below.
-          Submissions are private by default — we only publish a thread (without
-          your name or email) if it helps other users.
+        <p className="muted-text text-[12px] mt-0.5">
+          Found a bug or want a feature? Submissions are private by default.
         </p>
       </header>
 

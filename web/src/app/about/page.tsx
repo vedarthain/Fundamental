@@ -43,16 +43,13 @@ export default function AboutPage() {
 
 function Hero() {
   return (
-    <header className="max-w-[760px]">
-      <div className="text-[12px] uppercase tracking-wide muted-text">Methodology</div>
-      <h1 className="font-display text-[44px] tracking-tight leading-[1.05] mt-2">
-        How a stock becomes <em className="accent">a score</em>.
+    <header className="pb-2.5 mb-4 border-b hairline">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] muted-text mb-0.5">Methodology</div>
+      <h1 className="font-display text-[18px] md:text-[20px] font-semibold tracking-tight leading-tight">
+        How a stock becomes <em className="accent">a score</em>
       </h1>
-      <p className="mt-4 text-[16px] leading-relaxed muted-text max-w-[640px]">
-        Every actively-traded NSE stock is scored on three pillars — Quality,
-        Valuation, Momentum — within its peer cluster and maturity tier. The
-        result is a 0–100 percentile that means the same thing everywhere on
-        the site.
+      <p className="mt-0.5 text-[12px] muted-text max-w-[680px]">
+        Every actively-traded NSE stock is scored on Quality, Valuation, and Momentum within its peer cluster and maturity tier (0–100 percentile).
       </p>
     </header>
   );

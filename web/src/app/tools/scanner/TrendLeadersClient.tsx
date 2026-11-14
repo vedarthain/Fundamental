@@ -125,13 +125,15 @@ export default function TrendLeadersClient({
           </span>
           Daily scanner
         </div>
-        <h1 className="font-display text-[36px] tracking-tight leading-tight">Trend Leaders</h1>
-        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-          {dateLabel && (
-            <p className="text-[12.5px] muted-text">
-              <span className="ink-text font-medium">{dateLabel}</span> · {signals.length} fresh crosses · golden cross within the last 25 days
-            </p>
-          )}
+        <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 mb-3 border-b hairline">
+          <div>
+            <h1 className="font-display text-[18px] md:text-[20px] font-semibold tracking-tight leading-tight">Trend Leaders</h1>
+            {dateLabel && (
+              <p className="text-[12px] muted-text mt-0.5">
+                <span className="ink-text font-medium">{dateLabel}</span> · {signals.length} fresh crosses · golden cross within the last 25 days
+              </p>
+            )}
+          </div>
           <div className="flex items-center gap-3">
             <GroupBySectorToggle on={groupSector} onToggle={() => setGroupSector((v) => !v)} />
             <WindowPicker options={TREND_WINDOWS} days={win.days} onSelect={win.select} loading={win.loading} />

@@ -89,10 +89,11 @@ export function IndicesClient({ indices, isSignedIn = true }: { indices: IndexBo
 
   return (
     <div>
-      <header className="mb-4">
-        <h1 className="font-display text-[22px] md:text-[26px] leading-tight">NSE Index Board</h1>
-        <p className="muted-text text-[12px] mt-1">
-          All tracked Nifty indices · pick one to see its candlestick chart and constituents · daily EOD levels
+      <header className="pb-2.5 mb-3 border-b hairline">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] muted-text mb-0.5">Markets</div>
+        <h1 className="font-display text-[18px] md:text-[20px] font-semibold leading-tight tracking-tight">NSE Index Board</h1>
+        <p className="muted-text text-[12px] mt-0.5">
+          All tracked Nifty indices · candlestick chart and constituents · daily EOD levels
         </p>
       </header>
 

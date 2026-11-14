@@ -159,24 +159,23 @@ export default async function ComparePage({
   const hrefRaw = `/compare?${baseParams.toString()}`;
 
   return (
-    <div className="theme-amber mx-auto max-w-[1200px] px-6 py-10">
-      <header className="max-w-[820px]">
-        <div className="text-[12px] uppercase tracking-wide muted-text flex items-center gap-2">
-          <ArrowLeftRight size={13} />
-          <span>Peer comparison</span>
+    <div className="theme-amber mx-auto max-w-[1200px] px-4 sm:px-6 py-4 sm:py-5">
+      <header className="pb-2.5 mb-3 border-b hairline flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] muted-text flex items-center gap-1.5 mb-0.5">
+            <ArrowLeftRight size={11} />
+            <span>Peer comparison</span>
+          </div>
+          <h1 className="font-display text-[18px] md:text-[20px] font-semibold tracking-tight leading-tight">
+            Stocks <em className="accent">side by side</em>
+          </h1>
+          <p className="mt-0.5 text-[12px] muted-text">
+            Pick up to five NSE symbols to compare peer-relative scorecards and raw filings.
+          </p>
         </div>
-        <h1 className="font-display text-[36px] tracking-tight leading-tight mt-1">
-          Stocks <em className="accent">side by side</em>.
-        </h1>
-        <p className="mt-3 text-[14.5px] muted-text leading-[1.6] max-w-[640px]">
-          Pick up to five NSE symbols. Switch between the peer-relative
-          scorecard and the raw financial filings.
-        </p>
-        <div className="mt-2 text-[12px] muted-text">
-          <Link href="/tools" className="hover:text-[var(--color-accent-700)]">
-            ← Back to Tools
-          </Link>
-        </div>
+        <Link href="/tools" className="text-[11.5px] muted-text hover:text-[var(--color-accent-700)] shrink-0">
+          ← Back to Tools
+        </Link>
       </header>
 
       <CompareForm initial={raw} view={view} />

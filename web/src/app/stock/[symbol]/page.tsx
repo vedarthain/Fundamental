@@ -886,14 +886,14 @@ export default async function StockPage({
               </span>
             )}
           </div>
-          <div className="mt-1 flex items-baseline gap-3 flex-wrap">
-            <h1 className="font-display text-[36px] tracking-tight leading-tight">
+          <div className="mt-0.5 flex items-baseline gap-2.5 flex-wrap">
+            <h1 className="font-display text-[20px] md:text-[24px] font-semibold tracking-tight leading-tight">
               {stock.company_name || stock.symbol}
             </h1>
             {quarterly[0] && <ResultFlashChip latest={quarterly[0]} />}
             <WatchlistButton symbol={stock.symbol} />
           </div>
-          <div className="mt-2 flex flex-wrap items-center gap-3 text-[14px] muted-text">
+          <div className="mt-1 flex flex-wrap items-center gap-2.5 text-[13px] muted-text">
             <span className="font-medium ink-text tabular-nums">{stock.symbol}</span>
             <span
               className="inline-flex items-center rounded px-1.5 py-[1px] text-[10px] font-semibold tracking-wide"

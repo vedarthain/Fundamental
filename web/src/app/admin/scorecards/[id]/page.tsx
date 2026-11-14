@@ -74,17 +74,15 @@ export default async function ScorecardEditPage({
         ← All scorecards
       </Link>
 
-      <header className="mt-3 max-w-[760px]">
-        <div className="text-[12px] uppercase tracking-wide muted-text">
+      <header className="mt-2 pb-2.5 mb-3 border-b hairline">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] muted-text">
           {meta.sector_name}
         </div>
-        <h1 className="font-display text-[36px] tracking-tight leading-tight mt-1">
+        <h1 className="font-display text-[18px] md:text-[20px] font-semibold tracking-tight leading-tight mt-0.5">
           {meta.industry_name}
         </h1>
-        <p className="mt-3 text-[13px] muted-text">
-          Edit weights below and save. A new versioned row is written to{" "}
-          <code className="text-[12px]">app.cluster_scorecard</code>; the loader picks
-          up the most recent on the next scoring run.
+        <p className="mt-0.5 text-[12px] muted-text">
+          Edit weights below and save to <code className="text-[11px]">app.cluster_scorecard</code>.
         </p>
       </header>
 

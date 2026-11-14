@@ -97,23 +97,25 @@ export default function SupportFloorClient({
 
   return (
     <>
-      <header className="max-w-[720px]">
-        <div className="eyebrow mb-3 flex items-center gap-2">
+      <header className="pb-2.5 mb-3 border-b hairline">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] muted-text mb-0.5 flex items-center gap-1.5">
           <span
-            className="inline-flex items-center justify-center w-6 h-6 rounded-md shrink-0"
+            className="inline-flex items-center justify-center w-5 h-5 rounded shrink-0"
             style={{ background: "color-mix(in srgb, var(--color-accent-600) 12%, transparent)", color: "var(--color-accent-700)" }}
           >
-            <IconFloor size={14} />
+            <IconFloor size={12} />
           </span>
           Daily scanner
         </div>
-        <h1 className="font-display text-[36px] tracking-tight leading-tight">At Support</h1>
-        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-          {dateLabel && (
-            <p className="text-[12.5px] muted-text">
-              <span className="ink-text font-medium">{dateLabel}</span> · {signals.length} at support
-            </p>
-          )}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h1 className="font-display text-[18px] md:text-[20px] font-semibold tracking-tight leading-tight">At Support</h1>
+            {dateLabel && (
+              <p className="text-[12px] muted-text mt-0.5">
+                <span className="ink-text font-medium">{dateLabel}</span> · {signals.length} at support
+              </p>
+            )}
+          </div>
           <div className="flex items-center gap-3">
             <GroupBySectorToggle on={groupSector} onToggle={() => setGroupSector((v) => !v)} />
             <WindowPicker options={FLOOR_WINDOWS} days={win.days} onSelect={win.select} loading={win.loading} />

@@ -158,18 +158,17 @@ export default async function WeekRangePage({
     : null;
 
   return (
-    <div className="theme-indigo mx-auto max-w-[1100px] px-6 py-10">
-      <header className="max-w-[720px]">
-        <div className="eyebrow mb-3">Tools</div>
-        <h1 className="font-display text-[34px] tracking-tight leading-tight">52-week high / low</h1>
-        <p className="muted-text mt-3 text-[14.5px] leading-[1.55]">
-          Every stock sitting at or near its 52-week extreme, filterable by index segment.
-          End-of-day{asOfLabel ? ` · close of ${asOfLabel}` : ""} — not live. Each name links to its scorecard.
+    <div className="theme-indigo mx-auto max-w-[1100px] px-4 sm:px-6 py-4 sm:py-5">
+      <header className="pb-2.5 mb-3 border-b hairline">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] muted-text mb-0.5">Tools</div>
+        <h1 className="font-display text-[18px] md:text-[20px] font-semibold tracking-tight leading-tight">52-week high / low</h1>
+        <p className="muted-text mt-0.5 text-[12px]">
+          Stocks at or near their 52-week extreme, filterable by index segment · End-of-day{asOfLabel ? ` · close of ${asOfLabel}` : ""}.
         </p>
       </header>
 
       {/* Segment filter */}
-      <nav className="mt-6 flex flex-wrap items-center gap-1.5">
+      <nav className="mt-3 flex flex-wrap items-center gap-1.5">
         <span className="text-[10px] uppercase tracking-wide muted-text mr-1">Segment</span>
         {SEGMENTS.map((s) => {
           const active = s.key === seg;
