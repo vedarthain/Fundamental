@@ -638,12 +638,13 @@ export async function GET(request: Request) {
       const clusName = isMutualFundOrEtf ? "Mutual Funds & Commodity/Index ETFs" : (r.cluster_name ?? "General");
       const indName = isMutualFundOrEtf ? "Mutual Funds & Commodity/Index ETFs" : (r.industry || "General");
 
+      const curOverride = CURATED_LEVEL_OVERRIDES[sym];
       const resolvedPx = resolveLatestPrice(r.symbol, r.ltp, r.price_fetched_at);
       const avgCost = Number(r.weighted_avg_cost ?? 0);
       const ltp = isMutualFundOrEtf ? avgCost : resolvedPx.ltp;
-      const target = r.target_price ? Number(r.target_price) : null;
-      const buyBelow = r.buy_below ? Number(r.buy_below) : null;
-      const bearFloor = r.bear_floor ? Number(r.bear_floor) : null;
+      const target = curOverride ? curOverride.target : (r.target_price ? Number(r.target_price) : null);
+      const buyBelow = curOverride ? curOverride.buyBelow : (r.buy_below ? Number(r.buy_below) : null);
+      const bearFloor = curOverride ? curOverride.bearFloor : (r.bear_floor ? Number(r.bear_floor) : null);
       const upside = target && ltp > 0
         ? Math.round(((target - ltp) / ltp) * 1000) / 10
         : (r.upside_pct ? Number(r.upside_pct) : 0);
@@ -651,13 +652,13 @@ export async function GET(request: Request) {
       const qual = r.quality_pct ? Number(r.quality_pct) : 50;
       const mom = r.momentum_pct ? Number(r.momentum_pct) : 50;
       const comp = r.composite_pct ? Number(r.composite_pct) : 50;
-      const anchor = r.anchor_price ? Number(r.anchor_price) : null;
+      const anchor = curOverride ? curOverride.anchor : (r.anchor_price ? Number(r.anchor_price) : null);
       const pctMove = anchor && anchor > 0 ? ((ltp - anchor) / anchor) * 100 : null;
 
       // Dual Anchors
       const callPrice = anchor;
       const callPerfPct = anchor && anchor > 0 ? ((ltp - anchor) / anchor) * 100 : null;
-      const callDate = r.generated_at ? new Date(r.generated_at).toISOString().slice(0, 10) : null;
+      const callDate = curOverride ? curOverride.callDate : (r.generated_at ? new Date(r.generated_at).toISOString().slice(0, 10) : null);
 
       const purchasePrice = avgCost > 0 ? avgCost : null;
       const purchasePerfPct = purchasePrice && purchasePrice > 0 ? ((ltp - purchasePrice) / purchasePrice) * 100 : null;
