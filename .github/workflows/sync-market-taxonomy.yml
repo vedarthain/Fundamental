@@ -20,6 +20,7 @@ jobs:
           host: ${{ secrets.DO_HOST }}
           username: root
           key: ${{ secrets.DO_SSH_KEY }}
+          command_timeout: 30m
           script: |
             set -e
             cd /var/www/Fundamental

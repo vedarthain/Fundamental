@@ -429,6 +429,8 @@ type StockContext = {
   filings: { title: string; category: string; headline: string | null; published_at: string | null; pdf_url: string | null }[];
   dividends: { ex_date: string; purpose: string; amount: number | null }[];
   results: { title: string; headline: string | null; published_at: string | null; pdf_url: string | null }[];
+  quarterly?: { period_end: string; sales: number | null; operating_profit: number | null; net_profit: number | null }[];
+  boardMeetings?: { ex_date: string; purpose: string; is_upcoming: boolean }[];
   audit: {
     verdict: string | null;
     confidence: string | null;
@@ -5526,36 +5528,117 @@ export function CallsClient() {
 
                   {/* TAB 3: RESULTS DECLARATIONS */}
                   {effectiveTab === "results" && (
-                    <div className="space-y-2 text-xs sm:text-sm">
+                    <div className="space-y-3 text-xs sm:text-sm">
                       {contextLoading ? (
-                        <div className="py-6 text-center text-slate-400">Loading results filings…</div>
-                      ) : !contextData?.results || contextData.results.length === 0 ? (
-                        <div className="py-6 text-center text-slate-400">No recent result announcements on file.</div>
+                        <div className="py-6 text-center text-slate-400">Loading results &amp; schedule…</div>
                       ) : (
-                        <div className="space-y-2 max-h-72 overflow-y-auto">
-                          {contextData.results.map((r, idx) => (
-                            <div key={idx} className="p-2.5 rounded-md border hairline bg-slate-50/50 hover:bg-slate-50 flex items-start justify-between gap-2.5">
-                              <div className="space-y-0.5 min-w-0">
-                                <div className="font-semibold text-slate-900 line-clamp-1">{r.title}</div>
-                                {r.headline && <p className="text-xs text-slate-600 line-clamp-2">{r.headline}</p>}
-                                <div className="text-[10.5px] text-slate-400">
-                                  <span>Published: {fmtDate(r.published_at)} ({daysAgo(r.published_at)})</span>
-                                </div>
+                        <>
+                          {/* Upcoming Results Date & Latest Quarter Strip */}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <div className="p-2.5 rounded-md border hairline bg-slate-50/70">
+                              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                                Upcoming Results / Board Meeting
                               </div>
-                              {r.pdf_url && (
-                                <a
-                                  href={r.pdf_url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="px-2 py-1 text-xs font-semibold rounded bg-indigo-50 text-indigo-700 hover:bg-indigo-100 flex items-center gap-1 shrink-0"
-                                >
-                                  <span>PDF</span>
-                                  <ExternalLink className="w-3 h-3" />
-                                </a>
+                              {(() => {
+                                const upcoming = contextData?.boardMeetings?.find((b) => b.is_upcoming);
+                                const lastBm = contextData?.boardMeetings?.[0];
+                                if (upcoming) {
+                                  return (
+                                    <div className="mt-1">
+                                      <span className="font-semibold text-emerald-700">{fmtDate(upcoming.ex_date)}</span>
+                                      <span className="ml-1.5 text-[11px] text-slate-600">({upcoming.purpose})</span>
+                                    </div>
+                                  );
+                                }
+                                return (
+                                  <div className="mt-1 text-slate-600 text-xs">
+                                    Not scheduled yet
+                                    {lastBm ? (
+                                      <span className="text-[11px] text-slate-400 ml-1.5">
+                                        · Last: {fmtDate(lastBm.ex_date)}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                );
+                              })()}
+                            </div>
+
+                            <div className="p-2.5 rounded-md border hairline bg-slate-50/70">
+                              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                                Latest Quarter in DB
+                              </div>
+                              {contextData?.quarterly && contextData.quarterly.length > 0 ? (
+                                <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-xs">
+                                  <span className="font-semibold text-slate-900">{fmtDate(contextData.quarterly[0].period_end)}</span>
+                                  <span className="text-slate-600 tabular-nums">
+                                    Sales: ₹{contextData.quarterly[0].sales?.toFixed(1) ?? "—"} Cr
+                                  </span>
+                                  <span className="text-slate-600 tabular-nums">
+                                    PAT: ₹{contextData.quarterly[0].net_profit?.toFixed(1) ?? "—"} Cr
+                                  </span>
+                                </div>
+                              ) : (
+                                <div className="mt-1 text-slate-400 text-xs">No quarterly filings in DB yet.</div>
                               )}
                             </div>
-                          ))}
-                        </div>
+                          </div>
+
+                          {/* Recent Quarters Table */}
+                          {contextData?.quarterly && contextData.quarterly.length > 0 && (
+                            <div className="overflow-x-auto rounded-md border hairline">
+                              <table className="w-full text-[11.5px] tabular-nums">
+                                <thead className="bg-slate-50 text-slate-500 border-b hairline">
+                                  <tr>
+                                    <th className="text-left px-2.5 py-1.5 font-semibold">Quarter End</th>
+                                    <th className="text-right px-2.5 py-1.5 font-semibold">Sales (Cr)</th>
+                                    <th className="text-right px-2.5 py-1.5 font-semibold">Op. Profit (Cr)</th>
+                                    <th className="text-right px-2.5 py-1.5 font-semibold">Net Profit (Cr)</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                  {contextData.quarterly.map((q) => (
+                                    <tr key={q.period_end} className="hover:bg-slate-50/60">
+                                      <td className="px-2.5 py-1.5 font-medium text-slate-800">{fmtDate(q.period_end)}</td>
+                                      <td className="px-2.5 py-1.5 text-right text-slate-700">{q.sales != null ? q.sales.toFixed(2) : "—"}</td>
+                                      <td className="px-2.5 py-1.5 text-right text-slate-700">{q.operating_profit != null ? q.operating_profit.toFixed(2) : "—"}</td>
+                                      <td className="px-2.5 py-1.5 text-right font-medium text-slate-900">{q.net_profit != null ? q.net_profit.toFixed(2) : "—"}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+
+                          {/* Exchange Result Filings */}
+                          {!contextData?.results || contextData.results.length === 0 ? (
+                            <div className="py-4 text-center text-slate-400 text-xs">No recent BSE result announcements on file.</div>
+                          ) : (
+                            <div className="space-y-2 max-h-60 overflow-y-auto">
+                              {contextData.results.map((r, idx) => (
+                                <div key={idx} className="p-2.5 rounded-md border hairline bg-slate-50/50 hover:bg-slate-50 flex items-start justify-between gap-2.5">
+                                  <div className="space-y-0.5 min-w-0">
+                                    <div className="font-semibold text-slate-900 line-clamp-1">{r.title}</div>
+                                    {r.headline && <p className="text-xs text-slate-600 line-clamp-2">{r.headline}</p>}
+                                    <div className="text-[10.5px] text-slate-400">
+                                      <span>Published: {fmtDate(r.published_at)} ({daysAgo(r.published_at)})</span>
+                                    </div>
+                                  </div>
+                                  {r.pdf_url && (
+                                    <a
+                                      href={r.pdf_url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="px-2 py-1 text-xs font-semibold rounded bg-indigo-50 text-indigo-700 hover:bg-indigo-100 flex items-center gap-1 shrink-0"
+                                    >
+                                      <span>PDF</span>
+                                      <ExternalLink className="w-3 h-3" />
+                                    </a>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
                   )}

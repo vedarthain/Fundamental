@@ -200,6 +200,34 @@ export async function GET(req: NextRequest) {
     audit = null;
   }
 
+  let quarterly: { period_end: string; sales: number | null; operating_profit: number | null; net_profit: number | null }[] = [];
+  try {
+    quarterly = await sql<any[]>`
+      SELECT period_end::text, sales::float, operating_profit::float, net_profit::float
+        FROM app.fundamentals_quarterly
+       WHERE symbol = ${symbol}
+       ORDER BY period_end DESC
+       LIMIT 4
+    `;
+  } catch {
+    quarterly = [];
+  }
+
+  let boardMeetings: { ex_date: string; purpose: string; is_upcoming: boolean }[] = [];
+  try {
+    boardMeetings = await sql<any[]>`
+      SELECT ex_date::text, COALESCE(purpose, 'Board Meeting') AS purpose,
+             (ex_date >= CURRENT_DATE) AS is_upcoming
+        FROM app.corporate_action
+       WHERE symbol = ${symbol}
+         AND action_type = 'board_meeting'
+       ORDER BY ex_date DESC NULLS LAST
+       LIMIT 5
+    `;
+  } catch {
+    boardMeetings = [];
+  }
+
   return NextResponse.json(
     {
       overview,
@@ -207,6 +235,8 @@ export async function GET(req: NextRequest) {
       filings: filings.slice(0, 15),
       dividends,
       results,
+      quarterly,
+      boardMeetings,
       audit,
     },
     { headers: { "Cache-Control": "no-store" } },
