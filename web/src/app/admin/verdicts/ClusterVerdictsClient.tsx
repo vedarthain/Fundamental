@@ -6,7 +6,7 @@ import { ChevronDown, ChevronRight, ExternalLink, Search } from "lucide-react";
 import type { ClusterVerdictRow } from "@/app/api/admin/cluster-verdicts/route";
 
 export type ClusterTreeNode = {
-  clusterId: number;
+  clusterId: string;
   clusterName: string;
   stockCount: number;
 };
@@ -47,12 +47,12 @@ export function ClusterVerdictsClient({
   initialItems,
 }: {
   sectors: SectorTreeNode[];
-  initialClusterId: number | null;
+  initialClusterId: string | null;
   initialItems: ClusterVerdictRow[];
 }) {
   // Left panel starts completely collapsed to Sectors
   const [expandedSectors, setExpandedSectors] = useState<Set<string>>(new Set());
-  const [selectedClusterId, setSelectedClusterId] = useState<number | null>(initialClusterId);
+  const [selectedClusterId, setSelectedClusterId] = useState<string | null>(initialClusterId);
   const [items, setItems] = useState<ClusterVerdictRow[]>(initialItems);
   const [loading, setLoading] = useState(false);
 

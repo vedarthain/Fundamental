@@ -42,61 +42,64 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "clusterId required" }, { status: 400 });
   }
 
-  const rows = await sql<any[]>`
-    WITH latest_verdict AS (
-      SELECT DISTINCT ON (symbol)
-        symbol, verdict, target_price, buy_below, bear_floor, upside_pct
-      FROM app.stock_verdict
-      ORDER BY symbol, generated_at DESC
-    ),
-    latest_panel AS (
-      SELECT DISTINCT ON (symbol)
-        symbol, company_name, cluster_id, market_cap_cr, current_price,
-        composite_pct, quality_pct, valuation_pct, momentum_pct
-      FROM app.cluster_stocks_panel_cache
-      ORDER BY symbol, snapshot_date DESC
-    ),
-    latest_q AS (
-      SELECT DISTINCT ON (symbol)
-        symbol, period_end::text AS q_end, sales::float AS q_sales, net_profit::float AS q_pat
-      FROM app.fundamentals_quarterly
-      ORDER BY symbol, period_end DESC
-    )
-    SELECT
-      p.symbol,
-      p.company_name,
-      COALESCE(p.market_cap_cr, 0)::float AS market_cap_cr,
-      COALESCE(sm.current_price, p.current_price, 0)::float AS ltp,
-      v.buy_below::float,
-      v.target_price::float,
-      v.bear_floor::float,
-      CASE
-        WHEN v.target_price > 0 AND COALESCE(sm.current_price, p.current_price) > 0
-          THEN ROUND(((v.target_price - COALESCE(sm.current_price, p.current_price)) / COALESCE(sm.current_price, p.current_price) * 100)::numeric, 1)::float
-        ELSE v.upside_pct::float
-      END AS upside_pct,
-      COALESCE(p.composite_pct, 0)::float AS composite_pct,
-      COALESCE(p.quality_pct, 0)::float AS quality_pct,
-      COALESCE(p.valuation_pct, 0)::float AS valuation_pct,
-      COALESCE(p.momentum_pct, 0)::float AS momentum_pct,
-      q.q_end,
-      q.q_sales,
-      q.q_pat,
-      v.verdict,
-      u.business_summary,
-      m.moat_strength,
-      m.moat_type,
-      m.moat_points,
-      EXISTS(SELECT 1 FROM app.portfolio_holding h WHERE h.symbol = p.symbol AND h.quantity > 0) AS in_portfolio
-    FROM latest_panel p
-    LEFT JOIN latest_verdict v ON v.symbol = p.symbol
-    LEFT JOIN app.screener_meta sm ON sm.symbol = p.symbol
-    LEFT JOIN app.universe u ON u.symbol = p.symbol
-    LEFT JOIN latest_q q ON q.symbol = p.symbol
-    LEFT JOIN app.company_moat m ON m.symbol = p.symbol
-    WHERE p.cluster_id = ${Number(clusterId)}
-    ORDER BY p.composite_pct DESC NULLS LAST, upside_pct DESC NULLS LAST
-  `;
+  const [rows, moatRows] = await Promise.all([
+    sql<any[]>`
+      WITH latest_verdict AS (
+        SELECT DISTINCT ON (symbol)
+          symbol, verdict, target_price, buy_below, bear_floor, upside_pct
+        FROM app.stock_verdict
+        ORDER BY symbol, generated_at DESC
+      ),
+      latest_panel AS (
+        SELECT DISTINCT ON (symbol)
+          symbol, company_name, cluster_id, market_cap_cr, current_price,
+          composite_pct, quality_pct, valuation_pct, momentum_pct
+        FROM app.cluster_stocks_panel_cache
+        ORDER BY symbol, snapshot_date DESC
+      ),
+      latest_q AS (
+        SELECT DISTINCT ON (symbol)
+          symbol, period_end::text AS q_end, sales::float AS q_sales, net_profit::float AS q_pat
+        FROM app.fundamentals_quarterly
+        ORDER BY symbol, period_end DESC
+      )
+      SELECT
+        p.symbol,
+        p.company_name,
+        COALESCE(p.market_cap_cr, 0)::float AS market_cap_cr,
+        COALESCE(sm.current_price, p.current_price, 0)::float AS ltp,
+        v.buy_below::float,
+        v.target_price::float,
+        v.bear_floor::float,
+        CASE
+          WHEN v.target_price > 0 AND COALESCE(sm.current_price, p.current_price) > 0
+            THEN ROUND(((v.target_price - COALESCE(sm.current_price, p.current_price)) / COALESCE(sm.current_price, p.current_price) * 100)::numeric, 1)::float
+          ELSE v.upside_pct::float
+        END AS upside_pct,
+        COALESCE(p.composite_pct, 0)::float AS composite_pct,
+        COALESCE(p.quality_pct, 0)::float AS quality_pct,
+        COALESCE(p.valuation_pct, 0)::float AS valuation_pct,
+        COALESCE(p.momentum_pct, 0)::float AS momentum_pct,
+        q.q_end,
+        q.q_sales,
+        q.q_pat,
+        v.verdict,
+        u.business_summary,
+        EXISTS(SELECT 1 FROM app.portfolio_holding h WHERE h.symbol = p.symbol AND h.quantity > 0) AS in_portfolio
+      FROM latest_panel p
+      LEFT JOIN latest_verdict v ON v.symbol = p.symbol
+      LEFT JOIN app.screener_meta sm ON sm.symbol = p.symbol
+      LEFT JOIN app.universe u ON u.symbol = p.symbol
+      LEFT JOIN latest_q q ON q.symbol = p.symbol
+      WHERE p.cluster_id = ${clusterId}
+      ORDER BY p.composite_pct DESC NULLS LAST, upside_pct DESC NULLS LAST
+    `,
+    sql<{ symbol: string; moat_strength: string | null; moat_type: string | null; moat_points: unknown }[]>`
+      SELECT symbol, moat_strength, moat_type, moat_points
+      FROM app.company_moat
+    `.catch(() => [] as { symbol: string; moat_strength: string | null; moat_type: string | null; moat_points: unknown }[]),
+  ]);
+  const moatMap = new Map(moatRows.map((m) => [m.symbol, m]));
 
   const items: ClusterVerdictRow[] = rows.map((r) => {
     const ltp = Number(r.ltp ?? 0);
@@ -164,9 +167,9 @@ export async function GET(req: NextRequest) {
       q_pat: r.q_pat != null ? Number(r.q_pat) : null,
       verdict: r.verdict,
       business_summary: r.business_summary,
-      moat_strength: r.moat_strength ?? null,
-      moat_type: r.moat_type ?? null,
-      moat_points: Array.isArray(r.moat_points) ? r.moat_points : [],
+      moat_strength: moatMap.get(r.symbol)?.moat_strength ?? null,
+      moat_type: moatMap.get(r.symbol)?.moat_type ?? null,
+      moat_points: Array.isArray(moatMap.get(r.symbol)?.moat_points) ? (moatMap.get(r.symbol)!.moat_points as string[]) : [],
       in_portfolio: Boolean(r.in_portfolio),
       action_group,
       action_label,

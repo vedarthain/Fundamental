@@ -2568,7 +2568,7 @@ export function CallsClient() {
   return (
     <div className="space-y-2.5 text-slate-900">
       {/* ── Top Header & Executive Controls ─────────────────────────────────── */}
-      <div className="bg-white border hairline rounded-lg px-2.5 py-2 shadow-2xs flex items-center justify-between flex-wrap lg:flex-nowrap gap-1.5">
+      <div className="bg-white border hairline rounded-lg px-2.5 py-2 shadow-2xs flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-1.5 shrink-0">
           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
           <h1 className="text-sm sm:text-base font-bold tracking-tight text-slate-900 font-sans whitespace-nowrap">
@@ -2577,9 +2577,9 @@ export function CallsClient() {
         </div>
 
         {/* Action Type Filters, Scope Switchers, Search & Batches */}
-        <div className="flex items-center gap-1 flex-wrap lg:flex-nowrap flex-1 justify-end min-w-0">
-          {/* Unified Filter Strip: All, Top, New, Buy, Sell, Hold, Portfolio */}
-          <div className="flex items-center bg-slate-100 p-0.5 rounded-md border hairline text-xs gap-0.5 shrink-0">
+        <div className="flex items-center gap-1.5 flex-wrap justify-end min-w-0">
+          {/* Unified Filter Strip: All, Top, New, Buy, Watch, Sell, Hold, Portfolio */}
+          <div className="flex items-center flex-wrap bg-slate-100 p-0.5 rounded-md border hairline text-xs gap-0.5">
             <button
               onClick={() => { setScope("all"); setActionFilter("ALL"); }}
               className={`px-2 py-1 rounded text-xs font-medium transition-all whitespace-nowrap ${
