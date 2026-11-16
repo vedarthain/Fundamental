@@ -59,8 +59,8 @@ name: Weekly Fetch (Screener)
 #   exited 0" was never evidence that the universe was fresh.
 on:
   schedule:
-    - cron: '0 13 * * 1-4'   # Mon-Thu 13:00 UTC = 18:30 IST — capped slice
-    - cron: '0 13 * * 5'     # Fri    13:00 UTC = 18:30 IST — drain the rest
+    - cron: '57 13 * * 1-4'   # Mon-Thu 13:57 UTC = 19:27 IST (~19:30 IST, off-minute) — capped slice
+    - cron: '57 13 * * 5'     # Fri     13:57 UTC = 19:27 IST (~19:30 IST, off-minute) — drain the rest
   workflow_dispatch:
     inputs:
       force_full_fetch:
@@ -122,7 +122,7 @@ jobs:
 
             echo "=== 3. Fetch fundamentals from Screener ==="
             SKIP_HOURS="${{ github.event.inputs.force_full_fetch == 'true' && '0' || '120' }}"
-            LIMIT_FLAG="${{ github.event.schedule == '0 13 * * 1-4' && '--limit 700' || '' }}"
+            LIMIT_FLAG="${{ github.event.schedule == '57 13 * * 1-4' && '--limit 700' || '' }}"
             /var/www/Fundamental/.venv/bin/python -m fundamental_etl.cli fetch-many --max-runtime-min 180 --skip-recent-hours "$SKIP_HOURS" $LIMIT_FLAG
 
             echo "=== 4. Fetch dividend-only names (InvITs/REITs) ==="

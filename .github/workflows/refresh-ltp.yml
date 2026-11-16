@@ -12,8 +12,8 @@ name: Refresh LTP + OHLC
 
 on:
   schedule:
-    # 13:00 UTC = 18:30 IST. Mon-Fri only.
-    - cron: '0 13 * * 1-5'
+    # 13:55 UTC = 19:25 IST (off-minute to avoid :00 UTC queue spikes, lands ~19:30 IST). Mon-Fri only.
+    - cron: '55 13 * * 1-5'
   workflow_dispatch: {}
 
 jobs:
