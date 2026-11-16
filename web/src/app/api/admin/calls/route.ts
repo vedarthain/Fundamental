@@ -448,6 +448,8 @@ export async function GET(request: Request) {
         LEFT JOIN latest_verdict v ON v.symbol = p.symbol
         LEFT JOIN active_buys pt ON pt.symbol = p.symbol
         WHERE p.quantity > 0
+          AND p.symbol IS NOT NULL
+          AND p.symbol <> 'MUTUAL_FUNDS_ETFS'
         GROUP BY p.symbol, u.company_name, mc.name, u.sector, u.industry, u.market_cap_category, c.name, pt.first_buy_date,
                  lp.composite_pct, lp.quality_pct, lp.valuation_pct, lp.momentum_pct,
                  v.verdict, v.confidence, v.target_price, v.fair_value, v.buy_below, v.bear_floor, v.upside_pct, v.valuation_method, v.generated_at, v.anchor_price
