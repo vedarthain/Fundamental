@@ -358,7 +358,7 @@ const CUSTOM_PURCHASE_KEY = "calls_custom_purchase_v1";
 const CALLS_VIEW_STATE_KEY = "calls_view_state_v1";
 
 type Scope = "all" | "curated" | "new" | "portfolio";
-type ActionFilter = "ALL" | "BUY" | "PRIORITY_SELL" | "SELL" | "HOLD";
+type ActionFilter = "ALL" | "BUY" | "WATCH" | "PRIORITY_SELL" | "SELL" | "HOLD";
 type DetailTab = "overview" | "catalysts" | "results" | "dividends" | "news" | "audit" | "moat";
 export type PriorityCategory = "ALL" | "PROFIT_TRIM" | "DRAWDOWN_REVIEW" | "STRUCTURAL_EXIT";
 
@@ -1318,16 +1318,18 @@ export function CallsClient() {
     return Array.from(callMap.values());
   }, [data, curatedPicks, curatedSymbolMap, capital, customPurchases, userCallOverrides]);
 
-  // Action counts for filtering (Buy calls vs Sell calls vs Hold calls)
+  // Action counts for filtering (Buy/Accumulate vs Watch vs Hold vs Sell)
   const actionCounts = useMemo(() => {
     let buy = 0;
+    let watch = 0;
     let sell = 0;
     let hold = 0;
     unifiedCalls.forEach((c) => {
       const act = (c.actionToday || "").toUpperCase();
       const isSell = act.includes("SELL") || act.includes("TRIM") || act.includes("EXIT") || act.includes("CUT LOSS");
-      // Buy recommendations across screened universe
-      if (act.includes("BUY") || act.includes("ACCUMULATE")) {
+      if (act.includes("WATCH")) {
+        watch++;
+      } else if (act.includes("BUY") || act.includes("ACCUMULATE")) {
         buy++;
       }
       // Sell & Hold strictly apply to portfolio positions (you can only sell or hold what you own)
@@ -1339,7 +1341,7 @@ export function CallsClient() {
         }
       }
     });
-    return { all: buy + sell + hold, buy, sell, prioritySell: sell, hold };
+    return { all: unifiedCalls.length, buy, watch, sell, prioritySell: sell, hold };
   }, [unifiedCalls]);
 
   // Priority sell breakdown counts
@@ -1418,10 +1420,13 @@ export function CallsClient() {
         if (scope === "new" && (!latestBatchDate || c.callDate !== latestBatchDate)) return false;
         if (scope === "portfolio" && !c.isPortfolio) return false;
 
-        // Action Filter (Buy Calls vs Sell Calls vs Hold Calls)
+        // Action Filter (Buy/Accumulate vs Watch vs Sell vs Hold)
         if (actionFilter === "BUY") {
           const act = (c.actionToday || "").toUpperCase();
-          if (!act.includes("BUY") && !act.includes("ACCUMULATE")) return false;
+          if (act.includes("WATCH") || (!act.includes("BUY") && !act.includes("ACCUMULATE"))) return false;
+        } else if (actionFilter === "WATCH") {
+          const act = (c.actionToday || "").toUpperCase();
+          if (!act.includes("WATCH")) return false;
         } else if (actionFilter === "SELL") {
           const act = (c.actionToday || "").toUpperCase();
           const isSell = act.includes("SELL") || act.includes("TRIM") || act.includes("EXIT") || act.includes("CUT LOSS");
@@ -2606,9 +2611,20 @@ export function CallsClient() {
               className={`px-2 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 whitespace-nowrap ${
                 actionFilter === "BUY" ? "bg-emerald-600 text-white shadow-2xs font-semibold" : "text-emerald-700 hover:text-emerald-900"
               }`}
+              title="Stocks in Buy / Accumulate zone"
             >
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
               <span>Buy ({actionCounts.buy})</span>
+            </button>
+            <button
+              onClick={() => { setScope("all"); setActionFilter("WATCH"); }}
+              className={`px-2 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 whitespace-nowrap ${
+                actionFilter === "WATCH" ? "bg-amber-600 text-white shadow-2xs font-semibold" : "text-amber-700 hover:text-amber-900"
+              }`}
+              title="High-quality stocks to watch for pullback or better entry"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+              <span>Watch ({actionCounts.watch})</span>
             </button>
             <button
               onClick={() => { setScope("portfolio"); setActionFilter("HOLD"); }}
@@ -5365,8 +5381,8 @@ export function CallsClient() {
                         </span>
                       </div>
 
-                      <div className="pt-1 mt-0.5 border-t border-slate-200/80 text-[9.5px]">
-                        <p className="text-slate-700 line-clamp-2 leading-snug">
+                      <div className="pt-1 mt-0.5 border-t border-slate-200/80 text-[10px]">
+                        <p className="text-slate-700 leading-snug">
                           {selectedCall.actionReason || selectedCall.rationale}
                         </p>
                       </div>

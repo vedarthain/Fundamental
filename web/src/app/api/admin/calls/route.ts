@@ -51,7 +51,7 @@ export type ClusterGem = {
   strategy_desc: string;
   is_taken: boolean;
   is_cleared: boolean;
-  action_today?: "BUY / ACCUMULATE" | "SELL / EXIT" | "TRIM / TAKE PROFIT" | "HOLD & COMPOUND" | "WATCH / ACCUMULATE";
+  action_today?: "BUY / ACCUMULATE" | "WATCH" | "SELL / EXIT" | "TRIM / TAKE PROFIT" | "HOLD & COMPOUND";
   action_reason?: string;
   price_fetched_at?: string | null;
 };
@@ -550,26 +550,37 @@ export async function GET(request: Request) {
       const isCleared = !isTaken && isCallCleared;
 
       // Action determination for screened universe candidate
-      let actionToday: "BUY / ACCUMULATE" | "SELL / EXIT" | "TRIM / TAKE PROFIT" | "HOLD & COMPOUND" | "WATCH / ACCUMULATE" = "BUY / ACCUMULATE";
-      let actionReason = "Strong composite score and upside potential inside institutional buy zone.";
+      let actionToday: "BUY / ACCUMULATE" | "WATCH" | "SELL / EXIT" | "TRIM / TAKE PROFIT" | "HOLD & COMPOUND" = "WATCH";
+      let actionReason = "";
 
       const isTopCurated = ["INDUSTOWER", "UNIONBANK", "BBTC", "ALLDIGI", "APOLLOTYRE", "FMGOETZE", "SHARDACROP", "TRANSRAILL", "BANKBARODA", "ORIENTTECH", "MAXESTATES", "PITTIENG", "GRAVITA"].includes(r.symbol);
       const vLower = (r.verdict ?? "").toLowerCase();
+      const shortVerdict = r.verdict ? r.verdict.replace(/^[^—]+—\s*/, "").trim() : "";
+      const scoreTag = `C:${comp.toFixed(0)} Q:${qual.toFixed(0)} M:${mom.toFixed(0)} · Upside ${upside >= 0 ? "+" : ""}${upside.toFixed(1)}%`;
+
       if (isTopCurated) {
         actionToday = "BUY / ACCUMULATE";
-        actionReason = "Top High-Conviction Institutional Alpha Recommendation.";
+        actionReason = `Curated Alpha Pick (${scoreTag})${shortVerdict ? ` — ${shortVerdict}` : ""}`;
       } else if (isPortfolio && (vLower.includes("sell") || vLower.includes("exit") || (bearFloorVal && ltp <= bearFloorVal && qual < 50))) {
         actionToday = "SELL / EXIT";
-        actionReason = `Exit alert: ${r.verdict || "Breached bear floor with deterioration in quality"}.`;
+        actionReason = `Exit alert: LTP ₹${ltp.toFixed(1)} vs Floor ₹${Number(bearFloorVal ?? 0).toFixed(1)} (${scoreTag})${shortVerdict ? ` — ${shortVerdict}` : ""}`;
       } else if (isPortfolio && (vLower.includes("trim") || (targetPriceVal && ltp >= targetPriceVal) || upside < -5)) {
         actionToday = "TRIM / TAKE PROFIT";
-        actionReason = `Profit booking / trim: LTP (₹${ltp.toFixed(1)}) reached fundamental target (₹${Number(targetPriceVal ?? 0).toFixed(1)}).`;
-      } else if (buyBelow > 0 && ltp <= buyBelow * 1.02) {
+        actionReason = `Trim / Profit take: LTP ₹${ltp.toFixed(1)} vs Target ₹${Number(targetPriceVal ?? 0).toFixed(1)} (${scoreTag}).`;
+      } else if (buyBelow > 0 && ltp <= buyBelow * 1.02 && upside >= 10 && !vLower.includes("avoid")) {
         actionToday = "BUY / ACCUMULATE";
-        actionReason = `Trading within institutional accumulate zone (≤ ₹${buyBelow.toFixed(1)}).`;
+        actionReason = `In Buy Zone (LTP ₹${ltp.toFixed(1)} ≤ ₹${buyBelow.toFixed(1)}, ${scoreTag})${shortVerdict ? ` — ${shortVerdict}` : ""}`;
       } else {
-        actionToday = "WATCH / ACCUMULATE";
-        actionReason = `High-quality leader; monitor for entry pullback toward buy limit (₹${buyBelow.toFixed(1)}).`;
+        actionToday = "WATCH";
+        const distPct = buyBelow > 0 ? ((ltp - buyBelow) / buyBelow) * 100 : null;
+        const whyWait = vLower.includes("avoid")
+          ? "Model verdict is AVOID"
+          : upside < 10
+            ? `Limited target upside (${upside.toFixed(1)}% to ₹${Number(targetPriceVal ?? 0).toFixed(1)})`
+            : distPct !== null && distPct > 2
+              ? `LTP is +${distPct.toFixed(1)}% above Buy Below ₹${buyBelow.toFixed(1)}`
+              : "Monitor for cleaner entry";
+        actionReason = `Watch (${whyWait}; ${scoreTag})${shortVerdict ? ` — ${shortVerdict}` : ""}`;
       }
 
       const isGem = actionToday === "BUY / ACCUMULATE" && comp >= 75 && qual >= 58 && upside >= 15 && mcap >= 800;
