@@ -2568,100 +2568,19 @@ export function CallsClient() {
   return (
     <div className="space-y-2.5 text-slate-900">
       {/* ── Top Header & Executive Controls ─────────────────────────────────── */}
-      <div className="bg-white border hairline rounded-lg px-2.5 py-2 shadow-2xs flex items-center justify-between flex-wrap gap-2">
-        <div className="flex items-center gap-1.5 shrink-0">
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-          <h1 className="text-sm sm:text-base font-bold tracking-tight text-slate-900 font-sans whitespace-nowrap">
-            Calls Desk &amp; Verdicts
-          </h1>
-        </div>
-
-        {/* Action Type Filters, Scope Switchers, Search & Batches */}
-        <div className="flex items-center gap-1.5 flex-wrap justify-end min-w-0">
-          {/* Unified Filter Strip: All, Top, New, Buy, Watch, Sell, Hold, Portfolio */}
-          <div className="flex items-center flex-wrap bg-slate-100 p-0.5 rounded-md border hairline text-xs gap-0.5">
-            <button
-              onClick={() => { setScope("all"); setActionFilter("ALL"); }}
-              className={`px-2 py-1 rounded text-xs font-medium transition-all whitespace-nowrap ${
-                scope === "all" && actionFilter === "ALL" ? "bg-white text-slate-900 shadow-2xs font-semibold" : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              All ({actionCounts.all})
-            </button>
-            <button
-              onClick={() => { setScope("curated"); setActionFilter("ALL"); }}
-              className={`px-2 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 whitespace-nowrap ${
-                scope === "curated" ? "bg-indigo-700 text-white shadow-2xs font-semibold" : "text-indigo-800 hover:bg-indigo-100"
-              }`}
-            >
-              <Coins className="w-3 h-3 text-amber-400" />
-              <span>Top</span>
-            </button>
-            <button
-              onClick={() => { setScope("new"); setActionFilter("ALL"); }}
-              className={`px-2 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 whitespace-nowrap ${
-                scope === "new" ? "bg-violet-700 text-white shadow-2xs font-semibold" : "text-violet-800 hover:bg-violet-100"
-              }`}
-              title={latestBatchDate ? `Latest batch: ${latestBatchDate}` : "Latest weekend run calls"}
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />
-              <span>New ({newCallsCount})</span>
-            </button>
-            <button
-              onClick={() => { setScope("all"); setActionFilter("BUY"); }}
-              className={`px-2 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 whitespace-nowrap ${
-                actionFilter === "BUY" ? "bg-emerald-600 text-white shadow-2xs font-semibold" : "text-emerald-700 hover:text-emerald-900"
-              }`}
-              title="Stocks in Buy / Accumulate zone"
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-              <span>Buy ({actionCounts.buy})</span>
-            </button>
-            <button
-              onClick={() => { setScope("all"); setActionFilter("WATCH"); }}
-              className={`px-2 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 whitespace-nowrap ${
-                actionFilter === "WATCH" ? "bg-amber-600 text-white shadow-2xs font-semibold" : "text-amber-700 hover:text-amber-900"
-              }`}
-              title="High-quality stocks to watch for pullback or better entry"
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-              <span>Watch ({actionCounts.watch})</span>
-            </button>
-            <button
-              onClick={() => { setScope("portfolio"); setActionFilter("HOLD"); }}
-              className={`px-2 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 whitespace-nowrap ${
-                actionFilter === "HOLD" ? "bg-blue-600 text-white shadow-2xs font-semibold" : "text-blue-700 hover:text-blue-900"
-              }`}
-              title="Healthy holdings in your portfolio to continue holding"
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
-              <span>Hold ({actionCounts.hold})</span>
-            </button>
-            <button
-              onClick={() => { setScope("portfolio"); setActionFilter("SELL"); }}
-              className={`px-2 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 whitespace-nowrap ${
-                actionFilter === "SELL" || actionFilter === "PRIORITY_SELL"
-                  ? "bg-rose-600 text-white shadow-2xs font-bold ring-2 ring-rose-400"
-                  : "text-rose-700 hover:text-rose-900 bg-rose-50/70 hover:bg-rose-100"
-              }`}
-              title="Sell and trim alerts for your held portfolio positions"
-            >
-              <span>🚨</span>
-              <span>Sell ({actionCounts.sell})</span>
-            </button>
-            <button
-              onClick={() => { setScope("portfolio"); setActionFilter("ALL"); }}
-              className={`px-2 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 whitespace-nowrap ${
-                scope === "portfolio" ? "bg-slate-900 text-white shadow-2xs font-semibold" : "text-slate-700 hover:bg-slate-200"
-              }`}
-            >
-              <Wallet className="w-3 h-3" />
-              <span>Portfolio ({unifiedCalls.filter((c) => c.isPortfolio).length})</span>
-            </button>
+      <div className="bg-white border hairline rounded-lg px-2.5 py-2 shadow-2xs space-y-2">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+            <h1 className="text-sm sm:text-base font-bold tracking-tight text-slate-900 font-sans whitespace-nowrap">
+              Calls Desk &amp; Verdicts
+            </h1>
           </div>
 
-          {/* View Mode Switcher: Detail vs Table vs Audit vs Corpus */}
-          <div className="flex items-center bg-slate-100 p-0.5 rounded-md border hairline text-xs shrink-0">
+          {/* Scope Switchers, Search & Batches */}
+          <div className="flex items-center gap-1.5 flex-wrap justify-end min-w-0">
+            {/* View Mode Switcher: Detail vs Table vs Audit vs Corpus */}
+            <div className="flex items-center bg-slate-100 p-0.5 rounded-md border hairline text-xs shrink-0">
             <button
               onClick={() => setViewMode("detail")}
               className={`px-2 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 whitespace-nowrap ${
@@ -2805,6 +2724,91 @@ export function CallsClient() {
                 </div>
               </div>
             )}
+            </div>
+          </div>
+        </div>
+
+        {/* Row 2: Unified Filter Strip: All, Top, New, Buy, Watch, Hold, Sell, Portfolio */}
+        <div className="flex items-center justify-between flex-wrap gap-2 pt-1.5 border-t border-slate-100">
+          <div className="flex items-center flex-wrap bg-slate-100 p-0.5 rounded-md border hairline text-xs gap-0.5">
+            <button
+              onClick={() => { setScope("all"); setActionFilter("ALL"); }}
+              className={`px-2 py-1 rounded text-xs font-medium transition-all whitespace-nowrap ${
+                scope === "all" && actionFilter === "ALL" ? "bg-white text-slate-900 shadow-2xs font-semibold" : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              All ({actionCounts.all})
+            </button>
+            <button
+              onClick={() => { setScope("curated"); setActionFilter("ALL"); }}
+              className={`px-2 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 whitespace-nowrap ${
+                scope === "curated" ? "bg-indigo-700 text-white shadow-2xs font-semibold" : "text-indigo-800 hover:bg-indigo-100"
+              }`}
+            >
+              <Coins className="w-3 h-3 text-amber-400" />
+              <span>Top</span>
+            </button>
+            <button
+              onClick={() => { setScope("new"); setActionFilter("ALL"); }}
+              className={`px-2 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 whitespace-nowrap ${
+                scope === "new" ? "bg-violet-700 text-white shadow-2xs font-semibold" : "text-violet-800 hover:bg-violet-100"
+              }`}
+              title={latestBatchDate ? `Latest batch: ${latestBatchDate}` : "Latest weekend run calls"}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />
+              <span>New ({newCallsCount})</span>
+            </button>
+            <button
+              onClick={() => { setScope("all"); setActionFilter("BUY"); }}
+              className={`px-2 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 whitespace-nowrap ${
+                actionFilter === "BUY" ? "bg-emerald-600 text-white shadow-2xs font-semibold" : "text-emerald-700 hover:text-emerald-900"
+              }`}
+              title="Stocks in Buy / Accumulate zone"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              <span>Buy ({actionCounts.buy})</span>
+            </button>
+            <button
+              onClick={() => { setScope("all"); setActionFilter("WATCH"); }}
+              className={`px-2 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 whitespace-nowrap ${
+                actionFilter === "WATCH" ? "bg-amber-600 text-white shadow-2xs font-semibold" : "text-amber-700 hover:text-amber-900"
+              }`}
+              title="High-quality stocks to watch for pullback or better entry"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+              <span>Watch ({actionCounts.watch})</span>
+            </button>
+            <button
+              onClick={() => { setScope("portfolio"); setActionFilter("HOLD"); }}
+              className={`px-2 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 whitespace-nowrap ${
+                actionFilter === "HOLD" ? "bg-blue-600 text-white shadow-2xs font-semibold" : "text-blue-700 hover:text-blue-900"
+              }`}
+              title="Healthy holdings in your portfolio to continue holding"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+              <span>Hold ({actionCounts.hold})</span>
+            </button>
+            <button
+              onClick={() => { setScope("portfolio"); setActionFilter("SELL"); }}
+              className={`px-2 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 whitespace-nowrap ${
+                actionFilter === "SELL" || actionFilter === "PRIORITY_SELL"
+                  ? "bg-rose-600 text-white shadow-2xs font-bold ring-2 ring-rose-400"
+                  : "text-rose-700 hover:text-rose-900 bg-rose-50/70 hover:bg-rose-100"
+              }`}
+              title="Sell and trim alerts for your held portfolio positions"
+            >
+              <span>🚨</span>
+              <span>Sell ({actionCounts.sell})</span>
+            </button>
+            <button
+              onClick={() => { setScope("portfolio"); setActionFilter("ALL"); }}
+              className={`px-2 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 whitespace-nowrap ${
+                scope === "portfolio" ? "bg-slate-900 text-white shadow-2xs font-semibold" : "text-slate-700 hover:bg-slate-200"
+              }`}
+            >
+              <Wallet className="w-3 h-3" />
+              <span>Portfolio ({unifiedCalls.filter((c) => c.isPortfolio).length})</span>
+            </button>
           </div>
         </div>
       </div>

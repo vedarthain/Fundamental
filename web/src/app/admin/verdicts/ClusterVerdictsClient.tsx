@@ -316,30 +316,39 @@ export function ClusterVerdictsClient({
                 <span className="text-[11px] muted-text tabular-nums">{sec.rows.length}</span>
               </div>
 
-              <div className="overflow-x-auto">
+              <div className="overflow-auto max-h-[calc(100vh-14rem)]">
                 <table className="w-full text-left border-collapse text-[12px]">
-                  <thead>
-                    <tr className="border-b hairline text-[10.5px] uppercase tracking-wider muted-text bg-[var(--color-paper)]/30">
-                      <th className="py-1.5 px-2.5 font-semibold">Symbol</th>
-                      <th className="py-1.5 px-2 font-semibold">Action</th>
-                      <th className="py-1.5 px-2 font-semibold text-right">LTP / Buy Below</th>
-                      <th className="py-1.5 px-2 font-semibold text-right">Target (Upside)</th>
-                      <th className="py-1.5 px-2 font-semibold text-center">C / Q / V / M</th>
-                      <th className="py-1.5 px-2 font-semibold text-right">Latest Qtr</th>
-                      <th className="py-1.5 px-2.5 font-semibold min-w-[280px]">Moat (What It&apos;s Known For) &amp; Why</th>
+                  <thead className="sticky top-0 z-10 bg-[var(--color-card)] shadow-[0_1px_0_0_var(--color-border-default)]">
+                    <tr className="text-[10.5px] uppercase tracking-wider muted-text bg-[var(--color-paper)]/70">
+                      <th className="py-2 px-2.5 font-semibold">Symbol</th>
+                      <th className="py-2 px-2 font-semibold">Action</th>
+                      <th className="py-2 px-2 font-semibold text-right">LTP / Buy Below</th>
+                      <th className="py-2 px-2 font-semibold text-right">Target (Upside)</th>
+                      <th className="py-2 px-2 font-semibold text-center">C / Q / V / M</th>
+                      <th className="py-2 px-2 font-semibold text-right">Latest Qtr</th>
+                      <th className="py-2 px-2.5 font-semibold min-w-[340px]">Moat (Key Points) &amp; Why</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--color-border-default)]/50">
                     {sec.rows.map((r) => {
                       const inZone = r.buy_below != null && r.ltp > 0 && r.ltp <= r.buy_below * 1.02;
                       const distPct = r.buy_below && r.buy_below > 0 ? ((r.ltp - r.buy_below) / r.buy_below) * 100 : null;
+                      const whyTone =
+                        r.action_group === "actionable"
+                          ? "bg-emerald-50/70 border-emerald-200 text-emerald-950"
+                          : r.action_label === "HOLD"
+                            ? "bg-blue-50/60 border-blue-200 text-blue-950"
+                            : r.action_label === "AVOID"
+                              ? "bg-rose-50/70 border-rose-200 text-rose-950"
+                              : "bg-amber-50/60 border-amber-200 text-amber-950";
+
                       return (
                         <tr key={r.symbol} className="hover:bg-[var(--color-paper)]/40 align-top">
-                          <td className="py-2 px-2.5 whitespace-nowrap">
+                          <td className="py-2.5 px-2.5 whitespace-nowrap">
                             <div className="flex items-center gap-1.5">
                               <Link
                                 href={`/stock/${r.symbol}`}
-                                className="font-mono font-semibold text-[12px] hover:underline inline-flex items-center gap-1"
+                                className="font-mono font-semibold text-[12.5px] hover:underline inline-flex items-center gap-1"
                               >
                                 <span>{r.symbol}</span>
                                 <ExternalLink size={10} className="muted-text" />
@@ -350,51 +359,59 @@ export function ClusterVerdictsClient({
                                 </span>
                               )}
                             </div>
-                            <div className="text-[10.5px] muted-text truncate max-w-[140px]">
+                            <div className="text-[11px] muted-text truncate max-w-[150px]">
                               {r.company_name}
                             </div>
-                            <div className="text-[10px] muted-text tabular-nums">
+                            <div className="text-[10.5px] muted-text tabular-nums">
                               MCap ₹{Math.round(r.market_cap_cr).toLocaleString("en-IN")} Cr
                             </div>
                           </td>
 
-                          <td className="py-2 px-2 whitespace-nowrap">
-                            <span className={`inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded border ${badgeClass(r.action_label)}`}>
+                          <td className="py-2.5 px-2 whitespace-nowrap">
+                            <span className={`inline-block text-[10.5px] font-semibold px-2 py-0.5 rounded border ${badgeClass(r.action_label)}`}>
                               {r.action_label}
                             </span>
                           </td>
 
-                          <td className="py-2 px-2 text-right whitespace-nowrap tabular-nums">
-                            <div className="font-semibold">{fmtMoney(r.ltp)}</div>
-                            <div className="text-[10.5px] muted-text">
+                          <td className="py-2.5 px-2 text-right whitespace-nowrap tabular-nums">
+                            <div className="font-semibold text-[12.5px]">{fmtMoney(r.ltp)}</div>
+                            <div className="text-[11px] muted-text mt-0.5">
                               BB {fmtMoney(r.buy_below)}
-                              {distPct != null && (
-                                <span className={`ml-1 ${inZone ? "text-emerald-700 font-semibold" : ""}`}>
-                                  {inZone ? "(IN ZONE)" : `(${distPct > 0 ? "+" : ""}${distPct.toFixed(1)}%)`}
-                                </span>
-                              )}
                             </div>
+                            {distPct != null && (
+                              <span
+                                className={`inline-block mt-0.5 text-[10px] font-semibold px-1.5 py-0.2 rounded ${
+                                  inZone
+                                    ? "bg-emerald-100 text-emerald-800"
+                                    : distPct <= 8
+                                      ? "bg-teal-50 text-teal-700"
+                                      : "bg-amber-50 text-amber-800"
+                                }`}
+                              >
+                                {inZone ? "IN ZONE" : `${distPct > 0 ? "+" : ""}${distPct.toFixed(1)}%`}
+                              </span>
+                            )}
                           </td>
 
-                          <td className="py-2 px-2 text-right whitespace-nowrap tabular-nums">
-                            <div className="font-semibold">{fmtMoney(r.target_price)}</div>
+                          <td className="py-2.5 px-2 text-right whitespace-nowrap tabular-nums">
+                            <div className="font-semibold text-[12.5px]">{fmtMoney(r.target_price)}</div>
                             {r.upside_pct != null && (
-                              <div className={`text-[10.5px] font-semibold ${r.upside_pct >= 15 ? "text-emerald-700" : r.upside_pct < 0 ? "text-rose-600" : "muted-text"}`}>
+                              <div className={`text-[11px] font-semibold ${r.upside_pct >= 15 ? "text-emerald-700" : r.upside_pct < 0 ? "text-rose-600" : "muted-text"}`}>
                                 {r.upside_pct >= 0 ? "+" : ""}
                                 {r.upside_pct.toFixed(1)}%
                               </div>
                             )}
                           </td>
 
-                          <td className="py-2 px-2 text-center whitespace-nowrap tabular-nums font-mono text-[11px]">
+                          <td className="py-2.5 px-2 text-center whitespace-nowrap tabular-nums font-mono text-[11.5px]">
                             <span className="font-semibold">{Math.round(r.composite_pct)}</span>
                             <span className="muted-text"> / {Math.round(r.quality_pct)} / {Math.round(r.valuation_pct)} / {Math.round(r.momentum_pct)}</span>
                           </td>
 
-                          <td className="py-2 px-2 text-right whitespace-nowrap tabular-nums text-[11px]">
+                          <td className="py-2.5 px-2 text-right whitespace-nowrap tabular-nums text-[11.5px]">
                             {r.q_end ? (
                               <>
-                                <div className="muted-text text-[10px]">{r.q_end.slice(0, 7)}</div>
+                                <div className="muted-text text-[10.5px]">{r.q_end.slice(0, 7)}</div>
                                 <div>S: {r.q_sales != null ? `${r.q_sales.toFixed(0)}` : "—"}</div>
                                 <div className={r.q_pat != null && r.q_pat < 0 ? "text-rose-600 font-semibold" : ""}>
                                   P: {r.q_pat != null ? `${r.q_pat.toFixed(1)}` : "—"}
@@ -405,48 +422,73 @@ export function ClusterVerdictsClient({
                             )}
                           </td>
 
-                          <td className="py-2 px-2.5 text-[11.5px] leading-snug">
+                          <td className="py-2.5 px-2.5 leading-relaxed space-y-1.5">
                             {r.moat_points && r.moat_points.length > 0 ? (
-                              <div className="space-y-1">
+                              <div className="space-y-1.5">
                                 {(r.moat_strength || r.moat_type) && (
                                   <div className="flex items-center gap-1.5 flex-wrap">
                                     {r.moat_strength && (
                                       <span
-                                        className={`text-[9.5px] font-semibold px-1.5 py-0.2 rounded border ${
+                                        className={`text-[10.5px] font-bold px-2 py-0.5 rounded border ${
                                           r.moat_strength === "Wide"
-                                            ? "bg-emerald-50 text-emerald-800 border-emerald-300"
+                                            ? "bg-emerald-100 text-emerald-900 border-emerald-300"
                                             : r.moat_strength === "Narrow"
-                                              ? "bg-indigo-50 text-indigo-800 border-indigo-200"
-                                              : "bg-slate-100 text-slate-600 border-slate-200"
+                                              ? "bg-indigo-100 text-indigo-900 border-indigo-300"
+                                              : "bg-slate-100 text-slate-700 border-slate-300"
                                         }`}
                                       >
                                         {r.moat_strength} Moat
                                       </span>
                                     )}
                                     {r.moat_type && (
-                                      <span className="text-[10px] font-medium muted-text">
+                                      <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200">
                                         {r.moat_type}
                                       </span>
                                     )}
                                   </div>
                                 )}
-                                <ul className="space-y-0.5 text-[11px]">
-                                  {r.moat_points.map((pt, idx) => (
-                                    <li key={idx} className="flex items-start gap-1.5">
-                                      <span className="w-1 h-1 rounded-full bg-indigo-500 mt-1.5 shrink-0" />
-                                      <span>{pt}</span>
-                                    </li>
-                                  ))}
+                                <ul className="space-y-1 text-[12.5px]">
+                                  {r.moat_points.map((pt, idx) => {
+                                    const colonIdx = pt.indexOf(":");
+                                    const label = colonIdx > 0 && colonIdx < 28 ? pt.slice(0, colonIdx) : null;
+                                    const rest = label ? pt.slice(colonIdx + 1).trim() : pt;
+                                    const isRisk = label?.toLowerCase().includes("risk");
+                                    const isProof = label?.toLowerCase().includes("proof") || label?.toLowerCase().includes("financial");
+                                    const dotColor = isRisk
+                                      ? "bg-rose-500"
+                                      : isProof
+                                        ? "bg-violet-500"
+                                        : "bg-indigo-500";
+                                    const labelColor = isRisk
+                                      ? "text-rose-700"
+                                      : isProof
+                                        ? "text-violet-700"
+                                        : "text-indigo-700";
+                                    return (
+                                      <li key={idx} className="flex items-start gap-2">
+                                        <span className={`w-1.5 h-1.5 rounded-full ${dotColor} mt-2 shrink-0`} />
+                                        <span>
+                                          {label && (
+                                            <strong className={`${labelColor} font-semibold mr-1`}>
+                                              {label}:
+                                            </strong>
+                                          )}
+                                          {rest}
+                                        </span>
+                                      </li>
+                                    );
+                                  })}
                                 </ul>
                               </div>
                             ) : (
-                              <span className="text-[11px] muted-text italic">
+                              <span className="text-[12px] muted-text italic">
                                 Moat points not generated yet
                               </span>
                             )}
-                            <p className="muted-text mt-1 text-[11px] border-t border-[var(--color-border-default)]/40 pt-1">
-                              <strong className="text-[var(--color-ink)]">Why:</strong> {r.why}
-                            </p>
+                            <div className={`px-2.5 py-1.5 rounded border text-[12.5px] leading-snug ${whyTone}`}>
+                              <strong className="font-semibold mr-1">Why:</strong>
+                              <span>{r.why}</span>
+                            </div>
                           </td>
                         </tr>
                       );
