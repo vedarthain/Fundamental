@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
         ${item.symbol.toUpperCase()},
         ${item.moat_strength || "Narrow"},
         ${item.moat_type || "Niche / Operational"},
-        ${JSON.stringify(item.moat_points)}::jsonb,
+        ${sql.json(item.moat_points)},
         ${item.model ?? null},
         now()
       )

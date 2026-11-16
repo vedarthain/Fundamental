@@ -190,7 +190,19 @@ async function loadClusterItems(clusterId: string): Promise<ClusterVerdictRow[]>
       business_summary: r.business_summary,
       moat_strength: moatMap.get(r.symbol)?.moat_strength ?? null,
       moat_type: moatMap.get(r.symbol)?.moat_type ?? null,
-      moat_points: Array.isArray(moatMap.get(r.symbol)?.moat_points) ? (moatMap.get(r.symbol)!.moat_points as string[]) : [],
+      moat_points: (() => {
+        const raw = moatMap.get(r.symbol)?.moat_points;
+        if (Array.isArray(raw)) return raw as string[];
+        if (typeof raw === "string") {
+          try {
+            const parsed = JSON.parse(raw);
+            return Array.isArray(parsed) ? (parsed as string[]) : [];
+          } catch {
+            return [];
+          }
+        }
+        return [];
+      })(),
       in_portfolio: Boolean(r.in_portfolio),
       action_group,
       action_label,
