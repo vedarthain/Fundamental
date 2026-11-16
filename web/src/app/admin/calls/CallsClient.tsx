@@ -359,7 +359,7 @@ const CALLS_VIEW_STATE_KEY = "calls_view_state_v1";
 
 type Scope = "all" | "curated" | "new" | "portfolio";
 type ActionFilter = "ALL" | "BUY" | "PRIORITY_SELL" | "SELL" | "HOLD";
-type DetailTab = "overview" | "catalysts" | "results" | "dividends" | "news" | "audit" | "density";
+type DetailTab = "overview" | "catalysts" | "results" | "dividends" | "news" | "audit" | "moat";
 export type PriorityCategory = "ALL" | "PROFIT_TRIM" | "DRAWDOWN_REVIEW" | "STRUCTURAL_EXIT";
 
 export function getPriorityCategory(call: {
@@ -5480,16 +5480,13 @@ export function CallsClient() {
                   </button>
 
                   <button
-                    onClick={() => setActiveTab("density")}
+                    onClick={() => setActiveTab("moat")}
                     className={`px-3 py-1 rounded-md font-medium transition-all flex items-center gap-1.5 shrink-0 ${
-                      effectiveTab === "density" ? "bg-indigo-700 text-white shadow-xs font-semibold" : "text-slate-600 hover:bg-slate-200/60"
+                      effectiveTab === "moat" ? "bg-indigo-700 text-white shadow-xs font-semibold" : "text-slate-600 hover:bg-slate-200/60"
                     }`}
                   >
-                    <PieChart className="w-3.5 h-3.5" />
-                    <span>Sector Density</span>
-                    <span className="text-[10px] font-mono px-1 rounded bg-slate-200/60 text-slate-700">
-                      {sectorDensityData.sectorsCount}
-                    </span>
+                    <Layers className="w-3.5 h-3.5" />
+                    <span>Moat</span>
                   </button>
                 </div>
 
@@ -6043,282 +6040,97 @@ export function CallsClient() {
                     </div>
                   )}
 
-                  {/* TAB 7: SECTOR DENSITY & CONCENTRATION ANALYSIS */}
-                  {effectiveTab === "density" && (
-                    <div className="space-y-4">
-                      {/* Top Header & Scope Selector */}
-                      <div className="bg-slate-50 border hairline rounded-lg p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
-                              <PieChart className="w-4 h-4 text-indigo-600" />
-                              <span>Sector Density &amp; Portfolio Concentration</span>
-                            </h3>
-                            <span
-                              className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
-                                sectorDensityData.maxWeight > 30
-                                  ? "bg-rose-100 text-rose-800 border border-rose-300"
-                                  : sectorDensityData.maxWeight > 20
-                                  ? "bg-amber-100 text-amber-800 border border-amber-300"
-                                  : "bg-emerald-100 text-emerald-800 border border-emerald-300"
-                              }`}
-                            >
-                              {sectorDensityData.maxWeight > 30
-                                ? "⚠️ High Concentration Risk"
-                                : sectorDensityData.maxWeight > 20
-                                ? "🟡 Moderate Concentration"
-                                : "🟢 Optimal Diversification"}
-                            </span>
-                          </div>
-                          <p className="text-xs text-slate-500 mt-1">
-                            Portfolio Rule: Never put all eggs in one basket. No single sector should exceed 20–25% to protect capital against industry-wide cyclical drawdowns.
-                          </p>
-                        </div>
-
-                        {/* Scope Toggle inside Density Tab */}
-                        <div className="flex items-center gap-1 bg-white p-0.5 rounded-md border hairline text-xs shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => setDensityScope("curated")}
-                            className={`px-2.5 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 ${
-                              densityScope === "curated"
-                                ? "bg-indigo-700 text-white shadow-2xs font-semibold"
-                                : "text-slate-600 hover:bg-slate-100"
-                            }`}
-                          >
-                            <Coins className="w-3 h-3 text-amber-400" />
-                            <span>Top Calls</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setDensityScope("portfolio")}
-                            className={`px-2.5 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 ${
-                              densityScope === "portfolio"
-                                ? "bg-indigo-700 text-white shadow-2xs font-semibold"
-                                : "text-slate-600 hover:bg-slate-100"
-                            }`}
-                          >
-                            <Wallet className="w-3 h-3" />
-                            <span>Held Portfolio</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setDensityScope("all")}
-                            className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-                              densityScope === "all"
-                                ? "bg-indigo-700 text-white shadow-2xs font-semibold"
-                                : "text-slate-600 hover:bg-slate-100"
-                            }`}
-                          >
-                            All Calls
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Density KPI Summary Cards */}
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                        <div className="p-3 rounded-lg border hairline bg-white shadow-2xs">
-                          <span className="text-[10.5px] uppercase font-bold text-slate-400 block">Sectors Represented</span>
-                          <span className="text-lg font-bold text-slate-900 block mt-0.5 font-mono">
-                            {sectorDensityData.sectorsCount}
-                          </span>
-                          <span className="text-[10px] text-slate-500 block">Across {sectorDensityData.totalCallsCount} active stocks</span>
-                        </div>
-
-                        <div className="p-3 rounded-lg border hairline bg-white shadow-2xs">
-                          <span className="text-[10.5px] uppercase font-bold text-slate-400 block">Max Sector Exposure</span>
-                          <span className={`text-lg font-bold block mt-0.5 font-mono ${
-                            sectorDensityData.maxWeight > 30 ? "text-rose-600" : sectorDensityData.maxWeight > 20 ? "text-amber-600" : "text-emerald-700"
-                          }`}>
-                            {sectorDensityData.maxWeight.toFixed(1)}%
-                          </span>
-                          <span className="text-[10px] text-slate-500 truncate block">
-                            {sectorDensityData.list[0]?.sector || "None"}
-                          </span>
-                        </div>
-
-                        <div className="p-3 rounded-lg border hairline bg-white shadow-2xs">
-                          <span className="text-[10.5px] uppercase font-bold text-slate-400 block">Recommended Sector Cap</span>
-                          <span className="text-lg font-bold text-slate-900 block mt-0.5 font-mono">
-                            25.0%
-                          </span>
-                          <span className="text-[10px] text-emerald-600 block font-medium">Institutional safety limit</span>
-                        </div>
-
-                        <div className="p-3 rounded-lg border hairline bg-white shadow-2xs">
-                          <span className="text-[10.5px] uppercase font-bold text-slate-400 block">Total Capital Allocated</span>
-                          <span className="text-lg font-bold text-slate-900 block mt-0.5 font-mono">
-                            {money(sectorDensityData.totalCap)}
-                          </span>
-                          <span className="text-[10px] text-indigo-600 block font-medium">100% Capital Deployed</span>
-                        </div>
-                      </div>
-
-                      {/* Visual Proportional Segment Bar */}
-                      <div className="p-3 rounded-lg border hairline bg-white space-y-2">
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="font-bold text-slate-700 flex items-center gap-1.5">
-                            <Layers className="w-3.5 h-3.5 text-indigo-600" />
-                            <span>Sector Allocation Distribution</span>
-                          </span>
-                          <span className="text-[11px] text-slate-400 font-mono">
-                            {sectorDensityData.sectorsCount} Sectors • {sectorDensityData.totalCallsCount} Stocks
-                          </span>
-                        </div>
-
-                        <div className="h-4 w-full rounded-md overflow-hidden flex bg-slate-100 border hairline">
-                          {sectorDensityData.list.map((sec) => {
-                            const secTheme = getSectorTheme(sec.sector);
-                            return (
-                              <div
-                                key={sec.sector}
-                                style={{ width: `${Math.max(sec.calculatedWeight, 2)}%` }}
-                                className={`${secTheme.barColor} h-full transition-all relative group cursor-pointer`}
-                                title={`${sec.sector}: ${sec.calculatedWeight.toFixed(1)}% (${sec.calls.length} stocks)`}
-                              />
-                            );
-                          })}
-                        </div>
-
-                        {/* Legend */}
-                        <div className="flex flex-wrap gap-2 pt-1 text-[11px]">
-                          {sectorDensityData.list.map((sec) => {
-                            const secTheme = getSectorTheme(sec.sector);
-                            return (
-                              <span
-                                key={sec.sector}
-                                className={`px-2 py-0.5 rounded-full border text-[10.5px] font-medium flex items-center gap-1.5 ${secTheme.badgeClass}`}
-                              >
-                                <span className="font-semibold">{sec.sector}:</span>
-                                <span className="font-mono">{sec.calculatedWeight.toFixed(1)}%</span>
+                  {/* TAB 7: MOAT & BUSINESS IDENTITY */}
+                  {effectiveTab === "moat" && (
+                    <div className="space-y-3 text-xs sm:text-sm">
+                      {contextLoading ? (
+                        <div className="py-6 text-center text-slate-400">Loading company moat &amp; business profile…</div>
+                      ) : (
+                        <>
+                          {/* What the company is known for */}
+                          <div className="p-3.5 rounded-lg border hairline bg-slate-50/70 space-y-1.5">
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <h3 className="text-xs sm:text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                                <Layers className="w-4 h-4 text-indigo-600" />
+                                <span>What {selectedCall.name} Is Known For</span>
+                              </h3>
+                              <span className="text-[10.5px] font-mono px-2 py-0.5 rounded bg-indigo-50 text-indigo-800 border border-indigo-200">
+                                {selectedCall.sector} · {selectedCall.cluster || selectedCall.industry}
                               </span>
-                            );
-                          })}
-                        </div>
-                      </div>
+                            </div>
+                            <p className="text-xs sm:text-[13px] text-slate-700 leading-relaxed">
+                              {selectedCall.companyOverview ||
+                                contextData?.overview?.business_summary ||
+                                "No business summary available for this company yet."}
+                            </p>
+                          </div>
 
-                      {/* Detailed Sector Density Breakdown Cards */}
-                      <div className="space-y-2">
-                        <div className="text-xs font-bold text-slate-700 uppercase tracking-wider px-0.5">
-                          Sector Breakdown &amp; Concentration Risk Audit
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                          {sectorDensityData.list.map((sec) => {
-                            const secTheme = getSectorTheme(sec.sector);
-                            const isOver = sec.calculatedWeight > 30;
-                            const isMod = sec.calculatedWeight >= 20 && sec.calculatedWeight <= 30;
-                            return (
-                              <div
-                                key={sec.sector}
-                                className={`rounded-lg border p-3.5 space-y-2.5 transition-all bg-white shadow-2xs ${
-                                  isOver
-                                    ? "border-rose-300 ring-1 ring-rose-200"
-                                    : isMod
-                                    ? "border-amber-300 ring-1 ring-amber-100"
-                                    : "border-slate-200 hover:border-indigo-300"
-                                }`}
-                              >
-                                <div className="flex items-start justify-between gap-2">
-                                  <div>
-                                    <div className="flex items-center gap-1.5 flex-wrap">
-                                      <span
-                                        className="w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs"
-                                        style={{ backgroundColor: secTheme.dotColor }}
-                                      />
-                                      <h4 className="font-bold text-slate-900 text-xs sm:text-sm">
-                                        {sec.sector}
-                                      </h4>
-                                      <span
-                                        className={`text-[9.5px] font-bold px-1.5 py-0.2 rounded uppercase ${
-                                          isOver
-                                            ? "bg-rose-100 text-rose-800 border border-rose-300"
-                                            : isMod
-                                            ? "bg-amber-100 text-amber-800 border border-amber-300"
-                                            : "bg-emerald-100 text-emerald-800 border border-emerald-300"
-                                        }`}
-                                      >
-                                        {isOver ? "Overweight / Egg Basket Alert" : isMod ? "Moderate / Monitor" : "Balanced Exposure"}
-                                      </span>
-                                    </div>
-                                    <span className="text-[11px] text-slate-500 font-mono mt-0.5 block">
-                                      {sec.calls.length} position{sec.calls.length > 1 ? "s" : ""} • Allocated: {money(sec.allocatedAmount)}
-                                    </span>
-                                  </div>
-
-                                  <div className="text-right shrink-0">
-                                    <span className="font-mono font-bold text-base text-slate-900">
-                                      {sec.calculatedWeight.toFixed(1)}%
-                                    </span>
-                                    <span className="text-[10px] text-slate-400 block">of Total</span>
-                                  </div>
-                                </div>
-
-                                {/* Visual Progress Bar */}
-                                <div className="space-y-1">
-                                  <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
-                                    <div
-                                      style={{ width: `${Math.min(sec.calculatedWeight, 100)}%` }}
-                                      className={`h-full rounded-full ${
-                                        isOver ? "bg-rose-600" : isMod ? "bg-amber-500" : "bg-emerald-600"
-                                      }`}
-                                    />
-                                  </div>
-                                </div>
-
-                                {/* Positions in this sector */}
-                                <div className="space-y-1 pt-1">
-                                  <span className="text-[10px] font-bold uppercase text-slate-400 block">Stocks in this Sector:</span>
-                                  <div className="flex flex-wrap gap-1.5">
-                                    {sec.calls.map((c) => {
-                                      const isCurSel = selectedCall.symbol === c.symbol;
-                                      return (
-                                        <button
-                                          key={c.symbol}
-                                          type="button"
-                                          onClick={() => setSelectedSymbol(c.symbol)}
-                                          className={`px-2 py-1 rounded text-xs font-mono transition-all flex items-center gap-1.5 ${
-                                            isCurSel
-                                              ? "bg-indigo-700 text-white font-bold shadow-xs"
-                                              : "bg-slate-100 hover:bg-indigo-50 text-slate-800 border hairline"
-                                          }`}
-                                        >
-                                          <span>{c.symbol}</span>
-                                          {c.cluster && (
-                                            <span className={`text-[9px] px-1 py-0.2 rounded font-mono ${isCurSel ? "bg-white/20 text-white" : "bg-purple-50 text-purple-700 border border-purple-200/60"}`}>
-                                              {c.cluster}
-                                            </span>
-                                          )}
-                                          <span className="text-[10px] opacity-80">{money(c.cmp, 2)}</span>
-                                          <span className={`text-[10px] font-semibold ${isCurSel ? "text-amber-300" : "text-emerald-700"}`}>
-                                            +{c.upside}%
-                                          </span>
-                                        </button>
-                                      );
-                                    })}
-                                  </div>
-                                </div>
-
-                                {/* Guidance / Basket note */}
-                                <div className="text-[11px] pt-1 text-slate-600 border-t hairline flex items-center justify-between">
-                                  <span>
-                                    {isOver
-                                      ? "⚠️ Caution: High single-sector exposure. Avoid allocating additional capital."
-                                      : isMod
-                                      ? "✓ Moderate weight. Keep below 25% institutional threshold."
-                                      : "✓ Healthy diversification. Well insulated against idiosyncratic shocks."}
-                                  </span>
-                                  {sec.projectedProfit > 0 && (
-                                    <span className="font-mono text-emerald-700 font-semibold shrink-0 ml-2">
-                                      Proj. +{money(sec.projectedProfit)}
-                                    </span>
-                                  )}
-                                </div>
+                          {/* Competitive Moat & Core Edge */}
+                          <div className="p-3.5 rounded-lg border hairline bg-white space-y-2">
+                            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                              Competitive Moat &amp; Thesis Edge
+                            </div>
+                            {(selectedCall.rationale || contextData?.audit?.verdict) && (
+                              <div className="p-2.5 rounded-md bg-emerald-50/60 border border-emerald-200 text-xs text-emerald-950 font-medium leading-relaxed">
+                                {selectedCall.rationale || contextData?.audit?.verdict}
                               </div>
-                            );
-                          })}
-                        </div>
-                      </div>
+                            )}
+                            {contextData?.audit?.points && contextData.audit.points.length > 0 && (
+                              <ul className="space-y-1.5 pt-1">
+                                {contextData.audit.points.map((pt, idx) => (
+                                  <li key={idx} className="flex items-start gap-2 text-xs text-slate-700">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 mt-1.5 shrink-0" />
+                                    <span>{pt}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+
+                          {/* Company Snapshot */}
+                          {contextData?.overview && (
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                              <div className="p-2.5 rounded-md border hairline bg-slate-50/50">
+                                <span className="text-[10px] uppercase font-semibold text-slate-400 block">Leadership</span>
+                                <span className="font-semibold text-slate-800 block mt-0.5 truncate">
+                                  {contextData.overview.ceo_name || "—"}
+                                </span>
+                                {contextData.overview.ceo_title && (
+                                  <span className="text-[10px] text-slate-500 truncate block">{contextData.overview.ceo_title}</span>
+                                )}
+                              </div>
+                              <div className="p-2.5 rounded-md border hairline bg-slate-50/50">
+                                <span className="text-[10px] uppercase font-semibold text-slate-400 block">Employees</span>
+                                <span className="font-semibold text-slate-800 font-mono block mt-0.5">
+                                  {contextData.overview.employees ? contextData.overview.employees.toLocaleString("en-IN") : "—"}
+                                </span>
+                              </div>
+                              <div className="p-2.5 rounded-md border hairline bg-slate-50/50">
+                                <span className="text-[10px] uppercase font-semibold text-slate-400 block">NSE Listing</span>
+                                <span className="font-semibold text-slate-800 font-mono block mt-0.5">
+                                  {contextData.overview.listing_date ? fmtDate(contextData.overview.listing_date) : "—"}
+                                </span>
+                              </div>
+                              <div className="p-2.5 rounded-md border hairline bg-slate-50/50">
+                                <span className="text-[10px] uppercase font-semibold text-slate-400 block">Website</span>
+                                {contextData.overview.website ? (
+                                  <a
+                                    href={contextData.overview.website.startsWith("http") ? contextData.overview.website : `https://${contextData.overview.website}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="font-semibold text-indigo-600 hover:underline inline-flex items-center gap-1 mt-0.5 truncate max-w-full"
+                                  >
+                                    <span className="truncate">{contextData.overview.website.replace(/^https?:\/\//, "")}</span>
+                                    <ExternalLink className="w-3 h-3 shrink-0" />
+                                  </a>
+                                ) : (
+                                  <span className="font-semibold text-slate-800 block mt-0.5">—</span>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      )}
                     </div>
                   )}
                 </div>
