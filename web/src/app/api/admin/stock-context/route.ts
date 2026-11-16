@@ -81,16 +81,80 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "symbol required" }, { status: 400 });
   }
 
-  let overview: CompanyOverview | null = null;
-  try {
-    const uRows = await sql<any[]>`
+  const [
+    uRows,
+    rawNews,
+    filings,
+    dividends,
+    results,
+    vRows,
+    quarterly,
+    boardMeetings,
+  ] = await Promise.all([
+    sql<any[]>`
       SELECT symbol, company_name, business_summary, website, employees, ceo_name, ceo_title, listing_date::text, sector, industry, market_cap_category
         FROM app.universe
        WHERE symbol = ${symbol}
        LIMIT 1
-    `;
-    if (uRows.length > 0) {
-      overview = {
+    `.catch(() => [] as any[]),
+    sql<NewsRow[]>`
+      SELECT n.title, n.source, n.url, n.published_at::text
+        FROM app.news_stock ns JOIN app.news n ON n.id = ns.news_id
+       WHERE ns.symbol = ${symbol}
+         AND n.published_at > now() - interval '6 months'
+       ORDER BY n.published_at DESC NULLS LAST
+       LIMIT 80
+    `.catch(() => [] as NewsRow[]),
+    sql<FilingRow[]>`
+      SELECT title, category, headline, published_at::text, pdf_url
+        FROM app.announcement
+       WHERE symbol = ${symbol}
+       ORDER BY published_at DESC NULLS LAST
+       LIMIT 30
+    `.catch(() => [] as FilingRow[]),
+    sql<DividendRow[]>`
+      SELECT ex_date::text, purpose, amount::float
+        FROM app.corporate_action
+       WHERE symbol = ${symbol} AND action_type = 'dividend'
+       ORDER BY ex_date DESC NULLS LAST
+       LIMIT 12
+    `.catch(() => [] as DividendRow[]),
+    sql<ResultRow[]>`
+      SELECT title, headline, published_at::text, pdf_url
+        FROM app.announcement
+       WHERE symbol = ${symbol}
+         AND (category ILIKE '%result%' OR title ILIKE '%result%' OR headline ILIKE '%result%')
+       ORDER BY published_at DESC NULLS LAST
+       LIMIT 12
+    `.catch(() => [] as ResultRow[]),
+    sql<any[]>`
+      SELECT verdict, confidence, points, trigger_text, generated_at::text,
+             valuation_method, target_price::float, fair_value::float, buy_below::float, bear_floor::float, upside_pct::float
+        FROM app.stock_verdict
+       WHERE symbol = ${symbol}
+       ORDER BY generated_at DESC NULLS LAST
+       LIMIT 1
+    `.catch(() => [] as any[]),
+    sql<any[]>`
+      SELECT period_end::text, sales::float, operating_profit::float, net_profit::float
+        FROM app.fundamentals_quarterly
+       WHERE symbol = ${symbol}
+       ORDER BY period_end DESC
+       LIMIT 4
+    `.catch(() => [] as any[]),
+    sql<any[]>`
+      SELECT ex_date::text, COALESCE(purpose, 'Board Meeting') AS purpose,
+             (ex_date >= CURRENT_DATE) AS is_upcoming
+        FROM app.corporate_action
+       WHERE symbol = ${symbol}
+         AND action_type = 'board_meeting'
+       ORDER BY ex_date DESC NULLS LAST
+       LIMIT 5
+    `.catch(() => [] as any[]),
+  ]);
+
+  const overview: CompanyOverview | null = uRows.length > 0
+    ? {
         symbol: uRows[0].symbol,
         company_name: uRows[0].company_name,
         business_summary: uRows[0].business_summary,
@@ -102,131 +166,39 @@ export async function GET(req: NextRequest) {
         sector: uRows[0].sector,
         industry: uRows[0].industry,
         market_cap_category: uRows[0].market_cap_category,
-      };
-    }
-  } catch {
-    overview = null;
-  }
+      }
+    : null;
 
   let news: NewsRow[] = [];
   try {
-    const raw = await sql<NewsRow[]>`
-      SELECT n.title, n.source, n.url, n.published_at::text
-        FROM app.news_stock ns JOIN app.news n ON n.id = ns.news_id
-       WHERE ns.symbol = ${symbol}
-         AND n.published_at > now() - interval '6 months'
-       ORDER BY n.published_at DESC NULLS LAST
-       LIMIT 80
-    `;
-    news = cleanStockNews(raw);
+    news = cleanStockNews(rawNews);
   } catch {
     news = [];
   }
 
-  let filings: FilingRow[] = [];
-  try {
-    filings = await sql<FilingRow[]>`
-      SELECT title, category, headline, published_at::text, pdf_url
-        FROM app.announcement
-       WHERE symbol = ${symbol}
-       ORDER BY published_at DESC NULLS LAST
-       LIMIT 30
-    `;
-  } catch {
-    filings = [];
-  }
+  const v = vRows[0];
+  const rawPoints = v?.points;
+  const points: string[] = Array.isArray(rawPoints)
+    ? rawPoints
+    : typeof rawPoints === "string"
+      ? [rawPoints]
+      : [];
 
-  let dividends: DividendRow[] = [];
-  try {
-    dividends = await sql<DividendRow[]>`
-      SELECT ex_date::text, purpose, amount::float
-        FROM app.corporate_action
-       WHERE symbol = ${symbol} AND action_type = 'dividend'
-       ORDER BY ex_date DESC NULLS LAST
-       LIMIT 12
-    `;
-  } catch {
-    dividends = [];
-  }
-
-  let results: ResultRow[] = [];
-  try {
-    results = await sql<ResultRow[]>`
-      SELECT title, headline, published_at::text, pdf_url
-        FROM app.announcement
-       WHERE symbol = ${symbol}
-         AND (category ILIKE '%result%' OR title ILIKE '%result%' OR headline ILIKE '%result%')
-       ORDER BY published_at DESC NULLS LAST
-       LIMIT 12
-    `;
-  } catch {
-    results = [];
-  }
-
-  let audit: AuditInfo | null = null;
-  try {
-    const vRows = await sql<any[]>`
-      SELECT verdict, confidence, points, trigger_text, generated_at::text,
-             valuation_method, target_price::float, fair_value::float, buy_below::float, bear_floor::float, upside_pct::float
-        FROM app.stock_verdict
-       WHERE symbol = ${symbol}
-       ORDER BY generated_at DESC NULLS LAST
-       LIMIT 1
-    `;
-    const v = vRows[0];
-    const rawPoints = v?.points;
-    const points: string[] = Array.isArray(rawPoints)
-      ? rawPoints
-      : typeof rawPoints === "string"
-        ? [rawPoints]
-        : [];
-
-    audit = {
-      verdict: v?.verdict ?? null,
-      confidence: v?.confidence ?? null,
-      points,
-      trigger_text: v?.trigger_text ?? null,
-      generated_at: v?.generated_at ?? null,
-      valuation_method: v?.valuation_method ?? "Multi-factor Normalized Cycle",
-      target_price: v?.target_price ?? null,
-      fair_value: v?.fair_value ?? null,
-      buy_below: v?.buy_below ?? null,
-      bear_floor: v?.bear_floor ?? null,
-      upside_pct: v?.upside_pct ?? null,
-      audited_filing_status: "Audited Standalone & Consolidated (Unmodified Clean Opinion)",
-      forensic_status: "Low Forensic Risk / Healthy Accruals",
-    };
-  } catch {
-    audit = null;
-  }
-
-  let quarterly: { period_end: string; sales: number | null; operating_profit: number | null; net_profit: number | null }[] = [];
-  try {
-    quarterly = await sql<any[]>`
-      SELECT period_end::text, sales::float, operating_profit::float, net_profit::float
-        FROM app.fundamentals_quarterly
-       WHERE symbol = ${symbol}
-       ORDER BY period_end DESC
-       LIMIT 4
-    `;
-  } catch {
-    quarterly = [];
-  }
-
-  let boardMeetings: { ex_date: string; purpose: string; is_upcoming: boolean }[] = [];
-  try {
-    boardMeetings = await sql<any[]>`
-      SELECT ex_date::text, COALESCE(purpose, 'Board Meeting') AS purpose,
-             (ex_date >= CURRENT_DATE) AS is_upcoming
-        FROM app.corporate_action
-       WHERE symbol = ${symbol}
-         AND action_type = 'board_meeting'
-       ORDER BY ex_date DESC NULLS LAST
-       LIMIT 5
-    `;
-  } catch {
-    boardMeetings = [];
-  }
+  const audit: AuditInfo = {
+    verdict: v?.verdict ?? null,
+    confidence: v?.confidence ?? null,
+    points,
+    trigger_text: v?.trigger_text ?? null,
+    generated_at: v?.generated_at ?? null,
+    valuation_method: v?.valuation_method ?? "Multi-factor Normalized Cycle",
+    target_price: v?.target_price ?? null,
+    fair_value: v?.fair_value ?? null,
+    buy_below: v?.buy_below ?? null,
+    bear_floor: v?.bear_floor ?? null,
+    upside_pct: v?.upside_pct ?? null,
+    audited_filing_status: "Audited Standalone & Consolidated (Unmodified Clean Opinion)",
+    forensic_status: "Low Forensic Risk / Healthy Accruals",
+  };
 
   return NextResponse.json(
     {

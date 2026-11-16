@@ -673,31 +673,6 @@ export function CallsClient() {
     fetchData();
   }, [fetchData]);
 
-  // Fetch stock context for selected symbol
-  useEffect(() => {
-    if (!selectedSymbol) return;
-    let cancelled = false;
-    setContextLoading(true);
-
-    fetch(`/api/admin/stock-context?symbol=${encodeURIComponent(selectedSymbol)}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((json) => {
-        if (!cancelled && json) {
-          setContextData(json);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setContextData(null);
-      })
-      .finally(() => {
-        if (!cancelled) setContextLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedSymbol]);
-
   // User take / exit action handlers
   const handleTakeCall = async (symbol: string) => {
     try {
@@ -1590,6 +1565,39 @@ export function CallsClient() {
   const selectedCall = useMemo(() => {
     return filteredCalls.find((c) => c.symbol === selectedSymbol) || filteredCalls[0] || null;
   }, [filteredCalls, selectedSymbol]);
+
+  // Fetch stock context for selected symbol (uses selectedCall?.symbol so fallback selections also load)
+  const activeContextSymbol = selectedCall?.symbol ?? selectedSymbol;
+  useEffect(() => {
+    if (!activeContextSymbol) {
+      setContextLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    setContextLoading(true);
+
+    fetch(`/api/admin/stock-context?symbol=${encodeURIComponent(activeContextSymbol)}`, {
+      signal: controller.signal,
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((json) => {
+        if (!controller.signal.aborted && json) {
+          setContextData(json);
+        }
+      })
+      .catch((err) => {
+        if (!controller.signal.aborted && err?.name !== "AbortError") {
+          setContextData(null);
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setContextLoading(false);
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [activeContextSymbol]);
 
   // Whenever the active view filter/scope changes, automatically navigate to the top scrip of that view
   const prevFilterKey = useRef<string>("");

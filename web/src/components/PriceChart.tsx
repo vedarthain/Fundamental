@@ -283,7 +283,7 @@ export function PriceChart({
   const [fetched, setFetched] = useState<Candle[] | null>(null);
   useEffect(() => {
     if (candlesProp || !symbol) return;
-    let alive = true;
+    const controller = new AbortController();
     setFetched(null);
     // raw=1 IS LOAD-BEARING, NOT AN OPTIMISATION. fetchDays is ~11,000 so the
     // route's own weekly rollup would otherwise fire on every single request,
@@ -291,14 +291,18 @@ export function PriceChart({
     // 1Y were all being drawn from weekly bars. This chart had never rendered
     // a daily candle at any zoom. Remove raw=1 and it silently goes back to
     // weekly-everywhere; nothing errors, the chart just lies again.
-    fetch(`/api/scanner/ohlc?syms=${encodeURIComponent(symbol)}&days=${fetchDays}&raw=1`)
+    fetch(`/api/scanner/ohlc?syms=${encodeURIComponent(symbol)}&days=${fetchDays}&raw=1`, {
+      signal: controller.signal,
+    })
       .then((r) => (r.ok ? r.json() : null))
       .then((j: { data?: Record<string, Candle[]> } | null) => {
-        if (alive) setFetched(j?.data?.[symbol] ?? []);
+        if (!controller.signal.aborted) setFetched(j?.data?.[symbol] ?? []);
       })
-      .catch(() => alive && setFetched([]));
+      .catch(() => {
+        if (!controller.signal.aborted) setFetched([]);
+      });
     return () => {
-      alive = false;
+      controller.abort();
     };
   }, [candlesProp, symbol, fetchDays]);
 
