@@ -25,6 +25,7 @@
  *   DELETE:    one tiny DELETE
  */
 import { NextRequest, NextResponse } from "next/server";
+import { unstable_cache } from "next/cache";
 import { sql } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { loadPersistenceForSymbols } from "@/lib/persistence";
@@ -424,12 +425,28 @@ export async function GET(req: NextRequest) {
       ])
     : Promise.resolve(null);
 
-  const [rows, snapshotDate, persistence, quotes, meta, glance, verdicts, scorecardKeys, sessionData] = await Promise.all([
-    loadRows(symbols),
-    loadSnapshotDate(),
-    // Multi-snapshot trend per symbol. Two cheap reads regardless of
-    // watchlist size, then merged in Node.
-    loadPersistenceForSymbols(symbols),
+  const sortedKey = [...symbols].sort().join(",");
+  const cachedRows = unstable_cache(
+    async (syms: string[]) => loadRows(syms),
+    ["watchlist:rows:v1", sortedKey],
+    { revalidate: 300, tags: ["panel-cache", "watchlist-data"] },
+  );
+  const cachedSnapDate = unstable_cache(
+    () => loadSnapshotDate(),
+    ["watchlist:snapdate:v1"],
+    { revalidate: 3600, tags: ["panel-cache"] },
+  );
+  const cachedPersistence = unstable_cache(
+    async (syms: string[]) => Array.from((await loadPersistenceForSymbols(syms)).entries()),
+    ["watchlist:persistence:v1", sortedKey],
+    { revalidate: 3600, tags: ["panel-cache"] },
+  );
+
+  const [rows, snapshotDate, persistenceEntries, quotes, meta, glance, verdicts, scorecardKeys, sessionData] = await Promise.all([
+    cachedRows(symbols),
+    cachedSnapDate(),
+    // Multi-snapshot trend per symbol. Cached per symbol set + panel-cache tag.
+    cachedPersistence(symbols),
     // Fresh daily quote (LTP, 1D move, 52W high/low) from golden.
     loadQuotes(symbols, lean),
     // Per-user cost-basis snapshot + note. Empty when signed out.
@@ -444,6 +461,7 @@ export async function GET(req: NextRequest) {
     lean ? Promise.resolve(new Map<string, MetricKey[]>()) : loadScorecardKeys(symbols),
     sessionP,
   ]);
+  const persistence = new Map(persistenceEntries);
 
   // Portfolio ownership for the "P" badge (signed-in only). heldSet = currently
   // held (same reconciliation rule as the scanner graph); tradedSet = ever

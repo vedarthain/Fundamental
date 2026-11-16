@@ -134,7 +134,18 @@ export default async function MomentumPage({
     );
   }
 
-  const [momentum, trend, floor, rotation, dividendUniverse, themes, n500, portfolioSymbols, portfolioTrades, portfolioQty] = await Promise.all([
+  const getCachedUserPortfolio = unstable_cache(
+    async (uid: number) =>
+      Promise.all([
+        loadPortfolioSymbols(uid),
+        loadPortfolioTrades(uid),
+        loadPortfolioHeldQty(uid),
+      ]),
+    ["scanner:user-portfolio:v1"],
+    { revalidate: 60, tags: ["portfolio"] },
+  );
+
+  const [momentum, trend, floor, rotation, dividendUniverse, themes, n500, [portfolioSymbols, portfolioTrades, portfolioQty]] = await Promise.all([
     cachedMomentum(one(sp.mDate)),
     cachedTrend(one(sp.tDate)),
     cachedFloor(one(sp.fDate)),
@@ -142,9 +153,13 @@ export default async function MomentumPage({
     cachedDividendUniverse(),
     cachedThemes(),
     cachedN500(),
-    session ? loadPortfolioSymbols(session.userId) : Promise.resolve([]),
-    session ? loadPortfolioTrades(session.userId) : Promise.resolve({ tradedSymbols: [], tradesBySymbol: {} }),
-    session ? loadPortfolioHeldQty(session.userId) : Promise.resolve({}),
+    session
+      ? getCachedUserPortfolio(session.userId)
+      : Promise.resolve<[string[], { tradedSymbols: string[]; tradesBySymbol: Record<string, never[]> }, Record<string, number>]>([
+          [],
+          { tradedSymbols: [], tradesBySymbol: {} },
+          {},
+        ]),
   ]);
 
   // Per-row mini price charts — one batched golden query per tab, each on that

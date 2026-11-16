@@ -524,20 +524,18 @@ export function CallsClient() {
   const [contextData, setContextData] = useState<StockContext | null>(null);
   const [contextLoading, setContextLoading] = useState(false);
 
-  // Expanded sectors set for tree (in 'all'/'portfolio' only 1 sector open initially; in 'curated' (Top) all are uncollapsed by default)
+  // Expanded sectors & clusters for tree (all collapsed to sector by default; click sector -> clusters -> stocks)
   const [expandedSectors, setExpandedSectors] = useState<Set<string>>(new Set());
-  const [collapsedCuratedSectors, setCollapsedCuratedSectors] = useState<Set<string>>(new Set());
-  const [collapsedClusters, setCollapsedClusters] = useState<Set<string>>(new Set());
+  const [expandedClusters, setExpandedClusters] = useState<Set<string>>(new Set());
 
   const toggleCluster = (clusterKey: string) => {
-    setCollapsedClusters((prev) => {
+    setExpandedClusters((prev) => {
       const next = new Set(prev);
       if (next.has(clusterKey)) next.delete(clusterKey);
       else next.add(clusterKey);
       return next;
     });
   };
-  const [hasInitializedSectors, setHasInitializedSectors] = useState(false);
 
   // Call status overrides
   const [userCallOverrides, setUserCallOverrides] = useState<Record<string, { is_taken: boolean; is_cleared: boolean }>>({});
@@ -593,9 +591,6 @@ export function CallsClient() {
       const savedState = localStorage.getItem(CALLS_VIEW_STATE_KEY);
       if (savedState) {
         const parsed = JSON.parse(savedState);
-        if (parsed.viewMode && ["detail", "table", "audit", "corpus"].includes(parsed.viewMode)) {
-          setViewMode(parsed.viewMode);
-        }
         if (parsed.selectedSymbol && typeof parsed.selectedSymbol === "string") {
           setSelectedSymbol(parsed.selectedSymbol);
         }
@@ -2293,48 +2288,23 @@ export function CallsClient() {
     });
   }, [portfolioDistribution.groups]);
 
-  // Initial state & dynamic auto-expansion: ALWAYS open the selected stock's sector and cluster in left rail
+  // Smoothly scroll the selected stock into view if its branch is already open in the left rail
   useEffect(() => {
-    if (selectedCall?.sector) {
-      if (scope === "curated") {
-        setCollapsedCuratedSectors((prev) => {
-          if (!prev.has(selectedCall.sector)) return prev;
-          const next = new Set(prev);
-          next.delete(selectedCall.sector);
-          return next;
-        });
-      } else {
-        setExpandedSectors((prev) => {
-          if (prev.has(selectedCall.sector)) return prev;
-          const next = new Set(prev);
-          next.add(selectedCall.sector);
-          return next;
-        });
-      }
-      if (selectedCall.cluster) {
-        const clusKey = `${selectedCall.sector}::${selectedCall.cluster}`;
-        setCollapsedClusters((prev) => {
-          if (!prev.has(clusKey)) return prev;
-          const next = new Set(prev);
-          next.delete(clusKey);
-          return next;
-        });
-      }
-      // Scroll the selected stock in the left rail into view smoothly without scrolling window
-      setTimeout(() => {
-        const el = document.getElementById(`stock-rail-${selectedCall.symbol}`);
-        const rail = document.getElementById("calls-left-rail-scroll");
-        if (el && rail) {
-          const elTop = el.offsetTop;
-          const railTop = rail.scrollTop;
-          const railHeight = rail.clientHeight;
-          if (elTop < railTop || elTop > railTop + railHeight - 50) {
-            rail.scrollTo({ top: Math.max(0, elTop - 40), behavior: "smooth" });
-          }
+    if (!selectedCall?.symbol) return;
+    const t = setTimeout(() => {
+      const el = document.getElementById(`stock-rail-${selectedCall.symbol}`);
+      const rail = document.getElementById("calls-left-rail-scroll");
+      if (el && rail) {
+        const elTop = el.offsetTop;
+        const railTop = rail.scrollTop;
+        const railHeight = rail.clientHeight;
+        if (elTop < railTop || elTop > railTop + railHeight - 50) {
+          rail.scrollTo({ top: Math.max(0, elTop - 40), behavior: "smooth" });
         }
-      }, 60);
-    }
-  }, [selectedCall?.symbol, selectedCall?.sector, selectedCall?.cluster, scope]);
+      }
+    }, 60);
+    return () => clearTimeout(t);
+  }, [selectedCall?.symbol]);
 
   // Price info callback from PriceChart (carries computed prev close & 1D change)
   const [stockPriceInfo, setStockPriceInfo] = useState<{
@@ -2357,21 +2327,12 @@ export function CallsClient() {
   }, [selectedCall]);
 
   const toggleSector = (sec: string) => {
-    if (scope === "curated") {
-      setCollapsedCuratedSectors((prev) => {
-        const next = new Set(prev);
-        if (next.has(sec)) next.delete(sec);
-        else next.add(sec);
-        return next;
-      });
-    } else {
-      setExpandedSectors((prev) => {
-        const next = new Set(prev);
-        if (next.has(sec)) next.delete(sec);
-        else next.add(sec);
-        return next;
-      });
-    }
+    setExpandedSectors((prev) => {
+      const next = new Set(prev);
+      if (next.has(sec)) next.delete(sec);
+      else next.add(sec);
+      return next;
+    });
   };
 
   const toggleBatch = (key: string) => {
@@ -2397,21 +2358,19 @@ export function CallsClient() {
   const clearAllBatches = () => setSelectedBatches(new Set(["all"]));
 
   const expandAll = () => {
-    if (scope === "curated") {
-      setCollapsedCuratedSectors(new Set());
-    } else {
-      setExpandedSectors(new Set(sectorGroups.map((g) => g.sector)));
+    setExpandedSectors(new Set(sectorGroups.map((g) => g.sector)));
+    const allClusterKeys: string[] = [];
+    for (const g of sectorGroups) {
+      for (const cl of g.clusters) {
+        allClusterKeys.push(`${g.sector}::${cl.cluster}`);
+      }
     }
-    setCollapsedClusters(new Set());
+    setExpandedClusters(new Set(allClusterKeys));
   };
 
   const collapseAll = () => {
-    if (scope === "curated") {
-      setCollapsedCuratedSectors(new Set(sectorGroups.map((g) => g.sector)));
-    } else {
-      setExpandedSectors(new Set());
-    }
-    setCollapsedClusters(new Set());
+    setExpandedSectors(new Set());
+    setExpandedClusters(new Set());
   };
 
   // Keyboard Arrow Key Navigation (ArrowDown/ArrowRight = Next stock, ArrowUp/ArrowLeft = Prev stock)
@@ -4693,13 +4652,13 @@ export function CallsClient() {
               <button
                 type="button"
                 onClick={
-                  (scope === "curated" ? collapsedCuratedSectors.size === 0 : expandedSectors.size === sectorGroups.length)
+                  expandedSectors.size === sectorGroups.length && sectorGroups.length > 0
                     ? collapseAll
                     : expandAll
                 }
                 className="text-[10px] text-slate-500 hover:text-slate-800 px-1.5 py-0.2 rounded border hairline bg-white"
               >
-                {(scope === "curated" ? collapsedCuratedSectors.size === 0 : expandedSectors.size === sectorGroups.length)
+                {expandedSectors.size === sectorGroups.length && sectorGroups.length > 0
                   ? "Collapse"
                   : "Expand"}
               </button>
@@ -4713,10 +4672,7 @@ export function CallsClient() {
               </div>
             ) : (
               sectorGroups.map((g) => {
-                const isSecOpen =
-                  scope === "curated"
-                    ? !collapsedCuratedSectors.has(g.sector)
-                    : (!!search.trim() || expandedSectors.has(g.sector));
+                const isSecOpen = !!search.trim() || expandedSectors.has(g.sector);
                 return (
                   <div key={g.sector} className="rounded border hairline bg-slate-50/40 overflow-hidden">
                     <button
@@ -4745,7 +4701,7 @@ export function CallsClient() {
                       <div className="border-t hairline bg-white divide-y divide-slate-100">
                         {g.clusters.map((cl) => {
                           const clusterKey = `${g.sector}::${cl.cluster}`;
-                          const isClusOpen = !collapsedClusters.has(clusterKey);
+                          const isClusOpen = !!search.trim() || expandedClusters.has(clusterKey);
                           return (
                             <div key={cl.cluster} className="bg-white">
                               {/* Level 2: Cluster Subheader */}
