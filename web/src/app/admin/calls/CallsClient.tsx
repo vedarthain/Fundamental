@@ -357,7 +357,7 @@ function cleanPointText(raw: string, tagRegex: RegExp): { metric: string; peer?:
 const CUSTOM_PURCHASE_KEY = "calls_custom_purchase_v1";
 const CALLS_VIEW_STATE_KEY = "calls_view_state_v1";
 
-type Scope = "all" | "curated" | "portfolio";
+type Scope = "all" | "curated" | "new" | "portfolio";
 type ActionFilter = "ALL" | "BUY" | "PRIORITY_SELL" | "SELL" | "HOLD";
 type DetailTab = "overview" | "catalysts" | "results" | "dividends" | "news" | "audit" | "density";
 export type PriorityCategory = "ALL" | "PROFIT_TRIM" | "DRAWDOWN_REVIEW" | "STRUCTURAL_EXIT";
@@ -594,7 +594,7 @@ export function CallsClient() {
         if (parsed.selectedSymbol && typeof parsed.selectedSymbol === "string") {
           setSelectedSymbol(parsed.selectedSymbol);
         }
-        if (parsed.scope && ["all", "curated", "portfolio"].includes(parsed.scope)) {
+        if (parsed.scope && ["all", "curated", "new", "portfolio"].includes(parsed.scope)) {
           setScope(parsed.scope);
         }
         if (parsed.activeTab && typeof parsed.activeTab === "string") {
@@ -1383,6 +1383,48 @@ export function CallsClient() {
     return { all: profitTrim + drawdown + exit, profitTrim, drawdown, exit };
   }, [unifiedCalls]);
 
+  // Dynamic weekend/run batch dates derived from live calls + availableDates
+  const { dynamicBatches, latestBatchDate, newCallsCount } = useMemo(() => {
+    const counts = new Map<string, number>();
+    unifiedCalls.forEach((c) => {
+      if (c.callDate) {
+        counts.set(c.callDate, (counts.get(c.callDate) ?? 0) + 1);
+      }
+    });
+    (data?.availableDates ?? []).forEach((d) => {
+      if (d && !counts.has(d)) counts.set(d, 0);
+    });
+    const sortedDates = Array.from(counts.keys()).sort((a, b) => b.localeCompare(a));
+    const latest = sortedDates.find((d) => (counts.get(d) ?? 0) > 0) ?? sortedDates[0] ?? null;
+
+    const fmtBatch = (d: string, idx: number) => {
+      try {
+        const dt = new Date(d + "T00:00:00");
+        const weekday = dt.toLocaleDateString("en-IN", { weekday: "short" });
+        const full = dt.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+        const short = dt.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+        return {
+          key: d,
+          label: `${weekday}, ${full}${idx === 0 ? " (Latest)" : ""}`,
+          shortLabel: short,
+          count: counts.get(d) ?? 0,
+        };
+      } catch {
+        return { key: d, label: d, shortLabel: d, count: counts.get(d) ?? 0 };
+      }
+    };
+
+    const batches = [
+      { key: "priority_sells", label: "Portfolio Sells & Trims Batch", shortLabel: "Sells & Trims", count: null as number | null },
+      ...sortedDates.map((d, idx) => fmtBatch(d, idx)),
+    ];
+    return {
+      dynamicBatches: batches,
+      latestBatchDate: latest,
+      newCallsCount: latest ? (counts.get(latest) ?? 0) : 0,
+    };
+  }, [unifiedCalls, data?.availableDates]);
+
   // Filter unified calls based on Multi-Selected Dates, Scope, Action Filter, and Search
   const filteredCalls = useMemo(() => {
     return unifiedCalls.filter((c) => {
@@ -1394,8 +1436,9 @@ export function CallsClient() {
         if (!isSell || !c.isPortfolio) return false;
         if (prioritySubFilter !== "ALL" && getPriorityCategory(c).category !== prioritySubFilter) return false;
       } else {
-        // Standard Scope Filter (Curated Top vs Portfolio vs All)
+        // Standard Scope Filter (Curated Top vs New vs Portfolio vs All)
         if (scope === "curated" && !c.isCurated) return false;
+        if (scope === "new" && (!latestBatchDate || c.callDate !== latestBatchDate)) return false;
         if (scope === "portfolio" && !c.isPortfolio) return false;
 
         // Action Filter (Buy Calls vs Sell Calls vs Hold Calls)
@@ -2483,11 +2526,11 @@ export function CallsClient() {
     if (selectedBatches.has("all")) return "All Batches";
     if (selectedBatches.size === 1) {
       const key = Array.from(selectedBatches)[0];
-      const found = BATCH_DEFINITIONS.find((b) => b.key === key);
+      const found = dynamicBatches.find((b) => b.key === key);
       return found ? found.shortLabel : key;
     }
     return `${selectedBatches.size} Batches`;
-  }, [selectedBatches]);
+  }, [selectedBatches, dynamicBatches]);
 
   // Is selected call a Sell / Exit / Trim action?
   const isSellAction = useMemo(() => {
@@ -2519,7 +2562,7 @@ export function CallsClient() {
 
         {/* Action Type Filters, Scope Switchers, Search & Batches */}
         <div className="flex items-center gap-1 flex-wrap lg:flex-nowrap flex-1 justify-end min-w-0">
-          {/* Unified Filter Strip: All, Top, Buy, Sell, Hold, Portfolio */}
+          {/* Unified Filter Strip: All, Top, New, Buy, Sell, Hold, Portfolio */}
           <div className="flex items-center bg-slate-100 p-0.5 rounded-md border hairline text-xs gap-0.5 shrink-0">
             <button
               onClick={() => { setScope("all"); setActionFilter("ALL"); }}
@@ -2537,6 +2580,16 @@ export function CallsClient() {
             >
               <Coins className="w-3 h-3 text-amber-400" />
               <span>Top</span>
+            </button>
+            <button
+              onClick={() => { setScope("new"); setActionFilter("ALL"); }}
+              className={`px-2 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 whitespace-nowrap ${
+                scope === "new" ? "bg-violet-700 text-white shadow-2xs font-semibold" : "text-violet-800 hover:bg-violet-100"
+              }`}
+              title={latestBatchDate ? `Latest batch: ${latestBatchDate}` : "Latest weekend run calls"}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />
+              <span>New ({newCallsCount})</span>
             </button>
             <button
               onClick={() => { setScope("all"); setActionFilter("BUY"); }}
@@ -2696,22 +2749,29 @@ export function CallsClient() {
                     <span className="truncate">All Deployment Batches</span>
                   </button>
 
-                  {BATCH_DEFINITIONS.map((b) => {
+                  {dynamicBatches.map((b) => {
                     const isChecked = selectedBatches.has(b.key);
                     return (
                       <button
                         key={b.key}
                         onClick={() => toggleBatch(b.key)}
-                        className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left hover:bg-slate-100 ${
+                        className={`w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-md text-left hover:bg-slate-100 ${
                           isChecked ? "font-bold text-indigo-700 bg-indigo-50/70" : "text-slate-700"
                         }`}
                       >
-                        <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
-                          isChecked ? "bg-indigo-600 border-indigo-600 text-white" : "border-slate-300"
-                        }`}>
-                          {isChecked && <Check className="w-3 h-3" />}
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
+                            isChecked ? "bg-indigo-600 border-indigo-600 text-white" : "border-slate-300"
+                          }`}>
+                            {isChecked && <Check className="w-3 h-3" />}
+                          </div>
+                          <span className="truncate">{b.label}</span>
                         </div>
-                        <span className="truncate">{b.label}</span>
+                        {b.count !== null && (
+                          <span className="text-[10px] font-mono text-slate-400 shrink-0 tabular-nums">
+                            {b.count}
+                          </span>
+                        )}
                       </button>
                     );
                   })}
