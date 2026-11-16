@@ -21,6 +21,11 @@ export type ClusterVerdictRow = {
   q_end: string | null;
   q_sales: number | null;
   q_pat: number | null;
+  q_sales_yoy_pct: number | null;
+  q_pat_yoy_pct: number | null;
+  ret_1m: number | null;
+  ret_6m: number | null;
+  ret_1y: number | null;
   verdict: string | null;
   business_summary: string | null;
   moat_strength: string | null;
@@ -53,15 +58,36 @@ export async function GET(req: NextRequest) {
       latest_panel AS (
         SELECT DISTINCT ON (symbol)
           symbol, company_name, cluster_id, market_cap_cr, current_price,
-          composite_pct, quality_pct, valuation_pct, momentum_pct
+          composite_pct, quality_pct, valuation_pct, momentum_pct,
+          ret_1m, ret_6m, ret_1y
         FROM app.cluster_stocks_panel_cache
         ORDER BY symbol, snapshot_date DESC
       ),
-      latest_q AS (
-        SELECT DISTINCT ON (symbol)
-          symbol, period_end::text AS q_end, sales::float AS q_sales, net_profit::float AS q_pat
+      ranked_q AS (
+        SELECT
+          symbol, period_end, sales::float, net_profit::float,
+          ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY period_end DESC) AS rn
         FROM app.fundamentals_quarterly
-        ORDER BY symbol, period_end DESC
+      ),
+      latest_q AS (
+        SELECT
+          a.symbol,
+          a.period_end::text AS q_end,
+          a.sales AS q_sales,
+          a.net_profit AS q_pat,
+          CASE
+            WHEN b.sales IS NOT NULL AND ABS(b.sales) > 0
+              THEN ROUND(((a.sales - b.sales) / ABS(b.sales) * 100)::numeric, 1)::float
+            ELSE NULL
+          END AS q_sales_yoy_pct,
+          CASE
+            WHEN b.net_profit IS NOT NULL AND ABS(b.net_profit) > 0
+              THEN ROUND(((a.net_profit - b.net_profit) / ABS(b.net_profit) * 100)::numeric, 1)::float
+            ELSE NULL
+          END AS q_pat_yoy_pct
+        FROM ranked_q a
+        LEFT JOIN ranked_q b ON b.symbol = a.symbol AND b.rn = 5
+        WHERE a.rn = 1
       )
       SELECT
         p.symbol,
@@ -80,9 +106,14 @@ export async function GET(req: NextRequest) {
         COALESCE(p.quality_pct, 0)::float AS quality_pct,
         COALESCE(p.valuation_pct, 0)::float AS valuation_pct,
         COALESCE(p.momentum_pct, 0)::float AS momentum_pct,
+        p.ret_1m::float,
+        p.ret_6m::float,
+        p.ret_1y::float,
         q.q_end,
         q.q_sales,
         q.q_pat,
+        q.q_sales_yoy_pct,
+        q.q_pat_yoy_pct,
         v.verdict,
         u.business_summary,
         EXISTS(SELECT 1 FROM app.portfolio_holding h WHERE h.symbol = p.symbol AND h.quantity > 0) AS in_portfolio
@@ -165,6 +196,11 @@ export async function GET(req: NextRequest) {
       q_end: r.q_end,
       q_sales: r.q_sales != null ? Number(r.q_sales) : null,
       q_pat: r.q_pat != null ? Number(r.q_pat) : null,
+      q_sales_yoy_pct: r.q_sales_yoy_pct != null ? Number(r.q_sales_yoy_pct) : null,
+      q_pat_yoy_pct: r.q_pat_yoy_pct != null ? Number(r.q_pat_yoy_pct) : null,
+      ret_1m: r.ret_1m != null ? Number(r.ret_1m) : null,
+      ret_6m: r.ret_6m != null ? Number(r.ret_6m) : null,
+      ret_1y: r.ret_1y != null ? Number(r.ret_1y) : null,
       verdict: r.verdict,
       business_summary: r.business_summary,
       moat_strength: moatMap.get(r.symbol)?.moat_strength ?? null,

@@ -522,6 +522,7 @@ def main() -> int:
     ap.add_argument("--next-cluster", action="store_true", help="Automatically pick the next cluster that has un-refreshed stocks")
     ap.add_argument("--list-clusters", action="store_true", help="Display all clusters with queue indices and exit")
     ap.add_argument("--portfolio", action="store_true", help="Process un-verdicted portfolio stocks")
+    ap.add_argument("--weekly-new-portfolio", action="store_true", help="Process latest-batch new calls and active portfolio stocks missing a verdict from the last 7 days")
     ap.add_argument("--claude-stocks", action="store_true", help="Process stocks that have Claude verdicts but lack Gemini verdicts")
     ap.add_argument("--since", help="Process symbols that had verdicts generated on or after this date (e.g. 2026-10-25)")
     ap.add_argument("--unverdicted", action="store_true", help="Process active universe symbols that do not yet have a verdict")
@@ -641,6 +642,7 @@ def main() -> int:
             f"Verdicts generated on or after {args.since}" if args.since else
             "Active universe stocks needing verdicts" if args.unverdicted else
             "Claude-verdicted stocks needing Gemini" if args.claude_stocks else
+            "Weekly new calls + portfolio holdings needing refresh" if args.weekly_new_portfolio else
             "Un-verdicted portfolio holdings"
         )
     print(f"Target Mode:    {target_desc}")
@@ -734,6 +736,41 @@ def main() -> int:
                 symbols = [r[0] for r in cur.fetchall()]
         if not symbols:
             print("✓ All active stocks already have verdicts in app.stock_verdict.")
+            return 0
+    elif args.weekly_new_portfolio:
+        import psycopg
+        url = os.environ.get("APP_DB_URL", "postgres:///fundamental_app")
+        with psycopg.connect(url) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    WITH latest_batch AS (
+                        SELECT MAX(created_at::date) AS d FROM app.stock_call
+                    ),
+                    candidates AS (
+                        SELECT DISTINCT symbol
+                        FROM app.portfolio_holding
+                        WHERE quantity > 0
+                        UNION
+                        SELECT DISTINCT symbol
+                        FROM app.stock_call
+                        WHERE created_at::date = (SELECT d FROM latest_batch)
+                    ),
+                    latest_v AS (
+                        SELECT DISTINCT ON (symbol) symbol, generated_at
+                        FROM app.stock_verdict
+                        ORDER BY symbol, generated_at DESC
+                    )
+                    SELECT c.symbol
+                    FROM candidates c
+                    LEFT JOIN latest_v v ON v.symbol = c.symbol
+                    WHERE v.symbol IS NULL OR v.generated_at < now() - interval '7 days'
+                    ORDER BY c.symbol;
+                """)
+                symbols = [r[0] for r in cur.fetchall()]
+        if args.limit:
+            symbols = symbols[:args.limit]
+        if not symbols:
+            print("✓ All weekly new calls and portfolio holdings already have fresh verdicts (< 7 days).")
             return 0
     elif args.claude_stocks:
         import psycopg

@@ -28,12 +28,13 @@ jobs:
         uses: appleboy/ssh-action@v1.0.3
         env:
           REVALIDATE_TOKEN: ${{ secrets.REVALIDATE_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         with:
           host: ${{ secrets.DO_HOST }}
           username: root
           key: ${{ secrets.DO_SSH_KEY }}
           command_timeout: 60m
-          envs: REVALIDATE_TOKEN
+          envs: REVALIDATE_TOKEN,GEMINI_API_KEY
           script: |
             set -e
             cd /var/www/Fundamental
@@ -66,7 +67,15 @@ jobs:
             echo "=== 2. Running cluster calls & portfolio sweep audit ==="
             /var/www/Fundamental/.venv/bin/python scripts/audit_cluster_calls.py
 
-            echo "=== 3. Purging Local Next.js Cache ==="
+            echo "=== 3. Generating Gemini verdicts for weekly new calls & portfolio holdings ==="
+            if [ -z "$DRY_ARG" ] && [ -n "${GEMINI_API_KEY:-}" ]; then
+              /var/www/Fundamental/.venv/bin/python scripts/ollama-verdict.py \
+                --weekly-new-portfolio --engine gemini --load --workers 3 --delay 1.0 || true
+            else
+              echo "Skipping Gemini weekly verdict pass (dry-run or GEMINI_API_KEY not set)."
+            fi
+
+            echo "=== 4. Purging Local Next.js Cache ==="
             curl -s -X POST "http://localhost:3000/api/revalidate?token=$REVALIDATE_TOKEN" \
               -H "Content-Type: application/json" \
               -d '{"tags":["market","panel-cache","snapshot","sectors","calls"]}' || true
