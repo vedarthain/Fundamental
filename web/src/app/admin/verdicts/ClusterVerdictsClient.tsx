@@ -406,12 +406,45 @@ export function ClusterVerdictsClient({
                           </td>
 
                           <td className="py-2 px-2.5 text-[11.5px] leading-snug">
-                            {r.business_summary && (
-                              <p className="text-[var(--color-ink)] line-clamp-2">
-                                {r.business_summary}
-                              </p>
+                            {r.moat_points && r.moat_points.length > 0 ? (
+                              <div className="space-y-1">
+                                {(r.moat_strength || r.moat_type) && (
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    {r.moat_strength && (
+                                      <span
+                                        className={`text-[9.5px] font-semibold px-1.5 py-0.2 rounded border ${
+                                          r.moat_strength === "Wide"
+                                            ? "bg-emerald-50 text-emerald-800 border-emerald-300"
+                                            : r.moat_strength === "Narrow"
+                                              ? "bg-indigo-50 text-indigo-800 border-indigo-200"
+                                              : "bg-slate-100 text-slate-600 border-slate-200"
+                                        }`}
+                                      >
+                                        {r.moat_strength} Moat
+                                      </span>
+                                    )}
+                                    {r.moat_type && (
+                                      <span className="text-[10px] font-medium muted-text">
+                                        {r.moat_type}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                                <ul className="space-y-0.5 text-[11px]">
+                                  {r.moat_points.map((pt, idx) => (
+                                    <li key={idx} className="flex items-start gap-1.5">
+                                      <span className="w-1 h-1 rounded-full bg-indigo-500 mt-1.5 shrink-0" />
+                                      <span>{pt}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ) : (
+                              <span className="text-[11px] muted-text italic">
+                                Moat points not generated yet
+                              </span>
                             )}
-                            <p className="muted-text mt-0.5 text-[11px]">
+                            <p className="muted-text mt-1 text-[11px] border-t border-[var(--color-border-default)]/40 pt-1">
                               <strong className="text-[var(--color-ink)]">Why:</strong> {r.why}
                             </p>
                           </td>

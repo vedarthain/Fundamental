@@ -90,6 +90,7 @@ export async function GET(req: NextRequest) {
     vRows,
     quarterly,
     boardMeetings,
+    moatRows,
   ] = await Promise.all([
     sql<any[]>`
       SELECT symbol, company_name, business_summary, website, employees, ceo_name, ceo_title, listing_date::text, sector, industry, market_cap_category
@@ -151,7 +152,21 @@ export async function GET(req: NextRequest) {
        ORDER BY ex_date DESC NULLS LAST
        LIMIT 5
     `.catch(() => [] as any[]),
+    sql<any[]>`
+      SELECT moat_strength, moat_type, moat_points
+        FROM app.company_moat
+       WHERE symbol = ${symbol}
+       LIMIT 1
+    `.catch(() => [] as any[]),
   ]);
+
+  const moat = moatRows[0]
+    ? {
+        moat_strength: moatRows[0].moat_strength as string,
+        moat_type: moatRows[0].moat_type as string,
+        moat_points: Array.isArray(moatRows[0].moat_points) ? (moatRows[0].moat_points as string[]) : [],
+      }
+    : null;
 
   const overview: CompanyOverview | null = uRows.length > 0
     ? {
@@ -209,6 +224,7 @@ export async function GET(req: NextRequest) {
       results,
       quarterly,
       boardMeetings,
+      moat,
       audit,
     },
     { headers: { "Cache-Control": "no-store" } },

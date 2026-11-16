@@ -431,6 +431,7 @@ type StockContext = {
   results: { title: string; headline: string | null; published_at: string | null; pdf_url: string | null }[];
   quarterly?: { period_end: string; sales: number | null; operating_profit: number | null; net_profit: number | null }[];
   boardMeetings?: { ex_date: string; purpose: string; is_upcoming: boolean }[];
+  moat?: { moat_strength: string; moat_type: string; moat_points: string[] } | null;
   audit: {
     verdict: string | null;
     confidence: string | null;
@@ -6071,22 +6072,50 @@ export function CallsClient() {
                         <div className="py-6 text-center text-slate-400">Loading company moat &amp; business profile…</div>
                       ) : (
                         <>
-                          {/* What the company is known for */}
-                          <div className="p-3.5 rounded-lg border hairline bg-slate-50/70 space-y-1.5">
+                          {/* Derived Moat Key Points */}
+                          <div className="p-3.5 rounded-lg border hairline bg-slate-50/70 space-y-2">
                             <div className="flex items-center justify-between gap-2 flex-wrap">
                               <h3 className="text-xs sm:text-sm font-bold text-slate-900 flex items-center gap-1.5">
                                 <Layers className="w-4 h-4 text-indigo-600" />
-                                <span>What {selectedCall.name} Is Known For</span>
+                                <span>{selectedCall.name} — Competitive Moat</span>
                               </h3>
-                              <span className="text-[10.5px] font-mono px-2 py-0.5 rounded bg-indigo-50 text-indigo-800 border border-indigo-200">
-                                {selectedCall.sector} · {selectedCall.cluster || selectedCall.industry}
-                              </span>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                {contextData?.moat?.moat_strength && (
+                                  <span
+                                    className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+                                      contextData.moat.moat_strength === "Wide"
+                                        ? "bg-emerald-50 text-emerald-800 border-emerald-300"
+                                        : contextData.moat.moat_strength === "Narrow"
+                                          ? "bg-indigo-50 text-indigo-800 border-indigo-200"
+                                          : "bg-slate-100 text-slate-700 border-slate-200"
+                                    }`}
+                                  >
+                                    {contextData.moat.moat_strength} Moat
+                                  </span>
+                                )}
+                                {contextData?.moat?.moat_type && (
+                                  <span className="text-[10.5px] font-mono px-2 py-0.5 rounded bg-white text-slate-700 border hairline">
+                                    {contextData.moat.moat_type}
+                                  </span>
+                                )}
+                              </div>
                             </div>
-                            <p className="text-xs sm:text-[13px] text-slate-700 leading-relaxed">
-                              {selectedCall.companyOverview ||
-                                contextData?.overview?.business_summary ||
-                                "No business summary available for this company yet."}
-                            </p>
+
+                            {contextData?.moat?.moat_points && contextData.moat.moat_points.length > 0 ? (
+                              <ul className="space-y-1.5 pt-1">
+                                {contextData.moat.moat_points.map((pt, idx) => (
+                                  <li key={idx} className="flex items-start gap-2 text-xs text-slate-800 leading-relaxed">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-600 mt-1.5 shrink-0" />
+                                    <span>{pt}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <p className="text-xs text-slate-600 leading-relaxed">
+                                {selectedCall.companyOverview ||
+                                  "Moat key points not generated for this stock yet."}
+                              </p>
+                            )}
                           </div>
 
                           {/* Competitive Moat & Core Edge */}

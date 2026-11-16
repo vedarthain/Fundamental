@@ -105,12 +105,16 @@ async function loadClusterItems(clusterId: number): Promise<ClusterVerdictRow[]>
       q.q_pat,
       v.verdict,
       u.business_summary,
+      m.moat_strength,
+      m.moat_type,
+      m.moat_points,
       EXISTS(SELECT 1 FROM app.portfolio_holding h WHERE h.symbol = p.symbol AND h.quantity > 0) AS in_portfolio
     FROM latest_panel p
     LEFT JOIN latest_verdict v ON v.symbol = p.symbol
     LEFT JOIN app.screener_meta sm ON sm.symbol = p.symbol
     LEFT JOIN app.universe u ON u.symbol = p.symbol
     LEFT JOIN latest_q q ON q.symbol = p.symbol
+    LEFT JOIN app.company_moat m ON m.symbol = p.symbol
     WHERE p.cluster_id = ${clusterId}
     ORDER BY p.composite_pct DESC NULLS LAST, upside_pct DESC NULLS LAST
   `;
@@ -181,6 +185,9 @@ async function loadClusterItems(clusterId: number): Promise<ClusterVerdictRow[]>
       q_pat: r.q_pat != null ? Number(r.q_pat) : null,
       verdict: r.verdict,
       business_summary: r.business_summary,
+      moat_strength: r.moat_strength ?? null,
+      moat_type: r.moat_type ?? null,
+      moat_points: Array.isArray(r.moat_points) ? r.moat_points : [],
       in_portfolio: Boolean(r.in_portfolio),
       action_group,
       action_label,
