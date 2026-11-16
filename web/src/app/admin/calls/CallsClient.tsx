@@ -5290,30 +5290,59 @@ export function CallsClient() {
                     )}
                   </div>
 
-                  {/* BOX 3: TRANCHE 1 - MARKET ORDER (CMP) */}
+                  {/* BOX 3: TRANCHE 1 - MARKET ORDER (CMP) or FILLED */}
                   {selectedCall.isCurated ? (
-                    <div className="bg-slate-50/90 border border-indigo-100 rounded-lg p-2 shadow-2xs flex-1 flex flex-col justify-between min-w-0">
-                      <div className="flex items-center justify-between text-[11px] gap-1 min-w-0">
-                        <div className="flex items-center gap-1 font-bold text-indigo-950 truncate">
-                          <span className="w-1.5 h-1.5 rounded-full bg-indigo-600 shrink-0" />
-                          <span className="tracking-wide text-[10px] truncate">TRANCHE 1: MARKET CMP</span>
+                    (selectedCall.isPortfolio && (selectedCall.heldQty ?? 0) > 0) || selectedCall.isTaken ? (
+                      <div className="bg-emerald-50/70 border border-emerald-200 rounded-lg p-2 shadow-2xs flex-1 flex flex-col justify-between min-w-0">
+                        <div className="flex items-center justify-between text-[11px] gap-1 min-w-0">
+                          <div className="flex items-center gap-1 font-bold text-emerald-950 truncate">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 shrink-0" />
+                            <span className="tracking-wide text-[10px] truncate">TRANCHE 1: FILLED ✓</span>
+                          </div>
+                          <span className="text-[10.5px] font-mono font-bold text-emerald-800 bg-emerald-100/80 border border-emerald-300 px-1.5 py-0.2 rounded shrink-0">
+                            {selectedCall.investedVal ? money(selectedCall.investedVal, 0) : "Taken"}
+                          </span>
                         </div>
-                        <span className="text-[10.5px] font-mono font-bold text-indigo-800 bg-indigo-50 border border-indigo-200 px-1.5 py-0.2 rounded shrink-0">
-                          50% (~{money(selectedCall.t1Value)})
-                        </span>
-                      </div>
 
-                      <div className="flex items-center justify-between pt-1 mt-0.5 border-t border-indigo-100/80">
-                        <div>
-                          <span className="text-[8.5px] uppercase font-semibold text-slate-500 block">Buy Today</span>
-                          <span className="text-xs sm:text-sm font-bold font-mono text-slate-900">{selectedCall.tranche1Shares} shares</span>
-                        </div>
-                        <div className="text-right">
-                          <span className="text-[8.5px] uppercase font-semibold text-slate-500 block">Order Price</span>
-                          <span className="text-xs sm:text-sm font-bold font-mono text-indigo-700">@ CMP {money(selectedCall.cmp)}</span>
+                        <div className="flex items-center justify-between pt-1 mt-0.5 border-t border-emerald-200/80">
+                          <div>
+                            <span className="text-[8.5px] uppercase font-semibold text-emerald-700 block">Held</span>
+                            <span className="text-xs sm:text-sm font-bold font-mono text-emerald-950">
+                              {selectedCall.heldQty ? `${selectedCall.heldQty} shares` : "Position Active"}
+                            </span>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-[8.5px] uppercase font-semibold text-emerald-700 block">Avg Cost</span>
+                            <span className="text-xs sm:text-sm font-bold font-mono text-emerald-800">
+                              {selectedCall.purchasePrice ? `@ ${money(selectedCall.purchasePrice)}` : "In Book"}
+                            </span>
+                          </div>
                         </div>
                       </div>
-                    </div>
+                    ) : (
+                      <div className="bg-slate-50/90 border border-indigo-100 rounded-lg p-2 shadow-2xs flex-1 flex flex-col justify-between min-w-0">
+                        <div className="flex items-center justify-between text-[11px] gap-1 min-w-0">
+                          <div className="flex items-center gap-1 font-bold text-indigo-950 truncate">
+                            <span className="w-1.5 h-1.5 rounded-full bg-indigo-600 shrink-0" />
+                            <span className="tracking-wide text-[10px] truncate">TRANCHE 1: MARKET CMP</span>
+                          </div>
+                          <span className="text-[10.5px] font-mono font-bold text-indigo-800 bg-indigo-50 border border-indigo-200 px-1.5 py-0.2 rounded shrink-0">
+                            50% (~{money(selectedCall.t1Value)})
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-1 mt-0.5 border-t border-indigo-100/80">
+                          <div>
+                            <span className="text-[8.5px] uppercase font-semibold text-slate-500 block">Buy Today</span>
+                            <span className="text-xs sm:text-sm font-bold font-mono text-slate-900">{selectedCall.tranche1Shares} shares</span>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-[8.5px] uppercase font-semibold text-slate-500 block">Order Price</span>
+                            <span className="text-xs sm:text-sm font-bold font-mono text-indigo-700">@ CMP {money(selectedCall.cmp)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )
                   ) : (
                     <div className={`rounded-lg p-2 shadow-2xs flex-1 flex flex-col justify-between min-w-0 ${
                       isSellAction ? "bg-rose-50/90 border border-rose-300" : "bg-slate-50/90 border hairline"
