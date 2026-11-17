@@ -177,7 +177,7 @@ function DriftTable({ drift }: { drift: DriftRow[] }) {
 
 /* ------------------------------------------------------------------- panel */
 
-function parseVerdictPoints(points: string[]) {
+export function parseVerdictPoints(points: string[]) {
   const good: string[] = [];
   const bad: string[] = [];
   const params: string[] = [];

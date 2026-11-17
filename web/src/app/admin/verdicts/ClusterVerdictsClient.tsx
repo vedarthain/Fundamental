@@ -14,6 +14,7 @@ import {
   Table2,
 } from "lucide-react";
 import type { ClusterVerdictRow } from "@/app/api/admin/cluster-verdicts/route";
+import { VerdictAuditSection } from "./VerdictAuditSection";
 
 export type ClusterTreeNode = {
   clusterId: string;
@@ -884,6 +885,7 @@ export function ClusterVerdictsClient({
                                     </div>
                                     <WhyBulletsBlock row={r} />
                                   </div>
+                                  <VerdictAuditSection symbol={r.symbol} />
                                 </td>
                               </tr>
                             )}
@@ -983,6 +985,26 @@ export function ClusterVerdictsClient({
                         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)] gap-3 items-start">
                           <MoatPointsBlock row={r} />
                           <WhyBulletsBlock row={r} />
+                        </div>
+
+                        <div>
+                          <button
+                            type="button"
+                            onClick={() => toggleRow(r.symbol)}
+                            className="text-[11.5px] font-medium text-indigo-700 hover:underline inline-flex items-center gap-1"
+                          >
+                            {expandedRows.has(r.symbol) ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                            <span>
+                              {expandedRows.has(r.symbol)
+                                ? "Hide Trigger, Working/Risks & 8 Quantitative Models"
+                                : "Show Trigger, Working/Risks & 8 Quantitative Models"}
+                            </span>
+                          </button>
+                          {expandedRows.has(r.symbol) && (
+                            <div className="mt-2">
+                              <VerdictAuditSection symbol={r.symbol} />
+                            </div>
+                          )}
                         </div>
                       </div>
                     );
