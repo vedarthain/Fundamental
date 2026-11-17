@@ -212,6 +212,17 @@ export function ClusterVerdictsClient({
   const [loading, setLoading] = useState(false);
 
   const [groupFilter, setGroupFilter] = useState<GroupFilter>("all");
+  const [collapsedSections, setCollapsedSections] = useState<Set<"actionable" | "watch" | "hold_avoid">>(
+    () => new Set(["watch", "hold_avoid"]),
+  );
+  const toggleSection = (key: "actionable" | "watch" | "hold_avoid") => {
+    setCollapsedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
   const [viewMode, setViewMode] = useState<ViewMode>("compact");
   const [showSidebar, setShowSidebar] = useState(true);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
@@ -667,15 +678,28 @@ export function ClusterVerdictsClient({
             No stocks match the current filter in this cluster.
           </div>
         ) : (
-          sections.map((sec) => (
+          sections.map((sec) => {
+            const isCollapsed = groupFilter === "all" && collapsedSections.has(sec.key);
+            return (
             <div key={sec.key} className="rounded-md border hairline bg-[var(--color-card)] overflow-hidden">
-              <div className="px-3 py-2 border-b hairline bg-[var(--color-paper)]/60 flex items-center justify-between">
-                <h3 className="text-[12.5px] font-semibold tracking-tight">{sec.title}</h3>
+              <div
+                onClick={() => groupFilter === "all" && toggleSection(sec.key)}
+                className={`px-3 py-2 bg-[var(--color-paper)]/60 flex items-center justify-between ${
+                  !isCollapsed ? "border-b hairline" : ""
+                } ${groupFilter === "all" ? "cursor-pointer hover:bg-[var(--color-paper)]" : ""}`}
+              >
+                <div className="flex items-center gap-1.5">
+                  {groupFilter === "all" && (
+                    isCollapsed ? <ChevronRight size={14} className="muted-text" /> : <ChevronDown size={14} className="muted-text" />
+                  )}
+                  <h3 className="text-[12.5px] font-semibold tracking-tight">{sec.title}</h3>
+                </div>
                 <div className="flex items-center gap-2">
-                  {viewMode === "compact" && (
+                  {!isCollapsed && viewMode === "compact" && (
                     <button
                       type="button"
-                      onClick={() => {
+                      onClick={(e) => {
+                        e.stopPropagation();
                         const allExpanded = sec.rows.every((r) => expandedRows.has(r.symbol));
                         setExpandedRows((prev) => {
                           const next = new Set(prev);
@@ -689,11 +713,11 @@ export function ClusterVerdictsClient({
                       {sec.rows.every((r) => expandedRows.has(r.symbol)) ? "Collapse all" : "Expand all"}
                     </button>
                   )}
-                  <span className="text-[11px] muted-text tabular-nums">{sec.rows.length}</span>
+                  <span className="text-[11px] font-semibold muted-text tabular-nums">{sec.rows.length}</span>
                 </div>
               </div>
 
-              {viewMode === "compact" ? (
+              {!isCollapsed && (viewMode === "compact" ? (
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse text-[12px]">
                     <thead className="sticky top-0 z-10 bg-[var(--color-card)] shadow-[0_1px_0_0_var(--color-border-default)]">
@@ -729,6 +753,8 @@ export function ClusterVerdictsClient({
                                 <div className="flex items-center gap-1.5">
                                   <Link
                                     href={`/stock/${r.symbol}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
                                     onClick={(e) => e.stopPropagation()}
                                     className="font-mono font-semibold text-[12.5px] hover:underline inline-flex items-center gap-1"
                                   >
@@ -879,6 +905,8 @@ export function ClusterVerdictsClient({
                           <div className="flex items-center gap-2.5 min-w-0">
                             <Link
                               href={`/stock/${r.symbol}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
                               className="font-mono font-bold text-[14px] hover:underline inline-flex items-center gap-1"
                             >
                               <span>{r.symbol}</span>
@@ -960,9 +988,10 @@ export function ClusterVerdictsClient({
                     );
                   })}
                 </div>
-              )}
+              ))}
             </div>
-          ))
+            );
+          })
         )}
       </section>
     </div>

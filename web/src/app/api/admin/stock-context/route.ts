@@ -137,7 +137,7 @@ export async function GET(req: NextRequest) {
        LIMIT 1
     `.catch(() => [] as any[]),
     sql<any[]>`
-      SELECT period_end::text, sales::float, operating_profit::float, net_profit::float
+      SELECT period_end::text, source_fetched_at::text, sales::float, operating_profit::float, net_profit::float
         FROM app.fundamentals_quarterly
        WHERE symbol = ${symbol}
        ORDER BY period_end DESC

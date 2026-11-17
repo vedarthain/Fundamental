@@ -359,7 +359,7 @@ const CALLS_VIEW_STATE_KEY = "calls_view_state_v1";
 
 type Scope = "all" | "curated" | "new" | "portfolio";
 type ActionFilter = "ALL" | "BUY" | "WATCH" | "PRIORITY_SELL" | "SELL" | "HOLD";
-type DetailTab = "overview" | "catalysts" | "results" | "dividends" | "news" | "audit" | "moat";
+type DetailTab = "overview" | "catalysts" | "results" | "dividends" | "news" | "audit";
 export type PriorityCategory = "ALL" | "PROFIT_TRIM" | "DRAWDOWN_REVIEW" | "STRUCTURAL_EXIT";
 
 export function getPriorityCategory(call: {
@@ -429,9 +429,8 @@ type StockContext = {
   filings: { title: string; category: string; headline: string | null; published_at: string | null; pdf_url: string | null }[];
   dividends: { ex_date: string; purpose: string; amount: number | null }[];
   results: { title: string; headline: string | null; published_at: string | null; pdf_url: string | null }[];
-  quarterly?: { period_end: string; sales: number | null; operating_profit: number | null; net_profit: number | null }[];
+  quarterly?: { period_end: string; source_fetched_at?: string | null; sales: number | null; operating_profit: number | null; net_profit: number | null }[];
   boardMeetings?: { ex_date: string; purpose: string; is_upcoming: boolean }[];
-  moat?: { moat_strength: string; moat_type: string; moat_points: string[] } | null;
   audit: {
     verdict: string | null;
     confidence: string | null;
@@ -5507,16 +5506,6 @@ export function CallsClient() {
                     <CheckSquare className="w-3.5 h-3.5" />
                     <span>Audit &amp; Governance</span>
                   </button>
-
-                  <button
-                    onClick={() => setActiveTab("moat")}
-                    className={`px-3 py-1 rounded-md font-medium transition-all flex items-center gap-1.5 shrink-0 ${
-                      effectiveTab === "moat" ? "bg-indigo-700 text-white shadow-xs font-semibold" : "text-slate-600 hover:bg-slate-200/60"
-                    }`}
-                  >
-                    <Layers className="w-3.5 h-3.5" />
-                    <span>Moat</span>
-                  </button>
                 </div>
 
                 <div className="p-3.5">
@@ -5588,8 +5577,26 @@ export function CallsClient() {
                         <div className="py-6 text-center text-slate-400">Loading results &amp; schedule…</div>
                       ) : (
                         <>
-                          {/* Upcoming Results Date & Latest Quarter Strip */}
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {/* Results Declared Date, Upcoming Results, & Latest Quarter in DB */}
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                            <div className="p-2.5 rounded-md border border-indigo-200 bg-indigo-50/70">
+                              <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-700">
+                                Results Declared (Exchange)
+                              </div>
+                              {contextData?.results && contextData.results.length > 0 ? (
+                                <div className="mt-1">
+                                  <span className="font-bold text-indigo-950 text-xs">
+                                    {contextData.results[0].published_at ? fmtDate(contextData.results[0].published_at) : "—"}
+                                  </span>
+                                  <div className="text-[10.5px] text-indigo-800/80 truncate mt-0.5" title={contextData.results[0].title}>
+                                    {contextData.results[0].title}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="mt-1 text-slate-500 text-xs">No exchange filing found</div>
+                              )}
+                            </div>
+
                             <div className="p-2.5 rounded-md border hairline bg-slate-50/70">
                               <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
                                 Upcoming Results / Board Meeting
@@ -5623,14 +5630,21 @@ export function CallsClient() {
                                 Latest Quarter in DB
                               </div>
                               {contextData?.quarterly && contextData.quarterly.length > 0 ? (
-                                <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-xs">
-                                  <span className="font-semibold text-slate-900">{fmtDate(contextData.quarterly[0].period_end)}</span>
-                                  <span className="text-slate-600 tabular-nums">
-                                    Sales: ₹{contextData.quarterly[0].sales?.toFixed(1) ?? "—"} Cr
-                                  </span>
-                                  <span className="text-slate-600 tabular-nums">
-                                    PAT: ₹{contextData.quarterly[0].net_profit?.toFixed(1) ?? "—"} Cr
-                                  </span>
+                                <div className="mt-1 space-y-0.5 text-xs">
+                                  <div className="flex flex-wrap items-center gap-x-2">
+                                    <span className="font-semibold text-slate-900">{fmtDate(contextData.quarterly[0].period_end)}</span>
+                                    <span className="text-slate-600 tabular-nums">
+                                      S: ₹{contextData.quarterly[0].sales?.toFixed(1) ?? "—"}
+                                    </span>
+                                    <span className="text-slate-600 tabular-nums">
+                                      P: ₹{contextData.quarterly[0].net_profit?.toFixed(1) ?? "—"}
+                                    </span>
+                                  </div>
+                                  {contextData.quarterly[0].source_fetched_at && (
+                                    <div className="text-[10.5px] text-slate-500">
+                                      DB Updated: {fmtDate(contextData.quarterly[0].source_fetched_at)}
+                                    </div>
+                                  )}
                                 </div>
                               ) : (
                                 <div className="mt-1 text-slate-400 text-xs">No quarterly filings in DB yet.</div>
@@ -6066,128 +6080,6 @@ export function CallsClient() {
                           <ExternalLink className="w-3.5 h-3.5" />
                         </Link>
                       </div>
-                    </div>
-                  )}
-
-                  {/* TAB 7: MOAT & BUSINESS IDENTITY */}
-                  {effectiveTab === "moat" && (
-                    <div className="space-y-3 text-xs sm:text-sm">
-                      {contextLoading ? (
-                        <div className="py-6 text-center text-slate-400">Loading company moat &amp; business profile…</div>
-                      ) : (
-                        <>
-                          {/* Derived Moat Key Points */}
-                          <div className="p-3.5 rounded-lg border hairline bg-slate-50/70 space-y-2">
-                            <div className="flex items-center justify-between gap-2 flex-wrap">
-                              <h3 className="text-xs sm:text-sm font-bold text-slate-900 flex items-center gap-1.5">
-                                <Layers className="w-4 h-4 text-indigo-600" />
-                                <span>{selectedCall.name} — Competitive Moat</span>
-                              </h3>
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                {contextData?.moat?.moat_strength && (
-                                  <span
-                                    className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
-                                      contextData.moat.moat_strength === "Wide"
-                                        ? "bg-emerald-50 text-emerald-800 border-emerald-300"
-                                        : contextData.moat.moat_strength === "Narrow"
-                                          ? "bg-indigo-50 text-indigo-800 border-indigo-200"
-                                          : "bg-slate-100 text-slate-700 border-slate-200"
-                                    }`}
-                                  >
-                                    {contextData.moat.moat_strength} Moat
-                                  </span>
-                                )}
-                                {contextData?.moat?.moat_type && (
-                                  <span className="text-[10.5px] font-mono px-2 py-0.5 rounded bg-white text-slate-700 border hairline">
-                                    {contextData.moat.moat_type}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-
-                            {contextData?.moat?.moat_points && contextData.moat.moat_points.length > 0 ? (
-                              <ul className="space-y-1.5 pt-1">
-                                {contextData.moat.moat_points.map((pt, idx) => (
-                                  <li key={idx} className="flex items-start gap-2 text-xs text-slate-800 leading-relaxed">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-600 mt-1.5 shrink-0" />
-                                    <span>{pt}</span>
-                                  </li>
-                                ))}
-                              </ul>
-                            ) : (
-                              <p className="text-xs text-slate-600 leading-relaxed">
-                                {selectedCall.companyOverview ||
-                                  "Moat key points not generated for this stock yet."}
-                              </p>
-                            )}
-                          </div>
-
-                          {/* Competitive Moat & Core Edge */}
-                          <div className="p-3.5 rounded-lg border hairline bg-white space-y-2">
-                            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                              Competitive Moat &amp; Thesis Edge
-                            </div>
-                            {(selectedCall.rationale || contextData?.audit?.verdict) && (
-                              <div className="p-2.5 rounded-md bg-emerald-50/60 border border-emerald-200 text-xs text-emerald-950 font-medium leading-relaxed">
-                                {selectedCall.rationale || contextData?.audit?.verdict}
-                              </div>
-                            )}
-                            {contextData?.audit?.points && contextData.audit.points.length > 0 && (
-                              <ul className="space-y-1.5 pt-1">
-                                {contextData.audit.points.map((pt, idx) => (
-                                  <li key={idx} className="flex items-start gap-2 text-xs text-slate-700">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 mt-1.5 shrink-0" />
-                                    <span>{pt}</span>
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                          </div>
-
-                          {/* Company Snapshot */}
-                          {contextData?.overview && (
-                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-                              <div className="p-2.5 rounded-md border hairline bg-slate-50/50">
-                                <span className="text-[10px] uppercase font-semibold text-slate-400 block">Leadership</span>
-                                <span className="font-semibold text-slate-800 block mt-0.5 truncate">
-                                  {contextData.overview.ceo_name || "—"}
-                                </span>
-                                {contextData.overview.ceo_title && (
-                                  <span className="text-[10px] text-slate-500 truncate block">{contextData.overview.ceo_title}</span>
-                                )}
-                              </div>
-                              <div className="p-2.5 rounded-md border hairline bg-slate-50/50">
-                                <span className="text-[10px] uppercase font-semibold text-slate-400 block">Employees</span>
-                                <span className="font-semibold text-slate-800 font-mono block mt-0.5">
-                                  {contextData.overview.employees ? contextData.overview.employees.toLocaleString("en-IN") : "—"}
-                                </span>
-                              </div>
-                              <div className="p-2.5 rounded-md border hairline bg-slate-50/50">
-                                <span className="text-[10px] uppercase font-semibold text-slate-400 block">NSE Listing</span>
-                                <span className="font-semibold text-slate-800 font-mono block mt-0.5">
-                                  {contextData.overview.listing_date ? fmtDate(contextData.overview.listing_date) : "—"}
-                                </span>
-                              </div>
-                              <div className="p-2.5 rounded-md border hairline bg-slate-50/50">
-                                <span className="text-[10px] uppercase font-semibold text-slate-400 block">Website</span>
-                                {contextData.overview.website ? (
-                                  <a
-                                    href={contextData.overview.website.startsWith("http") ? contextData.overview.website : `https://${contextData.overview.website}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="font-semibold text-indigo-600 hover:underline inline-flex items-center gap-1 mt-0.5 truncate max-w-full"
-                                  >
-                                    <span className="truncate">{contextData.overview.website.replace(/^https?:\/\//, "")}</span>
-                                    <ExternalLink className="w-3 h-3 shrink-0" />
-                                  </a>
-                                ) : (
-                                  <span className="font-semibold text-slate-800 block mt-0.5">—</span>
-                                )}
-                              </div>
-                            </div>
-                          )}
-                        </>
-                      )}
                     </div>
                   )}
                 </div>
