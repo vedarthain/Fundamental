@@ -192,7 +192,7 @@ export async function SnapshotRibbon() {
         <Sep />
         <Cell label="COVERAGE">{s.coverage.toLocaleString("en-IN")}</Cell>
         <Sep />
-        <Cell label="PEER GROUPS">{s.clusters}</Cell>
+        <Cell label="CLUSTERS">{s.clusters}</Cell>
         <Sep />
         {/* Persistent disclaimer — sits in the dark ribbon so it's visible
             on every page without taking up dedicated UI real estate.

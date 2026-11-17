@@ -45,7 +45,7 @@ const LINKS: NavLink[] = [
       // "Media & Entertainment" without already knowing which sector holds it
       // meant opening all nine tabs in turn. Same peer groups, one filter box,
       // no hierarchy to guess at first.
-      { href: "/industries", label: "Industries", description: "Every peer group in one filterable list — find one without knowing its sector" },
+      { href: "/industries", label: "Industries", description: "Every cluster in one filterable list — find one without knowing its sector" },
       // A real route, not a Scanner deep-link. It briefly pointed at
       // /tools/scanner?tab=all, and because isActive() below matches on pathname
       // only, opening it lit up Tools instead of Segments. The table is a

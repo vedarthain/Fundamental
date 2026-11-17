@@ -408,7 +408,7 @@ export default function ScannerTabs({
               <div className="inline-flex items-center gap-1 rounded-lg p-1 border hairline mb-4" role="group" aria-label="Rotation grouping">
                 {([
                   { id: "sectors" as RotView, label: "Sectors" },
-                  { id: "peers" as RotView, label: "Peer groups" },
+                  { id: "peers" as RotView, label: "Clusters" },
                 ]).map((opt) => {
                   const active = rotView === opt.id;
                   return (
@@ -429,16 +429,16 @@ export default function ScannerTabs({
                 <RotationClient
                   snapDate={rotation.snapDate}
                   rows={peers}
-                  title="Peer groups"
+                  title="Clusters"
                   eyebrow="Rotation map"
-                  groupLabel="Peer group"
-                  noun="peer groups"
+                  groupLabel="Cluster"
+                  noun="clusters"
                   datePicker={<ScannerDatePicker param="rDate" dates={rotation.dates} selected={rotation.snapDate} />}
                   intro={
                     <>
-                      The scoring peer clusters (~46 of them) ranked by <strong>median 1-week return</strong>,
+                      The scoring clusters ranked by <strong>median 1-week return</strong>,
                       so you can see <strong>which pockets are being bid up</strong> and which are being sold.
-                      Peer groups are tighter than sectors — they&apos;re the same clusters the platform
+                      Clusters are tighter than sectors — they&apos;re the same industry buckets the platform
                       scores stocks within — so this is the granular read on rotation.
                     </>
                   }

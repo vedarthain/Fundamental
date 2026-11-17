@@ -57,13 +57,35 @@ Generate structured 8-section forensic verdicts locally and sync them to Neon.
 # 1. Generate & load verdict for a single stock into local DB using Ollama
 etl/.venv/bin/python scripts/ollama-verdict.py --engine ollama --symbol FMGOETZE --load
 
-# 2. Generate & load verdicts for portfolio stocks (bounded batch)
+# 2. Monthly Drift Pass (Recommended — only refreshes stocks whose financials/metrics changed)
+etl/.venv/bin/python scripts/ollama-verdict.py --drift --engine gemini --limit 250 --delay 4.5 --load
+
+# 3. Phased Backfill (Top un-verdicted stocks, free-tier safe)
+etl/.venv/bin/python scripts/ollama-verdict.py --unverdicted --engine gemini --model gemini-2.5-flash-lite --limit 700 --delay 4.5 --skip-existing --load
+
+# 4. Generate & load verdicts for portfolio stocks (bounded batch)
 etl/.venv/bin/python scripts/ollama-verdict.py --engine ollama --portfolio --limit 10 --load
 
-# 3. Push local stock verdicts to Neon Production
+# 5. Push local stock verdicts to Production
 set -a && source .env.local && set +a
 etl/.venv/bin/python scripts/sync-verdicts-to-neon.py
 ```
+
+---
+
+## 2b. Company Moats (`app.company_moat`) via Local Ollama (Yearly / Phased)
+
+Run yearly (plus `--resume` whenever new stocks/IPOs enter the universe). Orders by highest `composite_pct` first:
+
+```bash
+# Phased batch of next 200 stocks without a moat
+etl/.venv/bin/python scripts/generate_moat_points.py --all --resume --limit 200
+
+# Single cluster or sector
+etl/.venv/bin/python scripts/generate_moat_points.py --cluster "Dyes, Pigments & Colorants" --resume
+```
+
+*(Push generated rows from local Postgres to Production via `POST https://www.equityroots.in/api/admin/moat/sync?token=$REVALIDATE_TOKEN`.)*
 
 ---
 

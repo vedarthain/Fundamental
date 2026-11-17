@@ -143,6 +143,7 @@ def main() -> int:
     ap.add_argument("--cluster", help="Exact cluster name to process")
     ap.add_argument("--sector", help="Sector name (ILIKE match)")
     ap.add_argument("--symbol", help="Single symbol")
+    ap.add_argument("--all", action="store_true", help="Process all clusters/sectors (default when no filter is passed)")
     ap.add_argument("--limit", type=int, default=0, help="Max symbols to process (0 = no limit)")
     ap.add_argument("--model", help="Ollama model name (auto-detected if omitted)")
     ap.add_argument("--ollama-url", default="http://127.0.0.1:11434")

@@ -116,7 +116,7 @@ export function SampleScorecard() {
               className="num num-sm font-semibold shrink-0 text-[10.5px] sm:text-[11.5px]"
               style={{ color: "var(--color-score-excellent)" }}
             >
-              {s.quality}th in Peer Group
+              {s.quality}th in Cluster
             </span>
           </div>
           <div className="h-1.5 rounded-full overflow-hidden bg-[var(--color-paper)]">
@@ -137,7 +137,7 @@ export function SampleScorecard() {
               className="num num-sm font-semibold shrink-0 text-[10.5px] sm:text-[11.5px]"
               style={{ color: "var(--color-score-excellent)" }}
             >
-              {s.momentum}th in Peer Group
+              {s.momentum}th in Cluster
             </span>
           </div>
           <div className="h-1.5 rounded-full overflow-hidden bg-[var(--color-paper)]">
@@ -158,7 +158,7 @@ export function SampleScorecard() {
               className="num num-sm font-semibold shrink-0 text-[10.5px] sm:text-[11.5px]"
               style={{ color: "var(--color-score-neutral)" }}
             >
-              {s.valuation}th in Peer Group
+              {s.valuation}th in Cluster
             </span>
           </div>
           <div className="h-1.5 rounded-full overflow-hidden bg-[var(--color-paper)]">
@@ -641,7 +641,7 @@ export function ResponsiveSectorHeatmap({ tiles }: { tiles: IndustryTile[] }) {
         <div className="lg:hidden">
           <div className="flex items-center justify-between mb-2.5">
             <div>
-              <div className="eyebrow mb-0.5">{tiles.length > 0 ? `${tiles.length} Peer Groups` : "Peer Groups"}</div>
+              <div className="eyebrow mb-0.5">{tiles.length > 0 ? `${tiles.length} Clusters` : "Clusters"}</div>
               <h3 className="font-display text-[20px] sm:text-[22px] font-semibold text-[var(--color-ink)]">
                 Sector Heatmap
               </h3>
@@ -672,7 +672,7 @@ export function ResponsiveSectorHeatmap({ tiles }: { tiles: IndustryTile[] }) {
                   className="shrink-0 w-32 sm:w-36 card p-2.5 sm:p-3 flex flex-col justify-between shadow-2xs hover:border-[var(--color-accent-400)] transition-colors"
                 >
                   <div className="flex justify-between items-center mb-1">
-                    <span className="kbd-label text-[8.5px] sm:text-[9px]">PEER GROUP</span>
+                    <span className="kbd-label text-[8.5px] sm:text-[9px]">CLUSTER</span>
                     <span
                       className="num num-sm font-bold px-1.5 py-0.5 rounded text-white text-[10px] sm:text-[11px]"
                       style={{ backgroundColor: scoreBg }}
@@ -692,7 +692,7 @@ export function ResponsiveSectorHeatmap({ tiles }: { tiles: IndustryTile[] }) {
         {/* Desktop View: Full 2-Column Split (lg+) */}
         <div className="hidden lg:grid grid-cols-12 gap-10 items-center">
           <div className="col-span-6">
-            <div className="eyebrow mb-3">{tiles.length > 0 ? `${tiles.length} Peer Groups` : "Peer Groups"}</div>
+            <div className="eyebrow mb-3">{tiles.length > 0 ? `${tiles.length} Clusters` : "Clusters"}</div>
             <h2
               className="font-display"
               style={{ fontSize: "clamp(28px, 3.5vw, 42px)", lineHeight: 1.05 }}
@@ -701,7 +701,7 @@ export function ResponsiveSectorHeatmap({ tiles }: { tiles: IndustryTile[] }) {
               <em className="accent">torn open.</em>
             </h2>
             <p className="muted-text mt-4 text-[14.5px] leading-[1.6] max-w-[420px]">
-              {tiles.length} peer groups — every single one ranked weekly within its sector. Greens
+              {tiles.length} clusters — every single one ranked weekly within its sector. Greens
               compound. Reds need a closer look.
             </p>
             <div className="mt-6 flex items-center gap-3">

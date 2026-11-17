@@ -351,7 +351,7 @@ export async function GET(request: Request) {
             ))
           )
         ORDER BY (p.symbol IN ('INDUSTOWER', 'UNIONBANK', 'BBTC', 'ALLDIGI', 'APOLLOTYRE', 'FMGOETZE', 'SHARDACROP', 'TRANSRAILL', 'BANKBARODA')) DESC, v.generated_at DESC, p.composite_pct DESC
-        LIMIT 600
+        LIMIT 1500
       `,
       sql<any[]>`
         WITH latest_verdict AS (
