@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { unstable_cache } from "next/cache";
 import { isAdminRequest } from "@/lib/auth";
 import { sql, golden } from "@/lib/db";
 
@@ -216,7 +217,25 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const dateParam = searchParams.get("date"); // e.g. "2026-10-31"
+    const forceRefresh = searchParams.get("refresh") === "1";
 
+    const payload = forceRefresh
+      ? await computeCallsPayload(dateParam)
+      : await unstable_cache(
+          () => computeCallsPayload(dateParam),
+          ["admin:calls:v1", dateParam ?? "ALL"],
+          { revalidate: 300, tags: ["calls", "panel-cache"] },
+        )();
+
+    return NextResponse.json(payload, {
+      headers: { "Cache-Control": "no-store" },
+    });
+  } catch (err: any) {
+    return NextResponse.json({ error: err?.message || String(err) }, { status: 500 });
+  }
+}
+
+async function computeCallsPayload(dateParam: string | null) {
     // Fetch available dates, screened candidate gems, and portfolio holdings concurrently
     const [availableDatesRows, rawGems, rawPortfolio] = await Promise.all([
       sql<{ d: string }[]>`
@@ -945,16 +964,11 @@ export async function GET(request: Request) {
       },
     };
 
-    return NextResponse.json({
+    return {
       summary,
       availableDates,
       clusterGems,
       portfolioActions,
       monthlyAudit,
-    }, {
-      headers: { "Cache-Control": "no-store" },
-    });
-  } catch (err: any) {
-    return NextResponse.json({ error: err?.message || String(err) }, { status: 500 });
-  }
+    };
 }

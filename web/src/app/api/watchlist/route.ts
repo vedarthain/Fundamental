@@ -441,14 +441,19 @@ export async function GET(req: NextRequest) {
     ["watchlist:persistence:v1", sortedKey],
     { revalidate: 3600, tags: ["panel-cache"] },
   );
+  const cachedQuotes = unstable_cache(
+    async (syms: string[], isLean: boolean) => Array.from((await loadQuotes(syms, isLean)).entries()),
+    ["watchlist:quotes:v1", sortedKey, String(lean)],
+    { revalidate: 120, tags: ["market", "panel-cache"] },
+  );
 
-  const [rows, snapshotDate, persistenceEntries, quotes, meta, glance, verdicts, scorecardKeys, sessionData] = await Promise.all([
+  const [rows, snapshotDate, persistenceEntries, quoteEntries, meta, glance, verdicts, scorecardKeys, sessionData] = await Promise.all([
     cachedRows(symbols),
     cachedSnapDate(),
     // Multi-snapshot trend per symbol. Cached per symbol set + panel-cache tag.
     cachedPersistence(symbols),
-    // Fresh daily quote (LTP, 1D move, 52W high/low) from golden.
-    loadQuotes(symbols, lean),
+    // Fresh daily quote (LTP, 1D move, 52W high/low) from golden — 2m cache.
+    cachedQuotes(symbols, lean),
     // Per-user cost-basis snapshot + note. Empty when signed out.
     session
       ? loadMeta(session.userId, symbols)
@@ -462,6 +467,7 @@ export async function GET(req: NextRequest) {
     sessionP,
   ]);
   const persistence = new Map(persistenceEntries);
+  const quotes = new Map(quoteEntries);
 
   // Portfolio ownership for the "P" badge (signed-in only). heldSet = currently
   // held (same reconciliation rule as the scanner graph); tradedSet = ever
