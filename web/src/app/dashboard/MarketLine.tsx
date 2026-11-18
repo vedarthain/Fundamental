@@ -16,6 +16,7 @@ import Link from "next/link";
 import { unstable_cache } from "next/cache";
 import { sql } from "@/lib/db";
 import { loadFiiDii, type FiiDay } from "@/lib/fiiDii";
+import { getLiveIndices } from "@/lib/liveIndices";
 import { Delta, cr, fmtDay, num } from "./ui";
 
 const FII_DAYS = 5;
@@ -54,18 +55,43 @@ const cachedFiiDii = unstable_cache(loadFiiDii, ["dashboard:fii:v1"], {
 });
 
 export async function MarketLine() {
-  const [indices, fii] = await Promise.all([cachedIndices(), cachedFiiDii(FII_DAYS)]);
+  const [indices, fii, live] = await Promise.all([
+    cachedIndices(),
+    cachedFiiDii(FII_DAYS),
+    getLiveIndices().catch(() => null),
+  ]);
 
-  if (indices.length === 0 && fii.length === 0) {
+  if (indices.length === 0 && fii.length === 0 && !live?.nifty) {
     return null;
   }
 
+  const DEFAULT_NAMES: Record<string, string> = {
+    NIFTY50: "NIFTY 50",
+    NIFTYBANK: "NIFTY BANK",
+    NIFTYMIDCAP100: "NIFTY MIDCAP 100",
+    NIFTY500: "NIFTY 500",
+  };
+
   // Preserve HEADLINE_INDICES order — the query returns whatever order Neon
-  // picks, and Nifty 50 must lead.
-  const ordered = HEADLINE_INDICES.map((c) => indices.find((i) => i.code === c)).filter(
-    (r): r is IndexRow => r != null,
-  );
-  const asOf = ordered[0]?.date ?? fii[0]?.date ?? null;
+  // picks, and Nifty 50 must lead. Overlay live Upstox/5-min quotes so Home
+  // matches the top ribbon without waiting for the EOD refresh-ltp run.
+  let hasLive = false;
+  const ordered = HEADLINE_INDICES.map((c) => {
+    const eod = indices.find((i) => i.code === c);
+    const lq = live?.byCode[c as keyof typeof live.byCode];
+    if (lq) {
+      hasLive = true;
+      return {
+        code: c,
+        name: eod?.name ?? DEFAULT_NAMES[c] ?? lq.label,
+        close: lq.price,
+        pct_change_1d: lq.changePct,
+        date: eod?.date ?? "",
+      };
+    }
+    return eod ?? null;
+  }).filter((r): r is IndexRow => r != null);
+  const asOf = ordered[0]?.date || fii[0]?.date || null;
 
   return (
     <section
@@ -93,7 +119,7 @@ export async function MarketLine() {
         className="ml-auto shrink-0 text-[10px]"
         style={{ color: "var(--color-accent-700)" }}
       >
-        {asOf ? `EOD · ${fmtDay(asOf)}` : "Indices"}
+        {hasLive ? "Live · 5m" : asOf ? `EOD · ${fmtDay(asOf)}` : "Indices"}
       </Link>
     </section>
   );

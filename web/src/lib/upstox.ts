@@ -336,7 +336,7 @@ export async function resolveMarketDataToken(): Promise<MarketDataToken> {
 
 /** Load the session and assert the token is present + not past its stored
  *  expiry. Throws UpstoxTokenError otherwise. */
-async function requireFreshToken(): Promise<string> {
+export async function requireFreshToken(): Promise<string> {
   return (await resolveMarketDataToken()).token;
 }
 
