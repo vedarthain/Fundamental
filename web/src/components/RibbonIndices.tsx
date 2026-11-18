@@ -14,7 +14,7 @@ function IndexPill({ quote }: { quote: IndexQuote }) {
   const sign = up ? "+" : "";
   return (
     <span className="inline-flex items-baseline gap-1.5 whitespace-nowrap shrink-0">
-      <span className="kbd-label" style={{ color: "var(--color-strip-label)" }}>
+      <span className="kbd-label" style={{ color: "var(--color-strip-muted)" }}>
         {quote.label}
       </span>
       <span className="num num-sm text-[11px] font-medium text-white">
