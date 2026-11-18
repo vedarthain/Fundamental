@@ -26,8 +26,9 @@
  * trading-window boilerplate, which the title filter catches, but what remains
  * is promoter buying and selling — the one filing class worth waking up for.
  */
+import { unstable_cache } from "next/cache";
 import { sql } from "@/lib/db";
-import { loadPortfolioSymbols } from "@/lib/portfolio";
+import { getPortfolioSymbols } from "./portfolioOnce";
 import { Zone, Empty, SymbolLink, fmtDay } from "./ui";
 
 const WINDOW_DAYS = 7;
@@ -74,9 +75,14 @@ async function loadFilings(userId: number, held: string[]): Promise<Filing[]> {
   `.catch(() => [] as Filing[]);
 }
 
+const cachedFilings = unstable_cache(loadFilings, ["dashboard:filings:v1"], {
+  revalidate: 300,
+  tags: ["market", "panel-cache"],
+});
+
 export async function FilingsZone({ userId }: { userId: number }) {
-  const held = await loadPortfolioSymbols(userId).catch(() => [] as string[]);
-  const rows = await loadFilings(userId, held);
+  const held = await getPortfolioSymbols(userId).catch(() => [] as string[]);
+  const rows = await cachedFilings(userId, held);
 
   return (
     /* No `href`: filings are per-stock in this app (/stock/[symbol] carries the

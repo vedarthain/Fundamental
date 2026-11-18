@@ -16,6 +16,7 @@
  * Any new tile that needs holdings must import THIS, not loadPortfolio.
  */
 import { cache } from "react";
-import { loadPortfolio } from "@/lib/portfolio";
+import { loadPortfolio, loadPortfolioSymbols } from "@/lib/portfolio";
 
 export const getPortfolio = cache(loadPortfolio);
+export const getPortfolioSymbols = cache(loadPortfolioSymbols);

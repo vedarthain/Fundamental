@@ -44,12 +44,17 @@ async function loadHeadlineIndices(): Promise<IndexRow[]> {
 }
 
 const cachedIndices = unstable_cache(loadHeadlineIndices, ["dashboard:indices:v1"], {
-  revalidate: 3600,
+  revalidate: 300,
+  tags: ["market"],
+});
+
+const cachedFiiDii = unstable_cache(loadFiiDii, ["dashboard:fii:v1"], {
+  revalidate: 300,
   tags: ["market"],
 });
 
 export async function MarketLine() {
-  const [indices, fii] = await Promise.all([cachedIndices(), loadFiiDii(FII_DAYS)]);
+  const [indices, fii] = await Promise.all([cachedIndices(), cachedFiiDii(FII_DAYS)]);
 
   if (indices.length === 0 && fii.length === 0) {
     return null;

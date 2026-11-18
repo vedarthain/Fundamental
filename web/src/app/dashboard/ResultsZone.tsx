@@ -17,8 +17,9 @@
  * and this table records what was last filed — which is why the header says
  * "as filed" rather than implying a guarantee.
  */
+import { unstable_cache } from "next/cache";
 import { sql } from "@/lib/db";
-import { loadPortfolioSymbols } from "@/lib/portfolio";
+import { getPortfolioSymbols } from "./portfolioOnce";
 import { Zone, Empty, SymbolLink, fmtDay } from "./ui";
 
 const WINDOW_DAYS = 14;
@@ -78,9 +79,14 @@ async function loadUpcomingResults(userId: number, held: string[]): Promise<Resu
   `.catch(() => [] as ResultRow[]);
 }
 
+const cachedUpcomingResults = unstable_cache(loadUpcomingResults, ["dashboard:results:v1"], {
+  revalidate: 300,
+  tags: ["market", "panel-cache"],
+});
+
 export async function ResultsZone({ userId }: { userId: number }) {
-  const held = await loadPortfolioSymbols(userId).catch(() => [] as string[]);
-  const rows = await loadUpcomingResults(userId, held);
+  const held = await getPortfolioSymbols(userId).catch(() => [] as string[]);
+  const rows = await cachedUpcomingResults(userId, held);
   const heldSet = new Set(held);
 
   // Group by date AND kind, so one line reads "14 Oct · results: A, B, C" and
