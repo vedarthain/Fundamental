@@ -151,12 +151,21 @@ function determineIdeaHorizon(args: {
     };
   }
 
-  if (actionToday === "TRIM / TAKE PROFIT" || upside <= 0) {
+  if (actionToday === "TRIM / TAKE PROFIT") {
     return {
       horizon: "EXIT",
       label: "💰 Harvest / Trim",
       timeline: "1–2W",
       strategy: "Profit Harvesting — target reached, lock in gains.",
+    };
+  }
+
+  if (upside <= 0) {
+    return {
+      horizon: "EXIT",
+      label: "⏸️ Above Target",
+      timeline: "Wait Dip",
+      strategy: "Trading above 12M fair target — wait for pullback into Buy Zone.",
     };
   }
 

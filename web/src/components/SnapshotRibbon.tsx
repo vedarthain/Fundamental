@@ -180,12 +180,13 @@ export async function SnapshotRibbon() {
       }}
     >
       <div
-        className="mx-auto max-w-[1300px] px-3.5 sm:px-6 h-7 flex items-center gap-3 sm:gap-4 overflow-x-auto"
+        className="mx-auto max-w-[1300px] px-3.5 sm:px-6 h-7 flex items-center gap-2.5 sm:gap-3 overflow-x-auto"
         style={{ scrollbarWidth: "none" }}
       >
         {/* TODAY — current calendar date (IST). Leads the strip so users always
             see the current day at a glance. */}
         <Cell label="TODAY"><TodayCell initial={todayIstSeed} /></Cell>
+        <RibbonIndices />
         <Sep />
         {/* SNAPSHOT — weekly scoring snapshot date. Updates Sundays after the
             weekend fetch. Quality/Valuation/Momentum percentiles pin to this. */}
@@ -194,7 +195,6 @@ export async function SnapshotRibbon() {
         <Cell label="COVERAGE">{s.coverage.toLocaleString("en-IN")}</Cell>
         <Sep />
         <Cell label="CLUSTERS">{s.clusters}</Cell>
-        <RibbonIndices />
         <Sep />
         {/* Persistent disclaimer — sits in the dark ribbon so it's visible
             on every page without taking up dedicated UI real estate.

@@ -22,7 +22,8 @@ function IndexPill({ quote }: { quote: IndexQuote }) {
       </span>
       <span className="num num-sm text-[10.5px] font-semibold" style={{ color }}>
         ({sign}
-        {quote.changePts.toFixed(1)})
+        {quote.changePts.toFixed(1)} / {sign}
+        {quote.changePct.toFixed(2)}%)
       </span>
     </span>
   );
