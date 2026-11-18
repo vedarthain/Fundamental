@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef, startTransition } from "react";
 import Link from "next/link";
 import {
   Calendar,
@@ -491,6 +491,7 @@ export function CallsClient() {
 
   // Multi-Select Dates State: default to "all" so calls and priority alerts are never hidden by default
   const [selectedBatches, setSelectedBatches] = useState<Set<string>>(new Set(["all"]));
+  const [tableLimit, setTableLimit] = useState<number>(100);
   const [isDateDropdownOpen, setIsDateDropdownOpen] = useState(false);
   const dateDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -654,10 +655,10 @@ export function CallsClient() {
   };
 
   // Fetch calls data
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (forceRefresh = false) => {
     setLoading(true);
     try {
-      const res = await fetch("/api/admin/calls");
+      const res = await fetch(forceRefresh ? "/api/admin/calls?refresh=1" : "/api/admin/calls");
       if (res.ok) {
         const json = await res.json();
         setData(json);
@@ -2394,26 +2395,37 @@ export function CallsClient() {
   };
 
   const toggleBatch = (key: string) => {
-    setSelectedBatches((prev) => {
-      const next = new Set(prev);
-      if (key === "all") {
-        if (next.has("all")) next.clear();
-        else {
-          next.clear();
-          next.add("all");
+    startTransition(() => {
+      setTableLimit(100);
+      setSelectedBatches((prev) => {
+        const next = new Set(prev);
+        if (key === "all") {
+          if (next.has("all")) next.clear();
+          else {
+            next.clear();
+            next.add("all");
+          }
+          return next;
         }
+        next.delete("all");
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        if (next.size === 0) next.add("all");
         return next;
-      }
-      next.delete("all");
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      if (next.size === 0) next.add("all");
-      return next;
+      });
     });
   };
 
-  const selectAllBatches = () => setSelectedBatches(new Set(["all"]));
-  const clearAllBatches = () => setSelectedBatches(new Set(["all"]));
+  const selectAllBatches = () =>
+    startTransition(() => {
+      setTableLimit(100);
+      setSelectedBatches(new Set(["all"]));
+    });
+  const clearAllBatches = () =>
+    startTransition(() => {
+      setTableLimit(100);
+      setSelectedBatches(new Set(["all"]));
+    });
 
   const expandAll = () => {
     setExpandedSectors(new Set(sectorGroups.map((g) => g.sector)));
@@ -2643,7 +2655,7 @@ export function CallsClient() {
           </div>
 
           <button
-            onClick={() => fetchData()}
+            onClick={() => fetchData(true)}
             disabled={mounted && loading}
             suppressHydrationWarning
             className="p-1.5 rounded text-slate-600 hover:bg-slate-100 border hairline shadow-2xs transition-colors shrink-0"
@@ -4611,7 +4623,7 @@ export function CallsClient() {
                 </tr>
               </thead>
               <tbody className="divide-y hairline">
-                {sortedTableCalls.map((c, idx) => {
+                {sortedTableCalls.slice(0, tableLimit).map((c, idx) => {
                   const secTheme = getSectorTheme(c.sector);
                   const isSelected = selectedSymbol === c.symbol;
                   const upsidePct = c.upside ?? (c.target && c.cmp ? ((c.target - c.cmp) / c.cmp) * 100 : 0);
@@ -4723,6 +4735,29 @@ export function CallsClient() {
                 })}
               </tbody>
             </table>
+            {sortedTableCalls.length > tableLimit && (
+              <div className="px-3 py-2 border-t hairline bg-slate-50 flex items-center justify-between text-xs text-slate-600">
+                <span>
+                  Showing <strong>{tableLimit}</strong> of <strong>{sortedTableCalls.length}</strong> stocks
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setTableLimit((n) => n + 100)}
+                    className="px-2.5 py-1 rounded border hairline bg-white hover:bg-slate-100 font-medium text-slate-800"
+                  >
+                    Show 100 more
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTableLimit(sortedTableCalls.length)}
+                    className="px-2.5 py-1 rounded border hairline bg-white hover:bg-slate-100 font-medium text-indigo-700"
+                  >
+                    Show all ({sortedTableCalls.length})
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       ) : (
