@@ -32,7 +32,13 @@ function cleanPointText(raw: string, tagRegex: RegExp): { metric: string; peer: 
   };
 }
 
-export function VerdictAuditSection({ symbol }: { symbol: string }) {
+export function VerdictAuditSection({
+  symbol,
+  section = "all",
+}: {
+  symbol: string;
+  section?: "all" | "good_bad" | "models";
+}) {
   const [audit, setAudit] = useState<AuditPayload | null | undefined>(() =>
     auditCache.has(symbol) ? auditCache.get(symbol) : undefined,
   );
@@ -89,10 +95,13 @@ export function VerdictAuditSection({ symbol }: { symbol: string }) {
     else redModels.push(item);
   }
 
+  const showGoodBad = section === "all" || section === "good_bad";
+  const showModels = section === "all" || section === "models";
+
   return (
     <div className="space-y-3 pt-1">
       {/* Trigger / Verdict Description */}
-      {audit.trigger_text && (
+      {showGoodBad && audit.trigger_text && (
         <div className="rounded border hairline bg-[var(--color-card)] px-3 py-2 text-[12.5px]">
           <div className="flex items-center justify-between gap-2 mb-0.5">
             <span className="text-[10px] font-bold uppercase tracking-wider muted-text">
@@ -109,7 +118,7 @@ export function VerdictAuditSection({ symbol }: { symbol: string }) {
       )}
 
       {/* Verdict Justification Points: The Good & The Bad */}
-      {(good.length > 0 || bad.length > 0) && (
+      {showGoodBad && (good.length > 0 || bad.length > 0) && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div className="rounded-lg border border-emerald-200/90 bg-emerald-50/40 p-3">
             <div className="text-xs font-bold text-emerald-900 mb-2 flex items-center justify-between">
@@ -176,7 +185,7 @@ export function VerdictAuditSection({ symbol }: { symbol: string }) {
       )}
 
       {/* Quantitative Institutional Models */}
-      {parsedParams.length > 0 && (
+      {showModels && parsedParams.length > 0 && (
         <div className="space-y-2">
           <span className="text-[10px] font-bold uppercase tracking-wider muted-text block">
             Quantitative Institutional Models ({greenModels.length + redModels.length} models checked)

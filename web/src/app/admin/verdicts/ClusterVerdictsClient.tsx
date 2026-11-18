@@ -145,6 +145,49 @@ function WhyBulletsBlock({ row }: { row: ClusterVerdictRow }) {
   );
 }
 
+function StockDetailTabs({ row }: { row: ClusterVerdictRow }) {
+  const [tab, setTab] = useState<"moat_why" | "good_bad" | "models">("moat_why");
+
+  return (
+    <div className="space-y-2.5">
+      <div className="inline-flex rounded border hairline bg-[var(--color-card)] p-0.5 text-[11.5px]">
+        {(
+          [
+            { k: "moat_why", label: "Moat & Rationale" },
+            { k: "good_bad", label: "The Good / Bad" },
+            { k: "models", label: "8 Models Check" },
+          ] as const
+        ).map((t) => (
+          <button
+            key={t.k}
+            type="button"
+            onClick={() => setTab(t.k)}
+            className={`px-2.5 py-1 rounded transition-colors whitespace-nowrap ${
+              tab === t.k
+                ? "bg-slate-800 text-white font-semibold shadow-2xs"
+                : "muted-text hover:text-[var(--color-ink)]"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "moat_why" && (
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)] gap-3 items-start">
+          <div className="rounded border hairline bg-[var(--color-card)] p-3">
+            <MoatPointsBlock row={row} />
+          </div>
+          <WhyBulletsBlock row={row} />
+        </div>
+      )}
+
+      {tab === "good_bad" && <VerdictAuditSection symbol={row.symbol} section="good_bad" />}
+      {tab === "models" && <VerdictAuditSection symbol={row.symbol} section="models" />}
+    </div>
+  );
+}
+
 function MoatPointsBlock({ row }: { row: ClusterVerdictRow }) {
   if (!row.moat_points || row.moat_points.length === 0) {
     return <span className="text-[12.5px] muted-text italic">Moat points not generated yet</span>;
@@ -879,13 +922,7 @@ export function ClusterVerdictsClient({
                               <tr className="bg-[var(--color-paper)]/45">
                                 <td colSpan={9} className="px-4 py-3 border-t border-slate-200/70 space-y-2.5">
                                   <DeepDiveMetricsStrip row={r} />
-                                  <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)] gap-3 items-start">
-                                    <div className="rounded border hairline bg-[var(--color-card)] p-3">
-                                      <MoatPointsBlock row={r} />
-                                    </div>
-                                    <WhyBulletsBlock row={r} />
-                                  </div>
-                                  <VerdictAuditSection symbol={r.symbol} />
+                                  <StockDetailTabs row={r} />
                                 </td>
                               </tr>
                             )}
@@ -981,31 +1018,7 @@ export function ClusterVerdictsClient({
 
                         <DeepDiveMetricsStrip row={r} />
 
-                        {/* Bottom Split Band: Moat (left) & Why (right) */}
-                        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)] gap-3 items-start">
-                          <MoatPointsBlock row={r} />
-                          <WhyBulletsBlock row={r} />
-                        </div>
-
-                        <div>
-                          <button
-                            type="button"
-                            onClick={() => toggleRow(r.symbol)}
-                            className="text-[11.5px] font-medium text-indigo-700 hover:underline inline-flex items-center gap-1"
-                          >
-                            {expandedRows.has(r.symbol) ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                            <span>
-                              {expandedRows.has(r.symbol)
-                                ? "Hide Trigger, Working/Risks & 8 Quantitative Models"
-                                : "Show Trigger, Working/Risks & 8 Quantitative Models"}
-                            </span>
-                          </button>
-                          {expandedRows.has(r.symbol) && (
-                            <div className="mt-2">
-                              <VerdictAuditSection symbol={r.symbol} />
-                            </div>
-                          )}
-                        </div>
+                        <StockDetailTabs row={r} />
                       </div>
                     );
                   })}
