@@ -5441,10 +5441,14 @@ export function CallsClient() {
                         </span>
                       </div>
 
-                      <div className="flex items-center justify-between pt-1 mt-0.5 border-t border-amber-100">
+                      <div className="grid grid-cols-3 gap-1.5 pt-1 mt-0.5 border-t border-amber-100">
                         <div>
                           <span className="text-[8.5px] uppercase font-semibold text-slate-500 block">Dip Buy</span>
-                          <span className="text-xs sm:text-sm font-bold font-mono text-slate-900">{selectedCall.tranche2Shares} shares</span>
+                          <span className="text-xs sm:text-sm font-bold font-mono text-slate-900">{selectedCall.tranche2Shares} sh</span>
+                        </div>
+                        <div className="text-center">
+                          <span className="text-[8.5px] uppercase font-semibold text-slate-500 block">Bear Floor</span>
+                          <span className="text-xs sm:text-sm font-bold font-mono text-rose-600">{money(selectedCall.stopLoss)}</span>
                         </div>
                         <div className="text-right">
                           <span className="text-[8.5px] uppercase font-semibold text-slate-500 block">Limit Price</span>
