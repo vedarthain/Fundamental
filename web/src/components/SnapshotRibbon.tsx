@@ -23,6 +23,7 @@
 import { sql } from "@/lib/db";
 import { unstable_cache } from "next/cache";
 import TodayCell from "@/components/TodayCell";
+import { RibbonIndices } from "@/components/RibbonIndices";
 
 type SnapshotStats = {
   latest: Date | null;          // weekly scoring snapshot date
@@ -193,6 +194,7 @@ export async function SnapshotRibbon() {
         <Cell label="COVERAGE">{s.coverage.toLocaleString("en-IN")}</Cell>
         <Sep />
         <Cell label="CLUSTERS">{s.clusters}</Cell>
+        <RibbonIndices />
         <Sep />
         {/* Persistent disclaimer — sits in the dark ribbon so it's visible
             on every page without taking up dedicated UI real estate.
