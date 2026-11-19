@@ -641,6 +641,7 @@ def main() -> int:
             f"Symbols: {args.symbols}" if args.symbols else
             f"Verdicts generated on or after {args.since}" if args.since else
             "Active universe stocks needing verdicts" if args.unverdicted else
+            "Stocks with evidence drift needing re-verdict" if args.drift else
             "Claude-verdicted stocks needing Gemini" if args.claude_stocks else
             "Weekly new calls + portfolio holdings needing refresh" if args.weekly_new_portfolio else
             "Un-verdicted portfolio holdings"
@@ -884,7 +885,7 @@ def main() -> int:
     # -------------------------------------------------------------------------
     print(f"[Stage 2/4] 🔍 Database Screening & Queue Planning...")
     done_set = set()
-    if args.skip_existing or args.load:
+    if args.skip_existing and not args.drift:
         import psycopg
         url = os.environ.get("APP_DB_URL", "postgres:///fundamental_app")
         with psycopg.connect(url) as conn:
