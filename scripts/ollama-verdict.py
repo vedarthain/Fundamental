@@ -357,6 +357,146 @@ def call_gemini(model: str, prompt: str, system_prompt: str = SYSTEM_PROMPT) -> 
     return parsed_data, used_model
 
 
+def compute_forensic_and_inflection_flags(s: dict) -> dict:
+    """Compute deterministic quarterly earnings inflection & forensic red flags.
+    Zero LLM guesswork — derived strictly from audited quarterly, shareholding, and score tables."""
+    ident = s.get("identity") or {}
+    sector = str(ident.get("sector") or "").lower()
+    is_financial = any(k in sector for k in ("financial", "bank", "nbfc", "insurance"))
+
+    metrics = dict(s.get("metrics") or {})
+    if isinstance(metrics.get("cluster_metrics"), dict):
+        for k, v in metrics["cluster_metrics"].items():
+            if metrics.get(k) is None:
+                metrics[k] = v
+
+    scores = s.get("scores") or {}
+    quarterly = s.get("quarterly") or []
+    sh_list = s.get("shareholding") or []
+
+    flags: list[str] = []
+    cap_reasons: list[str] = []
+
+    # 1. Quarterly PAT & Sales YoY inflection (latest quarter vs same quarter last year)
+    pat_yoy_pct = None
+    sales_yoy_pct = None
+    margin_compression_2q = False
+    if len(quarterly) >= 5:
+        q_now, q_yoy = quarterly[-1], quarterly[-5]
+        p_now, p_yoy = q_now.get("net_profit"), q_yoy.get("net_profit")
+        s_now, s_yoy = q_now.get("sales"), q_yoy.get("sales")
+        if p_now is not None and p_yoy is not None and abs(float(p_yoy)) > 0:
+            pat_yoy_pct = round(((float(p_now) - float(p_yoy)) / abs(float(p_yoy))) * 100.0, 1)
+            if pat_yoy_pct <= -15.0:
+                msg = f"Latest quarter PAT fell {pat_yoy_pct:+.1f}% YoY"
+                flags.append(msg)
+                cap_reasons.append(msg)
+        if s_now is not None and s_yoy is not None and abs(float(s_yoy)) > 0:
+            sales_yoy_pct = round(((float(s_now) - float(s_yoy)) / abs(float(s_yoy))) * 100.0, 1)
+
+    # 2. Two consecutive quarters of OPM compression
+    if len(quarterly) >= 3 and not is_financial:
+        opms = []
+        for q in quarterly[-3:]:
+            sal, op = q.get("sales"), q.get("operating_profit")
+            if sal and float(sal) > 0 and op is not None:
+                opms.append((float(op) / float(sal)) * 100.0)
+        if len(opms) == 3 and opms[2] < opms[1] < opms[0] and (opms[0] - opms[2]) >= 1.5:
+            margin_compression_2q = True
+            flags.append(f"OPM compressed 2 consecutive quarters ({opms[0]:.1f}% -> {opms[1]:.1f}% -> {opms[2]:.1f}%)")
+
+    # 3. Forensic Cash-Flow conversion (non-financials)
+    cfo_pat = metrics.get("cfo_pat_3y")
+    if not is_financial and isinstance(cfo_pat, (int, float)) and cfo_pat < 0.7:
+        msg = f"Weak 3Y cash conversion (CFO/PAT = {cfo_pat:.2f}x < 0.70x)"
+        flags.append(msg)
+        cap_reasons.append(msg)
+
+    # 4. Promoter stake drop (>1% QoQ) or high/rising pledge
+    if len(sh_list) >= 2:
+        p0, p1 = sh_list[0].get("promoter_pct"), sh_list[1].get("promoter_pct")
+        if isinstance(p0, (int, float)) and isinstance(p1, (int, float)) and (p0 - p1) <= -1.0:
+            msg = f"Promoter stake dropped {p0 - p1:+.2f}% QoQ ({p1:.1f}% -> {p0:.1f}%)"
+            flags.append(msg)
+            cap_reasons.append(msg)
+        pl0, pl1 = sh_list[0].get("pledge_pct") or 0.0, sh_list[1].get("pledge_pct") or 0.0
+        if isinstance(pl0, (int, float)) and (pl0 >= 15.0 or (isinstance(pl1, (int, float)) and (pl0 - pl1) >= 5.0)):
+            msg = f"Elevated/rising promoter pledge ({pl0:.1f}%)"
+            flags.append(msg)
+            cap_reasons.append(msg)
+
+    # 5. Backtest-derived score floors
+    comp = scores.get("composite_pct")
+    qual = scores.get("quality_pct")
+    mom = scores.get("momentum_pct")
+
+    return {
+        "pat_yoy_pct": pat_yoy_pct,
+        "sales_yoy_pct": sales_yoy_pct,
+        "margin_compression_2q": margin_compression_2q,
+        "composite_pct": float(comp) if isinstance(comp, (int, float)) else None,
+        "quality_pct": float(qual) if isinstance(qual, (int, float)) else None,
+        "momentum_pct": float(mom) if isinstance(mom, (int, float)) else None,
+        "flags": flags,
+        "cap_reasons": cap_reasons,
+    }
+
+
+def apply_accuracy_guardrails(verdict_obj: dict, item: dict) -> list[str]:
+    """Post-LLM deterministic guardrails backed by audit-verdict-accuracy.py backtest:
+      1. Momentum Gate: momentum_pct < 45 -> cap ACCUMULATE/BUY to WATCH (-3.18% alpha drag in backtest)
+      2. Quality/Composite Floor: composite < 65 or quality < 55 -> cap ACCUMULATE/BUY to WATCH
+      3. Earnings/Forensic Shield: severe PAT YoY drop (<=-15%), weak CFO/PAT (<0.7x), promoter dump -> cap to WATCH
+      4. High-Conviction Gate: confidence='high' on ACCUMULATE/BUY requires C>=75, Q>=60, M>=60
+    Returns list of guardrail notes applied (empty if none fired)."""
+    verdict_raw = str(verdict_obj.get("verdict") or "").strip()
+    if not verdict_raw:
+        return []
+    first_word = verdict_raw.split()[0].upper().rstrip(",:—-")
+    if first_word not in ("ACCUMULATE", "BUY"):
+        return []
+
+    diag = compute_forensic_and_inflection_flags(item)
+    comp = diag["composite_pct"]
+    qual = diag["quality_pct"]
+    mom = diag["momentum_pct"]
+
+    downgrade_reasons: list[str] = []
+    if mom is not None and mom < 45:
+        downgrade_reasons.append(f"weak momentum ({mom:.0f}% < 45%) — await trend stabilization")
+    if comp is not None and comp < 65:
+        downgrade_reasons.append(f"composite score below floor ({comp:.0f}% < 65%)")
+    if qual is not None and qual < 55:
+        downgrade_reasons.append(f"quality score below floor ({qual:.0f}% < 55%)")
+    downgrade_reasons.extend(diag["cap_reasons"])
+
+    applied: list[str] = []
+    if downgrade_reasons:
+        # Preserve the descriptive tail after the first dash/em-dash if present
+        if "—" in verdict_raw:
+            tail = verdict_raw.split("—", 1)[1].strip()
+        elif " - " in verdict_raw:
+            tail = verdict_raw.split(" - ", 1)[1].strip()
+        else:
+            tail = verdict_raw
+        verdict_obj["verdict"] = f"WATCH — {tail}"
+        if str(verdict_obj.get("confidence") or "").lower() == "high":
+            verdict_obj["confidence"] = "medium"
+        reason_str = "; ".join(downgrade_reasons)
+        trig = str(verdict_obj.get("trigger_text") or "").strip()
+        guard_note = f"[Guardrail: Capped to WATCH — {reason_str}]"
+        verdict_obj["trigger_text"] = f"{trig} {guard_note}".strip() if trig else guard_note
+        applied.append(guard_note)
+    else:
+        # High-Conviction Gate on surviving ACCUMULATE/BUY
+        if str(verdict_obj.get("confidence") or "").lower() == "high":
+            if (comp is not None and comp < 75) or (qual is not None and qual < 60) or (mom is not None and mom < 60):
+                verdict_obj["confidence"] = "medium"
+                applied.append(f"[Guardrail: Confidence capped to medium (C={comp}, Q={qual}, M={mom})]")
+
+    return applied
+
+
 def format_symbol_evidence_prompt(s: dict) -> str:
     """Format the raw symbol data into a comprehensive prompt utilizing all fundamental parameters."""
     symbol = s.get("symbol")
@@ -540,6 +680,9 @@ Market Cap: ₹{mcap} Cr{_rk('market_cap', pr_scores)} | Current Price: ₹{curr
 
 13. RECENT NEWS & CATALYSTS / RED FLAGS (LAST 60 DAYS):
 {news_str}
+
+14. DETERMINISTIC EARNINGS INFLECTION & FORENSIC SHIELD:
+{chr(10).join('- ' + f for f in compute_forensic_and_inflection_flags(s)['flags']) if compute_forensic_and_inflection_flags(s)['flags'] else 'No deterministic earnings/cash-flow/promoter red flags triggered.'}
 
 BLOCKERS & FLAGS:
 {json.dumps(blockers, indent=2) if blockers else 'None flagged.'}
@@ -1056,6 +1199,12 @@ def main() -> int:
             verdict_obj["bear_floor"] = val_res.get("bear_floor")
             verdict_obj["upside_pct"] = val_res.get("upside_pct")
             verdict_obj["valuation_method"] = val_res.get("valuation_method")
+
+            # Enforce backtest-backed deterministic accuracy guardrails
+            guardrail_notes = apply_accuracy_guardrails(verdict_obj, item)
+            if guardrail_notes:
+                with print_lock:
+                    print(f"            🛡️  {sym}: {' | '.join(guardrail_notes)}")
 
             # Step 4: DB Load
             db_status = "Saved ✓"
