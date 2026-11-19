@@ -1642,6 +1642,27 @@ export function CallsClient() {
     }
   }, [filteredCalls, sectorGroups, selectedSymbol, data]);
 
+  // Keep left rail focused on the currently opened stock:
+  // open ONLY its sector & cluster, collapse the rest, and scroll the stock into view.
+  useEffect(() => {
+    const sym = selectedCall?.symbol;
+    if (!sym || sectorGroups.length === 0) return;
+    for (const g of sectorGroups) {
+      for (const cl of g.clusters) {
+        if (cl.calls.some((c) => c.symbol === sym)) {
+          setExpandedSectors(new Set([g.sector]));
+          setExpandedClusters(new Set([`${g.sector}::${cl.cluster}`]));
+          requestAnimationFrame(() => {
+            const container = document.getElementById("calls-left-rail-scroll");
+            const el = container?.querySelector<HTMLElement>(`[data-rail-symbol="${CSS.escape(sym)}"]`);
+            el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+          });
+          return;
+        }
+      }
+    }
+  }, [selectedCall?.symbol, sectorGroups]);
+
   // Chart trade markers for selected stock (displays P on graph for portfolio holdings)
   const chartTrades = useMemo<TradeMark[]>(() => {
     if (!selectedCall || !selectedCall.isPortfolio) return [];
@@ -5033,6 +5054,7 @@ export function CallsClient() {
                                     return (
                                       <button
                                         key={call.symbol}
+                                        data-rail-symbol={call.symbol}
                                         id={`stock-rail-${call.symbol}`}
                                         type="button"
                                         onClick={() => setSelectedSymbol(call.symbol)}
