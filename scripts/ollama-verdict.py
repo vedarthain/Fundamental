@@ -435,6 +435,37 @@ def format_symbol_evidence_prompt(s: dict) -> str:
     sh_list = s.get("shareholding") or []
     sh = sh_list[0] if sh_list else {}
 
+    # Company Moat
+    moat_obj = s.get("moat") or {}
+    if moat_obj and moat_obj.get("moat_points"):
+        pts = moat_obj.get("moat_points") or []
+        moat_lines = [f"- Strength: {moat_obj.get('moat_strength') or 'N/A'} | Type: {moat_obj.get('moat_type') or 'N/A'}"]
+        for pt in pts[:5]:
+            moat_lines.append(f"  * {pt}")
+        moat_str = "\n".join(moat_lines)
+    else:
+        moat_str = "Not yet profiled."
+
+    # Material BSE/NSE Exchange Filings (90d)
+    filings = s.get("filings") or []
+    if filings:
+        filings_str = "\n".join(
+            f"- [{f.get('date', '')}] ({f.get('category', 'Filing')}) {str(f.get('text', ''))[:180]}"
+            for f in filings[:10]
+        )
+    else:
+        filings_str = "No material non-boilerplate filings in last 90 days."
+
+    # Recent News & Catalysts / Red Flags (60d)
+    news_items = s.get("news") or []
+    if news_items:
+        news_str = "\n".join(
+            f"- [{n.get('date', '')}] ({n.get('source', 'News')}) {str(n.get('title', ''))[:180]}"
+            for n in news_items[:6]
+        )
+    else:
+        news_str = "No recent material news headlines."
+
     prompt = f"""EVIDENCE PACK FOR: {symbol} ({ident.get('company_name', symbol)})
 Industry: {ident.get('industry', 'N/A')} | Sector: {ident.get('sector', 'N/A')} | Cluster: {ident.get('cluster_id', 'N/A')}
 Sector Playbook: {playbook.get('name', 'N/A')} (Category: {playbook.get('category', 'N/A')})
@@ -501,6 +532,15 @@ Market Cap: ₹{mcap} Cr{_rk('market_cap', pr_scores)} | Current Price: ₹{curr
 10. RECENT QUARTERLY RECORD:
 {q_str}
 
+11. COMPETITIVE MOAT PROFILE:
+{moat_str}
+
+12. RECENT MATERIAL BSE/NSE EXCHANGE FILINGS (LAST 90 DAYS):
+{filings_str}
+
+13. RECENT NEWS & CATALYSTS / RED FLAGS (LAST 60 DAYS):
+{news_str}
+
 BLOCKERS & FLAGS:
 {json.dumps(blockers, indent=2) if blockers else 'None flagged.'}
 
@@ -508,6 +548,7 @@ Write the comprehensive EquityRoots verdict JSON for {symbol}.
 Remember:
 - Populate as many valid, high-impact points as possible (aim for 6 to 10+ distinct pointers under "<b>The Good:</b>" and 6 to 10+ distinct pointers under "<b>The Bad:</b>").
 - Cover all dimensions: Operating Margins, ROCE/ROE, Cash Flow/Sloan, Solvency, 5Y Growth, Smart Money, 10Y PE Band, and Technicals.
+- Use Sections 11-13 (Moat, Exchange Filings, News) as catalyst & red-flag checks: explicitly flag governance/regulatory/resignation/pledge red flags or material order wins/capex catalysts, and NEVER override weak fundamentals on news hype alone.
 - Keep each point strictly in the delimiter-separated format: * <Metric> > <Value> - <Peer comparison>, - <Business driver>
 """
     return prompt

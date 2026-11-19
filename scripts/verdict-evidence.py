@@ -1076,9 +1076,81 @@ def stub_annual_rows(annual: list[dict]) -> list[str]:
 # (cluster_id, snapshot_date) -> peer rows. One query per cluster per run.
 _PEER_CACHE: dict[tuple[str, str], list[dict]] = {}
 
+_NEWS_NOISE_PATTERNS = (
+    "stocks to buy", "stocks to watch", "top 5 ", "top 10 ", "multibagger",
+    "share price today", "share price live", "stock price today", "live updates",
+    "why did ", "why is ", "hits upper circuit", "hits lower circuit",
+    "52-week high", "52-week low", "should you buy", "target price:",
+    "brokerage picks", "intraday", "buzzing stocks", "midday movers",
+    "opening bell", "reg 74(5)", "rta certificate",
+)
+
+
+def _fetch_google_news_rss(company_name: Optional[str], symbol: str, limit: int = 4) -> list[dict]:
+    """Targeted Google News RSS fallback for mid/smallcaps with sparse broadcaster RSS coverage.
+    Fail-soft: any network/parse error returns []. Drops generic price-recap/listicle noise."""
+    import urllib.parse
+    import urllib.request
+    import xml.etree.ElementTree as ET
+    from email.utils import parsedate_to_datetime
+
+    query_term = (company_name or symbol).strip()
+    # Strip common legal suffixes so search matches real headlines
+    for suffix in (" Limited", " Ltd.", " Ltd", " (India)", " India"):
+        if query_term.endswith(suffix) and len(query_term) > len(suffix) + 3:
+            query_term = query_term[: -len(suffix)].strip()
+    q = f'"{query_term}" (NSE OR BSE OR stock OR shares OR results OR order) when:60d'
+    url = f"https://news.google.com/rss/search?q={urllib.parse.quote_plus(q)}&hl=en-IN&gl=IN&ceid=IN:en"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            raw = resp.read()
+        root = ET.fromstring(raw)
+    except Exception:
+        return []
+
+    out: list[dict] = []
+    seen: set[str] = set()
+    for item in root.findall(".//item"):
+        title = (item.findtext("title") or "").strip()
+        if not title:
+            continue
+        # Google News titles end with " - Publisher"
+        pub = "Google News"
+        if " - " in title:
+            parts = title.rsplit(" - ", 1)
+            title_clean, pub = parts[0].strip(), parts[1].strip()
+        else:
+            title_clean = title
+        low = title_clean.lower()
+        if any(p in low for p in _NEWS_NOISE_PATTERNS):
+            continue
+        key = low[:60]
+        if key in seen:
+            continue
+        seen.add(key)
+
+        pub_date_raw = (item.findtext("pubDate") or "").strip()
+        date_str = ""
+        if pub_date_raw:
+            try:
+                date_str = parsedate_to_datetime(pub_date_raw).date().isoformat()
+            except Exception:
+                date_str = pub_date_raw[:16]
+
+        out.append({
+            "date": date_str,
+            "source": f"Google News ({pub})",
+            "title": title_clean,
+        })
+        if len(out) >= limit:
+            break
+    return out
+
 
 def build_symbol(app: psycopg.Connection, golden: psycopg.Connection,
-                 symbol: str, snapshot: Optional[str]) -> dict:
+                 symbol: str, snapshot: Optional[str],
+                 use_google_news: bool = True) -> dict:
     pack: dict[str, Any] = {"symbol": symbol, "blockers": []}
 
     with app.cursor(row_factory=dict_row) as cur:
@@ -1132,6 +1204,71 @@ def build_symbol(app: psycopg.Connection, golden: psycopg.Connection,
                  FROM app.stock_verdict WHERE symbol = %s
                 ORDER BY generated_at DESC LIMIT 3""", (symbol,))
         pack["prior_verdicts"] = cur.fetchall()
+
+        # Structured Company Moat (if generated in app.company_moat)
+        try:
+            cur.execute(
+                """SELECT moat_strength, moat_type, moat_points, model, generated_at
+                     FROM app.company_moat WHERE symbol = %s""", (symbol,))
+            pack["moat"] = cur.fetchone()
+        except Exception:
+            app.rollback()
+            pack["moat"] = None
+
+        # Material BSE/NSE exchange filings (last 90 days, boilerplate stripped)
+        try:
+            cur.execute(
+                """SELECT published_at::date::text AS date,
+                          COALESCE(NULLIF(subcategory, ''), category, 'Filing') AS category,
+                          COALESCE(headline, title) AS text
+                     FROM app.announcement
+                    WHERE symbol = %s
+                      AND published_at >= NOW() - INTERVAL '90 days'
+                      AND COALESCE(category, '') <> 'AGM/EGM'
+                      AND COALESCE(subcategory, '') NOT IN (
+                        'Certificate under Reg. 74 (5) of SEBI (DP) Regulations, 2018',
+                        'Newspaper Publication',
+                        'Allotment of ESOP / ESPS'
+                      )
+                      AND COALESCE(headline, title) NOT ILIKE '%%trading window%%'
+                      AND COALESCE(headline, title) NOT ILIKE '%%reg%%74%%'
+                    ORDER BY published_at DESC
+                    LIMIT 10""", (symbol,))
+            pack["filings"] = cur.fetchall()
+        except Exception:
+            app.rollback()
+            pack["filings"] = []
+
+        # Broadcaster RSS news already stored in app.news + app.news_stock (last 60 days)
+        try:
+            cur.execute(
+                """SELECT n.published_at::date::text AS date,
+                          n.source,
+                          n.title
+                     FROM app.news_stock ns
+                     JOIN app.news n ON n.id = ns.news_id
+                    WHERE ns.symbol = %s
+                      AND n.published_at >= NOW() - INTERVAL '60 days'
+                    ORDER BY n.published_at DESC
+                    LIMIT 6""", (symbol,))
+            raw_db_news = list(cur.fetchall())
+            db_news = [
+                n for n in raw_db_news
+                if not any(p in (n.get("title") or "").lower() for p in _NEWS_NOISE_PATTERNS)
+            ]
+        except Exception:
+            app.rollback()
+            db_news = []
+
+        # Targeted Google News RSS fallback when broadcaster feeds are sparse (< 2 hits)
+        if use_google_news and len(db_news) < 2:
+            cname = (pack["identity"] or {}).get("company_name")
+            gnews = _fetch_google_news_rss(cname, symbol, limit=4)
+            existing_keys = {(n.get("title") or "").lower()[:50] for n in db_news}
+            for g in gnews:
+                if (g.get("title") or "").lower()[:50] not in existing_keys:
+                    db_news.append(g)
+        pack["news"] = db_news[:6]
 
     # Strip the one-time other-income spike exactly as the scorer does, BEFORE
     # anything is derived from these rows. See the module docstring: the raw
@@ -1308,6 +1445,8 @@ def main() -> int:
     ap.add_argument("--sanity-only", action="store_true",
                     help="print the universe sanity block and stop")
     ap.add_argument("--limit", type=int, help="cap the number of symbols")
+    ap.add_argument("--no-google-news", action="store_true",
+                    help="skip targeted Google News RSS fallback")
     ap.add_argument("--out", help="write JSON here instead of stdout")
     args = ap.parse_args()
     if not (args.symbols or args.watchlist or args.portfolio):
@@ -1338,7 +1477,10 @@ def main() -> int:
         "generated_at": datetime.now().astimezone().isoformat(),
         "selection": how,
         "sanity": sanity,
-        "symbols": [build_symbol(app, golden, s, sanity["snapshot_date"]) for s in symbols],
+        "symbols": [
+            build_symbol(app, golden, s, sanity["snapshot_date"], use_google_news=not args.no_google_news)
+            for s in symbols
+        ],
     }
     blocked = sum(1 for s in doc["symbols"] if s["blockers"])
     print(f"  .. {blocked}/{len(symbols)} symbol(s) carry at least one blocker", file=sys.stderr)
