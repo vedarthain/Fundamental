@@ -7,6 +7,7 @@
  * quarterly numbers, Moat ("what it's known for"), and Why.
  */
 import { redirect } from "next/navigation";
+import { unstable_cache } from "next/cache";
 import type { Metadata } from "next";
 import { isAdminRequest } from "@/lib/auth";
 import { sql } from "@/lib/db";
@@ -65,25 +66,28 @@ async function loadSectorClusterTree(): Promise<SectorTreeNode[]> {
 async function loadClusterItems(clusterId: string): Promise<ClusterVerdictRow[]> {
   const [rows, moatRows] = await Promise.all([
     sql<any[]>`
-      WITH latest_verdict AS (
-        SELECT DISTINCT ON (symbol)
-          symbol, verdict, target_price, buy_below, bear_floor, upside_pct
-        FROM app.stock_verdict
-        ORDER BY symbol, generated_at DESC
-      ),
-      latest_panel AS (
-        SELECT DISTINCT ON (symbol)
+      WITH latest_panel AS (
+        SELECT
           symbol, company_name, cluster_id, market_cap_cr, current_price,
           composite_pct, quality_pct, valuation_pct, momentum_pct,
           ret_1m, ret_6m, ret_1y
         FROM app.cluster_stocks_panel_cache
-        ORDER BY symbol, snapshot_date DESC
+        WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_stocks_panel_cache)
+          AND cluster_id = ${clusterId}
+      ),
+      latest_verdict AS (
+        SELECT DISTINCT ON (symbol)
+          symbol, verdict, target_price, buy_below, bear_floor, upside_pct
+        FROM app.stock_verdict
+        WHERE symbol IN (SELECT symbol FROM latest_panel)
+        ORDER BY symbol, generated_at DESC
       ),
       ranked_q AS (
         SELECT
           symbol, period_end, sales::float, net_profit::float,
           ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY period_end DESC) AS rn
         FROM app.fundamentals_quarterly
+        WHERE symbol IN (SELECT symbol FROM latest_panel)
       ),
       latest_q AS (
         SELECT
@@ -242,12 +246,24 @@ async function loadClusterItems(clusterId: string): Promise<ClusterVerdictRow[]>
   });
 }
 
+const cachedSectorClusterTree = unstable_cache(
+  loadSectorClusterTree,
+  ["admin:verdicts:tree:v1"],
+  { revalidate: 300, tags: ["panel-cache", "clusters"] },
+);
+
+const cachedClusterItems = unstable_cache(
+  loadClusterItems,
+  ["admin:verdicts:cluster:v1"],
+  { revalidate: 300, tags: ["panel-cache", "clusters"] },
+);
+
 export default async function AdminVerdictsPage() {
   if (!(await isAdminRequest())) redirect("/");
 
-  const sectors = await loadSectorClusterTree();
+  const sectors = await cachedSectorClusterTree();
   const initialClusterId = sectors[0]?.clusters[0]?.clusterId ?? null;
-  const initialItems = initialClusterId ? await loadClusterItems(initialClusterId) : [];
+  const initialItems = initialClusterId ? await cachedClusterItems(initialClusterId) : [];
 
   return (
     <main className="mx-auto max-w-[1600px] px-3 sm:px-4 py-2 sm:py-3">

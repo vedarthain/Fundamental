@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { unstable_cache } from "next/cache";
 import { isAdminRequest } from "@/lib/auth";
 import { sql, golden } from "@/lib/db";
 
@@ -218,6 +217,16 @@ function determineIdeaHorizon(args: {
   };
 }
 
+type CallsCacheEntry = {
+  payload: Awaited<ReturnType<typeof computeCallsPayload>>;
+  fetchedAt: number;
+  refreshing?: Promise<void>;
+};
+
+const CALLS_FRESH_MS = 5 * 60 * 1000; // 5 minutes
+const CALLS_STALE_MS = 60 * 60 * 1000; // 60 minutes stale-while-revalidate
+const callsMemoryCache = new Map<string, CallsCacheEntry>();
+
 export async function GET(request: Request) {
   if (!(await isAdminRequest())) {
     return NextResponse.json({ error: "admin only" }, { status: 401 });
@@ -227,14 +236,30 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const dateParam = searchParams.get("date"); // e.g. "2026-10-31"
     const forceRefresh = searchParams.get("refresh") === "1";
+    const cacheKey = dateParam ?? "ALL";
+    const now = Date.now();
+    const existing = callsMemoryCache.get(cacheKey);
 
-    const payload = forceRefresh
-      ? await computeCallsPayload(dateParam)
-      : await unstable_cache(
-          () => computeCallsPayload(dateParam),
-          ["admin:calls:v1", dateParam ?? "ALL"],
-          { revalidate: 300, tags: ["calls", "panel-cache"] },
-        )();
+    if (!forceRefresh && existing && now - existing.fetchedAt < CALLS_STALE_MS) {
+      // Serve immediately; if past fresh TTL, refresh silently in background
+      if (now - existing.fetchedAt >= CALLS_FRESH_MS && !existing.refreshing) {
+        existing.refreshing = computeCallsPayload(dateParam)
+          .then((fresh) => {
+            callsMemoryCache.set(cacheKey, { payload: fresh, fetchedAt: Date.now() });
+          })
+          .catch(() => {})
+          .finally(() => {
+            const cur = callsMemoryCache.get(cacheKey);
+            if (cur) cur.refreshing = undefined;
+          });
+      }
+      return NextResponse.json(existing.payload, {
+        headers: { "Cache-Control": "no-store" },
+      });
+    }
+
+    const payload = await computeCallsPayload(dateParam);
+    callsMemoryCache.set(cacheKey, { payload, fetchedAt: Date.now() });
 
     return NextResponse.json(payload, {
       headers: { "Cache-Control": "no-store" },
@@ -263,10 +288,10 @@ async function computeCallsPayload(dateParam: string | null) {
             ORDER BY symbol, generated_at DESC
         ),
         latest_panel AS (
-            SELECT DISTINCT ON (symbol)
+            SELECT
                 symbol, company_name, cluster_id, market_cap_cr, current_price, composite_pct, quality_pct, valuation_pct, momentum_pct
             FROM app.cluster_stocks_panel_cache
-            ORDER BY symbol, snapshot_date DESC
+            WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_stocks_panel_cache)
         ),
         intraday_price AS (
             SELECT DISTINCT ON (symbol) symbol, ltp, ts
@@ -389,10 +414,10 @@ async function computeCallsPayload(dateParam: string | null) {
             ORDER BY symbol, generated_at DESC
         ),
         latest_panel AS (
-            SELECT DISTINCT ON (symbol)
+            SELECT
                 symbol, current_price, composite_pct, quality_pct, valuation_pct, momentum_pct
             FROM app.cluster_stocks_panel_cache
-            ORDER BY symbol, snapshot_date DESC
+            WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_stocks_panel_cache)
         ),
         intraday_price AS (
             SELECT DISTINCT ON (symbol) symbol, ltp, ts
@@ -493,19 +518,23 @@ async function computeCallsPayload(dateParam: string | null) {
         ...rawPortfolio.map((r: any) => r.symbol),
       ]),
     ].filter(Boolean);
-    const targetCands = targetSymbols.flatMap((s) => [s, `${s}.NS`]);
+    const targetNsSyms = targetSymbols.map((s) => `${s}.NS`);
 
-    const goldenRows = targetCands.length > 0
+    const goldenRows = targetNsSyms.length > 0
       ? await golden<{ symbol: string; close: number; bar_date: string }[]>`
-          SELECT DISTINCT ON (symbol)
-            symbol,
-            COALESCE(adj_close, close)::float8 AS close,
-            date::text AS bar_date
-          FROM golden.price_history_1d
-          WHERE COALESCE(adj_close, close) IS NOT NULL
-            AND symbol = ANY(${targetCands})
-            AND date >= CURRENT_DATE - 16
-          ORDER BY symbol, date DESC
+          SELECT c.symbol, p.close, p.bar_date
+          FROM unnest(${targetNsSyms}::text[]) AS c(symbol)
+          CROSS JOIN LATERAL (
+            SELECT
+              COALESCE(ph.adj_close, ph.close)::float8 AS close,
+              ph.date::text AS bar_date
+            FROM golden.price_history_1d ph
+            WHERE ph.symbol = c.symbol
+              AND ph.interval = '1d'
+              AND COALESCE(ph.adj_close, ph.close) IS NOT NULL
+            ORDER BY ph.date DESC
+            LIMIT 1
+          ) p
         `.catch(() => [] as { symbol: string; close: number; bar_date: string }[])
       : [];
 

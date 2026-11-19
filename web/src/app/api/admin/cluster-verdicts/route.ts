@@ -37,6 +37,16 @@ export type ClusterVerdictRow = {
   why: string;
 };
 
+type ClusterVerdictCacheEntry = {
+  items: ClusterVerdictRow[];
+  fetchedAt: number;
+  refreshing?: Promise<void>;
+};
+
+const CV_FRESH_MS = 5 * 60 * 1000;
+const CV_STALE_MS = 60 * 60 * 1000;
+const clusterVerdictCache = new Map<string, ClusterVerdictCacheEntry>();
+
 export async function GET(req: NextRequest) {
   if (!(await isAdminRequest())) {
     return NextResponse.json({ error: "admin only" }, { status: 401 });
@@ -47,27 +57,53 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "clusterId required" }, { status: 400 });
   }
 
+  const now = Date.now();
+  const existing = clusterVerdictCache.get(clusterId);
+  if (existing && now - existing.fetchedAt < CV_STALE_MS) {
+    if (now - existing.fetchedAt >= CV_FRESH_MS && !existing.refreshing) {
+      existing.refreshing = computeClusterVerdicts(clusterId)
+        .then((items) => {
+          clusterVerdictCache.set(clusterId, { items, fetchedAt: Date.now() });
+        })
+        .catch(() => {})
+        .finally(() => {
+          const cur = clusterVerdictCache.get(clusterId);
+          if (cur) cur.refreshing = undefined;
+        });
+    }
+    return NextResponse.json({ items: existing.items }, { headers: { "Cache-Control": "no-store" } });
+  }
+
+  const items = await computeClusterVerdicts(clusterId);
+  clusterVerdictCache.set(clusterId, { items, fetchedAt: Date.now() });
+  return NextResponse.json({ items }, { headers: { "Cache-Control": "no-store" } });
+}
+
+async function computeClusterVerdicts(clusterId: string): Promise<ClusterVerdictRow[]> {
   const [rows, moatRows] = await Promise.all([
     sql<any[]>`
-      WITH latest_verdict AS (
-        SELECT DISTINCT ON (symbol)
-          symbol, verdict, target_price, buy_below, bear_floor, upside_pct
-        FROM app.stock_verdict
-        ORDER BY symbol, generated_at DESC
-      ),
-      latest_panel AS (
-        SELECT DISTINCT ON (symbol)
+      WITH latest_panel AS (
+        SELECT
           symbol, company_name, cluster_id, market_cap_cr, current_price,
           composite_pct, quality_pct, valuation_pct, momentum_pct,
           ret_1m, ret_6m, ret_1y
         FROM app.cluster_stocks_panel_cache
-        ORDER BY symbol, snapshot_date DESC
+        WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_stocks_panel_cache)
+          AND cluster_id = ${clusterId}
+      ),
+      latest_verdict AS (
+        SELECT DISTINCT ON (symbol)
+          symbol, verdict, target_price, buy_below, bear_floor, upside_pct
+        FROM app.stock_verdict
+        WHERE symbol IN (SELECT symbol FROM latest_panel)
+        ORDER BY symbol, generated_at DESC
       ),
       ranked_q AS (
         SELECT
           symbol, period_end, sales::float, net_profit::float,
           ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY period_end DESC) AS rn
         FROM app.fundamentals_quarterly
+        WHERE symbol IN (SELECT symbol FROM latest_panel)
       ),
       latest_q AS (
         SELECT
@@ -225,5 +261,5 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  return NextResponse.json({ items }, { headers: { "Cache-Control": "no-store" } });
+  return items;
 }
