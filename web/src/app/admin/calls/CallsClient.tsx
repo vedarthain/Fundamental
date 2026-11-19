@@ -2800,18 +2800,6 @@ export function CallsClient() {
             </button>
           </div>
 
-          {/* Search bar */}
-          <div className="relative shrink-0">
-            <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Find stock…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-6 pr-2 py-1 text-xs rounded border hairline bg-white focus:outline-none focus:ring-1 focus:ring-slate-400 w-24 sm:w-28 shadow-2xs"
-            />
-          </div>
-
           <button
             onClick={() => fetchData(true)}
             disabled={mounted && loading}
