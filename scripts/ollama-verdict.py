@@ -212,12 +212,12 @@ def get_unverdicted_portfolio_symbols(limit: Optional[int] = None) -> list[str]:
             return rows
 
 
-def call_ollama(model: str, prompt: str) -> dict:
+def call_ollama(model: str, prompt: str, system_prompt: str = SYSTEM_PROMPT) -> dict:
     """Send prompt to local Ollama instance and get parsed JSON response."""
     payload = {
         "model": model,
         "prompt": prompt,
-        "system": SYSTEM_PROMPT,
+        "system": system_prompt,
         "format": "json",
         "stream": False,
         "keep_alive": "60m",
@@ -497,6 +497,109 @@ def apply_accuracy_guardrails(verdict_obj: dict, item: dict) -> list[str]:
     return applied
 
 
+CRITIC_SYSTEM_PROMPT = """You are a ruthless institutional short-seller and risk-committee Devil's Advocate for Indian equities.
+A junior analyst just recommended ACCUMULATE / BUY on a stock. Your ONLY job is to try to BREAK the bull thesis using the audited facts provided.
+
+Check these 5 specific kill-switches:
+1. Cyclical margin peak: Is current OPM unusually elevated above 3Y average while trailing P/E looks deceptively cheap?
+2. Valuation stretch: Is current P/E significantly above its 10Y historical median without matching structural growth?
+3. Governance / regulatory / execution red flag: Any resignation, SEBI/USFDA/tax/ED action, pledge jump, or negative filing/news?
+4. Capex / working-capital trap: Heavy capex or rising WC days likely to depress FCF / PAT over the next 2-4 quarters?
+5. Weak moat / commodity exposure: Is a cyclical or commoditized business being mislabeled as a durable compounder?
+
+Output STRICT JSON only with exactly these 3 keys:
+{
+  "decision": "CONFIRM" | "CAP_CONFIDENCE_MEDIUM" | "DOWNGRADE_TO_WATCH",
+  "kill_risk": "One crisp sentence naming the #1 bear-case risk that could break this thesis.",
+  "reason": "One concise sentence justifying your decision."
+}
+
+Be selective: only choose DOWNGRADE_TO_WATCH when there is a concrete, material red flag or clear cyclical/valuation trap. Choose CAP_CONFIDENCE_MEDIUM when the thesis is solid but carries a notable risk. Choose CONFIRM when the thesis survives scrutiny."""
+
+
+def run_devils_advocate_critic(verdict_obj: dict, item: dict, engine: str, model: str) -> str | None:
+    """Second-stage adversarial risk check on surviving ACCUMULATE/BUY verdicts only.
+    Fail-soft: any API/JSON error leaves the primary verdict untouched."""
+    verdict_raw = str(verdict_obj.get("verdict") or "").strip()
+    if not verdict_raw:
+        return None
+    first_word = verdict_raw.split()[0].upper().rstrip(",:—-")
+    if first_word not in ("ACCUMULATE", "BUY"):
+        return None
+
+    sym = item.get("symbol") or ""
+    ident = item.get("identity") or {}
+    scores = item.get("scores") or {}
+    metrics = dict(item.get("metrics") or {})
+    if isinstance(metrics.get("cluster_metrics"), dict):
+        for k, v in metrics["cluster_metrics"].items():
+            if metrics.get(k) is None:
+                metrics[k] = v
+    pe_band = item.get("pe_band") or {}
+    moat = item.get("moat") or {}
+    filings = (item.get("filings") or [])[:5]
+    news = (item.get("news") or [])[:4]
+    diag = compute_forensic_and_inflection_flags(item)
+
+    critic_prompt = f"""AUDIT THIS ACCUMULATE/BUY CALL FOR: {sym} ({ident.get('company_name', sym)})
+Sector: {ident.get('sector')} | Industry: {ident.get('industry')}
+Proposed Verdict: {verdict_raw} (Confidence: {verdict_obj.get('confidence')})
+Trigger: {verdict_obj.get('trigger_text')}
+
+Key Numbers:
+- Scores (C/Q/V/M): {scores.get('composite_pct')}/{scores.get('quality_pct')}/{scores.get('valuation_pct')}/{scores.get('momentum_pct')}
+- P/E TTM: {metrics.get('pe_ttm')}x vs 10Y Median P/E: {pe_band.get('median')}x (Min {pe_band.get('min')}x, Max {pe_band.get('max')}x)
+- OPM Now: {metrics.get('opm_now')}% vs 3Y Avg OPM: {metrics.get('op_margin_3y')}%
+- 3Y ROCE: {metrics.get('roce_3y')}% | 3Y CFO/PAT: {metrics.get('cfo_pat_3y')}x | Net Debt/EBITDA: {metrics.get('net_debt_ebitda')}x
+- Moat: {moat.get('moat_strength') or 'Unprofiled'} ({moat.get('moat_type') or 'N/A'})
+- Forensic/Inflection Flags: {diag['flags'] or 'None'}
+- Recent Filings: {[f"{f.get('date')} {f.get('category')}: {str(f.get('text',''))[:90]}" for f in filings]}
+- Recent News: {[f"{n.get('date')} ({n.get('source')}): {str(n.get('title',''))[:90]}" for n in news]}
+
+Return strict JSON: decision, kill_risk, reason."""
+
+    try:
+        if engine == "gemini":
+            res, _ = call_gemini(model, critic_prompt, system_prompt=CRITIC_SYSTEM_PROMPT)
+        else:
+            res = call_ollama(model, critic_prompt, system_prompt=CRITIC_SYSTEM_PROMPT)
+    except Exception:
+        return None
+
+    if not isinstance(res, dict):
+        return None
+
+    decision = str(res.get("decision") or "CONFIRM").strip().upper()
+    kill_risk = str(res.get("kill_risk") or "").strip()
+    reason = str(res.get("reason") or "").strip()
+
+    if kill_risk:
+        pts = verdict_obj.get("points") or []
+        pts.append(f"<b>Bear-Case Risk (Critic):</b> {kill_risk}")
+        verdict_obj["points"] = pts
+
+    if decision == "DOWNGRADE_TO_WATCH":
+        if "—" in verdict_raw:
+            tail = verdict_raw.split("—", 1)[1].strip()
+        elif " - " in verdict_raw:
+            tail = verdict_raw.split(" - ", 1)[1].strip()
+        else:
+            tail = verdict_raw
+        verdict_obj["verdict"] = f"WATCH — {tail}"
+        if str(verdict_obj.get("confidence") or "").lower() == "high":
+            verdict_obj["confidence"] = "medium"
+        note = f"[Critic: Downgraded to WATCH — {reason or kill_risk}]"
+        trig = str(verdict_obj.get("trigger_text") or "").strip()
+        verdict_obj["trigger_text"] = f"{trig} {note}".strip() if trig else note
+        return note
+    elif decision == "CAP_CONFIDENCE_MEDIUM":
+        if str(verdict_obj.get("confidence") or "").lower() == "high":
+            verdict_obj["confidence"] = "medium"
+        return f"[Critic: Confidence capped to medium — {reason or kill_risk}]"
+    else:
+        return f"[Critic: CONFIRMED — risk noted: {kill_risk[:80]}]" if kill_risk else "[Critic: CONFIRMED]"
+
+
 def format_symbol_evidence_prompt(s: dict) -> str:
     """Format the raw symbol data into a comprehensive prompt utilizing all fundamental parameters."""
     symbol = s.get("symbol")
@@ -708,6 +811,7 @@ def main() -> int:
     ap.add_argument("--portfolio", action="store_true", help="Process un-verdicted portfolio stocks")
     ap.add_argument("--weekly-new-portfolio", action="store_true", help="Process latest-batch new calls and active portfolio stocks missing a verdict from the last 7 days")
     ap.add_argument("--claude-stocks", action="store_true", help="Process stocks that have Claude verdicts but lack Gemini verdicts")
+    ap.add_argument("--no-critic", action="store_true", help="Skip the Devil's Advocate bear-case critic pass on ACCUMULATE/BUY verdicts")
     ap.add_argument("--since", help="Process symbols that had verdicts generated on or after this date (e.g. 2026-10-25)")
     ap.add_argument("--unverdicted", action="store_true", help="Process active universe symbols that do not yet have a verdict")
     ap.add_argument("--drift", action="store_true", help="Process stocks whose stored evidence has drifted from live cluster metrics")
@@ -1205,6 +1309,13 @@ def main() -> int:
             if guardrail_notes:
                 with print_lock:
                     print(f"            🛡️  {sym}: {' | '.join(guardrail_notes)}")
+
+            # Second-stage Devil's Advocate Bear-Case Critic Pass (surviving ACCUMULATE/BUY only)
+            if not args.no_critic:
+                critic_note = run_devils_advocate_critic(verdict_obj, item, args.engine, args.model)
+                if critic_note:
+                    with print_lock:
+                        print(f"            ⚖️  {sym}: {critic_note}")
 
             # Step 4: DB Load
             db_status = "Saved ✓"
