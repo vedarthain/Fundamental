@@ -30,7 +30,116 @@ export function PortfolioDividends({ report }: { report: PortfolioDividendReport
   const [filterMode, setFilterMode] = useState<"all" | "payers" | "high_yield">("payers");
   const [sortKey, setSortKey] = useState<"payout" | "yield" | "yoc" | "value">("payout");
   const [simulatedShares, setSimulatedShares] = useState<Record<string, number>>({});
-  const [eventsTab, setEventsTab] = useState<"upcoming" | "recent">("recent");
+  const [eventsFilter, setEventsFilter] = useState<"all" | "paid" | "upcoming">("all");
+  const [expandedYears, setExpandedYears] = useState<Record<string, boolean>>({});
+  const [expandedMonths, setExpandedMonths] = useState<Record<string, boolean>>({});
+  const [expandedDates, setExpandedDates] = useState<Record<string, boolean>>({});
+
+  const allSourceEvents = useMemo(
+    () => report.allEvents ?? [...report.upcomingEvents, ...report.recentEvents],
+    [report.allEvents, report.upcomingEvents, report.recentEvents],
+  );
+
+  const filteredEvents = useMemo(() => {
+    if (eventsFilter === "upcoming") return allSourceEvents.filter((e) => e.isUpcoming);
+    if (eventsFilter === "paid") return allSourceEvents.filter((e) => !e.isUpcoming);
+    return allSourceEvents;
+  }, [allSourceEvents, eventsFilter]);
+
+  // Group events into Year -> Month -> Date -> DividendEvent[] (newest first at each level)
+  const dividendTree = useMemo(() => {
+    type DateBucket = { date: string; label: string; payout: number; events: DividendEvent[] };
+    type MonthBucket = { month: string; label: string; payout: number; eventCount: number; dates: DateBucket[] };
+    type YearBucket = { year: string; payout: number; eventCount: number; months: MonthBucket[] };
+
+    const yMap = new Map<
+      string,
+      {
+        payout: number;
+        eventCount: number;
+        mMap: Map<string, { label: string; payout: number; eventCount: number; dMap: Map<string, DateBucket> }>;
+      }
+    >();
+
+    for (const ev of filteredEvents) {
+      const year = ev.exDate.slice(0, 4);
+      const month = ev.exDate.slice(0, 7); // YYYY-MM
+      const date = ev.exDate.slice(0, 10); // YYYY-MM-DD
+
+      let yEntry = yMap.get(year);
+      if (!yEntry) {
+        yEntry = { payout: 0, eventCount: 0, mMap: new Map() };
+        yMap.set(year, yEntry);
+      }
+      yEntry.payout += ev.payout;
+      yEntry.eventCount += 1;
+
+      let mEntry = yEntry.mMap.get(month);
+      if (!mEntry) {
+        const [yr, mo] = month.split("-");
+        const mLabel = new Date(Number(yr), Number(mo) - 1, 1).toLocaleDateString("en-IN", {
+          month: "short",
+          year: "numeric",
+        });
+        mEntry = { label: mLabel, payout: 0, eventCount: 0, dMap: new Map() };
+        yEntry.mMap.set(month, mEntry);
+      }
+      mEntry.payout += ev.payout;
+      mEntry.eventCount += 1;
+
+      let dEntry = mEntry.dMap.get(date);
+      if (!dEntry) {
+        dEntry = { date, label: shortDate(date), payout: 0, events: [] };
+        mEntry.dMap.set(date, dEntry);
+      }
+      dEntry.payout += ev.payout;
+      dEntry.events.push(ev);
+    }
+
+    const years: YearBucket[] = [...yMap.entries()]
+      .sort((a, b) => b[0].localeCompare(a[0]))
+      .map(([year, yv]) => ({
+        year,
+        payout: yv.payout,
+        eventCount: yv.eventCount,
+        months: [...yv.mMap.entries()]
+          .sort((a, b) => b[0].localeCompare(a[0]))
+          .map(([month, mv]) => ({
+            month,
+            label: mv.label,
+            payout: mv.payout,
+            eventCount: mv.eventCount,
+            dates: [...mv.dMap.values()].sort((a, b) => b.date.localeCompare(a.date)),
+          })),
+      }));
+
+    return years;
+  }, [filteredEvents]);
+
+  // Default-open the latest year & latest month unless user explicitly toggled
+  const latestYear = dividendTree[0]?.year;
+  const latestMonth = dividendTree[0]?.months[0]?.month;
+  const isYearOpen = (y: string) => expandedYears[y] ?? y === latestYear;
+  const isMonthOpen = (m: string) => expandedMonths[m] ?? m === latestMonth;
+  const isDateOpen = (d: string) => expandedDates[d] ?? true;
+
+  const setAllTreeOpen = (open: boolean) => {
+    const yNext: Record<string, boolean> = {};
+    const mNext: Record<string, boolean> = {};
+    const dNext: Record<string, boolean> = {};
+    for (const y of dividendTree) {
+      yNext[y.year] = open;
+      for (const m of y.months) {
+        mNext[m.month] = open;
+        for (const d of m.dates) {
+          dNext[d.date] = open;
+        }
+      }
+    }
+    setExpandedYears(yNext);
+    setExpandedMonths(mNext);
+    setExpandedDates(dNext);
+  };
 
   // Recalculated holdings considering simulated share counts
   const simulatedHoldings = useMemo(() => {
@@ -350,100 +459,206 @@ export function PortfolioDividends({ report }: { report: PortfolioDividendReport
         </div>
       </div>
 
-      {/* 4. UPCOMING & RECENT DIVIDEND CASH FLOW CALENDAR */}
+      {/* 4. COLLAPSIBLE YEAR / MONTH / DATE DIVIDEND CALENDAR */}
       <div className="rounded-xl border border-slate-200/90 bg-white p-5 shadow-2xs">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
           <div>
             <h3 className="text-[15px] font-semibold text-slate-900 flex items-center gap-2">
-              <span>📅</span> Dividend Events &amp; Cash Flow Calendar
+              <span>📅</span> Datewise Dividend Report (Year → Month → Date)
             </h3>
             <p className="text-[12.5px] text-slate-500 mt-0.5">
-              Track upcoming ex-dates and recent disbursements for your holdings.
+              All historical &amp; upcoming ex-date dividends for your current holdings, collapsible by year, month, and date.
             </p>
           </div>
-          <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg text-[12px]">
-            <button
-              type="button"
-              onClick={() => setEventsTab("recent")}
-              className={`px-3 py-1 rounded-md font-medium transition-all ${
-                eventsTab === "recent" ? "bg-white text-slate-900 shadow-2xs" : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              Recent History ({report.recentEvents.length})
-            </button>
-            <button
-              type="button"
-              onClick={() => setEventsTab("upcoming")}
-              className={`px-3 py-1 rounded-md font-medium transition-all ${
-                eventsTab === "upcoming" ? "bg-white text-slate-900 shadow-2xs" : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              Announced ({report.upcomingEvents.length})
-            </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg text-[12px]">
+              {(
+                [
+                  { id: "all", label: `All (${allSourceEvents.length})` },
+                  { id: "paid", label: `Paid (${allSourceEvents.filter((e) => !e.isUpcoming).length})` },
+                  { id: "upcoming", label: `Upcoming (${report.upcomingEvents.length})` },
+                ] as const
+              ).map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setEventsFilter(tab.id)}
+                  className={`px-2.5 py-1 rounded-md font-medium transition-all ${
+                    eventsFilter === tab.id ? "bg-white text-slate-900 shadow-2xs" : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-1 text-[11.5px]">
+              <button
+                type="button"
+                onClick={() => setAllTreeOpen(true)}
+                className="px-2.5 py-1 rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50"
+              >
+                Expand all
+              </button>
+              <button
+                type="button"
+                onClick={() => setAllTreeOpen(false)}
+                className="px-2.5 py-1 rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50"
+              >
+                Collapse all
+              </button>
+            </div>
           </div>
         </div>
 
-        <div className="overflow-x-auto mt-4">
-          <table className="w-full text-left text-[12.5px]">
-            <thead>
-              <tr className="border-b border-slate-200 text-slate-500 font-medium">
-                <th className="py-2.5 px-3">Date (Ex-Date)</th>
-                <th className="py-2.5 px-3">Stock</th>
-                <th className="py-2.5 px-3">Purpose</th>
-                <th className="py-2.5 px-3 text-right">Per Share</th>
-                <th className="py-2.5 px-3 text-right">Shares Held</th>
-                <th className="py-2.5 px-3 text-right">Total Payout</th>
-                <th className="py-2.5 px-3 text-center">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {(eventsTab === "upcoming" ? report.upcomingEvents : report.recentEvents).slice(0, 15).map((e, idx) => (
-                <tr key={`${e.symbol}-${e.exDate}-${idx}`} className="hover:bg-slate-50/70 transition-colors">
-                  <td className="py-2.5 px-3 font-mono text-slate-600 whitespace-nowrap">
-                    {shortDate(e.exDate)}
-                  </td>
-                  <td className="py-2.5 px-3 font-medium text-slate-900">
-                    <Link href={`/stock/${e.symbol}`} className="hover:underline text-indigo-700 font-mono">
-                      {e.symbol}
-                    </Link>
-                    <span className="text-slate-400 font-normal ml-2 text-[11px] hidden sm:inline">
-                      {e.companyName}
+        <div className="mt-4 space-y-2">
+          {dividendTree.length === 0 ? (
+            <div className="py-8 text-center text-slate-400 text-[13px]">
+              No {eventsFilter === "all" ? "" : eventsFilter} dividend events on record for your positions.
+            </div>
+          ) : (
+            dividendTree.map((yr) => {
+              const yOpen = isYearOpen(yr.year);
+              return (
+                <div key={yr.year} className="rounded-lg border border-slate-200 overflow-hidden">
+                  {/* YEAR HEADER */}
+                  <button
+                    type="button"
+                    onClick={() => setExpandedYears((prev) => ({ ...prev, [yr.year]: !yOpen }))}
+                    className="w-full flex items-center justify-between px-4 py-2.5 bg-slate-50 hover:bg-slate-100/80 transition-colors text-left"
+                  >
+                    <span className="flex items-center gap-2 font-semibold text-slate-900 text-[13.5px]">
+                      <span className="text-[11px] text-slate-500 w-3">{yOpen ? "▾" : "▸"}</span>
+                      <span className="font-mono">{yr.year}</span>
+                      <span className="text-[11.5px] font-normal text-slate-500">
+                        · {yr.months.length} {yr.months.length === 1 ? "month" : "months"} · {yr.eventCount} payouts
+                      </span>
                     </span>
-                  </td>
-                  <td className="py-2.5 px-3 text-slate-600">
-                    {e.purpose}
-                  </td>
-                  <td className="py-2.5 px-3 text-right font-mono text-slate-800">
-                    {inr(e.amount, 2)}
-                  </td>
-                  <td className="py-2.5 px-3 text-right font-mono text-slate-600">
-                    {e.heldQty} sh
-                  </td>
-                  <td className="py-2.5 px-3 text-right font-mono font-semibold text-emerald-700">
-                    {inr(e.payout, 2)}
-                  </td>
-                  <td className="py-2.5 px-3 text-center">
-                    <span
-                      className={`inline-block px-2 py-0.5 rounded text-[10.5px] font-medium ${
-                        e.isUpcoming
-                          ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
-                          : "bg-slate-100 text-slate-600"
-                      }`}
-                    >
-                      {e.isUpcoming ? "Upcoming" : "Paid"}
+                    <span className="font-mono font-bold text-emerald-700 text-[13.5px]">
+                      {inr(yr.payout, 2)}
                     </span>
-                  </td>
-                </tr>
-              ))}
-              {(eventsTab === "upcoming" ? report.upcomingEvents : report.recentEvents).length === 0 && (
-                <tr>
-                  <td colSpan={7} className="py-8 text-center text-slate-400 text-[13px]">
-                    No {eventsTab} dividend events on record for your positions.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+                  </button>
+
+                  {yOpen && (
+                    <div className="divide-y divide-slate-100 bg-white">
+                      {yr.months.map((mo) => {
+                        const mOpen = isMonthOpen(mo.month);
+                        return (
+                          <div key={mo.month}>
+                            {/* MONTH HEADER */}
+                            <button
+                              type="button"
+                              onClick={() => setExpandedMonths((prev) => ({ ...prev, [mo.month]: !mOpen }))}
+                              className="w-full flex items-center justify-between pl-8 pr-4 py-2 hover:bg-slate-50/80 transition-colors text-left"
+                            >
+                              <span className="flex items-center gap-2 text-[12.5px] font-medium text-slate-800">
+                                <span className="text-[11px] text-slate-400 w-3">{mOpen ? "▾" : "▸"}</span>
+                                <span>{mo.label}</span>
+                                <span className="text-[11px] font-normal text-slate-400">
+                                  · {mo.dates.length} {mo.dates.length === 1 ? "date" : "dates"} · {mo.eventCount} payouts
+                                </span>
+                              </span>
+                              <span className="font-mono font-semibold text-slate-800 text-[12.5px]">
+                                {inr(mo.payout, 2)}
+                              </span>
+                            </button>
+
+                            {mOpen && (
+                              <div className="bg-slate-50/40 divide-y divide-slate-100">
+                                {mo.dates.map((dt) => {
+                                  const dOpen = isDateOpen(dt.date);
+                                  return (
+                                    <div key={dt.date}>
+                                      {/* DATE HEADER */}
+                                      <button
+                                        type="button"
+                                        onClick={() => setExpandedDates((prev) => ({ ...prev, [dt.date]: !dOpen }))}
+                                        className="w-full flex items-center justify-between pl-12 pr-4 py-1.5 hover:bg-slate-100/60 transition-colors text-left"
+                                      >
+                                        <span className="flex items-center gap-2 text-[12px] text-slate-700">
+                                          <span className="text-[10px] text-slate-400 w-3">{dOpen ? "▾" : "▸"}</span>
+                                          <span className="font-mono font-medium">{dt.label}</span>
+                                          <span className="text-[11px] text-slate-400">
+                                            ({dt.events.length} {dt.events.length === 1 ? "stock" : "stocks"})
+                                          </span>
+                                          {!dOpen && (
+                                            <span className="text-[11px] text-indigo-700 font-mono truncate max-w-[260px]">
+                                              {dt.events.map((e) => e.symbol).join(", ")}
+                                            </span>
+                                          )}
+                                        </span>
+                                        <span className="font-mono font-semibold text-emerald-700 text-[12px]">
+                                          {inr(dt.payout, 2)}
+                                        </span>
+                                      </button>
+
+                                      {/* DATE ROWS */}
+                                      {dOpen && (
+                                        <div className="overflow-x-auto pl-14 pr-4 pb-2">
+                                          <table className="w-full text-left text-[12px]">
+                                            <thead>
+                                              <tr className="border-b border-slate-200/80 text-slate-400 text-[11px] font-medium">
+                                                <th className="py-1.5 pr-3">Stock</th>
+                                                <th className="py-1.5 px-3">Purpose</th>
+                                                <th className="py-1.5 px-3 text-right">Per Share</th>
+                                                <th className="py-1.5 px-3 text-right">Shares Held</th>
+                                                <th className="py-1.5 px-3 text-right">Total Payout</th>
+                                                <th className="py-1.5 pl-3 text-center">Status</th>
+                                              </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100/80">
+                                              {dt.events.map((e, idx) => (
+                                                <tr key={`${e.symbol}-${e.exDate}-${idx}`} className="hover:bg-white/80">
+                                                  <td className="py-1.5 pr-3 font-medium text-slate-900 whitespace-nowrap">
+                                                    <Link href={`/stock/${e.symbol}`} className="hover:underline text-indigo-700 font-mono">
+                                                      {e.symbol}
+                                                    </Link>
+                                                    {e.companyName && (
+                                                      <span className="text-slate-400 font-normal ml-2 text-[11px] hidden sm:inline">
+                                                        {e.companyName}
+                                                      </span>
+                                                    )}
+                                                  </td>
+                                                  <td className="py-1.5 px-3 text-slate-600">{e.purpose}</td>
+                                                  <td className="py-1.5 px-3 text-right font-mono text-slate-800">
+                                                    {inr(e.amount, 2)}
+                                                  </td>
+                                                  <td className="py-1.5 px-3 text-right font-mono text-slate-600">
+                                                    {e.heldQty} sh
+                                                  </td>
+                                                  <td className="py-1.5 px-3 text-right font-mono font-semibold text-emerald-700">
+                                                    {inr(e.payout, 2)}
+                                                  </td>
+                                                  <td className="py-1.5 pl-3 text-center">
+                                                    <span
+                                                      className={`inline-block px-2 py-0.5 rounded text-[10px] font-medium ${
+                                                        e.isUpcoming
+                                                          ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
+                                                          : "bg-slate-100 text-slate-600"
+                                                      }`}
+                                                    >
+                                                      {e.isUpcoming ? "Upcoming" : "Paid"}
+                                                    </span>
+                                                  </td>
+                                                </tr>
+                                              ))}
+                                            </tbody>
+                                          </table>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
         </div>
       </div>
 

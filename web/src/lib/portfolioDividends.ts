@@ -67,6 +67,7 @@ export type PortfolioDividendReport = {
   monthlyHistory: MonthlyDividend[];
   recentEvents: DividendEvent[];
   upcomingEvents: DividendEvent[];
+  allEvents: DividendEvent[];
   holdings: HoldingDividend[];
 };
 
@@ -85,6 +86,7 @@ export async function loadPortfolioDividends(userId: number): Promise<PortfolioD
     monthlyHistory: [],
     recentEvents: [],
     upcomingEvents: [],
+    allEvents: [],
     holdings: [],
   };
 
@@ -140,7 +142,7 @@ export async function loadPortfolioDividends(userId: number): Promise<PortfolioD
       qtyBySymbol.set(r.symbol, r.qty);
     }
 
-    // 2. Fetch dividend corporate actions for held symbols (past 365 days + upcoming)
+    // 2. Fetch all dividend corporate actions for held symbols (full history + upcoming)
     const caRows = await sql<{
       symbol: string;
       ex_date: string;
@@ -148,6 +150,7 @@ export async function loadPortfolioDividends(userId: number): Promise<PortfolioD
       amount: number;
       company_name: string | null;
       is_upcoming: boolean;
+      is_ttm: boolean;
     }[]>`
       SELECT 
         ca.symbol,
@@ -155,19 +158,20 @@ export async function loadPortfolioDividends(userId: number): Promise<PortfolioD
         ca.purpose,
         ca.amount::float8 as amount,
         u.company_name,
-        (ca.ex_date >= CURRENT_DATE) as is_upcoming
+        (ca.ex_date >= CURRENT_DATE) as is_upcoming,
+        (ca.ex_date >= CURRENT_DATE - INTERVAL '365 days') as is_ttm
       FROM app.corporate_action ca
       LEFT JOIN app.universe u ON u.symbol = ca.symbol
       WHERE ca.symbol = ANY(${heldSymbols})
         AND ca.action_type = 'dividend'
         AND ca.amount IS NOT NULL
-        AND ca.ex_date >= CURRENT_DATE - INTERVAL '365 days'
-      ORDER BY ca.ex_date DESC
+      ORDER BY ca.ex_date DESC, ca.symbol ASC
     `;
 
-    // Process corporate actions into upcoming & recent events
+    // Process corporate actions into upcoming, recent (TTM), and full-history events
     const upcomingEvents: DividendEvent[] = [];
     const recentEvents: DividendEvent[] = [];
+    const allEvents: DividendEvent[] = [];
     const ttmDpsBySymbol = new Map<string, { totalDps: number; count: number; latestDate: string; latestAmt: number }>();
     const upcomingBySymbol = new Map<string, DividendEvent>();
 
@@ -188,16 +192,17 @@ export async function loadPortfolioDividends(userId: number): Promise<PortfolioD
         payout,
         isUpcoming: ca.is_upcoming,
       };
+      allEvents.push(event);
 
       if (ca.is_upcoming) {
         upcomingEvents.push(event);
         if (!upcomingBySymbol.has(ca.symbol)) {
           upcomingBySymbol.set(ca.symbol, event);
         }
-      } else {
+      } else if (ca.is_ttm) {
         recentEvents.push(event);
 
-        // Aggregate monthly history for past payouts
+        // Aggregate monthly history for past 12 months
         const monthKey = ca.ex_date.slice(0, 7); // YYYY-MM
         const curM = monthlyMap.get(monthKey) ?? { payout: 0, count: 0 };
         curM.payout += payout;
@@ -205,16 +210,18 @@ export async function loadPortfolioDividends(userId: number): Promise<PortfolioD
         monthlyMap.set(monthKey, curM);
       }
 
-      // Track TTM DPS
-      const prev = ttmDpsBySymbol.get(ca.symbol) ?? {
-        totalDps: 0,
-        count: 0,
-        latestDate: ca.ex_date,
-        latestAmt: ca.amount,
-      };
-      prev.totalDps += ca.amount;
-      prev.count += 1;
-      ttmDpsBySymbol.set(ca.symbol, prev);
+      if (ca.is_ttm) {
+        // Track TTM DPS
+        const prev = ttmDpsBySymbol.get(ca.symbol) ?? {
+          totalDps: 0,
+          count: 0,
+          latestDate: ca.ex_date,
+          latestAmt: ca.amount,
+        };
+        prev.totalDps += ca.amount;
+        prev.count += 1;
+        ttmDpsBySymbol.set(ca.symbol, prev);
+      }
     }
 
     // Format monthly history sorted chronologically
@@ -319,6 +326,7 @@ export async function loadPortfolioDividends(userId: number): Promise<PortfolioD
       monthlyHistory,
       recentEvents: recentEvents.slice(0, 50),
       upcomingEvents,
+      allEvents,
       holdings,
     };
   } catch (err) {
