@@ -1999,8 +1999,15 @@ export function CallsClient() {
       const cmp = call?.cmp ?? cur?.cmp ?? defaultCmp;
       const target = cur?.target ?? call?.target ?? defaultTarget;
       const upside = target > 0 && cmp > 0 ? Math.round(((target - cmp) / cmp) * 1000) / 10 : (call?.upside ?? cur?.upside ?? defaultUpside);
-      return { cmp, target, upside };
+      const momentumPct = call?.momentum_pct ?? null;
+      return { cmp, target, upside, momentumPct };
     };
+
+    // Stabilization guard: if price is in/below buy zone BUT momentum is weak (< 55)
+    // or price has sliced > 3% below the trigger, warn to wait for a base instead
+    // of blindly telling the user to "buy immediately" into a falling knife.
+    const needsStabilization = (inZone: boolean, distPct: number, momentumPct: number | null) =>
+      inZone && ((momentumPct != null && momentumPct < 55) || distPct <= -3.0);
 
     const fmMetrics = getStockMetrics("FMGOETZE", 466.4, 603.6, 29.4);
     const trMetrics = getStockMetrics("TRANSRAILL", 450.0, 630.0, 40.0);
@@ -2013,6 +2020,8 @@ export function CallsClient() {
     const fmDistPct = Math.round(((fmCmp - fmTrigger) / fmTrigger) * 1000) / 10;
     const fmPullback = Math.round(((fmCmp - fmTrigger) / fmCmp) * 1000) / 10;
     const fmInZone = fmCmp <= fmTrigger;
+    const fmFalling = needsStabilization(fmInZone, fmDistPct, fmMetrics.momentumPct);
+    const fmReady = fmInZone && !fmFalling;
 
     const trTrigger = transrailBought > 0 ? 434.0 : 445.0;
     const trShares = Math.floor(transrailRemaining / trTrigger) || 17;
@@ -2020,6 +2029,8 @@ export function CallsClient() {
     const trDistPct = Math.round(((trCmp - trTrigger) / trTrigger) * 1000) / 10;
     const trPullback = Math.round(((trCmp - trTrigger) / trCmp) * 1000) / 10;
     const trInZone = transrailBought > 0 ? trCmp <= trTrigger : trCmp <= 450.0;
+    const trFalling = needsStabilization(trInZone, trDistPct, trMetrics.momentumPct);
+    const trReady = trInZone && !trFalling;
 
     const bobCmp = bobMetrics.cmp;
     const bobStarterAmt = Math.round(bankBarodaRemaining * 0.3);
@@ -2027,7 +2038,10 @@ export function CallsClient() {
     const bobCoreAmt = bankBarodaRemaining - bobStarterAmt;
     const bobCoreShares = Math.max(1, Math.floor(bobCoreAmt / 263.5));
     const bobTotalShares = bobStarterShares + bobCoreShares;
+    const bobDistPct = Math.round(((bobCmp - 274) / 274) * 1000) / 10;
     const bobInZone = bankBarodaBought === 0 && bobCmp <= 276.0;
+    const bobFalling = needsStabilization(bobInZone, bobDistPct, bobMetrics.momentumPct);
+    const bobReady = bobInZone && !bobFalling;
 
     const grTrigger = gravitaBought > 0 ? 1440.0 : 1495.0;
     const grShares = Math.max(1, Math.floor(gravitaRemaining / (grMetrics.cmp || 1493.9))) || 5;
@@ -2035,6 +2049,8 @@ export function CallsClient() {
     const grDistPct = Math.round(((grCmp - grTrigger) / grTrigger) * 1000) / 10;
     const grPullback = Math.round(((grCmp - grTrigger) / grCmp) * 1000) / 10;
     const grInZone = gravitaBought === 0 ? grCmp <= 1520.0 : grCmp <= grTrigger;
+    const grFalling = needsStabilization(grInZone, grDistPct, grMetrics.momentumPct);
+    const grReady = grInZone && !grFalling;
 
     const remainingQueue = [
       ...(fmGoetzeRemaining > 0
@@ -2051,16 +2067,28 @@ export function CallsClient() {
               cmp: fmCmp,
               target: fmMetrics.target,
               upside: fmMetrics.upside,
-              isReadyToBuy: fmInZone,
+              isReadyToBuy: fmReady,
               triggerPrice: fmTrigger,
               distPct: fmDistPct,
               pullbackNeeded: fmPullback,
-              actionBadge: fmInZone ? "🟢 READY TO BUY (IN ZONE)" : "🟡 AWAITING DIP (GTT ARMED)",
-              actionBadgeColor: fmInZone ? "bg-emerald-600 text-white border-emerald-700 shadow-2xs font-bold" : "bg-amber-100 text-amber-900 border-amber-300",
-              brokerAction: `Place GTT Limit: ${fmShares} sh @ ≤ ₹457.10`,
-              timingDistance: fmInZone
-                ? `LTP is inside entry zone (≤ ₹457.10). Ready to execute.`
-                : `LTP is +${fmDistPct}% above trigger limit. Wait for -${fmPullback}% dip (do NOT chase at CMP).`,
+              actionBadge: fmFalling
+                ? "🟠 IN ZONE — WAIT FOR STABILIZATION"
+                : fmReady
+                  ? "🟢 READY TO BUY (IN ZONE)"
+                  : "🟡 AWAITING DIP (GTT ARMED)",
+              actionBadgeColor: fmFalling
+                ? "bg-orange-100 text-orange-900 border-orange-300 font-semibold"
+                : fmReady
+                  ? "bg-emerald-600 text-white border-emerald-700 shadow-2xs font-bold"
+                  : "bg-amber-100 text-amber-900 border-amber-300",
+              brokerAction: fmFalling
+                ? `PAUSE Tranche 2 — wait for 2 green closes / base before adding ${fmShares} sh`
+                : `Place GTT Limit: ${fmShares} sh @ ≤ ₹457.10`,
+              timingDistance: fmFalling
+                ? `LTP (₹${fmCmp.toFixed(1)}) is ${fmDistPct}% vs trigger ₹457.10, but momentum is weak (${fmMetrics.momentumPct ?? "—"}%). Do NOT catch a falling knife — wait for price to stop making lower lows & close above prior 2-day high.`
+                : fmReady
+                  ? `LTP is inside entry zone (≤ ₹457.10) with stable trend. Ready to execute.`
+                  : `LTP is +${fmDistPct}% above trigger limit. Wait for -${fmPullback}% dip (do NOT chase at CMP).`,
             },
           ]
         : []),
@@ -2078,24 +2106,34 @@ export function CallsClient() {
               cmp: trCmp,
               target: trMetrics.target,
               upside: trMetrics.upside,
-              isReadyToBuy: trInZone,
+              isReadyToBuy: trReady,
               triggerPrice: trTrigger,
               distPct: trDistPct,
               pullbackNeeded: trPullback,
-              actionBadge: transrailBought > 0
-                ? (trInZone ? "🟢 READY TO TOP-UP" : "🟡 AWAITING DIP (GTT ARMED)")
-                : (trInZone ? "🟢 READY TO BUY (IN ZONE)" : "🟡 AWAITING DIP (GTT ARMED)"),
-              actionBadgeColor: trInZone ? "bg-emerald-600 text-white border-emerald-700 shadow-2xs font-bold" : "bg-amber-100 text-amber-900 border-amber-300",
-              brokerAction: transrailBought > 0
-                ? `Place GTT Limit: ${trShares} sh @ ≤ ₹434.00`
-                : `Buy ${trShares} sh in Zone ₹438–₹450 (or 50% CMP / 50% GTT ≤ ₹436)`,
-              timingDistance: transrailBought > 0
-                ? (trInZone
-                    ? `LTP is at/below Tranche 2 dip level (₹434). Execute top-up now.`
-                    : `Tranche 1 filled (17 sh @ ₹449.45). LTP is +${trDistPct}% above Tranche 2 limit. Set GTT for -${trPullback}% dip.`)
-                : (trInZone
-                    ? `LTP is inside anchor entry zone (₹438–₹450). Ready to buy.`
-                    : `LTP is above entry zone. Place GTT order.`),
+              actionBadge: trFalling
+                ? "🟠 IN ZONE — WAIT FOR STABILIZATION"
+                : transrailBought > 0
+                  ? (trReady ? "🟢 READY TO TOP-UP" : "🟡 AWAITING DIP (GTT ARMED)")
+                  : (trReady ? "🟢 READY TO BUY (IN ZONE)" : "🟡 AWAITING DIP (GTT ARMED)"),
+              actionBadgeColor: trFalling
+                ? "bg-orange-100 text-orange-900 border-orange-300 font-semibold"
+                : trReady
+                  ? "bg-emerald-600 text-white border-emerald-700 shadow-2xs font-bold"
+                  : "bg-amber-100 text-amber-900 border-amber-300",
+              brokerAction: trFalling
+                ? `PAUSE Tranche 2 — wait for base above ₹400–₹410 & 2 green closes before adding ${trShares} sh`
+                : transrailBought > 0
+                  ? `Place GTT Limit: ${trShares} sh @ ≤ ₹434.00`
+                  : `Buy ${trShares} sh in Zone ₹438–₹450 (or 50% CMP / 50% GTT ≤ ₹436)`,
+              timingDistance: trFalling
+                ? `LTP (₹${trCmp.toFixed(1)}) hit Tranche 2 level (₹${trTrigger}), but momentum is weak (${trMetrics.momentumPct ?? "—"}%). Wait for lower lows to stop & 2 green closes above support before adding.`
+                : transrailBought > 0
+                  ? (trReady
+                      ? `LTP is at/below Tranche 2 dip level (₹434) with stable trend. Execute top-up now.`
+                      : `Tranche 1 filled (17 sh @ ₹449.45). LTP is +${trDistPct}% above Tranche 2 limit. Set GTT for -${trPullback}% dip.`)
+                  : (trReady
+                      ? `LTP is inside anchor entry zone (₹438–₹450). Ready to buy.`
+                      : `LTP is above entry zone. Place GTT order.`),
             },
           ]
         : []),
@@ -2113,18 +2151,30 @@ export function CallsClient() {
               cmp: bobCmp,
               target: bobMetrics.target,
               upside: bobMetrics.upside,
-              isReadyToBuy: bobInZone,
+              isReadyToBuy: bobReady,
               triggerPrice: bankBarodaBought > 0 ? 263.5 : 274.0,
-              distPct: Math.round(((bobCmp - 274) / 274) * 1000) / 10,
+              distPct: bobDistPct,
               pullbackNeeded: 0,
-              actionBadge: bankBarodaBought > 0 ? "🟡 SET GTT RETEST" : "🟢 READY TO BUY TODAY (30% STARTER)",
-              actionBadgeColor: bobInZone ? "bg-emerald-600 text-white border-emerald-700 shadow-2xs font-bold" : "bg-indigo-100 text-indigo-900 border-indigo-300",
-              brokerAction: bankBarodaBought > 0
-                ? `Place GTT Limit: ${Math.floor(bankBarodaRemaining / 263.5)} sh @ ≤ ₹263.50`
-                : `Step 1: ${bobStarterShares} sh Starter @ ~₹274 today • Step 2: GTT Limit ${bobCoreShares} sh @ ≤ ₹263.50`,
-              timingDistance: bankBarodaBought > 0
-                ? `Set GTT limit order for retest dip at ₹263.50.`
-                : `LTP (~₹${bobCmp.toFixed(2)}) is inside Starter zone (~₹274). Execute 30% starter today; set GTT for remaining 70% @ ≤ ₹263.50.`,
+              actionBadge: bobFalling
+                ? "🟠 IN ZONE — WAIT FOR STABILIZATION"
+                : bankBarodaBought > 0
+                  ? "🟡 SET GTT RETEST"
+                  : "🟢 READY TO BUY TODAY (30% STARTER)",
+              actionBadgeColor: bobFalling
+                ? "bg-orange-100 text-orange-900 border-orange-300 font-semibold"
+                : bobReady
+                  ? "bg-emerald-600 text-white border-emerald-700 shadow-2xs font-bold"
+                  : "bg-indigo-100 text-indigo-900 border-indigo-300",
+              brokerAction: bobFalling
+                ? `PAUSE Starter — wait for 2 green closes before entering ${bobStarterShares} sh`
+                : bankBarodaBought > 0
+                  ? `Place GTT Limit: ${Math.floor(bankBarodaRemaining / 263.5)} sh @ ≤ ₹263.50`
+                  : `Step 1: ${bobStarterShares} sh Starter @ ~₹274 today • Step 2: GTT Limit ${bobCoreShares} sh @ ≤ ₹263.50`,
+              timingDistance: bobFalling
+                ? `LTP (₹${bobCmp.toFixed(2)}) is in zone, but momentum is weak (${bobMetrics.momentumPct ?? "—"}%). Wait for stabilization before buying.`
+                : bankBarodaBought > 0
+                  ? `Set GTT limit order for retest dip at ₹263.50.`
+                  : `LTP (~₹${bobCmp.toFixed(2)}) is inside Starter zone (~₹274). Execute 30% starter today; set GTT for remaining 70% @ ≤ ₹263.50.`,
             },
           ]
         : []),
@@ -2142,24 +2192,34 @@ export function CallsClient() {
               cmp: grCmp,
               target: grMetrics.target,
               upside: grMetrics.upside,
-              isReadyToBuy: grInZone,
+              isReadyToBuy: grReady,
               triggerPrice: grTrigger,
               distPct: grDistPct,
               pullbackNeeded: grPullback > 0 ? grPullback : 0,
-              actionBadge: gravitaBought > 0
-                ? (grInZone ? "🟢 READY TO TOP-UP" : "🟡 AWAITING DIP (GTT ARMED)")
-                : (grInZone ? "🟢 READY TO BUY (IN ZONE)" : "🟡 AWAITING DIP (GTT ARMED)"),
-              actionBadgeColor: grInZone ? "bg-emerald-600 text-white border-emerald-700 shadow-2xs font-bold" : "bg-amber-100 text-amber-900 border-amber-300",
-              brokerAction: gravitaBought > 0
-                ? `Place GTT Limit: ${grShares} sh @ ≤ ₹1,440.00`
-                : `Buy ${grShares} sh at CMP / Zone ₹1,450–₹1,520`,
-              timingDistance: gravitaBought > 0
-                ? (grInZone
-                    ? `LTP is at/below Tranche 2 dip level (₹1,440). Ready to top-up.`
-                    : `Tranche 1 filled (3 sh @ ₹1,524). LTP is +${grDistPct}% above Tranche 2 limit. Set GTT for -${grPullback}% dip.`)
-                : (grInZone
-                    ? `LTP (~₹${grCmp.toFixed(2)}) is inside institutional buy zone (≤ ₹1,520). Actionable today.`
-                    : `LTP is +${grDistPct}% above trigger limit. Place GTT for pullback.`),
+              actionBadge: grFalling
+                ? "🟠 IN ZONE — WAIT FOR STABILIZATION"
+                : gravitaBought > 0
+                  ? (grReady ? "🟢 READY TO TOP-UP" : "🟡 AWAITING DIP (GTT ARMED)")
+                  : (grReady ? "🟢 READY TO BUY (IN ZONE)" : "🟡 AWAITING DIP (GTT ARMED)"),
+              actionBadgeColor: grFalling
+                ? "bg-orange-100 text-orange-900 border-orange-300 font-semibold"
+                : grReady
+                  ? "bg-emerald-600 text-white border-emerald-700 shadow-2xs font-bold"
+                  : "bg-amber-100 text-amber-900 border-amber-300",
+              brokerAction: grFalling
+                ? `PAUSE — wait for 2 green closes / base before adding ${grShares} sh`
+                : gravitaBought > 0
+                  ? `Place GTT Limit: ${grShares} sh @ ≤ ₹1,440.00`
+                  : `Buy ${grShares} sh at CMP / Zone ₹1,450–₹1,520`,
+              timingDistance: grFalling
+                ? `LTP (₹${grCmp.toFixed(1)}) is below trigger (₹${grTrigger}), but momentum is weak (${grMetrics.momentumPct ?? "—"}%). Wait for stabilization before buying.`
+                : gravitaBought > 0
+                  ? (grReady
+                      ? `LTP is at/below Tranche 2 dip level (₹1,440) with stable trend. Ready to top-up.`
+                      : `Tranche 1 filled (3 sh @ ₹1,524). LTP is +${grDistPct}% above Tranche 2 limit. Set GTT for -${grPullback}% dip.`)
+                  : (grReady
+                      ? `LTP (~₹${grCmp.toFixed(2)}) is inside institutional buy zone (≤ ₹1,520). Actionable today.`
+                      : `LTP is +${grDistPct}% above trigger limit. Place GTT for pullback.`),
             },
           ]
         : []),
