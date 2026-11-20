@@ -40,6 +40,11 @@ export function RibbonIndices() {
         .then((json) => {
           if (active && json) {
             setData({ nifty: json.nifty ?? null, bankNifty: json.bankNifty ?? null });
+            if (typeof json.fetchedAt === "string") {
+              window.dispatchEvent(
+                new CustomEvent("er:indices-fetched", { detail: json.fetchedAt }),
+              );
+            }
           }
         })
         .catch(() => {});

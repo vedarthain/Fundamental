@@ -15,15 +15,19 @@ import { useEffect, useState } from "react";
  * overwrites it with the real current IST day on mount. Keeps the whole site
  * statically generated while guaranteeing the visible date is always today.
  */
-function istToday(): string {
-  const now = new Date();
-  const datePart = now.toLocaleDateString("en-GB", {
+function istDate(): string {
+  return new Date().toLocaleDateString("en-GB", {
     timeZone: "Asia/Kolkata",
     weekday: "short",
     day: "numeric",
     month: "short",
   });
-  const timePart = now
+}
+
+function fmtIstTime(iso: string): string | null {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d
     .toLocaleTimeString("en-US", {
       timeZone: "Asia/Kolkata",
       hour: "numeric",
@@ -31,20 +35,30 @@ function istToday(): string {
       hour12: true,
     })
     .toUpperCase();
-  return `${datePart} - ${timePart}`;
 }
 
 export default function TodayCell({ initial }: { initial: string }) {
-  const [today, setToday] = useState(initial);
+  const [dateStr, setDateStr] = useState(initial);
+  const [fetchedTime, setFetchedTime] = useState<string | null>(null);
 
   useEffect(() => {
-    // Correct any stale baked-in value, then keep it honest if the tab is
-    // left open across midnight IST.
-    const tick = () => setToday(istToday());
+    const tick = () => setDateStr(istDate());
     tick();
     const id = setInterval(tick, 60_000);
-    return () => clearInterval(id);
+
+    const onFetched = (ev: Event) => {
+      const iso = (ev as CustomEvent<string>).detail;
+      if (typeof iso === "string") {
+        const t = fmtIstTime(iso);
+        if (t) setFetchedTime(t);
+      }
+    };
+    window.addEventListener("er:indices-fetched", onFetched);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener("er:indices-fetched", onFetched);
+    };
   }, []);
 
-  return <>{today}</>;
+  return <>{fetchedTime ? `${dateStr} - ${fetchedTime}` : dateStr}</>;
 }
