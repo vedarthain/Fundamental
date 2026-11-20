@@ -5,9 +5,7 @@ import { StockSearch } from "@/components/StockSearch";
 import { SnapshotRibbon } from "@/components/SnapshotRibbon";
 import { TopNavLinks } from "@/components/TopNavLinks";
 import { BrandLink } from "@/components/BrandLink";
-import { Analytics } from "@vercel/analytics/next";
-import { SpeedInsights } from "@vercel/speed-insights/next";
-import { EngagementTracker } from "@/components/EngagementTracker";
+import { SiteInsightsTracker } from "@/components/SiteInsightsTracker";
 import { QuickAddTradeFab } from "@/components/ManualTradeSheet";
 import "./globals.css";
 
@@ -59,9 +57,7 @@ export default function RootLayout({
         <main className="flex-1 w-full max-w-full min-w-0">{children}</main>
         <SiteFooter />
         <QuickAddTradeFab />
-        <Analytics />
-        <SpeedInsights />
-        <EngagementTracker />
+        <SiteInsightsTracker />
       </body>
     </html>
   );

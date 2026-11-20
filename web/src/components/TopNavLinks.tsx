@@ -562,6 +562,14 @@ function PopupSheet({
                     active={isActive(pathname, "/admin/calls")}
                     onClose={onClose}
                   />
+                  <PopupLink
+                    href="/admin/insights"
+                    label="Insights"
+                    sublabel="Real-User Speed Vitals, Slow Routes & Traffic"
+                    badge="ADMIN"
+                    active={isActive(pathname, "/admin/insights")}
+                    onClose={onClose}
+                  />
                   <button
                     type="button"
                     onClick={onPurgeCache}

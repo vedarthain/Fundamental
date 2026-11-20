@@ -241,6 +241,16 @@ export function UserMenu({ email, displayName, isAdmin = false }: Props) {
                 Calls{" "}
                 <AdminBadge />
               </Link>
+              <Link
+                href="/admin/insights"
+                role="menuitem"
+                onClick={() => setOpen(false)}
+                className="block px-4 py-2.5 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
+                title="Admin · Site Insights & Speed Vitals"
+              >
+                Insights{" "}
+                <AdminBadge />
+              </Link>
               <button
                 type="button"
                 role="menuitem"
