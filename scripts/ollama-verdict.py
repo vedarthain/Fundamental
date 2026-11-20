@@ -425,17 +425,57 @@ def compute_forensic_and_inflection_flags(s: dict) -> dict:
             flags.append(msg)
             cap_reasons.append(msg)
 
-    # 5. Backtest-derived score floors
+    # 5. Cyclical Peak Operating Margin check (OPM Now > 1.25x 3Y Avg OPM)
+    #    Point-in-time backtest: OPM/3Y > 1.25x had only 53.8% win rate and -4.64% median alpha.
+    def _norm_pct(val: Any) -> float | None:
+        if not isinstance(val, (int, float)):
+            return None
+        f = float(val)
+        return f * 100.0 if abs(f) <= 1.0 else f
+
+    opm_now_pct = _norm_pct(metrics.get("opm_now"))
+    opm_3y_pct = _norm_pct(metrics.get("op_margin_3y") if metrics.get("op_margin_3y") is not None else metrics.get("ebitda_margin_3y"))
+    opm_ratio = None
+    cyclical_peak_opm = False
+    if not is_financial and opm_now_pct is not None and opm_3y_pct is not None and opm_3y_pct > 2.0:
+        opm_ratio = round(opm_now_pct / opm_3y_pct, 2)
+        if opm_ratio > 1.25 and (opm_now_pct - opm_3y_pct) >= 3.0:
+            cyclical_peak_opm = True
+            msg = f"Operating margin at potential cyclical peak ({opm_now_pct:.1f}% vs 3Y avg {opm_3y_pct:.1f}%, {opm_ratio:.2f}x)"
+            flags.append(msg)
+            cap_reasons.append(msg)
+
+    # 6. Peer-relative 3M return extension & cash conversion rank
+    pr = s.get("peer_ranks") or {}
+    pr_metrics = pr.get("metrics") or {}
+    ret_3m_rel = _norm_pct(metrics.get("ret_3m_rel"))
+    ret_3m_extended = False
+    if ret_3m_rel is not None and ret_3m_rel >= 18.0:
+        ret_3m_extended = True
+        flags.append(f"Short-term price extended (+{ret_3m_rel:.1f}% 3M relative return vs Nifty — wait for pullback)")
+    else:
+        r3_info = pr_metrics.get("ret_3m_rel") or {}
+        rh, of = r3_info.get("rank_high"), r3_info.get("of")
+        if isinstance(rh, int) and isinstance(of, int) and of >= 4 and (1.0 - (rh - 1) / of) >= 0.75 and (ret_3m_rel or 0) >= 10.0:
+            ret_3m_extended = True
+            flags.append(f"Short-term price extended (top-quartile 3M surge #{rh}/{of}, +{ret_3m_rel:.1f}% vs Nifty)")
+
+    # 7. Backtest-derived score floors
     comp = scores.get("composite_pct")
     qual = scores.get("quality_pct")
+    val_pct = scores.get("valuation_pct")
     mom = scores.get("momentum_pct")
 
     return {
         "pat_yoy_pct": pat_yoy_pct,
         "sales_yoy_pct": sales_yoy_pct,
         "margin_compression_2q": margin_compression_2q,
+        "opm_ratio": opm_ratio,
+        "cyclical_peak_opm": cyclical_peak_opm,
+        "ret_3m_extended": ret_3m_extended,
         "composite_pct": float(comp) if isinstance(comp, (int, float)) else None,
         "quality_pct": float(qual) if isinstance(qual, (int, float)) else None,
+        "valuation_pct": float(val_pct) if isinstance(val_pct, (int, float)) else None,
         "momentum_pct": float(mom) if isinstance(mom, (int, float)) else None,
         "flags": flags,
         "cap_reasons": cap_reasons,
@@ -443,11 +483,12 @@ def compute_forensic_and_inflection_flags(s: dict) -> dict:
 
 
 def apply_accuracy_guardrails(verdict_obj: dict, item: dict) -> list[str]:
-    """Post-LLM deterministic guardrails backed by audit-verdict-accuracy.py backtest:
-      1. Momentum Gate: momentum_pct < 45 -> cap ACCUMULATE/BUY to WATCH (-3.18% alpha drag in backtest)
-      2. Quality/Composite Floor: composite < 65 or quality < 55 -> cap ACCUMULATE/BUY to WATCH
-      3. Earnings/Forensic Shield: severe PAT YoY drop (<=-15%), weak CFO/PAT (<0.7x), promoter dump -> cap to WATCH
-      4. High-Conviction Gate: confidence='high' on ACCUMULATE/BUY requires C>=75, Q>=60, M>=60
+    """Post-LLM deterministic guardrails backed by point-in-time audit-verdict-accuracy.py backtest:
+      1. Quality & Composite Floor: composite < 65 or quality < 55 -> cap ACCUMULATE/BUY to WATCH (Q<55 had -3.77% median alpha)
+      2. Momentum Gate: momentum_pct < 45 -> cap ACCUMULATE/BUY to WATCH
+      3. Cyclical Peak & Forensic Shield: OPM > 1.25x 3Y avg (-4.64% median alpha), PAT YoY <= -15%, CFO/PAT < 0.7x, promoter dump -> cap to WATCH
+      4. Valuation Stretch & 3M Spike Shield: if quality/composite are sound but valuation_pct < 35 (-0.12% alpha) or 3M surge is extended (-2.26% alpha) -> cap ACCUMULATE/BUY to HOLD (await pullback)
+      5. High-Conviction Gate: confidence='high' on ACCUMULATE/BUY requires C>=75, Q>=60, V>=40, 45<=M<78
     Returns list of guardrail notes applied (empty if none fired)."""
     verdict_raw = str(verdict_obj.get("verdict") or "").strip()
     if not verdict_raw:
@@ -459,40 +500,57 @@ def apply_accuracy_guardrails(verdict_obj: dict, item: dict) -> list[str]:
     diag = compute_forensic_and_inflection_flags(item)
     comp = diag["composite_pct"]
     qual = diag["quality_pct"]
+    val_pct = diag["valuation_pct"]
     mom = diag["momentum_pct"]
 
-    downgrade_reasons: list[str] = []
+    watch_reasons: list[str] = []
+    hold_reasons: list[str] = []
+
     if mom is not None and mom < 45:
-        downgrade_reasons.append(f"weak momentum ({mom:.0f}% < 45%) — await trend stabilization")
+        watch_reasons.append(f"weak momentum ({mom:.0f}% < 45%) — await trend stabilization")
     if comp is not None and comp < 65:
-        downgrade_reasons.append(f"composite score below floor ({comp:.0f}% < 65%)")
+        watch_reasons.append(f"composite score below floor ({comp:.0f}% < 65%)")
     if qual is not None and qual < 55:
-        downgrade_reasons.append(f"quality score below floor ({qual:.0f}% < 55%)")
-    downgrade_reasons.extend(diag["cap_reasons"])
+        watch_reasons.append(f"quality score below floor ({qual:.0f}% < 55%)")
+    watch_reasons.extend(diag["cap_reasons"])
+
+    if val_pct is not None and val_pct < 35:
+        hold_reasons.append(f"stretched valuation percentile ({val_pct:.0f}% < 35%) — hold and await multiple normalization")
+    if diag["ret_3m_extended"]:
+        hold_reasons.append("extended short-term 3M rally — hold and wait for pullback to buy-below zone")
 
     applied: list[str] = []
-    if downgrade_reasons:
-        # Preserve the descriptive tail after the first dash/em-dash if present
+    if watch_reasons or hold_reasons:
+        # If any fundamental/quality/forensic/cyclical-peak issue fired, downgrade to WATCH.
+        # Otherwise (business quality is clean, only valuation is stretched or 3M price spiked), downgrade to HOLD.
+        target_call = "WATCH" if watch_reasons else "HOLD"
+        all_reasons = watch_reasons + hold_reasons
+
         if "—" in verdict_raw:
             tail = verdict_raw.split("—", 1)[1].strip()
         elif " - " in verdict_raw:
             tail = verdict_raw.split(" - ", 1)[1].strip()
         else:
             tail = verdict_raw
-        verdict_obj["verdict"] = f"WATCH — {tail}"
+        verdict_obj["verdict"] = f"{target_call} — {tail}"
         if str(verdict_obj.get("confidence") or "").lower() == "high":
             verdict_obj["confidence"] = "medium"
-        reason_str = "; ".join(downgrade_reasons)
+        reason_str = "; ".join(all_reasons)
         trig = str(verdict_obj.get("trigger_text") or "").strip()
-        guard_note = f"[Guardrail: Capped to WATCH — {reason_str}]"
+        guard_note = f"[Guardrail: Capped to {target_call} — {reason_str}]"
         verdict_obj["trigger_text"] = f"{trig} {guard_note}".strip() if trig else guard_note
         applied.append(guard_note)
     else:
         # High-Conviction Gate on surviving ACCUMULATE/BUY
         if str(verdict_obj.get("confidence") or "").lower() == "high":
-            if (comp is not None and comp < 75) or (qual is not None and qual < 60) or (mom is not None and mom < 60):
+            if (
+                (comp is not None and comp < 75)
+                or (qual is not None and qual < 60)
+                or (val_pct is not None and val_pct < 40)
+                or (mom is not None and (mom < 60 or mom >= 78))
+            ):
                 verdict_obj["confidence"] = "medium"
-                applied.append(f"[Guardrail: Confidence capped to medium (C={comp}, Q={qual}, M={mom})]")
+                applied.append(f"[Guardrail: Confidence capped to medium (C={comp}, Q={qual}, V={val_pct}, M={mom})]")
 
     return applied
 
@@ -1296,14 +1354,6 @@ def main() -> int:
                 pts = [val_text if "validated parameters" in p.lower() else p for p in pts]
             verdict_obj["points"] = pts
 
-            # Calculate institutional valuation targets
-            val_res = calculate_stock_valuation(item)
-            verdict_obj["target_price"] = val_res.get("target_price")
-            verdict_obj["buy_below"] = val_res.get("buy_below")
-            verdict_obj["bear_floor"] = val_res.get("bear_floor")
-            verdict_obj["upside_pct"] = val_res.get("upside_pct")
-            verdict_obj["valuation_method"] = val_res.get("valuation_method")
-
             # Enforce backtest-backed deterministic accuracy guardrails
             guardrail_notes = apply_accuracy_guardrails(verdict_obj, item)
             if guardrail_notes:
@@ -1316,6 +1366,16 @@ def main() -> int:
                 if critic_note:
                     with print_lock:
                         print(f"            ⚖️  {sym}: {critic_note}")
+
+            # Calculate institutional valuation targets AFTER guardrails & critic finalize the verdict action
+            val_input = {**item, "verdict": verdict_obj.get("verdict")}
+            val_res = calculate_stock_valuation(val_input)
+            verdict_obj["target_price"] = val_res.get("target_price")
+            verdict_obj["fair_value"] = val_res.get("fair_value")
+            verdict_obj["buy_below"] = val_res.get("buy_below")
+            verdict_obj["bear_floor"] = val_res.get("bear_floor")
+            verdict_obj["upside_pct"] = val_res.get("upside_pct")
+            verdict_obj["valuation_method"] = val_res.get("valuation_method")
 
             # Step 4: DB Load
             db_status = "Saved ✓"

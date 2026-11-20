@@ -68,40 +68,88 @@ def main() -> int:
 
     with psycopg.connect(app_url, row_factory=dict_row) as aconn, psycopg.connect(golden_url, row_factory=dict_row) as gconn:
         with aconn.cursor() as acur, gconn.cursor() as gcur:
-            # 1. Load earliest verdict per (symbol, normalized bucket) that is at least min_days old
+            # 1. Load earliest verdict per symbol that is at least min_days old,
+            #    joined against POINT-IN-TIME app.scores (no look-ahead leakage).
             acur.execute(
                 """
                 WITH latest_panel AS (
-                    SELECT symbol, composite_pct, quality_pct, valuation_pct, momentum_pct,
-                           market_cap_cr, current_price AS panel_ltp
+                    SELECT symbol, market_cap_cr, current_price AS panel_ltp
                     FROM app.cluster_stocks_panel_cache
                     WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_stocks_panel_cache)
+                ),
+                latest_cm AS (
+                    SELECT symbol, cluster_metrics
+                    FROM app.metrics_snapshot
+                    WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM app.metrics_snapshot)
+                ),
+                v_earliest AS (
+                    SELECT DISTINCT ON (v.symbol)
+                        v.symbol,
+                        v.generated_at::date AS call_date,
+                        COALESCE(v.snapshot_date, v.generated_at::date) AS eff_snap,
+                        v.verdict,
+                        v.confidence,
+                        v.anchor_price::float8 AS anchor_price,
+                        v.buy_below::float8 AS buy_below,
+                        v.target_price::float8 AS target_price,
+                        v.bear_floor::float8 AS bear_floor,
+                        v.evidence
+                    FROM app.stock_verdict v
+                    WHERE v.anchor_price IS NOT NULL
+                      AND v.anchor_price > 0
+                      AND v.generated_at::date <= CURRENT_DATE - %s::int
+                    ORDER BY v.symbol, v.generated_at ASC
+                ),
+                pit_scores AS (
+                    SELECT DISTINCT ON (ve.symbol)
+                        ve.symbol,
+                        s.snapshot_date::text AS score_snap_date,
+                        s.composite_pct::float8 AS composite_pct,
+                        s.quality_pct::float8 AS quality_pct,
+                        s.valuation_pct::float8 AS valuation_pct,
+                        s.momentum_pct::float8 AS momentum_pct,
+                        s.cluster_id,
+                        s.quality_components,
+                        s.valuation_components,
+                        s.momentum_components
+                    FROM v_earliest ve
+                    JOIN app.scores s
+                      ON s.symbol = ve.symbol
+                     AND s.snapshot_date <= ve.eff_snap
+                     AND s.snapshot_date >= '2026-10-01'
+                    ORDER BY ve.symbol, s.snapshot_date DESC
                 )
-                SELECT DISTINCT ON (v.symbol)
-                    v.symbol,
-                    v.generated_at::date::text AS call_date,
-                    v.verdict,
-                    v.confidence,
-                    v.anchor_price::float8 AS anchor_price,
-                    v.buy_below::float8 AS buy_below,
-                    v.target_price::float8 AS target_price,
-                    v.bear_floor::float8 AS bear_floor,
+                SELECT
+                    ve.symbol,
+                    ve.call_date::text AS call_date,
+                    ps.score_snap_date,
+                    ve.verdict,
+                    ve.confidence,
+                    ve.anchor_price,
+                    ve.buy_below,
+                    ve.target_price,
+                    ve.bear_floor,
+                    ve.evidence,
                     COALESCE(sm.current_price, lp.panel_ltp)::float8 AS live_ltp,
-                    lp.composite_pct::float8 AS composite_pct,
-                    lp.quality_pct::float8 AS quality_pct,
-                    lp.valuation_pct::float8 AS valuation_pct,
-                    lp.momentum_pct::float8 AS momentum_pct,
+                    ps.composite_pct,
+                    ps.quality_pct,
+                    ps.valuation_pct,
+                    ps.momentum_pct,
+                    ps.cluster_id,
+                    ps.quality_components,
+                    ps.valuation_components,
+                    ps.momentum_components,
+                    lcm.cluster_metrics,
                     lp.market_cap_cr::float8 AS market_cap_cr,
                     COALESCE(u.sector, 'Other') AS sector,
                     COALESCE(u.market_cap_category, 'unknown') AS cap_tier
-                FROM app.stock_verdict v
-                LEFT JOIN latest_panel lp ON lp.symbol = v.symbol
-                LEFT JOIN app.screener_meta sm ON sm.symbol = v.symbol
-                LEFT JOIN app.universe u ON u.symbol = v.symbol
-                WHERE v.anchor_price IS NOT NULL
-                  AND v.anchor_price > 0
-                  AND v.generated_at::date <= CURRENT_DATE - %s::int
-                ORDER BY v.symbol, v.generated_at ASC
+                FROM v_earliest ve
+                LEFT JOIN latest_panel lp ON lp.symbol = ve.symbol
+                LEFT JOIN latest_cm lcm ON lcm.symbol = ve.symbol
+                LEFT JOIN app.screener_meta sm ON sm.symbol = ve.symbol
+                LEFT JOIN app.universe u ON u.symbol = ve.symbol
+                LEFT JOIN pit_scores ps ON ps.symbol = ve.symbol
+                ORDER BY ve.symbol
                 """,
                 (args.min_days,),
             )
@@ -162,6 +210,15 @@ def main() -> int:
                     bare = r["symbol"][:-3] if r["symbol"].endswith(".NS") else r["symbol"]
                     price_stats[bare] = r
 
+    def _norm_pct(x: Any) -> float | None:
+        if x is None:
+            return None
+        try:
+            f = float(x)
+        except (ValueError, TypeError):
+            return None
+        return f * 100.0 if abs(f) <= 1.0 else f
+
     # 4. Compute per-verdict performance
     scored: list[dict[str, Any]] = []
     for v in verdicts:
@@ -186,6 +243,17 @@ def main() -> int:
         hit_target = bool(v["target_price"] and max_hi >= v["target_price"])
         breached_floor = bool(v["bear_floor"] and min_lo <= v["bear_floor"])
 
+        ev = v.get("evidence") or {}
+        cm = v.get("cluster_metrics") or {}
+        qc = v.get("quality_components") or {}
+        mc = v.get("momentum_components") or {}
+
+        opm_now = _norm_pct(ev.get("opm_now") if ev.get("opm_now") is not None else cm.get("opm_now"))
+        opm_3y = _norm_pct(cm.get("op_margin_3y") if cm.get("op_margin_3y") is not None else cm.get("ebitda_margin_3y"))
+        opm_ratio = (opm_now / opm_3y) if (opm_now is not None and opm_3y is not None and opm_3y > 1.0) else None
+        ret_3m_pct = mc.get("ret_3m_rel")
+        cfo_rank = qc.get("cfo_pat_3y") if qc.get("cfo_pat_3y") is not None else qc.get("cfo_ebitda_3y")
+
         scored.append({
             **v,
             "bucket": normalize_call(v["verdict"]),
@@ -196,10 +264,13 @@ def main() -> int:
             "max_gain": max_gain,
             "hit_target": hit_target,
             "breached_floor": breached_floor,
+            "opm_ratio": opm_ratio,
+            "ret_3m_pct": float(ret_3m_pct) if isinstance(ret_3m_pct, (int, float)) else None,
+            "cfo_rank": float(cfo_rank) if isinstance(cfo_rank, (int, float)) else None,
         })
 
     print("=" * 96)
-    print(f"VERDICT ACCURACY AUDIT  |  Evaluated: {len(scored)} stocks (min age >= {args.min_days} days)")
+    print(f"POINT-IN-TIME VERDICT ACCURACY AUDIT  |  Evaluated: {len(scored)} stocks (min age >= {args.min_days} days)")
     print("=" * 96)
 
     # Table 1: By Call Type
@@ -226,32 +297,79 @@ def main() -> int:
             f"{fmt_pct(med_alpha):>9} {fmt_pct(med_dd):>9} {tgt_hit:>7.1f}% {flr_hit:>8.1f}%"
         )
 
-    # Table 2: Inside ACCUMULATE/BUY — By Momentum Bucket
     buys = [r for r in scored if r["bucket"] == "ACCUMULATE/BUY"]
-    print(f"\n2. ACCUMULATE/BUY BREAKDOWN BY MOMENTUM PERCENTILE (N={len(buys)})")
-    print(f"{'Momentum Bucket':<18} {'N':>5} {'Win>0%':>8} {'BeatNifty':>10} {'MedRet':>9} {'MedAlpha':>9} {'MedMaxDD':>9}")
-    print("-" * 76)
-    mom_buckets = [
-        ("< 45 (Weak)", lambda m: m is not None and m < 45),
-        ("45 - 59 (Neutral)", lambda m: m is not None and 45 <= m < 60),
-        ("60 - 74 (Strong)", lambda m: m is not None and 60 <= m < 75),
-        (">= 75 (Leader)", lambda m: m is not None and m >= 75),
-        ("Unknown", lambda m: m is None),
-    ]
-    for label, pred in mom_buckets:
-        rows = [r for r in buys if pred(r["momentum_pct"])]
-        if not rows:
-            continue
-        n = len(rows)
-        win = sum(1 for r in rows if r["ret_pct"] > 0) / n * 100
-        alphas = [r["alpha_pct"] for r in rows if r["alpha_pct"] is not None]
-        beat = (sum(1 for a in alphas if a > 0) / len(alphas) * 100) if alphas else 0.0
-        print(
-            f"{label:<18} {n:>5} {win:>7.1f}% {beat:>9.1f}% "
-            f"{fmt_pct(median_or_none([r['ret_pct'] for r in rows])):>9} "
-            f"{fmt_pct(median_or_none(alphas)):>9} "
-            f"{fmt_pct(median_or_none([r['max_dd'] for r in rows])):>9}"
-        )
+
+    def print_bucket_table(title: str, col_label: str, buckets: list[tuple[str, Any]]) -> None:
+        print(f"\n{title} (N={len(buys)})")
+        print(f"{col_label:<28} {'N':>5} {'Win>0%':>8} {'BeatNifty':>10} {'MedRet':>9} {'MedAlpha':>9} {'MedMaxDD':>9}")
+        print("-" * 86)
+        for label, pred in buckets:
+            rows = [r for r in buys if pred(r)]
+            if not rows:
+                continue
+            n = len(rows)
+            win = sum(1 for r in rows if r["ret_pct"] > 0) / n * 100
+            alphas = [r["alpha_pct"] for r in rows if r["alpha_pct"] is not None]
+            beat = (sum(1 for a in alphas if a > 0) / len(alphas) * 100) if alphas else 0.0
+            print(
+                f"{label:<28} {n:>5} {win:>7.1f}% {beat:>9.1f}% "
+                f"{fmt_pct(median_or_none([r['ret_pct'] for r in rows])):>9} "
+                f"{fmt_pct(median_or_none(alphas)):>9} "
+                f"{fmt_pct(median_or_none([r['max_dd'] for r in rows])):>9}"
+            )
+
+    # Table 2A: Inside ACCUMULATE/BUY — By Point-in-Time Quality & Valuation Percentile
+    print_bucket_table(
+        "2A. ACCUMULATE/BUY BREAKDOWN BY POINT-IN-TIME QUALITY & VALUATION",
+        "Factor Bucket",
+        [
+            ("Quality < 55 (Weak)", lambda r: r["quality_pct"] is not None and r["quality_pct"] < 55),
+            ("Quality >= 55 (Sound)", lambda r: r["quality_pct"] is not None and r["quality_pct"] >= 55),
+            ("Valuation < 35 (Stretched)", lambda r: r["valuation_pct"] is not None and r["valuation_pct"] < 35),
+            ("Valuation 35 - 69 (Fair)", lambda r: r["valuation_pct"] is not None and 35 <= r["valuation_pct"] < 70),
+            ("Valuation >= 70 (Attr.)", lambda r: r["valuation_pct"] is not None and r["valuation_pct"] >= 70),
+            ("CFO Rank < 40 (Weak Cash)", lambda r: r["cfo_rank"] is not None and r["cfo_rank"] < 40),
+            ("CFO Rank >= 40 (Clean Cash)", lambda r: r["cfo_rank"] is not None and r["cfo_rank"] >= 40),
+        ],
+    )
+
+    # Table 2B: Inside ACCUMULATE/BUY — By Point-in-Time Momentum & Cyclical Peak
+    print_bucket_table(
+        "2B. ACCUMULATE/BUY BREAKDOWN BY MOMENTUM, 3M SPIKE & CYCLICAL OPM PEAK",
+        "Regime Bucket",
+        [
+            ("Mom < 45 (Lagging)", lambda r: r["momentum_pct"] is not None and r["momentum_pct"] < 45),
+            ("Mom 45 - 59 (Base/Neutral)", lambda r: r["momentum_pct"] is not None and 45 <= r["momentum_pct"] < 60),
+            ("Mom 60 - 74 (Strong)", lambda r: r["momentum_pct"] is not None and 60 <= r["momentum_pct"] < 75),
+            ("Mom >= 75 (Extended Run)", lambda r: r["momentum_pct"] is not None and r["momentum_pct"] >= 75),
+            ("3M Rel Rank < 75 (Unextended)", lambda r: r["ret_3m_pct"] is not None and r["ret_3m_pct"] < 75),
+            ("3M Rel Rank >= 75 (Hot Spike)", lambda r: r["ret_3m_pct"] is not None and r["ret_3m_pct"] >= 75),
+            ("OPM/3Y <= 1.25x (Normal)", lambda r: r["opm_ratio"] is not None and r["opm_ratio"] <= 1.25),
+            ("OPM/3Y > 1.25x (Peak Margin)", lambda r: r["opm_ratio"] is not None and r["opm_ratio"] > 1.25),
+        ],
+    )
+
+    # Table 2C: Guardrail Separation (Clean Surviving vs Capped)
+    def _survives_pit_guardrails(r: dict[str, Any]) -> bool:
+        if (r["composite_pct"] or 0) < 65 or (r["quality_pct"] or 0) < 55 or (r["valuation_pct"] or 0) < 35:
+            return False
+        if r["opm_ratio"] is not None and r["opm_ratio"] > 1.25:
+            return False
+        if r["ret_3m_pct"] is not None and r["ret_3m_pct"] >= 75:
+            return False
+        if r["cfo_rank"] is not None and r["cfo_rank"] < 40:
+            return False
+        return True
+
+    print_bucket_table(
+        "2C. POINT-IN-TIME GUARDRAIL SEPARATION (SURVIVING vs CAPPED TO HOLD/WATCH)",
+        "Cohort",
+        [
+            ("All Raw ACCUMULATE/BUY", lambda r: True),
+            ("Surviving Guardrails (Clean)", _survives_pit_guardrails),
+            ("Capped by Guardrails", lambda r: not _survives_pit_guardrails(r)),
+        ],
+    )
 
     # Table 3: Inside ACCUMULATE/BUY — By Sector
     print("\n3. ACCUMULATE/BUY BREAKDOWN BY SECTOR")

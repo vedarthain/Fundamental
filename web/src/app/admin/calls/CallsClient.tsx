@@ -730,6 +730,19 @@ export function CallsClient({
 
   useEffect(() => {
     fetchData();
+    const id = setInterval(() => {
+      fetchData(true);
+    }, 5 * 60 * 1000);
+    const onIndicesFetched = () => {
+      if (clientCallsCache && Date.now() - clientCallsCache.ts >= 60 * 1000) {
+        fetchData(true);
+      }
+    };
+    window.addEventListener("er:indices-fetched", onIndicesFetched);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener("er:indices-fetched", onIndicesFetched);
+    };
   }, [fetchData]);
 
   // User take / exit action handlers

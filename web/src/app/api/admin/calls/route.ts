@@ -241,21 +241,31 @@ export async function GET(request: Request) {
     const existing = callsMemoryCache.get(cacheKey);
 
     if (!forceRefresh && existing && now - existing.fetchedAt < CALLS_STALE_MS) {
-      // Serve immediately; if past fresh TTL, refresh silently in background
-      if (now - existing.fetchedAt >= CALLS_FRESH_MS && !existing.refreshing) {
-        existing.refreshing = computeCallsPayload(dateParam)
-          .then((fresh) => {
-            callsMemoryCache.set(cacheKey, { payload: fresh, fetchedAt: Date.now() });
-          })
-          .catch(() => {})
-          .finally(() => {
-            const cur = callsMemoryCache.get(cacheKey);
-            if (cur) cur.refreshing = undefined;
-          });
+      // Check if /api/cron/intraday-equity fired since this cache entry was built
+      const latestMeta = await sql<{ ts: number | null }[]>`
+        SELECT (EXTRACT(EPOCH FROM MAX(price_fetched_at)) * 1000)::float8 AS ts
+          FROM app.screener_meta
+         WHERE price_fetched_at IS NOT NULL
+      `.catch(() => [] as { ts: number | null }[]);
+      const latestEquityMs = latestMeta[0]?.ts ?? 0;
+
+      if (latestEquityMs <= existing.fetchedAt) {
+        // Serve immediately; if past fresh TTL, refresh silently in background
+        if (now - existing.fetchedAt >= CALLS_FRESH_MS && !existing.refreshing) {
+          existing.refreshing = computeCallsPayload(dateParam)
+            .then((fresh) => {
+              callsMemoryCache.set(cacheKey, { payload: fresh, fetchedAt: Date.now() });
+            })
+            .catch(() => {})
+            .finally(() => {
+              const cur = callsMemoryCache.get(cacheKey);
+              if (cur) cur.refreshing = undefined;
+            });
+        }
+        return NextResponse.json(existing.payload, {
+          headers: { "Cache-Control": "no-store" },
+        });
       }
-      return NextResponse.json(existing.payload, {
-        headers: { "Cache-Control": "no-store" },
-      });
     }
 
     const payload = await computeCallsPayload(dateParam);

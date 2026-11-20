@@ -62,12 +62,14 @@ export function formatFetchedAt(iso: string): string {
       dt.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }) ===
       now.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 
-    const timeStr = dt.toLocaleTimeString("en-IN", {
-      timeZone: "Asia/Kolkata",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    });
+    const timeStr = dt
+      .toLocaleTimeString("en-US", {
+        timeZone: "Asia/Kolkata",
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+      })
+      .toUpperCase();
 
     if (isToday) {
       return `Today ${timeStr} IST`;

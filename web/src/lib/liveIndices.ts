@@ -266,12 +266,26 @@ export async function getLiveIndices(): Promise<LiveIndicesPayload> {
   const source: LiveIndicesPayload["source"] =
     gotUpstox && usedYahoo ? "mixed" : gotUpstox ? "upstox" : "yahoo";
 
+  let equityFetchedIso: string | null = null;
+  try {
+    const r = await sql<{ ts: string | null }[]>`
+      SELECT MAX(price_fetched_at)::text AS ts
+        FROM app.screener_meta
+       WHERE price_fetched_at IS NOT NULL
+    `;
+    if (r[0]?.ts) {
+      equityFetchedIso = r[0].ts;
+    }
+  } catch {
+    // ignore
+  }
+
   const payload: LiveIndicesPayload = {
     nifty: byCode.NIFTY50 ?? cache?.payload.nifty ?? null,
     bankNifty: byCode.NIFTYBANK ?? cache?.payload.bankNifty ?? null,
     byCode: Object.keys(byCode).length > 0 ? byCode : (cache?.payload.byCode ?? {}),
     source,
-    fetchedAt: new Date().toISOString(),
+    fetchedAt: equityFetchedIso ?? new Date().toISOString(),
   };
 
   if (payload.nifty || payload.bankNifty) {
