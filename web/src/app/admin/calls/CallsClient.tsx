@@ -45,6 +45,8 @@ import { PriceChart } from "@/components/PriceChart";
 import type { TradeMark } from "@/app/tools/scanner/CandleChart";
 import { formatFetchedAt } from "@/components/IntradayPriceBadge";
 import { CompanyProfile } from "@/components/CompanyProfile";
+import { ClusterVerdictsClient, type SectorTreeNode } from "../verdicts/ClusterVerdictsClient";
+import type { ClusterVerdictRow } from "@/app/api/admin/cluster-verdicts/route";
 import CapTierBadge, { type CapCategory } from "@/components/CapTierBadge";
 import { parseParameterItems, getModelAnalysis, ModelCard } from "@/components/VerdictPanel";
 import type { ClusterGem, PortfolioActionCall, IdeaHorizon, MonthlyAuditRow, MonthlyTradeItem } from "@/app/api/admin/calls/route";
@@ -464,7 +466,16 @@ const BATCH_DEFINITIONS = [
   { key: "2026-10-25", label: "Week 0: Sun, 25 Oct 2026 (7:00 PM)", shortLabel: "Wk 0 (25 Oct)", dateMatch: "2026-10-25" },
 ];
 
-export function CallsClient() {
+export function CallsClient({
+  verdictSectors = [],
+  verdictInitialClusterId = null,
+  verdictInitialItems = [],
+}: {
+  verdictSectors?: SectorTreeNode[];
+  verdictInitialClusterId?: string | null;
+  verdictInitialItems?: ClusterVerdictRow[];
+} = {}) {
+  const [deskSection, setDeskSection] = useState<"calls" | "verdicts">("calls");
   const [data, setData] = useState<{
     summary: {
       totalGems: number;
@@ -2737,87 +2748,65 @@ export function CallsClient() {
   return (
     <div className="space-y-2.5 text-slate-900">
       {/* ── Top Header & Executive Controls ─────────────────────────────────── */}
-      <div className="bg-white border hairline rounded-lg px-2.5 py-2 shadow-2xs space-y-2">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <div className="flex items-center gap-1.5 shrink-0">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-            <h1 className="text-sm sm:text-base font-bold tracking-tight text-slate-900 font-sans whitespace-nowrap">
-              Calls Desk &amp; Verdicts
-            </h1>
+      <div className="bg-white border hairline rounded-lg px-2 py-1 shadow-2xs space-y-1">
+        <div className="flex items-center justify-between flex-wrap gap-1.5">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5 shrink-0">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+              <h1 className="text-[13px] sm:text-sm font-bold tracking-tight text-slate-900 font-sans whitespace-nowrap">
+                Calls Desk &amp; Verdicts
+              </h1>
+            </div>
+
+            {/* Primary Desk Switcher: Calls vs Verdict */}
+            <div className="flex items-center bg-slate-100 p-0.5 rounded-md border hairline text-[11px] shrink-0">
+              <button
+                type="button"
+                onClick={() => setDeskSection("calls")}
+                className={`px-2.5 py-0.5 rounded text-[11px] font-semibold transition-all whitespace-nowrap ${
+                  deskSection === "calls"
+                    ? "bg-slate-900 text-white shadow-2xs"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                Calls
+              </button>
+              <button
+                type="button"
+                onClick={() => setDeskSection("verdicts")}
+                className={`px-2.5 py-0.5 rounded text-[11px] font-semibold transition-all whitespace-nowrap ${
+                  deskSection === "verdicts"
+                    ? "bg-slate-900 text-white shadow-2xs"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                Verdict
+              </button>
+            </div>
           </div>
 
-          {/* Scope Switchers, Search & Batches */}
-          <div className="flex items-center gap-1.5 flex-wrap justify-end min-w-0">
-            {/* View Mode Switcher: Detail vs Table vs Audit vs Corpus */}
-            <div className="flex items-center bg-slate-100 p-0.5 rounded-md border hairline text-xs shrink-0">
-            <button
-              onClick={() => setViewMode("detail")}
-              className={`px-2 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 whitespace-nowrap ${
-                viewMode === "detail"
-                  ? "bg-white text-slate-900 shadow-2xs font-semibold"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-              title="Interactive detail workstation with charts, moving averages, and filings"
-            >
-              <LayoutDashboard className="w-3 h-3" />
-              <span>Detail</span>
-            </button>
-            <button
-              onClick={() => setViewMode("table")}
-              className={`px-2 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 whitespace-nowrap ${
-                viewMode === "table"
-                  ? "bg-indigo-700 text-white shadow-2xs font-semibold"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-              title="Master deployment table sheet with sorting and allocation targets"
-            >
-              <TableIcon className="w-3 h-3" />
-              <span>Table</span>
-            </button>
-            <button
-              onClick={() => setViewMode("audit")}
-              className={`px-2 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 whitespace-nowrap ${
-                viewMode === "audit"
-                  ? "bg-amber-600 text-white shadow-2xs font-semibold"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-              title="Overall Per-Month Capital & Actual Trades Audit Ledger"
-            >
-              <CheckSquare className={`w-3 h-3 ${viewMode === "audit" ? "text-white" : "text-amber-600"}`} />
-              <span>Audit</span>
-            </button>
-            <button
-              onClick={() => setViewMode("corpus")}
-              className={`px-2 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 whitespace-nowrap ${
-                viewMode === "corpus"
-                  ? "bg-emerald-600 text-white shadow-2xs font-semibold"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-              title="Corpus Growth & Dynamic Investment Planner"
-            >
-              <TrendingUp className={`w-3 h-3 ${viewMode === "corpus" ? "text-white" : "text-emerald-600"}`} />
-              <span>Corpus</span>
-            </button>
-          </div>
+          {/* Right-side Calls Actions (Refresh, CSV, Batches) — hidden when Verdict is active */}
+          {deskSection === "calls" && (
+          <div className="flex items-center gap-1 flex-wrap justify-end min-w-0">
 
           <button
             onClick={() => fetchData(true)}
             disabled={mounted && loading}
             suppressHydrationWarning
-            className="p-1.5 rounded text-slate-600 hover:bg-slate-100 border hairline shadow-2xs transition-colors shrink-0"
+            className="p-1 rounded text-slate-600 hover:bg-slate-100 border hairline shadow-2xs transition-colors shrink-0"
             title="Refresh Calls Feed"
           >
-            <RotateCcw className={`w-3.5 h-3.5 ${mounted && loading ? "animate-spin" : ""}`} />
+            <RotateCcw className={`w-3 h-3 ${mounted && loading ? "animate-spin" : ""}`} />
           </button>
 
           <button
             type="button"
             onClick={handleExportCsv}
             disabled={filteredCalls.length === 0}
-            className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-40 border hairline bg-white shadow-2xs transition-colors shrink-0"
+            className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-40 border hairline bg-white shadow-2xs transition-colors shrink-0"
             title={`Export ${filteredCalls.length} filtered calls to CSV`}
           >
-            <Download className="w-3.5 h-3.5 text-emerald-700" />
+            <Download className="w-3 h-3 text-emerald-700" />
             <span>CSV</span>
           </button>
 
@@ -2826,9 +2815,9 @@ export function CallsClient() {
             <button
               type="button"
               onClick={() => setIsDateDropdownOpen(!isDateDropdownOpen)}
-              className="flex items-center gap-1 bg-slate-50 hover:bg-slate-100 border hairline rounded px-2 py-1 text-xs font-medium text-slate-800 transition-colors shadow-2xs whitespace-nowrap"
+              className="flex items-center gap-1 bg-slate-50 hover:bg-slate-100 border hairline rounded px-1.5 py-0.5 text-[11px] font-medium text-slate-800 transition-colors shadow-2xs whitespace-nowrap"
             >
-              <Calendar className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+              <Calendar className="w-3 h-3 text-indigo-600 shrink-0" />
               <span>{batchButtonLabel}</span>
               <ChevronDown className="w-3 h-3 text-slate-500" />
             </button>
@@ -2894,14 +2883,68 @@ export function CallsClient() {
             )}
             </div>
           </div>
+          )}
         </div>
 
-        {/* Row 2: Unified Filter Strip: All, Top, New, Buy, Watch, Hold, Sell, Portfolio */}
-        <div className="flex items-center justify-between flex-wrap gap-2 pt-1.5 border-t border-slate-100">
-          <div className="flex items-center flex-wrap bg-slate-100 p-0.5 rounded-md border hairline text-xs gap-0.5">
+        {/* Row 2: Calls View Switcher (Detail/Table/Audit/Corpus) + Filter Strip — blank when Verdict is selected */}
+        {deskSection === "calls" && (
+        <div className="flex items-center justify-between flex-wrap gap-1.5 pt-1 border-t border-slate-100">
+          {/* View Mode Switcher: Detail vs Table vs Audit vs Corpus */}
+          <div className="flex items-center bg-slate-100 p-0.5 rounded-md border hairline text-[11px] shrink-0">
+            <button
+              onClick={() => setViewMode("detail")}
+              className={`px-1.5 py-0.5 rounded text-[11px] font-medium transition-all flex items-center gap-1 whitespace-nowrap ${
+                viewMode === "detail"
+                  ? "bg-white text-slate-900 shadow-2xs font-semibold"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+              title="Interactive detail workstation with charts, moving averages, and filings"
+            >
+              <LayoutDashboard className="w-3 h-3" />
+              <span>Detail</span>
+            </button>
+            <button
+              onClick={() => setViewMode("table")}
+              className={`px-1.5 py-0.5 rounded text-[11px] font-medium transition-all flex items-center gap-1 whitespace-nowrap ${
+                viewMode === "table"
+                  ? "bg-indigo-700 text-white shadow-2xs font-semibold"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+              title="Master deployment table sheet with sorting and allocation targets"
+            >
+              <TableIcon className="w-3 h-3" />
+              <span>Table</span>
+            </button>
+            <button
+              onClick={() => setViewMode("audit")}
+              className={`px-1.5 py-0.5 rounded text-[11px] font-medium transition-all flex items-center gap-1 whitespace-nowrap ${
+                viewMode === "audit"
+                  ? "bg-amber-600 text-white shadow-2xs font-semibold"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+              title="Overall Per-Month Capital & Actual Trades Audit Ledger"
+            >
+              <CheckSquare className={`w-3 h-3 ${viewMode === "audit" ? "text-white" : "text-amber-600"}`} />
+              <span>Audit</span>
+            </button>
+            <button
+              onClick={() => setViewMode("corpus")}
+              className={`px-1.5 py-0.5 rounded text-[11px] font-medium transition-all flex items-center gap-1 whitespace-nowrap ${
+                viewMode === "corpus"
+                  ? "bg-emerald-600 text-white shadow-2xs font-semibold"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+              title="Corpus Growth & Dynamic Investment Planner"
+            >
+              <TrendingUp className={`w-3 h-3 ${viewMode === "corpus" ? "text-white" : "text-emerald-600"}`} />
+              <span>Corpus</span>
+            </button>
+          </div>
+
+          <div className="flex items-center flex-wrap bg-slate-100 p-0.5 rounded-md border hairline text-[11px] gap-0.5">
             <button
               onClick={() => { setScope("all"); setActionFilter("ALL"); }}
-              className={`px-2 py-1 rounded text-xs font-medium transition-all whitespace-nowrap ${
+              className={`px-1.5 py-0.5 rounded text-[11px] font-medium transition-all whitespace-nowrap ${
                 scope === "all" && actionFilter === "ALL" ? "bg-white text-slate-900 shadow-2xs font-semibold" : "text-slate-600 hover:text-slate-900"
               }`}
             >
@@ -2909,7 +2952,7 @@ export function CallsClient() {
             </button>
             <button
               onClick={() => { setScope("curated"); setActionFilter("ALL"); }}
-              className={`px-2 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 whitespace-nowrap ${
+              className={`px-1.5 py-0.5 rounded text-[11px] font-medium transition-colors flex items-center gap-1 whitespace-nowrap ${
                 scope === "curated" ? "bg-indigo-700 text-white shadow-2xs font-semibold" : "text-indigo-800 hover:bg-indigo-100"
               }`}
             >
@@ -2918,7 +2961,7 @@ export function CallsClient() {
             </button>
             <button
               onClick={() => { setScope("new"); setActionFilter("ALL"); }}
-              className={`px-2 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 whitespace-nowrap ${
+              className={`px-1.5 py-0.5 rounded text-[11px] font-medium transition-colors flex items-center gap-1 whitespace-nowrap ${
                 scope === "new" ? "bg-violet-700 text-white shadow-2xs font-semibold" : "text-violet-800 hover:bg-violet-100"
               }`}
               title={latestBatchDate ? `Latest batch: ${latestBatchDate}` : "Latest weekend run calls"}
@@ -2928,7 +2971,7 @@ export function CallsClient() {
             </button>
             <button
               onClick={() => { setScope("all"); setActionFilter("BUY"); }}
-              className={`px-2 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 whitespace-nowrap ${
+              className={`px-1.5 py-0.5 rounded text-[11px] font-medium transition-all flex items-center gap-1 whitespace-nowrap ${
                 actionFilter === "BUY" ? "bg-emerald-600 text-white shadow-2xs font-semibold" : "text-emerald-700 hover:text-emerald-900"
               }`}
               title="Stocks in Buy / Accumulate zone"
@@ -2938,7 +2981,7 @@ export function CallsClient() {
             </button>
             <button
               onClick={() => { setScope("all"); setActionFilter("WATCH"); }}
-              className={`px-2 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 whitespace-nowrap ${
+              className={`px-1.5 py-0.5 rounded text-[11px] font-medium transition-all flex items-center gap-1 whitespace-nowrap ${
                 actionFilter === "WATCH" ? "bg-amber-600 text-white shadow-2xs font-semibold" : "text-amber-700 hover:text-amber-900"
               }`}
               title="High-quality stocks to watch for pullback or better entry"
@@ -2948,7 +2991,7 @@ export function CallsClient() {
             </button>
             <button
               onClick={() => { setScope("portfolio"); setActionFilter("HOLD"); }}
-              className={`px-2 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 whitespace-nowrap ${
+              className={`px-1.5 py-0.5 rounded text-[11px] font-medium transition-all flex items-center gap-1 whitespace-nowrap ${
                 actionFilter === "HOLD" ? "bg-blue-600 text-white shadow-2xs font-semibold" : "text-blue-700 hover:text-blue-900"
               }`}
               title="Healthy holdings in your portfolio to continue holding"
@@ -2958,7 +3001,7 @@ export function CallsClient() {
             </button>
             <button
               onClick={() => { setScope("portfolio"); setActionFilter("SELL"); }}
-              className={`px-2 py-1 rounded text-xs font-medium transition-all flex items-center gap-1 whitespace-nowrap ${
+              className={`px-1.5 py-0.5 rounded text-[11px] font-medium transition-all flex items-center gap-1 whitespace-nowrap ${
                 actionFilter === "SELL" || actionFilter === "PRIORITY_SELL"
                   ? "bg-rose-600 text-white shadow-2xs font-bold ring-2 ring-rose-400"
                   : "text-rose-700 hover:text-rose-900 bg-rose-50/70 hover:bg-rose-100"
@@ -2970,7 +3013,7 @@ export function CallsClient() {
             </button>
             <button
               onClick={() => { setScope("portfolio"); setActionFilter("ALL"); }}
-              className={`px-2 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 whitespace-nowrap ${
+              className={`px-1.5 py-0.5 rounded text-[11px] font-medium transition-colors flex items-center gap-1 whitespace-nowrap ${
                 scope === "portfolio" ? "bg-slate-900 text-white shadow-2xs font-semibold" : "text-slate-700 hover:bg-slate-200"
               }`}
             >
@@ -2979,7 +3022,17 @@ export function CallsClient() {
             </button>
           </div>
         </div>
+        )}
       </div>
+
+      {deskSection === "verdicts" ? (
+        <ClusterVerdictsClient
+          sectors={verdictSectors}
+          initialClusterId={verdictInitialClusterId}
+          initialItems={verdictInitialItems}
+        />
+      ) : (
+        <>
 
       {actionFilter === "PRIORITY_SELL" && (
         <div className="bg-slate-900 border border-slate-800 text-white rounded-lg p-2.5 sm:px-3 sm:py-2.5 shadow-2xs text-xs space-y-2">
@@ -6309,6 +6362,8 @@ export function CallsClient() {
           )}
         </div>
       </div>
+      )}
+        </>
       )}
     </div>
   );

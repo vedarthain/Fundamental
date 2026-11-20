@@ -12,6 +12,7 @@ export async function GET() {
     {
       nifty: payload.nifty,
       bankNifty: payload.bankNifty,
+      byCode: payload.byCode,
       source: payload.source,
       fetchedAt: payload.fetchedAt,
     },

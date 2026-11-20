@@ -79,7 +79,39 @@ function fmtLevel(v: number): string {
 
 // ── Board ───────────────────────────────────────────────────────────────────
 export function IndicesClient({ indices, isSignedIn = true }: { indices: IndexBoardRow[]; isSignedIn?: boolean }) {
-  const byCode = useMemo(() => new Map(indices.map((r) => [r.code, r])), [indices]);
+  const [liveByCode, setLiveByCode] = useState<Record<string, { price: number; changePct: number }>>({});
+
+  useEffect(() => {
+    let active = true;
+    const load = () => {
+      fetch("/api/market-indices")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((json) => {
+          if (active && json?.byCode) {
+            setLiveByCode(json.byCode);
+          }
+        })
+        .catch(() => {});
+    };
+    load();
+    const id = setInterval(load, 5 * 60 * 1000);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, []);
+
+  const byCode = useMemo(() => {
+    const map = new Map<string, IndexBoardRow>();
+    for (const r of indices) {
+      const lq = liveByCode[r.code];
+      map.set(
+        r.code,
+        lq ? { ...r, close: lq.price, pct_change_1d: lq.changePct } : r,
+      );
+    }
+    return map;
+  }, [indices, liveByCode]);
   // Default to the first available code (prefer NIFTY50).
   const firstCode = byCode.has("NIFTY50") ? "NIFTY50" : indices[0]?.code ?? "";
   const [selected, setSelected] = useState<string>(firstCode);

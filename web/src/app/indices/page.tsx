@@ -13,9 +13,10 @@
  */
 import { unstable_cache } from "next/cache";
 import { sql } from "@/lib/db";
+import { getLiveIndices } from "@/lib/liveIndices";
 import { IndicesClient, type IndexBoardRow } from "./IndicesClient";
 
-export const revalidate = 3600;
+export const revalidate = 300;
 
 async function loadIndices(): Promise<IndexBoardRow[]> {
   // Latest level + trailing-window changes per index. LATERAL look-backs find
@@ -64,7 +65,7 @@ async function loadIndices(): Promise<IndexBoardRow[]> {
 }
 
 const getCachedIndices = unstable_cache(loadIndices, ["indices-board"], {
-  revalidate: 3600,
+  revalidate: 300,
   tags: ["market"],
 });
 
@@ -77,7 +78,20 @@ export const metadata = {
 import { getSession } from "@/lib/auth";
 
 export default async function IndicesPage() {
-  const [indices, session] = await Promise.all([getCachedIndices(), getSession()]);
+  const [eodIndices, live, session] = await Promise.all([
+    getCachedIndices(),
+    getLiveIndices().catch(() => null),
+    getSession(),
+  ]);
+  const indices: IndexBoardRow[] = eodIndices.map((row) => {
+    const lq = live?.byCode[row.code];
+    if (!lq) return row;
+    return {
+      ...row,
+      close: lq.price,
+      pct_change_1d: lq.changePct,
+    };
+  });
   const isSignedIn = Boolean(session);
   return (
     <div className="mx-auto max-w-[1300px] px-4 md:px-6 py-6 md:py-8">
