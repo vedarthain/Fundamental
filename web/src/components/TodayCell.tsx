@@ -16,12 +16,22 @@ import { useEffect, useState } from "react";
  * statically generated while guaranteeing the visible date is always today.
  */
 function istToday(): string {
-  return new Date().toLocaleDateString("en-GB", {
+  const now = new Date();
+  const datePart = now.toLocaleDateString("en-GB", {
     timeZone: "Asia/Kolkata",
     weekday: "short",
     day: "numeric",
     month: "short",
   });
+  const timePart = now
+    .toLocaleTimeString("en-US", {
+      timeZone: "Asia/Kolkata",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    })
+    .toUpperCase();
+  return `${datePart} - ${timePart}`;
 }
 
 export default function TodayCell({ initial }: { initial: string }) {
