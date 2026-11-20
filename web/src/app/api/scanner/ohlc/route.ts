@@ -36,6 +36,9 @@ const MIN_DAYS = 5; // 1W window
 // clamp here to ~30Y so full listed history comes back (weekly-rolled past ~2Y).
 const MAX_DAYS = 11000;
 
+const OHLC_CACHE_TTL_MS = 5 * 60 * 1000;
+const ohlcMemoryCache = new Map<string, { ts: number; data: Awaited<ReturnType<typeof loadCandles>> }>();
+
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const rawSyms = (url.searchParams.get("syms") ?? "").trim();
@@ -54,7 +57,19 @@ export async function GET(req: Request) {
     : 180;
 
   const raw = url.searchParams.get("raw") === "1";
+  const cacheKey = `${syms.join(",")}::${days}::${raw ? "1" : "0"}`;
+  const now = Date.now();
+  const cached = ohlcMemoryCache.get(cacheKey);
+  if (cached && now - cached.ts < OHLC_CACHE_TTL_MS) {
+    return NextResponse.json({ data: cached.data });
+  }
 
   const data = await loadCandles(syms, days, { rollup: !raw });
+  if (ohlcMemoryCache.size > 400) {
+    const oldestKey = ohlcMemoryCache.keys().next().value;
+    if (oldestKey) ohlcMemoryCache.delete(oldestKey);
+  }
+  ohlcMemoryCache.set(cacheKey, { ts: now, data });
   return NextResponse.json({ data });
 }
+

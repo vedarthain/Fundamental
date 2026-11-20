@@ -204,6 +204,38 @@ function formatShortDate(iso: string): string {
   return `${day} '${yr}`;
 }
 
+const CLIENT_CANDLE_TTL_MS = 5 * 60 * 1000;
+const clientCandleCache = new Map<string, { ts: number; candles: Candle[] }>();
+const clientCandleInflight = new Map<string, Promise<Candle[]>>();
+
+function storeClientCandleCache(key: string, candles: Candle[]) {
+  if (clientCandleCache.size > 150) {
+    const oldest = clientCandleCache.keys().next().value;
+    if (oldest) clientCandleCache.delete(oldest);
+  }
+  clientCandleCache.set(key, { ts: Date.now(), candles });
+}
+
+export function prefetchPriceChartCandles(symbol: string, fetchDays = 11000): void {
+  if (!symbol || typeof window === "undefined") return;
+  const key = `${symbol}::${fetchDays}`;
+  const hit = clientCandleCache.get(key);
+  if (hit && Date.now() - hit.ts < CLIENT_CANDLE_TTL_MS) return;
+  if (clientCandleInflight.has(key)) return;
+  const p = fetch(`/api/scanner/ohlc?syms=${encodeURIComponent(symbol)}&days=${fetchDays}&raw=1`)
+    .then((r) => (r.ok ? r.json() : null))
+    .then((j: { data?: Record<string, Candle[]> } | null) => {
+      const rows = j?.data?.[symbol] ?? [];
+      storeClientCandleCache(key, rows);
+      return rows;
+    })
+    .catch(() => [] as Candle[])
+    .finally(() => {
+      clientCandleInflight.delete(key);
+    });
+  clientCandleInflight.set(key, p);
+}
+
 export function PriceChart({
   candles: candlesProp,
   currentPrice,
@@ -279,12 +311,22 @@ export function PriceChart({
   const [range, setRange] = useState<Range>("1Y");
   const router = useRouter();
 
-  // Self-fetch candles when not passed as a server prop. Runs once per symbol.
-  const [fetched, setFetched] = useState<Candle[] | null>(null);
+  const cacheKey = symbol ? `${symbol}::${fetchDays}` : "";
+  // Self-fetch candles when not passed as a server prop. Uses in-memory cache for 0ms switching.
+  const [fetched, setFetched] = useState<Candle[] | null>(() => {
+    if (candlesProp || !cacheKey) return null;
+    const hit = clientCandleCache.get(cacheKey);
+    return hit && Date.now() - hit.ts < CLIENT_CANDLE_TTL_MS ? hit.candles : null;
+  });
   useEffect(() => {
     if (candlesProp || !symbol) return;
+    const key = `${symbol}::${fetchDays}`;
+    const hit = clientCandleCache.get(key);
+    if (hit && Date.now() - hit.ts < CLIENT_CANDLE_TTL_MS) {
+      setFetched(hit.candles);
+      return;
+    }
     const controller = new AbortController();
-    setFetched(null);
     // raw=1 IS LOAD-BEARING, NOT AN OPTIMISATION. fetchDays is ~11,000 so the
     // route's own weekly rollup would otherwise fire on every single request,
     // and this component slices per range AFTER the fetch — so 1W, 1M, 3M and
@@ -296,7 +338,11 @@ export function PriceChart({
     })
       .then((r) => (r.ok ? r.json() : null))
       .then((j: { data?: Record<string, Candle[]> } | null) => {
-        if (!controller.signal.aborted) setFetched(j?.data?.[symbol] ?? []);
+        if (!controller.signal.aborted) {
+          const rows = j?.data?.[symbol] ?? [];
+          storeClientCandleCache(key, rows);
+          setFetched(rows);
+        }
       })
       .catch(() => {
         if (!controller.signal.aborted) setFetched([]);

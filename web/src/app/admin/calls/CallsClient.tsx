@@ -41,7 +41,7 @@ import {
   Download,
   X,
 } from "lucide-react";
-import { PriceChart } from "@/components/PriceChart";
+import { PriceChart, prefetchPriceChartCandles } from "@/components/PriceChart";
 import type { TradeMark } from "@/app/tools/scanner/CandleChart";
 import { formatFetchedAt } from "@/components/IntradayPriceBadge";
 import { CompanyProfile } from "@/components/CompanyProfile";
@@ -466,6 +466,38 @@ const BATCH_DEFINITIONS = [
   { key: "2026-10-25", label: "Week 0: Sun, 25 Oct 2026 (7:00 PM)", shortLabel: "Wk 0 (25 Oct)", dateMatch: "2026-10-25" },
 ];
 
+const CLIENT_CALLS_CACHE_TTL_MS = 5 * 60 * 1000;
+let clientCallsCache: { ts: number; data: any } | null = null;
+
+const CLIENT_STOCK_CTX_TTL_MS = 3 * 60 * 1000;
+const clientStockContextCache = new Map<string, { ts: number; data: StockContext }>();
+const clientStockContextInflight = new Map<string, Promise<StockContext | null>>();
+
+function prefetchStockResources(symbol: string): void {
+  if (!symbol || typeof window === "undefined") return;
+  prefetchPriceChartCandles(symbol);
+  const hit = clientStockContextCache.get(symbol);
+  if (hit && Date.now() - hit.ts < CLIENT_STOCK_CTX_TTL_MS) return;
+  if (clientStockContextInflight.has(symbol)) return;
+  const p = fetch(`/api/admin/stock-context?symbol=${encodeURIComponent(symbol)}`)
+    .then((r) => (r.ok ? r.json() : null))
+    .then((json: StockContext | null) => {
+      if (json) {
+        if (clientStockContextCache.size > 200) {
+          const oldest = clientStockContextCache.keys().next().value;
+          if (oldest) clientStockContextCache.delete(oldest);
+        }
+        clientStockContextCache.set(symbol, { ts: Date.now(), data: json });
+      }
+      return json;
+    })
+    .catch(() => null)
+    .finally(() => {
+      clientStockContextInflight.delete(symbol);
+    });
+  clientStockContextInflight.set(symbol, p);
+}
+
 export function CallsClient({
   verdictSectors = [],
   verdictInitialClusterId = null,
@@ -493,9 +525,9 @@ export function CallsClient({
     clusterGems: ClusterGem[];
     portfolioActions: PortfolioActionCall[];
     monthlyAudit?: MonthlyAuditRow[];
-  } | null>(null);
+  } | null>(() => (clientCallsCache && Date.now() - clientCallsCache.ts < CLIENT_CALLS_CACHE_TTL_MS ? clientCallsCache.data : null));
 
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !(clientCallsCache && Date.now() - clientCallsCache.ts < CLIENT_CALLS_CACHE_TTL_MS));
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -514,6 +546,9 @@ export function CallsClient({
   const [prioritySubFilter, setPrioritySubFilter] = useState<PriorityCategory>("ALL");
   const [search, setSearch] = useState("");
   const [capital] = useState<number>(100000);
+
+  // Left Rail View Mode: "sectors" (hierarchical Sector -> Cluster -> Stock) vs "stocks" (flat Only Stock view)
+  const [leftRailMode, setLeftRailMode] = useState<"sectors" | "stocks">("sectors");
 
   // Selected Stock & Detail Tab: dynamically defaults to the top scrip of active view
   const [selectedSymbol, setSelectedSymbol] = useState<string>("");
@@ -601,7 +636,7 @@ export function CallsClient({
     }
   }, []);
 
-  // Load workstation view state from localStorage (preserves viewMode, selectedSymbol, scope, activeTab on refresh)
+  // Load workstation view state from localStorage (preserves viewMode, selectedSymbol, scope, activeTab, leftRailMode on refresh)
   useEffect(() => {
     try {
       const savedState = localStorage.getItem(CALLS_VIEW_STATE_KEY);
@@ -615,6 +650,9 @@ export function CallsClient({
         }
         if (parsed.activeTab && typeof parsed.activeTab === "string") {
           setActiveTab(parsed.activeTab);
+        }
+        if (parsed.leftRailMode === "stocks" || parsed.leftRailMode === "sectors") {
+          setLeftRailMode(parsed.leftRailMode);
         }
       }
     } catch {
@@ -633,12 +671,13 @@ export function CallsClient({
           selectedSymbol,
           scope,
           activeTab,
+          leftRailMode,
         })
       );
     } catch {
       // ignore
     }
-  }, [viewMode, selectedSymbol, scope, activeTab, mounted]);
+  }, [viewMode, selectedSymbol, scope, activeTab, leftRailMode, mounted]);
 
   const saveCustomPurchase = (sym: string, date: string, price: number) => {
     setCustomPurchases((prev) => {
@@ -667,13 +706,19 @@ export function CallsClient({
     setIsEditingPurchase(false);
   };
 
-  // Fetch calls data
+  // Fetch calls data (serves from clientCallsCache immediately when warm)
   const fetchData = useCallback(async (forceRefresh = false) => {
-    setLoading(true);
+    if (!forceRefresh && clientCallsCache && Date.now() - clientCallsCache.ts < CLIENT_CALLS_CACHE_TTL_MS) {
+      setData(clientCallsCache.data);
+      setLoading(false);
+      return;
+    }
+    if (!clientCallsCache) setLoading(true);
     try {
       const res = await fetch(forceRefresh ? "/api/admin/calls?refresh=1" : "/api/admin/calls");
       if (res.ok) {
         const json = await res.json();
+        clientCallsCache = { ts: Date.now(), data: json };
         setData(json);
       }
     } catch {
@@ -1044,11 +1089,13 @@ export function CallsClient({
   const unifiedCalls = useMemo(() => {
     if (!data) return [];
     const callMap = new Map<string, any>();
+    const portfolioMap = new Map<string, PortfolioActionCall>();
+    data.portfolioActions.forEach((p) => portfolioMap.set(p.symbol, p));
 
     // 1. Cluster Gems (from server)
     data.clusterGems.forEach((g) => {
       const cur = curatedSymbolMap.get(g.symbol);
-      const port = data.portfolioActions.find((p) => p.symbol === g.symbol);
+      const port = portfolioMap.get(g.symbol);
 
       const cmp = g.ltp ?? cur?.cmp ?? 0;
       const target = cur?.target ?? g.target_price ?? 0;
@@ -1581,18 +1628,40 @@ export function CallsClient({
     return groups;
   }, [filteredCalls]);
 
+  // Flat ordered list of calls for Only Stock View & keyboard navigation
+  const flatRailCalls = useMemo(() => {
+    return sectorGroups.flatMap((g) => g.calls);
+  }, [sectorGroups]);
+
+  // Prefetch chart & context for the top visible stocks in the left rail so clicking is 0ms
+  useEffect(() => {
+    if (flatRailCalls.length === 0) return;
+    const toPrefetch = flatRailCalls.slice(0, 9).map((c) => c.symbol);
+    const timer = window.setTimeout(() => {
+      toPrefetch.forEach((sym) => prefetchStockResources(sym));
+    }, 60);
+    return () => window.clearTimeout(timer);
+  }, [flatRailCalls]);
+
   // Selected Call Detail
   const selectedCall = useMemo(() => {
     return filteredCalls.find((c) => c.symbol === selectedSymbol) || filteredCalls[0] || null;
   }, [filteredCalls, selectedSymbol]);
 
-  // Fetch stock context for selected symbol (uses selectedCall?.symbol so fallback selections also load)
+  // Fetch stock context for selected symbol (uses clientStockContextCache for 0ms switching)
   const activeContextSymbol = selectedCall?.symbol ?? selectedSymbol;
   useEffect(() => {
     if (!activeContextSymbol) {
       setContextLoading(false);
       return;
     }
+    const cached = clientStockContextCache.get(activeContextSymbol);
+    if (cached && Date.now() - cached.ts < CLIENT_STOCK_CTX_TTL_MS) {
+      setContextData(cached.data);
+      setContextLoading(false);
+      return;
+    }
+
     const controller = new AbortController();
     setContextLoading(true);
 
@@ -1602,6 +1671,7 @@ export function CallsClient({
       .then((r) => (r.ok ? r.json() : null))
       .then((json) => {
         if (!controller.signal.aborted && json) {
+          clientStockContextCache.set(activeContextSymbol, { ts: Date.now(), data: json });
           setContextData(json);
         }
       })
@@ -1658,21 +1728,24 @@ export function CallsClient({
   useEffect(() => {
     const sym = selectedCall?.symbol;
     if (!sym || sectorGroups.length === 0) return;
-    for (const g of sectorGroups) {
-      for (const cl of g.clusters) {
-        if (cl.calls.some((c) => c.symbol === sym)) {
-          setExpandedSectors(new Set([g.sector]));
-          setExpandedClusters(new Set([`${g.sector}::${cl.cluster}`]));
-          requestAnimationFrame(() => {
-            const container = document.getElementById("calls-left-rail-scroll");
-            const el = container?.querySelector<HTMLElement>(`[data-rail-symbol="${CSS.escape(sym)}"]`);
-            el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-          });
-          return;
+    if (leftRailMode === "sectors") {
+      for (const g of sectorGroups) {
+        for (const cl of g.clusters) {
+          if (cl.calls.some((c) => c.symbol === sym)) {
+            const targetClusterKey = `${g.sector}::${cl.cluster}`;
+            setExpandedSectors((prev) => (prev.size === 1 && prev.has(g.sector) ? prev : new Set([g.sector])));
+            setExpandedClusters((prev) => (prev.size === 1 && prev.has(targetClusterKey) ? prev : new Set([targetClusterKey])));
+            break;
+          }
         }
       }
     }
-  }, [selectedCall?.symbol, sectorGroups]);
+    requestAnimationFrame(() => {
+      const container = document.getElementById("calls-left-rail-scroll");
+      const el = container?.querySelector<HTMLElement>(`[data-rail-symbol="${CSS.escape(sym)}"]`);
+      el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
+  }, [selectedCall?.symbol, sectorGroups, leftRailMode]);
 
   // Chart trade markers for selected stock (displays P on graph for portfolio holdings)
   const chartTrades = useMemo<TradeMark[]>(() => {
@@ -4998,29 +5071,52 @@ export function CallsClient({
             </div>
           </div>
 
-          <div className="px-2.5 py-1.5 border-b hairline flex items-center justify-between shrink-0 bg-slate-50">
-            <div className="flex items-center gap-1.5">
-              <span className="text-[11px] font-medium uppercase tracking-wider text-slate-600">
-                Sectors &amp; Calls
+          <div className="px-2 py-1.5 border-b hairline flex items-center justify-between gap-1 shrink-0 bg-slate-50">
+            <div className="flex items-center gap-1 min-w-0">
+              <span className="text-[10.5px] font-medium uppercase tracking-wider text-slate-600 truncate">
+                {leftRailMode === "stocks" ? "All Stocks" : "Sectors & Calls"}
               </span>
-              <span className="text-[10px] text-slate-400 font-mono">
+              <span className="text-[10px] text-slate-400 font-mono shrink-0">
                 ({filteredCalls.length})
               </span>
             </div>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1 shrink-0">
               <button
                 type="button"
-                onClick={
-                  expandedSectors.size === sectorGroups.length && sectorGroups.length > 0
-                    ? collapseAll
-                    : expandAll
+                onClick={() => setLeftRailMode((prev) => (prev === "stocks" ? "sectors" : "stocks"))}
+                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold border transition-all shadow-2xs ${
+                  leftRailMode === "stocks"
+                    ? "bg-indigo-600 text-white border-indigo-700"
+                    : "bg-white text-slate-700 hover:bg-slate-100 border-slate-300"
+                }`}
+                title={
+                  leftRailMode === "stocks"
+                    ? "Only Stock View active — Click to toggle back to Sectors & Clusters view"
+                    : "Click to view all stocks at a glance (Only Stock View)"
                 }
-                className="text-[10px] text-slate-500 hover:text-slate-800 px-1.5 py-0.2 rounded border hairline bg-white"
               >
-                {expandedSectors.size === sectorGroups.length && sectorGroups.length > 0
-                  ? "Collapse"
-                  : "Expand"}
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    leftRailMode === "stocks" ? "bg-emerald-300" : "bg-indigo-500"
+                  }`}
+                />
+                <span>{leftRailMode === "stocks" ? "Stocks Only" : "Only Stocks"}</span>
               </button>
+              {leftRailMode === "sectors" && (
+                <button
+                  type="button"
+                  onClick={
+                    expandedSectors.size === sectorGroups.length && sectorGroups.length > 0
+                      ? collapseAll
+                      : expandAll
+                  }
+                  className="text-[10px] text-slate-500 hover:text-slate-800 px-1.5 py-0.5 rounded border hairline bg-white"
+                >
+                  {expandedSectors.size === sectorGroups.length && sectorGroups.length > 0
+                    ? "Collapse"
+                    : "Expand"}
+                </button>
+              )}
             </div>
           </div>
 
@@ -5028,6 +5124,118 @@ export function CallsClient({
             {sectorGroups.length === 0 ? (
               <div className="text-center py-8 px-2 text-slate-400 text-xs">
                 No calls found.
+              </div>
+            ) : leftRailMode === "stocks" ? (
+              <div className="rounded border hairline bg-white divide-y divide-slate-100 overflow-hidden">
+                {flatRailCalls.map((call) => {
+                  const isSel = selectedCall?.symbol === call.symbol;
+                  const actUpper = (call.actionToday || "").toUpperCase();
+                  const isSell = actUpper.includes("SELL") || actUpper.includes("TRIM") || actUpper.includes("EXIT") || actUpper.includes("CUT LOSS");
+                  const isPrioritySell = isSell && call.isPortfolio;
+                  const isHolding = Boolean(call.isPortfolio && call.purchasePerfPct != null);
+                  const pnl = isHolding ? call.purchasePerfPct : call.callPerfPct;
+                  return (
+                    <button
+                      key={call.symbol}
+                      data-rail-symbol={call.symbol}
+                      id={`stock-rail-${call.symbol}`}
+                      type="button"
+                      onMouseEnter={() => prefetchStockResources(call.symbol)}
+                      onClick={() => setSelectedSymbol(call.symbol)}
+                      className={`w-full flex items-center justify-between px-2.5 py-1.5 text-left transition-all ${
+                        isSel
+                          ? "bg-slate-900 text-white shadow-2xs font-medium"
+                          : "hover:bg-slate-100 text-slate-800"
+                      }`}
+                      title={
+                        isHolding
+                          ? `${call.sector} · ${call.cluster} | Held in portfolio | Position P&L: ${pct(call.purchasePerfPct)} | Avg Cost: ${money(call.purchasePrice)} | CMP: ${money(call.cmp)}`
+                          : `${call.sector} · ${call.cluster} | Call Price: ${money(call.callPrice)} | Return: ${pct(call.callPerfPct)} | CMP: ${money(call.cmp)}`
+                      }
+                    >
+                      <div className="flex items-center gap-1.5 min-w-0 flex-1 mr-1.5">
+                        {isPrioritySell ? (
+                          <span
+                            className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0 animate-pulse"
+                            title="Priority Sell / Trim"
+                          />
+                        ) : (
+                          <span
+                            className="w-1.5 h-1.5 rounded-full shrink-0"
+                            style={{ backgroundColor: getSectorTheme(call.sector).dotColor }}
+                            title={`${call.sector} · ${call.cluster}`}
+                          />
+                        )}
+                        {call.isCurated && (
+                          <span
+                            className={`text-[8.5px] font-bold px-1 rounded shrink-0 ${
+                              isSel ? "bg-amber-400 text-slate-950" : "bg-amber-100 text-amber-900 border border-amber-300"
+                            }`}
+                          >
+                            ★
+                          </span>
+                        )}
+                        <span className="font-mono text-xs font-bold truncate">
+                          {call.symbol}
+                        </span>
+                        {call.isCurated && !call.isPortfolio && (
+                          <span
+                            className={`text-[8px] font-mono font-bold px-1 py-0.2 rounded shrink-0 ${
+                              isSel
+                                ? "bg-emerald-400 text-slate-950"
+                                : "bg-emerald-100 text-emerald-900 border border-emerald-300"
+                            }`}
+                            title="Fresh Anchor — Not yet bought in portfolio"
+                          >
+                            FRESH
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-1.5 text-right shrink-0">
+                        {pnl != null && (
+                          <span
+                            style={
+                              !isHolding
+                                ? {
+                                    background: isSel
+                                      ? pnl >= 0
+                                        ? "linear-gradient(90deg, rgba(59,130,246,0.38) 50%, rgba(16,185,129,0.38) 50%)"
+                                        : "linear-gradient(90deg, rgba(59,130,246,0.38) 50%, rgba(244,63,94,0.38) 50%)"
+                                      : pnl >= 0
+                                        ? "linear-gradient(90deg, #dbeafe 50%, #dcfce7 50%)"
+                                        : "linear-gradient(90deg, #dbeafe 50%, #ffe4e6 50%)",
+                                  }
+                                : undefined
+                            }
+                            className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded whitespace-nowrap ${
+                              isHolding
+                                ? pnl >= 0
+                                  ? isSel
+                                    ? "bg-emerald-400/20 text-emerald-300 border border-emerald-400/40"
+                                    : "bg-emerald-50 text-emerald-800 border border-emerald-300"
+                                  : isSel
+                                    ? "bg-rose-400/20 text-rose-300 border border-rose-400/40"
+                                    : "bg-rose-50 text-rose-800 border border-rose-300"
+                                : pnl >= 0
+                                  ? isSel
+                                    ? "text-emerald-200 border border-blue-400/50"
+                                    : "text-emerald-900 border border-blue-300"
+                                  : isSel
+                                    ? "text-rose-200 border border-blue-400/50"
+                                    : "text-rose-900 border border-blue-300"
+                            }`}
+                          >
+                            {pct(pnl, 1)}
+                          </span>
+                        )}
+                        <span className="font-mono text-xs font-semibold whitespace-nowrap">
+                          {money(call.cmp, 2)}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             ) : (
               sectorGroups.map((g) => {
@@ -5098,6 +5306,7 @@ export function CallsClient({
                                         data-rail-symbol={call.symbol}
                                         id={`stock-rail-${call.symbol}`}
                                         type="button"
+                                        onMouseEnter={() => prefetchStockResources(call.symbol)}
                                         onClick={() => setSelectedSymbol(call.symbol)}
                                         className={`w-full flex items-center justify-between pl-5 pr-2 py-1.5 text-left transition-all ${
                                           isSel

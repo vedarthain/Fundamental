@@ -71,6 +71,9 @@ type AuditInfo = {
   forensic_status: string;
 };
 
+const STOCK_CTX_TTL_MS = 3 * 60 * 1000;
+const stockContextMemoryCache = new Map<string, { ts: number; payload: any }>();
+
 export async function GET(req: NextRequest) {
   if (!(await isAdminRequest())) {
     return NextResponse.json({ error: "admin only" }, { status: 401 });
@@ -79,6 +82,12 @@ export async function GET(req: NextRequest) {
   const symbol = req.nextUrl.searchParams.get("symbol")?.trim().toUpperCase();
   if (!symbol) {
     return NextResponse.json({ error: "symbol required" }, { status: 400 });
+  }
+
+  const now = Date.now();
+  const cached = stockContextMemoryCache.get(symbol);
+  if (cached && now - cached.ts < STOCK_CTX_TTL_MS) {
+    return NextResponse.json(cached.payload, { headers: { "Cache-Control": "no-store" } });
   }
 
   const [
@@ -215,18 +224,22 @@ export async function GET(req: NextRequest) {
     forensic_status: "Low Forensic Risk / Healthy Accruals",
   };
 
-  return NextResponse.json(
-    {
-      overview,
-      news: news.slice(0, 15),
-      filings: filings.slice(0, 15),
-      dividends,
-      results,
-      quarterly,
-      boardMeetings,
-      moat,
-      audit,
-    },
-    { headers: { "Cache-Control": "no-store" } },
-  );
+  const payload = {
+    overview,
+    news: news.slice(0, 15),
+    filings: filings.slice(0, 15),
+    dividends,
+    results,
+    quarterly,
+    boardMeetings,
+    moat,
+    audit,
+  };
+  if (stockContextMemoryCache.size > 300) {
+    const oldest = stockContextMemoryCache.keys().next().value;
+    if (oldest) stockContextMemoryCache.delete(oldest);
+  }
+  stockContextMemoryCache.set(symbol, { ts: now, payload });
+
+  return NextResponse.json(payload, { headers: { "Cache-Control": "no-store" } });
 }
