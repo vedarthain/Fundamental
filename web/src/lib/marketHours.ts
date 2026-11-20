@@ -45,11 +45,8 @@
  * a cost guard.
  */
 
-const FIRST_HOUR = 9;    // first pull at 09:15 IST, the open
-const LAST_HOUR = 15;    // last pull at 15:45 IST → 7 hours × 2 slots = 14
-// Two accepted bands per hour. Each is 10 min wide: enough for pinger jitter,
-// comfortably less than the 15-min fire interval, so one fire per band.
-const SLOTS: ReadonlyArray<readonly [number, number]> = [[15, 24], [45, 54]];
+const WINDOW_START_MIN = 9 * 60 + 15;  // 09:15 IST (NSE open)
+const WINDOW_END_MIN   = 15 * 60 + 40; // 15:40 IST (post-close settle)
 const WEEKDAYS = new Set(["Mon", "Tue", "Wed", "Thu", "Fri"]);
 
 /** Current IST weekday + minutes-since-midnight, via Intl (no TZ libs). */
@@ -64,15 +61,11 @@ function istNow(d: Date = new Date()): { weekday: string; minutes: number } {
   return { weekday: p.weekday, minutes: hour * 60 + Number(p.minute) };
 }
 
-/** True only in a :15 or :45 slot on a weekday, 09:15–15:45 IST. Every other
- *  pinger fire no-ops before any DB access, so Neon wakes ~14×/day. */
+/** True during NSE market hours (Mon–Fri, 09:15–15:40 IST). */
 export function withinPingerWindow(d: Date = new Date()): boolean {
   const { weekday, minutes } = istNow(d);
   if (!WEEKDAYS.has(weekday)) return false;
-  const hour = Math.floor(minutes / 60);
-  if (hour < FIRST_HOUR || hour > LAST_HOUR) return false;
-  const minOfHour = minutes % 60;
-  return SLOTS.some(([lo, hi]) => minOfHour >= lo && minOfHour <= hi);
+  return minutes >= WINDOW_START_MIN && minutes <= WINDOW_END_MIN;
 }
 
 // ── Once-a-day "post-close" window, for the EOD signal crons ───────────────

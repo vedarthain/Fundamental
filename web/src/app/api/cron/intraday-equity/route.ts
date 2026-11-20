@@ -41,6 +41,8 @@ export const dynamic = "force-dynamic";
 // Full-universe fetch is ~11 Upstox calls + 2 bulk UPDATEs. Give it room.
 export const maxDuration = 60;
 
+let lastPruneAt = 0;
+
 function authOk(req: NextRequest): boolean {
   const expected = process.env.INTRADAY_CRON_TOKEN || process.env.REVALIDATE_TOKEN;
   if (!expected) return false;
@@ -206,12 +208,15 @@ async function handle(req: NextRequest) {
       SELECT sym, price
         FROM unnest(${syms}::text[], ${prices}::float8[]) AS up(sym, price)
     `;
-    // Retention: keep ~one trading day. A touch over 24h so the current
-    // IST-day read is never truncated at the boundary.
-    await sql`
-      DELETE FROM app.stock_intraday
-       WHERE ts < now() - INTERVAL '26 hours'
-    `;
+    // Retention: auto-prune rows older than 2 days (throttled to every 30 min so 5-min ticks stay fast).
+    const nowMs = Date.now();
+    if (nowMs - lastPruneAt >= 30 * 60 * 1000) {
+      lastPruneAt = nowMs;
+      await sql`
+        DELETE FROM app.stock_intraday
+         WHERE ts < now() - INTERVAL '2 days'
+      `;
+    }
 
     // Purge the live-reading surfaces so fresh prices show on the next render.
     // (Not "market"/"snapshot" — that blob is unchanged until the EOD rebuild.)
