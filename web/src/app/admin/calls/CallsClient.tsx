@@ -5146,6 +5146,19 @@ export function CallsClient({
                                         <div className="flex items-center gap-1.5 text-right shrink-0">
                                           {pnl != null && (
                                             <span
+                                              style={
+                                                !isHolding
+                                                  ? {
+                                                      background: isSel
+                                                        ? pnl >= 0
+                                                          ? "linear-gradient(90deg, rgba(59,130,246,0.38) 50%, rgba(16,185,129,0.38) 50%)"
+                                                          : "linear-gradient(90deg, rgba(59,130,246,0.38) 50%, rgba(244,63,94,0.38) 50%)"
+                                                        : pnl >= 0
+                                                          ? "linear-gradient(90deg, #dbeafe 50%, #dcfce7 50%)"
+                                                          : "linear-gradient(90deg, #dbeafe 50%, #ffe4e6 50%)",
+                                                    }
+                                                  : undefined
+                                              }
                                               className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded whitespace-nowrap ${
                                                 isHolding
                                                   ? pnl >= 0
@@ -5155,9 +5168,13 @@ export function CallsClient({
                                                     : isSel
                                                       ? "bg-rose-400/20 text-rose-300 border border-rose-400/40"
                                                       : "bg-rose-50 text-rose-800 border border-rose-300"
-                                                  : isSel
-                                                    ? "bg-blue-400/20 text-blue-300 border border-blue-400/40"
-                                                    : "bg-blue-50 text-blue-800 border border-blue-300"
+                                                  : pnl >= 0
+                                                    ? isSel
+                                                      ? "text-emerald-200 border border-blue-400/50"
+                                                      : "text-emerald-900 border border-blue-300"
+                                                    : isSel
+                                                      ? "text-rose-200 border border-blue-400/50"
+                                                      : "text-rose-900 border border-blue-300"
                                               }`}
                                             >
                                               {pct(pnl, 1)}
