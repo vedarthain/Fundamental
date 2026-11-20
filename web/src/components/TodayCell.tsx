@@ -15,13 +15,36 @@ import { useEffect, useState } from "react";
  * overwrites it with the real current IST day on mount. Keeps the whole site
  * statically generated while guaranteeing the visible date is always today.
  */
-function istDate(): string {
-  return new Date().toLocaleDateString("en-GB", {
+const WEEKDAYS = new Set(["Mon", "Tue", "Wed", "Thu", "Fri"]);
+
+function istMarketState(): { dateStr: string; status: "open" | "post_close" | "closed" } {
+  const now = new Date();
+  const dateStr = now.toLocaleDateString("en-GB", {
     timeZone: "Asia/Kolkata",
     weekday: "short",
     day: "numeric",
     month: "short",
   });
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Kolkata",
+    weekday: "short",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(now);
+  const p = Object.fromEntries(parts.map((x) => [x.type, x.value]));
+  const hour = Number(p.hour) % 24;
+  const mins = hour * 60 + Number(p.minute);
+  if (!WEEKDAYS.has(p.weekday)) {
+    return { dateStr, status: "closed" };
+  }
+  if (mins >= 9 * 60 + 15 && mins <= 15 * 60 + 40) {
+    return { dateStr, status: "open" };
+  }
+  if (mins > 15 * 60 + 40) {
+    return { dateStr, status: "post_close" };
+  }
+  return { dateStr, status: "closed" };
 }
 
 function fmtIstTime(iso: string): string | null {
@@ -38,11 +61,14 @@ function fmtIstTime(iso: string): string | null {
 }
 
 export default function TodayCell({ initial }: { initial: string }) {
-  const [dateStr, setDateStr] = useState(initial);
+  const [state, setState] = useState<{ dateStr: string; status: "open" | "post_close" | "closed" }>({
+    dateStr: initial,
+    status: "open",
+  });
   const [fetchedTime, setFetchedTime] = useState<string | null>(null);
 
   useEffect(() => {
-    const tick = () => setDateStr(istDate());
+    const tick = () => setState(istMarketState());
     tick();
     const id = setInterval(tick, 60_000);
 
@@ -60,5 +86,11 @@ export default function TodayCell({ initial }: { initial: string }) {
     };
   }, []);
 
-  return <>{fetchedTime ? `${dateStr} - ${fetchedTime}` : dateStr}</>;
+  if (state.status === "post_close") {
+    return <>{state.dateStr} - Closed (3:30 PM)</>;
+  }
+  if (state.status === "closed") {
+    return <>{state.dateStr} - Market Closed</>;
+  }
+  return <>{fetchedTime ? `${state.dateStr} - ${fetchedTime}` : state.dateStr}</>;
 }

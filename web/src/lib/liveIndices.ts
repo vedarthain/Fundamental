@@ -1,4 +1,6 @@
 import { requireFreshToken } from "@/lib/upstox";
+import { withinPingerWindow } from "@/lib/marketHours";
+import { sql } from "@/lib/db";
 
 export type IndexQuote = {
   code: string;
@@ -14,7 +16,7 @@ export type LiveIndicesPayload = {
   nifty: IndexQuote | null;
   bankNifty: IndexQuote | null;
   byCode: Record<string, IndexQuote>;
-  source: "upstox" | "yahoo" | "mixed";
+  source: "upstox" | "yahoo" | "mixed" | "eod";
   fetchedAt: string;
 };
 
@@ -177,8 +179,65 @@ async function fetchYahooIndex(
   }
 }
 
+async function fetchFromDbEod(): Promise<LiveIndicesPayload> {
+  const byCode: Record<string, IndexQuote> = {};
+  const labelByCode = new Map(UPSTOX_INDEX_KEYS.map((x) => [x.code, x.label]));
+  let asOfIso = new Date().toISOString();
+  try {
+    const rows = await sql<
+      { code: string; close: number; pct_change: number | null; date: string }[]
+    >`
+      WITH latest_date AS (SELECT MAX(date) AS d FROM app.market_index_history)
+      SELECT h.index_code AS code,
+             h.close::float AS close,
+             h.pct_change::float AS pct_change,
+             h.date::text AS date
+        FROM app.market_index_history h
+        JOIN latest_date l ON l.d = h.date
+    `;
+    for (const r of rows) {
+      const price = Number(r.close);
+      if (!Number.isFinite(price) || price <= 0) continue;
+      const pct = Number.isFinite(Number(r.pct_change)) ? Number(r.pct_change) : 0;
+      const prevClose = pct !== -100 ? Math.round((price / (1 + pct / 100)) * 100) / 100 : price;
+      const changePts = Math.round((price - prevClose) * 100) / 100;
+      const changePct = Math.round(pct * 100) / 100;
+      byCode[r.code] = {
+        code: r.code,
+        symbol: r.code,
+        label: labelByCode.get(r.code) ?? r.code,
+        price,
+        prevClose,
+        changePts,
+        changePct,
+      };
+      if (r.date) asOfIso = `${r.date}T10:00:00.000Z`; // 15:30 IST
+    }
+  } catch {
+    // Fail soft
+  }
+  return {
+    nifty: byCode.NIFTY50 ?? null,
+    bankNifty: byCode.NIFTYBANK ?? null,
+    byCode,
+    source: "eod",
+    fetchedAt: asOfIso,
+  };
+}
+
 export async function getLiveIndices(): Promise<LiveIndicesPayload> {
   const now = Date.now();
+  const marketOpen = withinPingerWindow();
+
+  // After market hours / weekends: NEVER call Upstox or overwrite the cache.
+  // Serve the last closing snapshot if present, otherwise clean EOD from Postgres.
+  if (!marketOpen) {
+    if (cache && (cache.payload.nifty || cache.payload.bankNifty)) {
+      return cache.payload;
+    }
+    return fetchFromDbEod();
+  }
+
   if (cache && cache.expiresAt > now && (cache.payload.nifty || cache.payload.bankNifty)) {
     return cache.payload;
   }
