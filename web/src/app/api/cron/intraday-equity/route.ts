@@ -222,6 +222,7 @@ async function handle(req: NextRequest) {
     // (Not "market"/"snapshot" — that blob is unchanged until the EOD rebuild.)
     revalidateTag("panel-cache", "default");
     revalidateTag("sectors", "default");
+    revalidateTag("portfolio", "default");
 
     return NextResponse.json({
       ok: true,

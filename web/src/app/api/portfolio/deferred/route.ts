@@ -10,9 +10,10 @@
  * Auth-gated. Non-owners still get booked + transactions; performance fields
  * stay null — same split as the page.
  */
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSession, isAdminRequest } from "@/lib/auth";
 import {
+  loadPortfolio,
   loadRealizedPnl,
   loadTradeLog,
   loadImportLog,
@@ -23,13 +24,24 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const session = await getSession();
   if (!session) {
     return NextResponse.json({ error: "sign in required" }, { status: 401 });
   }
 
   const owner = await isAdminRequest();
+  const liveOnly = req.nextUrl.searchParams.get("liveOnly") === "1";
+
+  if (liveOnly) {
+    const portfolio = await loadPortfolio(session.userId);
+    const perf = owner ? await loadPerformanceStats(session.userId, portfolio) : null;
+    return NextResponse.json(
+      { portfolio, perf },
+      { headers: { "Cache-Control": "no-store" } },
+    );
+  }
+
   const [realized, tradeLog, importLog, perf, timeline] = await Promise.all([
     loadRealizedPnl(session.userId),
     loadTradeLog(session.userId),
@@ -38,5 +50,8 @@ export async function GET() {
     owner ? loadRealizedTimeline(session.userId) : Promise.resolve(null),
   ]);
 
-  return NextResponse.json({ realized, tradeLog, importLog, owner, perf, timeline });
+  return NextResponse.json(
+    { realized, tradeLog, importLog, owner, perf, timeline },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }

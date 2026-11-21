@@ -116,7 +116,7 @@ const EMPTY_REALIZED: RealizedPnl = {
 const EMPTY_TRADE_LOG: TradeLog = { manual: [], imported: [] };
 
 export function PortfolioClient({
-  portfolio,
+  portfolio: initialPortfolio,
   owner = false,
   extrasEpoch,
   initialTab = "holdings",
@@ -128,6 +128,7 @@ export function PortfolioClient({
   initialTab?: PortfolioTab;
 }) {
   const router = useRouter();
+  const [portfolio, setPortfolio] = useState<Portfolio>(initialPortfolio);
   const [tab, setTab] = useState<PortfolioTab>(initialTab);
   const [realized, setRealized] = useState<RealizedPnl>(EMPTY_REALIZED);
   const [tradeLog, setTradeLog] = useState<TradeLog>(EMPTY_TRADE_LOG);
@@ -135,6 +136,10 @@ export function PortfolioClient({
   const [perf, setPerf] = useState<PerformanceStats | null>(null);
   const [timeline, setTimeline] = useState<RealizedTimeline | null>(null);
   const [extrasStatus, setExtrasStatus] = useState<"loading" | "ok" | "error">("loading");
+
+  useEffect(() => {
+    setPortfolio(initialPortfolio);
+  }, [initialPortfolio]);
 
   const [divReport, setDivReport] = useState<PortfolioDividendReport | null>(null);
   const [divStatus, setDivStatus] = useState<"idle" | "loading" | "ok" | "error">("idle");
@@ -160,10 +165,11 @@ export function PortfolioClient({
   useEffect(() => {
     let alive = true;
     setExtrasStatus("loading");
-    fetch("/api/portfolio/deferred", { credentials: "include" })
+    fetch("/api/portfolio/deferred", { credentials: "include", cache: "no-store" })
       .then(async (r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json() as Promise<{
+          portfolio?: Portfolio;
           realized: RealizedPnl;
           tradeLog: TradeLog;
           importLog: ImportLogRow[];
@@ -173,6 +179,7 @@ export function PortfolioClient({
       })
       .then((data) => {
         if (!alive) return;
+        if (data.portfolio) setPortfolio(data.portfolio);
         setRealized(data.realized ?? EMPTY_REALIZED);
         setTradeLog(data.tradeLog ?? EMPTY_TRADE_LOG);
         setImportLog(data.importLog ?? []);
@@ -188,6 +195,61 @@ export function PortfolioClient({
       alive = false;
     };
   }, [extrasEpoch]);
+
+  // Realtime Upstox LTP sync: zero-overhead off-hours.
+  // Only fetches when the top ribbon announces a NEW Upstox tick timestamp,
+  // or once every 5 minutes strictly during NSE market hours (Mon–Fri 09:15–15:40 IST).
+  useEffect(() => {
+    let alive = true;
+    let lastSeenTs = initialPortfolio.priceAsOfTs ?? "";
+
+    const isMarketOpenIst = () => {
+      const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: "Asia/Kolkata",
+        weekday: "short",
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: false,
+      }).formatToParts(new Date());
+      const p = Object.fromEntries(parts.map((x) => [x.type, x.value]));
+      if (!["Mon", "Tue", "Wed", "Thu", "Fri"].includes(p.weekday)) return false;
+      const mins = (Number(p.hour) % 24) * 60 + Number(p.minute);
+      return mins >= 9 * 60 + 15 && mins <= 15 * 60 + 40;
+    };
+
+    const refreshLive = (incomingTs?: string) => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      if (incomingTs && incomingTs === lastSeenTs) return;
+      fetch("/api/portfolio/deferred?liveOnly=1", { credentials: "include", cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data: { portfolio?: Portfolio; perf?: PerformanceStats | null } | null) => {
+          if (!alive || !data) return;
+          if (data.portfolio) {
+            lastSeenTs = data.portfolio.priceAsOfTs ?? incomingTs ?? lastSeenTs;
+            setPortfolio(data.portfolio);
+          }
+          if (data.perf !== undefined) setPerf(data.perf ?? null);
+        })
+        .catch(() => {});
+    };
+
+    const onIndicesFetched = (ev: Event) => {
+      const ts = (ev as CustomEvent<string>).detail;
+      if (!isMarketOpenIst()) return;
+      refreshLive(typeof ts === "string" ? ts : undefined);
+    };
+
+    const id = setInterval(() => {
+      if (isMarketOpenIst()) refreshLive();
+    }, 5 * 60_000);
+
+    window.addEventListener("er:indices-fetched", onIndicesFetched);
+    return () => {
+      alive = false;
+      clearInterval(id);
+      window.removeEventListener("er:indices-fetched", onIndicesFetched);
+    };
+  }, [initialPortfolio.priceAsOfTs]);
   const [broker, setBroker] = useState<string>("zerodha");
   const [kind, setKind] = useState<ImportKind>("holdings");
   const [busy, setBusy] = useState(false);
@@ -559,7 +621,12 @@ function PerformanceTab({ portfolio, realized, perf, timeline }: { portfolio: Po
             </button>
           ))}
         </div>
-        <SummaryCards t={segTotals} snapshot={portfolio.snapshotDate} />
+        <SummaryCards
+          t={segTotals}
+          snapshot={portfolio.snapshotDate}
+          priceAsOf={portfolio.priceAsOf}
+          priceAsOfTs={portfolio.priceAsOfTs}
+        />
         <SegmentWindows seg={seg} windows={segWindows.windows} skipped={segWindows.skipped} />
       </div>
       {/* Sits directly under the value/P&L cards on purpose: those numbers are
@@ -2862,10 +2929,37 @@ function ImportLedger({ rows }: { rows: ImportLogRow[] }) {
 
 // ─────────────────────────── summary cards ─────────────────────────────────
 
-function SummaryCards({ t, snapshot }: { t: Portfolio["totals"]; snapshot: string | null }) {
+function SummaryCards({
+  t,
+  snapshot,
+  priceAsOf,
+  priceAsOfTs,
+}: {
+  t: Portfolio["totals"];
+  snapshot: string | null;
+  priceAsOf?: string | null;
+  priceAsOfTs?: string | null;
+}) {
+  const liveLabel = priceAsOfTs
+    ? `live · ${new Date(priceAsOfTs)
+        .toLocaleTimeString("en-US", {
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+          timeZone: "Asia/Kolkata",
+        })
+        .toUpperCase()} IST`
+    : priceAsOf
+    ? `as of ${new Date(priceAsOf + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}`
+    : null;
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-6">
-      <Card label="Current value" value={inr(t.currentValue)} sub={`${t.holdingCount} instruments · ${t.mappedCount} scored`} icon={<IconWallet size={15} />} />
+      <Card
+        label="Current value"
+        value={inr(t.currentValue)}
+        sub={`${t.holdingCount} instruments · ${t.mappedCount} scored${liveLabel ? ` · ${liveLabel}` : ""}`}
+        icon={<IconWallet size={15} />}
+      />
       <Card label="Invested" value={inr(t.invested)} sub={snapshot ? `scores @ ${snapshot}` : undefined} icon={<IconDeposit size={15} />} />
       <Card
         label="Total P&L"
@@ -3322,9 +3416,14 @@ function HoldingsTable({
   // oversell a stale one. priceAsOfTs is the only thing that distinguishes the
   // two cases: a same-day EOD bar and a same-day tick share a date.
   const asOfLabel = priceAsOfTs
-    ? new Date(priceAsOfTs).toLocaleTimeString("en-IN", {
-        hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kolkata",
-      })
+    ? new Date(priceAsOfTs)
+        .toLocaleTimeString("en-US", {
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+          timeZone: "Asia/Kolkata",
+        })
+        .toUpperCase()
     : priceAsOf
     ? new Date(priceAsOf + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short" })
     : null;

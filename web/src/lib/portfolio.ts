@@ -242,7 +242,10 @@ export type PerformanceStats = {
   series: { date: string; dayPnl: number; invested: number; value: number }[];
 };
 
-export async function loadPerformanceStats(userId: number): Promise<PerformanceStats | null> {
+export async function loadPerformanceStats(
+  userId: number,
+  livePortfolio?: Portfolio,
+): Promise<PerformanceStats | null> {
   // equity_value/equity_cost (0080) — the same book without the instruments
   // golden has no daily bar for. COALESCE to total_* so a row written by a
   // future code path that forgets the new columns degrades to the old, whole-
@@ -265,6 +268,31 @@ export async function loadPerformanceStats(userId: number): Promise<PerformanceS
      WHERE user_id = ${userId} AND total_value IS NOT NULL
      ORDER BY snap_date ASC
   `;
+
+  // Overlay live intraday/latest portfolio valuation so the Performance charts
+  // (TWR, Daily Profit, Invested vs Market Value) reflect today's live Upstox
+  // ticks in real time before the EOD snapshot cron runs.
+  const pf = livePortfolio ?? (await loadPortfolio(userId).catch(() => null));
+  if (pf && pf.hasHoldings && pf.priceAsOf) {
+    const eq = pf.instruments.filter((i) => i.isMapped);
+    if (eq.length > 0) {
+      const liveEqVal = Math.round(eq.reduce((s, i) => s + i.currentValue, 0) * 100) / 100;
+      const liveEqCost = Math.round(eq.reduce((s, i) => s + i.invested, 0) * 100) / 100;
+      const liveDayChg = Math.round(eq.reduce((s, i) => s + (i.dayChangeValue ?? 0), 0) * 100) / 100;
+      const liveRow = {
+        snap_date: pf.priceAsOf,
+        total_value: String(liveEqVal),
+        total_cost: String(liveEqCost),
+        day_change_value: String(liveDayChg),
+      };
+      if (snaps.length === 0 || snaps[snaps.length - 1].snap_date < pf.priceAsOf) {
+        snaps.push(liveRow);
+      } else if (snaps[snaps.length - 1].snap_date === pf.priceAsOf) {
+        snaps[snaps.length - 1] = liveRow;
+      }
+    }
+  }
+
   if (snaps.length < 2) return null;
   const first = snaps[0].snap_date;
 
@@ -1490,11 +1518,19 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
   `;
   const buyP = currentLegBuyDateRows(userId);
 
+  const tickTsP = sql<{ ts: string | null }[]>`
+    SELECT COALESCE(
+      (SELECT MAX(price_fetched_at)::text FROM app.screener_meta),
+      (SELECT MAX(fetched_at)::text FROM app.etf_price)
+    ) AS ts
+  `;
+
   const holdings = await holdingsP;
   if (holdings.length === 0) return emptyPortfolio();
 
-  const [manualRows, buyRows] = await Promise.all([manualP, buyP]);
+  const [manualRows, buyRows, tickRows] = await Promise.all([manualP, buyP, tickTsP]);
   const manualSymbols = manualRows.map((r) => r.symbol).sort();
+  const tickEpoch = tickRows[0]?.ts ?? "eod";
 
   const firstBuyBySym: Record<string, string> = {};
   for (const r of buyRows) {
@@ -1502,11 +1538,10 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
   }
 
   const fp = portfolioFingerprint(holdings, manualSymbols);
-  // Fold the buy-date map into the cache key so adding an earlier trade for an
-  // already-tracked symbol (which need not change the holdings fingerprint)
-  // still busts the cache and re-anchors the window.
+  // Fold the buy-date map and latest Upstox tick timestamp into the cache key
+  // so every new intraday Upstox fetch immediately busts the cache and re-prices.
   const buyFp = Object.entries(firstBuyBySym).sort().map(([s, d]) => `${s}:${d}`).join(",");
-  return finishPortfolio(holdings, manualSymbols, firstBuyBySym, fp, buyFp, userId);
+  return finishPortfolio(holdings, manualSymbols, firstBuyBySym, fp, buyFp, tickEpoch, userId);
 }
 
 /** Start of the CURRENT holding period per symbol — the anchor for the
@@ -1691,6 +1726,7 @@ async function finishPortfolio(
   firstBuyBySym: Record<string, string>,
   fp: string,
   buyFp: string,
+  tickEpoch: string,
   userId: number,
 ): Promise<Portfolio> {
   const dateKey = istDateKey();
@@ -1710,7 +1746,9 @@ async function finishPortfolio(
     // ADDED to the shape, so a warm v4 blob would deserialize without it and
     // the column would render blank until the entry expired on its own. The
     // tag is the only thing that evicts it.
-    ["portfolio", "v5-instrument-buy-date", String(userId), dateKey, fp, buyFp],
+    // v6: include tickEpoch so every 5-min Upstox intraday price refresh immediately
+    // busts the cache and re-values holdings live.
+    ["portfolio", "v6-live-tick-epoch", String(userId), dateKey, fp, buyFp, tickEpoch],
     { revalidate: 900, tags: ["portfolio", "panel-cache"] },
   );
   return cached();

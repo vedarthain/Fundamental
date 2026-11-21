@@ -180,13 +180,14 @@ export function PortfolioReturnsTable({ others = [] }: { others?: OtherRow[] }) 
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    const load = async () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       try {
         // ONE request, not two. `symbols=@portfolio` makes the route resolve
         // holdings from the session, and `lean=1` drops the glance/verdict
         // payload this table never reads — together ~65% of the bytes and
         // three of the route's eight parallel query branches.
-        const w = await fetch("/api/watchlist?symbols=@portfolio&lean=1");
+        const w = await fetch("/api/watchlist?symbols=@portfolio&lean=1", { cache: "no-store" });
         if (!w.ok) throw new Error("Could not load your holdings.");
         const wd = (await w.json()) as { rows: ApiRow[]; signedIn: boolean };
         if (cancelled) return;
@@ -220,9 +221,33 @@ export function PortfolioReturnsTable({ others = [] }: { others?: OtherRow[] }) 
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Something went wrong.");
       }
-    })();
+    };
+    const isMarketOpenIst = () => {
+      const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: "Asia/Kolkata",
+        weekday: "short",
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: false,
+      }).formatToParts(new Date());
+      const p = Object.fromEntries(parts.map((x) => [x.type, x.value]));
+      if (!["Mon", "Tue", "Wed", "Thu", "Fri"].includes(p.weekday)) return false;
+      const mins = (Number(p.hour) % 24) * 60 + Number(p.minute);
+      return mins >= 9 * 60 + 15 && mins <= 15 * 60 + 40;
+    };
+
+    void load();
+    const id = setInterval(() => {
+      if (isMarketOpenIst()) void load();
+    }, 5 * 60_000);
+    const onIndices = () => {
+      if (isMarketOpenIst()) void load();
+    };
+    window.addEventListener("er:indices-fetched", onIndices);
     return () => {
       cancelled = true;
+      clearInterval(id);
+      window.removeEventListener("er:indices-fetched", onIndices);
     };
   }, []);
 

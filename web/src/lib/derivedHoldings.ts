@@ -99,13 +99,18 @@ export async function recomputeDerivedHolding(
   }
   const walk = hasSnapshot ? txns.filter((t) => t.manual) : txns;
   for (const t of walk) {
-    if (firstDate == null) firstDate = t.d;
     if (t.side === "buy") {
+      if (firstDate == null || qty <= 1e-9) firstDate = t.d;
       const next = qty + t.qty;
       avg = next > 0 ? (qty * avg + t.qty * t.price) / next : 0;
       qty = next;
     } else {
-      qty -= t.qty; // sell: avg unchanged
+      qty -= t.qty; // sell: avg unchanged while position remains open
+      if (qty <= 1e-9) {
+        qty = 0;
+        avg = 0;
+        firstDate = null;
+      }
     }
   }
   qty = Math.round(qty * 10000) / 10000;

@@ -1857,9 +1857,10 @@ export function CallsClient({
       const totalGain = yearEnd - startBase;
       const returnsShare = totalGain > 0 ? Math.min(100, Math.round((cumReturns / totalGain) * 100)) : 0;
 
+      const calYear = 2024 + y;
       rows.push({
         year: y,
-        label: `Year ${y}`,
+        label: `Year ${y} (${calYear})`,
         startCorpus: yearStart,
         monthlyInflow: thisYearMonthly,
         annualFreshInflow: annualFresh,
@@ -4274,62 +4275,63 @@ export function CallsClient({
                 </div>
               </div>
 
-              {/* Control 2: Annual Step-Up SIP % */}
+              {/* Control 2: Annual Step-Up SIP % (0% to 30% incremental slider) */}
               <div className="space-y-1.5 p-2 rounded-md bg-slate-50/70 border hairline">
                 <div className="flex items-center justify-between">
-                  <span className="font-semibold text-slate-700">Annual Step-Up (Salary Hike)</span>
-                  <span className="font-mono font-bold text-indigo-700 text-xs">
+                  <span className="font-semibold text-slate-700">Annual Step-Up (SIP Hike)</span>
+                  <span className="font-mono font-bold text-indigo-700 text-xs bg-indigo-50 border border-indigo-200 px-1.5 py-0.2 rounded">
                     +{corpusStepUpPct}% / yr
                   </span>
                 </div>
-                <div className="flex items-center gap-1 flex-wrap">
-                  {[0, 5, 10, 15].map((val) => (
-                    <button
-                      key={val}
-                      onClick={() => setCorpusStepUpPct(val)}
-                      className={`px-2 py-0.5 rounded text-[11px] font-mono font-medium transition-all ${
-                        corpusStepUpPct === val
-                          ? "bg-indigo-700 text-white font-bold shadow-2xs"
-                          : "bg-white text-slate-700 border hairline hover:bg-slate-100"
-                      }`}
-                    >
-                      {val === 0 ? "Flat" : val === 10 ? "+10% (Default)" : `+${val}%`}
-                    </button>
-                  ))}
+                <div className="flex items-center gap-2 pt-1">
+                  <span className="text-[10px] font-mono text-slate-400">0%</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={30}
+                    step={1}
+                    value={corpusStepUpPct}
+                    onChange={(e) => setCorpusStepUpPct(Number(e.target.value))}
+                    className="w-full h-1.5 bg-indigo-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                    title={`Slide Annual Incremental Investment from 0% to 30% (Current: +${corpusStepUpPct}%/yr)`}
+                  />
+                  <span className="text-[10px] font-mono text-slate-500 font-semibold">30%</span>
+                </div>
+                <div className="text-[10px] text-slate-500">
+                  {corpusStepUpPct === 0
+                    ? "Flat monthly investment every year"
+                    : `Monthly SIP increases by +${corpusStepUpPct}% each year`}
                 </div>
               </div>
 
-              {/* Control 3: External SIP Window (Self-Funding Switch) */}
+              {/* Control 3: Stop Investing Year Slider (Year 1 / 2025 to Year 15 / 2039) */}
               <div className="space-y-1.5 p-2 rounded-md bg-slate-50/70 border hairline">
                 <div className="flex items-center justify-between">
-                  <span className="font-semibold text-slate-700">External SIP Window</span>
+                  <span className="font-semibold text-slate-700">Stop Fresh Investing</span>
                   <span className="font-mono font-bold text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-0.2 rounded text-[11px]">
-                    {corpusSipStopYear < 15 ? `Stop After Yr ${corpusSipStopYear}` : "All 15 Yrs"}
+                    {corpusSipStopYear < 15
+                      ? `After Yr ${corpusSipStopYear} (${2024 + corpusSipStopYear})`
+                      : "All 15 Yrs (2039)"}
                   </span>
                 </div>
-                <div className="flex items-center gap-1 flex-wrap">
-                  {[
-                    { yrs: 4, label: "4 Yrs (Yr 5+ Self-Funded)" },
-                    { yrs: 5, label: "5 Yrs" },
-                    { yrs: 15, label: "All 15 Yrs" },
-                  ].map((opt) => (
-                    <button
-                      key={opt.yrs}
-                      onClick={() => setCorpusSipStopYear(opt.yrs)}
-                      className={`px-2 py-0.5 rounded text-[10.5px] font-mono font-medium transition-all ${
-                        corpusSipStopYear === opt.yrs
-                          ? "bg-amber-600 text-white font-bold shadow-2xs"
-                          : "bg-white text-slate-700 border hairline hover:bg-slate-100"
-                      }`}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
+                <div className="flex items-center gap-2 pt-1">
+                  <span className="text-[10px] font-mono text-slate-400">Yr 1</span>
+                  <input
+                    type="range"
+                    min={1}
+                    max={15}
+                    step={1}
+                    value={corpusSipStopYear}
+                    onChange={(e) => setCorpusSipStopYear(Number(e.target.value))}
+                    className="w-full h-1.5 bg-amber-200 rounded-lg appearance-none cursor-pointer accent-amber-600"
+                    title={`Slide when to stop adding fresh monthly cash (Year ${corpusSipStopYear} / ${2024 + corpusSipStopYear})`}
+                  />
+                  <span className="text-[10px] font-mono text-slate-500 font-semibold">Yr 15</span>
                 </div>
                 <div className="text-[10px] text-slate-500">
                   {corpusSipStopYear < 15
-                    ? `Yr ${corpusSipStopYear + 1}–15: ₹0 salary added; 100% market profits reinvested`
-                    : "Continuous salary SIP across all 15 years"}
+                    ? `Yr ${corpusSipStopYear + 1} (${2025 + corpusSipStopYear})–Yr 15 (2039): ₹0 fresh cash; 100% profits reinvested`
+                    : "Continuous monthly SIP across all 15 years (2025–2039)"}
                 </div>
               </div>
 
@@ -4341,7 +4343,7 @@ export function CallsClient({
                     {corpusCagrPct}% p.a.
                   </span>
                 </div>
-                <div className="flex items-center gap-2 pt-0.5">
+                <div className="flex items-center gap-2 pt-1">
                   <span className="text-[10px] font-mono text-slate-400">10%</span>
                   <input
                     type="range"
@@ -4355,20 +4357,8 @@ export function CallsClient({
                   />
                   <span className="text-[10px] font-mono text-slate-500 font-semibold">50%</span>
                 </div>
-                <div className="flex items-center gap-1 flex-wrap pt-0.5">
-                  {[15, 20, 25, 30, 40, 50].map((val) => (
-                    <button
-                      key={val}
-                      onClick={() => setCorpusCagrPct(val)}
-                      className={`px-2 py-0.5 rounded text-[10.5px] font-mono font-medium transition-all ${
-                        corpusCagrPct === val
-                          ? "bg-emerald-700 text-white font-bold shadow-2xs"
-                          : "bg-white text-slate-700 border hairline hover:bg-slate-100"
-                      }`}
-                    >
-                      {val === 25 ? "25% (Base)" : `${val}%`}
-                    </button>
-                  ))}
+                <div className="text-[10px] text-slate-500">
+                  Compounded annually across 15 years (2025–2039)
                 </div>
               </div>
             </div>
@@ -4510,165 +4500,49 @@ export function CallsClient({
             </div>
           </div>
 
-          {/* ── This Month's Recommended Execution Plan ─────────────────── */}
-          <div className="bg-white border hairline rounded-lg p-3 sm:p-4 shadow-2xs space-y-2.5">
-            <div className="flex items-center justify-between border-b hairline pb-2 flex-wrap gap-2">
-              <div className="flex items-center gap-2">
-                <Coins className="w-4 h-4 text-amber-500" />
-                <h3 className="text-sm font-bold text-slate-900">
-                  This Month&apos;s Recommended Deployment Plan (Budget: {fmtLakhs(dynamicSizing.monthlyDeployable)})
-                </h3>
-              </div>
-              <span className="text-xs text-slate-500">
-                Prioritized allocations from Top Picks desk adapted to current ticket size
-              </span>
-            </div>
-
-            <div className="overflow-x-auto w-full">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="border-b hairline bg-slate-50 text-[10.5px] uppercase tracking-wider text-slate-500 font-semibold">
-                    <th className="py-2 px-2.5">Stock</th>
-                    <th className="py-2 px-2.5">Strategic Role</th>
-                    <th className="py-2 px-2.5 text-right">CMP</th>
-                    <th className="py-2 px-2.5 text-right">Target</th>
-                    <th className="py-2 px-2.5 text-right">Upside</th>
-                    <th className="py-2 px-2.5 text-center">Allocated Weight</th>
-                    <th className="py-2 px-2.5 text-right">Tranche 1 Budget</th>
-                    <th className="py-2 px-2.5 text-center">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y hairline">
-                  {curatedPicks.slice(0, 5).map((p) => {
-                    const weight = p.weightPct || 15;
-                    const totalTarget = Math.round((corpusMonthlyInflow * weight) / 100);
-                    const t1Budget = Math.round(totalTarget * 0.5);
-                    const shares = p.cmp > 0 ? Math.floor(t1Budget / p.cmp) : 0;
-                    return (
-                      <tr key={p.symbol} className="hover:bg-slate-50/70 transition-colors">
-                        <td className="py-2 px-2.5">
-                          <span className="font-mono font-bold text-slate-900 text-xs sm:text-sm">{p.symbol}</span>
-                          <div className="text-[10px] text-slate-500 truncate max-w-[150px]">{p.name}</div>
-                        </td>
-                        <td className="py-2 px-2.5">
-                          <span className="text-[11px] font-medium text-slate-700">{p.role}</span>
-                        </td>
-                        <td className="py-2 px-2.5 text-right font-mono font-bold text-slate-900">{money(p.cmp, 2)}</td>
-                        <td className="py-2 px-2.5 text-right font-mono font-semibold text-emerald-800">{money(p.target, 2)}</td>
-                        <td className="py-2 px-2.5 text-right font-mono font-bold text-emerald-700">+{p.upside}%</td>
-                        <td className="py-2 px-2.5 text-center">
-                          <span className="px-1.5 py-0.5 rounded text-[10.5px] font-mono font-bold bg-indigo-50 text-indigo-900 border border-indigo-200">
-                            {weight}% ({fmtLakhs(totalTarget)})
-                          </span>
-                        </td>
-                        <td className="py-2 px-2.5 text-right font-mono font-bold text-slate-900">
-                          {money(t1Budget, 0)}
-                          <div className="text-[10px] text-slate-500 font-normal">~{shares} shares</div>
-                        </td>
-                        <td className="py-2 px-2.5 text-center">
-                          <button
-                            onClick={() => {
-                              setSelectedSymbol(p.symbol);
-                              setViewMode("detail");
-                            }}
-                            className="px-2 py-1 text-[10.5px] font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded border border-indigo-200 transition-colors inline-flex items-center gap-0.5"
-                          >
-                            <span>Inspect</span>
-                            <ArrowUpRight className="w-3 h-3" />
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
           {/* ── 15-Year Compounding Simulation & Crossover Trajectory ─────── */}
           <div className="bg-white border hairline rounded-lg p-3 sm:p-4 shadow-2xs space-y-3">
             <div className="flex items-center justify-between border-b hairline pb-2.5 flex-wrap gap-3">
               <div>
                 <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5 flex-wrap">
                   <BarChart3 className="w-4 h-4 text-emerald-600" />
-                  <span>15-Year Compounding Trajectory &amp; The Compounding Crossover</span>
+                  <span>15-Year Compounding Trajectory (2025–2039)</span>
                   <span className="px-2 py-0.5 rounded text-[10.5px] font-mono font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">
                     @ {corpusCagrPct}% Annual Growth
                   </span>
+                  <span className="px-2 py-0.5 rounded text-[10.5px] font-mono font-bold bg-indigo-100 text-indigo-950 border border-indigo-300">
+                    +{corpusStepUpPct}%/yr Step-Up
+                  </span>
                   <span className="px-2 py-0.5 rounded text-[10.5px] font-mono font-bold bg-amber-100 text-amber-950 border border-amber-300">
                     {corpusSipStopYear < 15
-                      ? `SIP Yrs 1–${corpusSipStopYear} → Yr ${corpusSipStopYear + 1}–15 100% Profit Reinvested`
-                      : "SIP All 15 Yrs"}
+                      ? `SIP Yrs 1–${corpusSipStopYear} (2025–${2024 + corpusSipStopYear}) → Yr ${corpusSipStopYear + 1}–15 100% Profit Reinvested`
+                      : "SIP All 15 Yrs (2025–2039)"}
                   </span>
                 </h3>
                 <p className="text-[11px] text-slate-500 mt-0.5">
                   {corpusSipStopYear < 15
-                    ? `After Year ${corpusSipStopYear}, external salary inflow stops (₹0/mo) and 100% of your annual portfolio profit is reinvested into new Calls Desk stocks through Year 15!`
-                    : "Year-by-year 15-year trajectory showing when portfolio returns overtake your fresh salary savings!"}
+                    ? `After Year ${corpusSipStopYear} (${2024 + corpusSipStopYear}), external salary inflow stops (₹0/mo) and 100% of your annual portfolio profit is reinvested into new Calls Desk stocks through Year 15 (2039)!`
+                    : "Year-by-year 15-year trajectory (2025–2039) showing when portfolio returns overtake your fresh salary savings!"}
                 </p>
               </div>
 
-              {/* Inline SIP Window Toggle + CAGR Slider (10% to 50%) + Quick Milestone Highlights */}
-              <div className="flex items-center gap-2.5 flex-wrap">
-                <div className="bg-slate-50 border hairline rounded-md px-2.5 py-1 flex items-center gap-1.5">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 whitespace-nowrap">
-                    Salary SIP:
-                  </span>
-                  {[
-                    { yrs: 4, label: "Stop After Yr 4" },
-                    { yrs: 5, label: "Stop After Yr 5" },
-                    { yrs: 15, label: "All 15 Yrs" },
-                  ].map((opt) => (
-                    <button
-                      key={opt.yrs}
-                      onClick={() => setCorpusSipStopYear(opt.yrs)}
-                      className={`px-2 py-0.5 rounded text-[10px] font-mono font-semibold transition-all ${
-                        corpusSipStopYear === opt.yrs
-                          ? "bg-amber-600 text-white shadow-2xs"
-                          : "bg-white text-slate-600 border hairline hover:bg-slate-100"
-                      }`}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
+              {/* Quick Milestone Highlights */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="bg-slate-50 border hairline px-2.5 py-1 rounded text-right">
+                  <span className="text-[9.5px] uppercase font-bold text-slate-400 block">Yr 3 (2027)</span>
+                  <strong className="text-xs font-mono text-slate-900">{fmtLakhs(corpusSimulation.summary3Y?.endCorpus)}</strong>
                 </div>
-
-                <div className="bg-slate-50 border hairline rounded-md px-3 py-1.5 flex items-center gap-2.5">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 whitespace-nowrap">
-                    Growth Rate: <strong className="font-mono text-emerald-700 text-xs">{corpusCagrPct}%</strong>
-                  </div>
-                  <div className="flex items-center gap-1.5 w-32 sm:w-40">
-                    <span className="text-[9.5px] font-mono text-slate-400">10%</span>
-                    <input
-                      type="range"
-                      min={10}
-                      max={50}
-                      step={1}
-                      value={corpusCagrPct}
-                      onChange={(e) => setCorpusCagrPct(Number(e.target.value))}
-                      className="w-full h-1.5 bg-emerald-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
-                    />
-                    <span className="text-[9.5px] font-mono text-slate-600 font-bold">50%</span>
-                  </div>
+                <div className="bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded text-right">
+                  <span className="text-[9.5px] uppercase font-bold text-emerald-700 block">Yr 5 (2029)</span>
+                  <strong className="text-xs font-mono text-emerald-900">{fmtLakhs(corpusSimulation.summary5Y?.endCorpus)}</strong>
                 </div>
-
-                <div className="flex items-center gap-2 flex-wrap">
-                  <div className="bg-slate-50 border hairline px-2.5 py-1 rounded text-right">
-                    <span className="text-[9.5px] uppercase font-bold text-slate-400 block">3-Year Target</span>
-                    <strong className="text-xs font-mono text-slate-900">{fmtLakhs(corpusSimulation.summary3Y?.endCorpus)}</strong>
-                  </div>
-                  <div className="bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded text-right">
-                    <span className="text-[9.5px] uppercase font-bold text-emerald-700 block">5-Year Target</span>
-                    <strong className="text-xs font-mono text-emerald-900">{fmtLakhs(corpusSimulation.summary5Y?.endCorpus)}</strong>
-                  </div>
-                  <div className="bg-indigo-50 border border-indigo-200 px-2.5 py-1 rounded text-right">
-                    <span className="text-[9.5px] uppercase font-bold text-indigo-700 block">10-Year Target</span>
-                    <strong className="text-xs font-mono text-indigo-900">{fmtLakhs(corpusSimulation.summary10Y?.endCorpus)}</strong>
-                  </div>
-                  <div className="bg-purple-50 border border-purple-200 px-2.5 py-1 rounded text-right">
-                    <span className="text-[9.5px] uppercase font-bold text-purple-700 block">15-Year Target</span>
-                    <strong className="text-xs font-mono text-purple-950">{fmtLakhs(corpusSimulation.summary15Y?.endCorpus)}</strong>
-                  </div>
+                <div className="bg-indigo-50 border border-indigo-200 px-2.5 py-1 rounded text-right">
+                  <span className="text-[9.5px] uppercase font-bold text-indigo-700 block">Yr 10 (2034)</span>
+                  <strong className="text-xs font-mono text-indigo-900">{fmtLakhs(corpusSimulation.summary10Y?.endCorpus)}</strong>
+                </div>
+                <div className="bg-purple-50 border border-purple-200 px-2.5 py-1 rounded text-right">
+                  <span className="text-[9.5px] uppercase font-bold text-purple-700 block">Yr 15 (2039)</span>
+                  <strong className="text-xs font-mono text-purple-950">{fmtLakhs(corpusSimulation.summary15Y?.endCorpus)}</strong>
                 </div>
               </div>
             </div>
@@ -4678,7 +4552,7 @@ export function CallsClient({
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
                   <tr className="border-b hairline bg-slate-100/80 text-[10.5px] uppercase tracking-wider text-slate-600 font-semibold">
-                    <th className="py-2.5 px-3 w-16">Year</th>
+                    <th className="py-2.5 px-3 w-32">Year</th>
                     <th className="py-2.5 px-3 text-right">Starting Corpus</th>
                     <th className="py-2.5 px-3 text-right">Monthly Inflow</th>
                     <th className="py-2.5 px-3 text-right">Annual Fresh Cash</th>
