@@ -109,14 +109,18 @@ def check(row: dict, floor: int) -> tuple[list[str], dict]:
         if c["label"] == c["metric"]:
             errs.append(f"{sym}: {c['metric']} has no plain-English label")
 
-    # A sheet that withholds nothing and says so nowhere is suspicious: every
-    # pack measured so far refuses something. This is the "check that cannot
-    # fail" guard turned on this script itself.
-    if not out["withheld"] and S.R.band_state(row) is None \
-            and not S.R.pillar_caveats(row):
-        errs.append(f"{sym}: nothing is withheld and no band or pillar "
-                    f"shortfall is reported — verify this row really is "
-                    f"complete rather than unread")
+    # An unread/empty row produces no blocks and no table rows and nothing
+    # withheld. A genuinely complete stock (like KALYANKJIL: full 200-EMA,
+    # valid PE band, 8+ quarters, all 3 pillars at 100% weight) has nothing
+    # withheld because nothing is missing — that is the best case, not an error.
+    if (
+        not out["withheld"]
+        and S.R.band_state(row) is None
+        and not S.R.pillar_caveats(row)
+        and (not out["blocks"] or not tab["rows"])
+    ):
+        errs.append(f"{sym}: nothing is withheld, no blocks/rows rendered, and "
+                    f"no band or pillar shortfall is reported — row appears unread")
     return errs, out
 
 

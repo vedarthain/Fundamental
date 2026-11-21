@@ -119,7 +119,7 @@ SELECT
         --    through to arm 5 (gated_insufficient_history), where they belong.
         WHEN sm.last_status IS DISTINCT FROM 'ok'
          AND NOT (
-             sm.last_error LIKE 'Export button missing%'
+             sm.last_error LIKE 'Export button missing%%'
              AND (u.listing_date IS NULL
                   OR u.listing_date >= %(snap)s::date - INTERVAL '90 days'
                   OR u.maturity_tier = 'insufficient')
@@ -157,7 +157,7 @@ SELECT
         WHEN sm.symbol IS NULL THEN 'no screener_meta row — fetch never attempted'
         WHEN sm.last_status IS DISTINCT FROM 'ok'
          AND NOT (
-             sm.last_error LIKE 'Export button missing%'
+             sm.last_error LIKE 'Export button missing%%'
              AND (u.listing_date IS NULL
                   OR u.listing_date >= %(snap)s::date - INTERVAL '90 days'
                   OR u.maturity_tier = 'insufficient')
@@ -171,7 +171,7 @@ SELECT
             || COALESCE((SELECT COUNT(DISTINCT period_end)::text
                            FROM app.fundamentals_annual a WHERE a.symbol = u.symbol), '0')
             || ' annual periods'
-            || CASE WHEN sm.last_error LIKE 'Export button missing%'
+            || CASE WHEN sm.last_error LIKE 'Export button missing%%'
                     THEN ' (new listing, Screener export not yet available)'
                     ELSE '' END
         -- Name WHICH of the two no_metrics causes this is. They need different
