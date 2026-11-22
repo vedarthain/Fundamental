@@ -178,8 +178,20 @@ def extract_evidence_pack(symbols: list[str]) -> Path:
         if s and str(s).strip() and str(s).strip().upper() != "MUTUAL_FUNDS_ETFS"
     ]
     out_path = Path(f"/tmp/evidence_pack_{int(datetime.now().timestamp())}.json")
+    python_bin = sys.executable
+    if not (python_bin and os.path.exists(python_bin)):
+        for candidate in [
+            ROOT / ".venv" / "bin" / "python",
+            ROOT / "etl" / ".venv" / "bin" / "python",
+        ]:
+            if candidate.exists():
+                python_bin = str(candidate)
+                break
+        else:
+            python_bin = "python3"
+
     cmd = [
-        str(ROOT / "etl" / ".venv" / "bin" / "python"),
+        str(python_bin),
         str(ROOT / "scripts" / "verdict-evidence.py"),
         "--symbols",
         ",".join(clean_symbols),
