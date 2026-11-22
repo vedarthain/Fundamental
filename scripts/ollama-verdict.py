@@ -170,6 +170,20 @@ Return ONLY a valid JSON object matching this schema:
 """
 
 
+def get_python_bin() -> str:
+    """Resolve active or repo virtualenv Python binary."""
+    python_bin = sys.executable
+    if python_bin and os.path.exists(python_bin):
+        return str(python_bin)
+    for candidate in [
+        ROOT / ".venv" / "bin" / "python",
+        ROOT / "etl" / ".venv" / "bin" / "python",
+    ]:
+        if candidate.exists():
+            return str(candidate)
+    return "python3"
+
+
 def extract_evidence_pack(symbols: list[str]) -> Path:
     """Run verdict-evidence.py to generate a temporary pack JSON."""
     clean_symbols = [
@@ -178,20 +192,8 @@ def extract_evidence_pack(symbols: list[str]) -> Path:
         if s and str(s).strip() and str(s).strip().upper() != "MUTUAL_FUNDS_ETFS"
     ]
     out_path = Path(f"/tmp/evidence_pack_{int(datetime.now().timestamp())}.json")
-    python_bin = sys.executable
-    if not (python_bin and os.path.exists(python_bin)):
-        for candidate in [
-            ROOT / ".venv" / "bin" / "python",
-            ROOT / "etl" / ".venv" / "bin" / "python",
-        ]:
-            if candidate.exists():
-                python_bin = str(candidate)
-                break
-        else:
-            python_bin = "python3"
-
     cmd = [
-        str(python_bin),
+        get_python_bin(),
         str(ROOT / "scripts" / "verdict-evidence.py"),
         "--symbols",
         ",".join(clean_symbols),
@@ -1407,7 +1409,7 @@ def main() -> int:
                 tmp_single = Path(f"/tmp/v_{sym}_{int(datetime.now().timestamp())}_{idx}.json")
                 tmp_single.write_text(json.dumps([verdict_obj], indent=2))
                 load_cmd = [
-                    str(ROOT / "etl" / ".venv" / "bin" / "python"),
+                    get_python_bin(),
                     str(ROOT / "scripts" / "verdict-load.py"),
                     str(tmp_single),
                     "--allow-no-evidence",
