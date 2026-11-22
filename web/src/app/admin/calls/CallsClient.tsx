@@ -4364,142 +4364,6 @@ export function CallsClient({
             </div>
           </div>
 
-          {/* ── Dynamic Position Sizing System (The Answer to User's Core Question) ─ */}
-          <div className="bg-white border hairline rounded-lg p-3 sm:p-4 shadow-2xs space-y-3">
-            <div className="flex items-center justify-between border-b hairline pb-2 flex-wrap gap-2">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
-                  <Target className="w-4 h-4 text-indigo-600" />
-                  <span>Adaptive Position Sizing: How Stock Tickets Scale As Corpus Expands</span>
-                </h3>
-                <p className="text-[11px] text-slate-500 mt-0.5">
-                  Your monthly fresh cash stays steady (~₹1 Lakh), but your purchase size per stock scales automatically with corpus percentage!
-                </p>
-              </div>
-              <span className="text-xs font-mono font-bold bg-indigo-50 text-indigo-900 px-2 py-0.5 rounded border border-indigo-200">
-                Corpus Base: {fmtLakhs(dynamicSizing.corpus)}
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              {/* Tier 1: Anchor Core */}
-              <div className="rounded-lg border border-indigo-100 bg-indigo-50/40 p-3 space-y-2 flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-indigo-950 flex items-center gap-1">
-                      <span>🏛️</span>
-                      <span>Anchor Core Position</span>
-                    </span>
-                    <span className="text-[10px] font-mono font-bold text-indigo-800 bg-indigo-100 px-1.5 py-0.2 rounded">
-                      1.5% Corpus / 15% SIP
-                    </span>
-                  </div>
-                  <div className="mt-2 space-y-1">
-                    <div className="flex items-baseline justify-between">
-                      <span className="text-[11px] text-slate-500">Today&apos;s Target Size:</span>
-                      <strong className="text-sm font-mono text-slate-900">{fmtLakhs(dynamicSizing.anchor.total)}</strong>
-                    </div>
-                    <div className="flex items-center justify-between text-[11px] text-slate-600 pl-2 border-l-2 border-indigo-300">
-                      <span>Tranche 1 (Market):</span>
-                      <strong className="font-mono">{fmtLakhs(dynamicSizing.anchor.t1)}</strong>
-                    </div>
-                    <div className="flex items-center justify-between text-[11px] text-slate-600 pl-2 border-l-2 border-indigo-300">
-                      <span>Tranche 2 (Dip GTT):</span>
-                      <strong className="font-mono">{fmtLakhs(dynamicSizing.anchor.t2)}</strong>
-                    </div>
-                  </div>
-                </div>
-                <div className="pt-2 border-t border-indigo-100 text-[10px] text-indigo-900 space-y-0.5">
-                  <div className="flex justify-between">
-                    <span>At ₹30L Corpus:</span>
-                    <strong className="font-mono">₹45,000 (T1: ₹22.5k)</strong>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>At ₹60L Corpus:</span>
-                    <strong className="font-mono">₹90,000 (T1: ₹45k)</strong>
-                  </div>
-                </div>
-              </div>
-
-              {/* Tier 2: Growth Compounder */}
-              <div className="rounded-lg border border-emerald-100 bg-emerald-50/40 p-3 space-y-2 flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-emerald-950 flex items-center gap-1">
-                      <span>📈</span>
-                      <span>Growth Compounder</span>
-                    </span>
-                    <span className="text-[10px] font-mono font-bold text-emerald-800 bg-emerald-100 px-1.5 py-0.2 rounded">
-                      1.0% Corpus / 12% SIP
-                    </span>
-                  </div>
-                  <div className="mt-2 space-y-1">
-                    <div className="flex items-baseline justify-between">
-                      <span className="text-[11px] text-slate-500">Today&apos;s Target Size:</span>
-                      <strong className="text-sm font-mono text-slate-900">{fmtLakhs(dynamicSizing.compounder.total)}</strong>
-                    </div>
-                    <div className="flex items-center justify-between text-[11px] text-slate-600 pl-2 border-l-2 border-emerald-300">
-                      <span>Tranche 1 (Market):</span>
-                      <strong className="font-mono">{fmtLakhs(dynamicSizing.compounder.t1)}</strong>
-                    </div>
-                    <div className="flex items-center justify-between text-[11px] text-slate-600 pl-2 border-l-2 border-emerald-300">
-                      <span>Tranche 2 (Dip GTT):</span>
-                      <strong className="font-mono">{fmtLakhs(dynamicSizing.compounder.t2)}</strong>
-                    </div>
-                  </div>
-                </div>
-                <div className="pt-2 border-t border-emerald-100 text-[10px] text-emerald-900 space-y-0.5">
-                  <div className="flex justify-between">
-                    <span>At ₹30L Corpus:</span>
-                    <strong className="font-mono">₹30,000 (T1: ₹15k)</strong>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>At ₹60L Corpus:</span>
-                    <strong className="font-mono">₹60,000 (T1: ₹30k)</strong>
-                  </div>
-                </div>
-              </div>
-
-              {/* Tier 3: Tactical / Alpha Gem */}
-              <div className="rounded-lg border border-amber-100 bg-amber-50/40 p-3 space-y-2 flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-amber-950 flex items-center gap-1">
-                      <span>⚡</span>
-                      <span>Tactical Alpha Gem</span>
-                    </span>
-                    <span className="text-[10px] font-mono font-bold text-amber-800 bg-amber-100 px-1.5 py-0.2 rounded">
-                      0.6% Corpus / 8% SIP
-                    </span>
-                  </div>
-                  <div className="mt-2 space-y-1">
-                    <div className="flex items-baseline justify-between">
-                      <span className="text-[11px] text-slate-500">Today&apos;s Target Size:</span>
-                      <strong className="text-sm font-mono text-slate-900">{fmtLakhs(dynamicSizing.tactical.total)}</strong>
-                    </div>
-                    <div className="flex items-center justify-between text-[11px] text-slate-600 pl-2 border-l-2 border-amber-300">
-                      <span>Execution Strategy:</span>
-                      <strong className="font-mono">Single Tranche Buy</strong>
-                    </div>
-                    <div className="text-[10px] text-slate-500 italic">
-                      High upside technical catalysts &amp; earnings inflections
-                    </div>
-                  </div>
-                </div>
-                <div className="pt-2 border-t border-amber-100 text-[10px] text-amber-900 space-y-0.5">
-                  <div className="flex justify-between">
-                    <span>At ₹30L Corpus:</span>
-                    <strong className="font-mono">₹18,000</strong>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>At ₹60L Corpus:</span>
-                    <strong className="font-mono">₹36,000</strong>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
           {/* ── 15-Year Compounding Simulation & Crossover Trajectory ─────── */}
           <div className="bg-white border hairline rounded-lg p-3 sm:p-4 shadow-2xs space-y-3">
             <div className="flex items-center justify-between border-b hairline pb-2.5 flex-wrap gap-3">
@@ -4649,6 +4513,142 @@ export function CallsClient({
                   ))}
                 </tbody>
               </table>
+            </div>
+          </div>
+
+          {/* ── Dynamic Position Sizing System (The Answer to User's Core Question) ─ */}
+          <div className="bg-white border hairline rounded-lg p-3 sm:p-4 shadow-2xs space-y-3">
+            <div className="flex items-center justify-between border-b hairline pb-2 flex-wrap gap-2">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                  <Target className="w-4 h-4 text-indigo-600" />
+                  <span>Adaptive Position Sizing: How Stock Tickets Scale As Corpus Expands</span>
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Your monthly fresh cash stays steady (~₹1 Lakh), but your purchase size per stock scales automatically with corpus percentage!
+                </p>
+              </div>
+              <span className="text-xs font-mono font-bold bg-indigo-50 text-indigo-900 px-2 py-0.5 rounded border border-indigo-200">
+                Corpus Base: {fmtLakhs(dynamicSizing.corpus)}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {/* Tier 1: Anchor Core */}
+              <div className="rounded-lg border border-indigo-100 bg-indigo-50/40 p-3 space-y-2 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-indigo-950 flex items-center gap-1">
+                      <span>🏛️</span>
+                      <span>Anchor Core Position</span>
+                    </span>
+                    <span className="text-[10px] font-mono font-bold text-indigo-800 bg-indigo-100 px-1.5 py-0.2 rounded">
+                      1.5% Corpus / 15% SIP
+                    </span>
+                  </div>
+                  <div className="mt-2 space-y-1">
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-[11px] text-slate-500">Today&apos;s Target Size:</span>
+                      <strong className="text-sm font-mono text-slate-900">{fmtLakhs(dynamicSizing.anchor.total)}</strong>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] text-slate-600 pl-2 border-l-2 border-indigo-300">
+                      <span>Tranche 1 (Market):</span>
+                      <strong className="font-mono">{fmtLakhs(dynamicSizing.anchor.t1)}</strong>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] text-slate-600 pl-2 border-l-2 border-indigo-300">
+                      <span>Tranche 2 (Dip GTT):</span>
+                      <strong className="font-mono">{fmtLakhs(dynamicSizing.anchor.t2)}</strong>
+                    </div>
+                  </div>
+                </div>
+                <div className="pt-2 border-t border-indigo-100 text-[10px] text-indigo-900 space-y-0.5">
+                  <div className="flex justify-between">
+                    <span>At ₹30L Corpus:</span>
+                    <strong className="font-mono">₹45,000 (T1: ₹22.5k)</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>At ₹60L Corpus:</span>
+                    <strong className="font-mono">₹90,000 (T1: ₹45k)</strong>
+                  </div>
+                </div>
+              </div>
+
+              {/* Tier 2: Growth Compounder */}
+              <div className="rounded-lg border border-emerald-100 bg-emerald-50/40 p-3 space-y-2 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-emerald-950 flex items-center gap-1">
+                      <span>📈</span>
+                      <span>Growth Compounder</span>
+                    </span>
+                    <span className="text-[10px] font-mono font-bold text-emerald-800 bg-emerald-100 px-1.5 py-0.2 rounded">
+                      1.0% Corpus / 12% SIP
+                    </span>
+                  </div>
+                  <div className="mt-2 space-y-1">
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-[11px] text-slate-500">Today&apos;s Target Size:</span>
+                      <strong className="text-sm font-mono text-slate-900">{fmtLakhs(dynamicSizing.compounder.total)}</strong>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] text-slate-600 pl-2 border-l-2 border-emerald-300">
+                      <span>Tranche 1 (Market):</span>
+                      <strong className="font-mono">{fmtLakhs(dynamicSizing.compounder.t1)}</strong>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] text-slate-600 pl-2 border-l-2 border-emerald-300">
+                      <span>Tranche 2 (Dip GTT):</span>
+                      <strong className="font-mono">{fmtLakhs(dynamicSizing.compounder.t2)}</strong>
+                    </div>
+                  </div>
+                </div>
+                <div className="pt-2 border-t border-emerald-100 text-[10px] text-emerald-900 space-y-0.5">
+                  <div className="flex justify-between">
+                    <span>At ₹30L Corpus:</span>
+                    <strong className="font-mono">₹30,000 (T1: ₹15k)</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>At ₹60L Corpus:</span>
+                    <strong className="font-mono">₹60,000 (T1: ₹30k)</strong>
+                  </div>
+                </div>
+              </div>
+
+              {/* Tier 3: Tactical / Alpha Gem */}
+              <div className="rounded-lg border border-amber-100 bg-amber-50/40 p-3 space-y-2 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-amber-950 flex items-center gap-1">
+                      <span>⚡</span>
+                      <span>Tactical Alpha Gem</span>
+                    </span>
+                    <span className="text-[10px] font-mono font-bold text-amber-800 bg-amber-100 px-1.5 py-0.2 rounded">
+                      0.6% Corpus / 8% SIP
+                    </span>
+                  </div>
+                  <div className="mt-2 space-y-1">
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-[11px] text-slate-500">Today&apos;s Target Size:</span>
+                      <strong className="text-sm font-mono text-slate-900">{fmtLakhs(dynamicSizing.tactical.total)}</strong>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] text-slate-600 pl-2 border-l-2 border-amber-300">
+                      <span>Execution Strategy:</span>
+                      <strong className="font-mono">Single Tranche Buy</strong>
+                    </div>
+                    <div className="text-[10px] text-slate-500 italic">
+                      High upside technical catalysts &amp; earnings inflections
+                    </div>
+                  </div>
+                </div>
+                <div className="pt-2 border-t border-amber-100 text-[10px] text-amber-900 space-y-0.5">
+                  <div className="flex justify-between">
+                    <span>At ₹30L Corpus:</span>
+                    <strong className="font-mono">₹18,000</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>At ₹60L Corpus:</span>
+                    <strong className="font-mono">₹36,000</strong>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
