@@ -13,7 +13,7 @@ function timeAgo(dateString: string): string {
   return `${days}d ago`;
 }
 
-type LogType = "drift" | "sunday";
+type LogType = "drift" | "sunday" | "ltp" | "compute" | "scanner" | "backup";
 
 interface LogResponse {
   success: boolean;
@@ -25,6 +25,15 @@ interface LogResponse {
   modifiedAt: string | null;
   sizeBytes: number;
 }
+
+const TABS: { id: LogType; label: string }[] = [
+  { id: "drift", label: "🌙 Nightly Drift (11:00 PM)" },
+  { id: "ltp", label: "📈 Bhavcopy & LTP (7:25 PM)" },
+  { id: "scanner", label: "🚀 Momentum Scanners (8:30 PM)" },
+  { id: "backup", label: "💾 DB Backup (7:30 AM)" },
+  { id: "compute", label: "⚙️ Saturday Compute (8:30 AM)" },
+  { id: "sunday", label: "☀️ Sunday Calls (2:00 PM)" },
+];
 
 export function LogsViewerClient() {
   const [activeTab, setActiveTab] = useState<LogType>("drift");
@@ -86,27 +95,20 @@ export function LogsViewerClient() {
       {/* Control Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 shadow-sm">
         {/* Tabs */}
-        <div className="flex items-center gap-1 bg-zinc-100 dark:bg-zinc-800/80 p-1 rounded-lg">
-          <button
-            onClick={() => setActiveTab("drift")}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
-              activeTab === "drift"
-                ? "bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-sm"
-                : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200"
-            }`}
-          >
-            🌙 Nightly Drift (11:00 PM IST)
-          </button>
-          <button
-            onClick={() => setActiveTab("sunday")}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
-              activeTab === "sunday"
-                ? "bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-sm"
-                : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200"
-            }`}
-          >
-            ☀️ Sunday Calls & Audit (2:00 PM IST)
-          </button>
+        <div className="flex items-center gap-1 bg-zinc-100 dark:bg-zinc-800/80 p-1 rounded-lg flex-wrap">
+          {TABS.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
+                activeTab === tab.id
+                  ? "bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-sm"
+                  : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
 
         {/* Options */}
@@ -186,7 +188,7 @@ export function LogsViewerClient() {
             <span className="w-3 h-3 rounded-full bg-amber-500/80 inline-block" />
             <span className="w-3 h-3 rounded-full bg-emerald-500/80 inline-block" />
             <span className="ml-2 font-mono text-xs text-zinc-400">
-              {activeTab === "drift" ? "fundamental-daily-drift.log" : "fundamental-sunday-calls.log"}
+              {logData?.filePath || "fundamental-pipeline.log"}
             </span>
           </div>
           <span className="text-[11px] font-mono text-zinc-500 uppercase tracking-wider">

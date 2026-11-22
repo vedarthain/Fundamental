@@ -26,10 +26,8 @@
 name: Momentum scanner
 
 on:
-  schedule:
-    # Post-close on IST weekdays. 15:00 UTC = 20:30 IST (momentum), then
-    # trend-leaders right after. One run, both scanners, sequential.
-    - cron: '0 15 * * 1-5'
+  # Automated runs trigger Mon-Fri at 8:30:00 PM IST sharp via native Droplet cron (/var/www/Fundamental/scripts/cron-momentum-scanner.sh).
+  # workflow_dispatch is preserved for manual runs on demand.
   workflow_dispatch:
     inputs:
       which:

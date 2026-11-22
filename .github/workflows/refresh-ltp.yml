@@ -11,9 +11,8 @@
 name: Refresh LTP + OHLC
 
 on:
-  schedule:
-    # 13:55 UTC = 19:25 IST (off-minute to avoid :00 UTC queue spikes, lands ~19:30 IST). Mon-Fri only.
-    - cron: '55 13 * * 1-5'
+  # Automated runs trigger at 7:25:00 PM IST sharp via native Droplet cron (/var/www/Fundamental/scripts/cron-refresh-ltp.sh).
+  # workflow_dispatch is preserved for manual runs on demand.
   workflow_dispatch: {}
 
 jobs:

@@ -6,6 +6,10 @@ import path from "path";
 const LOG_FILES: Record<string, string> = {
   drift: "/var/log/fundamental-daily-drift.log",
   sunday: "/var/log/fundamental-sunday-calls.log",
+  ltp: "/var/log/fundamental-refresh-ltp.log",
+  compute: "/var/log/fundamental-weekly-compute.log",
+  scanner: "/var/log/fundamental-momentum-scanner.log",
+  backup: "/var/log/fundamental-db-backup.log",
 };
 
 export async function GET(request: Request) {

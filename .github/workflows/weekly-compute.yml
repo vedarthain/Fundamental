@@ -4,9 +4,8 @@
 name: Weekly Compute + Score
 
 on:
-  schedule:
-    # Sat 03:00 UTC = 08:30 IST.
-    - cron: '0 3 * * 6'
+  # Automated runs trigger Saturdays at 8:30:00 AM IST sharp via native Droplet cron (/var/www/Fundamental/scripts/cron-weekly-compute.sh).
+  # workflow_dispatch is preserved for manual runs on demand.
   workflow_dispatch:
     inputs:
       snapshot_date:
