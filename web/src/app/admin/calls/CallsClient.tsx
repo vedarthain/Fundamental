@@ -498,6 +498,171 @@ function prefetchStockResources(symbol: string): void {
   clientStockContextInflight.set(symbol, p);
 }
 
+export type CuratedResearchDetails = {
+  role?: string;
+  rationale?: string;
+  companyOverview?: string;
+  operatingHighlights?: string[];
+  catalysts?: string[];
+  marginOfSafety?: string;
+};
+
+export const CURATED_RESEARCH_NOTES: Record<string, CuratedResearchDetails> = {
+  INDUSTOWER: {
+    role: "1Y Alpha FCF Compounder",
+    rationale: "India's leading telecom tower infrastructure provider benefiting from nationwide 5G densification, accelerating collection of legacy Vodafone Idea receivables, and structural Free Cash Flow yield > 15%.",
+    companyOverview: "Indus Towers Ltd. is India's leading passive telecom infrastructure provider, deploying, owning, and managing over 225,000 telecom towers and 365,000 co-locations across all 22 telecom circles in India. It serves major wireless operators including Bharti Airtel, Reliance Jio, and Vodafone Idea with long-term Master Service Agreements.",
+    operatingHighlights: [
+      "Massive Free Cash Flow (FCF) yield exceeding 15% with high operating EBITDA margins (>52%).",
+      "Consistent recovery of overdue receivables from Vodafone Idea as telco funding and tariff hikes take effect.",
+      "Aggressive nationwide 5G tower tenancies and small-cell rollouts driving multi-year loading factor expansion per tower.",
+      "Significant operating leverage with near-zero incremental CAPEX needed for co-location additions.",
+    ],
+    catalysts: [
+      "Formalization of additional tenant additions from ongoing 5G site densification across Tier-2/3 cities.",
+      "Dividend reinstatement / potential special dividend distribution as trapped working capital unwinds.",
+      "Continuous balance sheet deleveraging leading to interest cost savings and ROE expansion toward 25%.",
+    ],
+    marginOfSafety: "Irreplaceable nationwide physical infrastructure asset base. Trading at significant discount to international tower peers. Bear floor well anchored at ₹335.",
+  },
+  UNIONBANK: {
+    role: "6M Banking Growth Anchor",
+    rationale: "Tier-1 PSU banking leader demonstrating strong balance sheet turnaround, multi-quarter decline in Net NPAs (<0.95%), expanding RAM (Retail, Agri, MSME) loan book, and high technical momentum (Pillar 74).",
+    companyOverview: "Union Bank of India is one of the premier public sector banking institutions in India, operating an extensive network of 8,500+ domestic branches and ATMs serving over 150 million customers across retail, agriculture, MSME (RAM), and large corporate segments. Headquartered in Mumbai, it commands significant market share in regional deposit mobilization and priority lending.",
+    operatingHighlights: [
+      "Robust NIM expansion with disciplined deposit re-pricing and expanding CASA ratio (>34%).",
+      "Asset quality turnaround: Gross NPA falling steadily below 4.5% and Net NPA < 0.95% with high Provision Coverage Ratio (PCR > 92%).",
+      "Corporate credit book accelerating at 12–14% CAGR driven by infrastructure, renewable energy, and manufacturing CAPEX.",
+      "Strong capital adequacy (CRAR > 16.2%), providing substantial headroom for risk-weighted asset expansion without near-term dilution risk.",
+    ],
+    catalysts: [
+      "Impending credit ratings upgrade by domestic and international agencies following multi-quarter balance sheet clean-up.",
+      "Operating leverage kicks in as digital banking transactions cross 82% of total retail volume, lowering cost-to-income ratio.",
+      "Recovery from legacy stressed assets via NCLT resolutions feeding directly into non-interest income.",
+    ],
+    marginOfSafety: "Sizable valuation cushion trading at an attractive Price-to-Adjusted Book Value (P/ABV < 0.85x), well below historical peak multiples of 1.2x. Floor anchored at ₹130 (0.65x ABV).",
+  },
+  BBTC: {
+    role: ">1Y Holding Co Arbitrage",
+    rationale: "Holding company of the Wadia Group controlling a massive 50.5% effective equity stake in Britannia Industries alongside prime land parcels, plantations, and auto components, trading at an extreme >60% holding discount.",
+    companyOverview: "The Bombay Burmah Trading Corporation, Limited (BBTC) is a 160+ year old flagship enterprise of the Wadia Group. Its primary economic engine is its majority ownership in Britannia Industries Limited (direct and through subsidiaries), coupled with direct operations in tea and coffee plantations, auto-electrical components, and real estate assets.",
+    operatingHighlights: [
+      "Unrivaled asset backing: BBTC holds ~12.16 crore shares (~50.5%) of Britannia Industries Ltd, valued in excess of ₹65,000 Cr at market prices.",
+      "Deep holding company discount (>60%) compared to historical typical holding discounts of 35–40%, offering a massive structural mean-reversion cushion.",
+      "Zero-leverage parent holding structure with regular dividend pass-through from Britannia fueling treasury yield.",
+      "Significant standalone land banks and high-margin plantation assets providing hard asset floor.",
+    ],
+    catalysts: [
+      "Narrowing holding company discount driven by institutional activist pressure and corporate simplification.",
+      "Accelerating volume recovery and rural demand tailwinds in Britannia's premium biscuit and dairy portfolio.",
+      "Potential value unlocking or restructuring of non-core real estate land holdings in South and Western India.",
+    ],
+    marginOfSafety: "Pristine fundamental backing with Britannia market value alone representing >2.5x BBTC's current market cap. High margin of safety with firm support floor at ₹1,050.",
+  },
+  FMGOETZE: {
+    role: "3M Auto Components Alpha",
+    rationale: "Premier manufacturer of pistons, piston rings, and engine bearings commanding unmatched domestic market share (>55%), debt-free balance sheet, and strong operating cash flows backed by parent Tenneco LLC.",
+    companyOverview: "Federal-Mogul Goetze (India) Limited is a leading manufacturer of automotive powertrain components including pistons, piston rings, cylinder liners, and sintered metal products for two-wheelers, passenger cars, commercial vehicles, and agricultural tractors. It operates state-of-the-art manufacturing plants in Bangalore, Patiala, and Bhiwadi with global technical backing from Tenneco.",
+    operatingHighlights: [
+      "Dominant domestic market leadership (>55% market share in piston rings and OEM powertrain assemblies).",
+      "Pristine balance sheet with zero net long-term debt and positive Free Cash Flow generation.",
+      "Operating EBITDA margins steady at 14–16% supported by high-margin aftermarket and commercial vehicle exports.",
+      "High barrier to entry with deep OEM co-engineering relationships and strict quality certifications.",
+    ],
+    catalysts: [
+      "Cyclical upturn in commercial vehicles and tractors driving high-margin replacement demand.",
+      "Margin expansion supported by localized raw material sourcing and lean operational initiatives under Tenneco.",
+      "Increasing hybrid vehicle engine component complexity commanding higher realization per kit.",
+    ],
+    marginOfSafety: "Debt-free balance sheet with high institutional quality score of 99. Solid support floor anchored at ₹301.40.",
+  },
+  GRAVITA: {
+    role: "Circular Economy Leader — Global Battery & Metals Recycling",
+    rationale: "India's largest non-ferrous metal and battery recycling leader benefiting from mandatory Battery Waste Management Rules (BWMR), 100% LME price hedging, zero commodity risk, and >25% ROCE.",
+    companyOverview: "Gravita India Limited is India's leading multinational non-ferrous recycling and circular economy champion with operations spanning India, Africa, Central America, and Europe. It specializes in lead recycling, aluminium recycling, plastic recycling, and rubber recycling with turnkey engineering solutions. Operating on a 100% back-to-back margin-hedging framework on the London Metal Exchange (LME), the business earns consistent value-added conversion spreads regardless of commodity price volatility.",
+    operatingHighlights: [
+      "Pan-global recycling footprint across 11 manufacturing plants with cumulative capacity exceeding 300,000 MTPA.",
+      "Strict 100% back-to-back LME hedging policy removing commodity price risks and locking in predictable per-tonne conversion margins.",
+      "Rigorous regulatory tailwinds under Battery Waste Management Rules (BWMR) and Extended Producer Responsibility (EPR), mandating formal recyclers to process OEM scrap.",
+      "Superior capital allocation track record delivering sustained ROCE >25% and ROE >22% alongside steady net debt reduction.",
+    ],
+    catalysts: [
+      "Aggressive ongoing capacity expansion toward 500,000 MTPA by FY27 targeting 25%+ CAGR volume growth.",
+      "Commercial rollout of lithium-ion battery recycling and rubber pyrolysis plants commanding higher EBITDA margins (>12%).",
+      "Mandatory EPR credit trading in India driving high-margin ancillary royalty income from tier-1 automotive and battery OEMs.",
+    ],
+    marginOfSafety: "Rock-solid 25%+ ROCE balance sheet, 100% commodity price hedging insulation, composite institutional score of 98, and strong technical consolidation base around ₹1,420–₹1,450 with bear floor at ₹1,180.",
+  },
+  ALLDIGI: {
+    role: "1M B2B Tech Alpha",
+    rationale: "B2B enterprise digital transformation and payroll solutions compounder delivering >24% ROCE, long-term enterprise retention (>95%), and accelerating AI-driven margin expansion.",
+    companyOverview: "Alldigi Tech (formerly Allsec Technologies) is a premier digital transformation, BPO, and enterprise HR/payroll processing solutions provider, serving Global Fortune 500 enterprises across North America, Europe, and APAC with scalable cloud SaaS platforms.",
+    operatingHighlights: [
+      "Exceptional capital efficiency with ROCE > 24% and consistent debt-free cash generation.",
+      "Long-term sticky enterprise contracts with >95% client retention and rising contract values.",
+      "Accelerating adoption of AI-enabled automated customer experience (CX) and compliance workflows.",
+      "High operating cash conversion with over 90% of EBITDA converting directly into free cash.",
+    ],
+    catalysts: [
+      "Margin expansion as automated AI workflows displace legacy manual service hours.",
+      "Inorganic tuck-in acquisitions enabled by debt-free treasury.",
+      "Dividend payout ratio exceeding 50% providing superior cash yield to shareholders.",
+    ],
+    marginOfSafety: "Debt-free balance sheet with high cash per share, sticky recurring multi-year enterprise contracts, and strong floor at ₹582.",
+  },
+  APOLLOTYRE: {
+    role: "3M Margin Expansion",
+    rationale: "Global radial tire manufacturing leader trading at strong multi-month support, expanding European EBITDA margins, accelerating debt reduction cycle, and benefiting from stabilizing raw material costs.",
+    companyOverview: "Apollo Tyres is a global tire manufacturing giant with iconic brand equity across India and Europe (Vredestein brand), manufacturing high-performance radial tires for passenger vehicles, commercial trucks, off-highway vehicles, and two-wheelers.",
+    operatingHighlights: [
+      "Structural margin inflection: Consolidated EBITDA margins expanding toward 16% on disciplined pricing and premiumization.",
+      "Strong balance sheet deleveraging with net debt-to-EBITDA dropping below 1.0x.",
+      "European operations (Vredestein) capturing market share in all-season and ultra-high-performance tire categories.",
+      "Improving capacity utilization across Indian plants driving operational efficiency.",
+    ],
+    catalysts: [
+      "Stabilization in natural rubber and crude-derivative raw material inputs expanding gross margins.",
+      "Recovery in Indian commercial vehicle replacement demand and automotive OEM volumes.",
+      "Enhanced free cash flow generation driving accelerated debt retirement and ROE expansion toward 17%.",
+    ],
+    marginOfSafety: "Firm technical and fundamental support around the ₹380–₹395 zone. Substantial replacement market revenue cushioning cyclic downturns.",
+  },
+  TRANSRAILL: {
+    role: "6M Power T&D Capex Anchor",
+    rationale: "Integrated EPC & power transmission tower manufacturing leader with backward-integrated conductors/monopoles, multi-year unexecuted order book (>₹10,000 Cr), and high ROCE (>33%).",
+    companyOverview: "Transrail Lighting Limited is one of India's premier engineering, procurement, and construction (EPC) companies specializing in power transmission and distribution (T&D), integrated with in-house manufacturing of galvanized lattice towers, conductors, and monopoles across 4 large-scale facilities.",
+    operatingHighlights: [
+      "Backward-integrated manufacturing of high-voltage towers and conductors shielding operating EBITDA margins (12–13%) from raw material volatility.",
+      "Multi-year order book visibility exceeding 2.5x trailing annual revenues across domestic HVDC corridors and international power grids.",
+      "Superior capital efficiency with ROCE > 33% and disciplined working capital cycle.",
+      "Strong execution track record across 55+ countries in Africa, Asia, and the Americas.",
+    ],
+    catalysts: [
+      "Accelerated national grid evacuation capex for renewable energy parks (Green Energy Corridors).",
+      "Margin expansion from rising share of higher-margin international T&D and substation turnkey orders.",
+      "Deleveraging balance sheet post-listing driving lower finance costs and PAT acceleration (>30% YoY).",
+    ],
+    marginOfSafety: "Trading at ~14x P/E and PEG < 0.6x with 2.5+ years of locked-in sovereign/utility order backlog. Multi-week institutional support base at ₹420–₹429; bear floor anchored at ₹398.00.",
+  },
+  BANKBARODA: {
+    role: "1Y PSU Banking Value Anchor",
+    rationale: "Tier-1 PSU bank delivering sector-leading ROE (>16%), pristine asset quality with Net NPA < 0.65%, strong retail & corporate loan book expansion, and deep valuation comfort (~1.0x FY27E Book).",
+    companyOverview: "Bank of Baroda is India's second-largest public sector bank by asset base, operating over 8,200 domestic branches and a major international presence across 17 countries, serving over 165 million global customers across retail, MSME, agri, and corporate banking.",
+    operatingHighlights: [
+      "Best-in-class asset quality among PSU peers with Net NPA below 0.65% and Provision Coverage Ratio (PCR) > 93%.",
+      "Consistent RoA > 1.15% and RoE > 16.5% backed by disciplined credit underwriting and international book yields.",
+      "Retail and MSME (RAM) credit growing at 15%+ YoY, improving structural asset yield mix.",
+      "Robust Capital Adequacy (CRAR > 16.3%) supporting self-funded credit growth without equity dilution.",
+    ],
+    catalysts: [
+      "Re-rating toward 1.25x–1.35x Adjusted Book Value as RoA sustains above 1.15% across credit cycles.",
+      "Strong treasury and recovery income from resolved corporate accounts boosting non-interest income.",
+      "Consistent dividend yield (~2.8%–3.2%) providing downside cushion for institutional holders.",
+    ],
+    marginOfSafety: "Trading around 1.0x forward Adjusted Book Value despite private-bank-like RoE (>16%). Breakout retest support at ₹262–₹265, multi-month demand at ₹238, and bear floor anchored at ₹224.00.",
+  },
+};
+
 export function CallsClient({
   verdictSectors = [],
   verdictInitialClusterId = null,
@@ -558,7 +723,7 @@ export function CallsClient({
   // View Mode: Detail Workstation vs Master Table Sheet vs Monthly Actual Audit vs Corpus Growth Planner
   const [viewMode, setViewMode] = useState<"detail" | "table" | "audit" | "corpus">("detail");
   const [selectedAuditMonth, setSelectedAuditMonth] = useState<string>("2026-11");
-  const [tableSortKey, setTableSortKey] = useState<"symbol" | "cmp" | "target" | "upside" | "weight" | "quality">("weight");
+  const [tableSortKey, setTableSortKey] = useState<"symbol" | "cmp" | "target" | "upside" | "weight" | "quality" | "conviction">("conviction");
   const [tableSortAsc, setTableSortAsc] = useState<boolean>(false);
 
   // Corpus Growth & Dynamic Investment Planner State
@@ -787,312 +952,9 @@ export function CallsClient({
     }
   };
 
-  // Comprehensive Curated deployment picks with rich operational thesis & company overview
-  const curatedPicks = useMemo(() => [
-    {
-      symbol: "INDUSTOWER",
-      name: "Indus Towers Ltd.",
-      sector: "Tech & Communication",
-      cluster: "Telecom",
-      weightPct: 15,
-      cmp: 378.3,
-      anchorPrice: 380.0,
-      callDate: "2026-11-01",
-      buyBelow: 370.7,
-      target: 554.4,
-      stopLoss: 335.0,
-      upside: 46.5,
-      scores: "100 / 82 / 51",
-      horizon: "1Y" as IdeaHorizon,
-      horizonLabel: "🏛️ 1Y Core",
-      timeline: "9–12M",
-      role: "1Y Alpha FCF Compounder",
-      rationale: "India's leading telecom tower infrastructure provider benefiting from nationwide 5G densification, accelerating collection of legacy Vodafone Idea receivables, and structural Free Cash Flow yield > 15%.",
-      companyOverview: "Indus Towers Ltd. is India's leading passive telecom infrastructure provider, deploying, owning, and managing over 225,000 telecom towers and 365,000 co-locations across all 22 telecom circles in India. It serves major wireless operators including Bharti Airtel, Reliance Jio, and Vodafone Idea with long-term Master Service Agreements.",
-      operatingHighlights: [
-        "Massive Free Cash Flow (FCF) yield exceeding 15% with high operating EBITDA margins (>52%).",
-        "Consistent recovery of overdue receivables from Vodafone Idea as telco funding and tariff hikes take effect.",
-        "Aggressive nationwide 5G tower tenancies and small-cell rollouts driving multi-year loading factor expansion per tower.",
-        "Significant operating leverage with near-zero incremental CAPEX needed for co-location additions.",
-      ],
-      catalysts: [
-        "Formalization of additional tenant additions from ongoing 5G site densification across Tier-2/3 cities.",
-        "Dividend reinstatement / potential special dividend distribution as trapped working capital unwinds.",
-        "Continuous balance sheet deleveraging leading to interest cost savings and ROE expansion toward 25%.",
-      ],
-      marginOfSafety: "Irreplaceable nationwide physical infrastructure asset base. Trading at significant discount to international tower peers. Bear floor well anchored at ₹335.",
-    },
-    {
-      symbol: "UNIONBANK",
-      name: "Union Bank of India",
-      sector: "Financials",
-      cluster: "PSU Banks",
-      weightPct: 15,
-      cmp: 186.0,
-      anchorPrice: 178.9,
-      callDate: "2026-11-01",
-      buyBelow: 182.3,
-      target: 270.1,
-      stopLoss: 130.0,
-      upside: 45.2,
-      scores: "83 / 68 / 74",
-      horizon: "6M" as IdeaHorizon,
-      horizonLabel: "📈 6M Banking",
-      timeline: "5–6M",
-      role: "6M Banking Growth Anchor",
-      rationale: "Tier-1 PSU banking leader demonstrating strong balance sheet turnaround, multi-quarter decline in Net NPAs (<0.95%), expanding RAM (Retail, Agri, MSME) loan book, and high technical momentum (Pillar 74).",
-      companyOverview: "Union Bank of India is one of the premier public sector banking institutions in India, operating an extensive network of 8,500+ domestic branches and ATMs serving over 150 million customers across retail, agriculture, MSME (RAM), and large corporate segments. Headquartered in Mumbai, it commands significant market share in regional deposit mobilization and priority lending.",
-      operatingHighlights: [
-        "Robust NIM expansion with disciplined deposit re-pricing and expanding CASA ratio (>34%).",
-        "Asset quality turnaround: Gross NPA falling steadily below 4.5% and Net NPA < 0.95% with high Provision Coverage Ratio (PCR > 92%).",
-        "Corporate credit book accelerating at 12–14% CAGR driven by infrastructure, renewable energy, and manufacturing CAPEX.",
-        "Strong capital adequacy (CRAR > 16.2%), providing substantial headroom for risk-weighted asset expansion without near-term dilution risk.",
-      ],
-      catalysts: [
-        "Impending credit ratings upgrade by domestic and international agencies following multi-quarter balance sheet clean-up.",
-        "Operating leverage kicks in as digital banking transactions cross 82% of total retail volume, lowering cost-to-income ratio.",
-        "Recovery from legacy stressed assets via NCLT resolutions feeding directly into non-interest income.",
-      ],
-      marginOfSafety: "Sizable valuation cushion trading at an attractive Price-to-Adjusted Book Value (P/ABV < 0.85x), well below historical peak multiples of 1.2x. Floor anchored at ₹130 (0.65x ABV).",
-    },
-    {
-      symbol: "BBTC",
-      name: "Bombay Burmah Trading Corporation Ltd.",
-      sector: "Consumer",
-      cluster: "Packaged Foods & Dairy",
-      weightPct: 15,
-      cmp: 1284.3,
-      anchorPrice: 1284.3,
-      callDate: "2026-11-06",
-      buyBelow: 1124.3,
-      target: 2356.9,
-      stopLoss: 1050.0,
-      upside: 83.5,
-      scores: "100 / 82 / 27",
-      horizon: ">1Y" as IdeaHorizon,
-      horizonLabel: "💎 >1Y Asset Arbitrage",
-      timeline: "9–15M",
-      role: ">1Y Holding Co Arbitrage",
-      rationale: "Holding company of the Wadia Group controlling a massive 50.5% effective equity stake in Britannia Industries alongside prime land parcels, plantations, and auto components, trading at an extreme >60% holding discount.",
-      companyOverview: "The Bombay Burmah Trading Corporation, Limited (BBTC) is a 160+ year old flagship enterprise of the Wadia Group. Its primary economic engine is its majority ownership in Britannia Industries Limited (direct and through subsidiaries), coupled with direct operations in tea and coffee plantations, auto-electrical components, and real estate assets.",
-      operatingHighlights: [
-        "Unrivaled asset backing: BBTC holds ~12.16 crore shares (~50.5%) of Britannia Industries Ltd, valued in excess of ₹65,000 Cr at market prices.",
-        "Deep holding company discount (>60%) compared to historical typical holding discounts of 35–40%, offering a massive structural mean-reversion cushion.",
-        "Zero-leverage parent holding structure with regular dividend pass-through from Britannia fueling treasury yield.",
-        "Significant standalone land banks and high-margin plantation assets providing hard asset floor.",
-      ],
-      catalysts: [
-        "Narrowing holding company discount driven by institutional activist pressure and corporate simplification.",
-        "Accelerating volume recovery and rural demand tailwinds in Britannia's premium biscuit and dairy portfolio.",
-        "Potential value unlocking or restructuring of non-core real estate land holdings in South and Western India.",
-      ],
-      marginOfSafety: "Pristine fundamental backing with Britannia market value alone representing >2.5x BBTC's current market cap. High margin of safety with firm support floor at ₹1,050.",
-    },
-    {
-      symbol: "FMGOETZE",
-      name: "Federal-Mogul Goetze (India) Ltd.",
-      sector: "Industrials",
-      cluster: "Auto Components (Powertrain & Body)",
-      weightPct: 15,
-      cmp: 466.4,
-      anchorPrice: 429.3,
-      callDate: "2026-10-27",
-      buyBelow: 457.1,
-      target: 603.6,
-      stopLoss: 326.4,
-      upside: 29.4,
-      scores: "99 / 63 / 45",
-      horizon: "3M" as IdeaHorizon,
-      horizonLabel: "🚀 3M Auto Alpha",
-      timeline: "2–3M",
-      role: "3M Auto Components Alpha",
-      rationale: "Premier manufacturer of pistons, piston rings, and engine bearings commanding unmatched domestic market share (>55%), debt-free balance sheet, and strong operating cash flows backed by parent Tenneco LLC.",
-      companyOverview: "Federal-Mogul Goetze (India) Limited is a leading manufacturer of automotive powertrain components including pistons, piston rings, cylinder liners, and sintered metal products for two-wheelers, passenger cars, commercial vehicles, and agricultural tractors. It operates state-of-the-art manufacturing plants in Bangalore, Patiala, and Bhiwadi with global technical backing from Tenneco.",
-      operatingHighlights: [
-        "Dominant domestic market leadership (>55% market share in piston rings and OEM powertrain assemblies).",
-        "Pristine balance sheet with zero net long-term debt and positive Free Cash Flow generation.",
-        "Operating EBITDA margins steady at 14–16% supported by high-margin aftermarket and commercial vehicle exports.",
-        "High barrier to entry with deep OEM co-engineering relationships and strict quality certifications.",
-      ],
-      catalysts: [
-        "Cyclical upturn in commercial vehicles and tractors driving high-margin replacement demand.",
-        "Margin expansion supported by localized raw material sourcing and lean operational initiatives under Tenneco.",
-        "Increasing hybrid vehicle engine component complexity commanding higher realization per kit.",
-      ],
-      marginOfSafety: "Debt-free balance sheet with high institutional quality score of 99. Solid support floor anchored at ₹301.40.",
-    },
-    {
-      symbol: "GRAVITA",
-      name: "Gravita India Ltd.",
-      sector: "Materials",
-      cluster: "Circular Economy & Metals Recycling",
-      weightPct: 10,
-      cmp: 1493.9,
-      anchorPrice: 1493.9,
-      callDate: "2026-11-12",
-      buyBelow: 1520.0,
-      target: 2100.0,
-      stopLoss: 1180.0,
-      upside: 40.6,
-      scores: "98 / 82 / 65",
-      horizon: "1Y" as IdeaHorizon,
-      horizonLabel: "🏛️ 1Y Alpha",
-      timeline: "9–12M",
-      role: "Circular Economy Leader — Global Battery & Metals Recycling",
-      rationale: "India's largest non-ferrous metal and battery recycling leader benefiting from mandatory Battery Waste Management Rules (BWMR), 100% LME price hedging, zero commodity risk, and >25% ROCE.",
-      companyOverview: "Gravita India Limited is India's leading multinational non-ferrous recycling and circular economy champion with operations spanning India, Africa, Central America, and Europe. It specializes in lead recycling, aluminium recycling, plastic recycling, and rubber recycling with turnkey engineering solutions. Operating on a 100% back-to-back margin-hedging framework on the London Metal Exchange (LME), the business earns consistent value-added conversion spreads regardless of commodity price volatility.",
-      operatingHighlights: [
-        "Pan-global recycling footprint across 11 manufacturing plants with cumulative capacity exceeding 300,000 MTPA.",
-        "Strict 100% back-to-back LME hedging policy removing commodity price risks and locking in predictable per-tonne conversion margins.",
-        "Rigorous regulatory tailwinds under Battery Waste Management Rules (BWMR) and Extended Producer Responsibility (EPR), mandating formal recyclers to process OEM scrap.",
-        "Superior capital allocation track record delivering sustained ROCE >25% and ROE >22% alongside steady net debt reduction.",
-      ],
-      catalysts: [
-        "Aggressive ongoing capacity expansion toward 500,000 MTPA by FY27 targeting 25%+ CAGR volume growth.",
-        "Commercial rollout of lithium-ion battery recycling and rubber pyrolysis plants commanding higher EBITDA margins (>12%).",
-        "Mandatory EPR credit trading in India driving high-margin ancillary royalty income from tier-1 automotive and battery OEMs.",
-      ],
-      marginOfSafety: "Rock-solid 25%+ ROCE balance sheet, 100% commodity price hedging insulation, composite institutional score of 98, and strong technical consolidation base around ₹1,420–₹1,450 with bear floor at ₹1,180.",
-    },
-    {
-      symbol: "ALLDIGI",
-      name: "Alldigi Tech Ltd.",
-      sector: "Industrials",
-      cluster: "Commercial B2B Services & Supplies",
-      weightPct: 15,
-      cmp: 831.65,
-      anchorPrice: 772.25,
-      callDate: "2026-11-01",
-      buyBelow: 815.0,
-      target: 1117.7,
-      stopLoss: 582.0,
-      upside: 34.4,
-      scores: "94 / 78 / 52",
-      horizon: "1M" as IdeaHorizon,
-      horizonLabel: "⚡ 1M Swing",
-      timeline: "2–4W",
-      role: "1M B2B Tech Alpha",
-      rationale: "B2B enterprise digital transformation and payroll solutions compounder delivering >24% ROCE, long-term enterprise retention (>95%), and accelerating AI-driven margin expansion.",
-      companyOverview: "Alldigi Tech (formerly Allsec Technologies) is a premier digital transformation, BPO, and enterprise HR/payroll processing solutions provider, serving Global Fortune 500 enterprises across North America, Europe, and APAC with scalable cloud SaaS platforms.",
-      operatingHighlights: [
-        "Exceptional capital efficiency with ROCE > 24% and consistent debt-free cash generation.",
-        "Long-term sticky enterprise contracts with >95% client retention and rising contract values.",
-        "Accelerating adoption of AI-enabled automated customer experience (CX) and compliance workflows.",
-        "High operating cash conversion with over 90% of EBITDA converting directly into free cash.",
-      ],
-      catalysts: [
-        "Margin expansion as automated AI workflows displace legacy manual service hours.",
-        "Inorganic tuck-in acquisitions enabled by debt-free treasury.",
-        "Dividend payout ratio exceeding 50% providing superior cash yield to shareholders.",
-      ],
-      marginOfSafety: "Debt-free balance sheet with high cash per share, sticky recurring multi-year enterprise contracts, and strong floor at ₹582.",
-    },
-    {
-      symbol: "APOLLOTYRE",
-      name: "Apollo Tyres Ltd.",
-      sector: "Industrials",
-      cluster: "Tyres & Rubber Products",
-      weightPct: 15,
-      cmp: 400.4,
-      anchorPrice: 384.15,
-      callDate: "2026-11-01",
-      buyBelow: 371.9,
-      target: 498.1,
-      stopLoss: 265.0,
-      upside: 31.3,
-      scores: "100 / 63 / 51",
-      horizon: "3M" as IdeaHorizon,
-      horizonLabel: "🚀 3M Support Rebound",
-      timeline: "2–3M",
-      role: "3M Margin Expansion",
-      rationale: "Global radial tire manufacturing leader trading at strong multi-month support, expanding European EBITDA margins, accelerating debt reduction cycle, and benefiting from stabilizing raw material costs.",
-      companyOverview: "Apollo Tyres is a global tire manufacturing giant with iconic brand equity across India and Europe (Vredestein brand), manufacturing high-performance radial tires for passenger vehicles, commercial trucks, off-highway vehicles, and two-wheelers.",
-      operatingHighlights: [
-        "Structural margin inflection: Consolidated EBITDA margins expanding toward 16% on disciplined pricing and premiumization.",
-        "Strong balance sheet deleveraging with net debt-to-EBITDA dropping below 1.0x.",
-        "European operations (Vredestein) capturing market share in all-season and ultra-high-performance tire categories.",
-        "Improving capacity utilization across Indian plants driving operational efficiency.",
-      ],
-      catalysts: [
-        "Stabilization in natural rubber and crude-derivative raw material inputs expanding gross margins.",
-        "Recovery in Indian commercial vehicle replacement demand and automotive OEM volumes.",
-        "Enhanced free cash flow generation driving accelerated debt retirement and ROE expansion toward 17%.",
-      ],
-      marginOfSafety: "Firm technical and fundamental support around the ₹380–₹395 zone. Substantial replacement market revenue cushioning cyclic downturns.",
-    },
-    {
-      symbol: "TRANSRAILL",
-      name: "Transrail Lighting Ltd.",
-      sector: "Industrials",
-      cluster: "Electrical Equipment & Power T&D",
-      weightPct: 15,
-      cmp: 450.0,
-      anchorPrice: 440.35,
-      callDate: "2026-11-08",
-      buyBelow: 448.0,
-      target: 630.0,
-      stopLoss: 398.0,
-      upside: 40.0,
-      scores: "100 / 88 / 79",
-      horizon: "6M" as IdeaHorizon,
-      horizonLabel: "🏛️ 6M Fresh Anchor",
-      timeline: "5–6M",
-      role: "6M Power T&D Capex Anchor",
-      rationale: "Integrated EPC & power transmission tower manufacturing leader with backward-integrated conductors/monopoles, multi-year unexecuted order book (>₹10,000 Cr), and high ROCE (>33%).",
-      companyOverview: "Transrail Lighting Limited is one of India's premier engineering, procurement, and construction (EPC) companies specializing in power transmission and distribution (T&D), integrated with in-house manufacturing of galvanized lattice towers, conductors, and monopoles across 4 large-scale facilities.",
-      operatingHighlights: [
-        "Backward-integrated manufacturing of high-voltage towers and conductors shielding operating EBITDA margins (12–13%) from raw material volatility.",
-        "Multi-year order book visibility exceeding 2.5x trailing annual revenues across domestic HVDC corridors and international power grids.",
-        "Superior capital efficiency with ROCE > 33% and disciplined working capital cycle.",
-        "Strong execution track record across 55+ countries in Africa, Asia, and the Americas.",
-      ],
-      catalysts: [
-        "Accelerated national grid evacuation capex for renewable energy parks (Green Energy Corridors).",
-        "Margin expansion from rising share of higher-margin international T&D and substation turnkey orders.",
-        "Deleveraging balance sheet post-listing driving lower finance costs and PAT acceleration (>30% YoY).",
-      ],
-      marginOfSafety: "Trading at ~14x P/E and PEG < 0.6x with 2.5+ years of locked-in sovereign/utility order backlog. Multi-week institutional support base at ₹420–₹429; bear floor anchored at ₹398.00.",
-    },
-    {
-      symbol: "BANKBARODA",
-      name: "Bank of Baroda",
-      sector: "Financials",
-      cluster: "PSU Banks",
-      weightPct: 15,
-      cmp: 273.62,
-      anchorPrice: 263.50,
-      callDate: "2026-11-08",
-      buyBelow: 263.50,
-      target: 335.0,
-      stopLoss: 224.0,
-      upside: 22.4,
-      scores: "95 / 72 / 69",
-      horizon: "1Y" as IdeaHorizon,
-      horizonLabel: "🏛️ 1Y Fresh Anchor",
-      timeline: "9–12M",
-      role: "1Y PSU Banking Value Anchor",
-      rationale: "Tier-1 PSU bank delivering sector-leading ROE (>16%), pristine asset quality with Net NPA < 0.65%, strong retail & corporate loan book expansion, and deep valuation comfort (~1.0x FY27E Book).",
-      companyOverview: "Bank of Baroda is India's second-largest public sector bank by asset base, operating over 8,200 domestic branches and a major international presence across 17 countries, serving over 165 million global customers across retail, MSME, agri, and corporate banking.",
-      operatingHighlights: [
-        "Best-in-class asset quality among PSU peers with Net NPA below 0.65% and Provision Coverage Ratio (PCR) > 93%.",
-        "Consistent RoA > 1.15% and RoE > 16.5% backed by disciplined credit underwriting and international book yields.",
-        "Retail and MSME (RAM) credit growing at 15%+ YoY, improving structural asset yield mix.",
-        "Robust Capital Adequacy (CRAR > 16.3%) supporting self-funded credit growth without equity dilution.",
-      ],
-      catalysts: [
-        "Re-rating toward 1.25x–1.35x Adjusted Book Value as RoA sustains above 1.15% across credit cycles.",
-        "Strong treasury and recovery income from resolved corporate accounts boosting non-interest income.",
-        "Consistent dividend yield (~2.8%–3.2%) providing downside cushion for institutional holders.",
-      ],
-      marginOfSafety: "Trading around 1.0x forward Adjusted Book Value despite private-bank-like RoE (>16%). Breakout retest support at ₹262–₹265, multi-month demand at ₹238, and bear floor anchored at ₹224.00.",
-    },
-  ], []);
-
-  const curatedSymbolMap = useMemo(() => {
-    const map = new Map<string, typeof curatedPicks[0]>();
-    curatedPicks.forEach((p) => map.set(p.symbol, p));
-    return map;
-  }, [curatedPicks]);
+    const curatedSymbolMap = useMemo(() => {
+    return new Map<string, CuratedResearchDetails>(Object.entries(CURATED_RESEARCH_NOTES));
+  }, []);
 
   // Unified Calls List: Cluster Gems + Curated Top Picks + Portfolio Action Calls (Buy, Sell, Trim, Exit)
   const unifiedCalls = useMemo(() => {
@@ -1106,15 +968,15 @@ export function CallsClient({
       const cur = curatedSymbolMap.get(g.symbol);
       const port = portfolioMap.get(g.symbol);
 
-      const cmp = g.ltp ?? cur?.cmp ?? 0;
-      const target = cur?.target ?? g.target_price ?? 0;
-      const buyBelow = cur?.buyBelow ?? g.buy_below ?? 0;
-      const stopLoss = cur?.stopLoss ?? g.bear_floor ?? Math.round(cmp * 0.82);
-      const upside = target > 0 && cmp > 0 ? ((target - cmp) / cmp) * 100 : (g.upside_pct ?? cur?.upside ?? 0);
+      const cmp = g.ltp ?? 0;
+      const target = g.target_price ?? 0;
+      const buyBelow = g.buy_below ?? 0;
+      const stopLoss = g.bear_floor ?? (cmp > 0 ? Math.round(cmp * 0.82) : 0);
+      const upside = target > 0 && cmp > 0 ? ((target - cmp) / cmp) * 100 : (g.upside_pct ?? 0);
 
       // Anchor 1: Call Given
-      const callDate = cur?.callDate ?? g.call_date ?? (g.generated_at ? g.generated_at.slice(0, 10) : "2026-11-01");
-      const callPrice = cur?.anchorPrice ?? g.call_price ?? g.anchor_price ?? cmp;
+      const callDate = g.call_date ?? (g.generated_at ? g.generated_at.slice(0, 10) : "2026-11-01");
+      const callPrice = g.call_price ?? g.anchor_price ?? cmp;
       const callPerfPct = callPrice > 0 ? ((cmp - callPrice) / callPrice) * 100 : 0;
 
       const customP = customPurchases[g.symbol];
@@ -1149,7 +1011,21 @@ export function CallsClient({
       const isTaken = override ? override.is_taken : isPortfolio || g.is_taken;
       const isCleared = override ? override.is_cleared : g.is_cleared;
 
-      const weightPct = cur?.weightPct ?? (isPortfolio ? 15 : 10);
+      // Determine Action
+      let actionToday = g.action_today || (isPortfolio ? (port?.action_today || "HOLD & COMPOUND") : (cmp <= buyBelow * 1.02 ? "BUY / ACCUMULATE" : "WATCH / ACCUMULATE"));
+      if (isPortfolio && port?.action_today) {
+        actionToday = port.action_today;
+      }
+
+      const isTopConviction = Boolean(g.is_top_conviction);
+      const convictionScore = g.conviction_score ?? null;
+      const isTop = Boolean(
+        isTopConviction ||
+        (cur != null && (actionToday === "BUY / ACCUMULATE" || isPortfolio)) ||
+        (convictionScore != null && convictionScore >= 72 && actionToday === "BUY / ACCUMULATE")
+      );
+
+      const weightPct = isTop ? (isPortfolio ? 12 : 10) : (isPortfolio ? 10 : 8);
       const allocatedAmount = Math.round((capital * weightPct) / 100);
       const totalShares = cmp > 0 ? Math.floor(allocatedAmount / cmp) : 0;
       const tranche1Shares = Math.ceil(totalShares / 2);
@@ -1159,33 +1035,31 @@ export function CallsClient({
       const projectedValue = Math.round(totalShares * target);
       const profitRupees = projectedValue - allocatedAmount;
 
-      // Determine Action
-      let actionToday = g.action_today || (isPortfolio ? (port?.action_today || "HOLD & COMPOUND") : (cmp <= buyBelow * 1.02 ? "BUY / ACCUMULATE" : "WATCH / ACCUMULATE"));
-      if (isPortfolio && port?.action_today) {
-        actionToday = port.action_today;
-      }
-
       callMap.set(g.symbol, {
         symbol: g.symbol,
-        name: g.company_name || cur?.name || g.symbol,
-        sector: cur?.sector || g.sector || "General",
-        industry: cur?.cluster || g.industry || "General",
+        name: g.company_name || g.symbol,
+        sector: g.sector || "General",
+        industry: g.industry || "General",
         market_cap_category: g.market_cap_category || "mid_cap",
-        cluster: cur?.cluster || g.cluster_name || "General",
+        cluster: g.cluster_name || "General",
         marketCapCr: g.market_cap_cr ?? 0,
         cmp,
         buyBelow,
         target,
         stopLoss,
         upside: Math.round(upside * 10) / 10,
-        scores: `${g.composite_pct ?? cur?.scores?.split(" / ")[0] ?? "—"} / ${g.quality_pct ?? "—"} / ${g.momentum_pct ?? "—"}`,
+        scores: `${g.composite_pct ?? "—"} / ${g.quality_pct ?? "—"} / ${g.momentum_pct ?? "—"}`,
         composite_pct: g.composite_pct ?? 70,
         quality_pct: g.quality_pct ?? 65,
         valuation_pct: g.valuation_pct ?? 60,
         momentum_pct: g.momentum_pct ?? 65,
-        horizon: cur?.horizon || g.horizon || ("6M" as IdeaHorizon),
-        horizonLabel: cur?.horizonLabel || g.horizon_label || "📈 6M High-Momentum",
-        timeline: cur?.timeline || g.sell_timeline || "6M",
+        moat_strength: g.moat_strength ?? null,
+        moat_type: g.moat_type ?? null,
+        conviction_score: convictionScore,
+        is_top_conviction: isTopConviction,
+        horizon: g.horizon || ("6M" as IdeaHorizon),
+        horizonLabel: g.horizon_label || "📈 6M High-Momentum",
+        timeline: g.sell_timeline || "6M",
         role: cur?.role || `${g.horizon || "6M"} Opportunity`,
         rationale: cur?.rationale || g.action_reason || g.strategy_desc || g.verdict || "High-conviction re-rating catalyst.",
         companyOverview: cur?.companyOverview || null,
@@ -1198,7 +1072,7 @@ export function CallsClient({
         heldQty,
         investedVal,
         curVal,
-        isCurated: Boolean(cur),
+        isCurated: isTop,
         weightPct,
         allocatedAmount,
         totalShares,
@@ -1221,17 +1095,17 @@ export function CallsClient({
       });
     });
 
-    // 2. Curated Picks fallback (ensures Top are always present)
-    curatedPicks.forEach((cp) => {
-      if (!callMap.has(cp.symbol)) {
-        const port = data.portfolioActions.find((p) => p.symbol === cp.symbol);
-        const gem = data.clusterGems.find((g) => g.symbol === cp.symbol);
-        const cmp = gem?.ltp ?? port?.ltp ?? cp.cmp;
-        const callDate = cp.callDate ?? gem?.call_date ?? "2026-11-01";
-        const callPrice = gem?.call_price ?? gem?.anchor_price ?? cp.anchorPrice ?? cp.cmp;
+    // 2. Curated Picks fallback (ensures any curated research symbol is in callMap)
+    Object.entries(CURATED_RESEARCH_NOTES).forEach(([sym, notes]) => {
+      if (!callMap.has(sym)) {
+        const port = data.portfolioActions.find((p) => p.symbol === sym);
+        const gem = data.clusterGems.find((g) => g.symbol === sym);
+        const cmp = gem?.ltp ?? port?.ltp ?? 0;
+        const callDate = gem?.call_date ?? port?.call_date ?? "2026-11-01";
+        const callPrice = gem?.call_price ?? gem?.anchor_price ?? port?.call_price ?? cmp;
         const callPerfPct = callPrice > 0 ? ((cmp - callPrice) / callPrice) * 100 : 0;
 
-        const customP = customPurchases[cp.symbol];
+        const customP = customPurchases[sym];
         const isPortfolio = Boolean(port && port.total_qty > 0) || Boolean(gem?.is_portfolio) || Boolean(customP);
 
         const purchaseDate = customP?.purchase_date ?? (isPortfolio ? (port?.purchase_date ?? gem?.purchase_date ?? null) : null);
@@ -1251,57 +1125,66 @@ export function CallsClient({
           ? port.cur_val
           : (cmp > 0 && heldQty > 0 ? cmp * heldQty : 0);
 
-        // ONLY actual portfolio holdings have a holding duration (from trade buy date)!
         const holdingDuration = isPortfolio && purchaseDate ? getHoldingDuration(purchaseDate) : null;
 
-        const allocatedAmount = Math.round((capital * cp.weightPct) / 100);
-        const totalShares = Math.floor(allocatedAmount / cmp);
+        const weightPct = 10;
+        const allocatedAmount = Math.round((capital * weightPct) / 100);
+        const totalShares = cmp > 0 ? Math.floor(allocatedAmount / cmp) : 0;
         const tranche1Shares = Math.ceil(totalShares / 2);
         const tranche2Shares = Math.max(0, totalShares - tranche1Shares);
 
-        callMap.set(cp.symbol, {
-          symbol: cp.symbol,
-          name: cp.name,
-          sector: cp.sector,
-          industry: cp.cluster,
-          market_cap_category: "large_cap",
-          cluster: cp.cluster,
-          marketCapCr: 25000,
+        const target = gem?.target_price ?? port?.target_price ?? (cmp > 0 ? Math.round(cmp * 1.25) : 0);
+        const buyBelow = gem?.buy_below ?? port?.buy_below ?? (cmp > 0 ? Math.round(cmp * 0.95) : 0);
+        const stopLoss = gem?.bear_floor ?? port?.bear_floor ?? (cmp > 0 ? Math.round(cmp * 0.85) : 0);
+        const upside = target > 0 && cmp > 0 ? Math.round(((target - cmp) / cmp) * 1000) / 10 : (gem?.upside_pct ?? 25);
+
+        callMap.set(sym, {
+          symbol: sym,
+          name: gem?.company_name || port?.company_name || sym,
+          sector: gem?.sector || port?.sector || "General",
+          industry: gem?.industry || port?.industry || "General",
+          market_cap_category: gem?.market_cap_category || port?.market_cap_category || "mid_cap",
+          cluster: gem?.cluster_name || port?.cluster_name || "General",
+          marketCapCr: gem?.market_cap_cr ?? 0,
           cmp,
-          buyBelow: cp.buyBelow,
-          target: cp.target,
-          stopLoss: cp.stopLoss,
-          upside: cp.target > 0 && cmp > 0 ? Math.round(((cp.target - cmp) / cmp) * 1000) / 10 : cp.upside,
-          scores: cp.scores,
-          composite_pct: 85,
-          quality_pct: 75,
-          valuation_pct: 70,
-          momentum_pct: 70,
-          horizon: cp.horizon,
-          horizonLabel: cp.horizonLabel,
-          timeline: cp.timeline,
-          role: cp.role,
-          rationale: cp.rationale,
-          companyOverview: cp.companyOverview,
-          operatingHighlights: cp.operatingHighlights,
-          catalysts: cp.catalysts,
-          marginOfSafety: cp.marginOfSafety,
-          actionToday: isPortfolio ? (port?.action_today || "HOLD & COMPOUND") : "BUY / ACCUMULATE",
-          actionReason: cp.rationale,
+          buyBelow,
+          target,
+          stopLoss,
+          upside,
+          scores: `${gem?.composite_pct ?? port?.composite_pct ?? "—"} / ${gem?.quality_pct ?? port?.quality_pct ?? "—"} / ${gem?.momentum_pct ?? port?.momentum_pct ?? "—"}`,
+          composite_pct: gem?.composite_pct ?? port?.composite_pct ?? 70,
+          quality_pct: gem?.quality_pct ?? port?.quality_pct ?? 65,
+          valuation_pct: gem?.valuation_pct ?? port?.valuation_pct ?? 60,
+          momentum_pct: gem?.momentum_pct ?? port?.momentum_pct ?? 65,
+          moat_strength: gem?.moat_strength ?? port?.moat_strength ?? null,
+          moat_type: gem?.moat_type ?? port?.moat_type ?? null,
+          conviction_score: gem?.conviction_score ?? port?.conviction_score ?? null,
+          is_top_conviction: Boolean(gem?.is_top_conviction ?? port?.is_top_conviction),
+          horizon: gem?.horizon || port?.horizon || ("6M" as IdeaHorizon),
+          horizonLabel: gem?.horizon_label || port?.horizon_label || "📈 6M High-Momentum",
+          timeline: gem?.sell_timeline || port?.sell_timeline || "6M",
+          role: notes.role || "Institutional Pick",
+          rationale: notes.rationale || "Active recommendation under tracking.",
+          companyOverview: notes.companyOverview || null,
+          operatingHighlights: notes.operatingHighlights || null,
+          catalysts: notes.catalysts || null,
+          marginOfSafety: notes.marginOfSafety || null,
+          actionToday: isPortfolio ? (port?.action_today || "HOLD & COMPOUND") : (gem?.action_today || "BUY / ACCUMULATE"),
+          actionReason: gem?.action_reason || port?.action_reason || notes.rationale || "Active recommendation.",
           isPortfolio,
           heldQty,
           investedVal,
           curVal,
           isCurated: true,
-          weightPct: cp.weightPct,
+          weightPct,
           allocatedAmount,
           totalShares,
           tranche1Shares,
           tranche2Shares,
           t1Value: tranche1Shares * cmp,
           t2Value: tranche2Shares * cmp,
-          projectedValue: Math.round(totalShares * cp.target),
-          profitRupees: Math.round(totalShares * cp.target) - allocatedAmount,
+          projectedValue: Math.round(totalShares * target),
+          profitRupees: Math.round(totalShares * target) - allocatedAmount,
           callDate,
           callPrice,
           callPerfPct,
@@ -1347,6 +1230,7 @@ export function CallsClient({
         const totalShares = cmp > 0 ? Math.floor(allocatedAmount / cmp) : 0;
         const tranche1Shares = Math.ceil(totalShares / 2);
         const tranche2Shares = Math.max(0, totalShares - tranche1Shares);
+        const notes = CURATED_RESEARCH_NOTES[port.symbol];
 
         callMap.set(port.symbol, {
           symbol: port.symbol,
@@ -1366,22 +1250,26 @@ export function CallsClient({
           quality_pct: port.quality_pct ?? 50,
           valuation_pct: port.valuation_pct ?? 50,
           momentum_pct: port.momentum_pct ?? 50,
+          moat_strength: port.moat_strength ?? null,
+          moat_type: port.moat_type ?? null,
+          conviction_score: port.conviction_score ?? null,
+          is_top_conviction: Boolean(port.is_top_conviction),
           horizon: port.horizon,
           horizonLabel: port.horizon_label,
           timeline: port.sell_timeline,
-          role: "Portfolio Holding Action",
-          rationale: port.action_reason || "Portfolio holding under active risk management.",
-          companyOverview: null,
-          operatingHighlights: null,
-          catalysts: null,
-          marginOfSafety: null,
+          role: notes?.role || "Portfolio Holding Action",
+          rationale: notes?.rationale || port.action_reason || "Portfolio holding under active risk management.",
+          companyOverview: notes?.companyOverview || null,
+          operatingHighlights: notes?.operatingHighlights || null,
+          catalysts: notes?.catalysts || null,
+          marginOfSafety: notes?.marginOfSafety || null,
           actionToday: port.action_today,
           actionReason: port.action_reason,
           isPortfolio: true,
           heldQty,
           investedVal,
           curVal,
-          isCurated: false,
+          isCurated: Boolean(notes && port.action_today?.includes("BUY")),
           weightPct,
           allocatedAmount,
           totalShares,
@@ -1406,7 +1294,7 @@ export function CallsClient({
     });
 
     return Array.from(callMap.values());
-  }, [data, curatedPicks, curatedSymbolMap, capital, customPurchases, userCallOverrides]);
+  }, [data, curatedSymbolMap, capital, customPurchases, userCallOverrides]);
 
   // Action counts for filtering (Buy/Accumulate vs Watch vs Hold vs Sell)
   const actionCounts = useMemo(() => {
@@ -1565,6 +1453,7 @@ export function CallsClient({
       else if (tableSortKey === "upside") diff = (a.upside || 0) - (b.upside || 0);
       else if (tableSortKey === "weight") diff = (a.weightPct || 0) - (b.weightPct || 0);
       else if (tableSortKey === "quality") diff = (a.quality_pct || 0) - (b.quality_pct || 0);
+      else if (tableSortKey === "conviction") diff = (a.conviction_score || 0) - (b.conviction_score || 0);
       return tableSortAsc ? diff : -diff;
     });
     return list;
@@ -1613,6 +1502,10 @@ export function CallsClient({
         clusCalls.sort((a, b) => {
           if (a.isCurated && !b.isCurated) return -1;
           if (!a.isCurated && b.isCurated) return 1;
+          if (a.isCurated && b.isCurated) {
+            const csDiff = (b.conviction_score ?? 0) - (a.conviction_score ?? 0);
+            if (csDiff !== 0) return csDiff;
+          }
           // Within Curated (Top), put Fresh Unbought Anchors (!isPortfolio) first
           if (a.isCurated && b.isCurated && a.isPortfolio !== b.isPortfolio) {
             return a.isPortfolio ? 1 : -1;
@@ -2149,10 +2042,9 @@ export function CallsClient({
 
     const getStockMetrics = (sym: string, defaultCmp: number, defaultTarget: number, defaultUpside: number) => {
       const call = unifiedCalls.find((c) => c.symbol === sym);
-      const cur = curatedSymbolMap.get(sym);
-      const cmp = call?.cmp ?? cur?.cmp ?? defaultCmp;
-      const target = cur?.target ?? call?.target ?? defaultTarget;
-      const upside = target > 0 && cmp > 0 ? Math.round(((target - cmp) / cmp) * 1000) / 10 : (call?.upside ?? cur?.upside ?? defaultUpside);
+      const cmp = call?.cmp ?? defaultCmp;
+      const target = call?.target ?? defaultTarget;
+      const upside = target > 0 && cmp > 0 ? Math.round(((target - cmp) / cmp) * 1000) / 10 : (call?.upside ?? defaultUpside);
       const momentumPct = call?.momentum_pct ?? null;
       return { cmp, target, upside, momentumPct };
     };
@@ -4866,6 +4758,16 @@ export function CallsClient({
                   </th>
                   <th
                     className="py-2.5 px-3 text-center cursor-pointer hover:bg-slate-200/70 transition-colors"
+                    onClick={() => handleTableSort("conviction")}
+                    title="Sort by Institutional Conviction Score (Quality 35%, Composite 30%, Momentum 20%, Moat 15%)"
+                  >
+                    <div className="flex items-center justify-center gap-1">
+                      <span>ICS Score</span>
+                      <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                    </div>
+                  </th>
+                  <th
+                    className="py-2.5 px-3 text-center cursor-pointer hover:bg-slate-200/70 transition-colors"
                     onClick={() => handleTableSort("weight")}
                     title="Sort by Portfolio Allocation Weight"
                   >
@@ -4905,12 +4807,22 @@ export function CallsClient({
                           <span className="font-bold font-mono text-slate-900 text-xs sm:text-sm">{c.symbol}</span>
                           {c.isCurated && (
                             <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-100 text-amber-900 border border-amber-300">
-                              ★ TOP
+                              ★ TOP{c.conviction_score ? ` (${c.conviction_score.toFixed(0)})` : ""}
                             </span>
                           )}
                           {c.isPortfolio && (
                             <span className="text-[9px] font-semibold px-1.5 py-0.2 rounded bg-blue-50 text-blue-800 border border-blue-200">
                               Held
+                            </span>
+                          )}
+                          {c.actionToday === "BUY / ACCUMULATE" && (
+                            <span className="text-[8.5px] font-semibold px-1 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
+                              Buy Zone
+                            </span>
+                          )}
+                          {c.callPerfPct != null && c.callPerfPct > 8 && (
+                            <span className="text-[8.5px] font-semibold px-1 rounded bg-purple-50 text-purple-800 border border-purple-200" title={`Spiked +${c.callPerfPct.toFixed(1)}% above call price`}>
+                              🚀 +{c.callPerfPct.toFixed(0)}% Spiked
                             </span>
                           )}
                         </div>
@@ -4980,6 +4892,21 @@ export function CallsClient({
                         <span className="font-mono text-[10.5px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-800 font-semibold border hairline">
                           {c.composite_pct ?? "—"} / {c.quality_pct ?? "—"}
                         </span>
+                      </td>
+                      <td className="py-2.5 px-3 text-center">
+                        {c.conviction_score != null ? (
+                          <span className={`font-mono text-[11px] px-1.5 py-0.5 rounded font-bold border ${
+                            c.conviction_score >= 80
+                              ? "bg-amber-100 text-amber-950 border-amber-300"
+                              : c.conviction_score >= 70
+                                ? "bg-amber-50 text-amber-900 border-amber-200"
+                                : "bg-slate-100 text-slate-700 border-slate-200"
+                          }`}>
+                            {c.conviction_score.toFixed(1)}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 text-[10px]">—</span>
+                        )}
                       </td>
                       <td className="py-2.5 px-3 text-center">
                         {c.weightPct ? (
@@ -5438,6 +5365,16 @@ export function CallsClient({
                     {selectedCall.name}
                   </span>
                   <CapTierBadge category={selectedCall.market_cap_category as CapCategory} />
+                  {selectedCall.isCurated && (
+                    <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs">
+                      ★ TOP CONVICTION
+                    </span>
+                  )}
+                  {selectedCall.callPerfPct != null && selectedCall.callPerfPct > 8 && (
+                    <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-300 shadow-2xs" title={`Stock moved +${selectedCall.callPerfPct.toFixed(1)}% above call price`}>
+                      🚀 SPIKED (+{selectedCall.callPerfPct.toFixed(1)}%)
+                    </span>
+                  )}
                   {selectedCall.isPortfolio && isSellAction && (
                     <span className="px-2 py-0.5 rounded text-[10.5px] font-bold bg-rose-600 text-white shadow-2xs flex items-center gap-1">
                       <span>🚨 PRIORITY TRIM / EXIT</span>
@@ -5446,7 +5383,29 @@ export function CallsClient({
                 </div>
 
                 {/* Center: Score Pillars (clean, compact) */}
-                <div className="flex items-center gap-2 bg-slate-50 border hairline px-2 py-1 rounded-md text-xs shrink-0">
+                <div className="flex items-center gap-2 bg-slate-50 border hairline px-2 py-1 rounded-md text-xs shrink-0 flex-wrap">
+                  {selectedCall.conviction_score != null && (
+                    <>
+                      <div className="flex items-center gap-1" title="Institutional Conviction Score: Quality (35%), Composite (30%), Momentum (20%), Moat (15%)">
+                        <span className="text-[10px] text-amber-800 font-semibold">ICS</span>
+                        <span className="font-mono font-bold text-amber-950 text-[11px] bg-amber-100 px-1 py-0.2 rounded border border-amber-300">
+                          {selectedCall.conviction_score.toFixed(1)}
+                        </span>
+                      </div>
+                      <span className="text-slate-300">|</span>
+                    </>
+                  )}
+                  {selectedCall.moat_strength && (
+                    <>
+                      <div className="flex items-center gap-1" title={selectedCall.moat_type || undefined}>
+                        <span className="text-[10px] text-indigo-700 font-semibold">Moat</span>
+                        <span className="font-mono font-bold text-indigo-900 text-[11px] bg-indigo-50 px-1 py-0.2 rounded border border-indigo-200">
+                          {selectedCall.moat_strength}
+                        </span>
+                      </div>
+                      <span className="text-slate-300">|</span>
+                    </>
+                  )}
                   <div className="flex items-center gap-1">
                     <span className="text-[10px] text-slate-500 font-medium">Comp</span>
                     <span className="font-mono font-bold text-indigo-700 text-[11px]">{selectedCall.composite_pct}%</span>

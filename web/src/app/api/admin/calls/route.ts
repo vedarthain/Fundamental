@@ -54,6 +54,10 @@ export type ClusterGem = {
   action_today?: "BUY / ACCUMULATE" | "WATCH" | "SELL / EXIT" | "TRIM / TAKE PROFIT" | "HOLD & COMPOUND";
   action_reason?: string;
   price_fetched_at?: string | null;
+  moat_strength?: string | null;
+  moat_type?: string | null;
+  conviction_score?: number | null;
+  is_top_conviction?: boolean;
 };
 
 export type PortfolioActionCall = {
@@ -100,6 +104,10 @@ export type PortfolioActionCall = {
   strategy_desc: string;
   is_taken: boolean;
   is_cleared: boolean;
+  moat_strength?: string | null;
+  moat_type?: string | null;
+  conviction_score?: number | null;
+  is_top_conviction?: boolean;
 };
 
 export type MonthlyTradeItem = {
@@ -394,6 +402,8 @@ async function computeCallsPayload(dateParam: string | null) {
             p.quality_pct,
             p.valuation_pct,
             p.momentum_pct,
+            mo.moat_strength,
+            mo.moat_type,
             ph.quantity AS held_qty,
             ph.avg_cost AS purchase_price,
             CASE WHEN ph.quantity > 0 THEN COALESCE(pt.first_buy_date, ph.fallback_buy_date) ELSE NULL END AS purchase_date,
@@ -412,6 +422,7 @@ async function computeCallsPayload(dateParam: string | null) {
         LEFT JOIN app.screener_meta sm ON sm.symbol = p.symbol
         LEFT JOIN intraday_price si ON si.symbol = p.symbol
         LEFT JOIN user_calls uc ON uc.symbol = p.symbol
+        LEFT JOIN app.company_moat mo ON mo.symbol = p.symbol
         LEFT JOIN (
             SELECT symbol, 
                    SUM(quantity) as quantity, 
@@ -425,16 +436,13 @@ async function computeCallsPayload(dateParam: string | null) {
         LEFT JOIN active_buys pt ON pt.symbol = p.symbol
         WHERE v.target_price IS NOT NULL
           AND (
-            p.symbol IN ('INDUSTOWER', 'UNIONBANK', 'BBTC', 'ALLDIGI', 'APOLLOTYRE', 'FMGOETZE', 'SHARDACROP', 'TRANSRAILL', 'BANKBARODA', 'ORIENTTECH', 'MAXESTATES', 'PITTIENG', 'GRAVITA')
-            OR (p.composite_pct >= 60 AND p.quality_pct >= 50 AND v.buy_below IS NOT NULL)
-            OR (ph.quantity > 0 AND (
-              v.verdict ILIKE '%SELL%'
-              OR v.verdict ILIKE '%EXIT%'
-              OR v.verdict ILIKE '%TRIM%'
-              OR (v.upside_pct IS NOT NULL AND v.upside_pct < -5)
-            ))
+            p.composite_pct >= 55
+            OR ph.quantity > 0
+            OR v.verdict ILIKE '%BUY%'
+            OR v.verdict ILIKE '%ACCUMULATE%'
+            OR v.verdict ILIKE '%HOLD%'
           )
-        ORDER BY (p.symbol IN ('INDUSTOWER', 'UNIONBANK', 'BBTC', 'ALLDIGI', 'APOLLOTYRE', 'FMGOETZE', 'SHARDACROP', 'TRANSRAILL', 'BANKBARODA')) DESC, v.generated_at DESC, p.composite_pct DESC
+        ORDER BY v.generated_at DESC, p.composite_pct DESC
         LIMIT 1500
       `,
       sql<any[]>`
@@ -520,7 +528,9 @@ async function computeCallsPayload(dateParam: string | null) {
             v.upside_pct,
             v.valuation_method,
             v.generated_at,
-            v.anchor_price
+            v.anchor_price,
+            MAX(mo.moat_strength) AS moat_strength,
+            MAX(mo.moat_type) AS moat_type
         FROM app.portfolio_holding p
         LEFT JOIN app.universe u ON u.symbol = p.symbol
         LEFT JOIN app.cluster_assignment ca ON ca.symbol = p.symbol
@@ -531,6 +541,7 @@ async function computeCallsPayload(dateParam: string | null) {
         LEFT JOIN intraday_price si ON si.symbol = p.symbol
         LEFT JOIN latest_verdict v ON v.symbol = p.symbol
         LEFT JOIN active_buys pt ON pt.symbol = p.symbol
+        LEFT JOIN app.company_moat mo ON mo.symbol = p.symbol
         WHERE p.quantity > 0
           AND p.symbol IS NOT NULL
           AND p.symbol <> 'MUTUAL_FUNDS_ETFS'
@@ -641,35 +652,42 @@ async function computeCallsPayload(dateParam: string | null) {
       let actionToday: "BUY / ACCUMULATE" | "WATCH" | "SELL / EXIT" | "TRIM / TAKE PROFIT" | "HOLD & COMPOUND" = "WATCH";
       let actionReason = "";
 
-      const isTopCurated = ["INDUSTOWER", "UNIONBANK", "BBTC", "ALLDIGI", "APOLLOTYRE", "FMGOETZE", "SHARDACROP", "TRANSRAILL", "BANKBARODA", "ORIENTTECH", "MAXESTATES", "PITTIENG", "GRAVITA"].includes(r.symbol);
       const vLower = (r.verdict ?? "").toLowerCase();
       const shortVerdict = r.verdict ? r.verdict.replace(/^[^—]+—\s*/, "").trim() : "";
       const scoreTag = `C:${comp.toFixed(0)} Q:${qual.toFixed(0)} M:${mom.toFixed(0)} · Upside ${upside >= 0 ? "+" : ""}${upside.toFixed(1)}%`;
 
-      if (isTopCurated) {
-        actionToday = "BUY / ACCUMULATE";
-        actionReason = `Curated Alpha Pick (${scoreTag})${shortVerdict ? ` — ${shortVerdict}` : ""}`;
-      } else if (isPortfolio && (vLower.includes("sell") || vLower.includes("exit") || (bearFloorVal && ltp <= bearFloorVal && qual < 50))) {
+      if (isPortfolio && (vLower.includes("sell") || vLower.includes("exit") || (bearFloorVal && ltp <= bearFloorVal && qual < 50))) {
         actionToday = "SELL / EXIT";
         actionReason = `Exit alert: LTP ₹${ltp.toFixed(1)} vs Floor ₹${Number(bearFloorVal ?? 0).toFixed(1)} (${scoreTag})${shortVerdict ? ` — ${shortVerdict}` : ""}`;
       } else if (isPortfolio && (vLower.includes("trim") || (targetPriceVal && ltp >= targetPriceVal) || upside < -5)) {
         actionToday = "TRIM / TAKE PROFIT";
         actionReason = `Trim / Profit take: LTP ₹${ltp.toFixed(1)} vs Target ₹${Number(targetPriceVal ?? 0).toFixed(1)} (${scoreTag}).`;
-      } else if (buyBelow > 0 && ltp <= buyBelow * 1.02 && upside >= 10 && !vLower.includes("avoid")) {
+      } else if (buyBelow > 0 && ltp <= buyBelow * 1.05 && upside >= 10 && !vLower.includes("avoid")) {
         actionToday = "BUY / ACCUMULATE";
-        actionReason = `In Buy Zone (LTP ₹${ltp.toFixed(1)} ≤ ₹${buyBelow.toFixed(1)}, ${scoreTag})${shortVerdict ? ` — ${shortVerdict}` : ""}`;
+        actionReason = `In Buy Zone (LTP ₹${ltp.toFixed(1)} ≤ ₹${(buyBelow * 1.05).toFixed(1)}, ${scoreTag})${shortVerdict ? ` — ${shortVerdict}` : ""}`;
+      } else if ((vLower.includes("buy") || vLower.includes("accumulate")) && (pctMove === null || pctMove <= 8) && upside >= 10 && !vLower.includes("avoid")) {
+        actionToday = "BUY / ACCUMULATE";
+        actionReason = `Active Call in Buy Zone (${pctMove !== null ? (pctMove >= 0 ? `+${pctMove.toFixed(1)}%` : `${pctMove.toFixed(1)}%`) : "at"} anchor ₹${anchor?.toFixed(1)}, ${scoreTag})${shortVerdict ? ` — ${shortVerdict}` : ""}`;
       } else {
         actionToday = "WATCH";
-        const distPct = buyBelow > 0 ? ((ltp - buyBelow) / buyBelow) * 100 : null;
+        const distPct = buyBelow > 0 ? ((ltp - buyBelow) / buyBelow) * 100 : (pctMove ?? 0);
         const whyWait = vLower.includes("avoid")
           ? "Model verdict is AVOID"
           : upside < 10
             ? `Limited target upside (${upside.toFixed(1)}% to ₹${Number(targetPriceVal ?? 0).toFixed(1)})`
-            : distPct !== null && distPct > 2
-              ? `LTP is +${distPct.toFixed(1)}% above Buy Below ₹${buyBelow.toFixed(1)}`
+            : distPct > 8
+              ? `Spiked +${distPct.toFixed(1)}% from Call Anchor — wait for pullback`
               : "Monitor for cleaner entry";
         actionReason = `Watch (${whyWait}; ${scoreTag})${shortVerdict ? ` — ${shortVerdict}` : ""}`;
       }
+
+      // Institutional Conviction Score (ICS):
+      // Quality (35%), Composite (30%), Momentum (20%), Moat (15%) + High Confidence Bonus (+10)
+      const moatScore = r.moat_strength === "Wide" ? 100 : r.moat_strength === "Narrow" ? 70 : 40;
+      const confBonus = (r.confidence ?? "").toLowerCase() === "high" ? 10 : 0;
+      const convictionScore = Math.round(
+        (qual * 0.35 + comp * 0.30 + mom * 0.20 + moatScore * 0.15 + confBonus) * 10
+      ) / 10;
 
       const isGem = actionToday === "BUY / ACCUMULATE" && comp >= 75 && qual >= 58 && upside >= 15 && mcap >= 800;
 
@@ -724,6 +742,10 @@ async function computeCallsPayload(dateParam: string | null) {
         quality_pct: qual,
         valuation_pct: r.valuation_pct ? Number(r.valuation_pct) : null,
         momentum_pct: mom,
+        moat_strength: r.moat_strength ?? null,
+        moat_type: r.moat_type ?? null,
+        conviction_score: convictionScore,
+        is_top_conviction: false,
         is_portfolio: isPortfolio,
         is_gem: isGem,
         sell_timeline: horizonInfo.timeline,
@@ -736,6 +758,31 @@ async function computeCallsPayload(dateParam: string | null) {
         action_reason: actionReason,
         price_fetched_at: resolvedPx.fetchedAt,
       };
+    });
+
+    // Dynamic Top Conviction Assignment:
+    // Screen for candidates that are:
+    // 1. BUY / ACCUMULATE
+    // 2. High or Medium confidence (not low)
+    // 3. Quality >= 55
+    // 4. Upside >= 15%
+    // 5. In Buy Zone: pct_move <= 8% (has not spiked away from call anchor)
+    // 6. Ranked by conviction_score DESC
+    const topBuyCandidates = [...clusterGems]
+      .filter((g) =>
+        g.action_today === "BUY / ACCUMULATE" &&
+        (g.quality_pct ?? 0) >= 55 &&
+        (g.upside_pct ?? 0) >= 15 &&
+        (g.pct_move === null || g.pct_move <= 8) &&
+        (g.confidence ?? "").toLowerCase() !== "low"
+      )
+      .sort((a, b) => (b.conviction_score ?? 0) - (a.conviction_score ?? 0));
+
+    const topConvictionSymbols = new Set(topBuyCandidates.slice(0, 15).map((g) => g.symbol));
+    clusterGems.forEach((g) => {
+      if (topConvictionSymbols.has(g.symbol)) {
+        g.is_top_conviction = true;
+      }
     });
 
     // 2. Portfolio Holdings with Action Sweeps & Dual Anchors (already fetched in parallel above)
@@ -863,6 +910,10 @@ async function computeCallsPayload(dateParam: string | null) {
         is_taken: true,
         is_cleared: false,
         price_fetched_at: resolvedPx.fetchedAt,
+        moat_strength: r.moat_strength ?? null,
+        moat_type: r.moat_type ?? null,
+        conviction_score: Math.round((qual * 0.35 + comp * 0.30 + mom * 0.20 + (r.moat_strength === "Wide" ? 100 : r.moat_strength === "Narrow" ? 70 : 40) * 0.15) * 10) / 10,
+        is_top_conviction: false,
       };
     });
 
