@@ -4,9 +4,9 @@
 name: Sunday Calls & Portfolio Audit
 
 on:
-  schedule:
-    # Sun 08:30 UTC = 14:00 IST (2:00 PM IST Sunday afternoon).
-    - cron: '30 8 * * 0'
+  # Scheduled run has been decommissioned from GitHub Actions to prevent queue delays.
+  # Automated runs trigger at 2:00:00 PM IST sharp via native Droplet cron (/var/www/Fundamental/scripts/cron-sunday-calls.sh).
+  # workflow_dispatch is preserved for manual runs on demand.
   workflow_dispatch:
     inputs:
       dry_run:

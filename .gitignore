@@ -51,8 +51,9 @@ build/*
 # survived in Neon, the ability to re-check or correct it had not. The rest of
 # build/ is 533M of dumps and decks and stays out of a PUBLIC repo.
 !build/verdicts/
-build/verdicts/__pycache__/
-logs/
+/logs/
+!web/src/app/admin/logs/
+!web/src/app/api/admin/logs/
 .claude/
 !.claude/launch.json
 web/.claude/

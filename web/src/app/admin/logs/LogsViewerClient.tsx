@@ -1,0 +1,206 @@
+"use client";
+
+import React, { useState, useEffect, useRef } from "react";
+
+function timeAgo(dateString: string): string {
+  const seconds = Math.floor((new Date().getTime() - new Date(dateString).getTime()) / 1000);
+  if (seconds < 60) return `${Math.max(0, seconds)}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+type LogType = "drift" | "sunday";
+
+interface LogResponse {
+  success: boolean;
+  type: string;
+  filePath: string;
+  content: string;
+  linesCount: number;
+  totalLines: number;
+  modifiedAt: string | null;
+  sizeBytes: number;
+}
+
+export function LogsViewerClient() {
+  const [activeTab, setActiveTab] = useState<LogType>("drift");
+  const [lines, setLines] = useState<number>(200);
+  const [autoRefresh, setAutoRefresh] = useState<boolean>(false);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [logData, setLogData] = useState<LogResponse | null>(null);
+  const [copied, setCopied] = useState<boolean>(false);
+  const terminalRef = useRef<HTMLPreElement>(null);
+
+  const fetchLog = async (type: LogType = activeTab, lineCount: number = lines) => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/admin/logs?type=${type}&lines=${lineCount}`);
+      if (res.ok) {
+        const data = await res.json();
+        setLogData(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch log", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchLog(activeTab, lines);
+  }, [activeTab, lines]);
+
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const interval = setInterval(() => {
+      fetchLog(activeTab, lines);
+    }, 6000);
+    return () => clearInterval(interval);
+  }, [autoRefresh, activeTab, lines]);
+
+  const scrollToBottom = () => {
+    if (terminalRef.current) {
+      terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
+    }
+  };
+
+  const copyToClipboard = () => {
+    if (!logData?.content) return;
+    navigator.clipboard.writeText(logData.content);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Control Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 shadow-sm">
+        {/* Tabs */}
+        <div className="flex items-center gap-1 bg-zinc-100 dark:bg-zinc-800/80 p-1 rounded-lg">
+          <button
+            onClick={() => setActiveTab("drift")}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
+              activeTab === "drift"
+                ? "bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-sm"
+                : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200"
+            }`}
+          >
+            🌙 Nightly Drift (11:00 PM IST)
+          </button>
+          <button
+            onClick={() => setActiveTab("sunday")}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
+              activeTab === "sunday"
+                ? "bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-sm"
+                : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200"
+            }`}
+          >
+            ☀️ Sunday Calls & Audit (2:00 PM IST)
+          </button>
+        </div>
+
+        {/* Options */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <label className="text-xs text-zinc-500 dark:text-zinc-400 flex items-center gap-1">
+            <span>Tail:</span>
+            <select
+              value={lines}
+              onChange={(e) => setLines(Number(e.target.value))}
+              className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-xs rounded px-2 py-1 text-zinc-800 dark:text-zinc-200"
+            >
+              <option value={100}>100 lines</option>
+              <option value={200}>200 lines</option>
+              <option value={500}>500 lines</option>
+              <option value={1000}>1000 lines</option>
+            </select>
+          </label>
+
+          <button
+            onClick={() => setAutoRefresh(!autoRefresh)}
+            className={`px-2.5 py-1 text-xs rounded font-medium border transition-colors ${
+              autoRefresh
+                ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800 animate-pulse"
+                : "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700"
+            }`}
+          >
+            {autoRefresh ? "● Auto-refreshing (6s)" : "Auto-refresh: Off"}
+          </button>
+
+          <button
+            onClick={() => fetchLog(activeTab, lines)}
+            disabled={loading}
+            className="px-2.5 py-1 text-xs font-medium rounded bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 hover:opacity-90 transition-opacity"
+          >
+            {loading ? "Refreshing..." : "Refresh"}
+          </button>
+
+          <button
+            onClick={copyToClipboard}
+            className="px-2.5 py-1 text-xs font-medium rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-200 hover:bg-zinc-200 dark:hover:bg-zinc-700"
+          >
+            {copied ? "Copied ✓" : "Copy"}
+          </button>
+
+          <button
+            onClick={scrollToBottom}
+            className="px-2.5 py-1 text-xs font-medium rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-200 hover:bg-zinc-200 dark:hover:bg-zinc-700"
+          >
+            Scroll to Bottom ↓
+          </button>
+        </div>
+      </div>
+
+      {/* Meta stats */}
+      {logData && (
+        <div className="flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400 px-1">
+          <div>
+            File: <span className="font-mono text-zinc-700 dark:text-zinc-300">{logData.filePath}</span>
+            {" · "}
+            Size: <span className="font-mono">{formatFileSize(logData.sizeBytes)}</span>
+            {" · "}
+            Showing <span className="font-semibold">{logData.linesCount}</span> of <span className="font-semibold">{logData.totalLines}</span> lines
+          </div>
+          {logData.modifiedAt && (
+            <div>
+              Updated: <span className="font-medium text-zinc-700 dark:text-zinc-300">{timeAgo(logData.modifiedAt)}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Terminal View */}
+      <div className="relative rounded-xl overflow-hidden border border-zinc-800 bg-zinc-950 shadow-2xl">
+        <div className="flex items-center justify-between px-4 py-2 bg-zinc-900/90 border-b border-zinc-800">
+          <div className="flex items-center gap-2">
+            <span className="w-3 h-3 rounded-full bg-rose-500/80 inline-block" />
+            <span className="w-3 h-3 rounded-full bg-amber-500/80 inline-block" />
+            <span className="w-3 h-3 rounded-full bg-emerald-500/80 inline-block" />
+            <span className="ml-2 font-mono text-xs text-zinc-400">
+              {activeTab === "drift" ? "fundamental-daily-drift.log" : "fundamental-sunday-calls.log"}
+            </span>
+          </div>
+          <span className="text-[11px] font-mono text-zinc-500 uppercase tracking-wider">
+            {loading ? "Reading..." : "Live Tail"}
+          </span>
+        </div>
+
+        <pre
+          ref={terminalRef}
+          className="p-4 font-mono text-xs leading-relaxed text-zinc-200 overflow-x-auto overflow-y-auto max-h-[650px] whitespace-pre-wrap select-text scrollbar-thin scrollbar-thumb-zinc-700"
+        >
+          {logData?.content || (loading ? "Loading logs from server..." : "No log data available.")}
+        </pre>
+      </div>
+    </div>
+  );
+}
