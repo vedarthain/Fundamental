@@ -884,6 +884,12 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true", help="Print verdicts to stdout without loading")
     args = ap.parse_args()
 
+    if sys.platform == "darwin":
+        try:
+            subprocess.Popen(["caffeinate", "-is", "-w", str(os.getpid())])
+        except Exception:
+            pass
+
     if args.list_clusters:
         qtxt = ROOT / "clusters_queue.txt"
         if qtxt.exists():

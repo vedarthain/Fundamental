@@ -150,9 +150,17 @@ def main() -> int:
     ap.add_argument("--resume", action="store_true", help="Skip symbols already in app.company_moat")
     args = ap.parse_args()
 
+    import subprocess
+    if sys.platform == "darwin":
+        try:
+            subprocess.Popen(["caffeinate", "-is", "-w", str(os.getpid())])
+            print("☕ macOS caffeinate active — system sleep prevented while batch runs.")
+        except Exception:
+            pass
+
     db_url = load_db_url()
     model = args.model or pick_default_model(args.ollama_url)
-    print(f"Using Ollama model: {model} ({args.ollama_url})")
+    print(f"Using Ollama model: {model} ({args.ollama_url})", flush=True)
 
     with psycopg.connect(db_url) as conn:
         with conn.cursor() as cur:
