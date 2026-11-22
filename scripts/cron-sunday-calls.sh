@@ -2,11 +2,29 @@
 # ==============================================================================
 # cron-sunday-calls.sh — Sunday Calls & Portfolio Audit
 # Runs every Sunday at 2:00 PM IST (08:30 UTC) on the Droplet.
+# Sends failure email alert if any command errors out.
 # ==============================================================================
 set -euo pipefail
 
 ROOT_DIR="/var/www/Fundamental"
 cd "$ROOT_DIR"
+
+PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
+if [ ! -x "$PYTHON_BIN" ]; then
+  PYTHON_BIN="python3"
+fi
+
+handle_failure() {
+  local exit_code=$?
+  echo "❌ [$(date -u '+%Y-%m-%d %H:%M:%S UTC')] Sunday Calls failed with exit code $exit_code. Sending alert..."
+  "$PYTHON_BIN" scripts/send-alert.py \
+    --subject "🚨 [Finance-Server] Sunday Calls & Audit Failed (Exit: $exit_code)" \
+    --log-file "/var/log/fundamental-sunday-calls.log" \
+    --tail 60 \
+    --message "cron-sunday-calls.sh encountered an error and exited with status $exit_code." || true
+  exit "$exit_code"
+}
+trap 'handle_failure' ERR
 
 echo "================================================================================"
 echo "🕒 [$(date -u '+%Y-%m-%d %H:%M:%S UTC')] Starting Sunday Calls & Portfolio Audit"
@@ -25,11 +43,6 @@ done
 
 export FUNDAMENTAL_ALLOW_REMOTE_DB="1"
 export PYTHONUNBUFFERED=1
-
-PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
-if [ ! -x "$PYTHON_BIN" ]; then
-  PYTHON_BIN="python3"
-fi
 
 echo "=== 1. Computing institutional target prices & accumulation zones ==="
 $PYTHON_BIN scripts/backfill_target_prices.py

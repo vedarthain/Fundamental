@@ -2,11 +2,29 @@
 # ==============================================================================
 # cron-daily-drift.sh — Nightly fundamental verdict evidence drift refresh
 # Runs every night at 11:00 PM IST (17:30 UTC) on the Droplet.
+# Sends failure email alert if any command errors out.
 # ==============================================================================
 set -euo pipefail
 
 ROOT_DIR="/var/www/Fundamental"
 cd "$ROOT_DIR"
+
+PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
+if [ ! -x "$PYTHON_BIN" ]; then
+  PYTHON_BIN="python3"
+fi
+
+handle_failure() {
+  local exit_code=$?
+  echo "❌ [$(date -u '+%Y-%m-%d %H:%M:%S UTC')] Job failed with exit code $exit_code. Sending alert..."
+  "$PYTHON_BIN" scripts/send-alert.py \
+    --subject "🚨 [Finance-Server] Daily Verdict Drift Failed (Exit: $exit_code)" \
+    --log-file "/var/log/fundamental-daily-drift.log" \
+    --tail 60 \
+    --message "cron-daily-drift.sh encountered an error and exited with status $exit_code." || true
+  exit "$exit_code"
+}
+trap 'handle_failure' ERR
 
 echo "================================================================================"
 echo "🕒 [$(date -u '+%Y-%m-%d %H:%M:%S UTC')] Starting Daily Verdict Drift Catch-Up"
@@ -25,11 +43,6 @@ done
 
 export FUNDAMENTAL_ALLOW_REMOTE_DB="1"
 export PYTHONUNBUFFERED=1
-
-PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
-if [ ! -x "$PYTHON_BIN" ]; then
-  PYTHON_BIN="python3"
-fi
 
 # Run up to 250 drifted stocks with 4 workers and 0.5s delay
 $PYTHON_BIN scripts/ollama-verdict.py \
