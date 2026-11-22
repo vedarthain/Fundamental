@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # scripts/sync-to-prod-ssh.sh
 #
-# Sync locally generated moats (app.company_moat) and/or verdicts (app.stock_verdict)
-# directly to DigitalOcean Production Postgres (10.122.0.3:5432) via Finance-server.
+# Sync locally generated moats (app.company_moat), verdicts (app.stock_verdict),
+# and/or portfolio holdings (app.portfolio_holding) directly to DigitalOcean
+# Production Postgres (10.122.0.3:5432) via Finance-server.
 #
 # Usage:
-#   scripts/sync-to-prod-ssh.sh             # Syncs both company_moat and stock_verdict
+#   scripts/sync-to-prod-ssh.sh             # Syncs moat, verdicts, and portfolio
+#   scripts/sync-to-prod-ssh.sh --portfolio # Syncs only portfolio_holding
 #   scripts/sync-to-prod-ssh.sh --moat      # Syncs only company_moat
 #   scripts/sync-to-prod-ssh.sh --verdicts  # Syncs only stock_verdict
 #
@@ -20,23 +22,32 @@ LOCAL_APP="${LOCAL_APP_DB:-fundamental_app}"
 
 SYNC_MOAT=true
 SYNC_VERDICTS=true
+SYNC_PORTFOLIO=true
 
 for arg in "$@"; do
   case "$arg" in
     --moat)
       SYNC_MOAT=true
       SYNC_VERDICTS=false
+      SYNC_PORTFOLIO=false
       ;;
     --verdicts)
       SYNC_MOAT=false
       SYNC_VERDICTS=true
+      SYNC_PORTFOLIO=false
+      ;;
+    --portfolio)
+      SYNC_MOAT=false
+      SYNC_VERDICTS=false
+      SYNC_PORTFOLIO=true
       ;;
     --all)
       SYNC_MOAT=true
       SYNC_VERDICTS=true
+      SYNC_PORTFOLIO=true
       ;;
     -h|--help)
-      echo "Usage: $0 [--moat | --verdicts | --all]"
+      echo "Usage: $0 [--moat | --verdicts | --portfolio | --all]"
       exit 0
       ;;
     *)
@@ -67,6 +78,7 @@ echo "  Source (Local DB): $LOCAL_APP"
 echo "  Target Server:     $SSH_HOST"
 echo "  Sync Moat:         $SYNC_MOAT"
 echo "  Sync Verdicts:     $SYNC_VERDICTS"
+echo "  Sync Portfolio:    $SYNC_PORTFOLIO"
 echo "================================================================================"
 
 # Step 0: Ensure remote temp directory
@@ -77,7 +89,7 @@ ssh -i "$SSH_KEY" -o BatchMode=yes "$SSH_HOST" "mkdir -p '$REMOTE_TMP_DIR'"
 # ------------------------------------------------------------------------------
 if [[ "$SYNC_MOAT" == true ]]; then
   echo ""
-  echo "▶ [1/2] Syncing app.company_moat..."
+  echo "▶ [1/3] Syncing app.company_moat..."
 
   LOCAL_MOAT_COUNT=$(psql "$LOCAL_APP" -tAc "SELECT count(*) FROM app.company_moat;")
   echo "  Local moat count: $LOCAL_MOAT_COUNT rows"
@@ -130,7 +142,7 @@ fi
 # ------------------------------------------------------------------------------
 if [[ "$SYNC_VERDICTS" == true ]]; then
   echo ""
-  echo "▶ [2/2] Syncing app.stock_verdict..."
+  echo "▶ [2/3] Syncing app.stock_verdict..."
 
   LOCAL_VERDICT_COUNT=$(psql "$LOCAL_APP" -tAc "SELECT count(*) FROM app.stock_verdict;")
   echo "  Local verdict count: $LOCAL_VERDICT_COUNT rows"
@@ -188,25 +200,83 @@ SQL
 fi
 
 # ------------------------------------------------------------------------------
-# 3. VERIFY PRODUCTION COUNTS & PRE-WARM CACHE
+# 3. SYNC PORTFOLIO (app.portfolio_holding)
+# ------------------------------------------------------------------------------
+if [[ "$SYNC_PORTFOLIO" == true ]]; then
+  echo ""
+  echo "▶ [3/3] Syncing app.portfolio_holding..."
+
+  LOCAL_HOLDING_COUNT=$(psql "$LOCAL_APP" -tAc "SELECT count(*) FROM app.portfolio_holding;")
+  echo "  Local portfolio_holding count: $LOCAL_HOLDING_COUNT rows"
+
+  if [[ "$LOCAL_HOLDING_COUNT" -eq 0 ]]; then
+    echo "  (No rows in local app.portfolio_holding — skipping)"
+  else
+    HOLDING_FILE="$LOCAL_TMP_DIR/portfolio_holding.tsv"
+    psql "$LOCAL_APP" -c "\COPY (SELECT user_id, broker, raw_symbol, isin, symbol, is_mapped, quantity, avg_cost, broker_ltp, broker_cur_value, broker_day_pct, source_batch, imported_at, first_seen_at FROM app.portfolio_holding) TO STDOUT" > "$HOLDING_FILE"
+
+    echo "  Transferring $(wc -l < "$HOLDING_FILE" | tr -d ' ') rows to production..."
+    scp -i "$SSH_KEY" -o BatchMode=yes "$HOLDING_FILE" "$SSH_HOST:$REMOTE_TMP_DIR/portfolio_holding.tsv"
+
+    echo "  Applying UPSERT to production DB..."
+    ssh -i "$SSH_KEY" -o BatchMode=yes "$SSH_HOST" "
+      source /var/www/Fundamental/.env.local 2>/dev/null || source /var/www/Fundamental/web/.env.local 2>/dev/null || true
+      psql \"\$APP_DB_URL\" -v ON_ERROR_STOP=1 <<SQL
+DROP TABLE IF EXISTS _temp_holding;
+CREATE TEMP TABLE _temp_holding (LIKE app.portfolio_holding INCLUDING ALL);
+\COPY _temp_holding (user_id, broker, raw_symbol, isin, symbol, is_mapped, quantity, avg_cost, broker_ltp, broker_cur_value, broker_day_pct, source_batch, imported_at, first_seen_at) FROM '$REMOTE_TMP_DIR/portfolio_holding.tsv';
+
+INSERT INTO app.portfolio_holding (
+  user_id, broker, raw_symbol, isin, symbol, is_mapped, quantity,
+  avg_cost, broker_ltp, broker_cur_value, broker_day_pct, source_batch,
+  imported_at, first_seen_at
+)
+SELECT
+  user_id, broker, raw_symbol, isin, symbol, is_mapped, quantity,
+  avg_cost, broker_ltp, broker_cur_value, broker_day_pct, source_batch,
+  imported_at, first_seen_at
+FROM _temp_holding
+ON CONFLICT (user_id, broker, raw_symbol) DO UPDATE SET
+  quantity = EXCLUDED.quantity,
+  avg_cost = EXCLUDED.avg_cost,
+  broker_ltp = EXCLUDED.broker_ltp,
+  broker_cur_value = EXCLUDED.broker_cur_value,
+  broker_day_pct = EXCLUDED.broker_day_pct,
+  isin = EXCLUDED.isin,
+  symbol = EXCLUDED.symbol,
+  is_mapped = EXCLUDED.is_mapped,
+  source_batch = EXCLUDED.source_batch,
+  imported_at = EXCLUDED.imported_at,
+  first_seen_at = EXCLUDED.first_seen_at;
+
+DROP TABLE IF EXISTS _temp_holding;
+SQL
+"
+    echo "  ✓ app.portfolio_holding sync completed successfully."
+  fi
+fi
+
+# ------------------------------------------------------------------------------
+# 4. VERIFY PRODUCTION COUNTS & PRE-WARM CACHE
 # ------------------------------------------------------------------------------
 echo ""
 echo "▶ Verifying production counts and revalidating cache..."
-ssh -i "$SSH_KEY" -o BatchMode=yes "$SSH_HOST" "
+ssh -i "$SSH_KEY" -o BatchMode=yes "$SSH_HOST" bash -s <<'REMOTE_EOF'
   source /var/www/Fundamental/.env.local 2>/dev/null || source /var/www/Fundamental/web/.env.local 2>/dev/null || true
-  psql \"\$APP_DB_URL\" -c '
+  psql "$APP_DB_URL" <<'SQL'
 SELECT
   (SELECT count(*) FROM app.company_moat) AS prod_moat_count,
-  (SELECT max(generated_at) FROM app.company_moat) AS prod_moat_max,
   (SELECT count(*) FROM app.stock_verdict) AS prod_verdict_count,
-  (SELECT max(generated_at) FROM app.stock_verdict) AS prod_verdict_max;
-'
-  if [[ -n \"\${REVALIDATE_TOKEN:-}\" ]]; then
-    echo '  Triggering production cache keep-warm...'
-    curl -s -X POST \"http://localhost:3000/api/cron/keep-warm?force=1&token=\$REVALIDATE_TOKEN\" >/dev/null || true
-    echo '  ✓ Cache warm-up triggered.'
+  (SELECT count(*) FROM app.portfolio_holding) AS prod_holding_count,
+  (SELECT avg_cost FROM app.portfolio_holding WHERE symbol = 'BANKBARODA' AND broker = 'derived') AS bankbaroda_cost;
+SQL
+  pm2 reload equityroots --update-env >/dev/null 2>&1 || true
+  if [[ -n "${REVALIDATE_TOKEN:-}" ]]; then
+    echo "  Triggering production cache keep-warm..."
+    curl -s -X POST "http://localhost:3000/api/cron/keep-warm?force=1&token=$REVALIDATE_TOKEN" >/dev/null || true
+    echo "  ✓ Cache warm-up triggered."
   fi
-"
+REMOTE_EOF
 
 echo ""
 echo "================================================================================"

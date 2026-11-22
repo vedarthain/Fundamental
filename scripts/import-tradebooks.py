@@ -675,6 +675,7 @@ def recompute_derived_holding(cur, user_id, symbol):
         "select side, trade_date::text, quantity::float8, price::float8, "
         "(source_file='manual-entry') as manual "
         "from app.portfolio_transaction where user_id=%s and symbol=%s "
+        "and not (source_file='manual-entry' and matched_at is not null) "
         "order by trade_date asc, trade_time asc nulls first, id asc",
         (user_id, symbol))
     txns = cur.fetchall()
@@ -711,14 +712,18 @@ def recompute_derived_holding(cur, user_id, symbol):
         first_date = s_date
     walk = [r for r in txns if r[4]] if has_snapshot else txns
     for side, d, q, price, _manual in walk:
-        if first_date is None:
-            first_date = d
         if side == "buy":
+            if first_date is None or qty <= 1e-9:
+                first_date = d
             nxt = qty + q
             avg = (qty * avg + q * price) / nxt if nxt > 0 else 0.0
             qty = nxt
         else:
             qty -= q
+            if qty <= 1e-9:
+                qty = 0.0
+                avg = 0.0
+                first_date = None
     qty = round(qty, 4)
 
     if qty <= 0:
