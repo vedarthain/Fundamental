@@ -70,7 +70,7 @@ jobs:
             echo "=== 3. Generating Gemini verdicts for weekly new calls & portfolio holdings ==="
             if [ -z "$DRY_ARG" ] && [ -n "${GEMINI_API_KEY:-}" ]; then
               /var/www/Fundamental/.venv/bin/python scripts/ollama-verdict.py \
-                --weekly-new-portfolio --engine gemini --load --workers 3 --delay 1.0 || true
+                --weekly-new-portfolio --engine gemini --load --workers 3 --delay 1.0
             else
               echo "Skipping Gemini weekly verdict pass (dry-run or GEMINI_API_KEY not set)."
             fi

@@ -172,12 +172,17 @@ Return ONLY a valid JSON object matching this schema:
 
 def extract_evidence_pack(symbols: list[str]) -> Path:
     """Run verdict-evidence.py to generate a temporary pack JSON."""
+    clean_symbols = [
+        str(s).strip().upper()
+        for s in symbols
+        if s and str(s).strip() and str(s).strip().upper() != "MUTUAL_FUNDS_ETFS"
+    ]
     out_path = Path(f"/tmp/evidence_pack_{int(datetime.now().timestamp())}.json")
     cmd = [
         str(ROOT / "etl" / ".venv" / "bin" / "python"),
         str(ROOT / "scripts" / "verdict-evidence.py"),
         "--symbols",
-        ",".join(symbols),
+        ",".join(clean_symbols),
         "--out",
         str(out_path),
     ]
@@ -1102,11 +1107,12 @@ def main() -> int:
                     candidates AS (
                         SELECT DISTINCT symbol
                         FROM app.portfolio_holding
-                        WHERE quantity > 0
+                        WHERE quantity > 0 AND symbol IS NOT NULL AND symbol != '' AND symbol != 'MUTUAL_FUNDS_ETFS'
                         UNION
                         SELECT DISTINCT symbol
                         FROM app.stock_call
                         WHERE created_at::date = (SELECT d FROM latest_batch)
+                          AND symbol IS NOT NULL AND symbol != ''
                     ),
                     latest_v AS (
                         SELECT DISTINCT ON (symbol) symbol, generated_at
@@ -1116,10 +1122,10 @@ def main() -> int:
                     SELECT c.symbol
                     FROM candidates c
                     LEFT JOIN latest_v v ON v.symbol = c.symbol
-                    WHERE v.symbol IS NULL OR v.generated_at < now() - interval '7 days'
+                    WHERE c.symbol IS NOT NULL AND (v.symbol IS NULL OR v.generated_at < now() - interval '7 days')
                     ORDER BY c.symbol;
                 """)
-                symbols = [r[0] for r in cur.fetchall()]
+                symbols = [r[0] for r in cur.fetchall() if r[0] and r[0].strip() and r[0] != 'MUTUAL_FUNDS_ETFS']
         if args.limit:
             symbols = symbols[:args.limit]
         if not symbols:
