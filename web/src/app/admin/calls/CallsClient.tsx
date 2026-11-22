@@ -596,10 +596,8 @@ export function CallsClient({
   const [auditChartMode, setAuditChartMode] = useState<"cluster" | "sector">("cluster");
   const [selectedAuditSliceKey, setSelectedAuditSliceKey] = useState<string | null>(null);
 
-  // Custom User Purchase overrides - preseed INDUSTOWER to last week (02 Nov 2026 @ ₹380.00)
-  const [customPurchases, setCustomPurchases] = useState<Record<string, { purchase_date: string; purchase_price: number }>>({
-    INDUSTOWER: { purchase_date: "2026-11-02", purchase_price: 380.0 },
-  });
+  // Custom User Purchase overrides (loaded from localStorage)
+  const [customPurchases, setCustomPurchases] = useState<Record<string, { purchase_date: string; purchase_price: number }>>({});
   const [isEditingPurchase, setIsEditingPurchase] = useState(false);
   const [editPurchaseDate, setEditPurchaseDate] = useState("");
   const [editPurchasePrice, setEditPurchasePrice] = useState("");
@@ -800,9 +798,6 @@ export function CallsClient({
       cmp: 378.3,
       anchorPrice: 380.0,
       callDate: "2026-11-01",
-      purchaseDate: "2026-11-02",
-      purchasePrice: 380.0,
-      heldQty: 26,
       buyBelow: 370.7,
       target: 554.4,
       stopLoss: 335.0,
@@ -1126,14 +1121,26 @@ export function CallsClient({
       const isPortfolio = Boolean(port && port.total_qty > 0) || Boolean(g.is_portfolio) || Boolean(customP);
 
       // Anchor 2: Stock Purchase (only for actual portfolio holdings or user-logged buys)
-      const purchaseDate = customP?.purchase_date ?? (isPortfolio ? (g.purchase_date ?? port?.purchase_date ?? cur?.purchaseDate ?? null) : null);
-      const purchasePrice = customP?.purchase_price ?? (isPortfolio ? (g.purchase_price ?? port?.weighted_avg_cost ?? cur?.purchasePrice ?? null) : null);
+      const purchaseDate = customP?.purchase_date ?? (isPortfolio ? (g.purchase_date ?? port?.purchase_date ?? null) : null);
+      const purchasePrice = customP?.purchase_price ?? (isPortfolio ? (g.purchase_price ?? port?.weighted_avg_cost ?? null) : null);
       const purchasePerfPct =
         purchasePrice && purchasePrice > 0 ? ((cmp - purchasePrice) / purchasePrice) * 100 : null;
 
-      const heldQty = port?.total_qty ?? (isPortfolio ? (g.held_qty && g.held_qty > 0 ? g.held_qty : (cur?.heldQty ?? (customP ? 26 : 0))) : 0) ?? 0;
-      const investedVal = port?.invested_val ?? (isPortfolio ? g.invested_val : 0) ?? (purchasePrice ? purchasePrice * heldQty : 0);
-      const curVal = port?.cur_val ?? (isPortfolio ? g.cur_val : 0) ?? (cmp * heldQty);
+      const heldQty = (port?.total_qty && port.total_qty > 0)
+        ? port.total_qty
+        : (g.held_qty && g.held_qty > 0)
+          ? g.held_qty
+          : (customP ? 26 : 0);
+      const investedVal = (port?.invested_val && port.invested_val > 0)
+        ? port.invested_val
+        : (g.invested_val && g.invested_val > 0)
+          ? g.invested_val
+          : (purchasePrice && heldQty > 0 ? purchasePrice * heldQty : 0);
+      const curVal = (port?.cur_val && port.cur_val > 0)
+        ? port.cur_val
+        : (g.cur_val && g.cur_val > 0)
+          ? g.cur_val
+          : (cmp > 0 && heldQty > 0 ? cmp * heldQty : 0);
 
       // ONLY actual portfolio holdings have a holding duration (from trade buy date)!
       const holdingDuration = isPortfolio && purchaseDate ? getHoldingDuration(purchaseDate) : null;
@@ -1225,16 +1232,24 @@ export function CallsClient({
         const callPerfPct = callPrice > 0 ? ((cmp - callPrice) / callPrice) * 100 : 0;
 
         const customP = customPurchases[cp.symbol];
-        const isPortfolio = Boolean(port && port.total_qty > 0) || Boolean(gem?.is_portfolio) || Boolean(customP) || Boolean(cp.purchasePrice);
+        const isPortfolio = Boolean(port && port.total_qty > 0) || Boolean(gem?.is_portfolio) || Boolean(customP);
 
-        const purchaseDate = customP?.purchase_date ?? (isPortfolio ? (port?.purchase_date ?? gem?.purchase_date ?? cp.purchaseDate ?? null) : null);
-        const purchasePrice = customP?.purchase_price ?? (isPortfolio ? (port?.weighted_avg_cost ?? gem?.purchase_price ?? cp.purchasePrice ?? null) : null);
+        const purchaseDate = customP?.purchase_date ?? (isPortfolio ? (port?.purchase_date ?? gem?.purchase_date ?? null) : null);
+        const purchasePrice = customP?.purchase_price ?? (isPortfolio ? (port?.weighted_avg_cost ?? gem?.purchase_price ?? null) : null);
         const purchasePerfPct =
           purchasePrice && purchasePrice > 0 ? ((cmp - purchasePrice) / purchasePrice) * 100 : null;
 
-        const heldQty = port?.total_qty ?? (isPortfolio ? (gem?.held_qty && gem.held_qty > 0 ? gem.held_qty : (cp.heldQty ?? 26)) : 0);
-        const investedVal = port?.invested_val ?? (purchasePrice ? purchasePrice * heldQty : 0);
-        const curVal = port?.cur_val ?? (cmp * heldQty);
+        const heldQty = (port?.total_qty && port.total_qty > 0)
+          ? port.total_qty
+          : (gem?.held_qty && gem.held_qty > 0)
+            ? gem.held_qty
+            : (customP ? 26 : 0);
+        const investedVal = (port?.invested_val && port.invested_val > 0)
+          ? port.invested_val
+          : (purchasePrice && heldQty > 0 ? purchasePrice * heldQty : 0);
+        const curVal = (port?.cur_val && port.cur_val > 0)
+          ? port.cur_val
+          : (cmp > 0 && heldQty > 0 ? cmp * heldQty : 0);
 
         // ONLY actual portfolio holdings have a holding duration (from trade buy date)!
         const holdingDuration = isPortfolio && purchaseDate ? getHoldingDuration(purchaseDate) : null;
@@ -1321,8 +1336,8 @@ export function CallsClient({
         const callPerfPct = callPrice > 0 ? ((cmp - callPrice) / callPrice) * 100 : 0;
 
         const heldQty = port.total_qty;
-        const investedVal = port.invested_val;
-        const curVal = port.cur_val;
+        const investedVal = port.invested_val > 0 ? port.invested_val : (purchasePrice && heldQty > 0 ? purchasePrice * heldQty : 0);
+        const curVal = port.cur_val > 0 ? port.cur_val : (cmp > 0 && heldQty > 0 ? cmp * heldQty : 0);
 
         // Portfolio holdings use their actual purchase date
         const holdingDuration = purchaseDate ? getHoldingDuration(purchaseDate) : null;

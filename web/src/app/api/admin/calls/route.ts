@@ -682,6 +682,14 @@ async function computeCallsPayload(dateParam: string | null) {
         marketCapCr: mcap,
       });
 
+      const heldQtyVal = r.held_qty ? Number(r.held_qty) : null;
+      const invVal = r.invested_val && Number(r.invested_val) > 0
+        ? Number(r.invested_val)
+        : (purchasePrice && heldQtyVal ? purchasePrice * heldQtyVal : null);
+      const curVal = r.cur_val && Number(r.cur_val) > 0
+        ? Number(r.cur_val)
+        : (ltp > 0 && heldQtyVal ? ltp * heldQtyVal : null);
+
       return {
         symbol: r.symbol,
         company_name: r.company_name,
@@ -700,9 +708,9 @@ async function computeCallsPayload(dateParam: string | null) {
         purchase_date: purchaseDate,
         purchase_price: purchasePrice,
         purchase_perf_pct: purchasePerfPct,
-        held_qty: r.held_qty ? Number(r.held_qty) : null,
-        invested_val: r.invested_val ? Number(r.invested_val) : null,
-        cur_val: r.cur_val ? Number(r.cur_val) : null,
+        held_qty: heldQtyVal,
+        invested_val: invVal,
+        cur_val: curVal,
         verdict: r.verdict,
         confidence: r.confidence,
         target_price: targetPriceVal,
@@ -807,6 +815,12 @@ async function computeCallsPayload(dateParam: string | null) {
         compositePct: comp,
       });
 
+      const totalQtyVal = Number(r.total_qty ?? 0);
+      const invVal = Number(r.invested_val ?? 0) > 0 ? Number(r.invested_val) : (avgCost > 0 && totalQtyVal > 0 ? avgCost * totalQtyVal : 0);
+      const curVal = Number(r.cur_val ?? 0) > 0 ? Number(r.cur_val) : (ltp > 0 && totalQtyVal > 0 ? ltp * totalQtyVal : 0);
+      const pnlVal = curVal - invVal;
+      const pnlPctVal = invVal > 0 ? (pnlVal / invVal) * 100 : pnlPct;
+
       return {
         symbol: sym,
         company_name: compName,
@@ -814,7 +828,7 @@ async function computeCallsPayload(dateParam: string | null) {
         industry: indName,
         market_cap_category: isMutualFundOrEtf ? "large_cap" : r.market_cap_category,
         cluster_name: clusName,
-        total_qty: Number(r.total_qty ?? 0),
+        total_qty: totalQtyVal,
         weighted_avg_cost: avgCost,
         ltp,
         anchor_price: anchor,
@@ -825,10 +839,10 @@ async function computeCallsPayload(dateParam: string | null) {
         purchase_date: purchaseDate,
         purchase_price: purchasePrice,
         purchase_perf_pct: purchasePerfPct,
-        invested_val: Number(r.invested_val ?? 0),
-        cur_val: Number(r.cur_val ?? 0),
-        pnl: Number(r.pnl ?? 0),
-        pnl_pct: pnlPct,
+        invested_val: invVal,
+        cur_val: curVal,
+        pnl: pnlVal,
+        pnl_pct: pnlPctVal,
         composite_pct: comp,
         quality_pct: qual,
         valuation_pct: r.valuation_pct ? Number(r.valuation_pct) : null,
