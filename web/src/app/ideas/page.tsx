@@ -30,9 +30,17 @@ import { WatchlistButton } from "@/components/WatchlistButton";
 import { isIpoStatus } from "./IpoTracker";
 import { IdeasNav, type NavItem } from "./IdeasNav";
 import { ResultsCornerClient, type DeclaredResult, type ResultsCalendarEvent } from "./ResultsCornerClient";
+import DividendCornerClient from "./DividendCornerClient";
+import { loadDividendUniverse } from "@/lib/dividendScanner";
 
 // Score data changes weekly. 6h ISR cache avoids waking Neon on every visit.
 export const revalidate = 21600;
+
+const cachedN500 = unstable_cache(
+  async () => sql<{ symbol: string }[]>`SELECT symbol FROM app.index_constituent WHERE index_code = 'NIFTY500'`,
+  ["ideas:n500:v1"],
+  { revalidate: 21600, tags: ["panel-cache"] },
+);
 
 // ---------------------------------------------------------------------------
 // Types
@@ -454,12 +462,14 @@ function ideasHref(
  */
 function viewItems(sp: Record<string, string | undefined>): NavItem[] {
   const isResults = sp.view === "results";
+  const isDividends = sp.view === "dividends";
+  const isTrends = !isResults && !isDividends;
   return [
     {
       key: "trends",
       label: "Trends",
       sub: "Scored ideas",
-      active: !isResults,
+      active: isTrends,
       href: ideasHref(sp, { view: null, ipo: null }),
     },
     {
@@ -468,6 +478,13 @@ function viewItems(sp: Record<string, string | undefined>): NavItem[] {
       sub: "Declared results",
       active: isResults,
       href: ideasHref(sp, { view: "results", ipo: null }),
+    },
+    {
+      key: "dividends",
+      label: "Dividend Corner",
+      sub: "Yields & payers",
+      active: isDividends,
+      href: ideasHref(sp, { view: "dividends", ipo: null }),
     },
   ];
 }
@@ -1140,6 +1157,32 @@ export default async function IdeasPage({
         <ResultsCornerClient
           calendarEvents={calendarEvents}
           declaredResults={declaredResults}
+        />
+      </IdeasShell>
+    );
+  }
+
+  if (sp.view === "dividends") {
+    const [dividendUniverse, n500Rows] = await Promise.all([
+      loadDividendUniverse(),
+      cachedN500(),
+    ]);
+    const nifty500 = n500Rows.map((r) => r.symbol);
+
+    return (
+      <IdeasShell
+        nav={
+          <IdeasNav
+            views={viewItems(sp)}
+            contextLabel="Universe"
+            universe={null}
+            groups={[]}
+          />
+        }
+      >
+        <DividendCornerClient
+          universe={dividendUniverse}
+          nifty500={nifty500}
         />
       </IdeasShell>
     );

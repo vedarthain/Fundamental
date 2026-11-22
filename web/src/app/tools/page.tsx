@@ -60,12 +60,12 @@ const TOOLS: ToolCard[] = [
     title: "Scanner",
     tagline: "Where's the move — spikes, trends, floors, fallen quality & rotation",
     body:
-      "Every daily scanner under one roof. Igniting today: stocks up ≥6% on ≥3× normal volume that broke a fresh 60-day high, cross-checked against news so pumps stand out. Trend Leaders: durable uptrends caught at the start (fresh golden cross near the 52-week high). At Support: names sitting on a multi-year tested floor. Fallen Leaders: quality businesses temporarily beaten down. Dividends: income by sector — per-share payout over four fiscal years, trailing yield & composite. Plus sector and peer-group rotation maps.",
+      "Every daily scanner under one roof. Igniting today: stocks up ≥6% on ≥3× normal volume that broke a fresh 60-day high, cross-checked against news so pumps stand out. Trend Leaders: durable uptrends caught at the start (fresh golden cross near the 52-week high). At Support: names sitting on a multi-year tested floor. Fallen Leaders: quality businesses temporarily beaten down. Plus interactive candlestick graph and sector/peer-group rotation maps. (For dividend yields & payouts, see Ideas → Dividend Corner).",
     useFor: [
       "Catch breakouts early, on the ignition day",
       "Spot durable trends at initiation, not mid-run",
       "Find beaten-down quality and see where money is rotating",
-      "Hunt sustainable dividend yields, not yield traps",
+      "Explore candle patterns and multi-week rotation maps",
     ],
     accent: "var(--color-accent-600)",
   },

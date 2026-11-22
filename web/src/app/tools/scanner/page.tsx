@@ -4,7 +4,6 @@ import { loadLatestMomentum } from "@/lib/momentum";
 import { loadLatestTrendLeaders } from "@/lib/trendLeaders";
 import { loadLatestSupportFloor } from "@/lib/supportFloor";
 import { loadRotation } from "@/lib/rotation";
-import { loadDividendUniverse } from "@/lib/dividendScanner";
 import { loadThemes } from "@/lib/themes";
 import { loadSparklines } from "@/lib/sparklines";
 import { loadPortfolioSymbols, loadPortfolioTrades, loadPortfolioHeldQty } from "@/lib/portfolio";
@@ -20,7 +19,7 @@ export const dynamic = "force-dynamic";
 // The Scanner is a post-close daily tool built from app.cluster_stocks_panel_cache
 // and the per-scanner snapshot tables — none of it changes within a session. Yet
 // the page is force-dynamic (each tab keeps its own history search-param), so
-// WITHOUT caching every visit re-ran all eight tab loaders + three sparkline
+// WITHOUT caching every visit re-ran all tab loaders + three sparkline
 // batches against Neon: ~10s per click. Wrap each loader in the Data Cache
 // instead — keyed by its date arg, revalidated hourly, and tagged "panel-cache"
 // so the daily cron purge (see /api/revalidate) busts it the moment new scores
@@ -32,11 +31,6 @@ const cachedMomentum = unstable_cache(loadLatestMomentum, ["scanner:momentum:v1"
 const cachedTrend = unstable_cache(loadLatestTrendLeaders, ["scanner:trend:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
 const cachedFloor = unstable_cache(loadLatestSupportFloor, ["scanner:floor:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
 const cachedRotation = unstable_cache(loadRotation, ["scanner:rotation:v2-live-returns"], { revalidate: HOUR, tags: CACHE_TAGS });
-// "Graph" is the heaviest payload on this page. It's lazy-loaded on first tab
-// open via /api/scanner/panel, NOT shipped with the page — so it's intentionally
-// absent from the eager wave below. ("All stocks" was the other half of that
-// pair; it now lives at /stocks and loads server-side there.)
-const cachedDividendUniverse = unstable_cache(loadDividendUniverse, ["scanner:dividends:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
 const cachedThemes = unstable_cache(loadThemes, ["scanner:themes:v2-live-returns"], { revalidate: HOUR, tags: CACHE_TAGS });
 const cachedSparklines = unstable_cache(loadSparklines, ["scanner:sparklines:v1"], { revalidate: HOUR, tags: CACHE_TAGS });
 const cachedN500 = unstable_cache(
@@ -48,7 +42,7 @@ const cachedN500 = unstable_cache(
 // Defined server-side, NOT imported from the "use client" ScannerTabs module:
 // value exports from a client module become client-reference proxies in a
 // Server Component, so `.includes` would be undefined at runtime.
-const SCANNER_TABS: readonly Tab[] = ["igniting", "trend", "floor", "fallen", "sectors", "graph", "themes", "dividends"];
+const SCANNER_TABS: readonly Tab[] = ["igniting", "trend", "floor", "fallen", "sectors", "graph", "themes"];
 
 export const metadata: Metadata = {
   title: "Scanner — EquityRoots",
@@ -82,11 +76,10 @@ export default async function MomentumPage({
   // Sectors ⇄ Peer groups). Redirect the old deep-link so a bookmarked
   // ?tab=peers still lands somewhere real instead of a blank panel.
   const normalizedTab = tabParam === "peers" ? "sectors" : tabParam;
-  // "all" moved out of the Scanner to its own Segments route. Redirect rather
-  // than silently falling through to the Graph tab: ?tab=all was linked from the
-  // nav in production, so a bookmark or a back-button must still land on the
-  // table it asked for, not on a different page that looks like it worked.
+  // "all" moved out of the Scanner to its own Segments route.
   if (normalizedTab === "all") redirect("/stocks");
+  // "dividends" moved to Ideas -> Dividend Corner.
+  if (normalizedTab === "dividends") redirect("/ideas?view=dividends");
   // Graph is the landing tab, matching its position first in the strip. This is
   // the fallback for a bare /tools/scanner only — an explicit ?tab= still wins,
   // so every existing deep link keeps landing where it always did, and the
@@ -145,12 +138,11 @@ export default async function MomentumPage({
     { revalidate: 60, tags: ["portfolio"] },
   );
 
-  const [momentum, trend, floor, rotation, dividendUniverse, themes, n500, [portfolioSymbols, portfolioTrades, portfolioQty]] = await Promise.all([
+  const [momentum, trend, floor, rotation, themes, n500, [portfolioSymbols, portfolioTrades, portfolioQty]] = await Promise.all([
     cachedMomentum(one(sp.mDate)),
     cachedTrend(one(sp.tDate)),
     cachedFloor(one(sp.fDate)),
     cachedRotation(one(sp.rDate)),
-    cachedDividendUniverse(),
     cachedThemes(),
     cachedN500(),
     session
@@ -187,7 +179,6 @@ export default async function MomentumPage({
       floorDates={floor.dates}
       floorSpark={floorSpark}
       rotation={rotation}
-      dividendUniverse={dividendUniverse}
       themes={themes}
       nifty500={n500.map((r) => r.symbol)}
       portfolioSymbols={portfolioSymbols}

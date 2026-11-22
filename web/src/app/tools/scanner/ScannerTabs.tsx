@@ -17,12 +17,10 @@ import type { TrendLeaderSignal } from "@/lib/trendLeaders";
 import type { SupportFloorSignal } from "@/lib/supportFloor";
 import type { RotationData } from "@/lib/rotation";
 import type { GraphUniverse } from "@/lib/graphUniverse";
-import type { DividendUniverse } from "@/lib/dividendScanner";
 import type { ThemesData } from "@/lib/themes";
 import type { SparkPoint } from "@/components/Sparkline";
 import MomentumClient from "./MomentumClient";
 import GraphClient from "./GraphClient";
-import DividendClient from "./DividendClient";
 import TrendLeadersClient from "./TrendLeadersClient";
 import SupportFloorClient from "./SupportFloorClient";
 import RotationClient from "./RotationClient";
@@ -32,7 +30,7 @@ import ScannerDatePicker from "./ScannerDatePicker";
 import type { TradeMark } from "@/lib/portfolio";
 
 // "peers" is no longer a top-level tab — it folded into "sectors" as a toggle.
-export type Tab = "igniting" | "trend" | "floor" | "fallen" | "sectors" | "graph" | "themes" | "dividends";
+export type Tab = "igniting" | "trend" | "floor" | "fallen" | "sectors" | "graph" | "themes";
 // Which cut the merged Sectors/Peers ("rotation") tab is showing.
 type RotView = "sectors" | "peers";
 
@@ -84,7 +82,7 @@ export default function ScannerTabs({
   floorDates: string[];
   floorSpark: Record<string, SparkPoint[]>;
   rotation: RotationData;
-  dividendUniverse: DividendUniverse;
+  dividendUniverse?: any;
   themes: ThemesData;
   nifty500: string[];
   portfolioSymbols?: string[];
@@ -216,7 +214,6 @@ export default function ScannerTabs({
     { id: "fallen", label: "Fallen Leaders", sub: "Beaten-down quality", count: null },
     { id: "sectors", label: "Sectors & Peers", sub: "Rotation map", count: rotCount },
     { id: "themes", label: "Themes", sub: "Index vs. constituents", count: themes.themes.length },
-    { id: "dividends", label: "Dividend Scanner", sub: "Income by sector · yield", count: null },
   ];
 
   // The per-stock scanners carry a sector→industry tree on the left, so they
@@ -225,7 +222,6 @@ export default function ScannerTabs({
   // stay in the tighter reading column.
   const wide =
     tab === "graph" ||
-    tab === "dividends" ||
     tab === "igniting" ||
     tab === "trend" ||
     tab === "floor" ||
@@ -398,9 +394,6 @@ export default function ScannerTabs({
             ) : (
               <GraphClient universe={graphUniverse} nifty500={nifty500} n500Only={n500Only} portfolioSymbols={portfolioSymbols} tradedSymbols={tradedSymbols} tradesBySymbol={tradesBySymbol} portfolioQty={portfolioQty} />
             )
-          )}
-          {tab === "dividends" && (
-            <DividendClient universe={dividendUniverse} nifty500={nifty500} n500Only={n500Only} />
           )}
           {tab === "sectors" && (
             <div>

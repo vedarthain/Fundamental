@@ -136,3 +136,16 @@ this repo's existing answer to "does not fit the taxonomy" is a named group.
 
 **Reverses if:** the bucket stops being temporary in practice. It carries its own
 expiry (`dq.unclassified_sector_aged`), so that would show up rather than accrue.
+
+---
+
+## 2026-11-23 — Dividend Scanner moved to Ideas → Dividend Corner with flat list of stocks
+
+Moved Dividend Scanner from `/tools/scanner?tab=dividends` to `/ideas?view=dividends` ("Dividend Corner").
+
+**Why:**
+1. Discoverability & Product Fit: Scanners are technical/price-action momentum triggers ("where's the move today"), whereas dividend income is fundamental idea generation, aligning directly with `/ideas` alongside Trends and Results Corner.
+2. Flat List Tab: Rather than forcing users to navigate nested sector/industry accordions to discover dividend payers, Dividend Corner introduces a primary "List of Stocks" tab providing a single, sortable, searchable table across all ~1,900 dividend-paying stocks with trailing yields, 4-year DPS history, and upcoming payouts.
+3. Performance: Removing dividend universe eager evaluation from `/tools/scanner` reduces cold-load weight for scanner visitors while redirecting old bookmarks cleanly.
+
+**Reverses if:** Users request technical scanner indicators on dividend yield spikes within momentum scanner workflows.

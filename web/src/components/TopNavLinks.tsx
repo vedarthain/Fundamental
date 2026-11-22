@@ -67,6 +67,7 @@ const LINKS: NavLink[] = [
     submenu: [
       { href: "/ideas", label: "Trends", description: "Scored weekly ideas — compounders, breakouts, and value in clusters" },
       { href: "/ideas?view=results", label: "Results Corner", description: "Declared quarterly results for NSE stocks sorted by date" },
+      { href: "/ideas?view=dividends", label: "Dividend Corner", description: "Dividend-paying stocks, high yields, consistency record, and upcoming payouts" },
     ],
   },
   {
@@ -74,7 +75,7 @@ const LINKS: NavLink[] = [
     label: "Tools",
     submenu: [
       { href: "/tools/screener",          label: "Stock Screener",     description: "Filter by criteria, see ranked matches" },
-      { href: "/tools/scanner",          label: "Scanner",            description: "Igniting today, trend leaders, fallen leaders, dividends + rotation" },
+      { href: "/tools/scanner",          label: "Scanner",            description: "Igniting today, trend leaders, fallen leaders, rotation + graph" },
       { href: "/tools/alerts",            label: "Alerts",             description: "Holdings that need a look + your price alerts" },
       { href: "/tools/peer-comparison",   label: "Peer Comparison",    description: "Stack 2-5 stocks side by side" },
       { href: "/tools/universe-changes",  label: "Universe Changes",   description: "Weekly log of stocks added & removed" },
