@@ -28,20 +28,19 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "crypto";
+import { runMorningWarmup } from "@/lib/morningWarmup";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
-// Paths whose functions we keep warm. Unauthenticated GETs to these hit no DB
-// (see the file header); scanner carries ?warm=1 to short-circuit its loaders.
-const WARM_PATHS = ["/dashboard", "/watchlist", "/portfolio", "/tools/scanner?warm=1"];
+// Active window: 07:00–22:00 IST. Self-hosted DigitalOcean Postgres has zero
+// per-second compute billing (unlike old Neon), so warming the caches every
+// morning and during the day is completely free and makes /portfolio, /watchlist,
+// and /admin/calls open in <200ms instead of 5–6s.
+const WARM_START_HOUR_IST = 7;
+const WARM_END_HOUR_IST = 22;
 
-// Active window: keep warm only 08:00–22:00 IST (the hours the app is actually
-// used). Enforced HERE, not just on the cron-job.org schedule, so a wrong
-// timezone on the pinger side can't silently widen the window — an off-hours
-// ping becomes a cheap no-op. IST = UTC+5:30: shift the clock and read the hour.
-const WARM_START_HOUR_IST = 8; // inclusive — first warm hour
-const WARM_END_HOUR_IST = 22; // exclusive — last ping fires at 21:55, warm through 22:00
 function withinActiveWindowIST(): boolean {
   const istMs = Date.now() + 5.5 * 60 * 60 * 1000;
   const hour = new Date(istMs).getUTCHours();
@@ -49,24 +48,33 @@ function withinActiveWindowIST(): boolean {
 }
 
 function authOk(req: NextRequest): boolean {
-  const expected = process.env.INTRADAY_CRON_TOKEN || process.env.REVALIDATE_TOKEN;
-  if (!expected) return false;
+  const candidates = [
+    process.env.INTRADAY_CRON_TOKEN,
+    process.env.REVALIDATE_TOKEN,
+    process.env.CRON_SECRET,
+  ].filter((x): x is string => !!x);
+  if (candidates.length === 0) return false;
   const header = req.headers.get("authorization") || "";
   const m = /^Bearer\s+(.+)$/i.exec(header);
   const given = m?.[1] ?? req.nextUrl.searchParams.get("token") ?? "";
-  if (!given || given.length !== expected.length) return false;
-  return timingSafeEqual(Buffer.from(given), Buffer.from(expected));
+  if (!given) return false;
+  return candidates.some(
+    (exp) => given.length === exp.length && timingSafeEqual(Buffer.from(given), Buffer.from(exp)),
+  );
 }
 
 async function warm(req: NextRequest): Promise<NextResponse> {
-  // RETIRED: Keep-warm previously fetched 4 heavy serverless pages every 5 minutes,
-  // preventing Neon PostgreSQL from ever auto-suspending and driving CU-hour billing
-  // to 24/7 run rates. Disabled to allow Neon to scale to zero when idle.
-  return NextResponse.json({
-    ok: true,
-    disabled: true,
-    message: "Keep-warm retired to prevent Neon compute billing overage.",
-  });
+  const force = req.nextUrl.searchParams.get("force") === "1";
+  if (!force && !withinActiveWindowIST()) {
+    return NextResponse.json({ ok: true, skipped: "outside_active_window_ist" });
+  }
+  try {
+    const res = await runMorningWarmup(1);
+    return NextResponse.json(res);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return NextResponse.json({ ok: false, error: msg }, { status: 500 });
+  }
 }
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
@@ -78,3 +86,5 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   if (!authOk(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   return warm(req);
 }
+
+

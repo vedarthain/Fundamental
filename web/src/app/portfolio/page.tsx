@@ -29,8 +29,6 @@ export default async function PortfolioPage({
       ? ("transactions" as const)
       : sp?.tab === "booked"
       ? ("booked" as const)
-      : sp?.tab === "scorecard"
-      ? ("scorecard" as const)
       : sp?.tab === "returns"
       ? ("returns" as const)
       : ("holdings" as const);

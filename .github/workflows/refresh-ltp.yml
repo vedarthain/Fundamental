@@ -63,4 +63,7 @@ jobs:
 
             echo "=== 5. Recording Daily Portfolio Snapshot ==="
             curl -s -X POST "http://localhost:3000/api/cron/portfolio-snapshot?token=$REVALIDATE_TOKEN" || true
+
+            echo "=== 6. Pre-Warming Portfolio, Watchlist & Calls Caches ==="
+            curl -s -X POST "http://localhost:3000/api/cron/keep-warm?force=1&token=$REVALIDATE_TOKEN" || true
             echo "EOD Pipeline completed successfully."

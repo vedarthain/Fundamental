@@ -227,15 +227,28 @@ const CALLS_FRESH_MS = 5 * 60 * 1000; // 5 minutes
 const CALLS_STALE_MS = 60 * 60 * 1000; // 60 minutes stale-while-revalidate
 const callsMemoryCache = new Map<string, CallsCacheEntry>();
 
+function isInternalWarmRequest(request: Request): boolean {
+  const { searchParams } = new URL(request.url);
+  if (searchParams.get("warm") !== "1") return false;
+  const given = searchParams.get("token") ?? "";
+  const candidates = [
+    process.env.INTRADAY_CRON_TOKEN,
+    process.env.REVALIDATE_TOKEN,
+    process.env.CRON_SECRET,
+  ].filter((x): x is string => !!x);
+  return candidates.some((exp) => given.length === exp.length && given === exp);
+}
+
 export async function GET(request: Request) {
-  if (!(await isAdminRequest())) {
+  const isWarm = isInternalWarmRequest(request);
+  if (!isWarm && !(await isAdminRequest())) {
     return NextResponse.json({ error: "admin only" }, { status: 401 });
   }
 
   try {
     const { searchParams } = new URL(request.url);
     const dateParam = searchParams.get("date"); // e.g. "2026-10-31"
-    const forceRefresh = searchParams.get("refresh") === "1";
+    const forceRefresh = searchParams.get("refresh") === "1" || isWarm;
     const cacheKey = dateParam ?? "ALL";
     const now = Date.now();
     const existing = callsMemoryCache.get(cacheKey);
@@ -270,6 +283,14 @@ export async function GET(request: Request) {
 
     const payload = await computeCallsPayload(dateParam);
     callsMemoryCache.set(cacheKey, { payload, fetchedAt: Date.now() });
+
+    if (isWarm) {
+      return NextResponse.json({
+        ok: true,
+        gems: payload.clusterGems?.length ?? 0,
+        portfolio: payload.portfolioActions?.length ?? 0,
+      });
+    }
 
     return NextResponse.json(payload, {
       headers: { "Cache-Control": "no-store" },

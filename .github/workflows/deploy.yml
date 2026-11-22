@@ -128,6 +128,12 @@ jobs:
               pm2 save || true
             fi
 
-            # Allow 5s for PM2 to boot, then warm up / refresh price cache
+            # Allow 5s for PM2 to boot, then refresh price cache and pre-warm Portfolio, Watchlist & Calls
             sleep 5
             curl -s -X POST "http://localhost:3000/api/cron/intraday-equity?token=$REVALIDATE_TOKEN&force=1" || true
+            curl -s -X POST "http://localhost:3000/api/cron/keep-warm?force=1&token=$REVALIDATE_TOKEN" || true
+
+            # Install/update morning warmup cron on Droplet (07:30 IST, 08:30 IST, 09:05 IST daily)
+            CRON_CMD="curl -s -X POST 'http://localhost:3000/api/cron/keep-warm?force=1&token=$REVALIDATE_TOKEN' >/dev/null 2>&1"
+            (crontab -l 2>/dev/null | grep -v '/api/cron/keep-warm' ; echo "0 2,3 * * * $CRON_CMD" ; echo "35 3 * * * $CRON_CMD") | crontab - || true
+

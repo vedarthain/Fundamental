@@ -224,6 +224,12 @@ async function handle(req: NextRequest) {
     revalidateTag("sectors", "default");
     revalidateTag("portfolio", "default");
 
+    // Pre-warm portfolio, watchlist, and calls caches with the fresh Upstox prices
+    // in the background so opening /portfolio, /watchlist, or /admin/calls is instant (<200ms).
+    import("@/lib/morningWarmup")
+      .then((m) => m.runMorningWarmup(1))
+      .catch(() => {});
+
     return NextResponse.json({
       ok: true,
       fetched: syms.length,

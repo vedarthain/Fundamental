@@ -26,12 +26,8 @@ import {
 import type { Portfolio, Instrument, RealizedPnl, RealizedLot, RealizedTerm, PerformanceStats, RealizedTimeline, TradeLog, TradeRow, ImportLogRow } from "@/lib/portfolio";
 import { refreshWatchlist } from "@/lib/watchlist";
 
-// Holdings is the tab that opens. Scorecard pulls in the whole watchlist
-// client, and Returns / the trade sheet are their own trees — keep them
+// Holdings is the tab that opens. Returns / the trade sheet are their own trees — keep them
 // out of the first-load bundle.
-const PortfolioScorecard = dynamic(() =>
-  import("./PortfolioScorecard").then((m) => m.PortfolioScorecard),
-);
 const PortfolioReturnsTable = dynamic(() =>
   import("./PortfolioReturnsTable").then((m) => m.PortfolioReturnsTable),
 );
@@ -107,7 +103,7 @@ type ImportResult = {
   error?: string;
 };
 
-type PortfolioTab = "holdings" | "dividends" | "performance" | "transactions" | "booked" | "scorecard" | "returns";
+type PortfolioTab = "holdings" | "dividends" | "performance" | "transactions" | "booked" | "returns";
 
 const EMPTY_REALIZED: RealizedPnl = {
   rows: [],
@@ -310,10 +306,9 @@ export function PortfolioClient({
           { v: "performance", label: "Performance" },
           { v: "transactions", label: "Transactions" },
           { v: "booked", label: "P&L" },
-          { v: "scorecard", label: "Scorecard" },
           { v: "returns", label: "Returns" },
         ] as const)
-          .filter((o) => owner || (o.v !== "performance" && o.v !== "scorecard" && o.v !== "returns"))
+          .filter((o) => owner || (o.v !== "performance" && o.v !== "returns"))
           .map((o) => (
           <button
             key={o.v}
@@ -442,8 +437,6 @@ export function PortfolioClient({
             <TradeLogView log={tradeLog} />
           )}
         </>
-      ) : tab === "scorecard" && owner ? (
-        <PortfolioScorecard />
       ) : tab === "returns" && owner ? (
         // ETFs aren't in the scored universe, so the table's /api/watchlist
         // fetch cannot reach them — they can only arrive as props from here.
