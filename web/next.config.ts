@@ -74,9 +74,6 @@ const nextConfig: NextConfig = {
     // Typecheck is rigorously enforced via `npx tsc --noEmit` prior to commit
     ignoreBuildErrors: true,
   },
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
 };
 
 export default nextConfig;
