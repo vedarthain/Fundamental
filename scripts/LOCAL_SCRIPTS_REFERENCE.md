@@ -83,9 +83,12 @@ etl/.venv/bin/python scripts/generate_moat_points.py --all --resume --limit 200
 
 # Single cluster or sector
 etl/.venv/bin/python scripts/generate_moat_points.py --cluster "Dyes, Pigments & Colorants" --resume
-```
 
-*(Push generated rows from local Postgres to Production via `POST https://www.equityroots.in/api/admin/moat/sync?token=$REVALIDATE_TOKEN`.)*
+# Push generated moats and/or verdicts from local Postgres to Production (DigitalOcean):
+./scripts/sync-to-prod-ssh.sh             # Syncs both company_moat and stock_verdict
+./scripts/sync-to-prod-ssh.sh --moat      # Syncs only company_moat
+./scripts/sync-to-prod-ssh.sh --verdicts  # Syncs only stock_verdict
+```
 
 ---
 
