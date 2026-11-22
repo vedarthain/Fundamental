@@ -566,6 +566,7 @@ export function CallsClient({
   const [corpusStepUpPct, setCorpusStepUpPct] = useState<number>(10); // 10% annual step-up
   const [corpusCagrPct, setCorpusCagrPct] = useState<number>(25); // 25% expected returns
   const [corpusSipStopYear, setCorpusSipStopYear] = useState<number>(4); // Stop external salary SIP after Year 4 (Year 5+ = 100% Profit Reinvestment Only)
+  const [corpusTaxDragPct, setCorpusTaxDragPct] = useState<number>(10); // 10% effective annual tax drag on profits (blended LTCG 12.5% after ₹1.25L exemption / STCG 20% on realized churn)
   const [corpusTargetHorizonYears, setCorpusTargetHorizonYears] = useState<number>(5); // 5Y horizon
   const [corpusManualBaseOverride, setCorpusManualBaseOverride] = useState<number | null>(null);
   const [isEditingBaseCorpus, setIsEditingBaseCorpus] = useState(false);
@@ -1812,7 +1813,9 @@ export function CallsClient({
     const startBase = corpusManualBaseOverride ?? livePortfolioStats.currentValue;
     const cagr = corpusCagrPct / 100;
     const stepUp = corpusStepUpPct / 100;
+    const taxRate = corpusTaxDragPct / 100;
     const monthlyStart = corpusMonthlyInflow;
+    const LTCG_ANNUAL_EXEMPTION = 125000; // ₹1.25 Lakh Indian LTCG tax-free exemption per FY
 
     const rows: {
       year: number;
@@ -1820,11 +1823,14 @@ export function CallsClient({
       startCorpus: number;
       monthlyInflow: number;
       annualFreshInflow: number;
+      grossReturnsEarned: number;
+      taxPaid: number;
       returnsEarned: number;
       monthlyProfitReinvested: number;
       endCorpus: number;
       cumulativeFresh: number;
       cumulativeReturns: number;
+      cumulativeTaxPaid: number;
       returnsSharePct: number;
       isCrossover: boolean;
       isSelfFundedPhase: boolean;
@@ -1833,6 +1839,7 @@ export function CallsClient({
     let currentCorpus = startBase;
     let cumFresh = 0;
     let cumReturns = 0;
+    let cumTax = 0;
     let crossoverMarked = false;
 
     for (let y = 1; y <= 15; y++) {
@@ -1843,15 +1850,21 @@ export function CallsClient({
 
       const returnOnCapital = yearStart * cagr;
       const returnOnFresh = annualFresh * (cagr * 0.5);
-      const totalReturns = Math.round(returnOnCapital + returnOnFresh);
-      const monthlyProfitReinvested = Math.round(totalReturns / 12);
+      const grossReturns = Math.round(returnOnCapital + returnOnFresh);
 
-      // 100% of totalReturns (market profit) is reinvested back into yearEnd corpus
-      const yearEnd = yearStart + annualFresh + totalReturns;
+      // Deduct annual ₹1.25L LTCG exemption before applying the effective tax drag rate
+      const taxableGain = taxRate > 0 ? Math.max(0, grossReturns - LTCG_ANNUAL_EXEMPTION) : 0;
+      const taxPaid = taxRate > 0 ? Math.round(taxableGain * taxRate) : 0;
+      const netReturns = Math.max(0, grossReturns - taxPaid);
+      const monthlyProfitReinvested = Math.round(netReturns / 12);
+
+      // 100% of net post-tax market profit is reinvested back into yearEnd corpus
+      const yearEnd = yearStart + annualFresh + netReturns;
       cumFresh += annualFresh;
-      cumReturns += totalReturns;
+      cumReturns += netReturns;
+      cumTax += taxPaid;
 
-      const isCrossoverYear = !crossoverMarked && totalReturns >= annualFresh && !isSelfFundedPhase;
+      const isCrossoverYear = !crossoverMarked && netReturns >= annualFresh && !isSelfFundedPhase;
       if (isCrossoverYear) crossoverMarked = true;
 
       const totalGain = yearEnd - startBase;
@@ -1864,11 +1877,14 @@ export function CallsClient({
         startCorpus: yearStart,
         monthlyInflow: thisYearMonthly,
         annualFreshInflow: annualFresh,
-        returnsEarned: totalReturns,
+        grossReturnsEarned: grossReturns,
+        taxPaid,
+        returnsEarned: netReturns,
         monthlyProfitReinvested,
         endCorpus: yearEnd,
         cumulativeFresh: cumFresh,
         cumulativeReturns: cumReturns,
+        cumulativeTaxPaid: cumTax,
         returnsSharePct: returnsShare,
         isCrossover: isCrossoverYear,
         isSelfFundedPhase,
@@ -1882,12 +1898,13 @@ export function CallsClient({
       rows,
       totalExternalSipAdded: cumFresh,
       totalMarketProfitsReinvested: cumReturns,
+      totalTaxPaid: cumTax,
       summary3Y: rows[2],
       summary5Y: rows[4],
       summary10Y: rows[9],
       summary15Y: rows[14],
     };
-  }, [corpusManualBaseOverride, livePortfolioStats.currentValue, corpusMonthlyInflow, corpusStepUpPct, corpusCagrPct, corpusSipStopYear]);
+  }, [corpusManualBaseOverride, livePortfolioStats.currentValue, corpusMonthlyInflow, corpusStepUpPct, corpusCagrPct, corpusSipStopYear, corpusTaxDragPct]);
 
   // Dynamic Position Sizing adapted to Current Corpus (~1.5% Core Anchor per stock / 15% of Monthly ₹1L SIP)
   const dynamicSizing = useMemo(() => {
@@ -4249,7 +4266,7 @@ export function CallsClient({
               </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 text-xs">
               {/* Control 1: Monthly Fresh Savings */}
               <div className="space-y-1.5 p-2 rounded-md bg-slate-50/70 border hairline">
                 <div className="flex items-center justify-between">
@@ -4361,6 +4378,39 @@ export function CallsClient({
                   Compounded annually across 15 years (2025–2039)
                 </div>
               </div>
+
+              {/* Control 5: Effective Capital Gains Tax Drag % */}
+              <div className="space-y-1.5 p-2 rounded-md bg-slate-50/70 border hairline">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-slate-700">Tax Drag (LTCG / STCG)</span>
+                  <span className={`font-mono font-bold text-xs px-1.5 py-0.2 rounded border ${
+                    corpusTaxDragPct === 0
+                      ? "text-slate-600 bg-slate-100 border-slate-300"
+                      : "text-rose-800 bg-rose-50 border-rose-200"
+                  }`}>
+                    {corpusTaxDragPct === 0 ? "0% (Pre-Tax)" : `${corpusTaxDragPct}% Tax`}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 pt-1">
+                  <span className="text-[10px] font-mono text-slate-400">0%</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={20}
+                    step={0.5}
+                    value={corpusTaxDragPct}
+                    onChange={(e) => setCorpusTaxDragPct(Number(e.target.value))}
+                    className="w-full h-1.5 bg-rose-200 rounded-lg appearance-none cursor-pointer accent-rose-600"
+                    title={`Slide Effective Tax Rate from 0% (Pre-Tax) to 20% STCG (12.5% = LTCG after ₹1.25L exemption)`}
+                  />
+                  <span className="text-[10px] font-mono text-slate-500 font-semibold">20%</span>
+                </div>
+                <div className="text-[10px] text-slate-500">
+                  {corpusTaxDragPct === 0
+                    ? "Pre-tax gross compounding (0% tax deducted)"
+                    : `After ₹1.25L/yr LTCG exemption (15Y Tax: ${fmtLakhs(corpusSimulation.totalTaxPaid)})`}
+                </div>
+              </div>
             </div>
           </div>
 
@@ -4382,11 +4432,18 @@ export function CallsClient({
                       ? `SIP Yrs 1–${corpusSipStopYear} (2025–${2024 + corpusSipStopYear}) → Yr ${corpusSipStopYear + 1}–15 100% Profit Reinvested`
                       : "SIP All 15 Yrs (2025–2039)"}
                   </span>
+                  <span className={`px-2 py-0.5 rounded text-[10.5px] font-mono font-bold border ${
+                    corpusTaxDragPct > 0
+                      ? "bg-rose-50 text-rose-900 border-rose-300"
+                      : "bg-slate-100 text-slate-700 border-slate-300"
+                  }`}>
+                    {corpusTaxDragPct > 0 ? `Post-Tax (${corpusTaxDragPct}% after ₹1.25L LTCG Exempt)` : "Pre-Tax (0% Tax)"}
+                  </span>
                 </h3>
                 <p className="text-[11px] text-slate-500 mt-0.5">
                   {corpusSipStopYear < 15
-                    ? `After Year ${corpusSipStopYear} (${2024 + corpusSipStopYear}), external salary inflow stops (₹0/mo) and 100% of your annual portfolio profit is reinvested into new Calls Desk stocks through Year 15 (2039)!`
-                    : "Year-by-year 15-year trajectory (2025–2039) showing when portfolio returns overtake your fresh salary savings!"}
+                    ? `After Year ${corpusSipStopYear} (${2024 + corpusSipStopYear}), external salary inflow stops (₹0/mo) and 100% of your net post-tax annual portfolio profit is reinvested into new Calls Desk stocks through Year 15 (2039)!`
+                    : "Year-by-year 15-year trajectory (2025–2039) showing when net post-tax portfolio returns overtake your fresh salary savings!"}
                 </p>
               </div>
 
@@ -4420,9 +4477,11 @@ export function CallsClient({
                     <th className="py-2.5 px-3 text-right">Starting Corpus</th>
                     <th className="py-2.5 px-3 text-right">Monthly Inflow</th>
                     <th className="py-2.5 px-3 text-right">Annual Fresh Cash</th>
-                    <th className="py-2.5 px-3 text-right">Portfolio Return (100% Reinvested)</th>
+                    <th className="py-2.5 px-3 text-right">Gross Profit</th>
+                    <th className="py-2.5 px-3 text-right">Tax Portion ({corpusTaxDragPct}%)</th>
+                    <th className="py-2.5 px-3 text-right">Net Return (Reinvested)</th>
                     <th className="py-2.5 px-3 text-right font-bold">End-of-Year Corpus</th>
-                    <th className="py-2.5 px-3 w-48">Growth Driver Mix</th>
+                    <th className="py-2.5 px-3 w-44">Growth Driver Mix</th>
                     <th className="py-2.5 px-3 text-center">Milestone Status</th>
                   </tr>
                 </thead>
@@ -4447,7 +4506,7 @@ export function CallsClient({
                           <div className="space-y-0.5">
                             <span className="text-slate-400 font-semibold block">₹0 / mo (Salary)</span>
                             <span className="inline-block px-1.5 py-0.2 rounded text-[9.5px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">
-                              ♻️ +{fmtLakhs(r.monthlyProfitReinvested)}/mo Profit
+                              ♻️ +{fmtLakhs(r.monthlyProfitReinvested)}/mo Net
                             </span>
                           </div>
                         ) : (
@@ -4461,12 +4520,25 @@ export function CallsClient({
                           <span className="text-blue-700 font-medium">+{fmtLakhs(r.annualFreshInflow)}</span>
                         )}
                       </td>
+                      <td className="py-2.5 px-3 text-right font-mono text-slate-700">
+                        +{fmtLakhs(r.grossReturnsEarned)}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono">
+                        {r.taxPaid > 0 ? (
+                          <div>
+                            <span className="text-rose-700 font-semibold">-{fmtLakhs(r.taxPaid)}</span>
+                            <div className="text-[9px] text-slate-400 font-sans">₹1.25L Exempt</div>
+                          </div>
+                        ) : (
+                          <span className="text-slate-400">₹0</span>
+                        )}
+                      </td>
                       <td className="py-2.5 px-3 text-right font-mono">
                         <div className="text-emerald-700 font-bold">+{fmtLakhs(r.returnsEarned)}</div>
                         <div className="text-[9.5px] text-emerald-600 font-sans">
                           {r.isSelfFundedPhase
                             ? `100% Reinvested (~${fmtLakhs(r.monthlyProfitReinvested)}/mo)`
-                            : "100% Reinvested in Corpus"}
+                            : "100% Net Reinvested"}
                         </div>
                       </td>
                       <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900 text-sm">
@@ -4760,10 +4832,10 @@ export function CallsClient({
                   <th
                     className="py-2.5 px-3 text-right cursor-pointer hover:bg-slate-200/70 transition-colors"
                     onClick={() => handleTableSort("upside")}
-                    title="Sort by Upside Potential"
+                    title="Sort by Target Upside & Performance since Anchor Call Date"
                   >
                     <div className="flex items-center justify-end gap-1">
-                      <span>Upside</span>
+                      <span>Upside / Call Perf</span>
                       <ArrowUpDown className="w-3 h-3 text-slate-400" />
                     </div>
                   </th>
@@ -4797,6 +4869,9 @@ export function CallsClient({
                   const secTheme = getSectorTheme(c.sector);
                   const isSelected = selectedSymbol === c.symbol;
                   const upsidePct = c.upside ?? (c.target && c.cmp ? ((c.target - c.cmp) / c.cmp) * 100 : 0);
+                  const callPerf =
+                    c.callPerfPct ??
+                    (c.callPrice && c.callPrice > 0 ? ((c.cmp - c.callPrice) / c.callPrice) * 100 : null);
 
                   return (
                     <tr
@@ -4845,14 +4920,46 @@ export function CallsClient({
                         {c.target && c.target > 0 ? money(c.target, 2) : "—"}
                       </td>
                       <td className="py-2.5 px-3 text-right">
-                        <span className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-mono font-bold ${
-                          upsidePct >= 25 ? "bg-emerald-100 text-emerald-900 border border-emerald-300" :
-                          upsidePct >= 10 ? "bg-emerald-50 text-emerald-800 border border-emerald-200" :
-                          upsidePct >= 0 ? "bg-slate-100 text-slate-800" :
-                          "bg-rose-100 text-rose-900 border border-rose-300"
-                        }`}>
-                          {pct(upsidePct, 1)}
-                        </span>
+                        <div className="flex flex-col items-end gap-1">
+                          <span
+                            className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-mono font-bold ${
+                              upsidePct >= 25
+                                ? "bg-emerald-100 text-emerald-900 border border-emerald-300"
+                                : upsidePct >= 10
+                                  ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
+                                  : upsidePct >= 0
+                                    ? "bg-slate-100 text-slate-800"
+                                    : "bg-rose-100 text-rose-900 border border-rose-300"
+                            }`}
+                            title={`12M Target Upside from CMP (${money(c.cmp, 2)} → ${money(c.target, 2)})`}
+                          >
+                            {pct(upsidePct, 1)}
+                          </span>
+                          {callPerf != null && (
+                            <div
+                              className="flex flex-col items-end"
+                              title={`Anchor Call Performance since ${fmtDate(c.callDate)} (Call Price: ${money(c.callPrice, 2)} → CMP: ${money(c.cmp, 2)})`}
+                            >
+                              <span
+                                className={`inline-block px-1.5 py-0.2 rounded text-[10px] font-mono font-semibold ${
+                                  callPerf > 0
+                                    ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
+                                    : callPerf < 0
+                                      ? "bg-rose-50 text-rose-800 border border-rose-200"
+                                      : "bg-slate-100 text-slate-600 border border-slate-200"
+                                }`}
+                              >
+                                Call: {pct(callPerf, 1)}
+                              </span>
+                              {c.callDate && (
+                                <span className="text-[9px] text-slate-400 font-mono mt-0.5 whitespace-nowrap">
+                                  since {fmtDate(c.callDate)}
+                                  {c.callPrice ? ` @ ${money(c.callPrice, 0)}` : ""}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </td>
                       <td className="py-2.5 px-3 text-center">
                         <span className="font-mono text-[10.5px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-800 font-semibold border hairline">
