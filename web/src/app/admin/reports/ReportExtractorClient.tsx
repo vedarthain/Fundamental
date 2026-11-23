@@ -21,7 +21,7 @@ export type ParameterDef = {
   description?: string;
   defaultSelected?: boolean;
   align?: "left" | "right" | "center";
-  format?: "text" | "number" | "currency" | "percent" | "badge_verdict" | "badge_moat" | "badge_boolean" | "date";
+  format?: "text" | "number" | "currency" | "percent" | "badge_action" | "badge_moat" | "badge_boolean" | "date";
 };
 
 export const PARAMETERS: ParameterDef[] = [
@@ -44,7 +44,7 @@ export const PARAMETERS: ParameterDef[] = [
   { id: "ret_1y", label: "1-Year Return (%)", category: "pricing", categoryLabel: "Pricing & Returns", align: "right", format: "percent", defaultSelected: false },
 
   // 3. Verdicts & Calls Desk (Price Targets & Audit)
-  { id: "verdict", label: "Verdict / Action", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "center", format: "badge_verdict", defaultSelected: true },
+  { id: "action", label: "Verdict Action", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "center", format: "badge_action", defaultSelected: true },
   { id: "confidence", label: "Confidence", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "center", format: "text", defaultSelected: false },
   { id: "buy_below", label: "Buy Below Price (₹)", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "right", format: "currency", defaultSelected: true },
   { id: "target_price", label: "12M Target Price (₹)", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "right", format: "currency", defaultSelected: true },
@@ -54,6 +54,7 @@ export const PARAMETERS: ParameterDef[] = [
   { id: "risk_reward", label: "Risk / Reward Ratio", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "right", format: "number", defaultSelected: false },
   { id: "valuation_method", label: "Valuation Model", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "left", format: "text", defaultSelected: false },
   { id: "verdict_date", label: "Verdict Audit Date", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "center", format: "date", defaultSelected: false },
+  { id: "verdict", label: "Full Verdict / Rationale", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "left", format: "text", defaultSelected: false },
 
   // 4. Moat & Business Audit
   { id: "moat_strength", label: "Moat Strength", category: "moat", categoryLabel: "Moat & Business Audit", align: "center", format: "badge_moat", defaultSelected: true },
@@ -97,10 +98,12 @@ const CATEGORIES: { id: ParameterCategory; label: string; icon: string }[] = [
   { id: "portfolio", label: "Portfolio Holdings", icon: "💼" },
 ];
 
+const DEFAULT_SELECTED_IDS: (keyof ReportStockRow)[] = PARAMETERS.filter((p) => p.defaultSelected).map((p) => p.id);
+
 const PRESETS: { name: string; ids: (keyof ReportStockRow)[] }[] = [
   {
     name: "Calls Desk & Verdicts",
-    ids: ["symbol", "company_name", "ltp", "verdict", "confidence", "buy_below", "target_price", "fair_value", "bear_floor", "upside_pct", "moat_strength", "verdict_date"],
+    ids: ["symbol", "company_name", "ltp", "action", "confidence", "buy_below", "target_price", "fair_value", "bear_floor", "upside_pct", "moat_strength", "verdict_date"],
   },
   {
     name: "Valuation & Fundamentals",
@@ -108,7 +111,7 @@ const PRESETS: { name: string; ids: (keyof ReportStockRow)[] }[] = [
   },
   {
     name: "Portfolio Audit",
-    ids: ["symbol", "company_name", "is_in_portfolio", "held_quantity", "avg_cost", "ltp", "invested_value", "current_value", "unrealized_pnl", "unrealized_pnl_pct", "verdict", "buy_below", "target_price"],
+    ids: ["symbol", "company_name", "is_in_portfolio", "held_quantity", "avg_cost", "ltp", "invested_value", "current_value", "unrealized_pnl", "unrealized_pnl_pct", "action", "buy_below", "target_price"],
   },
   {
     name: "Scores & Momentum",
@@ -124,7 +127,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
 
   // Selected parameters set
   const [selectedIds, setSelectedIds] = useState<Set<keyof ReportStockRow>>(() => {
-    return new Set(PARAMETERS.filter((p) => p.defaultSelected).map((p) => p.id));
+    return new Set(DEFAULT_SELECTED_IDS);
   });
 
   // Parameter search filter
@@ -155,7 +158,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
       const res = await fetch(`/api/admin/reports/data${force ? "?refresh=1" : ""}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
-      if (json.rows) {
+      if (json.rows && Array.isArray(json.rows)) {
         setData(json.rows);
       }
     } catch (e) {
@@ -201,8 +204,12 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
     setSelectedIds(new Set(PARAMETERS.map((p) => p.id)));
   };
 
+  const resetToDefault = () => {
+    setSelectedIds(new Set(DEFAULT_SELECTED_IDS));
+  };
+
   const clearAll = () => {
-    setSelectedIds(new Set(["symbol"]));
+    setSelectedIds(new Set(["symbol", "company_name"]));
   };
 
   const applyPreset = (ids: (keyof ReportStockRow)[]) => {
@@ -236,12 +243,10 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
 
       // 2. Action filter
       if (actionFilter !== "all") {
-        if (!row.verdict) return false;
-        const v = row.verdict.toUpperCase();
-        if (actionFilter === "BUY" && !v.includes("BUY") && !v.includes("ACCUMULATE")) return false;
-        if (actionFilter === "WATCH" && !v.includes("WATCH")) return false;
-        if (actionFilter === "HOLD" && !v.includes("HOLD")) return false;
-        if (actionFilter === "SELL" && !v.includes("SELL") && !v.includes("EXIT") && !v.includes("TRIM")) return false;
+        if (actionFilter === "BUY" && row.action !== "BUY") return false;
+        if (actionFilter === "WATCH" && row.action !== "WATCH") return false;
+        if (actionFilter === "HOLD" && row.action !== "HOLD") return false;
+        if (actionFilter === "SELL" && row.action !== "SELL") return false;
       }
 
       // 3. Stock text search
@@ -250,7 +255,8 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
         const matchesSym = row.symbol.toLowerCase().includes(q);
         const matchesName = row.company_name?.toLowerCase().includes(q);
         const matchesSec = row.sector?.toLowerCase().includes(q);
-        if (!matchesSym && !matchesName && !matchesSec) return false;
+        const matchesInd = row.industry?.toLowerCase().includes(q);
+        if (!matchesSym && !matchesName && !matchesSec && !matchesInd) return false;
       }
 
       return true;
@@ -376,17 +382,17 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
       );
     }
 
-    if (col.format === "badge_verdict") {
+    if (col.format === "badge_action") {
       const s = String(val).toUpperCase();
       let colorCls = "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300";
-      if (s.includes("BUY") || s.includes("ACCUMULATE")) {
+      if (s === "BUY") {
         colorCls = "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-bold border border-emerald-300 dark:border-emerald-700";
-      } else if (s.includes("WATCH")) {
-        colorCls = "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300 dark:border-amber-700";
-      } else if (s.includes("HOLD")) {
-        colorCls = "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300 border border-sky-300 dark:border-sky-700";
-      } else if (s.includes("SELL") || s.includes("EXIT") || s.includes("TRIM")) {
-        colorCls = "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border border-rose-300 dark:border-rose-700";
+      } else if (s === "WATCH") {
+        colorCls = "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300 dark:border-amber-700 font-medium";
+      } else if (s === "HOLD") {
+        colorCls = "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300 border border-sky-300 dark:border-sky-700 font-medium";
+      } else if (s === "SELL") {
+        colorCls = "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border border-rose-300 dark:border-rose-700 font-medium";
       }
       return <span className={`inline-flex px-2 py-0.5 rounded text-[11px] whitespace-nowrap ${colorCls}`}>{String(val)}</span>;
     }
@@ -426,7 +432,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
       return <span>{num.toLocaleString("en-IN")}</span>;
     }
 
-    return <span>{String(val)}</span>;
+    return <span className="max-w-md truncate block" title={String(val)}>{String(val)}</span>;
   };
 
   return (
@@ -443,7 +449,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
             </span>
           </div>
           <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
-            Pick parameters from the left panel to configure, preview real-time metrics across ~2,100+ stocks, and export clean CSV reports.
+            Pick parameters from the left panel to configure, preview real-time metrics across all {data.length > 0 ? `${data.length.toLocaleString("en-IN")} active NSE stocks` : "active NSE stocks"}, and export clean CSV reports.
           </p>
         </div>
 
@@ -485,8 +491,17 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
               </button>
               <span className="text-slate-300 dark:text-slate-700">•</span>
               <button
+                onClick={resetToDefault}
+                className="text-slate-600 dark:text-slate-300 hover:underline font-medium px-1"
+                title="Reset to default recommended columns"
+              >
+                Default
+              </button>
+              <span className="text-slate-300 dark:text-slate-700">•</span>
+              <button
                 onClick={clearAll}
                 className="text-slate-500 dark:text-slate-400 hover:underline font-medium px-1"
+                title="Clear all optional columns"
               >
                 Clear
               </button>
@@ -627,9 +642,9 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                     setUniverseScope(e.target.value as any);
                     setPage(1);
                   }}
-                  className="text-xs px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="text-xs px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium"
                 >
-                  <option value="all">All NSE Scored (~2,100)</option>
+                  <option value="all">All Active NSE Stocks ({data.length > 0 ? data.length.toLocaleString("en-IN") : "..."})</option>
                   <option value="nifty500">NIFTY 500 Constituents</option>
                   <option value="portfolio">Portfolio Holdings Only</option>
                   <option value="verdict">Curated Calls / Verdicts</option>
@@ -645,7 +660,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                     setActionFilter(e.target.value);
                     setPage(1);
                   }}
-                  className="text-xs px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="text-xs px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium"
                 >
                   <option value="all">All Actions</option>
                   <option value="BUY">BUY / ACCUMULATE</option>
@@ -702,7 +717,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                 title="Download CSV file for Excel / Sheets"
               >
                 <span>📥</span>
-                <span>Export to CSV ({sortedRows.length})</span>
+                <span>Export to CSV ({sortedRows.length.toLocaleString("en-IN")})</span>
               </button>
             </div>
           </div>
@@ -710,7 +725,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
           {/* Live Count / Metrics Summary Bar */}
           <div className="flex items-center justify-between text-xs px-1 text-slate-500 dark:text-slate-400">
             <div>
-              Showing <span className="font-semibold text-slate-800 dark:text-slate-200">{sortedRows.length}</span> stocks
+              Showing <span className="font-semibold text-slate-800 dark:text-slate-200">{sortedRows.length.toLocaleString("en-IN")}</span> stocks
               matching criteria • <span className="font-semibold text-slate-800 dark:text-slate-200">{activeColumns.length}</span> columns active
             </div>
             {totalPages > 1 && (
@@ -725,7 +740,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
             {loading ? (
               <div className="py-24 flex flex-col items-center justify-center text-slate-400">
                 <span className="text-2xl animate-spin mb-2">🔄</span>
-                <span className="text-sm">Loading scored stocks data...</span>
+                <span className="text-sm">Loading active stocks data...</span>
               </div>
             ) : activeColumns.length === 0 ? (
               <div className="py-20 flex flex-col items-center justify-center text-slate-400 px-4 text-center">
@@ -737,10 +752,10 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                   Select at least one parameter from the left rail or pick a 1-click preset to preview and export data.
                 </p>
                 <button
-                  onClick={() => applyPreset(PRESETS[0].ids)}
+                  onClick={resetToDefault}
                   className="mt-3 px-3 py-1.5 text-xs font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
                 >
-                  Load Calls Desk Preset
+                  Load Default Columns
                 </button>
               </div>
             ) : sortedRows.length === 0 ? (
@@ -750,7 +765,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                   No stocks match current filters
                 </span>
                 <p className="text-xs text-slate-400 mt-1">
-                  Try clearing the search query or switching scope to &quot;All NSE Scored&quot;.
+                  Try clearing the search query or switching scope to &quot;All Active Stocks&quot;.
                 </p>
               </div>
             ) : (
@@ -827,8 +842,8 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
             {totalPages > 1 && (
               <div className="flex items-center justify-between px-3 py-2 bg-slate-50/70 dark:bg-slate-800/50 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500">
                 <span>
-                  Showing {(page - 1) * pageSize + 1} to{" "}
-                  {Math.min(page * pageSize, sortedRows.length)} of {sortedRows.length} stocks
+                  Showing {((page - 1) * pageSize + 1).toLocaleString("en-IN")} to{" "}
+                  {Math.min(page * pageSize, sortedRows.length).toLocaleString("en-IN")} of {sortedRows.length.toLocaleString("en-IN")} stocks
                 </span>
                 <div className="flex items-center gap-1.5">
                   <button

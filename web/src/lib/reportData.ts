@@ -21,6 +21,7 @@ export type ReportStockRow = {
   ret_1y: number | null;
 
   // Verdicts & Price Targets
+  action: "BUY" | "WATCH" | "HOLD" | "SELL" | "OTHER" | null;
   verdict: string | null;
   confidence: string | null;
   buy_below: number | null;
@@ -67,6 +68,20 @@ export type ReportStockRow = {
 let cachedReportRows: { rows: ReportStockRow[]; fetchedAt: number } | null = null;
 const CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
 
+function extractAction(verdict: string | null): "BUY" | "WATCH" | "HOLD" | "SELL" | "OTHER" | null {
+  if (!verdict) return null;
+  const upper = verdict.toUpperCase().trim();
+  if (upper.startsWith("BUY") || upper.startsWith("ACCUMULATE")) return "BUY";
+  if (upper.startsWith("WATCH")) return "WATCH";
+  if (upper.startsWith("HOLD")) return "HOLD";
+  if (upper.startsWith("SELL") || upper.startsWith("EXIT") || upper.startsWith("TRIM")) return "SELL";
+  if (upper.includes("BUY") || upper.includes("ACCUMULATE")) return "BUY";
+  if (upper.includes("WATCH")) return "WATCH";
+  if (upper.includes("HOLD")) return "HOLD";
+  if (upper.includes("SELL") || upper.includes("EXIT") || upper.includes("TRIM")) return "SELL";
+  return "OTHER";
+}
+
 export async function loadReportData(forceRefresh: boolean = false): Promise<ReportStockRow[]> {
   const now = Date.now();
   if (!forceRefresh && cachedReportRows && now - cachedReportRows.fetchedAt < CACHE_TTL_MS) {
@@ -112,16 +127,13 @@ export async function loadReportData(forceRefresh: boolean = false): Promise<Rep
     latest_metrics AS (
       SELECT
         symbol,
-        (cluster_metrics->>'pe_ttm')::float AS pe_ttm,
-        (cluster_metrics->>'pb')::float AS pb,
-        COALESCE(
-          (cluster_metrics->>'roe_3y')::float,
-          (cluster_metrics->>'roce_3y')::float
-        ) AS roe_3y,
-        (cluster_metrics->>'div_yield')::float AS div_yield,
-        (cluster_metrics->>'op_margin_3y')::float AS op_margin_3y,
-        (cluster_metrics->>'np_cagr_5y')::float AS np_cagr_5y,
-        (cluster_metrics->>'rev_cagr_5y')::float AS rev_cagr_5y
+        pe_ttm::float AS pe_ttm,
+        pb::float AS pb,
+        COALESCE(roe_3y, roce_3y)::float AS roe_3y,
+        div_yield::float AS div_yield,
+        op_margin_3y::float AS op_margin_3y,
+        np_cagr_5y::float AS np_cagr_5y,
+        rev_cagr_5y::float AS rev_cagr_5y
       FROM app.metrics_snapshot
       WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM app.metrics_snapshot)
     ),
@@ -166,7 +178,7 @@ export async function loadReportData(forceRefresh: boolean = false): Promise<Rep
       -- Moat
       mo.moat_strength,
       mo.moat_type,
-      COALESCE(mo.rationale, mo.moat_summary) AS moat_rationale,
+      mo.moat_points,
 
       -- Scores & Ranks
       p.composite_pct,
@@ -244,6 +256,15 @@ export async function loadReportData(forceRefresh: boolean = false): Promise<Rep
     const pnl = invVal != null && curVal != null ? curVal - invVal : null;
     const pnlPct = invVal != null && curVal != null && invVal > 0 ? Math.round(((curVal - invVal) / invVal) * 1000) / 10 : null;
 
+    let moatRationale: string | null = null;
+    if (Array.isArray(r.moat_points) && r.moat_points.length > 0) {
+      moatRationale = r.moat_points.join(" | ");
+    } else if (typeof r.moat_points === "string") {
+      moatRationale = r.moat_points;
+    }
+
+    const action = extractAction(r.verdict);
+
     return {
       symbol: r.symbol,
       company_name: r.company_name,
@@ -261,6 +282,7 @@ export async function loadReportData(forceRefresh: boolean = false): Promise<Rep
       ret_1m: ret1m,
       ret_1y: ret1y,
 
+      action: action,
       verdict: r.verdict ?? null,
       confidence: r.confidence ? r.confidence.toUpperCase() : null,
       buy_below: r.buy_below != null ? Math.round(Number(r.buy_below) * 100) / 100 : null,
@@ -274,7 +296,7 @@ export async function loadReportData(forceRefresh: boolean = false): Promise<Rep
 
       moat_strength: r.moat_strength ? r.moat_strength.toUpperCase() : null,
       moat_type: r.moat_type ?? null,
-      moat_rationale: r.moat_rationale ?? null,
+      moat_rationale: moatRationale,
 
       composite_pct: r.composite_pct != null ? Math.round(Number(r.composite_pct)) : null,
       quality_pct: r.quality_pct != null ? Math.round(Number(r.quality_pct)) : null,
