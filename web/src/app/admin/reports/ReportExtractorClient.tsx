@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useState, useMemo, useCallback, useEffect } from "react";
 import Link from "next/link";
 import type { ReportStockRow } from "@/lib/reportData";
 
@@ -81,6 +81,7 @@ export const PARAMETERS: ParameterDef[] = [
   // 7. Portfolio & Holdings
   { id: "unrealized_pnl_pct", label: "Current Performance % (Portfolio)", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "right", format: "percent", defaultSelected: true },
   { id: "is_in_portfolio", label: "In Portfolio?", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "center", format: "badge_boolean", defaultSelected: false },
+  { id: "is_watchlist", label: "In Watchlist?", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "center", format: "badge_boolean", defaultSelected: false },
   { id: "held_quantity", label: "Held Quantity", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "right", format: "number", defaultSelected: false },
   { id: "avg_cost", label: "Avg Purchase Cost (₹)", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "right", format: "currency", defaultSelected: false },
   { id: "invested_value", label: "Invested Capital (₹)", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "right", format: "currency", defaultSelected: false },
@@ -99,6 +100,7 @@ const CATEGORIES: { id: ParameterCategory; label: string; icon: string }[] = [
 ];
 
 const DEFAULT_SELECTED_IDS: (keyof ReportStockRow)[] = PARAMETERS.filter((p) => p.defaultSelected).map((p) => p.id);
+const STORAGE_KEY = "equityroots_report_saved_columns_v1";
 
 const PRESETS: { name: string; ids: (keyof ReportStockRow)[] }[] = [
   {
@@ -124,6 +126,14 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
   const [loading, setLoading] = useState<boolean>(!initialData || initialData.length === 0);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
+  const [saveStatus, setSaveStatus] = useState<string | null>(null);
+
+  // Fullscreen view toggle
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [showFullscreenDrawer, setShowFullscreenDrawer] = useState<boolean>(false);
+
+  // Saved user choices from localStorage
+  const [savedPreset, setSavedPreset] = useState<(keyof ReportStockRow)[] | null>(null);
 
   // Selected parameters set
   const [selectedIds, setSelectedIds] = useState<Set<keyof ReportStockRow>>(() => {
@@ -137,7 +147,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
   const [collapsedCats, setCollapsedCats] = useState<Record<string, boolean>>({});
 
   // Filter toolbar
-  const [universeScope, setUniverseScope] = useState<"all" | "nifty500" | "portfolio" | "verdict">("all");
+  const [universeScope, setUniverseScope] = useState<"all" | "nifty500" | "portfolio" | "watchlist" | "verdict">("all");
   const [actionFilter, setActionFilter] = useState<string>("all");
   const [stockSearch, setStockSearch] = useState<string>("");
 
@@ -148,6 +158,48 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
   // Pagination
   const [page, setPage] = useState<number>(1);
   const pageSize = 50;
+
+  // Hydrate saved choices from localStorage on mount
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const validIds = parsed.filter((id) => PARAMETERS.some((p) => p.id === id));
+          if (validIds.length > 0) {
+            setSavedPreset(validIds);
+            setSelectedIds(new Set(validIds));
+          }
+        }
+      }
+    } catch {}
+  }, []);
+
+  // Listen for Escape key to exit fullscreen
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && isFullscreen) {
+        setIsFullscreen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isFullscreen]);
+
+  // Save choices handler
+  const handleSaveChoices = () => {
+    try {
+      const ids = Array.from(selectedIds);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(ids));
+      setSavedPreset(ids);
+      setSaveStatus("✓ Saved as default!");
+      setTimeout(() => setSaveStatus(null), 2500);
+    } catch {
+      setSaveStatus("Failed to save");
+      setTimeout(() => setSaveStatus(null), 2500);
+    }
+  };
 
   // Fetch / refresh data from API
   const fetchData = useCallback(async (force: boolean = false) => {
@@ -170,7 +222,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
   }, []);
 
   // Initial load if no SSR data provided
-  React.useEffect(() => {
+  useEffect(() => {
     if (!initialData || initialData.length === 0) {
       fetchData(false);
     }
@@ -233,12 +285,18 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
     return PARAMETERS.filter((p) => selectedIds.has(p.id));
   }, [selectedIds]);
 
+  // Watchlist count
+  const watchlistCount = useMemo(() => {
+    return data.filter((r) => r.is_watchlist).length;
+  }, [data]);
+
   // Filtered rows
   const filteredRows = useMemo(() => {
     return data.filter((row) => {
       // 1. Universe filter
       if (universeScope === "nifty500" && !row.is_nifty500) return false;
       if (universeScope === "portfolio" && !row.is_in_portfolio) return false;
+      if (universeScope === "watchlist" && !row.is_watchlist) return false;
       if (universeScope === "verdict" && !row.verdict) return false;
 
       // 2. Action filter
@@ -453,204 +511,269 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
     return <span className="max-w-md truncate block" title={String(val)}>{String(val)}</span>;
   };
 
-  return (
-    <div className="w-full flex flex-col gap-4">
-      {/* Top Header Card */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xs">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
-              📊 Report Extraction Desk
-            </h1>
-            <span className="px-2 py-0.5 text-[11px] font-semibold tracking-wide uppercase bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200 dark:border-blue-800 rounded-full">
-              Admin Suite
-            </span>
-          </div>
-          <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
-            Pick parameters from the left panel to configure, preview real-time metrics across all {data.length > 0 ? `${data.length.toLocaleString("en-IN")} active NSE stocks` : "active NSE stocks"}, and export clean CSV reports.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2.5 shrink-0">
-          <a
-            href="/api/admin/reports/nifty500"
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-            title="Download official NIFTY 500 Excel Scorecard (.xlsx)"
-          >
-            <span>📥 NIFTY 500 (.xlsx)</span>
-          </a>
+  // Reusable Parameter Sidebar Content
+  const ParameterSidebarContent = (
+    <div className="flex flex-col gap-3">
+      {/* Header, Save Button & Presets */}
+      <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
+        <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+          Export Parameters ({selectedIds.size})
+        </span>
+        <div className="flex items-center gap-1 text-[11px]">
           <button
-            onClick={() => fetchData(true)}
-            disabled={refreshing || loading}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
-            title="Re-query latest data from database"
+            onClick={selectAll}
+            className="text-blue-600 dark:text-blue-400 hover:underline font-medium px-1"
           >
-            <span className={refreshing ? "animate-spin" : ""}>🔄</span>
-            <span>{refreshing ? "Refreshing..." : "Refresh"}</span>
+            All
+          </button>
+          <span className="text-slate-300 dark:text-slate-700">•</span>
+          <button
+            onClick={resetToDefault}
+            className="text-slate-600 dark:text-slate-300 hover:underline font-medium px-1"
+            title="Reset to default recommended columns"
+          >
+            Default
+          </button>
+          <span className="text-slate-300 dark:text-slate-700">•</span>
+          <button
+            onClick={clearAll}
+            className="text-slate-500 dark:text-slate-400 hover:underline font-medium px-1"
+            title="Clear all optional columns"
+          >
+            Clear
           </button>
         </div>
       </div>
 
-      {/* Main Split Layout: Left Rail (Parameters) | Right Panel (Preview & Actions) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
-        {/* ── LEFT RAIL: PARAMETER EXTRACTION SELECTOR (3 cols) ── */}
-        <div className="lg:col-span-4 xl:col-span-3 flex flex-col gap-3 p-3.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xs sticky top-16 max-h-[calc(100vh-5rem)] overflow-y-auto">
-          {/* Header & Presets */}
-          <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              Export Parameters ({selectedIds.size})
-            </span>
-            <div className="flex items-center gap-1 text-[11px]">
-              <button
-                onClick={selectAll}
-                className="text-blue-600 dark:text-blue-400 hover:underline font-medium px-1"
-              >
-                All
-              </button>
-              <span className="text-slate-300 dark:text-slate-700">•</span>
-              <button
-                onClick={resetToDefault}
-                className="text-slate-600 dark:text-slate-300 hover:underline font-medium px-1"
-                title="Reset to default recommended columns"
-              >
-                Default
-              </button>
-              <span className="text-slate-300 dark:text-slate-700">•</span>
-              <button
-                onClick={clearAll}
-                className="text-slate-500 dark:text-slate-400 hover:underline font-medium px-1"
-                title="Clear all optional columns"
-              >
-                Clear
-              </button>
-            </div>
-          </div>
+      {/* Save My Choices Button */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={handleSaveChoices}
+          className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-colors cursor-pointer"
+          title="Save your current column selections so they persist on refresh"
+        >
+          <span>💾</span>
+          <span>Save My Choices</span>
+        </button>
+        {saveStatus && (
+          <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 whitespace-nowrap animate-pulse">
+            {saveStatus}
+          </span>
+        )}
+      </div>
 
-          {/* Quick Presets */}
-          <div className="flex flex-col gap-1.5">
-            <span className="text-[11px] font-semibold text-slate-400 dark:text-slate-500">
-              ⚡ 1-Click Presets:
-            </span>
-            <div className="grid grid-cols-2 gap-1.5">
-              {PRESETS.map((preset) => (
+      {/* Quick Presets */}
+      <div className="flex flex-col gap-1.5">
+        <span className="text-[11px] font-semibold text-slate-400 dark:text-slate-500">
+          ⚡ 1-Click Presets:
+        </span>
+        <div className="grid grid-cols-2 gap-1.5">
+          {savedPreset && (
+            <button
+              onClick={() => applyPreset(savedPreset)}
+              className="col-span-2 px-2 py-1 text-[11px] text-left font-bold rounded bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-700/60 truncate transition-colors hover:bg-amber-100"
+              title="Restore your saved column preferences"
+            >
+              ⭐ My Saved Choices ({savedPreset.length})
+            </button>
+          )}
+          {PRESETS.map((preset) => (
+            <button
+              key={preset.name}
+              onClick={() => applyPreset(preset.ids)}
+              className="px-2 py-1 text-[11px] text-left font-medium rounded bg-slate-50 dark:bg-slate-800/80 hover:bg-blue-50 dark:hover:bg-blue-950/60 text-slate-700 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700/60 truncate transition-colors"
+              title={preset.name}
+            >
+              {preset.name}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Parameter Search Input */}
+      <div className="relative">
+        <input
+          type="text"
+          placeholder="Search parameters..."
+          value={paramSearch}
+          onChange={(e) => setParamSearch(e.target.value)}
+          className="w-full text-xs px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500 text-slate-800 dark:text-slate-200 placeholder-slate-400"
+        />
+        {paramSearch && (
+          <button
+            onClick={() => setParamSearch("")}
+            className="absolute right-2 top-1.5 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+          >
+            ✕
+          </button>
+        )}
+      </div>
+
+      {/* Parameter Categories & Checkboxes */}
+      <div className="flex flex-col gap-3">
+        {CATEGORIES.map((cat) => {
+          const catParams = filteredParams.filter((p) => p.category === cat.id);
+          if (catParams.length === 0) return null;
+
+          const selectedCount = catParams.filter((p) => selectedIds.has(p.id)).length;
+          const isCollapsed = Boolean(collapsedCats[cat.id]);
+
+          return (
+            <div
+              key={cat.id}
+              className="border border-slate-100 dark:border-slate-800/80 rounded-lg overflow-hidden"
+            >
+              {/* Category Header */}
+              <div className="flex items-center justify-between px-2.5 py-1.5 bg-slate-50/80 dark:bg-slate-800/40 select-none">
                 <button
-                  key={preset.name}
-                  onClick={() => applyPreset(preset.ids)}
-                  className="px-2 py-1 text-[11px] text-left font-medium rounded bg-slate-50 dark:bg-slate-800/80 hover:bg-blue-50 dark:hover:bg-blue-950/60 text-slate-700 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700/60 truncate transition-colors"
-                  title={preset.name}
+                  onClick={() =>
+                    setCollapsedCats((prev) => ({ ...prev, [cat.id]: !prev[cat.id] }))
+                  }
+                  className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 text-left"
                 >
-                  {preset.name}
+                  <span className="text-[10px] text-slate-400">
+                    {isCollapsed ? "▶" : "▼"}
+                  </span>
+                  <span>{cat.icon}</span>
+                  <span>{cat.label}</span>
                 </button>
-              ))}
-            </div>
-          </div>
 
-          {/* Parameter Search Input */}
-          <div className="relative">
-            <input
-              type="text"
-              placeholder="Search parameters..."
-              value={paramSearch}
-              onChange={(e) => setParamSearch(e.target.value)}
-              className="w-full text-xs px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500 text-slate-800 dark:text-slate-200 placeholder-slate-400"
-            />
-            {paramSearch && (
-              <button
-                onClick={() => setParamSearch("")}
-                className="absolute right-2 top-1.5 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-              >
-                ✕
-              </button>
-            )}
-          </div>
+                <div className="flex items-center gap-1.5">
+                  <span
+                    className={`text-[10px] px-1.5 py-0.2 rounded-full font-semibold ${
+                      selectedCount > 0
+                        ? "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
+                        : "bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500"
+                    }`}
+                  >
+                    {selectedCount}/{catParams.length}
+                  </span>
+                  <button
+                    onClick={() => toggleCategory(cat.id)}
+                    className="text-[10px] text-slate-400 hover:text-blue-600 dark:hover:text-blue-400"
+                    title={selectedCount === catParams.length ? "Deselect category" : "Select all in category"}
+                  >
+                    {selectedCount === catParams.length ? "none" : "all"}
+                  </button>
+                </div>
+              </div>
 
-          {/* Parameter Categories & Checkboxes */}
-          <div className="flex flex-col gap-3">
-            {CATEGORIES.map((cat) => {
-              const catParams = filteredParams.filter((p) => p.category === cat.id);
-              if (catParams.length === 0) return null;
-
-              const selectedCount = catParams.filter((p) => selectedIds.has(p.id)).length;
-              const isCollapsed = Boolean(collapsedCats[cat.id]);
-
-              return (
-                <div
-                  key={cat.id}
-                  className="border border-slate-100 dark:border-slate-800/80 rounded-lg overflow-hidden"
-                >
-                  {/* Category Header */}
-                  <div className="flex items-center justify-between px-2.5 py-1.5 bg-slate-50/80 dark:bg-slate-800/40 select-none">
-                    <button
-                      onClick={() =>
-                        setCollapsedCats((prev) => ({ ...prev, [cat.id]: !prev[cat.id] }))
-                      }
-                      className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 text-left"
-                    >
-                      <span className="text-[10px] text-slate-400">
-                        {isCollapsed ? "▶" : "▼"}
-                      </span>
-                      <span>{cat.icon}</span>
-                      <span>{cat.label}</span>
-                    </button>
-
-                    <div className="flex items-center gap-1.5">
-                      <span
-                        className={`text-[10px] px-1.5 py-0.2 rounded-full font-semibold ${
-                          selectedCount > 0
-                            ? "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
-                            : "bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500"
+              {/* Category Parameter Items */}
+              {!isCollapsed && (
+                <div className="p-2 flex flex-col gap-1 bg-white dark:bg-slate-900">
+                  {catParams.map((param) => {
+                    const isChecked = selectedIds.has(param.id);
+                    return (
+                      <label
+                        key={param.id}
+                        className={`flex items-center gap-2 px-1.5 py-1 rounded text-xs cursor-pointer select-none transition-colors ${
+                          isChecked
+                            ? "bg-blue-50/70 text-slate-900 dark:bg-blue-950/40 dark:text-slate-100 font-medium"
+                            : "text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/40"
                         }`}
                       >
-                        {selectedCount}/{catParams.length}
-                      </span>
-                      <button
-                        onClick={() => toggleCategory(cat.id)}
-                        className="text-[10px] text-slate-400 hover:text-blue-600 dark:hover:text-blue-400"
-                        title={selectedCount === catParams.length ? "Deselect category" : "Select all in category"}
-                      >
-                        {selectedCount === catParams.length ? "none" : "all"}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Category Parameter Items */}
-                  {!isCollapsed && (
-                    <div className="p-2 flex flex-col gap-1 bg-white dark:bg-slate-900">
-                      {catParams.map((param) => {
-                        const isChecked = selectedIds.has(param.id);
-                        return (
-                          <label
-                            key={param.id}
-                            className={`flex items-center gap-2 px-1.5 py-1 rounded text-xs cursor-pointer select-none transition-colors ${
-                              isChecked
-                                ? "bg-blue-50/70 text-slate-900 dark:bg-blue-950/40 dark:text-slate-100 font-medium"
-                                : "text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/40"
-                            }`}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={() => toggleParam(param.id)}
-                              className="rounded text-blue-600 focus:ring-blue-500 border-slate-300 dark:border-slate-700"
-                            />
-                            <span className="truncate">{param.label}</span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  )}
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => toggleParam(param.id)}
+                          className="rounded text-blue-600 focus:ring-blue-500 border-slate-300 dark:border-slate-700"
+                        />
+                        <span className="truncate">{param.label}</span>
+                      </label>
+                    );
+                  })}
                 </div>
-              );
-            })}
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className={`w-full flex flex-col gap-4 ${isFullscreen ? "fixed inset-0 z-50 bg-slate-50 dark:bg-slate-950 p-3 sm:p-4 overflow-hidden" : ""}`}>
+      {/* Top Header Card (Hidden in Fullscreen mode for maximum space) */}
+      {!isFullscreen && (
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xs">
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
+                📊 Report Extraction Desk
+              </h1>
+              <span className="px-2 py-0.5 text-[11px] font-semibold tracking-wide uppercase bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200 dark:border-blue-800 rounded-full">
+                Admin Suite
+              </span>
+            </div>
+            <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
+              Pick parameters from the left panel to configure, preview real-time metrics across all {data.length > 0 ? `${data.length.toLocaleString("en-IN")} active NSE stocks` : "active NSE stocks"}, and export clean CSV reports.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2.5 shrink-0">
+            <a
+              href="/api/admin/reports/nifty500"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+              title="Download official NIFTY 500 Excel Scorecard (.xlsx)"
+            >
+              <span>📥 NIFTY 500 (.xlsx)</span>
+            </a>
+            <button
+              onClick={() => fetchData(true)}
+              disabled={refreshing || loading}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+              title="Re-query latest data from database"
+            >
+              <span className={refreshing ? "animate-spin" : ""}>🔄</span>
+              <span>{refreshing ? "Refreshing..." : "Refresh"}</span>
+            </button>
           </div>
         </div>
+      )}
 
-        {/* ── RIGHT PANEL: PREVIEW DESK & EXPORT ACTIONS (9 cols) ── */}
-        <div className="lg:col-span-8 xl:col-span-9 flex flex-col gap-3">
+      {/* Main Split Layout: Left Rail (Parameters) | Right Panel (Preview & Actions) */}
+      <div className={`grid grid-cols-1 ${isFullscreen ? "h-full flex-1 flex flex-col" : "lg:grid-cols-12 gap-4 items-start"}`}>
+        {/* ── LEFT RAIL: PARAMETER EXTRACTION SELECTOR (3 cols) ── (Hidden on Fullscreen by default, accessible via Drawer) */}
+        {!isFullscreen && (
+          <div className="lg:col-span-4 xl:col-span-3 p-3.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xs sticky top-16 max-h-[calc(100vh-5rem)] overflow-y-auto">
+            {ParameterSidebarContent}
+          </div>
+        )}
+
+        {/* ── FULLSCREEN PARAMETERS DRAWER ── */}
+        {isFullscreen && showFullscreenDrawer && (
+          <div className="absolute top-16 bottom-4 left-4 w-84 z-50 p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl overflow-y-auto">
+            <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-200 dark:border-slate-700">
+              <span className="text-xs font-bold uppercase text-slate-700 dark:text-slate-300">
+                Configure Columns
+              </span>
+              <button
+                onClick={() => setShowFullscreenDrawer(false)}
+                className="text-xs px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-800"
+              >
+                ✕ Close
+              </button>
+            </div>
+            {ParameterSidebarContent}
+          </div>
+        )}
+
+        {/* ── RIGHT PANEL: PREVIEW DESK & EXPORT ACTIONS ── */}
+        <div className={`${isFullscreen ? "h-full flex-1 flex flex-col" : "lg:col-span-8 xl:col-span-9 flex flex-col gap-3"}`}>
           {/* Action Toolbar */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xs">
-            {/* Left Controls: Universe & Verdict filters */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xs shrink-0">
+            {/* Left Controls: Universe, Verdict & Stock filters */}
             <div className="flex flex-wrap items-center gap-2">
+              {isFullscreen && (
+                <button
+                  onClick={() => setShowFullscreenDrawer((prev) => !prev)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800 hover:bg-blue-100 transition-colors"
+                >
+                  <span>⚙️</span>
+                  <span>Columns ({selectedIds.size})</span>
+                </button>
+              )}
+
               {/* Universe Dropdown */}
               <div className="flex items-center gap-1.5 text-xs">
                 <span className="text-slate-400 font-medium hidden sm:inline">Scope:</span>
@@ -665,6 +788,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                   <option value="all">All Active NSE Stocks ({data.length > 0 ? data.length.toLocaleString("en-IN") : "..."})</option>
                   <option value="nifty500">NIFTY 500 Constituents</option>
                   <option value="portfolio">Portfolio Holdings Only</option>
+                  <option value="watchlist">My Watchlist Only ({watchlistCount})</option>
                   <option value="verdict">Curated Calls / Verdicts</option>
                 </select>
               </div>
@@ -698,7 +822,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                     setStockSearch(e.target.value);
                     setPage(1);
                   }}
-                  className="text-xs px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-slate-400 w-36 sm:w-44"
+                  className="text-xs px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-slate-400 w-32 sm:w-40"
                 />
                 {stockSearch && (
                   <button
@@ -711,13 +835,36 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
               </div>
             </div>
 
-            {/* Right Controls: CSV Export & Copy Actions */}
+            {/* Right Controls: Save, Fullscreen, Copy, Export */}
             <div className="flex items-center gap-2">
               {copyStatus && (
                 <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 animate-pulse">
                   {copyStatus}
                 </span>
               )}
+              {saveStatus && (
+                <span className="text-xs font-semibold text-blue-600 dark:text-blue-400 animate-pulse">
+                  {saveStatus}
+                </span>
+              )}
+
+              {/* Fullscreen Toggle Button */}
+              <button
+                onClick={() => {
+                  setIsFullscreen((prev) => !prev);
+                  setShowFullscreenDrawer(false);
+                }}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
+                  isFullscreen
+                    ? "bg-amber-100 hover:bg-amber-200 text-amber-900 dark:bg-amber-950 dark:hover:bg-amber-900 dark:text-amber-200 border border-amber-300 dark:border-amber-700"
+                    : "bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200"
+                }`}
+                title={isFullscreen ? "Exit Fullscreen (Esc)" : "Expand to Fullscreen View"}
+              >
+                <span>{isFullscreen ? "✕" : "⛶"}</span>
+                <span>{isFullscreen ? "Exit Fullscreen" : "Fullscreen"}</span>
+              </button>
+
               <button
                 onClick={handleCopyCSV}
                 disabled={activeColumns.length === 0 || sortedRows.length === 0}
@@ -725,7 +872,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                 title="Copy formatted CSV to clipboard"
               >
                 <span>📋</span>
-                <span>Copy CSV</span>
+                <span className="hidden sm:inline">Copy CSV</span>
               </button>
 
               <button
@@ -735,13 +882,13 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                 title="Download CSV file for Excel / Sheets"
               >
                 <span>📥</span>
-                <span>Export to CSV ({sortedRows.length.toLocaleString("en-IN")})</span>
+                <span>Export CSV ({sortedRows.length.toLocaleString("en-IN")})</span>
               </button>
             </div>
           </div>
 
           {/* Live Count / Metrics Summary Bar */}
-          <div className="flex items-center justify-between text-xs px-1 text-slate-500 dark:text-slate-400">
+          <div className="flex items-center justify-between text-xs px-1 text-slate-500 dark:text-slate-400 shrink-0">
             <div>
               Showing <span className="font-semibold text-slate-800 dark:text-slate-200">{sortedRows.length.toLocaleString("en-IN")}</span> stocks
               matching criteria • <span className="font-semibold text-slate-800 dark:text-slate-200">{activeColumns.length}</span> columns active
@@ -754,7 +901,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
           </div>
 
           {/* Table Container */}
-          <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-white dark:bg-slate-900 shadow-xs">
+          <div className={`border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-white dark:bg-slate-900 shadow-xs flex flex-col ${isFullscreen ? "flex-1 min-h-0" : ""}`}>
             {loading ? (
               <div className="py-24 flex flex-col items-center justify-center text-slate-400">
                 <span className="text-2xl animate-spin mb-2">🔄</span>
@@ -787,20 +934,23 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                 </p>
               </div>
             ) : (
-              <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+              <div className={`overflow-x-auto overflow-y-auto ${isFullscreen ? "flex-1" : "max-h-[600px]"}`}>
                 <table className="w-full text-left border-collapse text-xs">
-                  <thead className="bg-slate-50 dark:bg-slate-800/80 sticky top-0 z-10 border-b border-slate-200 dark:border-slate-800 backdrop-blur-xs">
+                  <thead className="bg-slate-50 dark:bg-slate-800/90 sticky top-0 z-10 border-b border-slate-200 dark:border-slate-800 backdrop-blur-xs">
                     <tr>
-                      <th className="py-2.5 px-3 font-semibold text-slate-500 dark:text-slate-400 w-10 text-center">
+                      <th className="py-2.5 px-3 font-semibold text-slate-500 dark:text-slate-400 w-10 text-center sticky left-0 bg-slate-50 dark:bg-slate-800 z-20">
                         #
                       </th>
-                      {activeColumns.map((col) => {
+                      {activeColumns.map((col, cIdx) => {
                         const isSorted = sortCol === col.id;
+                        const isFirstCol = cIdx === 0 && col.id === "symbol";
                         return (
                           <th
                             key={col.id}
                             onClick={() => handleSort(col.id)}
                             className={`py-2.5 px-3 font-semibold text-slate-700 dark:text-slate-300 cursor-pointer select-none hover:bg-slate-100 dark:hover:bg-slate-700/60 transition-colors whitespace-nowrap ${
+                              isFirstCol ? "sticky left-10 bg-slate-50 dark:bg-slate-800 z-20" : ""
+                            } ${
                               col.align === "right"
                                 ? "text-right"
                                 : col.align === "center"
@@ -831,23 +981,28 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                           key={row.symbol}
                           className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
                         >
-                          <td className="py-2 px-3 text-slate-400 text-center font-mono text-[11px]">
+                          <td className="py-2 px-3 text-slate-400 text-center font-mono text-[11px] sticky left-0 bg-white dark:bg-slate-900">
                             {absoluteIdx}
                           </td>
-                          {activeColumns.map((col) => (
-                            <td
-                              key={col.id}
-                              className={`py-2 px-3 whitespace-nowrap ${
-                                col.align === "right"
-                                ? "text-right font-mono"
-                                : col.align === "center"
-                                ? "text-center"
-                                : "text-left"
-                              }`}
-                            >
-                              {renderCellContent(row, col)}
-                            </td>
-                          ))}
+                          {activeColumns.map((col, cIdx) => {
+                            const isFirstCol = cIdx === 0 && col.id === "symbol";
+                            return (
+                              <td
+                                key={col.id}
+                                className={`py-2 px-3 whitespace-nowrap ${
+                                  isFirstCol ? "sticky left-10 bg-white dark:bg-slate-900 font-semibold" : ""
+                                } ${
+                                  col.align === "right"
+                                  ? "text-right font-mono"
+                                  : col.align === "center"
+                                  ? "text-center"
+                                  : "text-left"
+                                }`}
+                              >
+                                {renderCellContent(row, col)}
+                              </td>
+                            );
+                          })}
                         </tr>
                       );
                     })}
@@ -858,7 +1013,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
 
             {/* Pagination Toolbar */}
             {totalPages > 1 && (
-              <div className="flex items-center justify-between px-3 py-2 bg-slate-50/70 dark:bg-slate-800/50 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500">
+              <div className="flex items-center justify-between px-3 py-2 bg-slate-50/70 dark:bg-slate-800/50 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500 shrink-0">
                 <span>
                   Showing {((page - 1) * pageSize + 1).toLocaleString("en-IN")} to{" "}
                   {Math.min(page * pageSize, sortedRows.length).toLocaleString("en-IN")} of {sortedRows.length.toLocaleString("en-IN")} stocks
@@ -901,133 +1056,135 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
           </div>
 
           {/* ── METRIC & INTERPRETATION GUIDE ── */}
-          <div className="p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xs">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-              <div className="flex items-center gap-2">
-                <span className="text-base">📖</span>
-                <div>
-                  <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                    How to Interpret Key Metrics &amp; Parameters
-                  </h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Quick reference definitions for price targets, portfolio returns, moats, and risk metrics.
+          {!isFullscreen && (
+            <div className="p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xs">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">📖</span>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                      How to Interpret Key Metrics &amp; Parameters
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      Quick reference definitions for price targets, portfolio returns, moats, and risk metrics.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5 mt-3.5">
+                {/* 1. Upside to Target */}
+                <div className="p-3 rounded-lg bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200/60 dark:border-slate-700/60 flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                      <span>🎯</span> Upside to Target (%)
+                    </span>
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+                      (Target - LTP) / LTP
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                    Projected percentage appreciation from the current market price (LTP) to the 12-month fair target price.
                   </p>
+                  <div className="text-[10.5px] text-slate-500 dark:text-slate-400 border-t border-slate-200/40 dark:border-slate-700/40 pt-1 flex flex-col gap-0.5">
+                    <span>• <strong>&gt; 20%:</strong> Strong headroom for potential capital appreciation.</span>
+                    <span>• <strong>0% to 5%:</strong> Fully valued; minimal margin of safety.</span>
+                    <span>• <strong>Negative (&le; 0%):</strong> Trading above 12M target (Profit Harvesting / Hold).</span>
+                  </div>
+                </div>
+
+                {/* 2. Current Performance % */}
+                <div className="p-3 rounded-lg bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200/60 dark:border-slate-700/60 flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                      <span>💼</span> Current Performance % (Portfolio)
+                    </span>
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+                      (LTP - Avg Cost) / Avg Cost
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                    Live unrealized return percentage on stocks actively held in your portfolio based on weighted average purchase price.
+                  </p>
+                  <div className="text-[10.5px] text-slate-500 dark:text-slate-400 border-t border-slate-200/40 dark:border-slate-700/40 pt-1 flex flex-col gap-0.5">
+                    <span>• <strong>Badge:</strong> Green for positive gains (+), red for unrealized losses (-).</span>
+                    <span>• <strong>Dash (—):</strong> Displayed for stocks not currently held in your portfolio.</span>
+                  </div>
+                </div>
+
+                {/* 3. Buy Below Price */}
+                <div className="p-3 rounded-lg bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200/60 dark:border-slate-700/60 flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                      <span>🛒</span> Buy Below Price (₹)
+                    </span>
+                    <span className="text-[10px] font-semibold text-slate-400">Entry Ceiling</span>
+                  </div>
+                  <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                    Maximum disciplined entry price ensuring an attractive margin of safety before initiating or adding to a position.
+                  </p>
+                  <div className="text-[10.5px] text-slate-500 dark:text-slate-400 border-t border-slate-200/40 dark:border-slate-700/40 pt-1 flex flex-col gap-0.5">
+                    <span>• <strong>LTP &le; Buy Below:</strong> Inside favorable buy zone; attractive accumulation point.</span>
+                    <span>• <strong>LTP &gt; Buy Below:</strong> Wait for a pullback into the buy zone rather than chasing.</span>
+                  </div>
+                </div>
+
+                {/* 4. Bear Floor */}
+                <div className="p-3 rounded-lg bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200/60 dark:border-slate-700/60 flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                      <span>🛡️</span> Bear Floor / Stop (₹)
+                    </span>
+                    <span className="text-[10px] font-semibold text-slate-400">Risk Floor</span>
+                  </div>
+                  <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                    Conservative downside support floor derived from historical valuation troughs, capital replacement cost, and cyclical bottoms.
+                  </p>
+                  <div className="text-[10.5px] text-slate-500 dark:text-slate-400 border-t border-slate-200/40 dark:border-slate-700/40 pt-1 flex flex-col gap-0.5">
+                    <span>• Defines your maximum expected drawdown risk during market selloffs.</span>
+                    <span>• Breaching below the bear floor prompts re-evaluation or stop loss.</span>
+                  </div>
+                </div>
+
+                {/* 5. Risk / Reward */}
+                <div className="p-3 rounded-lg bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200/60 dark:border-slate-700/60 flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                      <span>⚖️</span> Risk / Reward Ratio (R:R)
+                    </span>
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300">
+                      (Target - LTP) / (LTP - Floor)
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                    Ratio of potential upside gain relative to downside risk guardrail.
+                  </p>
+                  <div className="text-[10.5px] text-slate-500 dark:text-slate-400 border-t border-slate-200/40 dark:border-slate-700/40 pt-1 flex flex-col gap-0.5">
+                    <span>• <strong>&ge; 2.5:</strong> Highly asymmetric opportunity (upside outweighs risk).</span>
+                    <span>• <strong>&lt; 1.5:</strong> Symmetrical or unfavorable risk proposition.</span>
+                  </div>
+                </div>
+
+                {/* 6. Moat Strength */}
+                <div className="p-3 rounded-lg bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200/60 dark:border-slate-700/60 flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                      <span>🏰</span> Moat Strength &amp; Audit
+                    </span>
+                    <span className="text-[10px] font-semibold text-slate-400">Durability</span>
+                  </div>
+                  <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                    Measures the sustainability of the company&apos;s competitive advantage against competitors.
+                  </p>
+                  <div className="text-[10.5px] text-slate-500 dark:text-slate-400 border-t border-slate-200/40 dark:border-slate-700/40 pt-1 flex flex-col gap-0.5">
+                    <span>• <strong>Wide:</strong> Strong pricing power, brand, or network monopoly.</span>
+                    <span>• <strong>Narrow:</strong> Defensible niche edge, but vulnerable over multi-year cycles.</span>
+                    <span>• <strong>None:</strong> Commodity or highly competitive business.</span>
+                  </div>
                 </div>
               </div>
             </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5 mt-3.5">
-              {/* 1. Upside to Target */}
-              <div className="p-3 rounded-lg bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200/60 dark:border-slate-700/60 flex flex-col gap-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                    <span>🎯</span> Upside to Target (%)
-                  </span>
-                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
-                    (Target - LTP) / LTP
-                  </span>
-                </div>
-                <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-                  Projected percentage appreciation from the current market price (LTP) to the 12-month fair target price.
-                </p>
-                <div className="text-[10.5px] text-slate-500 dark:text-slate-400 border-t border-slate-200/40 dark:border-slate-700/40 pt-1 flex flex-col gap-0.5">
-                  <span>• <strong>&gt; 20%:</strong> Strong headroom for potential capital appreciation.</span>
-                  <span>• <strong>0% to 5%:</strong> Fully valued; minimal margin of safety.</span>
-                  <span>• <strong>Negative (&le; 0%):</strong> Trading above 12M target (Profit Harvesting / Hold).</span>
-                </div>
-              </div>
-
-              {/* 2. Current Performance % */}
-              <div className="p-3 rounded-lg bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200/60 dark:border-slate-700/60 flex flex-col gap-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                    <span>💼</span> Current Performance % (Portfolio)
-                  </span>
-                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
-                    (LTP - Avg Cost) / Avg Cost
-                  </span>
-                </div>
-                <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-                  Live unrealized return percentage on stocks actively held in your portfolio based on weighted average purchase price.
-                </p>
-                <div className="text-[10.5px] text-slate-500 dark:text-slate-400 border-t border-slate-200/40 dark:border-slate-700/40 pt-1 flex flex-col gap-0.5">
-                  <span>• <strong>Badge:</strong> Green for positive gains (+), red for unrealized losses (-).</span>
-                  <span>• <strong>Dash (—):</strong> Displayed for stocks not currently held in your portfolio.</span>
-                </div>
-              </div>
-
-              {/* 3. Buy Below Price */}
-              <div className="p-3 rounded-lg bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200/60 dark:border-slate-700/60 flex flex-col gap-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                    <span>🛒</span> Buy Below Price (₹)
-                  </span>
-                  <span className="text-[10px] font-semibold text-slate-400">Entry Ceiling</span>
-                </div>
-                <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-                  Maximum disciplined entry price ensuring an attractive margin of safety before initiating or adding to a position.
-                </p>
-                <div className="text-[10.5px] text-slate-500 dark:text-slate-400 border-t border-slate-200/40 dark:border-slate-700/40 pt-1 flex flex-col gap-0.5">
-                  <span>• <strong>LTP &le; Buy Below:</strong> Inside favorable buy zone; attractive accumulation point.</span>
-                  <span>• <strong>LTP &gt; Buy Below:</strong> Wait for a pullback into the buy zone rather than chasing.</span>
-                </div>
-              </div>
-
-              {/* 4. Bear Floor */}
-              <div className="p-3 rounded-lg bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200/60 dark:border-slate-700/60 flex flex-col gap-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                    <span>🛡️</span> Bear Floor / Stop (₹)
-                  </span>
-                  <span className="text-[10px] font-semibold text-slate-400">Risk Floor</span>
-                </div>
-                <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-                  Conservative downside support floor derived from historical valuation troughs, capital replacement cost, and cyclical bottoms.
-                </p>
-                <div className="text-[10.5px] text-slate-500 dark:text-slate-400 border-t border-slate-200/40 dark:border-slate-700/40 pt-1 flex flex-col gap-0.5">
-                  <span>• Defines your maximum expected drawdown risk during market selloffs.</span>
-                  <span>• Breaching below the bear floor prompts re-evaluation or stop loss.</span>
-                </div>
-              </div>
-
-              {/* 5. Risk / Reward */}
-              <div className="p-3 rounded-lg bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200/60 dark:border-slate-700/60 flex flex-col gap-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                    <span>⚖️</span> Risk / Reward Ratio (R:R)
-                  </span>
-                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300">
-                    (Target - LTP) / (LTP - Floor)
-                  </span>
-                </div>
-                <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-                  Ratio of potential upside gain relative to downside risk guardrail.
-                </p>
-                <div className="text-[10.5px] text-slate-500 dark:text-slate-400 border-t border-slate-200/40 dark:border-slate-700/40 pt-1 flex flex-col gap-0.5">
-                  <span>• <strong>&ge; 2.5:</strong> Highly asymmetric opportunity (upside outweighs risk).</span>
-                  <span>• <strong>&lt; 1.5:</strong> Symmetrical or unfavorable risk proposition.</span>
-                </div>
-              </div>
-
-              {/* 6. Moat Strength */}
-              <div className="p-3 rounded-lg bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200/60 dark:border-slate-700/60 flex flex-col gap-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                    <span>🏰</span> Moat Strength &amp; Audit
-                  </span>
-                  <span className="text-[10px] font-semibold text-slate-400">Durability</span>
-                </div>
-                <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-                  Measures the sustainability of the company&apos;s competitive advantage against competitors.
-                </p>
-                <div className="text-[10.5px] text-slate-500 dark:text-slate-400 border-t border-slate-200/40 dark:border-slate-700/40 pt-1 flex flex-col gap-0.5">
-                  <span>• <strong>Wide:</strong> Strong pricing power, brand, or network monopoly.</span>
-                  <span>• <strong>Narrow:</strong> Defensible niche edge, but vulnerable over multi-year cycles.</span>
-                  <span>• <strong>None:</strong> Commodity or highly competitive business.</span>
-                </div>
-              </div>
-            </div>
-          </div>
+          )}
         </div>
       </div>
     </div>

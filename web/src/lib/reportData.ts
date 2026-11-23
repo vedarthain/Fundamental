@@ -11,6 +11,7 @@ export type ReportStockRow = {
   market_cap_cr: number | null;
   maturity_tier: string | null;
   is_nifty500: boolean;
+  is_watchlist: boolean;
   listing_date: string | null;
 
   // Price & Returns
@@ -160,6 +161,7 @@ export async function loadReportData(forceRefresh: boolean = false): Promise<Rep
       COALESCE(p.maturity_tier, u.maturity_tier) AS maturity_tier,
       u.listing_date::text AS listing_date,
       (n500.symbol IS NOT NULL) AS is_nifty500,
+      (wl.symbol IS NOT NULL) AS is_watchlist,
 
       -- Prices
       COALESCE(sm.current_price, p.cache_price) AS ltp,
@@ -218,6 +220,7 @@ export async function loadReportData(forceRefresh: boolean = false): Promise<Rep
     LEFT JOIN app.cluster c ON c.id = p.cluster_id
     LEFT JOIN app.meta_cluster mc ON mc.id = c.meta_cluster_id
     LEFT JOIN nifty500_set n500 ON n500.symbol = u.symbol
+    LEFT JOIN (SELECT DISTINCT symbol FROM app.user_watchlist) wl ON wl.symbol = u.symbol
     WHERE u.is_active = TRUE
     ORDER BY p.composite_pct DESC NULLS LAST, u.symbol ASC
   `;
@@ -274,6 +277,7 @@ export async function loadReportData(forceRefresh: boolean = false): Promise<Rep
       market_cap_cr: r.market_cap_cr != null ? Math.round(Number(r.market_cap_cr)) : null,
       maturity_tier: r.maturity_tier ? r.maturity_tier.toUpperCase() : null,
       is_nifty500: Boolean(r.is_nifty500),
+      is_watchlist: Boolean(r.is_watchlist),
       listing_date: r.listing_date ?? null,
 
       ltp: ltp != null ? Math.round(ltp * 100) / 100 : null,
