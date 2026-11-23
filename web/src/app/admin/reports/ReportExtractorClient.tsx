@@ -192,7 +192,15 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
 
   // Pagination
   const [page, setPage] = useState<number>(1);
-  const [pageSize, setPageSize] = useState<number>(100);
+  const [pageSize, setPageSize] = useState<number>(50);
+  const tableRef = useRef<HTMLDivElement>(null);
+
+  const handlePageChange = (nextPage: number) => {
+    setPage(nextPage);
+    if (!isFullscreen && tableRef.current) {
+      tableRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
 
   // Table Density: "compact" (default, high information density) vs "normal"
   const [density, setDensity] = useState<"compact" | "normal">(() => {
@@ -986,21 +994,37 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
             </div>
           </div>
 
-          {/* Live Count / Metrics Summary Bar */}
+          {/* Live Count / Metrics Summary Bar with Top Quick Pager */}
           <div className="flex items-center justify-between text-xs px-1 text-slate-500 dark:text-slate-400 shrink-0">
             <div>
               Showing <span className="font-semibold text-slate-800 dark:text-slate-200">{sortedRows.length.toLocaleString("en-IN")}</span> stocks
               matching criteria • <span className="font-semibold text-slate-800 dark:text-slate-200">{activeColumns.length}</span> columns active
             </div>
             {totalPages > 1 && (
-              <div>
-                Page {page} of {totalPages}
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] text-slate-400 mr-1">
+                  Page {page} of {totalPages}
+                </span>
+                <button
+                  onClick={() => handlePageChange(Math.max(1, page - 1))}
+                  disabled={page === 1}
+                  className="px-2 py-0.5 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 disabled:opacity-40 hover:bg-slate-100 dark:hover:bg-slate-800 text-[11px] font-medium"
+                >
+                  ‹ Prev
+                </button>
+                <button
+                  onClick={() => handlePageChange(Math.min(totalPages, page + 1))}
+                  disabled={page === totalPages}
+                  className="px-2.5 py-0.5 rounded bg-blue-600 text-white disabled:opacity-40 hover:bg-blue-700 text-[11px] font-semibold transition-colors"
+                >
+                  Next page ›
+                </button>
               </div>
             )}
           </div>
 
           {/* Table Container */}
-          <div className={`border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-white dark:bg-slate-900 shadow-xs flex flex-col ${isFullscreen ? "flex-1 min-h-0" : ""}`}>
+          <div ref={tableRef} className={`border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-white dark:bg-slate-900 shadow-xs flex flex-col ${isFullscreen ? "flex-1 min-h-0" : ""}`}>
             {loading ? (
               <div className="py-24 flex flex-col items-center justify-center text-slate-400">
                 <span className="text-2xl animate-spin mb-2">🔄</span>
@@ -1033,7 +1057,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                 </p>
               </div>
             ) : (
-              <div className={`overflow-x-auto overflow-y-auto ${isFullscreen ? "flex-1" : "max-h-[calc(100vh-270px)] min-h-[460px]"}`}>
+              <div className={`overflow-x-auto ${isFullscreen ? "flex-1 overflow-y-auto min-h-0" : "overflow-y-visible"}`}>
                 <table className={`w-full text-left border-collapse ${isCompact ? "text-[11px]" : "text-xs"}`}>
                   <thead className="bg-slate-50 dark:bg-slate-800/95 sticky top-0 z-10 border-b border-slate-200 dark:border-slate-800 backdrop-blur-xs">
                     <tr>
@@ -1136,33 +1160,33 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                 </div>
                 <div className="flex items-center gap-1.5">
                   <button
-                    onClick={() => setPage(1)}
+                    onClick={() => handlePageChange(1)}
                     disabled={page === 1}
-                    className="px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 disabled:opacity-40 hover:bg-slate-100 dark:hover:bg-slate-800"
+                    className="px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 disabled:opacity-40 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium"
                   >
                     « First
                   </button>
                   <button
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    onClick={() => handlePageChange(Math.max(1, page - 1))}
                     disabled={page === 1}
-                    className="px-2.5 py-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 disabled:opacity-40 hover:bg-slate-100 dark:hover:bg-slate-800"
+                    className="px-2.5 py-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 disabled:opacity-40 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium"
                   >
                     ‹ Prev
                   </button>
-                  <span className="px-2 font-medium text-slate-700 dark:text-slate-300">
-                    {page} / {totalPages}
+                  <span className="px-2 font-semibold text-slate-700 dark:text-slate-200">
+                    Page {page} of {totalPages}
                   </span>
                   <button
-                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    onClick={() => handlePageChange(Math.min(totalPages, page + 1))}
                     disabled={page === totalPages}
-                    className="px-2.5 py-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 disabled:opacity-40 hover:bg-slate-100 dark:hover:bg-slate-800"
+                    className="px-3.5 py-1 rounded bg-blue-600 text-white font-bold shadow-xs disabled:opacity-40 disabled:bg-slate-300 dark:disabled:bg-slate-700 hover:bg-blue-700 transition-colors cursor-pointer"
                   >
-                    Next ›
+                    Next page ›
                   </button>
                   <button
-                    onClick={() => setPage(totalPages)}
+                    onClick={() => handlePageChange(totalPages)}
                     disabled={page === totalPages}
-                    className="px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 disabled:opacity-40 hover:bg-slate-100 dark:hover:bg-slate-800"
+                    className="px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 disabled:opacity-40 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium"
                   >
                     Last »
                   </button>
