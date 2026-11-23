@@ -361,9 +361,15 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
     );
   }, [paramSearch]);
 
-  // Selected parameters list in order
+  // Selected parameters list in order (Symbol always leads as column 1 if selected)
   const activeColumns = useMemo(() => {
-    return PARAMETERS.filter((p) => selectedIds.has(p.id));
+    const selected = PARAMETERS.filter((p) => selectedIds.has(p.id));
+    const symIdx = selected.findIndex((p) => p.id === "symbol");
+    if (symIdx > 0) {
+      const sym = selected[symIdx];
+      return [sym, ...selected.slice(0, symIdx), ...selected.slice(symIdx + 1)];
+    }
+    return selected;
   }, [selectedIds]);
 
   // Watchlist count
@@ -1061,18 +1067,24 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                 <table className={`w-full text-left border-collapse ${isCompact ? "text-[11px]" : "text-xs"}`}>
                   <thead className="bg-slate-50 dark:bg-slate-800/95 sticky top-0 z-10 border-b border-slate-200 dark:border-slate-800 backdrop-blur-xs">
                     <tr>
-                      <th className={`${isCompact ? "py-1.5 px-1.5 text-[10px] w-8" : "py-2.5 px-3 text-xs w-10"} font-semibold text-slate-500 dark:text-slate-400 text-center sticky left-0 bg-slate-50 dark:bg-slate-800 z-20`}>
+                      <th
+                        style={{ width: 44, minWidth: 44, maxWidth: 44, left: 0 }}
+                        className={`${isCompact ? "py-1.5 px-1 text-[10px]" : "py-2.5 px-2 text-xs"} font-semibold text-slate-500 dark:text-slate-400 text-center sticky left-0 z-30 bg-slate-100 dark:bg-slate-800 border-r border-slate-200/80 dark:border-slate-800`}
+                      >
                         #
                       </th>
                       {activeColumns.map((col, cIdx) => {
                         const isSorted = sortCol === col.id;
-                        const isFirstCol = cIdx === 0 && col.id === "symbol";
+                        const isFirstCol = cIdx === 0;
                         return (
                           <th
                             key={col.id}
                             onClick={() => handleSort(col.id)}
-                            className={`${isCompact ? "py-1.5 px-2 text-[10.5px]" : "py-2.5 px-3 text-xs"} font-semibold text-slate-700 dark:text-slate-300 cursor-pointer select-none hover:bg-slate-100 dark:hover:bg-slate-700/60 transition-colors whitespace-nowrap ${
-                              isFirstCol ? (isCompact ? "sticky left-8 bg-slate-50 dark:bg-slate-800 z-20" : "sticky left-10 bg-slate-50 dark:bg-slate-800 z-20") : ""
+                            style={isFirstCol ? { left: 44 } : undefined}
+                            className={`${isCompact ? "py-1.5 px-2.5 text-[10.5px]" : "py-2.5 px-3 text-xs"} font-semibold text-slate-700 dark:text-slate-300 cursor-pointer select-none hover:bg-slate-100 dark:hover:bg-slate-700/60 transition-colors whitespace-nowrap ${
+                              isFirstCol
+                                ? "sticky z-30 bg-slate-100 dark:bg-slate-800 border-r-2 border-slate-300 dark:border-slate-700 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.12)]"
+                                : ""
                             } ${
                               col.align === "right"
                                 ? "text-right"
@@ -1102,18 +1114,24 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                       return (
                         <tr
                           key={row.symbol}
-                          className="even:bg-slate-50/40 dark:even:bg-slate-800/25 hover:bg-blue-50/60 dark:hover:bg-slate-800/70 transition-colors"
+                          className="group even:bg-slate-50/50 dark:even:bg-slate-800/30 hover:bg-blue-50/70 dark:hover:bg-slate-800/80 transition-colors"
                         >
-                          <td className={`${isCompact ? "py-1 px-1 text-[10px]" : "py-2 px-3 text-[11px]"} text-slate-400 text-center font-mono sticky left-0 bg-white dark:bg-slate-900`}>
+                          <td
+                            style={{ width: 44, minWidth: 44, maxWidth: 44, left: 0 }}
+                            className={`${isCompact ? "py-1 px-1 text-[10px]" : "py-2 px-2 text-[11px]"} text-slate-400 text-center font-mono sticky left-0 z-20 bg-white group-even:bg-slate-50 dark:bg-slate-900 group-hover:bg-blue-50 dark:group-hover:bg-slate-800 border-r border-slate-200/60 dark:border-slate-800 transition-colors`}
+                          >
                             {absoluteIdx}
                           </td>
                           {activeColumns.map((col, cIdx) => {
-                            const isFirstCol = cIdx === 0 && col.id === "symbol";
+                            const isFirstCol = cIdx === 0;
                             return (
                               <td
                                 key={col.id}
-                                className={`${isCompact ? "py-0.5 px-2" : "py-2 px-3"} whitespace-nowrap ${
-                                  isFirstCol ? (isCompact ? "sticky left-8 bg-white dark:bg-slate-900 font-semibold" : "sticky left-10 bg-white dark:bg-slate-900 font-semibold") : ""
+                                style={isFirstCol ? { left: 44 } : undefined}
+                                className={`${isCompact ? "py-0.5 px-2.5" : "py-2 px-3"} whitespace-nowrap ${
+                                  isFirstCol
+                                    ? "sticky z-20 bg-white group-even:bg-slate-50 dark:bg-slate-900 group-hover:bg-blue-50 dark:group-hover:bg-slate-800 font-semibold border-r-2 border-slate-300 dark:border-slate-700 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.12)] transition-colors"
+                                    : ""
                                 } ${
                                   col.align === "right"
                                   ? "text-right font-mono"
