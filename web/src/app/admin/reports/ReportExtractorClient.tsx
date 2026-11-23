@@ -194,10 +194,13 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
   const [page, setPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(50);
   const tableRef = useRef<HTMLDivElement>(null);
+  const tableScrollRef = useRef<HTMLDivElement>(null);
 
   const handlePageChange = (nextPage: number) => {
     setPage(nextPage);
-    if (!isFullscreen && tableRef.current) {
+    if (isFullscreen && tableScrollRef.current) {
+      tableScrollRef.current.scrollTo({ top: 0, behavior: "smooth" });
+    } else if (!isFullscreen && tableRef.current) {
       tableRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   };
@@ -256,15 +259,22 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
     };
   }, []);
 
-  // Listen for Escape key to exit fullscreen
+  // Listen for Escape key to exit fullscreen & lock body scroll
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && isFullscreen) {
-        setIsFullscreen(false);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    if (isFullscreen) {
+      const prevOverflow = document.body.style.overflow;
+      document.body.style.overflow = "hidden";
+      const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.key === "Escape") {
+          setIsFullscreen(false);
+        }
+      };
+      window.addEventListener("keydown", handleKeyDown);
+      return () => {
+        document.body.style.overflow = prevOverflow;
+        window.removeEventListener("keydown", handleKeyDown);
+      };
+    }
   }, [isFullscreen]);
 
   // Save choices handler: saves locally and persists to server for this signed-in user
@@ -783,7 +793,13 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
   );
 
   return (
-    <div className={`w-full flex flex-col gap-4 ${isFullscreen ? "fixed inset-0 z-50 bg-slate-50 dark:bg-slate-950 p-3 sm:p-4 overflow-hidden" : ""}`}>
+    <div
+      className={`w-full ${
+        isFullscreen
+          ? "fixed inset-0 z-50 bg-slate-100 dark:bg-slate-950 p-2 sm:p-3 flex flex-col h-screen w-screen overflow-hidden"
+          : "flex flex-col gap-4"
+      }`}
+    >
       {/* Top Header Card (Hidden in Fullscreen mode for maximum space) */}
       {!isFullscreen && (
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xs">
@@ -823,7 +839,13 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
       )}
 
       {/* Main Split Layout: Left Rail (Parameters) | Right Panel (Preview & Actions) */}
-      <div className={`grid grid-cols-1 ${isFullscreen ? "h-full flex-1 flex flex-col" : "lg:grid-cols-12 gap-4 items-start"}`}>
+      <div
+        className={
+          isFullscreen
+            ? "relative flex-1 min-h-0 flex flex-col w-full"
+            : "grid grid-cols-1 lg:grid-cols-12 gap-4 items-start"
+        }
+      >
         {/* ── LEFT RAIL: PARAMETER EXTRACTION SELECTOR (3 cols) ── (Hidden on Fullscreen by default, accessible via Drawer) */}
         {!isFullscreen && (
           <div className="lg:col-span-4 xl:col-span-3 p-3.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xs sticky top-16 max-h-[calc(100vh-5rem)] overflow-y-auto">
@@ -850,7 +872,13 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
         )}
 
         {/* ── RIGHT PANEL: PREVIEW DESK & EXPORT ACTIONS ── */}
-        <div className={`${isFullscreen ? "h-full flex-1 flex flex-col" : "lg:col-span-8 xl:col-span-9 flex flex-col gap-3"}`}>
+        <div
+          className={
+            isFullscreen
+              ? "flex-1 min-h-0 flex flex-col gap-2 w-full overflow-hidden"
+              : "lg:col-span-8 xl:col-span-9 flex flex-col gap-3"
+          }
+        >
           {/* Action Toolbar */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xs shrink-0">
             {/* Left Controls: Universe, Verdict & Stock filters */}
@@ -1030,7 +1058,12 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
           </div>
 
           {/* Table Container */}
-          <div ref={tableRef} className={`border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-white dark:bg-slate-900 shadow-xs flex flex-col ${isFullscreen ? "flex-1 min-h-0" : ""}`}>
+          <div
+            ref={tableRef}
+            className={`border border-slate-200 dark:border-slate-800 rounded-xl bg-white dark:bg-slate-900 shadow-xs flex flex-col overflow-hidden ${
+              isFullscreen ? "flex-1 min-h-0" : ""
+            }`}
+          >
             {loading ? (
               <div className="py-24 flex flex-col items-center justify-center text-slate-400">
                 <span className="text-2xl animate-spin mb-2">🔄</span>
@@ -1063,9 +1096,14 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                 </p>
               </div>
             ) : (
-              <div className={`overflow-x-auto ${isFullscreen ? "flex-1 overflow-y-auto min-h-0" : "overflow-y-visible"}`}>
+              <div
+                ref={tableScrollRef}
+                className={`w-full ${
+                  isFullscreen ? "flex-1 min-h-0 overflow-auto" : "overflow-x-auto"
+                }`}
+              >
                 <table className={`w-full text-left border-collapse ${isCompact ? "text-[11px]" : "text-xs"}`}>
-                  <thead className="bg-slate-50 dark:bg-slate-800/95 sticky top-0 z-10 border-b border-slate-200 dark:border-slate-800 backdrop-blur-xs">
+                  <thead className="bg-slate-100 dark:bg-slate-800 sticky top-0 z-10 border-b border-slate-200 dark:border-slate-800">
                     <tr>
                       <th
                         style={{ width: 44, minWidth: 44, maxWidth: 44, left: 0 }}
