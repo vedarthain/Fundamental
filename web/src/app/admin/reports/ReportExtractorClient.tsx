@@ -537,11 +537,11 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
 
     if (col.format === "badge_boolean") {
       return val ? (
-        <span className={`inline-flex px-1.5 rounded ${isCompact ? "text-[10px] py-0 leading-tight" : "text-[11px] py-0.5"} font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300`}>
+        <span className={`inline-flex px-1.5 rounded ${isCompact ? "text-[11px] py-0.5" : "text-xs py-0.5"} font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300`}>
           YES
         </span>
       ) : (
-        <span className={`inline-flex px-1.5 rounded ${isCompact ? "text-[10px] py-0 leading-tight" : "text-[11px] py-0.5"} font-semibold bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400`}>
+        <span className={`inline-flex px-1.5 rounded ${isCompact ? "text-[11px] py-0.5" : "text-xs py-0.5"} font-semibold bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400`}>
           NO
         </span>
       );
@@ -559,7 +559,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
       } else if (s === "SELL") {
         colorCls = "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border border-rose-300 dark:border-rose-700 font-medium";
       }
-      return <span className={`inline-flex px-1.5 rounded ${isCompact ? "text-[10px] py-0 leading-tight" : "text-[11px] py-0.5"} whitespace-nowrap ${colorCls}`}>{String(val)}</span>;
+      return <span className={`inline-flex px-1.5 rounded ${isCompact ? "text-[11px] py-0.5" : "text-xs py-0.5"} whitespace-nowrap ${colorCls}`}>{String(val)}</span>;
     }
 
     if (col.format === "badge_moat") {
@@ -567,7 +567,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
       let colorCls = "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400";
       if (s === "WIDE") colorCls = "bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 font-semibold";
       else if (s === "NARROW") colorCls = "bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300";
-      return <span className={`inline-flex px-1.5 rounded ${isCompact ? "text-[10px] py-0 leading-tight" : "text-[11px] py-0.5"} whitespace-nowrap ${colorCls}`}>{String(val)}</span>;
+      return <span className={`inline-flex px-1.5 rounded ${isCompact ? "text-[11px] py-0.5" : "text-xs py-0.5"} whitespace-nowrap ${colorCls}`}>{String(val)}</span>;
     }
 
     if (col.format === "percent") {
@@ -578,7 +578,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
       if (col.id === "unrealized_pnl_pct") {
         return (
           <span
-            className={`inline-flex items-center px-1 rounded ${isCompact ? "text-[10px] py-0 leading-tight" : "text-[11px] py-0.5"} font-bold ${
+            className={`inline-flex items-center px-1 rounded ${isCompact ? "text-[11px] py-0.5" : "text-xs py-0.5"} font-bold ${
               isPositive
                 ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200/80 dark:border-emerald-800/80"
                 : isNegative
@@ -828,13 +828,6 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
           </div>
 
           <div className="flex items-center gap-2.5 shrink-0">
-            <a
-              href="/api/admin/reports/nifty500"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-              title="Download official NIFTY 500 Excel Scorecard (.xlsx)"
-            >
-              <span>📥 NIFTY 500 (.xlsx)</span>
-            </a>
             <button
               onClick={() => fetchData(true)}
               disabled={refreshing || loading}
@@ -1112,12 +1105,12 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                   isFullscreen ? "flex-1 min-h-0 overflow-auto" : "overflow-x-auto"
                 }`}
               >
-                <table className={`w-full text-left border-collapse ${isCompact ? "text-[11px]" : "text-xs"}`}>
+                <table className={`w-full text-left border-collapse ${isCompact ? "text-xs" : "text-sm"}`}>
                   <thead className="bg-slate-100 dark:bg-slate-800 sticky top-0 z-10 border-b border-slate-200 dark:border-slate-800">
                     <tr>
                       <th
                         style={{ width: 44, minWidth: 44, maxWidth: 44, left: 0 }}
-                        className={`${isCompact ? "py-1.5 px-1 text-[10px]" : "py-2.5 px-2 text-xs"} font-semibold text-slate-500 dark:text-slate-400 text-center sticky left-0 z-30 bg-slate-100 dark:bg-slate-800 border-r border-slate-200/80 dark:border-slate-800`}
+                        className={`${isCompact ? "py-1.5 px-1 text-[11px]" : "py-2 px-2 text-xs"} font-semibold text-slate-500 dark:text-slate-400 text-center sticky left-0 z-30 bg-slate-100 dark:bg-slate-800 border-r border-slate-200/80 dark:border-slate-800`}
                       >
                         #
                       </th>
@@ -1130,7 +1123,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                             onClick={() => handleSort(col.id)}
                             style={isFirstCol ? { left: 44 } : undefined}
                             title={col.label}
-                            className={`${isCompact ? "py-1.5 px-2 text-[10.5px]" : "py-2 px-2.5 text-xs"} font-semibold text-slate-700 dark:text-slate-300 cursor-pointer select-none hover:bg-slate-200/70 dark:hover:bg-slate-700/60 transition-colors whitespace-nowrap ${
+                            className={`${isCompact ? "py-1.5 px-2 text-xs" : "py-2 px-2.5 text-sm"} font-semibold text-slate-700 dark:text-slate-300 cursor-pointer select-none hover:bg-slate-200/70 dark:hover:bg-slate-700/60 transition-colors whitespace-nowrap ${
                               isFirstCol
                                 ? "sticky z-30 bg-slate-100 dark:bg-slate-800 border-r-2 border-slate-300 dark:border-slate-700 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.12)]"
                                 : ""
@@ -1171,7 +1164,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                         >
                           <td
                             style={{ width: 44, minWidth: 44, maxWidth: 44, left: 0 }}
-                            className={`${isCompact ? "py-1 px-1 text-[10px]" : "py-2 px-2 text-[11px]"} text-slate-400 text-center font-mono sticky left-0 z-20 bg-white group-even:bg-slate-50 dark:bg-slate-900 group-hover:bg-blue-50 dark:group-hover:bg-slate-800 border-r border-slate-200/60 dark:border-slate-800 transition-colors`}
+                            className={`${isCompact ? "py-1 px-1 text-[11px]" : "py-1.5 px-2 text-xs"} text-slate-400 text-center font-mono sticky left-0 z-20 bg-white group-even:bg-slate-50 dark:bg-slate-900 group-hover:bg-blue-50 dark:group-hover:bg-slate-800 border-r border-slate-200/60 dark:border-slate-800 transition-colors`}
                           >
                             {absoluteIdx}
                           </td>
@@ -1181,7 +1174,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                               <td
                                 key={col.id}
                                 style={isFirstCol ? { left: 44 } : undefined}
-                                className={`${isCompact ? "py-0.5 px-2 text-[10.5px]" : "py-1.5 px-2.5 text-xs"} whitespace-nowrap ${
+                                className={`${isCompact ? "py-1 px-2 text-xs" : "py-2 px-2.5 text-sm"} whitespace-nowrap ${
                                   isFirstCol
                                     ? "sticky z-20 bg-white group-even:bg-slate-50 dark:bg-slate-900 group-hover:bg-blue-50 dark:group-hover:bg-slate-800 font-semibold border-r-2 border-slate-300 dark:border-slate-700 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.12)] transition-colors"
                                     : ""
