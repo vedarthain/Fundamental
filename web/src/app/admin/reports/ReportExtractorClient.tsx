@@ -16,6 +16,8 @@ export type ParameterCategory =
 export type ParameterDef = {
   id: keyof ReportStockRow;
   label: string;
+  shortLabel?: string;
+  width?: string;
   category: ParameterCategory;
   categoryLabel: string;
   description?: string;
@@ -26,67 +28,67 @@ export type ParameterDef = {
 
 export const PARAMETERS: ParameterDef[] = [
   // 1. Identity & Classification
-  { id: "symbol", label: "Symbol", category: "identity", categoryLabel: "Identity & Sector", align: "left", format: "text", defaultSelected: true },
-  { id: "company_name", label: "Company Name", category: "identity", categoryLabel: "Identity & Sector", align: "left", format: "text", defaultSelected: true },
-  { id: "sector", label: "Sector", category: "identity", categoryLabel: "Identity & Sector", align: "left", format: "text", defaultSelected: true },
-  { id: "industry", label: "Industry / Cluster", category: "identity", categoryLabel: "Identity & Sector", align: "left", format: "text", defaultSelected: false },
-  { id: "market_cap_category", label: "Market Cap Tier", category: "identity", categoryLabel: "Identity & Sector", align: "center", format: "text", defaultSelected: false },
-  { id: "market_cap_cr", label: "Market Cap (₹ Cr)", category: "identity", categoryLabel: "Identity & Sector", align: "right", format: "number", defaultSelected: false },
-  { id: "maturity_tier", label: "Maturity Tier", category: "identity", categoryLabel: "Identity & Sector", align: "center", format: "text", defaultSelected: false },
-  { id: "is_nifty500", label: "NIFTY 500 Constituent", category: "identity", categoryLabel: "Identity & Sector", align: "center", format: "badge_boolean", defaultSelected: false },
-  { id: "listing_date", label: "Listing Date", category: "identity", categoryLabel: "Identity & Sector", align: "center", format: "date", defaultSelected: false },
+  { id: "symbol", label: "Symbol", shortLabel: "Symbol", width: "w-24 min-w-[85px]", category: "identity", categoryLabel: "Identity & Sector", align: "left", format: "text", defaultSelected: true },
+  { id: "company_name", label: "Company Name", shortLabel: "Company", width: "min-w-[160px] max-w-[220px]", category: "identity", categoryLabel: "Identity & Sector", align: "left", format: "text", defaultSelected: true },
+  { id: "sector", label: "Sector", shortLabel: "Sector", width: "min-w-[120px] max-w-[160px]", category: "identity", categoryLabel: "Identity & Sector", align: "left", format: "text", defaultSelected: true },
+  { id: "industry", label: "Industry / Cluster", shortLabel: "Industry", width: "min-w-[130px] max-w-[180px]", category: "identity", categoryLabel: "Identity & Sector", align: "left", format: "text", defaultSelected: false },
+  { id: "market_cap_category", label: "Market Cap Tier", shortLabel: "Cap Tier", width: "w-24 min-w-[85px]", category: "identity", categoryLabel: "Identity & Sector", align: "center", format: "text", defaultSelected: false },
+  { id: "market_cap_cr", label: "Market Cap (₹ Cr)", shortLabel: "Mkt Cap (₹ Cr)", width: "w-28 min-w-[100px]", category: "identity", categoryLabel: "Identity & Sector", align: "right", format: "number", defaultSelected: false },
+  { id: "maturity_tier", label: "Maturity Tier", shortLabel: "Maturity", width: "w-24 min-w-[85px]", category: "identity", categoryLabel: "Identity & Sector", align: "center", format: "text", defaultSelected: false },
+  { id: "is_nifty500", label: "NIFTY 500 Constituent", shortLabel: "Nifty 500", width: "w-20 min-w-[75px]", category: "identity", categoryLabel: "Identity & Sector", align: "center", format: "badge_boolean", defaultSelected: false },
+  { id: "listing_date", label: "Listing Date", shortLabel: "Listing", width: "w-24 min-w-[85px]", category: "identity", categoryLabel: "Identity & Sector", align: "center", format: "date", defaultSelected: false },
 
   // 2. Pricing & Returns
-  { id: "ltp", label: "Current Price / LTP (₹)", category: "pricing", categoryLabel: "Pricing & Returns", align: "right", format: "currency", defaultSelected: true },
-  { id: "ret_1d", label: "1-Day Change (%)", category: "pricing", categoryLabel: "Pricing & Returns", align: "right", format: "percent", defaultSelected: true },
-  { id: "ret_1w", label: "1-Week Return (%)", category: "pricing", categoryLabel: "Pricing & Returns", align: "right", format: "percent", defaultSelected: false },
-  { id: "ret_1m", label: "1-Month Return (%)", category: "pricing", categoryLabel: "Pricing & Returns", align: "right", format: "percent", defaultSelected: false },
-  { id: "ret_1y", label: "1-Year Return (%)", category: "pricing", categoryLabel: "Pricing & Returns", align: "right", format: "percent", defaultSelected: false },
+  { id: "ltp", label: "Current Price / LTP (₹)", shortLabel: "LTP (₹)", width: "w-24 min-w-[85px]", category: "pricing", categoryLabel: "Pricing & Returns", align: "right", format: "currency", defaultSelected: true },
+  { id: "ret_1d", label: "1-Day Change (%)", shortLabel: "1D %", width: "w-20 min-w-[70px]", category: "pricing", categoryLabel: "Pricing & Returns", align: "right", format: "percent", defaultSelected: true },
+  { id: "ret_1w", label: "1-Week Return (%)", shortLabel: "1W %", width: "w-20 min-w-[70px]", category: "pricing", categoryLabel: "Pricing & Returns", align: "right", format: "percent", defaultSelected: false },
+  { id: "ret_1m", label: "1-Month Return (%)", shortLabel: "1M %", width: "w-20 min-w-[70px]", category: "pricing", categoryLabel: "Pricing & Returns", align: "right", format: "percent", defaultSelected: false },
+  { id: "ret_1y", label: "1-Year Return (%)", shortLabel: "1Y %", width: "w-20 min-w-[70px]", category: "pricing", categoryLabel: "Pricing & Returns", align: "right", format: "percent", defaultSelected: false },
 
   // 3. Verdicts & Calls Desk (Price Targets & Audit)
-  { id: "action", label: "Verdict Action", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "center", format: "badge_action", defaultSelected: true },
-  { id: "confidence", label: "Confidence", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "center", format: "text", defaultSelected: false },
-  { id: "buy_below", label: "Buy Below Price (₹)", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "right", format: "currency", defaultSelected: true },
-  { id: "target_price", label: "12M Target Price (₹)", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "right", format: "currency", defaultSelected: true },
-  { id: "fair_value", label: "Fair Value (₹)", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "right", format: "currency", defaultSelected: false },
-  { id: "bear_floor", label: "Bear Floor / Stop (₹)", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "right", format: "currency", defaultSelected: true },
-  { id: "upside_pct", label: "Upside to Target (%)", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "right", format: "percent", defaultSelected: true },
-  { id: "risk_reward", label: "Risk / Reward Ratio", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "right", format: "number", defaultSelected: false },
-  { id: "valuation_method", label: "Valuation Model", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "left", format: "text", defaultSelected: false },
-  { id: "verdict_date", label: "Verdict Audit Date", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "center", format: "date", defaultSelected: false },
-  { id: "verdict", label: "Full Verdict / Rationale", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "left", format: "text", defaultSelected: false },
+  { id: "action", label: "Verdict Action", shortLabel: "Action", width: "w-28 min-w-[95px]", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "center", format: "badge_action", defaultSelected: true },
+  { id: "confidence", label: "Confidence", shortLabel: "Confidence", width: "w-24 min-w-[85px]", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "center", format: "text", defaultSelected: false },
+  { id: "buy_below", label: "Buy Below Price (₹)", shortLabel: "Buy Below (₹)", width: "w-28 min-w-[95px]", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "right", format: "currency", defaultSelected: true },
+  { id: "target_price", label: "12M Target Price (₹)", shortLabel: "12M Target (₹)", width: "w-28 min-w-[100px]", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "right", format: "currency", defaultSelected: true },
+  { id: "fair_value", label: "Fair Value (₹)", shortLabel: "Fair Value (₹)", width: "w-28 min-w-[95px]", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "right", format: "currency", defaultSelected: false },
+  { id: "bear_floor", label: "Bear Floor / Stop (₹)", shortLabel: "Bear Floor (₹)", width: "w-28 min-w-[95px]", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "right", format: "currency", defaultSelected: true },
+  { id: "upside_pct", label: "Upside to Target (%)", shortLabel: "Upside %", width: "w-24 min-w-[80px]", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "right", format: "percent", defaultSelected: true },
+  { id: "risk_reward", label: "Risk / Reward Ratio", shortLabel: "Risk/Reward", width: "w-24 min-w-[85px]", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "right", format: "number", defaultSelected: false },
+  { id: "valuation_method", label: "Valuation Model", shortLabel: "Val. Model", width: "w-28 min-w-[95px]", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "left", format: "text", defaultSelected: false },
+  { id: "verdict_date", label: "Verdict Audit Date", shortLabel: "Verdict Date", width: "w-24 min-w-[85px]", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "center", format: "date", defaultSelected: false },
+  { id: "verdict", label: "Full Verdict / Rationale", shortLabel: "Verdict", width: "min-w-[180px] max-w-[260px]", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "left", format: "text", defaultSelected: false },
 
   // 4. Moat & Business Audit
-  { id: "moat_strength", label: "Moat Strength", category: "moat", categoryLabel: "Moat & Business Audit", align: "center", format: "badge_moat", defaultSelected: true },
-  { id: "moat_type", label: "Moat Type", category: "moat", categoryLabel: "Moat & Business Audit", align: "left", format: "text", defaultSelected: false },
-  { id: "moat_rationale", label: "Moat Rationale / Notes", category: "moat", categoryLabel: "Moat & Business Audit", align: "left", format: "text", defaultSelected: false },
+  { id: "moat_strength", label: "Moat Strength", shortLabel: "Moat", width: "w-24 min-w-[80px]", category: "moat", categoryLabel: "Moat & Business Audit", align: "center", format: "badge_moat", defaultSelected: true },
+  { id: "moat_type", label: "Moat Type", shortLabel: "Moat Type", width: "w-28 min-w-[95px]", category: "moat", categoryLabel: "Moat & Business Audit", align: "left", format: "text", defaultSelected: false },
+  { id: "moat_rationale", label: "Moat Rationale / Notes", shortLabel: "Moat Notes", width: "min-w-[160px] max-w-[240px]", category: "moat", categoryLabel: "Moat & Business Audit", align: "left", format: "text", defaultSelected: false },
 
   // 5. Factor Scores & Ranks
-  { id: "composite_pct", label: "Composite Score (%)", category: "scores", categoryLabel: "Factor Scores & Ranks", align: "right", format: "number", defaultSelected: false },
-  { id: "quality_pct", label: "Quality Score (%)", category: "scores", categoryLabel: "Factor Scores & Ranks", align: "right", format: "number", defaultSelected: false },
-  { id: "valuation_pct", label: "Valuation Score (%)", category: "scores", categoryLabel: "Factor Scores & Ranks", align: "right", format: "number", defaultSelected: false },
-  { id: "momentum_pct", label: "Momentum Score (%)", category: "scores", categoryLabel: "Factor Scores & Ranks", align: "right", format: "number", defaultSelected: false },
-  { id: "peer_rank", label: "Peer Rank", category: "scores", categoryLabel: "Factor Scores & Ranks", align: "right", format: "number", defaultSelected: false },
-  { id: "peer_count", label: "Peer Pool Size", category: "scores", categoryLabel: "Factor Scores & Ranks", align: "right", format: "number", defaultSelected: false },
+  { id: "composite_pct", label: "Composite Score (%)", shortLabel: "Composite %", width: "w-24 min-w-[80px]", category: "scores", categoryLabel: "Factor Scores & Ranks", align: "right", format: "number", defaultSelected: false },
+  { id: "quality_pct", label: "Quality Score (%)", shortLabel: "Quality %", width: "w-20 min-w-[75px]", category: "scores", categoryLabel: "Factor Scores & Ranks", align: "right", format: "number", defaultSelected: false },
+  { id: "valuation_pct", label: "Valuation Score (%)", shortLabel: "Valuation %", width: "w-20 min-w-[75px]", category: "scores", categoryLabel: "Factor Scores & Ranks", align: "right", format: "number", defaultSelected: false },
+  { id: "momentum_pct", label: "Momentum Score (%)", shortLabel: "Momentum %", width: "w-24 min-w-[80px]", category: "scores", categoryLabel: "Factor Scores & Ranks", align: "right", format: "number", defaultSelected: false },
+  { id: "peer_rank", label: "Peer Rank", shortLabel: "Peer Rank", width: "w-20 min-w-[70px]", category: "scores", categoryLabel: "Factor Scores & Ranks", align: "right", format: "number", defaultSelected: false },
+  { id: "peer_count", label: "Peer Pool Size", shortLabel: "Peer Pool", width: "w-20 min-w-[70px]", category: "scores", categoryLabel: "Factor Scores & Ranks", align: "right", format: "number", defaultSelected: false },
 
   // 6. Valuation & Fundamentals
-  { id: "pe_ttm", label: "P/E Ratio (TTM)", category: "fundamentals", categoryLabel: "Valuation & Fundamentals", align: "right", format: "number", defaultSelected: false },
-  { id: "pb", label: "Price / Book (P/B)", category: "fundamentals", categoryLabel: "Valuation & Fundamentals", align: "right", format: "number", defaultSelected: false },
-  { id: "div_yield", label: "Dividend Yield (%)", category: "fundamentals", categoryLabel: "Valuation & Fundamentals", align: "right", format: "percent", defaultSelected: false },
-  { id: "roe_3y", label: "ROE / ROCE (3Y %)", category: "fundamentals", categoryLabel: "Valuation & Fundamentals", align: "right", format: "percent", defaultSelected: false },
-  { id: "op_margin_3y", label: "Operating Margin (%)", category: "fundamentals", categoryLabel: "Valuation & Fundamentals", align: "right", format: "percent", defaultSelected: false },
-  { id: "sales_cagr_5y", label: "5-Year Sales CAGR (%)", category: "fundamentals", categoryLabel: "Valuation & Fundamentals", align: "right", format: "percent", defaultSelected: false },
-  { id: "profit_cagr_5y", label: "5-Year Profit CAGR (%)", category: "fundamentals", categoryLabel: "Valuation & Fundamentals", align: "right", format: "percent", defaultSelected: false },
+  { id: "pe_ttm", label: "P/E Ratio (TTM)", shortLabel: "P/E", width: "w-20 min-w-[65px]", category: "fundamentals", categoryLabel: "Valuation & Fundamentals", align: "right", format: "number", defaultSelected: false },
+  { id: "pb", label: "Price / Book (P/B)", shortLabel: "P/B", width: "w-20 min-w-[60px]", category: "fundamentals", categoryLabel: "Valuation & Fundamentals", align: "right", format: "number", defaultSelected: false },
+  { id: "div_yield", label: "Dividend Yield (%)", shortLabel: "Div Yield %", width: "w-24 min-w-[75px]", category: "fundamentals", categoryLabel: "Valuation & Fundamentals", align: "right", format: "percent", defaultSelected: false },
+  { id: "roe_3y", label: "ROE / ROCE (3Y %)", shortLabel: "ROE (3Y %)", width: "w-24 min-w-[80px]", category: "fundamentals", categoryLabel: "Valuation & Fundamentals", align: "right", format: "percent", defaultSelected: false },
+  { id: "op_margin_3y", label: "Operating Margin (%)", shortLabel: "Op. Margin %", width: "w-24 min-w-[80px]", category: "fundamentals", categoryLabel: "Valuation & Fundamentals", align: "right", format: "percent", defaultSelected: false },
+  { id: "sales_cagr_5y", label: "5-Year Sales CAGR (%)", shortLabel: "Sales 5Y %", width: "w-24 min-w-[80px]", category: "fundamentals", categoryLabel: "Valuation & Fundamentals", align: "right", format: "percent", defaultSelected: false },
+  { id: "profit_cagr_5y", label: "5-Year Profit CAGR (%)", shortLabel: "Profit 5Y %", width: "w-24 min-w-[80px]", category: "fundamentals", categoryLabel: "Valuation & Fundamentals", align: "right", format: "percent", defaultSelected: false },
 
   // 7. Portfolio & Holdings
-  { id: "unrealized_pnl_pct", label: "Current Performance % (Portfolio)", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "right", format: "percent", defaultSelected: true },
-  { id: "is_in_portfolio", label: "In Portfolio?", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "center", format: "badge_boolean", defaultSelected: false },
-  { id: "is_watchlist", label: "In Watchlist?", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "center", format: "badge_boolean", defaultSelected: false },
-  { id: "held_quantity", label: "Held Quantity", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "right", format: "number", defaultSelected: false },
-  { id: "avg_cost", label: "Avg Purchase Cost (₹)", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "right", format: "currency", defaultSelected: false },
-  { id: "invested_value", label: "Invested Capital (₹)", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "right", format: "currency", defaultSelected: false },
-  { id: "current_value", label: "Current Value (₹)", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "right", format: "currency", defaultSelected: false },
-  { id: "unrealized_pnl", label: "Unrealized P&L (₹)", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "right", format: "currency", defaultSelected: false },
+  { id: "unrealized_pnl_pct", label: "Current Performance % (Portfolio)", shortLabel: "Port. Perf %", width: "w-24 min-w-[85px] max-w-[100px]", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "right", format: "percent", defaultSelected: true },
+  { id: "is_in_portfolio", label: "In Portfolio?", shortLabel: "Portfolio", width: "w-20 min-w-[75px]", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "center", format: "badge_boolean", defaultSelected: false },
+  { id: "is_watchlist", label: "In Watchlist?", shortLabel: "Watchlist", width: "w-20 min-w-[75px]", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "center", format: "badge_boolean", defaultSelected: false },
+  { id: "held_quantity", label: "Held Quantity", shortLabel: "Qty Held", width: "w-20 min-w-[75px]", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "right", format: "number", defaultSelected: false },
+  { id: "avg_cost", label: "Avg Purchase Cost (₹)", shortLabel: "Avg Cost (₹)", width: "w-28 min-w-[90px]", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "right", format: "currency", defaultSelected: false },
+  { id: "invested_value", label: "Invested Capital (₹)", shortLabel: "Invested (₹)", width: "w-28 min-w-[95px]", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "right", format: "currency", defaultSelected: false },
+  { id: "current_value", label: "Current Value (₹)", shortLabel: "Cur Value (₹)", width: "w-28 min-w-[95px]", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "right", format: "currency", defaultSelected: false },
+  { id: "unrealized_pnl", label: "Unrealized P&L (₹)", shortLabel: "P&L (₹)", width: "w-28 min-w-[95px]", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "right", format: "currency", defaultSelected: false },
 ];
 
 const CATEGORIES: { id: ParameterCategory; label: string; icon: string }[] = [
@@ -525,6 +527,14 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
       );
     }
 
+    if (col.id === "company_name") {
+      return (
+        <span className="block truncate max-w-[200px]" title={String(val)}>
+          {String(val)}
+        </span>
+      );
+    }
+
     if (col.format === "badge_boolean") {
       return val ? (
         <span className={`inline-flex px-1.5 rounded ${isCompact ? "text-[10px] py-0 leading-tight" : "text-[11px] py-0.5"} font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300`}>
@@ -843,19 +853,19 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
         className={
           isFullscreen
             ? "relative flex-1 min-h-0 flex flex-col w-full"
-            : "grid grid-cols-1 lg:grid-cols-12 gap-4 items-start"
+            : "flex flex-col lg:flex-row gap-3.5 items-start w-full"
         }
       >
-        {/* ── LEFT RAIL: PARAMETER EXTRACTION SELECTOR (3 cols) ── (Hidden on Fullscreen by default, accessible via Drawer) */}
+        {/* ── LEFT RAIL: PARAMETER EXTRACTION SELECTOR (Compact column: ~260-280px) ── */}
         {!isFullscreen && (
-          <div className="lg:col-span-4 xl:col-span-3 p-3.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xs sticky top-16 max-h-[calc(100vh-5rem)] overflow-y-auto">
+          <div className="w-full lg:w-64 xl:w-72 shrink-0 p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xs sticky top-16 max-h-[calc(100vh-5rem)] overflow-y-auto">
             {ParameterSidebarContent}
           </div>
         )}
 
         {/* ── FULLSCREEN PARAMETERS DRAWER ── */}
         {isFullscreen && showFullscreenDrawer && (
-          <div className="absolute top-16 bottom-4 left-4 w-84 z-50 p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl overflow-y-auto">
+          <div className="absolute top-16 bottom-4 left-4 w-72 z-50 p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl overflow-y-auto">
             <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-200 dark:border-slate-700">
               <span className="text-xs font-bold uppercase text-slate-700 dark:text-slate-300">
                 Configure Columns
@@ -871,12 +881,12 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
           </div>
         )}
 
-        {/* ── RIGHT PANEL: PREVIEW DESK & EXPORT ACTIONS ── */}
+        {/* ── RIGHT PANEL: PREVIEW DESK & EXPORT ACTIONS (Takes all remaining width) ── */}
         <div
           className={
             isFullscreen
               ? "flex-1 min-h-0 flex flex-col gap-2 w-full overflow-hidden"
-              : "lg:col-span-8 xl:col-span-9 flex flex-col gap-3"
+              : "flex-1 min-w-0 flex flex-col gap-3 w-full"
           }
         >
           {/* Action Toolbar */}
@@ -1119,11 +1129,12 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                             key={col.id}
                             onClick={() => handleSort(col.id)}
                             style={isFirstCol ? { left: 44 } : undefined}
-                            className={`${isCompact ? "py-1.5 px-2.5 text-[10.5px]" : "py-2.5 px-3 text-xs"} font-semibold text-slate-700 dark:text-slate-300 cursor-pointer select-none hover:bg-slate-100 dark:hover:bg-slate-700/60 transition-colors whitespace-nowrap ${
+                            title={col.label}
+                            className={`${isCompact ? "py-1.5 px-2 text-[10.5px]" : "py-2 px-2.5 text-xs"} font-semibold text-slate-700 dark:text-slate-300 cursor-pointer select-none hover:bg-slate-200/70 dark:hover:bg-slate-700/60 transition-colors whitespace-nowrap ${
                               isFirstCol
                                 ? "sticky z-30 bg-slate-100 dark:bg-slate-800 border-r-2 border-slate-300 dark:border-slate-700 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.12)]"
                                 : ""
-                            } ${
+                            } ${col.width ?? ""} ${
                               col.align === "right"
                                 ? "text-right"
                                 : col.align === "center"
@@ -1133,10 +1144,14 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                           >
                             <div
                               className={`inline-flex items-center gap-1 ${
-                                col.align === "right" ? "justify-end" : ""
+                                col.align === "right"
+                                  ? "justify-end"
+                                  : col.align === "center"
+                                  ? "justify-center"
+                                  : ""
                               }`}
                             >
-                              <span>{col.label}</span>
+                              <span>{col.shortLabel ?? col.label}</span>
                               <span className="text-[9px] text-slate-400">
                                 {isSorted ? (sortDir === "asc" ? "▲" : "▼") : "⇅"}
                               </span>
@@ -1166,16 +1181,16 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                               <td
                                 key={col.id}
                                 style={isFirstCol ? { left: 44 } : undefined}
-                                className={`${isCompact ? "py-0.5 px-2.5" : "py-2 px-3"} whitespace-nowrap ${
+                                className={`${isCompact ? "py-0.5 px-2 text-[10.5px]" : "py-1.5 px-2.5 text-xs"} whitespace-nowrap ${
                                   isFirstCol
                                     ? "sticky z-20 bg-white group-even:bg-slate-50 dark:bg-slate-900 group-hover:bg-blue-50 dark:group-hover:bg-slate-800 font-semibold border-r-2 border-slate-300 dark:border-slate-700 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.12)] transition-colors"
                                     : ""
-                                } ${
+                                } ${col.width ?? ""} ${
                                   col.align === "right"
-                                  ? "text-right font-mono"
-                                  : col.align === "center"
-                                  ? "text-center"
-                                  : "text-left"
+                                    ? "text-right font-mono"
+                                    : col.align === "center"
+                                    ? "text-center"
+                                    : "text-left"
                                 }`}
                               >
                                 {renderCellContent(row, col)}
