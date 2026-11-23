@@ -361,6 +361,38 @@ function cleanPointText(raw: string, tagRegex: RegExp): { metric: string; peer?:
 const CUSTOM_PURCHASE_KEY = "calls_custom_purchase_v1";
 const CALLS_VIEW_STATE_KEY = "calls_view_state_v1";
 const CALLS_BOOKMARK_SYMBOL_KEY = "calls_bookmark_symbol_v1";
+const CALLS_BOOKMARK_SERVER_KEY = "er:callsBookmark:v1";
+
+async function fetchCallsBookmarkServer(): Promise<{ signedIn: boolean; symbol: string | null }> {
+  try {
+    const r = await fetch(`/api/scanner/bookmarks?key=${encodeURIComponent(CALLS_BOOKMARK_SERVER_KEY)}`, {
+      credentials: "include",
+    });
+    if (!r.ok) return { signedIn: false, symbol: null };
+    const d = (await r.json()) as { signedIn?: boolean; items?: { id: string }[] };
+    return {
+      signedIn: !!d.signedIn,
+      symbol: Array.isArray(d.items) && d.items.length > 0 && typeof d.items[0].id === "string" ? d.items[0].id : null,
+    };
+  } catch {
+    return { signedIn: false, symbol: null };
+  }
+}
+
+async function putCallsBookmarkServer(symbol: string): Promise<void> {
+  if (!symbol) return;
+  const items = [{ id: symbol, label: symbol }];
+  try {
+    await fetch("/api/scanner/bookmarks", {
+      method: "PUT",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: CALLS_BOOKMARK_SERVER_KEY, items }),
+    });
+  } catch {
+    // Best-effort
+  }
+}
 
 type Scope = "all" | "curated" | "new" | "portfolio";
 type ActionFilter = "ALL" | "BUY" | "WATCH" | "PRIORITY_SELL" | "SELL" | "HOLD";
@@ -839,7 +871,42 @@ export function CallsClient({
     }
   }, []);
 
-  // Save workstation view state and bookmark when changed
+  const [bookmarkHydrated, setBookmarkHydrated] = useState(false);
+  const bookmarkSignedInRef = useRef(false);
+
+  // Cross-device calls bookmark: hydrate from server for signed-in user
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      let localBookmark = "";
+      try {
+        localBookmark = localStorage.getItem(CALLS_BOOKMARK_SYMBOL_KEY) || "";
+      } catch {}
+
+      const server = await fetchCallsBookmarkServer();
+      if (!alive) return;
+      if (server.signedIn) {
+        bookmarkSignedInRef.current = true;
+        if (server.symbol) {
+          try {
+            localStorage.setItem(CALLS_BOOKMARK_SYMBOL_KEY, server.symbol);
+          } catch {}
+          setSelectedSymbol(server.symbol);
+        } else if (localBookmark) {
+          // Carry-up existing local bookmark to server
+          putCallsBookmarkServer(localBookmark).catch(() => {});
+        }
+      } else {
+        bookmarkSignedInRef.current = false;
+      }
+      setBookmarkHydrated(true);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // Save workstation view state and local bookmark when changed
   useEffect(() => {
     if (!mounted) return;
     try {
@@ -860,6 +927,15 @@ export function CallsClient({
       // ignore
     }
   }, [viewMode, selectedSymbol, scope, activeTab, leftRailMode, mounted]);
+
+  // Persist calls bookmark across devices to server (debounced)
+  useEffect(() => {
+    if (!mounted || !bookmarkHydrated || !selectedSymbol) return;
+    const timer = setTimeout(() => {
+      putCallsBookmarkServer(selectedSymbol).catch(() => {});
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [selectedSymbol, mounted, bookmarkHydrated]);
 
   const saveCustomPurchase = (sym: string, date: string, price: number) => {
     setCustomPurchases((prev) => {
@@ -1641,6 +1717,9 @@ export function CallsClient({
       prevFilterKey.current = key;
       // Do NOT overwrite user's selectedSymbol if it's already in filteredCalls!
       if (!selectedSymbol || !filteredCalls.some((c) => c.symbol === selectedSymbol)) {
+        if (!bookmarkHydrated && !selectedSymbol) {
+          return;
+        }
         let bookmark = "";
         try {
           bookmark = localStorage.getItem(CALLS_BOOKMARK_SYMBOL_KEY) || "";
@@ -1655,10 +1734,11 @@ export function CallsClient({
         }
       }
     }
-  }, [scope, actionFilter, prioritySubFilter, selectedBatches, sectorGroups, filteredCalls, selectedSymbol]);
+  }, [scope, actionFilter, prioritySubFilter, selectedBatches, sectorGroups, filteredCalls, selectedSymbol, bookmarkHydrated]);
 
   // Fallback: If selectedSymbol is not set or not in filteredCalls, restore bookmark or pick top scrip
   useEffect(() => {
+    if (!bookmarkHydrated && !selectedSymbol) return;
     if (filteredCalls.length > 0) {
       if (!selectedSymbol) {
         let bookmark = "";
@@ -1688,7 +1768,7 @@ export function CallsClient({
         }
       }
     }
-  }, [filteredCalls, sectorGroups, selectedSymbol, data]);
+  }, [filteredCalls, sectorGroups, selectedSymbol, data, bookmarkHydrated]);
 
   // Keep left rail focused on the currently opened stock:
   // open ONLY its sector & cluster, collapse the rest, and scroll the stock into view.

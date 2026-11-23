@@ -60,6 +60,10 @@ const KEY_LIMITS: Record<string, { maxItems: number; maxBytes: number }> = {
   // Single-stock "jump back here" bookmark on the admin verdict detail page.
   // Now auto-follows the last stock marked inspected; one entry only.
   "er:verdictBookmark:v1": { maxItems: 1, maxBytes: 1024 },
+  // Single-stock bookmark on the admin calls desk — remembers the last selected stock across devices.
+  "er:callsBookmark:v1": { maxItems: 1, maxBytes: 1024 },
+  // Selected report columns in admin report extractor — saves user's column choices across devices.
+  "er:reportColumns:v1": { maxItems: 64, maxBytes: 16 * 1024 },
 };
 
 const ALLOWED_KEYS = new Set(Object.keys(KEY_LIMITS));

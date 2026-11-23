@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo, useCallback, useEffect } from "react";
+import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
 import type { ReportStockRow } from "@/lib/reportData";
 
@@ -101,6 +101,40 @@ const CATEGORIES: { id: ParameterCategory; label: string; icon: string }[] = [
 
 const DEFAULT_SELECTED_IDS: (keyof ReportStockRow)[] = PARAMETERS.filter((p) => p.defaultSelected).map((p) => p.id);
 const STORAGE_KEY = "equityroots_report_saved_columns_v1";
+const REPORT_COLUMNS_SERVER_KEY = "er:reportColumns:v1";
+
+async function fetchReportColumnsServer(): Promise<{ signedIn: boolean; ids: (keyof ReportStockRow)[] }> {
+  try {
+    const r = await fetch(`/api/scanner/bookmarks?key=${encodeURIComponent(REPORT_COLUMNS_SERVER_KEY)}`, {
+      credentials: "include",
+    });
+    if (!r.ok) return { signedIn: false, ids: [] };
+    const d = (await r.json()) as { signedIn?: boolean; items?: { id: string }[] };
+    if (!d.signedIn || !Array.isArray(d.items)) {
+      return { signedIn: !!d.signedIn, ids: [] };
+    }
+    const ids = d.items
+      .map((it) => it.id as keyof ReportStockRow)
+      .filter((id) => PARAMETERS.some((p) => p.id === id));
+    return { signedIn: true, ids };
+  } catch {
+    return { signedIn: false, ids: [] };
+  }
+}
+
+async function putReportColumnsServer(ids: (keyof ReportStockRow)[]): Promise<void> {
+  const items = ids.map((id) => ({ id: String(id), label: String(id) }));
+  try {
+    await fetch("/api/scanner/bookmarks", {
+      method: "PUT",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: REPORT_COLUMNS_SERVER_KEY, items }),
+    });
+  } catch {
+    // Best-effort
+  }
+}
 
 const PRESETS: { name: string; ids: (keyof ReportStockRow)[] }[] = [
   {
@@ -132,8 +166,9 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [showFullscreenDrawer, setShowFullscreenDrawer] = useState<boolean>(false);
 
-  // Saved user choices from localStorage
+  // Saved user choices from localStorage / server
   const [savedPreset, setSavedPreset] = useState<(keyof ReportStockRow)[] | null>(null);
+  const signedInRef = useRef(false);
 
   // Selected parameters set
   const [selectedIds, setSelectedIds] = useState<Set<keyof ReportStockRow>>(() => {
@@ -159,21 +194,46 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
   const [page, setPage] = useState<number>(1);
   const pageSize = 50;
 
-  // Hydrate saved choices from localStorage on mount
+  // Hydrate saved choices: local cache first (instant), then server sync (cross-device)
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const validIds = parsed.filter((id) => PARAMETERS.some((p) => p.id === id));
-          if (validIds.length > 0) {
-            setSavedPreset(validIds);
-            setSelectedIds(new Set(validIds));
+    let alive = true;
+    (async () => {
+      let localIds: (keyof ReportStockRow)[] = [];
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            localIds = parsed.filter((id) => PARAMETERS.some((p) => p.id === id));
+            if (localIds.length > 0) {
+              setSavedPreset(localIds);
+              setSelectedIds(new Set(localIds));
+            }
           }
         }
+      } catch {}
+
+      const server = await fetchReportColumnsServer();
+      if (!alive) return;
+      if (server.signedIn) {
+        signedInRef.current = true;
+        if (server.ids.length > 0) {
+          setSavedPreset(server.ids);
+          setSelectedIds(new Set(server.ids));
+          try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(server.ids));
+          } catch {}
+        } else if (localIds.length > 0) {
+          // Carry-up local choices to server so user doesn't lose them
+          putReportColumnsServer(localIds).catch(() => {});
+        }
+      } else {
+        signedInRef.current = false;
       }
-    } catch {}
+    })();
+    return () => {
+      alive = false;
+    };
   }, []);
 
   // Listen for Escape key to exit fullscreen
@@ -187,13 +247,14 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isFullscreen]);
 
-  // Save choices handler
+  // Save choices handler: saves locally and persists to server for this signed-in user
   const handleSaveChoices = () => {
     try {
       const ids = Array.from(selectedIds);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(ids));
       setSavedPreset(ids);
-      setSaveStatus("✓ Saved as default!");
+      putReportColumnsServer(ids).catch(() => {});
+      setSaveStatus("✓ Saved across all devices!");
       setTimeout(() => setSaveStatus(null), 2500);
     } catch {
       setSaveStatus("Failed to save");
