@@ -691,6 +691,12 @@ export function CallsClient({
 
   useEffect(() => {
     setMounted(true);
+    if (typeof window !== "undefined") {
+      if ("scrollRestoration" in window.history) {
+        window.history.scrollRestoration = "manual";
+      }
+      window.scrollTo({ top: 0, left: 0 });
+    }
   }, []);
 
   // Multi-Select Dates State: default to "all" so calls and priority alerts are never hidden by default
@@ -1663,7 +1669,14 @@ export function CallsClient({
     requestAnimationFrame(() => {
       const container = document.getElementById("calls-left-rail-scroll");
       const el = container?.querySelector<HTMLElement>(`[data-rail-symbol="${CSS.escape(sym)}"]`);
-      el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      if (container && el) {
+        const elTop = el.offsetTop;
+        const containerTop = container.scrollTop;
+        const containerHeight = container.clientHeight;
+        if (elTop < containerTop || elTop > containerTop + containerHeight - 40) {
+          container.scrollTo({ top: Math.max(0, elTop - 40), behavior: "smooth" });
+        }
+      }
     });
   }, [selectedCall?.symbol, sectorGroups, leftRailMode]);
 
