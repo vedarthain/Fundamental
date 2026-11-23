@@ -79,13 +79,13 @@ export const PARAMETERS: ParameterDef[] = [
   { id: "profit_cagr_5y", label: "5-Year Profit CAGR (%)", category: "fundamentals", categoryLabel: "Valuation & Fundamentals", align: "right", format: "percent", defaultSelected: false },
 
   // 7. Portfolio & Holdings
+  { id: "unrealized_pnl_pct", label: "Current Performance % (Portfolio)", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "right", format: "percent", defaultSelected: true },
   { id: "is_in_portfolio", label: "In Portfolio?", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "center", format: "badge_boolean", defaultSelected: false },
   { id: "held_quantity", label: "Held Quantity", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "right", format: "number", defaultSelected: false },
   { id: "avg_cost", label: "Avg Purchase Cost (₹)", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "right", format: "currency", defaultSelected: false },
   { id: "invested_value", label: "Invested Capital (₹)", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "right", format: "currency", defaultSelected: false },
   { id: "current_value", label: "Current Value (₹)", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "right", format: "currency", defaultSelected: false },
   { id: "unrealized_pnl", label: "Unrealized P&L (₹)", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "right", format: "currency", defaultSelected: false },
-  { id: "unrealized_pnl_pct", label: "Unrealized P&L (%)", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "right", format: "percent", defaultSelected: false },
 ];
 
 const CATEGORIES: { id: ParameterCategory; label: string; icon: string }[] = [
@@ -103,7 +103,7 @@ const DEFAULT_SELECTED_IDS: (keyof ReportStockRow)[] = PARAMETERS.filter((p) => 
 const PRESETS: { name: string; ids: (keyof ReportStockRow)[] }[] = [
   {
     name: "Calls Desk & Verdicts",
-    ids: ["symbol", "company_name", "ltp", "action", "confidence", "buy_below", "target_price", "fair_value", "bear_floor", "upside_pct", "moat_strength", "verdict_date"],
+    ids: ["symbol", "company_name", "ltp", "unrealized_pnl_pct", "action", "confidence", "buy_below", "target_price", "fair_value", "bear_floor", "upside_pct", "moat_strength", "verdict_date"],
   },
   {
     name: "Valuation & Fundamentals",
@@ -111,7 +111,7 @@ const PRESETS: { name: string; ids: (keyof ReportStockRow)[] }[] = [
   },
   {
     name: "Portfolio Audit",
-    ids: ["symbol", "company_name", "is_in_portfolio", "held_quantity", "avg_cost", "ltp", "invested_value", "current_value", "unrealized_pnl", "unrealized_pnl_pct", "action", "buy_below", "target_price"],
+    ids: ["symbol", "company_name", "is_in_portfolio", "held_quantity", "avg_cost", "ltp", "unrealized_pnl_pct", "invested_value", "current_value", "unrealized_pnl", "action", "buy_below", "target_price"],
   },
   {
     name: "Scores & Momentum",
@@ -409,6 +409,24 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
       const num = Number(val);
       const isPositive = num > 0;
       const isNegative = num < 0;
+
+      if (col.id === "unrealized_pnl_pct") {
+        return (
+          <span
+            className={`inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-bold ${
+              isPositive
+                ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200/80 dark:border-emerald-800/80"
+                : isNegative
+                ? "bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-200/80 dark:border-rose-800/80"
+                : "text-slate-600 dark:text-slate-400"
+            }`}
+          >
+            {isPositive ? "+" : ""}
+            {num.toFixed(1)}%
+          </span>
+        );
+      }
+
       const cls = isPositive
         ? "text-emerald-600 dark:text-emerald-400 font-medium"
         : isNegative
