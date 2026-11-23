@@ -899,6 +899,135 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
               </div>
             )}
           </div>
+
+          {/* ── METRIC & INTERPRETATION GUIDE ── */}
+          <div className="p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xs">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <span className="text-base">📖</span>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                    How to Interpret Key Metrics &amp; Parameters
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Quick reference definitions for price targets, portfolio returns, moats, and risk metrics.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5 mt-3.5">
+              {/* 1. Upside to Target */}
+              <div className="p-3 rounded-lg bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200/60 dark:border-slate-700/60 flex flex-col gap-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                    <span>🎯</span> Upside to Target (%)
+                  </span>
+                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+                    (Target - LTP) / LTP
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                  Projected percentage appreciation from the current market price (LTP) to the 12-month fair target price.
+                </p>
+                <div className="text-[10.5px] text-slate-500 dark:text-slate-400 border-t border-slate-200/40 dark:border-slate-700/40 pt-1 flex flex-col gap-0.5">
+                  <span>• <strong>&gt; 20%:</strong> Strong headroom for potential capital appreciation.</span>
+                  <span>• <strong>0% to 5%:</strong> Fully valued; minimal margin of safety.</span>
+                  <span>• <strong>Negative (&le; 0%):</strong> Trading above 12M target (Profit Harvesting / Hold).</span>
+                </div>
+              </div>
+
+              {/* 2. Current Performance % */}
+              <div className="p-3 rounded-lg bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200/60 dark:border-slate-700/60 flex flex-col gap-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                    <span>💼</span> Current Performance % (Portfolio)
+                  </span>
+                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+                    (LTP - Avg Cost) / Avg Cost
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                  Live unrealized return percentage on stocks actively held in your portfolio based on weighted average purchase price.
+                </p>
+                <div className="text-[10.5px] text-slate-500 dark:text-slate-400 border-t border-slate-200/40 dark:border-slate-700/40 pt-1 flex flex-col gap-0.5">
+                  <span>• <strong>Badge:</strong> Green for positive gains (+), red for unrealized losses (-).</span>
+                  <span>• <strong>Dash (—):</strong> Displayed for stocks not currently held in your portfolio.</span>
+                </div>
+              </div>
+
+              {/* 3. Buy Below Price */}
+              <div className="p-3 rounded-lg bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200/60 dark:border-slate-700/60 flex flex-col gap-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                    <span>🛒</span> Buy Below Price (₹)
+                  </span>
+                  <span className="text-[10px] font-semibold text-slate-400">Entry Ceiling</span>
+                </div>
+                <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                  Maximum disciplined entry price ensuring an attractive margin of safety before initiating or adding to a position.
+                </p>
+                <div className="text-[10.5px] text-slate-500 dark:text-slate-400 border-t border-slate-200/40 dark:border-slate-700/40 pt-1 flex flex-col gap-0.5">
+                  <span>• <strong>LTP &le; Buy Below:</strong> Inside favorable buy zone; attractive accumulation point.</span>
+                  <span>• <strong>LTP &gt; Buy Below:</strong> Wait for a pullback into the buy zone rather than chasing.</span>
+                </div>
+              </div>
+
+              {/* 4. Bear Floor */}
+              <div className="p-3 rounded-lg bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200/60 dark:border-slate-700/60 flex flex-col gap-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                    <span>🛡️</span> Bear Floor / Stop (₹)
+                  </span>
+                  <span className="text-[10px] font-semibold text-slate-400">Risk Floor</span>
+                </div>
+                <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                  Conservative downside support floor derived from historical valuation troughs, capital replacement cost, and cyclical bottoms.
+                </p>
+                <div className="text-[10.5px] text-slate-500 dark:text-slate-400 border-t border-slate-200/40 dark:border-slate-700/40 pt-1 flex flex-col gap-0.5">
+                  <span>• Defines your maximum expected drawdown risk during market selloffs.</span>
+                  <span>• Breaching below the bear floor prompts re-evaluation or stop loss.</span>
+                </div>
+              </div>
+
+              {/* 5. Risk / Reward */}
+              <div className="p-3 rounded-lg bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200/60 dark:border-slate-700/60 flex flex-col gap-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                    <span>⚖️</span> Risk / Reward Ratio (R:R)
+                  </span>
+                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300">
+                    (Target - LTP) / (LTP - Floor)
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                  Ratio of potential upside gain relative to downside risk guardrail.
+                </p>
+                <div className="text-[10.5px] text-slate-500 dark:text-slate-400 border-t border-slate-200/40 dark:border-slate-700/40 pt-1 flex flex-col gap-0.5">
+                  <span>• <strong>&ge; 2.5:</strong> Highly asymmetric opportunity (upside outweighs risk).</span>
+                  <span>• <strong>&lt; 1.5:</strong> Symmetrical or unfavorable risk proposition.</span>
+                </div>
+              </div>
+
+              {/* 6. Moat Strength */}
+              <div className="p-3 rounded-lg bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200/60 dark:border-slate-700/60 flex flex-col gap-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                    <span>🏰</span> Moat Strength &amp; Audit
+                  </span>
+                  <span className="text-[10px] font-semibold text-slate-400">Durability</span>
+                </div>
+                <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                  Measures the sustainability of the company&apos;s competitive advantage against competitors.
+                </p>
+                <div className="text-[10.5px] text-slate-500 dark:text-slate-400 border-t border-slate-200/40 dark:border-slate-700/40 pt-1 flex flex-col gap-0.5">
+                  <span>• <strong>Wide:</strong> Strong pricing power, brand, or network monopoly.</span>
+                  <span>• <strong>Narrow:</strong> Defensible niche edge, but vulnerable over multi-year cycles.</span>
+                  <span>• <strong>None:</strong> Commodity or highly competitive business.</span>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
