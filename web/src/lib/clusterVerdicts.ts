@@ -10,6 +10,7 @@ async function loadSectorClusterTree(): Promise<SectorTreeNode[]> {
     cluster_id: string;
     cluster_name: string;
     stock_count: number;
+    stocks: any;
   }[]>`
     WITH latest_snap AS (
       SELECT MAX(snapshot_date) AS d FROM app.cluster_stocks_panel_cache
@@ -18,7 +19,14 @@ async function loadSectorClusterTree(): Promise<SectorTreeNode[]> {
       mc.name AS sector_name,
       cl.id::text AS cluster_id,
       cl.name AS cluster_name,
-      COUNT(p.symbol)::int AS stock_count
+      COUNT(p.symbol)::int AS stock_count,
+      COALESCE(
+        json_agg(
+          json_build_object('symbol', p.symbol, 'companyName', p.company_name)
+          ORDER BY p.symbol
+        ) FILTER (WHERE p.symbol IS NOT NULL),
+        '[]'::json
+      ) AS stocks
     FROM app.cluster cl
     JOIN app.meta_cluster mc ON mc.id = cl.meta_cluster_id
     JOIN app.cluster_stocks_panel_cache p
@@ -37,10 +45,17 @@ async function loadSectorClusterTree(): Promise<SectorTreeNode[]> {
       bySector.set(r.sector_name, sec);
     }
     sec.stockCount += r.stock_count;
+    const stocksList = Array.isArray(r.stocks)
+      ? r.stocks
+      : typeof r.stocks === "string"
+      ? JSON.parse(r.stocks)
+      : [];
+
     sec.clusters.push({
       clusterId: r.cluster_id,
       clusterName: r.cluster_name,
       stockCount: r.stock_count,
+      stocks: stocksList,
     });
   }
   return Array.from(bySector.values());
@@ -231,7 +246,7 @@ async function loadClusterItems(clusterId: string): Promise<ClusterVerdictRow[]>
 
 export const cachedSectorClusterTree = unstable_cache(
   loadSectorClusterTree,
-  ["admin:verdicts:tree:v1"],
+  ["admin:verdicts:tree:v2"],
   { revalidate: 300, tags: ["panel-cache", "clusters"] },
 );
 

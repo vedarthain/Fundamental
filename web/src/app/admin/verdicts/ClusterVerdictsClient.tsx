@@ -16,10 +16,16 @@ import {
 import type { ClusterVerdictRow } from "@/app/api/admin/cluster-verdicts/route";
 import { VerdictAuditSection } from "./VerdictAuditSection";
 
+export type ClusterStock = {
+  symbol: string;
+  companyName: string | null;
+};
+
 export type ClusterTreeNode = {
   clusterId: string;
   clusterName: string;
   stockCount: number;
+  stocks?: ClusterStock[];
 };
 
 export type SectorTreeNode = {
@@ -323,12 +329,28 @@ export function ClusterVerdictsClient({
     const q = treeSearch.trim().toLowerCase();
     if (!q) return sectors;
     return sectors
-      .map((s) => ({
-        ...s,
-        clusters: s.clusters.filter(
-          (c) => c.clusterName.toLowerCase().includes(q) || s.sectorName.toLowerCase().includes(q),
-        ),
-      }))
+      .map((s) => {
+        const sectorMatches = s.sectorName.toLowerCase().includes(q);
+        const clusters = s.clusters
+          .map((c) => {
+            const clusterMatches = c.clusterName.toLowerCase().includes(q);
+            const matchingStocks = (c.stocks || []).filter(
+              (st) =>
+                st.symbol.toLowerCase().includes(q) ||
+                (st.companyName && st.companyName.toLowerCase().includes(q)),
+            );
+            if (!sectorMatches && !clusterMatches && matchingStocks.length === 0) {
+              return null;
+            }
+            return {
+              ...c,
+              matchingStocks,
+            };
+          })
+          .filter((c): c is ClusterTreeNode & { matchingStocks: ClusterStock[] } => c !== null);
+
+        return { ...s, clusters };
+      })
       .filter((s) => s.clusters.length > 0);
   }, [sectors, treeSearch]);
 
@@ -454,9 +476,19 @@ export function ClusterVerdictsClient({
               type="text"
               value={treeSearch}
               onChange={(e) => setTreeSearch(e.target.value)}
-              placeholder="Filter sector or cluster…"
-              className="w-full pl-6 pr-2 py-1 text-[11.5px] rounded border hairline bg-transparent focus:outline-none"
+              placeholder="Search sector, cluster, or stock…"
+              className="w-full pl-6 pr-6 py-1 text-[11.5px] rounded border hairline bg-transparent focus:outline-none"
             />
+            {treeSearch && (
+              <button
+                type="button"
+                onClick={() => setTreeSearch("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] muted-text hover:text-[var(--color-ink)]"
+                title="Clear search"
+              >
+                ✕
+              </button>
+            )}
           </div>
         </div>
 
@@ -488,22 +520,56 @@ export function ClusterVerdictsClient({
                   <div className="pl-4 pr-0.5 py-0.5 space-y-0.5">
                     {s.clusters.map((c) => {
                       const active = c.clusterId === selectedClusterId;
+                      const matchingStocks = (c as any).matchingStocks as ClusterStock[] | undefined;
+                      const hasStockMatch = matchingStocks && matchingStocks.length > 0;
+
                       return (
-                        <button
-                          key={c.clusterId}
-                          type="button"
-                          onClick={() => setSelectedClusterId(c.clusterId)}
-                          className={`w-full flex items-center justify-between gap-1.5 px-2 py-1 rounded text-left text-[11.5px] transition-colors ${
-                            active
-                              ? "bg-slate-800 text-white font-medium"
-                              : "hover:bg-[var(--color-paper)] muted-text hover:text-[var(--color-ink)]"
-                          }`}
-                        >
-                          <span className="truncate">{c.clusterName}</span>
-                          <span className={`text-[10px] tabular-nums shrink-0 ${active ? "text-slate-300" : "muted-text"}`}>
-                            {c.stockCount}
-                          </span>
-                        </button>
+                        <div key={c.clusterId} className="space-y-0.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedClusterId(c.clusterId);
+                              if (hasStockMatch && matchingStocks.length <= 3) {
+                                setSearch(matchingStocks[0].symbol);
+                              }
+                            }}
+                            className={`w-full flex items-center justify-between gap-1.5 px-2 py-1 rounded text-left text-[11.5px] transition-colors ${
+                              active
+                                ? "bg-slate-800 text-white font-medium"
+                                : "hover:bg-[var(--color-paper)] muted-text hover:text-[var(--color-ink)]"
+                            }`}
+                          >
+                            <span className="truncate">{c.clusterName}</span>
+                            <span className={`text-[10px] tabular-nums shrink-0 ${active ? "text-slate-300" : "muted-text"}`}>
+                              {c.stockCount}
+                            </span>
+                          </button>
+
+                          {/* Quick matching stock badges when search matches stocks */}
+                          {treeSearch.trim() && hasStockMatch && (
+                            <div className="pl-2 pr-1 py-0.5 flex flex-wrap gap-1">
+                              {matchingStocks.slice(0, 6).map((st) => (
+                                <button
+                                  key={st.symbol}
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedClusterId(c.clusterId);
+                                    setSearch(st.symbol);
+                                  }}
+                                  className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200 font-mono font-medium transition-colors"
+                                  title={st.companyName || st.symbol}
+                                >
+                                  <span>{st.symbol}</span>
+                                </button>
+                              ))}
+                              {matchingStocks.length > 6 && (
+                                <span className="text-[9.5px] muted-text self-center">
+                                  +{matchingStocks.length - 6} more
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       );
                     })}
                   </div>

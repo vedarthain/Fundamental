@@ -906,11 +906,16 @@ export function VerdictDetailClient({
 
   const tree = useMemo(() => {
     const needle = treeSearch.trim().toUpperCase();
+    const needleLower = treeSearch.trim().toLowerCase();
     const rows = scoped.filter((e) => {
       if (!needle) return true;
+      const sector = realSector(e).toLowerCase();
+      const industry = realIndustry(e).toLowerCase();
       return (
         e.symbol.toUpperCase().includes(needle) ||
-        (e.company_name ?? "").toUpperCase().includes(needle)
+        (e.company_name ?? "").toUpperCase().includes(needle) ||
+        sector.includes(needleLower) ||
+        industry.includes(needleLower)
       );
     });
     const bySector = new Map<string, Map<string, QueueEntry[]>>();
@@ -1401,12 +1406,24 @@ export function VerdictDetailClient({
             </span>
           </div>
           <div className="p-2 border-b hairline shrink-0">
-            <input
-              value={treeSearch}
-              onChange={(e) => setTreeSearch(e.target.value)}
-              placeholder="Find a stock or industry"
-              className="w-full px-2 py-1 text-[12px] rounded-md border hairline bg-transparent"
-            />
+            <div className="relative">
+              <input
+                value={treeSearch}
+                onChange={(e) => setTreeSearch(e.target.value)}
+                placeholder="Search sector, cluster, or stock…"
+                className="w-full pl-2 pr-6 py-1 text-[12px] rounded-md border hairline bg-transparent focus:outline-none"
+              />
+              {treeSearch && (
+                <button
+                  type="button"
+                  onClick={() => setTreeSearch("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] muted-text hover:text-[var(--color-ink)]"
+                  title="Clear search"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
           </div>
           <div className="px-2 py-1 border-b hairline shrink-0 flex justify-end">
             <button
