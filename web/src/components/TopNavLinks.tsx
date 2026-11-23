@@ -13,50 +13,32 @@ import { QuickAddTradeButton } from "./ManualTradeSheet";
  *
  * Two layouts share the same data:
  *
- *  - md+ (desktop / tablet): inline nav with the "Tools" dropdown +
- *    UserMenu chip on the right. Same as before this commit.
+ *  - md+ (desktop / tablet): inline nav with Segments, News, Ideas,
+ *    and conditional Admin dropdown (when isAdmin) + UserMenu chip on the right.
+ *    Tools is integrated into UserMenu under the user account.
  *
  *  - <md  (mobile): a persistent tab row directly below the logo +
  *    search bar (no hamburger). Layout in layout.tsx stacks logo /
- *    search / tabs as three rows. Order: Segments | News | Tools |
- *    Account.
+ *    search / tabs as three rows. Order: Segments | News | Ideas | Account (| Admin).
  *      • News is a direct-nav link (tap → navigate).
- *      • Segments, Tools, Account are popup dropdowns — tap opens a
- *        sheet of options anchored below the tab.
- *      • Ideas lives inside the Tools popup; Watchlist inside Account
- *        (account-specific data). Tabs flex to fit narrow phones.
+ *      • Segments, Ideas, Account, Admin are popup dropdowns.
+ *      • Tools lives inside the Account popup.
+ *      • Admin tab is only rendered when isAdmin === true.
  */
 
-type Submenu = { href: string; label: string; description?: string };
-type NavLink = { href: string; label: string; submenu?: Submenu[] };
+export type Submenu = { href: string; label: string; description?: string };
+export type NavLink = { href: string; label: string; submenu?: Submenu[] };
 
 const LINKS: NavLink[] = [
   {
-    // Three complementary market-structure views under one tab: the official
-    // index membership, our own scoring taxonomy, and an editorial thematic
-    // grouping that deliberately cuts across both.
     href: "/indices",
     label: "Segments",
     submenu: [
       { href: "/indices", label: "Indices", description: "Official NSE benchmarks + their constituents" },
       { href: "/sectors", label: "Sectors", description: "Our full-universe scoring view — every stock" },
-      // Sectors is a browse; this is the lookup. The sectors page scopes its
-      // industry sidebar to whichever sector tab is active, so finding
-      // "Media & Entertainment" without already knowing which sector holds it
-      // meant opening all nine tabs in turn. Same peer groups, one filter box,
-      // no hierarchy to guess at first.
       { href: "/industries", label: "Industries", description: "Every cluster in one filterable list — find one without knowing its sector" },
-      // A real route, not a Scanner deep-link. It briefly pointed at
-      // /tools/scanner?tab=all, and because isActive() below matches on pathname
-      // only, opening it lit up Tools instead of Segments. The table is a
-      // market-structure browse (the whole scored universe, sortable), not a
-      // daily catch like the scanners — so it moved out rather than being
-      // aliased. /tools/scanner?tab=all now redirects here.
       { href: "/stocks", label: "All Stocks", description: "The full scored universe in one sortable table — price, returns, composite, peer rank" },
       { href: "/themes",  label: "Themes",  description: "Defence, Drone, Data Center, Green Hydrogen — groupings no industry tree can express" },
-      // Moved out of /ideas?view=ipo. A listing calendar is market structure,
-      // not an opinion — it has no score and no history, so every control on
-      // the Ideas page meant nothing on it. /ideas?view=ipo redirects here.
       { href: "/ipo",     label: "IPO Tracker", description: "Mainboard and SME issues — open, upcoming, closed and recently listed" },
     ],
   },
@@ -70,18 +52,25 @@ const LINKS: NavLink[] = [
       { href: "/ideas?view=dividends", label: "Dividend Corner", description: "Dividend-paying stocks, high yields, consistency record, and upcoming payouts" },
     ],
   },
-  {
-    href: "/tools",
-    label: "Tools",
-    submenu: [
-      { href: "/tools/screener",          label: "Stock Screener",     description: "Filter by criteria, see ranked matches" },
-      { href: "/tools/scanner",          label: "Scanner",            description: "Igniting today, trend leaders, fallen leaders, rotation + graph" },
-      { href: "/tools/alerts",            label: "Alerts",             description: "Holdings that need a look + your price alerts" },
-      { href: "/tools/peer-comparison",   label: "Peer Comparison",    description: "Stack 2-5 stocks side by side" },
-      { href: "/tools/universe-changes",  label: "Universe Changes",   description: "Weekly log of stocks added & removed" },
-      { href: "/feedback",                label: "Feedback",           description: "Tell us what to build next" },
-    ],
-  },
+];
+
+export const TOOLS_MENU_ITEMS: Submenu[] = [
+  { href: "/tools/screener",         label: "Stock Screener",   description: "Filter by criteria, see ranked matches" },
+  { href: "/tools/scanner",          label: "Scanner",          description: "Igniting today, trend leaders, fallen leaders" },
+  { href: "/tools/alerts",           label: "Alerts",           description: "Holdings that need a look + your price alerts" },
+  { href: "/tools/peer-comparison",  label: "Peer Comparison",  description: "Stack 2-5 stocks side by side" },
+  { href: "/tools/universe-changes", label: "Universe Changes", description: "Weekly log of stocks added & removed" },
+  { href: "/feedback",               label: "Feedback",         description: "Tell us what to build next" },
+];
+
+export const ADMIN_MENU_ITEMS: Submenu[] = [
+  { href: "/admin/calls",       label: "Calls Desk",       description: "Verdicts, Portfolio Sweep & Calls Desk" },
+  { href: "/admin/logs",        label: "Cron Logs",        description: "Server Cron & Pipeline Execution Logs" },
+  { href: "/admin/insights",    label: "Site Insights",    description: "Real-User Speed Vitals, Slow Routes & Traffic" },
+  { href: "/admin/daily-brief", label: "Daily Brief",      description: "Daily Market Brief & Editorial Preview" },
+  { href: "/admin/upstox",      label: "Upstox Session",   description: "Daily Upstox API token reauth" },
+  { href: "/admin/screener",    label: "Screener Session", description: "Rotate the Screener.in session cookie" },
+  { href: "/admin/users",       label: "User Accounts",    description: "Manage registered user accounts & access" },
 ];
 
 function isActive(pathname: string, href: string): boolean {
@@ -89,10 +78,6 @@ function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(href + "/");
 }
 
-// Mobile popups render straight off these, never off a hand-copied list: a
-// literal duplicate of the Segments submenu is exactly how /themes shipped to
-// desktop and stayed invisible on phones.
-const TOOLS_LINK = LINKS.find((l) => l.href === "/tools")!;
 const SEGMENTS_LINK = LINKS.find((l) => l.label === "Segments")!;
 const SEGMENTS_ITEMS = SEGMENTS_LINK.submenu ?? [];
 
@@ -105,11 +90,6 @@ export function TopNavLinks() {
   return (
     <>
       {/* ───── Desktop (lg+) ──────────────────────────────────────── */}
-      {/* lg, not md — this must switch in lockstep with the header row in
-          layout.tsx. While they disagreed, the tablet band rendered this
-          shrink-0 nav inside a row too narrow to hold it, which pushed the
-          user chip past the right edge and gave the site a horizontal
-          scrollbar. If you move one breakpoint, move the other. */}
       <nav className="hidden lg:flex items-center gap-3 lg:gap-6 text-[13px] lg:text-[14px] shrink-0 ml-auto">
         {LINKS.map((l) => {
           const active = l.submenu
@@ -119,6 +99,12 @@ export function TopNavLinks() {
             ? <DesktopDropdown key={l.href} link={l} active={active} />
             : <DesktopLink key={l.href} href={l.href} label={l.label} active={active} />;
         })}
+
+        {/* Dedicated Admin dropdown tab — only rendered when authenticated user is an admin */}
+        {!loading && isAdmin && (
+          <DesktopAdminDropdown active={isActive(pathname, "/admin")} />
+        )}
+
         {showWatchlist && (
           <DesktopLink href="/portfolio" label="Portfolio" active={isActive(pathname, "/portfolio")} />
         )}
@@ -135,7 +121,7 @@ export function TopNavLinks() {
         )}
       </nav>
 
-      {/* ───── Mobile (<md) — persistent tab bar ──────────────────── */}
+      {/* ───── Mobile (<lg) — persistent tab bar ──────────────────── */}
       <MobileTabBar
         pathname={pathname}
         user={user}
@@ -147,7 +133,7 @@ export function TopNavLinks() {
   );
 }
 
-// ── Desktop helpers (unchanged) ────────────────────────────────────────────
+// ── Desktop helpers ────────────────────────────────────────────────────────
 
 function DesktopLink({
   href, label, active,
@@ -231,6 +217,7 @@ function DesktopDropdown({ link, active }: { link: NavLink; active: boolean }) {
               key={item.href}
               href={item.href}
               role="menuitem"
+              onClick={() => setOpen(false)}
               className="block px-4 py-2.5 hover:bg-[var(--color-paper)] transition-colors"
             >
               <div className="text-[13.5px] font-medium ink-text">{item.label}</div>
@@ -241,16 +228,126 @@ function DesktopDropdown({ link, active }: { link: NavLink; active: boolean }) {
               )}
             </Link>
           ))}
-          {link.href === "/tools" && (
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DesktopAdminDropdown({ active }: { active: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [purgeState, setPurgeState] = useState<"idle" | "running" | "ok" | "error">("idle");
+  const pathname = usePathname();
+  const router = useRouter();
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [open]);
+
+  useEffect(() => { setOpen(false); }, [pathname]);
+
+  async function onPurgeCache() {
+    setPurgeState("running");
+    try {
+      const r = await fetch("/api/revalidate", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tags: ["sectors", "panel-cache", "market", "snapshot"] }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setPurgeState("ok");
+      router.refresh();
+      setTimeout(() => setPurgeState("idle"), 2000);
+    } catch {
+      setPurgeState("error");
+      setTimeout(() => setPurgeState("idle"), 3000);
+    }
+  }
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className={`relative pb-[3px] inline-flex items-center gap-1 transition-colors ${
+          active
+            ? "font-semibold text-[var(--color-accent-600)]"
+            : "text-[var(--color-ink)] hover:text-[var(--color-accent-600)]"
+        }`}
+      >
+        <span>Admin</span>
+        <span aria-hidden className="text-[10px] mt-px opacity-70">▾</span>
+        {active && (
+          <span
+            aria-hidden
+            className="absolute left-0 right-[14px] -bottom-[2px] h-[2px] rounded-full"
+            style={{ background: "var(--color-accent-600)" }}
+          />
+        )}
+      </button>
+
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 top-full mt-2 w-[290px] rounded-md border hairline shadow-lg z-50 overflow-hidden"
+          style={{ backgroundColor: "var(--color-card)" }}
+        >
+          <div className="px-4 py-2 border-b hairline bg-[var(--color-paper)]/50">
+            <span className="text-[10.5px] font-semibold tracking-wider uppercase muted-text">
+              Administration
+            </span>
+          </div>
+          {ADMIN_MENU_ITEMS.map((item) => (
             <Link
-              href={link.href}
+              key={item.href}
+              href={item.href}
               role="menuitem"
-              className="block px-4 py-2 border-t hairline text-[12px] hover:bg-[var(--color-paper)] transition-colors"
-              style={{ color: "var(--color-accent-600)" }}
+              onClick={() => setOpen(false)}
+              className="block px-4 py-2.5 hover:bg-[var(--color-paper)] transition-colors"
             >
-              See all tools →
+              <div className="text-[13.5px] font-medium ink-text">{item.label}</div>
+              {item.description && (
+                <div className="text-[11.5px] muted-text mt-0.5 leading-snug">
+                  {item.description}
+                </div>
+              )}
             </Link>
-          )}
+          ))}
+          <button
+            type="button"
+            role="menuitem"
+            disabled={purgeState === "running"}
+            onClick={onPurgeCache}
+            className="w-full text-left px-4 py-2.5 hover:bg-[var(--color-paper)] transition-colors border-t hairline"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[13.5px] font-medium ink-text">
+                {purgeState === "running" ? "Purging cache…"
+                  : purgeState === "ok"     ? "Cache purged ✓"
+                  : purgeState === "error"  ? "Purge failed — retry"
+                  : "Purge Cache"}
+              </span>
+            </div>
+            <div className="text-[11.5px] muted-text mt-0.5 leading-snug">
+              Force fresh server render of /indices, /sectors and caches
+            </div>
+          </button>
         </div>
       )}
     </div>
@@ -267,15 +364,13 @@ type MobileTabBarProps = {
   showSignIn: boolean;
 };
 
-type Popup = "segments" | "tools" | "account" | null;
+type Popup = "segments" | "ideas" | "account" | "admin" | null;
 
 function MobileTabBar({ pathname, user, isAdmin, showWatchlist, showSignIn }: MobileTabBarProps) {
   const [popup, setPopup] = useState<Popup>(null);
   const ref = useRef<HTMLDivElement>(null);
 
-  // Close popup on outside-click.  We register one generic listener
-  // typed as Event so the same handler can serve mousedown and
-  // touchstart without an overload mismatch.
+  // Close popup on outside-click.
   useEffect(() => {
     if (popup === null) return;
     const handler = (e: Event) => {
@@ -301,25 +396,27 @@ function MobileTabBar({ pathname, user, isAdmin, showWatchlist, showSignIn }: Mo
   useEffect(() => { setPopup(null); }, [pathname]);
 
   const segmentsActive = SEGMENTS_ITEMS.some((s) => isActive(pathname, s.href));
-  const toolsActive = isActive(pathname, "/tools") || isActive(pathname, "/ideas") || (TOOLS_LINK.submenu ?? []).some((s) => isActive(pathname, s.href));
+  const ideasActive = isActive(pathname, "/ideas");
   const accountActive = isActive(pathname, "/watchlist") || isActive(pathname, "/portfolio") ||
                         isActive(pathname, "/dashboard") ||
-                        isActive(pathname, "/login") || isActive(pathname, "/admin") ||
-                        isActive(pathname, "/account");
+                        isActive(pathname, "/login") || isActive(pathname, "/account") ||
+                        TOOLS_MENU_ITEMS.some((s) => isActive(pathname, s.href));
+  const adminActive = isActive(pathname, "/admin");
 
   return (
     <div ref={ref} className="lg:hidden relative">
-      {/* The tab bar. Horizontally scrolls on very narrow phones; on
-          most viewports (>360px) all five tabs fit comfortably. */}
       <div
         role="tablist"
         className="flex border-t hairline overflow-x-auto"
         style={{ scrollbarWidth: "none" }}
       >
         <TabButton label="Segments" active={segmentsActive} isOpen={popup === "segments"} onClick={() => setPopup((p) => p === "segments" ? null : "segments")} />
-        <TabLink  href="/news"    label="News"    active={isActive(pathname, "/news")}    onClick={() => setPopup(null)} />
-        <TabButton label="Tools"   active={toolsActive}   isOpen={popup === "tools"}   onClick={() => setPopup((p) => p === "tools"   ? null : "tools"  )} />
-        <TabButton label="Account" active={accountActive} isOpen={popup === "account"} onClick={() => setPopup((p) => p === "account" ? null : "account")} />
+        <TabLink  href="/news"     label="News"     active={isActive(pathname, "/news")}    onClick={() => setPopup(null)} />
+        <TabButton label="Ideas"    active={ideasActive}    isOpen={popup === "ideas"}    onClick={() => setPopup((p) => p === "ideas"    ? null : "ideas"   )} />
+        <TabButton label="Account"  active={accountActive}  isOpen={popup === "account"}  onClick={() => setPopup((p) => p === "account"  ? null : "account" )} />
+        {isAdmin && (
+          <TabButton label="Admin"  active={adminActive}    isOpen={popup === "admin"}    onClick={() => setPopup((p) => p === "admin"    ? null : "admin"   )} />
+        )}
       </div>
 
       {popup && (
@@ -383,7 +480,7 @@ function TabButton({
 // ── Mobile popup sheets ────────────────────────────────────────────────────
 
 type PopupSheetProps = {
-  which: "segments" | "tools" | "account";
+  which: "segments" | "ideas" | "account" | "admin";
   onClose: () => void;
   pathname: string;
   user: ReturnType<typeof useSession>["user"];
@@ -447,32 +544,29 @@ function PopupSheet({
         </>
       )}
 
-      {which === "tools" && (
+      {which === "ideas" && (
         <>
           <PopupLink
             href="/ideas"
-            label="Ideas — Trends"
-            sublabel="Compounders, breakouts, and value"
+            label="Trends"
+            sublabel="Compounders, breakouts, and value in clusters"
             active={pathname === "/ideas"}
             onClose={onClose}
           />
           <PopupLink
             href="/ideas?view=results"
             label="Results Corner"
-            sublabel="Declared quarterly results for NSE stocks"
-            active={pathname === "/ideas"}
+            sublabel="Declared quarterly results for NSE stocks sorted by date"
+            active={pathname.startsWith("/ideas") && pathname.includes("results")}
             onClose={onClose}
           />
-          {(TOOLS_LINK.submenu ?? []).map((item) => (
-            <PopupLink
-              key={item.href}
-              href={item.href}
-              label={item.label}
-              sublabel={item.description}
-              active={isActive(pathname, item.href)}
-              onClose={onClose}
-            />
-          ))}
+          <PopupLink
+            href="/ideas?view=dividends"
+            label="Dividend Corner"
+            sublabel="Dividend-paying stocks, high yields, consistency record & payouts"
+            active={pathname.startsWith("/ideas") && pathname.includes("dividends")}
+            onClose={onClose}
+          />
         </>
       )}
 
@@ -495,15 +589,6 @@ function PopupSheet({
                   label="Home"
                   sublabel="Equity book"
                   active={isActive(pathname, "/dashboard")}
-                  onClose={onClose}
-                />
-              )}
-              {showWatchlist && (
-                <PopupLink
-                  href="/tools/alerts"
-                  label="Alerts"
-                  sublabel="Holdings that need a look"
-                  active={isActive(pathname, "/tools/alerts")}
                   onClose={onClose}
                 />
               )}
@@ -532,73 +617,24 @@ function PopupSheet({
                 active={isActive(pathname, "/account")}
                 onClose={onClose}
               />
-              {isAdmin && (
-                <>
-                  <PopupLink
-                    href="/admin/upstox"
-                    label="Upstox session"
-                    sublabel="Daily Upstox API token reauth"
-                    badge="ADMIN"
-                    active={isActive(pathname, "/admin/upstox")}
-                    onClose={onClose}
-                  />
-                  {/* Kept in step with UserMenu.tsx — the two admin menus are
-                      separate components rendering the same list, so an entry
-                      added to one and not the other is invisible on whichever
-                      breakpoint the operator happens to be using. */}
-                  <PopupLink
-                    href="/admin/screener"
-                    label="Screener session"
-                    sublabel="Rotate the Screener.in session cookie"
-                    badge="ADMIN"
-                    active={isActive(pathname, "/admin/screener")}
-                    onClose={onClose}
-                  />
 
-                  <PopupLink
-                    href="/admin/calls"
-                    label="Calls"
-                    sublabel="Calls Desk, Cluster Verdicts & Portfolio Sweep"
-                    badge="ADMIN"
-                    active={isActive(pathname, "/admin/calls")}
-                    onClose={onClose}
-                  />
-                  <PopupLink
-                    href="/admin/insights"
-                    label="Insights"
-                    sublabel="Real-User Speed Vitals, Slow Routes & Traffic"
-                    badge="ADMIN"
-                    active={isActive(pathname, "/admin/insights")}
-                    onClose={onClose}
-                  />
-                  <button
-                    type="button"
-                    onClick={onPurgeCache}
-                    disabled={purgeState === "running"}
-                    className="w-full text-left px-4 py-3 hover:bg-[var(--color-paper)] transition-colors"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[14px] font-medium">
-                        {purgeState === "running" ? "Purging cache…"
-                          : purgeState === "ok"     ? "Cache purged ✓"
-                          : purgeState === "error"  ? "Purge failed — retry"
-                          : "Purge cache"}
-                      </span>
-                      {purgeState === "idle" && (
-                        <span
-                          className="inline-block px-1 py-0.5 rounded text-[9.5px] font-semibold tracking-wide uppercase"
-                          style={{ backgroundColor: "var(--color-paper)", color: "var(--color-muted)" }}
-                        >
-                          Admin
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-[11.5px] muted-text mt-0.5 leading-snug">
-                      Force a fresh server render of /indices, /sectors and their data caches.
-                    </div>
-                  </button>
-                </>
-              )}
+              {/* Tools Section */}
+              <div className="px-4 pt-3 pb-1.5 border-t hairline bg-[var(--color-paper)]/40">
+                <div className="text-[10px] font-semibold tracking-wider uppercase muted-text">
+                  Tools
+                </div>
+              </div>
+              {TOOLS_MENU_ITEMS.map((item) => (
+                <PopupLink
+                  key={item.href}
+                  href={item.href}
+                  label={item.label}
+                  sublabel={item.description}
+                  active={isActive(pathname, item.href)}
+                  onClose={onClose}
+                />
+              ))}
+
               <div className="border-t hairline">
                 <button
                   type="button"
@@ -611,6 +647,53 @@ function PopupSheet({
               </div>
             </>
           )}
+        </>
+      )}
+
+      {which === "admin" && (
+        <>
+          <div className="px-4 py-3 border-b hairline bg-[var(--color-paper)]/50">
+            <div className="text-[10.5px] tracking-[0.12em] uppercase font-semibold muted-text">
+              Admin Controls
+            </div>
+          </div>
+          {ADMIN_MENU_ITEMS.map((item) => (
+            <PopupLink
+              key={item.href}
+              href={item.href}
+              label={item.label}
+              sublabel={item.description}
+              badge="ADMIN"
+              active={isActive(pathname, item.href)}
+              onClose={onClose}
+            />
+          ))}
+          <button
+            type="button"
+            onClick={onPurgeCache}
+            disabled={purgeState === "running"}
+            className="w-full text-left px-4 py-3 hover:bg-[var(--color-paper)] transition-colors border-t hairline"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[14px] font-medium">
+                {purgeState === "running" ? "Purging cache…"
+                  : purgeState === "ok"     ? "Cache purged ✓"
+                  : purgeState === "error"  ? "Purge failed — retry"
+                  : "Purge cache"}
+              </span>
+              {purgeState === "idle" && (
+                <span
+                  className="inline-block px-1 py-0.5 rounded text-[9.5px] font-semibold tracking-wide uppercase"
+                  style={{ backgroundColor: "var(--color-paper)", color: "var(--color-muted)" }}
+                >
+                  Admin
+                </span>
+              )}
+            </div>
+            <div className="text-[11.5px] muted-text mt-0.5 leading-snug">
+              Force a fresh server render of /indices, /sectors and their data caches.
+            </div>
+          </button>
         </>
       )}
     </div>

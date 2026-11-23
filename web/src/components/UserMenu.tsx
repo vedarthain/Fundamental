@@ -5,16 +5,8 @@
  *
  * Replaces the anonymous "Sign in" link once the user has a session.
  * Renders a circular initial badge (their email's first letter) that
- * expands on click into a dropdown showing the email and a Sign out
- * action.
- *
- * Visual treatment is intentionally distinct from the nav links — a
- * small chip rather than a text link — so the signed-in state reads
- * unambiguously from the corner of the eye. Without this, /watchlist
- * felt like a dead end ("am I even logged in?").
- *
- * Click-outside + Escape close the menu (same pattern as the Tools
- * dropdown).
+ * expands on click into a dropdown showing account details, tools, and
+ * a Sign out action.
  */
 
 import Link from "next/link";
@@ -25,14 +17,11 @@ import { broadcastSessionChange } from "@/lib/session-client";
 type Props = {
   email: string;
   displayName: string | null;
-  /** Whether the er_admin cookie validates — surfaces admin-only links. */
+  /** Preserved for interface compatibility */
   isAdmin?: boolean;
 };
 
-type PurgeState = "idle" | "running" | "ok" | "error";
-
-export /** Small "Admin" pill rendered inside admin-only menu items. Stays a
- *  separate helper because the same chip appears in two siblings. */
+export /** Small "Admin" pill rendered inside admin-only menu items. */
 function AdminBadge() {
   return (
     <span
@@ -44,10 +33,9 @@ function AdminBadge() {
   );
 }
 
-export function UserMenu({ email, displayName, isAdmin = false }: Props) {
+export function UserMenu({ email, displayName }: Props) {
   const [open, setOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
-  const [purgeState, setPurgeState] = useState<PurgeState>("idle");
   const ref = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
@@ -71,39 +59,12 @@ export function UserMenu({ email, displayName, isAdmin = false }: Props) {
     return () => document.removeEventListener("keydown", onKey);
   }, [open]);
 
-  async function onPurgeCache() {
-    setPurgeState("running");
-    try {
-      const r = await fetch("/api/revalidate", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        // Purge every tag the live data layer carries. Cheap; just
-        // rebuilds on next page render.
-        body: JSON.stringify({
-          tags: ["sectors", "panel-cache", "market", "snapshot"],
-        }),
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      setPurgeState("ok");
-      // Force a soft refresh of the current page so the user immediately
-      // sees the result of the purge.
-      router.refresh();
-      // Reset the "ok" badge after 2s so the menu doesn't show it forever.
-      setTimeout(() => setPurgeState("idle"), 2000);
-    } catch {
-      setPurgeState("error");
-      setTimeout(() => setPurgeState("idle"), 3000);
-    }
-  }
-
   async function onSignOut() {
     setSigningOut(true);
     try {
       await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
     } catch {
       // Cookie will still be cleared client-side via broadcast/refresh below
-      // even if the server call fails; not worth blocking on.
     }
     broadcastSessionChange();
     setOpen(false);
@@ -111,8 +72,7 @@ export function UserMenu({ email, displayName, isAdmin = false }: Props) {
     router.refresh();
   }
 
-  // Derive the badge initial from displayName first, then email.  Falls
-  // back to "?" for paranoia — never crash on a missing letter.
+  // Derive the badge initial from displayName first, then email.
   const initial =
     (displayName?.trim()?.[0] ?? email?.trim()?.[0] ?? "?").toUpperCase();
   const shortLabel = displayName?.trim() || email;
@@ -138,11 +98,6 @@ export function UserMenu({ email, displayName, isAdmin = false }: Props) {
         >
           {initial}
         </span>
-        {/* xl, not lg. The nav's six items already need ~583px; adding up to
-            140px of name on top of that overflowed the row again between 1024
-            and ~1120px — the same bug one breakpoint further along. Below xl
-            the chip is the avatar alone, and the full email is still in the
-            button's title and the first line of the open menu. */}
         <span className="hidden xl:inline text-[12.5px] font-medium max-w-[140px] truncate">
           {shortLabel}
         </span>
@@ -165,23 +120,15 @@ export function UserMenu({ email, displayName, isAdmin = false }: Props) {
             href="/dashboard"
             role="menuitem"
             onClick={() => setOpen(false)}
-            className="block px-4 py-2.5 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
+            className="block px-4 py-2 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
           >
             Home
-          </Link>
-          <Link
-            href="/tools/alerts"
-            role="menuitem"
-            onClick={() => setOpen(false)}
-            className="block px-4 py-2.5 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
-          >
-            Alerts
           </Link>
           <Link
             href="/portfolio"
             role="menuitem"
             onClick={() => setOpen(false)}
-            className="block px-4 py-2.5 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
+            className="block px-4 py-2 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
           >
             Your portfolio
           </Link>
@@ -189,7 +136,7 @@ export function UserMenu({ email, displayName, isAdmin = false }: Props) {
             href="/watchlist"
             role="menuitem"
             onClick={() => setOpen(false)}
-            className="block px-4 py-2.5 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
+            className="block px-4 py-2 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
           >
             Your watchlist
           </Link>
@@ -197,92 +144,67 @@ export function UserMenu({ email, displayName, isAdmin = false }: Props) {
             href="/account"
             role="menuitem"
             onClick={() => setOpen(false)}
-            className="block px-4 py-2.5 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
+            className="block px-4 py-2 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
             title="Change your password"
           >
             Account settings
           </Link>
-          {isAdmin && (
-            <>
-              <Link
-                href="/admin/upstox"
-                role="menuitem"
-                onClick={() => setOpen(false)}
-                className="block px-4 py-2.5 hover:bg-[var(--color-paper)] transition-colors text-[13px] border-t hairline"
-                title="Admin · daily Upstox token reauth"
-              >
-                Upstox session{" "}
-                <AdminBadge />
-              </Link>
-              {/* Sits next to Upstox because they are the same chore: a
-                  credential that expires and that only a human can renew. It is
-                  in this menu rather than only at a bookmarked URL because the
-                  Screener cookie's failure mode is being forgotten — it went 33
-                  days stale in the GitHub secrets before anyone noticed. A link
-                  you pass every day is part of the fix. */}
-              <Link
-                href="/admin/screener"
-                role="menuitem"
-                onClick={() => setOpen(false)}
-                className="block px-4 py-2.5 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
-                title="Admin · rotate the Screener.in session cookie"
-              >
-                Screener session{" "}
-                <AdminBadge />
-              </Link>
 
-              <Link
-                href="/admin/calls"
-                role="menuitem"
-                onClick={() => setOpen(false)}
-                className="block px-4 py-2.5 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
-                title="Admin · Calls Desk, Verdicts & Portfolio Sweep"
-              >
-                Calls{" "}
-                <AdminBadge />
-              </Link>
-              <Link
-                href="/admin/insights"
-                role="menuitem"
-                onClick={() => setOpen(false)}
-                className="block px-4 py-2.5 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
-                title="Admin · Site Insights & Speed Vitals"
-              >
-                Insights{" "}
-                <AdminBadge />
-              </Link>
-              <Link
-                href="/admin/logs"
-                role="menuitem"
-                onClick={() => setOpen(false)}
-                className="block px-4 py-2.5 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
-                title="Admin · Server Cron & Pipeline Execution Logs"
-              >
-                Cron Logs{" "}
-                <AdminBadge />
-              </Link>
-              <button
-                type="button"
-                role="menuitem"
-                disabled={purgeState === "running"}
-                onClick={onPurgeCache}
-                className="w-full text-left px-4 py-2.5 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
-                title="Admin · purge Next.js Data Cache so the next page render fetches fresh data"
-              >
-                {purgeState === "running"
-                  ? "Purging cache…"
-                  : purgeState === "ok"
-                    ? "Cache purged ✓"
-                    : purgeState === "error"
-                      ? "Purge failed — retry"
-                      : (
-                        <>
-                          Purge cache <AdminBadge />
-                        </>
-                      )}
-              </button>
-            </>
-          )}
+          {/* Tools Section */}
+          <div className="px-4 pt-2.5 pb-1 border-t hairline">
+            <div className="text-[10.5px] font-semibold tracking-wider uppercase muted-text">
+              Tools
+            </div>
+          </div>
+          <Link
+            href="/tools/screener"
+            role="menuitem"
+            onClick={() => setOpen(false)}
+            className="block px-4 py-2 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
+          >
+            Stock Screener
+          </Link>
+          <Link
+            href="/tools/scanner"
+            role="menuitem"
+            onClick={() => setOpen(false)}
+            className="block px-4 py-2 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
+          >
+            Scanner
+          </Link>
+          <Link
+            href="/tools/alerts"
+            role="menuitem"
+            onClick={() => setOpen(false)}
+            className="block px-4 py-2 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
+          >
+            Alerts
+          </Link>
+          <Link
+            href="/tools/peer-comparison"
+            role="menuitem"
+            onClick={() => setOpen(false)}
+            className="block px-4 py-2 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
+          >
+            Peer Comparison
+          </Link>
+          <Link
+            href="/tools/universe-changes"
+            role="menuitem"
+            onClick={() => setOpen(false)}
+            className="block px-4 py-2 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
+          >
+            Universe Changes
+          </Link>
+          <Link
+            href="/feedback"
+            role="menuitem"
+            onClick={() => setOpen(false)}
+            className="block px-4 py-2 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
+          >
+            Feedback
+          </Link>
+
           <button
             type="button"
             role="menuitem"
