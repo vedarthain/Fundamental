@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { promises as fs } from "fs";
+import path from "path";
 import { isAdminRequest } from "@/lib/auth";
 import { sql, golden } from "@/lib/db";
 
@@ -134,6 +136,29 @@ export type MonthlyAuditRow = {
   sells: MonthlyTradeItem[];
 };
 
+export type CallsSummary = {
+  totalGems: number;
+  totalClusterCalls: number;
+  portfolioTotalCount: number;
+  portfolioTrimCount: number;
+  portfolioHoldCount: number;
+  portfolioAccumulateCount: number;
+  portfolioExitCount: number;
+  totalInvestedCr: number;
+  totalCurrentCr: number;
+  fullHoldingsCount?: number;
+  horizonCounts?: Record<string, number>;
+  statusCounts?: Record<string, number>;
+};
+
+export type CallsPayload = {
+  summary: CallsSummary;
+  availableDates?: string[];
+  clusterGems: ClusterGem[];
+  portfolioActions: PortfolioActionCall[];
+  monthlyAudit?: MonthlyAuditRow[];
+};
+
 function determineIdeaHorizon(args: {
   actionToday?: string;
   upsidePct?: number | null;
@@ -226,14 +251,92 @@ function determineIdeaHorizon(args: {
 }
 
 type CallsCacheEntry = {
-  payload: Awaited<ReturnType<typeof computeCallsPayload>>;
+  payload: CallsPayload;
   fetchedAt: number;
   refreshing?: Promise<void>;
 };
 
-const CALLS_FRESH_MS = 5 * 60 * 1000; // 5 minutes
-const CALLS_STALE_MS = 60 * 60 * 1000; // 60 minutes stale-while-revalidate
+const CALLS_FRESH_MS = 5 * 60 * 1000; // 5 minutes fresh
+const CALLS_STALE_MS = 24 * 60 * 60 * 1000; // 24 hours stale-while-revalidate
 const callsMemoryCache = new Map<string, CallsCacheEntry>();
+
+let cachedGoldenMap: { map: Map<string, { close: number; barDate: string; eodIso: string }>; fetchedAt: number } | null = null;
+const GOLDEN_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+const DISK_CACHE_DIR = "/tmp";
+function getDiskCachePath(key: string): string {
+  return path.join(DISK_CACHE_DIR, `er_calls_cache_${key.replace(/[^a-zA-Z0-9_-]/g, "_")}.json`);
+}
+
+async function readDiskCache(key: string): Promise<{ payload: CallsPayload; fetchedAt: number } | null> {
+  try {
+    const filePath = getDiskCachePath(key);
+    const stat = await fs.stat(filePath);
+    const content = await fs.readFile(filePath, "utf8");
+    const payload = JSON.parse(content) as CallsPayload;
+    if (!payload?.clusterGems?.length) return null;
+    return { payload, fetchedAt: stat.mtimeMs };
+  } catch {
+    return null;
+  }
+}
+
+async function writeDiskCache(key: string, payload: CallsPayload): Promise<void> {
+  try {
+    const filePath = getDiskCachePath(key);
+    const tmpPath = `${filePath}.${Date.now()}.tmp`;
+    await fs.writeFile(tmpPath, JSON.stringify(payload), "utf8");
+    await fs.rename(tmpPath, filePath);
+  } catch {
+    // Non-fatal write failure to /tmp
+  }
+}
+
+export async function getCachedCallsPayload(
+  dateParam: string | null = null,
+  forceRefresh: boolean = false,
+): Promise<CallsPayload> {
+  const cacheKey = dateParam ?? "ALL";
+  const now = Date.now();
+  let existing = callsMemoryCache.get(cacheKey);
+
+  // 1. If memory cache is cold, hydrate immediately from disk cache
+  if (!existing) {
+    const disk = await readDiskCache(cacheKey);
+    if (disk) {
+      existing = { payload: disk.payload, fetchedAt: disk.fetchedAt };
+      callsMemoryCache.set(cacheKey, existing);
+    }
+  }
+
+  // 2. If we have an existing cache entry and this is NOT a forced refresh:
+  if (!forceRefresh && existing && now - existing.fetchedAt < CALLS_STALE_MS) {
+    const isPastFresh = now - existing.fetchedAt >= CALLS_FRESH_MS;
+
+    // Trigger silent background revalidation if past fresh TTL without blocking the caller
+    if (isPastFresh && !existing.refreshing) {
+      existing.refreshing = computeCallsPayload(dateParam)
+        .then(async (fresh) => {
+          callsMemoryCache.set(cacheKey, { payload: fresh, fetchedAt: Date.now() });
+          await writeDiskCache(cacheKey, fresh);
+        })
+        .catch(() => {})
+        .finally(() => {
+          const cur = callsMemoryCache.get(cacheKey);
+          if (cur) cur.refreshing = undefined;
+        });
+    }
+
+    // ALWAYS serve the cached payload immediately (<5ms)
+    return existing.payload;
+  }
+
+  // 3. Cold start or forced refresh: compute synchronously
+  const payload = await computeCallsPayload(dateParam);
+  callsMemoryCache.set(cacheKey, { payload, fetchedAt: Date.now() });
+  writeDiskCache(cacheKey, payload).catch(() => {});
+  return payload;
+}
 
 function isInternalWarmRequest(request: Request): boolean {
   const { searchParams } = new URL(request.url);
@@ -257,40 +360,8 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const dateParam = searchParams.get("date"); // e.g. "2026-10-31"
     const forceRefresh = searchParams.get("refresh") === "1" || isWarm;
-    const cacheKey = dateParam ?? "ALL";
-    const now = Date.now();
-    const existing = callsMemoryCache.get(cacheKey);
 
-    if (!forceRefresh && existing && now - existing.fetchedAt < CALLS_STALE_MS) {
-      // Check if /api/cron/intraday-equity fired since this cache entry was built
-      const latestMeta = await sql<{ ts: number | null }[]>`
-        SELECT (EXTRACT(EPOCH FROM MAX(price_fetched_at)) * 1000)::float8 AS ts
-          FROM app.screener_meta
-         WHERE price_fetched_at IS NOT NULL
-      `.catch(() => [] as { ts: number | null }[]);
-      const latestEquityMs = latestMeta[0]?.ts ?? 0;
-
-      if (latestEquityMs <= existing.fetchedAt) {
-        // Serve immediately; if past fresh TTL, refresh silently in background
-        if (now - existing.fetchedAt >= CALLS_FRESH_MS && !existing.refreshing) {
-          existing.refreshing = computeCallsPayload(dateParam)
-            .then((fresh) => {
-              callsMemoryCache.set(cacheKey, { payload: fresh, fetchedAt: Date.now() });
-            })
-            .catch(() => {})
-            .finally(() => {
-              const cur = callsMemoryCache.get(cacheKey);
-              if (cur) cur.refreshing = undefined;
-            });
-        }
-        return NextResponse.json(existing.payload, {
-          headers: { "Cache-Control": "no-store" },
-        });
-      }
-    }
-
-    const payload = await computeCallsPayload(dateParam);
-    callsMemoryCache.set(cacheKey, { payload, fetchedAt: Date.now() });
+    const payload = await getCachedCallsPayload(dateParam, forceRefresh);
 
     if (isWarm) {
       return NextResponse.json({
@@ -562,33 +633,40 @@ async function computeCallsPayload(dateParam: string | null) {
     ].filter(Boolean);
     const targetNsSyms = targetSymbols.map((s) => `${s}.NS`);
 
-    const goldenRows = targetNsSyms.length > 0
-      ? await golden<{ symbol: string; close: number; bar_date: string }[]>`
-          SELECT c.symbol, p.close, p.bar_date
-          FROM unnest(${targetNsSyms}::text[]) AS c(symbol)
-          CROSS JOIN LATERAL (
-            SELECT
-              COALESCE(ph.adj_close, ph.close)::float8 AS close,
-              ph.date::text AS bar_date
-            FROM golden.price_history_1d ph
-            WHERE ph.symbol = c.symbol
-              AND ph.interval = '1d'
-              AND COALESCE(ph.adj_close, ph.close) IS NOT NULL
-            ORDER BY ph.date DESC
-            LIMIT 1
-          ) p
-        `.catch(() => [] as { symbol: string; close: number; bar_date: string }[])
-      : [];
+    let goldenMap = cachedGoldenMap && Date.now() - cachedGoldenMap.fetchedAt < GOLDEN_CACHE_TTL_MS
+      ? cachedGoldenMap.map
+      : null;
 
-    const goldenMap = new Map<string, { close: number; barDate: string; eodIso: string }>();
-    for (const gr of goldenRows) {
-      const bareSym = gr.symbol.replace(/\.NS$/, "");
-      // 15:30 IST = 10:00 UTC
-      goldenMap.set(bareSym, {
-        close: Number(gr.close),
-        barDate: gr.bar_date,
-        eodIso: `${gr.bar_date}T10:00:00.000Z`,
-      });
+    if (!goldenMap) {
+      const goldenRows = targetNsSyms.length > 0
+        ? await golden<{ symbol: string; close: number; bar_date: string }[]>`
+            SELECT c.symbol, p.close, p.bar_date
+            FROM unnest(${targetNsSyms}::text[]) AS c(symbol)
+            CROSS JOIN LATERAL (
+              SELECT
+                COALESCE(ph.adj_close, ph.close)::float8 AS close,
+                ph.date::text AS bar_date
+              FROM golden.price_history_1d ph
+              WHERE ph.symbol = c.symbol
+                AND ph.interval = '1d'
+                AND COALESCE(ph.adj_close, ph.close) IS NOT NULL
+              ORDER BY ph.date DESC
+              LIMIT 1
+            ) p
+          `.catch(() => [] as { symbol: string; close: number; bar_date: string }[])
+        : [];
+
+      goldenMap = new Map<string, { close: number; barDate: string; eodIso: string }>();
+      for (const gr of goldenRows) {
+        const bareSym = gr.symbol.replace(/\.NS$/, "");
+        // 15:30 IST = 10:00 UTC
+        goldenMap.set(bareSym, {
+          close: Number(gr.close),
+          barDate: gr.bar_date,
+          eodIso: `${gr.bar_date}T10:00:00.000Z`,
+        });
+      }
+      cachedGoldenMap = { map: goldenMap, fetchedAt: Date.now() };
     }
 
     const resolveLatestPrice = (sym: string, appLtpRaw: unknown, appTsRaw: unknown): { ltp: number; fetchedAt: string | null } => {

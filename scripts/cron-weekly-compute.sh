@@ -65,6 +65,9 @@ if [ -n "${REVALIDATE_TOKEN:-}" ]; then
   curl -s -X POST "http://localhost:3000/api/revalidate?token=$REVALIDATE_TOKEN" \
     -H "Content-Type: application/json" \
     -d '{"tags":["market","panel-cache","snapshot","sectors","scores"]}' || true
+
+  echo "=== 8. Pre-warming Calls Desk Cache ==="
+  curl -s "http://localhost:3000/api/admin/calls?warm=1&refresh=1&token=$REVALIDATE_TOKEN" >/dev/null 2>&1 || true
 fi
 
 echo "================================================================================"

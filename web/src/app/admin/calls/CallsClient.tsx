@@ -49,7 +49,7 @@ import { ClusterVerdictsClient, type SectorTreeNode } from "../verdicts/ClusterV
 import type { ClusterVerdictRow } from "@/app/api/admin/cluster-verdicts/route";
 import CapTierBadge, { type CapCategory } from "@/components/CapTierBadge";
 import { parseParameterItems, getModelAnalysis, ModelCard } from "@/components/VerdictPanel";
-import type { ClusterGem, PortfolioActionCall, IdeaHorizon, MonthlyAuditRow, MonthlyTradeItem } from "@/app/api/admin/calls/route";
+import type { ClusterGem, PortfolioActionCall, IdeaHorizon, MonthlyAuditRow, MonthlyTradeItem, CallsPayload } from "@/app/api/admin/calls/route";
 
 function money(v: number | null | undefined, digits?: number): string {
   if (v == null) return "—";
@@ -664,35 +664,29 @@ export const CURATED_RESEARCH_NOTES: Record<string, CuratedResearchDetails> = {
 };
 
 export function CallsClient({
+  initialData = null,
   verdictSectors = [],
   verdictInitialClusterId = null,
   verdictInitialItems = [],
 }: {
+  initialData?: CallsPayload | null;
   verdictSectors?: SectorTreeNode[];
   verdictInitialClusterId?: string | null;
   verdictInitialItems?: ClusterVerdictRow[];
 } = {}) {
   const [deskSection, setDeskSection] = useState<"calls" | "verdicts">("calls");
-  const [data, setData] = useState<{
-    summary: {
-      totalGems: number;
-      totalClusterCalls: number;
-      portfolioTotalCount: number;
-      portfolioTrimCount: number;
-      portfolioHoldCount: number;
-      portfolioAccumulateCount: number;
-      portfolioExitCount: number;
-      totalInvestedCr: number;
-      totalCurrentCr: number;
-      fullHoldingsCount?: number;
-    };
-    availableDates?: string[];
-    clusterGems: ClusterGem[];
-    portfolioActions: PortfolioActionCall[];
-    monthlyAudit?: MonthlyAuditRow[];
-  } | null>(() => (clientCallsCache && Date.now() - clientCallsCache.ts < CLIENT_CALLS_CACHE_TTL_MS ? clientCallsCache.data : null));
+  const [data, setData] = useState<CallsPayload | null>(() => {
+    if (initialData) return initialData;
+    if (clientCallsCache && Date.now() - clientCallsCache.ts < CLIENT_CALLS_CACHE_TTL_MS) {
+      return clientCallsCache.data;
+    }
+    return null;
+  });
 
-  const [loading, setLoading] = useState(() => !(clientCallsCache && Date.now() - clientCallsCache.ts < CLIENT_CALLS_CACHE_TTL_MS));
+  const [loading, setLoading] = useState(() => {
+    if (initialData) return false;
+    return !(clientCallsCache && Date.now() - clientCallsCache.ts < CLIENT_CALLS_CACHE_TTL_MS);
+  });
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -877,7 +871,7 @@ export function CallsClient({
       setLoading(false);
       return;
     }
-    if (!clientCallsCache) setLoading(true);
+    if (!data && !clientCallsCache) setLoading(true);
     try {
       const res = await fetch(forceRefresh ? "/api/admin/calls?refresh=1" : "/api/admin/calls");
       if (res.ok) {
@@ -890,16 +884,20 @@ export function CallsClient({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [data]);
 
   useEffect(() => {
-    fetchData();
+    if (initialData && !clientCallsCache) {
+      clientCallsCache = { ts: Date.now(), data: initialData };
+    } else if (!initialData && !clientCallsCache) {
+      fetchData(false);
+    }
     const id = setInterval(() => {
-      fetchData(true);
+      fetchData(false);
     }, 5 * 60 * 1000);
     const onIndicesFetched = () => {
       if (clientCallsCache && Date.now() - clientCallsCache.ts >= 60 * 1000) {
-        fetchData(true);
+        fetchData(false);
       }
     };
     window.addEventListener("er:indices-fetched", onIndicesFetched);
@@ -907,7 +905,7 @@ export function CallsClient({
       clearInterval(id);
       window.removeEventListener("er:indices-fetched", onIndicesFetched);
     };
-  }, [fetchData]);
+  }, [fetchData, initialData]);
 
   // User take / exit action handlers
   const handleTakeCall = async (symbol: string) => {

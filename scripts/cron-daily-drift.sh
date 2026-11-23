@@ -60,6 +60,9 @@ if [ -n "${REVALIDATE_TOKEN:-}" ]; then
     -H "Content-Type: application/json" \
     -d '{"tags":["market","panel-cache","snapshot","sectors","calls"]}' || true
   echo ""
+
+  echo "Pre-warming Calls Desk cache..."
+  curl -s "http://localhost:3000/api/admin/calls?warm=1&refresh=1&token=$REVALIDATE_TOKEN" >/dev/null 2>&1 || true
 fi
 
 echo "================================================================================"
