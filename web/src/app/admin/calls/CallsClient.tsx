@@ -360,6 +360,7 @@ function cleanPointText(raw: string, tagRegex: RegExp): { metric: string; peer?:
 
 const CUSTOM_PURCHASE_KEY = "calls_custom_purchase_v1";
 const CALLS_VIEW_STATE_KEY = "calls_view_state_v1";
+const CALLS_BOOKMARK_SYMBOL_KEY = "calls_bookmark_symbol_v1";
 
 type Scope = "all" | "curated" | "new" | "portfolio";
 type ActionFilter = "ALL" | "BUY" | "WATCH" | "PRIORITY_SELL" | "SELL" | "HOLD";
@@ -705,9 +706,9 @@ export function CallsClient({
   const [isDateDropdownOpen, setIsDateDropdownOpen] = useState(false);
   const dateDropdownRef = useRef<HTMLDivElement>(null);
 
-  // Scope & Action Filters: Always default to 'curated' (Top) on refresh
-  const [scope, setScope] = useState<Scope>("curated");
-  const [actionFilter, setActionFilter] = useState<ActionFilter>("ALL");
+  // Scope & Action Filters: Always default to 'all' & 'BUY' on refresh as requested
+  const [scope, setScope] = useState<Scope>("all");
+  const [actionFilter, setActionFilter] = useState<ActionFilter>("BUY");
   const [prioritySubFilter, setPrioritySubFilter] = useState<PriorityCategory>("ALL");
   const [search, setSearch] = useState("");
   const [capital] = useState<number>(100000);
@@ -715,8 +716,25 @@ export function CallsClient({
   // Left Rail View Mode: "sectors" (hierarchical Sector -> Cluster -> Stock) vs "stocks" (flat Only Stock view)
   const [leftRailMode, setLeftRailMode] = useState<"sectors" | "stocks">("sectors");
 
-  // Selected Stock & Detail Tab: dynamically defaults to the top scrip of active view
-  const [selectedSymbol, setSelectedSymbol] = useState<string>("");
+  // Selected Stock & Detail Tab: Synchronously initialized to bookmarked symbol if available
+  const [selectedSymbol, setSelectedSymbol] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const b = localStorage.getItem(CALLS_BOOKMARK_SYMBOL_KEY);
+        if (b && typeof b === "string") return b;
+        const saved = localStorage.getItem(CALLS_VIEW_STATE_KEY);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed.selectedSymbol && typeof parsed.selectedSymbol === "string") {
+            return parsed.selectedSymbol;
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return "";
+  });
   const [activeTab, setActiveTab] = useState<DetailTab>("overview");
   const [densityScope, setDensityScope] = useState<"curated" | "portfolio" | "all">("curated");
 
@@ -800,7 +818,7 @@ export function CallsClient({
     }
   }, []);
 
-  // Load workstation view state from localStorage (preserves viewMode, selectedSymbol, scope, activeTab, leftRailMode on refresh)
+  // Load workstation view state from localStorage (preserves viewMode, selectedSymbol, activeTab, leftRailMode on refresh)
   useEffect(() => {
     try {
       const savedState = localStorage.getItem(CALLS_VIEW_STATE_KEY);
@@ -808,9 +826,6 @@ export function CallsClient({
         const parsed = JSON.parse(savedState);
         if (parsed.selectedSymbol && typeof parsed.selectedSymbol === "string") {
           setSelectedSymbol(parsed.selectedSymbol);
-        }
-        if (parsed.scope && ["all", "curated", "new", "portfolio"].includes(parsed.scope)) {
-          setScope(parsed.scope);
         }
         if (parsed.activeTab && typeof parsed.activeTab === "string") {
           setActiveTab(parsed.activeTab);
@@ -824,10 +839,13 @@ export function CallsClient({
     }
   }, []);
 
-  // Save workstation view state when changed
+  // Save workstation view state and bookmark when changed
   useEffect(() => {
     if (!mounted) return;
     try {
+      if (selectedSymbol) {
+        localStorage.setItem(CALLS_BOOKMARK_SYMBOL_KEY, selectedSymbol);
+      }
       localStorage.setItem(
         CALLS_VIEW_STATE_KEY,
         JSON.stringify({
@@ -1615,32 +1633,55 @@ export function CallsClient({
     };
   }, [activeContextSymbol]);
 
-  // Whenever the active view filter/scope changes, automatically navigate to the top scrip of that view
+  // Whenever the active view filter/scope changes, navigate to bookmark or top scrip
   const prevFilterKey = useRef<string>("");
   useEffect(() => {
     const key = `${scope}::${actionFilter}::${prioritySubFilter}::${Array.from(selectedBatches).sort().join(",")}`;
     if (prevFilterKey.current !== key) {
-      const isInitial = prevFilterKey.current === "";
       prevFilterKey.current = key;
-      // Do NOT overwrite user's selectedSymbol on initial mount / page refresh!
-      if (!isInitial) {
-        const topScrip = sectorGroups[0]?.calls[0]?.symbol || filteredCalls[0]?.symbol;
-        if (topScrip) {
-          setSelectedSymbol(topScrip);
+      // Do NOT overwrite user's selectedSymbol if it's already in filteredCalls!
+      if (!selectedSymbol || !filteredCalls.some((c) => c.symbol === selectedSymbol)) {
+        let bookmark = "";
+        try {
+          bookmark = localStorage.getItem(CALLS_BOOKMARK_SYMBOL_KEY) || "";
+        } catch {}
+        if (bookmark && filteredCalls.some((c) => c.symbol === bookmark)) {
+          setSelectedSymbol(bookmark);
+        } else {
+          const topScrip = sectorGroups[0]?.calls[0]?.symbol || filteredCalls[0]?.symbol;
+          if (topScrip) {
+            setSelectedSymbol(topScrip);
+          }
         }
       }
     }
-  }, [scope, actionFilter, prioritySubFilter, selectedBatches, sectorGroups, filteredCalls]);
+  }, [scope, actionFilter, prioritySubFilter, selectedBatches, sectorGroups, filteredCalls, selectedSymbol]);
 
-  // Fallback: If selectedSymbol is not set, pick the top scrip
+  // Fallback: If selectedSymbol is not set or not in filteredCalls, restore bookmark or pick top scrip
   useEffect(() => {
     if (filteredCalls.length > 0) {
       if (!selectedSymbol) {
+        let bookmark = "";
+        try {
+          bookmark = localStorage.getItem(CALLS_BOOKMARK_SYMBOL_KEY) || "";
+        } catch {}
+        if (bookmark && filteredCalls.some((c) => c.symbol === bookmark)) {
+          setSelectedSymbol(bookmark);
+          return;
+        }
         const topScrip = sectorGroups[0]?.calls[0]?.symbol || filteredCalls[0]?.symbol;
         if (topScrip) {
           setSelectedSymbol(topScrip);
         }
       } else if (data != null && !filteredCalls.some((c) => c.symbol === selectedSymbol)) {
+        let bookmark = "";
+        try {
+          bookmark = localStorage.getItem(CALLS_BOOKMARK_SYMBOL_KEY) || "";
+        } catch {}
+        if (bookmark && filteredCalls.some((c) => c.symbol === bookmark)) {
+          setSelectedSymbol(bookmark);
+          return;
+        }
         const topScrip = sectorGroups[0]?.calls[0]?.symbol || filteredCalls[0]?.symbol;
         if (topScrip) {
           setSelectedSymbol(topScrip);
@@ -1666,18 +1707,26 @@ export function CallsClient({
         }
       }
     }
-    requestAnimationFrame(() => {
+
+    const scrollToTarget = (smooth = true) => {
       const container = document.getElementById("calls-left-rail-scroll");
-      const el = container?.querySelector<HTMLElement>(`[data-rail-symbol="${CSS.escape(sym)}"]`);
-      if (container && el) {
-        const elTop = el.offsetTop;
-        const containerTop = container.scrollTop;
-        const containerHeight = container.clientHeight;
-        if (elTop < containerTop || elTop > containerTop + containerHeight - 40) {
-          container.scrollTo({ top: Math.max(0, elTop - 40), behavior: "smooth" });
-        }
-      }
-    });
+      if (!container) return;
+      const el = container.querySelector<HTMLElement>(`[data-rail-symbol="${CSS.escape(sym)}"]`);
+      if (!el) return;
+      const elRect = el.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+      const relativeTop = elRect.top - containerRect.top + container.scrollTop;
+      const targetScrollTop = Math.max(0, relativeTop - container.clientHeight / 2 + el.clientHeight / 2);
+      container.scrollTo({ top: targetScrollTop, behavior: smooth ? "smooth" : "auto" });
+    };
+
+    scrollToTarget(false);
+    const t1 = setTimeout(() => scrollToTarget(true), 60);
+    const t2 = setTimeout(() => scrollToTarget(true), 250);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
   }, [selectedCall?.symbol, sectorGroups, leftRailMode]);
 
   // Chart trade markers for selected stock (displays P on graph for portfolio holdings)
@@ -2467,16 +2516,16 @@ export function CallsClient({
   // Smoothly scroll the selected stock into view if its branch is already open in the left rail
   useEffect(() => {
     if (!selectedCall?.symbol) return;
+    const sym = selectedCall.symbol;
     const t = setTimeout(() => {
-      const el = document.getElementById(`stock-rail-${selectedCall.symbol}`);
       const rail = document.getElementById("calls-left-rail-scroll");
+      const el = rail?.querySelector<HTMLElement>(`[data-rail-symbol="${CSS.escape(sym)}"]`);
       if (el && rail) {
-        const elTop = el.offsetTop;
-        const railTop = rail.scrollTop;
-        const railHeight = rail.clientHeight;
-        if (elTop < railTop || elTop > railTop + railHeight - 50) {
-          rail.scrollTo({ top: Math.max(0, elTop - 40), behavior: "smooth" });
-        }
+        const elRect = el.getBoundingClientRect();
+        const railRect = rail.getBoundingClientRect();
+        const relativeTop = elRect.top - railRect.top + rail.scrollTop;
+        const targetScrollTop = Math.max(0, relativeTop - rail.clientHeight / 2 + el.clientHeight / 2);
+        rail.scrollTo({ top: targetScrollTop, behavior: "smooth" });
       }
     }, 60);
     return () => clearTimeout(t);
