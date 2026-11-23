@@ -192,7 +192,19 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
 
   // Pagination
   const [page, setPage] = useState<number>(1);
-  const pageSize = 50;
+  const [pageSize, setPageSize] = useState<number>(100);
+
+  // Table Density: "compact" (default, high information density) vs "normal"
+  const [density, setDensity] = useState<"compact" | "normal">(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("equityroots_report_density_v1");
+        if (saved === "normal" || saved === "compact") return saved;
+      } catch {}
+    }
+    return "compact";
+  });
+  const isCompact = density === "compact";
 
   // Hydrate saved choices: local cache first (instant), then server sync (cross-device)
   useEffect(() => {
@@ -491,11 +503,11 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
 
     if (col.format === "badge_boolean") {
       return val ? (
-        <span className="inline-flex px-1.5 py-0.5 rounded text-[11px] font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+        <span className={`inline-flex px-1.5 rounded ${isCompact ? "text-[10px] py-0 leading-tight" : "text-[11px] py-0.5"} font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300`}>
           YES
         </span>
       ) : (
-        <span className="inline-flex px-1.5 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+        <span className={`inline-flex px-1.5 rounded ${isCompact ? "text-[10px] py-0 leading-tight" : "text-[11px] py-0.5"} font-semibold bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400`}>
           NO
         </span>
       );
@@ -513,7 +525,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
       } else if (s === "SELL") {
         colorCls = "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border border-rose-300 dark:border-rose-700 font-medium";
       }
-      return <span className={`inline-flex px-2 py-0.5 rounded text-[11px] whitespace-nowrap ${colorCls}`}>{String(val)}</span>;
+      return <span className={`inline-flex px-1.5 rounded ${isCompact ? "text-[10px] py-0 leading-tight" : "text-[11px] py-0.5"} whitespace-nowrap ${colorCls}`}>{String(val)}</span>;
     }
 
     if (col.format === "badge_moat") {
@@ -521,7 +533,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
       let colorCls = "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400";
       if (s === "WIDE") colorCls = "bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 font-semibold";
       else if (s === "NARROW") colorCls = "bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300";
-      return <span className={`inline-flex px-1.5 py-0.5 rounded text-[11px] whitespace-nowrap ${colorCls}`}>{String(val)}</span>;
+      return <span className={`inline-flex px-1.5 rounded ${isCompact ? "text-[10px] py-0 leading-tight" : "text-[11px] py-0.5"} whitespace-nowrap ${colorCls}`}>{String(val)}</span>;
     }
 
     if (col.format === "percent") {
@@ -532,7 +544,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
       if (col.id === "unrealized_pnl_pct") {
         return (
           <span
-            className={`inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-bold ${
+            className={`inline-flex items-center px-1 rounded ${isCompact ? "text-[10px] py-0 leading-tight" : "text-[11px] py-0.5"} font-bold ${
               isPositive
                 ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200/80 dark:border-emerald-800/80"
                 : isNegative
@@ -569,7 +581,11 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
       return <span>{num.toLocaleString("en-IN")}</span>;
     }
 
-    return <span className="max-w-md truncate block" title={String(val)}>{String(val)}</span>;
+    if (col.id === "company_name") {
+      return <span className="max-w-[180px] sm:max-w-[220px] truncate block font-medium" title={String(val)}>{String(val)}</span>;
+    }
+
+    return <span className="max-w-[220px] truncate block" title={String(val)}>{String(val)}</span>;
   };
 
   // Reusable Parameter Sidebar Content
@@ -909,6 +925,28 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                 </span>
               )}
 
+              {/* Density Toggle Button */}
+              <button
+                onClick={() => {
+                  setDensity((d) => {
+                    const next = d === "compact" ? "normal" : "compact";
+                    try {
+                      localStorage.setItem("equityroots_report_density_v1", next);
+                    } catch {}
+                    return next;
+                  });
+                }}
+                className={`inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg transition-colors border ${
+                  isCompact
+                    ? "bg-slate-100 hover:bg-slate-200 text-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200 border-slate-300 dark:border-slate-700"
+                    : "bg-white hover:bg-slate-50 text-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800 dark:text-slate-400 border-slate-200 dark:border-slate-800"
+                }`}
+                title={isCompact ? "Switch to Normal Row Spacing" : "Switch to Compact Density"}
+              >
+                <span>{isCompact ? "☵" : "☰"}</span>
+                <span>{isCompact ? "Compact" : "Comfortable"}</span>
+              </button>
+
               {/* Fullscreen Toggle Button */}
               <button
                 onClick={() => {
@@ -995,11 +1033,11 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                 </p>
               </div>
             ) : (
-              <div className={`overflow-x-auto overflow-y-auto ${isFullscreen ? "flex-1" : "max-h-[600px]"}`}>
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead className="bg-slate-50 dark:bg-slate-800/90 sticky top-0 z-10 border-b border-slate-200 dark:border-slate-800 backdrop-blur-xs">
+              <div className={`overflow-x-auto overflow-y-auto ${isFullscreen ? "flex-1" : "max-h-[calc(100vh-270px)] min-h-[460px]"}`}>
+                <table className={`w-full text-left border-collapse ${isCompact ? "text-[11px]" : "text-xs"}`}>
+                  <thead className="bg-slate-50 dark:bg-slate-800/95 sticky top-0 z-10 border-b border-slate-200 dark:border-slate-800 backdrop-blur-xs">
                     <tr>
-                      <th className="py-2.5 px-3 font-semibold text-slate-500 dark:text-slate-400 w-10 text-center sticky left-0 bg-slate-50 dark:bg-slate-800 z-20">
+                      <th className={`${isCompact ? "py-1.5 px-1.5 text-[10px] w-8" : "py-2.5 px-3 text-xs w-10"} font-semibold text-slate-500 dark:text-slate-400 text-center sticky left-0 bg-slate-50 dark:bg-slate-800 z-20`}>
                         #
                       </th>
                       {activeColumns.map((col, cIdx) => {
@@ -1009,8 +1047,8 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                           <th
                             key={col.id}
                             onClick={() => handleSort(col.id)}
-                            className={`py-2.5 px-3 font-semibold text-slate-700 dark:text-slate-300 cursor-pointer select-none hover:bg-slate-100 dark:hover:bg-slate-700/60 transition-colors whitespace-nowrap ${
-                              isFirstCol ? "sticky left-10 bg-slate-50 dark:bg-slate-800 z-20" : ""
+                            className={`${isCompact ? "py-1.5 px-2 text-[10.5px]" : "py-2.5 px-3 text-xs"} font-semibold text-slate-700 dark:text-slate-300 cursor-pointer select-none hover:bg-slate-100 dark:hover:bg-slate-700/60 transition-colors whitespace-nowrap ${
+                              isFirstCol ? (isCompact ? "sticky left-8 bg-slate-50 dark:bg-slate-800 z-20" : "sticky left-10 bg-slate-50 dark:bg-slate-800 z-20") : ""
                             } ${
                               col.align === "right"
                                 ? "text-right"
@@ -1025,7 +1063,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                               }`}
                             >
                               <span>{col.label}</span>
-                              <span className="text-[10px] text-slate-400">
+                              <span className="text-[9px] text-slate-400">
                                 {isSorted ? (sortDir === "asc" ? "▲" : "▼") : "⇅"}
                               </span>
                             </div>
@@ -1034,15 +1072,15 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                       })}
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800/70">
                     {paginatedRows.map((row, idx) => {
                       const absoluteIdx = (page - 1) * pageSize + idx + 1;
                       return (
                         <tr
                           key={row.symbol}
-                          className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
+                          className="even:bg-slate-50/40 dark:even:bg-slate-800/25 hover:bg-blue-50/60 dark:hover:bg-slate-800/70 transition-colors"
                         >
-                          <td className="py-2 px-3 text-slate-400 text-center font-mono text-[11px] sticky left-0 bg-white dark:bg-slate-900">
+                          <td className={`${isCompact ? "py-1 px-1 text-[10px]" : "py-2 px-3 text-[11px]"} text-slate-400 text-center font-mono sticky left-0 bg-white dark:bg-slate-900`}>
                             {absoluteIdx}
                           </td>
                           {activeColumns.map((col, cIdx) => {
@@ -1050,8 +1088,8 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                             return (
                               <td
                                 key={col.id}
-                                className={`py-2 px-3 whitespace-nowrap ${
-                                  isFirstCol ? "sticky left-10 bg-white dark:bg-slate-900 font-semibold" : ""
+                                className={`${isCompact ? "py-0.5 px-2" : "py-2 px-3"} whitespace-nowrap ${
+                                  isFirstCol ? (isCompact ? "sticky left-8 bg-white dark:bg-slate-900 font-semibold" : "sticky left-10 bg-white dark:bg-slate-900 font-semibold") : ""
                                 } ${
                                   col.align === "right"
                                   ? "text-right font-mono"
@@ -1074,11 +1112,28 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
 
             {/* Pagination Toolbar */}
             {totalPages > 1 && (
-              <div className="flex items-center justify-between px-3 py-2 bg-slate-50/70 dark:bg-slate-800/50 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500 shrink-0">
-                <span>
-                  Showing {((page - 1) * pageSize + 1).toLocaleString("en-IN")} to{" "}
-                  {Math.min(page * pageSize, sortedRows.length).toLocaleString("en-IN")} of {sortedRows.length.toLocaleString("en-IN")} stocks
-                </span>
+              <div className="flex items-center justify-between px-3 py-1.5 bg-slate-50/70 dark:bg-slate-800/50 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500 shrink-0">
+                <div className="flex items-center gap-3">
+                  <span>
+                    Showing {((page - 1) * pageSize + 1).toLocaleString("en-IN")} to{" "}
+                    {Math.min(page * pageSize, sortedRows.length).toLocaleString("en-IN")} of {sortedRows.length.toLocaleString("en-IN")} stocks
+                  </span>
+                  <div className="flex items-center gap-1 text-[11px]">
+                    <span className="text-slate-400">Page size:</span>
+                    <select
+                      value={pageSize}
+                      onChange={(e) => {
+                        setPageSize(Number(e.target.value));
+                        setPage(1);
+                      }}
+                      className="px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-700 dark:text-slate-300 focus:outline-none"
+                    >
+                      <option value={50}>50</option>
+                      <option value={100}>100</option>
+                      <option value={200}>200</option>
+                    </select>
+                  </div>
+                </div>
                 <div className="flex items-center gap-1.5">
                   <button
                     onClick={() => setPage(1)}
