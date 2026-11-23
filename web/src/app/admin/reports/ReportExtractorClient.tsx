@@ -1,0 +1,873 @@
+"use client";
+
+import React, { useState, useMemo, useCallback } from "react";
+import Link from "next/link";
+import type { ReportStockRow } from "@/lib/reportData";
+
+export type ParameterCategory =
+  | "identity"
+  | "pricing"
+  | "verdict"
+  | "moat"
+  | "scores"
+  | "fundamentals"
+  | "portfolio";
+
+export type ParameterDef = {
+  id: keyof ReportStockRow;
+  label: string;
+  category: ParameterCategory;
+  categoryLabel: string;
+  description?: string;
+  defaultSelected?: boolean;
+  align?: "left" | "right" | "center";
+  format?: "text" | "number" | "currency" | "percent" | "badge_verdict" | "badge_moat" | "badge_boolean" | "date";
+};
+
+export const PARAMETERS: ParameterDef[] = [
+  // 1. Identity & Classification
+  { id: "symbol", label: "Symbol", category: "identity", categoryLabel: "Identity & Sector", align: "left", format: "text", defaultSelected: true },
+  { id: "company_name", label: "Company Name", category: "identity", categoryLabel: "Identity & Sector", align: "left", format: "text", defaultSelected: true },
+  { id: "sector", label: "Sector", category: "identity", categoryLabel: "Identity & Sector", align: "left", format: "text", defaultSelected: true },
+  { id: "industry", label: "Industry / Cluster", category: "identity", categoryLabel: "Identity & Sector", align: "left", format: "text", defaultSelected: false },
+  { id: "market_cap_category", label: "Market Cap Tier", category: "identity", categoryLabel: "Identity & Sector", align: "center", format: "text", defaultSelected: false },
+  { id: "market_cap_cr", label: "Market Cap (₹ Cr)", category: "identity", categoryLabel: "Identity & Sector", align: "right", format: "number", defaultSelected: false },
+  { id: "maturity_tier", label: "Maturity Tier", category: "identity", categoryLabel: "Identity & Sector", align: "center", format: "text", defaultSelected: false },
+  { id: "is_nifty500", label: "NIFTY 500 Constituent", category: "identity", categoryLabel: "Identity & Sector", align: "center", format: "badge_boolean", defaultSelected: false },
+  { id: "listing_date", label: "Listing Date", category: "identity", categoryLabel: "Identity & Sector", align: "center", format: "date", defaultSelected: false },
+
+  // 2. Pricing & Returns
+  { id: "ltp", label: "Current Price / LTP (₹)", category: "pricing", categoryLabel: "Pricing & Returns", align: "right", format: "currency", defaultSelected: true },
+  { id: "ret_1d", label: "1-Day Change (%)", category: "pricing", categoryLabel: "Pricing & Returns", align: "right", format: "percent", defaultSelected: true },
+  { id: "ret_1w", label: "1-Week Return (%)", category: "pricing", categoryLabel: "Pricing & Returns", align: "right", format: "percent", defaultSelected: false },
+  { id: "ret_1m", label: "1-Month Return (%)", category: "pricing", categoryLabel: "Pricing & Returns", align: "right", format: "percent", defaultSelected: false },
+  { id: "ret_1y", label: "1-Year Return (%)", category: "pricing", categoryLabel: "Pricing & Returns", align: "right", format: "percent", defaultSelected: false },
+
+  // 3. Verdicts & Calls Desk (Price Targets & Audit)
+  { id: "verdict", label: "Verdict / Action", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "center", format: "badge_verdict", defaultSelected: true },
+  { id: "confidence", label: "Confidence", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "center", format: "text", defaultSelected: false },
+  { id: "buy_below", label: "Buy Below Price (₹)", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "right", format: "currency", defaultSelected: true },
+  { id: "target_price", label: "12M Target Price (₹)", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "right", format: "currency", defaultSelected: true },
+  { id: "fair_value", label: "Fair Value (₹)", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "right", format: "currency", defaultSelected: false },
+  { id: "bear_floor", label: "Bear Floor / Stop (₹)", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "right", format: "currency", defaultSelected: true },
+  { id: "upside_pct", label: "Upside to Target (%)", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "right", format: "percent", defaultSelected: true },
+  { id: "risk_reward", label: "Risk / Reward Ratio", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "right", format: "number", defaultSelected: false },
+  { id: "valuation_method", label: "Valuation Model", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "left", format: "text", defaultSelected: false },
+  { id: "verdict_date", label: "Verdict Audit Date", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "center", format: "date", defaultSelected: false },
+
+  // 4. Moat & Business Audit
+  { id: "moat_strength", label: "Moat Strength", category: "moat", categoryLabel: "Moat & Business Audit", align: "center", format: "badge_moat", defaultSelected: true },
+  { id: "moat_type", label: "Moat Type", category: "moat", categoryLabel: "Moat & Business Audit", align: "left", format: "text", defaultSelected: false },
+  { id: "moat_rationale", label: "Moat Rationale / Notes", category: "moat", categoryLabel: "Moat & Business Audit", align: "left", format: "text", defaultSelected: false },
+
+  // 5. Factor Scores & Ranks
+  { id: "composite_pct", label: "Composite Score (%)", category: "scores", categoryLabel: "Factor Scores & Ranks", align: "right", format: "number", defaultSelected: false },
+  { id: "quality_pct", label: "Quality Score (%)", category: "scores", categoryLabel: "Factor Scores & Ranks", align: "right", format: "number", defaultSelected: false },
+  { id: "valuation_pct", label: "Valuation Score (%)", category: "scores", categoryLabel: "Factor Scores & Ranks", align: "right", format: "number", defaultSelected: false },
+  { id: "momentum_pct", label: "Momentum Score (%)", category: "scores", categoryLabel: "Factor Scores & Ranks", align: "right", format: "number", defaultSelected: false },
+  { id: "peer_rank", label: "Peer Rank", category: "scores", categoryLabel: "Factor Scores & Ranks", align: "right", format: "number", defaultSelected: false },
+  { id: "peer_count", label: "Peer Pool Size", category: "scores", categoryLabel: "Factor Scores & Ranks", align: "right", format: "number", defaultSelected: false },
+
+  // 6. Valuation & Fundamentals
+  { id: "pe_ttm", label: "P/E Ratio (TTM)", category: "fundamentals", categoryLabel: "Valuation & Fundamentals", align: "right", format: "number", defaultSelected: false },
+  { id: "pb", label: "Price / Book (P/B)", category: "fundamentals", categoryLabel: "Valuation & Fundamentals", align: "right", format: "number", defaultSelected: false },
+  { id: "div_yield", label: "Dividend Yield (%)", category: "fundamentals", categoryLabel: "Valuation & Fundamentals", align: "right", format: "percent", defaultSelected: false },
+  { id: "roe_3y", label: "ROE / ROCE (3Y %)", category: "fundamentals", categoryLabel: "Valuation & Fundamentals", align: "right", format: "percent", defaultSelected: false },
+  { id: "op_margin_3y", label: "Operating Margin (%)", category: "fundamentals", categoryLabel: "Valuation & Fundamentals", align: "right", format: "percent", defaultSelected: false },
+  { id: "sales_cagr_5y", label: "5-Year Sales CAGR (%)", category: "fundamentals", categoryLabel: "Valuation & Fundamentals", align: "right", format: "percent", defaultSelected: false },
+  { id: "profit_cagr_5y", label: "5-Year Profit CAGR (%)", category: "fundamentals", categoryLabel: "Valuation & Fundamentals", align: "right", format: "percent", defaultSelected: false },
+
+  // 7. Portfolio & Holdings
+  { id: "is_in_portfolio", label: "In Portfolio?", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "center", format: "badge_boolean", defaultSelected: false },
+  { id: "held_quantity", label: "Held Quantity", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "right", format: "number", defaultSelected: false },
+  { id: "avg_cost", label: "Avg Purchase Cost (₹)", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "right", format: "currency", defaultSelected: false },
+  { id: "invested_value", label: "Invested Capital (₹)", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "right", format: "currency", defaultSelected: false },
+  { id: "current_value", label: "Current Value (₹)", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "right", format: "currency", defaultSelected: false },
+  { id: "unrealized_pnl", label: "Unrealized P&L (₹)", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "right", format: "currency", defaultSelected: false },
+  { id: "unrealized_pnl_pct", label: "Unrealized P&L (%)", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "right", format: "percent", defaultSelected: false },
+];
+
+const CATEGORIES: { id: ParameterCategory; label: string; icon: string }[] = [
+  { id: "identity", label: "Identity & Sector", icon: "🏷️" },
+  { id: "pricing", label: "Pricing & Returns", icon: "💰" },
+  { id: "verdict", label: "Verdicts & Calls Desk", icon: "🎯" },
+  { id: "moat", label: "Moat & Business Audit", icon: "🛡️" },
+  { id: "scores", label: "Factor Scores & Ranks", icon: "📊" },
+  { id: "fundamentals", label: "Valuation & Fundamentals", icon: "📈" },
+  { id: "portfolio", label: "Portfolio Holdings", icon: "💼" },
+];
+
+const PRESETS: { name: string; ids: (keyof ReportStockRow)[] }[] = [
+  {
+    name: "Calls Desk & Verdicts",
+    ids: ["symbol", "company_name", "ltp", "verdict", "confidence", "buy_below", "target_price", "fair_value", "bear_floor", "upside_pct", "moat_strength", "verdict_date"],
+  },
+  {
+    name: "Valuation & Fundamentals",
+    ids: ["symbol", "company_name", "sector", "ltp", "market_cap_cr", "pe_ttm", "pb", "div_yield", "roe_3y", "op_margin_3y", "sales_cagr_5y", "composite_pct"],
+  },
+  {
+    name: "Portfolio Audit",
+    ids: ["symbol", "company_name", "is_in_portfolio", "held_quantity", "avg_cost", "ltp", "invested_value", "current_value", "unrealized_pnl", "unrealized_pnl_pct", "verdict", "buy_below", "target_price"],
+  },
+  {
+    name: "Scores & Momentum",
+    ids: ["symbol", "company_name", "sector", "industry", "composite_pct", "quality_pct", "valuation_pct", "momentum_pct", "peer_rank", "ltp", "ret_1d", "ret_1w", "ret_1m", "ret_1y"],
+  },
+];
+
+export function ReportExtractorClient({ initialData }: { initialData: ReportStockRow[] | null }) {
+  const [data, setData] = useState<ReportStockRow[]>(initialData ?? []);
+  const [loading, setLoading] = useState<boolean>(!initialData || initialData.length === 0);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [copyStatus, setCopyStatus] = useState<string | null>(null);
+
+  // Selected parameters set
+  const [selectedIds, setSelectedIds] = useState<Set<keyof ReportStockRow>>(() => {
+    return new Set(PARAMETERS.filter((p) => p.defaultSelected).map((p) => p.id));
+  });
+
+  // Parameter search filter
+  const [paramSearch, setParamSearch] = useState<string>("");
+
+  // Collapsed categories map
+  const [collapsedCats, setCollapsedCats] = useState<Record<string, boolean>>({});
+
+  // Filter toolbar
+  const [universeScope, setUniverseScope] = useState<"all" | "nifty500" | "portfolio" | "verdict">("all");
+  const [actionFilter, setActionFilter] = useState<string>("all");
+  const [stockSearch, setStockSearch] = useState<string>("");
+
+  // Table sorting
+  const [sortCol, setSortCol] = useState<keyof ReportStockRow>("symbol");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  // Pagination
+  const [page, setPage] = useState<number>(1);
+  const pageSize = 50;
+
+  // Fetch / refresh data from API
+  const fetchData = useCallback(async (force: boolean = false) => {
+    try {
+      if (force) setRefreshing(true);
+      else setLoading(true);
+
+      const res = await fetch(`/api/admin/reports/data${force ? "?refresh=1" : ""}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      if (json.rows) {
+        setData(json.rows);
+      }
+    } catch (e) {
+      console.error("Failed to load report data:", e);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  // Initial load if no SSR data provided
+  React.useEffect(() => {
+    if (!initialData || initialData.length === 0) {
+      fetchData(false);
+    }
+  }, [initialData, fetchData]);
+
+  // Parameter toggle helpers
+  const toggleParam = (id: keyof ReportStockRow) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleCategory = (catId: ParameterCategory) => {
+    const catParams = PARAMETERS.filter((p) => p.category === catId);
+    const allSelected = catParams.every((p) => selectedIds.has(p.id));
+
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      catParams.forEach((p) => {
+        if (allSelected) next.delete(p.id);
+        else next.add(p.id);
+      });
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    setSelectedIds(new Set(PARAMETERS.map((p) => p.id)));
+  };
+
+  const clearAll = () => {
+    setSelectedIds(new Set(["symbol"]));
+  };
+
+  const applyPreset = (ids: (keyof ReportStockRow)[]) => {
+    setSelectedIds(new Set(ids));
+  };
+
+  // Filtered parameters based on search
+  const filteredParams = useMemo(() => {
+    if (!paramSearch.trim()) return PARAMETERS;
+    const q = paramSearch.toLowerCase().trim();
+    return PARAMETERS.filter(
+      (p) =>
+        p.label.toLowerCase().includes(q) ||
+        p.id.toLowerCase().includes(q) ||
+        p.categoryLabel.toLowerCase().includes(q)
+    );
+  }, [paramSearch]);
+
+  // Selected parameters list in order
+  const activeColumns = useMemo(() => {
+    return PARAMETERS.filter((p) => selectedIds.has(p.id));
+  }, [selectedIds]);
+
+  // Filtered rows
+  const filteredRows = useMemo(() => {
+    return data.filter((row) => {
+      // 1. Universe filter
+      if (universeScope === "nifty500" && !row.is_nifty500) return false;
+      if (universeScope === "portfolio" && !row.is_in_portfolio) return false;
+      if (universeScope === "verdict" && !row.verdict) return false;
+
+      // 2. Action filter
+      if (actionFilter !== "all") {
+        if (!row.verdict) return false;
+        const v = row.verdict.toUpperCase();
+        if (actionFilter === "BUY" && !v.includes("BUY") && !v.includes("ACCUMULATE")) return false;
+        if (actionFilter === "WATCH" && !v.includes("WATCH")) return false;
+        if (actionFilter === "HOLD" && !v.includes("HOLD")) return false;
+        if (actionFilter === "SELL" && !v.includes("SELL") && !v.includes("EXIT") && !v.includes("TRIM")) return false;
+      }
+
+      // 3. Stock text search
+      if (stockSearch.trim()) {
+        const q = stockSearch.toLowerCase().trim();
+        const matchesSym = row.symbol.toLowerCase().includes(q);
+        const matchesName = row.company_name?.toLowerCase().includes(q);
+        const matchesSec = row.sector?.toLowerCase().includes(q);
+        if (!matchesSym && !matchesName && !matchesSec) return false;
+      }
+
+      return true;
+    });
+  }, [data, universeScope, actionFilter, stockSearch]);
+
+  // Sorted rows
+  const sortedRows = useMemo(() => {
+    const rows = [...filteredRows];
+    rows.sort((a, b) => {
+      const valA = a[sortCol];
+      const valB = b[sortCol];
+
+      if (valA == null && valB == null) return 0;
+      if (valA == null) return 1;
+      if (valB == null) return -1;
+
+      if (typeof valA === "number" && typeof valB === "number") {
+        return sortDir === "asc" ? valA - valB : valB - valA;
+      }
+
+      const strA = String(valA).toLowerCase();
+      const strB = String(valB).toLowerCase();
+      return sortDir === "asc" ? strA.localeCompare(strB) : strB.localeCompare(strA);
+    });
+    return rows;
+  }, [filteredRows, sortCol, sortDir]);
+
+  // Paginated rows for preview
+  const totalPages = Math.ceil(sortedRows.length / pageSize) || 1;
+  const paginatedRows = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return sortedRows.slice(start, start + pageSize);
+  }, [sortedRows, page, pageSize]);
+
+  // Handle column header click for sorting
+  const handleSort = (colId: keyof ReportStockRow) => {
+    if (sortCol === colId) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortCol(colId);
+      setSortDir(colId === "symbol" || colId === "company_name" ? "asc" : "desc");
+    }
+  };
+
+  // CSV Generator
+  const generateCSVContent = useCallback(() => {
+    const cols = activeColumns;
+    // Header line
+    const headerLine = cols.map((c) => `"${c.label.replace(/"/g, '""')}"`).join(",");
+
+    // Data lines
+    const dataLines = sortedRows.map((row) => {
+      return cols
+        .map((col) => {
+          const val = row[col.id];
+          if (val == null) return "";
+          if (typeof val === "boolean") return val ? "YES" : "NO";
+          if (typeof val === "number") return val;
+          const s = String(val).replace(/"/g, '""');
+          return `"${s}"`;
+        })
+        .join(",");
+    });
+
+    return [headerLine, ...dataLines].join("\r\n");
+  }, [activeColumns, sortedRows]);
+
+  // Export CSV file download
+  const handleExportCSV = () => {
+    const csv = generateCSVContent();
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `equityroots-custom-report-${dateStr}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  // Copy CSV to clipboard
+  const handleCopyCSV = async () => {
+    try {
+      const csv = generateCSVContent();
+      await navigator.clipboard.writeText(csv);
+      setCopyStatus("✓ Copied to clipboard!");
+      setTimeout(() => setCopyStatus(null), 2500);
+    } catch {
+      setCopyStatus("Failed to copy");
+      setTimeout(() => setCopyStatus(null), 2500);
+    }
+  };
+
+  // Formatting helper for table cells
+  const renderCellContent = (row: ReportStockRow, col: ParameterDef) => {
+    const val = row[col.id];
+    if (val == null) return <span className="text-slate-400 dark:text-slate-500">—</span>;
+
+    if (col.id === "symbol") {
+      return (
+        <Link
+          href={`/stock/${row.symbol}`}
+          target="_blank"
+          className="font-semibold text-blue-600 dark:text-blue-400 hover:underline"
+        >
+          {String(val)}
+        </Link>
+      );
+    }
+
+    if (col.format === "badge_boolean") {
+      return val ? (
+        <span className="inline-flex px-1.5 py-0.5 rounded text-[11px] font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+          YES
+        </span>
+      ) : (
+        <span className="inline-flex px-1.5 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+          NO
+        </span>
+      );
+    }
+
+    if (col.format === "badge_verdict") {
+      const s = String(val).toUpperCase();
+      let colorCls = "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300";
+      if (s.includes("BUY") || s.includes("ACCUMULATE")) {
+        colorCls = "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-bold border border-emerald-300 dark:border-emerald-700";
+      } else if (s.includes("WATCH")) {
+        colorCls = "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300 dark:border-amber-700";
+      } else if (s.includes("HOLD")) {
+        colorCls = "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300 border border-sky-300 dark:border-sky-700";
+      } else if (s.includes("SELL") || s.includes("EXIT") || s.includes("TRIM")) {
+        colorCls = "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border border-rose-300 dark:border-rose-700";
+      }
+      return <span className={`inline-flex px-2 py-0.5 rounded text-[11px] whitespace-nowrap ${colorCls}`}>{String(val)}</span>;
+    }
+
+    if (col.format === "badge_moat") {
+      const s = String(val).toUpperCase();
+      let colorCls = "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400";
+      if (s === "WIDE") colorCls = "bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 font-semibold";
+      else if (s === "NARROW") colorCls = "bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300";
+      return <span className={`inline-flex px-1.5 py-0.5 rounded text-[11px] whitespace-nowrap ${colorCls}`}>{String(val)}</span>;
+    }
+
+    if (col.format === "percent") {
+      const num = Number(val);
+      const isPositive = num > 0;
+      const isNegative = num < 0;
+      const cls = isPositive
+        ? "text-emerald-600 dark:text-emerald-400 font-medium"
+        : isNegative
+        ? "text-rose-600 dark:text-rose-400 font-medium"
+        : "text-slate-600 dark:text-slate-400";
+      return (
+        <span className={cls}>
+          {isPositive ? "+" : ""}
+          {num.toFixed(1)}%
+        </span>
+      );
+    }
+
+    if (col.format === "currency") {
+      const num = Number(val);
+      return <span>₹{num.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</span>;
+    }
+
+    if (col.format === "number") {
+      const num = Number(val);
+      return <span>{num.toLocaleString("en-IN")}</span>;
+    }
+
+    return <span>{String(val)}</span>;
+  };
+
+  return (
+    <div className="w-full flex flex-col gap-4">
+      {/* Top Header Card */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xs">
+        <div>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
+              📊 Report Extraction Desk
+            </h1>
+            <span className="px-2 py-0.5 text-[11px] font-semibold tracking-wide uppercase bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200 dark:border-blue-800 rounded-full">
+              Admin Suite
+            </span>
+          </div>
+          <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
+            Pick parameters from the left panel to configure, preview real-time metrics across ~2,100+ stocks, and export clean CSV reports.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2.5 shrink-0">
+          <a
+            href="/api/admin/reports/nifty500"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+            title="Download official NIFTY 500 Excel Scorecard (.xlsx)"
+          >
+            <span>📥 NIFTY 500 (.xlsx)</span>
+          </a>
+          <button
+            onClick={() => fetchData(true)}
+            disabled={refreshing || loading}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+            title="Re-query latest data from database"
+          >
+            <span className={refreshing ? "animate-spin" : ""}>🔄</span>
+            <span>{refreshing ? "Refreshing..." : "Refresh"}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Main Split Layout: Left Rail (Parameters) | Right Panel (Preview & Actions) */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+        {/* ── LEFT RAIL: PARAMETER EXTRACTION SELECTOR (3 cols) ── */}
+        <div className="lg:col-span-4 xl:col-span-3 flex flex-col gap-3 p-3.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xs sticky top-16 max-h-[calc(100vh-5rem)] overflow-y-auto">
+          {/* Header & Presets */}
+          <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              Export Parameters ({selectedIds.size})
+            </span>
+            <div className="flex items-center gap-1 text-[11px]">
+              <button
+                onClick={selectAll}
+                className="text-blue-600 dark:text-blue-400 hover:underline font-medium px-1"
+              >
+                All
+              </button>
+              <span className="text-slate-300 dark:text-slate-700">•</span>
+              <button
+                onClick={clearAll}
+                className="text-slate-500 dark:text-slate-400 hover:underline font-medium px-1"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+
+          {/* Quick Presets */}
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[11px] font-semibold text-slate-400 dark:text-slate-500">
+              ⚡ 1-Click Presets:
+            </span>
+            <div className="grid grid-cols-2 gap-1.5">
+              {PRESETS.map((preset) => (
+                <button
+                  key={preset.name}
+                  onClick={() => applyPreset(preset.ids)}
+                  className="px-2 py-1 text-[11px] text-left font-medium rounded bg-slate-50 dark:bg-slate-800/80 hover:bg-blue-50 dark:hover:bg-blue-950/60 text-slate-700 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700/60 truncate transition-colors"
+                  title={preset.name}
+                >
+                  {preset.name}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Parameter Search Input */}
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="Search parameters..."
+              value={paramSearch}
+              onChange={(e) => setParamSearch(e.target.value)}
+              className="w-full text-xs px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500 text-slate-800 dark:text-slate-200 placeholder-slate-400"
+            />
+            {paramSearch && (
+              <button
+                onClick={() => setParamSearch("")}
+                className="absolute right-2 top-1.5 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+
+          {/* Parameter Categories & Checkboxes */}
+          <div className="flex flex-col gap-3">
+            {CATEGORIES.map((cat) => {
+              const catParams = filteredParams.filter((p) => p.category === cat.id);
+              if (catParams.length === 0) return null;
+
+              const selectedCount = catParams.filter((p) => selectedIds.has(p.id)).length;
+              const isCollapsed = Boolean(collapsedCats[cat.id]);
+
+              return (
+                <div
+                  key={cat.id}
+                  className="border border-slate-100 dark:border-slate-800/80 rounded-lg overflow-hidden"
+                >
+                  {/* Category Header */}
+                  <div className="flex items-center justify-between px-2.5 py-1.5 bg-slate-50/80 dark:bg-slate-800/40 select-none">
+                    <button
+                      onClick={() =>
+                        setCollapsedCats((prev) => ({ ...prev, [cat.id]: !prev[cat.id] }))
+                      }
+                      className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 text-left"
+                    >
+                      <span className="text-[10px] text-slate-400">
+                        {isCollapsed ? "▶" : "▼"}
+                      </span>
+                      <span>{cat.icon}</span>
+                      <span>{cat.label}</span>
+                    </button>
+
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className={`text-[10px] px-1.5 py-0.2 rounded-full font-semibold ${
+                          selectedCount > 0
+                            ? "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
+                            : "bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500"
+                        }`}
+                      >
+                        {selectedCount}/{catParams.length}
+                      </span>
+                      <button
+                        onClick={() => toggleCategory(cat.id)}
+                        className="text-[10px] text-slate-400 hover:text-blue-600 dark:hover:text-blue-400"
+                        title={selectedCount === catParams.length ? "Deselect category" : "Select all in category"}
+                      >
+                        {selectedCount === catParams.length ? "none" : "all"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Category Parameter Items */}
+                  {!isCollapsed && (
+                    <div className="p-2 flex flex-col gap-1 bg-white dark:bg-slate-900">
+                      {catParams.map((param) => {
+                        const isChecked = selectedIds.has(param.id);
+                        return (
+                          <label
+                            key={param.id}
+                            className={`flex items-center gap-2 px-1.5 py-1 rounded text-xs cursor-pointer select-none transition-colors ${
+                              isChecked
+                                ? "bg-blue-50/70 text-slate-900 dark:bg-blue-950/40 dark:text-slate-100 font-medium"
+                                : "text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/40"
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => toggleParam(param.id)}
+                              className="rounded text-blue-600 focus:ring-blue-500 border-slate-300 dark:border-slate-700"
+                            />
+                            <span className="truncate">{param.label}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* ── RIGHT PANEL: PREVIEW DESK & EXPORT ACTIONS (9 cols) ── */}
+        <div className="lg:col-span-8 xl:col-span-9 flex flex-col gap-3">
+          {/* Action Toolbar */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xs">
+            {/* Left Controls: Universe & Verdict filters */}
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Universe Dropdown */}
+              <div className="flex items-center gap-1.5 text-xs">
+                <span className="text-slate-400 font-medium hidden sm:inline">Scope:</span>
+                <select
+                  value={universeScope}
+                  onChange={(e) => {
+                    setUniverseScope(e.target.value as any);
+                    setPage(1);
+                  }}
+                  className="text-xs px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                >
+                  <option value="all">All NSE Scored (~2,100)</option>
+                  <option value="nifty500">NIFTY 500 Constituents</option>
+                  <option value="portfolio">Portfolio Holdings Only</option>
+                  <option value="verdict">Curated Calls / Verdicts</option>
+                </select>
+              </div>
+
+              {/* Action / Verdict Dropdown */}
+              <div className="flex items-center gap-1.5 text-xs">
+                <span className="text-slate-400 font-medium hidden sm:inline">Verdict:</span>
+                <select
+                  value={actionFilter}
+                  onChange={(e) => {
+                    setActionFilter(e.target.value);
+                    setPage(1);
+                  }}
+                  className="text-xs px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                >
+                  <option value="all">All Actions</option>
+                  <option value="BUY">BUY / ACCUMULATE</option>
+                  <option value="WATCH">WATCH Only</option>
+                  <option value="HOLD">HOLD Only</option>
+                  <option value="SELL">SELL / EXIT</option>
+                </select>
+              </div>
+
+              {/* Search Stocks */}
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Filter stock / sector..."
+                  value={stockSearch}
+                  onChange={(e) => {
+                    setStockSearch(e.target.value);
+                    setPage(1);
+                  }}
+                  className="text-xs px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-slate-400 w-36 sm:w-44"
+                />
+                {stockSearch && (
+                  <button
+                    onClick={() => setStockSearch("")}
+                    className="absolute right-2 top-1.5 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Right Controls: CSV Export & Copy Actions */}
+            <div className="flex items-center gap-2">
+              {copyStatus && (
+                <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 animate-pulse">
+                  {copyStatus}
+                </span>
+              )}
+              <button
+                onClick={handleCopyCSV}
+                disabled={activeColumns.length === 0 || sortedRows.length === 0}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200 transition-colors disabled:opacity-40"
+                title="Copy formatted CSV to clipboard"
+              >
+                <span>📋</span>
+                <span>Copy CSV</span>
+              </button>
+
+              <button
+                onClick={handleExportCSV}
+                disabled={activeColumns.length === 0 || sortedRows.length === 0}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-colors disabled:opacity-40 cursor-pointer"
+                title="Download CSV file for Excel / Sheets"
+              >
+                <span>📥</span>
+                <span>Export to CSV ({sortedRows.length})</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Live Count / Metrics Summary Bar */}
+          <div className="flex items-center justify-between text-xs px-1 text-slate-500 dark:text-slate-400">
+            <div>
+              Showing <span className="font-semibold text-slate-800 dark:text-slate-200">{sortedRows.length}</span> stocks
+              matching criteria • <span className="font-semibold text-slate-800 dark:text-slate-200">{activeColumns.length}</span> columns active
+            </div>
+            {totalPages > 1 && (
+              <div>
+                Page {page} of {totalPages}
+              </div>
+            )}
+          </div>
+
+          {/* Table Container */}
+          <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-white dark:bg-slate-900 shadow-xs">
+            {loading ? (
+              <div className="py-24 flex flex-col items-center justify-center text-slate-400">
+                <span className="text-2xl animate-spin mb-2">🔄</span>
+                <span className="text-sm">Loading scored stocks data...</span>
+              </div>
+            ) : activeColumns.length === 0 ? (
+              <div className="py-20 flex flex-col items-center justify-center text-slate-400 px-4 text-center">
+                <span className="text-3xl mb-2">📋</span>
+                <span className="text-sm font-semibold text-slate-600 dark:text-slate-300">
+                  No parameters selected
+                </span>
+                <p className="text-xs text-slate-400 mt-1 max-w-sm">
+                  Select at least one parameter from the left rail or pick a 1-click preset to preview and export data.
+                </p>
+                <button
+                  onClick={() => applyPreset(PRESETS[0].ids)}
+                  className="mt-3 px-3 py-1.5 text-xs font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+                >
+                  Load Calls Desk Preset
+                </button>
+              </div>
+            ) : sortedRows.length === 0 ? (
+              <div className="py-20 flex flex-col items-center justify-center text-slate-400 px-4 text-center">
+                <span className="text-3xl mb-2">🔍</span>
+                <span className="text-sm font-semibold text-slate-600 dark:text-slate-300">
+                  No stocks match current filters
+                </span>
+                <p className="text-xs text-slate-400 mt-1">
+                  Try clearing the search query or switching scope to &quot;All NSE Scored&quot;.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead className="bg-slate-50 dark:bg-slate-800/80 sticky top-0 z-10 border-b border-slate-200 dark:border-slate-800 backdrop-blur-xs">
+                    <tr>
+                      <th className="py-2.5 px-3 font-semibold text-slate-500 dark:text-slate-400 w-10 text-center">
+                        #
+                      </th>
+                      {activeColumns.map((col) => {
+                        const isSorted = sortCol === col.id;
+                        return (
+                          <th
+                            key={col.id}
+                            onClick={() => handleSort(col.id)}
+                            className={`py-2.5 px-3 font-semibold text-slate-700 dark:text-slate-300 cursor-pointer select-none hover:bg-slate-100 dark:hover:bg-slate-700/60 transition-colors whitespace-nowrap ${
+                              col.align === "right"
+                                ? "text-right"
+                                : col.align === "center"
+                                ? "text-center"
+                                : "text-left"
+                            }`}
+                          >
+                            <div
+                              className={`inline-flex items-center gap-1 ${
+                                col.align === "right" ? "justify-end" : ""
+                              }`}
+                            >
+                              <span>{col.label}</span>
+                              <span className="text-[10px] text-slate-400">
+                                {isSorted ? (sortDir === "asc" ? "▲" : "▼") : "⇅"}
+                              </span>
+                            </div>
+                          </th>
+                        );
+                      })}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {paginatedRows.map((row, idx) => {
+                      const absoluteIdx = (page - 1) * pageSize + idx + 1;
+                      return (
+                        <tr
+                          key={row.symbol}
+                          className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
+                        >
+                          <td className="py-2 px-3 text-slate-400 text-center font-mono text-[11px]">
+                            {absoluteIdx}
+                          </td>
+                          {activeColumns.map((col) => (
+                            <td
+                              key={col.id}
+                              className={`py-2 px-3 whitespace-nowrap ${
+                                col.align === "right"
+                                ? "text-right font-mono"
+                                : col.align === "center"
+                                ? "text-center"
+                                : "text-left"
+                              }`}
+                            >
+                              {renderCellContent(row, col)}
+                            </td>
+                          ))}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Pagination Toolbar */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between px-3 py-2 bg-slate-50/70 dark:bg-slate-800/50 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500">
+                <span>
+                  Showing {(page - 1) * pageSize + 1} to{" "}
+                  {Math.min(page * pageSize, sortedRows.length)} of {sortedRows.length} stocks
+                </span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setPage(1)}
+                    disabled={page === 1}
+                    className="px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 disabled:opacity-40 hover:bg-slate-100 dark:hover:bg-slate-800"
+                  >
+                    « First
+                  </button>
+                  <button
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={page === 1}
+                    className="px-2.5 py-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 disabled:opacity-40 hover:bg-slate-100 dark:hover:bg-slate-800"
+                  >
+                    ‹ Prev
+                  </button>
+                  <span className="px-2 font-medium text-slate-700 dark:text-slate-300">
+                    {page} / {totalPages}
+                  </span>
+                  <button
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={page === totalPages}
+                    className="px-2.5 py-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 disabled:opacity-40 hover:bg-slate-100 dark:hover:bg-slate-800"
+                  >
+                    Next ›
+                  </button>
+                  <button
+                    onClick={() => setPage(totalPages)}
+                    disabled={page === totalPages}
+                    className="px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 disabled:opacity-40 hover:bg-slate-100 dark:hover:bg-slate-800"
+                  >
+                    Last »
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
