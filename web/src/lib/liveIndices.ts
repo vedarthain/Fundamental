@@ -225,23 +225,45 @@ async function fetchFromDbEod(): Promise<LiveIndicesPayload> {
   };
 }
 
+async function persistIndicesToDb(byCode: Record<string, IndexQuote>): Promise<void> {
+  const todayStr = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+
+  const entries = Object.values(byCode);
+  if (entries.length === 0) return;
+
+  for (const q of entries) {
+    if (!q.price || q.price <= 0) continue;
+    try {
+      await sql`
+        INSERT INTO app.market_index_history (index_code, date, close, prev_close, pct_change, display_name)
+        VALUES (${q.code}, ${todayStr}, ${q.price}, ${q.prevClose}, ${q.changePct}, ${q.label})
+        ON CONFLICT (index_code, date) DO UPDATE SET
+          close = EXCLUDED.close,
+          prev_close = EXCLUDED.prev_close,
+          pct_change = EXCLUDED.pct_change,
+          display_name = EXCLUDED.display_name
+      `;
+    } catch {
+      // Non-fatal, ignore DB conflict
+    }
+  }
+}
+
 export async function getLiveIndices(): Promise<LiveIndicesPayload> {
   const now = Date.now();
   const marketOpen = withinPingerWindow();
 
-  // After market hours / weekends: NEVER call Upstox or overwrite the cache.
-  // Serve the last closing snapshot if present, otherwise clean EOD from Postgres.
-  if (!marketOpen) {
-    if (cache && (cache.payload.nifty || cache.payload.bankNifty)) {
-      return cache.payload;
-    }
-    return fetchFromDbEod();
-  }
-
+  // If in-memory cache is still fresh, serve it immediately
   if (cache && cache.expiresAt > now && (cache.payload.nifty || cache.payload.bankNifty)) {
     return cache.payload;
   }
 
+  // Fetch live / settled closing quotes from Upstox (or Yahoo Finance as fallback)
   const byCode = await fetchFromUpstox();
   const gotUpstox = Object.keys(byCode).length > 0;
   let usedYahoo = false;
@@ -261,6 +283,14 @@ export async function getLiveIndices(): Promise<LiveIndicesPayload> {
       byCode.NIFTYBANK = yBank;
       usedYahoo = true;
     }
+  }
+
+  // If both Upstox and Yahoo failed to provide NIFTY, fall back to DB EOD
+  if (!byCode.NIFTY50 && !byCode.NIFTYBANK) {
+    if (cache && (cache.payload.nifty || cache.payload.bankNifty)) {
+      return cache.payload;
+    }
+    return fetchFromDbEod();
   }
 
   const source: LiveIndicesPayload["source"] =
@@ -289,7 +319,10 @@ export async function getLiveIndices(): Promise<LiveIndicesPayload> {
   };
 
   if (payload.nifty || payload.bankNifty) {
-    cache = { payload, expiresAt: now + TTL_MS };
+    const ttl = marketOpen ? TTL_MS : 30 * 60 * 1000;
+    cache = { payload, expiresAt: now + ttl };
+    // Asynchronously persist quotes to DB so DB-driven views also reflect today's close
+    persistIndicesToDb(byCode).catch(() => {});
   }
 
   return payload;

@@ -64,8 +64,8 @@ async function loadIndices(): Promise<IndexBoardRow[]> {
   return rows;
 }
 
-const getCachedIndices = unstable_cache(loadIndices, ["indices-board"], {
-  revalidate: 300,
+const getCachedIndices = unstable_cache(loadIndices, ["indices-board-v2"], {
+  revalidate: 60,
   tags: ["market"],
 });
 
