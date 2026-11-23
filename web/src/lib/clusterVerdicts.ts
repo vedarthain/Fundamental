@@ -1,6 +1,6 @@
 import "server-only";
 import { unstable_cache } from "next/cache";
-import { sql } from "@/lib/db";
+import { sql, golden } from "@/lib/db";
 import type { SectorTreeNode } from "@/app/admin/verdicts/ClusterVerdictsClient";
 import type { ClusterVerdictRow } from "@/app/api/admin/cluster-verdicts/route";
 
@@ -134,12 +134,25 @@ async function loadClusterItems(clusterId: string): Promise<ClusterVerdictRow[]>
         q.q_pat_yoy_pct,
         v.verdict,
         u.business_summary,
-        EXISTS(SELECT 1 FROM app.portfolio_holding h WHERE h.symbol = p.symbol AND h.quantity > 0) AS in_portfolio
+        (h.holding_qty IS NOT NULL AND h.holding_qty > 0) AS in_portfolio,
+        h.holding_avg_cost,
+        h.holding_qty,
+        h.holding_cur_value,
+        h.broker_day_pct
       FROM latest_panel p
       LEFT JOIN latest_verdict v ON v.symbol = p.symbol
       LEFT JOIN app.screener_meta sm ON sm.symbol = p.symbol
       LEFT JOIN app.universe u ON u.symbol = p.symbol
       LEFT JOIN latest_q q ON q.symbol = p.symbol
+      LEFT JOIN LATERAL (
+        SELECT
+          SUM(quantity)::float AS holding_qty,
+          SUM(quantity * avg_cost)::float / NULLIF(SUM(quantity), 0) AS holding_avg_cost,
+          SUM(broker_cur_value)::float AS holding_cur_value,
+          MAX(broker_day_pct)::float AS broker_day_pct
+        FROM app.portfolio_holding
+        WHERE symbol = p.symbol AND quantity > 0
+      ) h ON true
       WHERE p.cluster_id = ${clusterId}
       ORDER BY p.composite_pct DESC NULLS LAST, upside_pct DESC NULLS LAST
     `,
@@ -150,6 +163,28 @@ async function loadClusterItems(clusterId: string): Promise<ClusterVerdictRow[]>
   ]);
   const moatMap = new Map(moatRows.map((m) => [m.symbol, m]));
 
+  const ret1dMap = new Map<string, number>();
+  try {
+    const symbolsNS = rows.map((r: any) => `${r.symbol}.NS`);
+    if (symbolsNS.length > 0) {
+      const moves = await golden<{ symbol: string; pct: number }[]>`
+        WITH recent AS (
+          SELECT REPLACE(symbol, '.NS', '') AS symbol,
+                 close,
+                 row_number() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
+            FROM golden.price_history
+           WHERE interval = '1d' AND symbol = ANY(${symbolsNS})
+             AND date >= CURRENT_DATE - 20
+        )
+        SELECT c.symbol, ((c.close - p.close) / NULLIF(p.close, 0))::float * 100 AS pct
+          FROM recent c
+          JOIN recent p ON p.symbol = c.symbol AND p.rn = 2
+         WHERE c.rn = 1 AND p.close > 0
+      `;
+      for (const m of moves) ret1dMap.set(m.symbol, m.pct);
+    }
+  } catch {}
+
   return rows.map((r) => {
     const ltp = Number(r.ltp ?? 0);
     const bb = r.buy_below != null ? Number(r.buy_below) : null;
@@ -159,6 +194,10 @@ async function loadClusterItems(clusterId: string): Promise<ClusterVerdictRow[]>
     const vLower = verd.toLowerCase();
     const shortVerdict = verd.replace(/^[^—]+—\s*/, "").trim();
     const inZone = bb != null && ltp > 0 && ltp <= bb * 1.02;
+
+    const ret_1d = ret1dMap.get(r.symbol) ?? (r.broker_day_pct != null ? Number(r.broker_day_pct) : null);
+    const avgCost = r.holding_avg_cost != null ? Number(r.holding_avg_cost) : null;
+    const holdingPnlPct = avgCost != null && avgCost > 0 && ltp > 0 ? ((ltp - avgCost) / avgCost) * 100 : null;
 
     let action_group: "actionable" | "watch" | "hold_avoid" = "watch";
     let action_label = "WATCH";
@@ -216,6 +255,7 @@ async function loadClusterItems(clusterId: string): Promise<ClusterVerdictRow[]>
       q_pat: r.q_pat != null ? Number(r.q_pat) : null,
       q_sales_yoy_pct: r.q_sales_yoy_pct != null ? Number(r.q_sales_yoy_pct) : null,
       q_pat_yoy_pct: r.q_pat_yoy_pct != null ? Number(r.q_pat_yoy_pct) : null,
+      ret_1d,
       ret_1m: r.ret_1m != null ? Number(r.ret_1m) : null,
       ret_6m: r.ret_6m != null ? Number(r.ret_6m) : null,
       ret_1y: r.ret_1y != null ? Number(r.ret_1y) : null,
@@ -237,6 +277,10 @@ async function loadClusterItems(clusterId: string): Promise<ClusterVerdictRow[]>
         return [];
       })(),
       in_portfolio: Boolean(r.in_portfolio),
+      holding_avg_cost: avgCost,
+      holding_qty: r.holding_qty != null ? Number(r.holding_qty) : null,
+      holding_cur_value: r.holding_cur_value != null ? Number(r.holding_cur_value) : null,
+      holding_pnl_pct: holdingPnlPct,
       action_group,
       action_label,
       why,
@@ -252,6 +296,6 @@ export const cachedSectorClusterTree = unstable_cache(
 
 export const cachedClusterItems = unstable_cache(
   loadClusterItems,
-  ["admin:verdicts:cluster:v1"],
+  ["admin:verdicts:cluster:v2"],
   { revalidate: 300, tags: ["panel-cache", "clusters"] },
 );

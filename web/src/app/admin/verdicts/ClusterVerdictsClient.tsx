@@ -63,6 +63,17 @@ function DeepDiveMetricsStrip({ row }: { row: ClusterVerdictRow }) {
   const { downsidePct, rr } = calcRiskReward(row);
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] px-2.5 py-1.5 rounded bg-slate-50 border border-slate-200/80 tabular-nums">
+      {row.in_portfolio && row.holding_avg_cost != null && (
+        <div className="bg-slate-800 text-white px-2 py-0.5 rounded font-medium flex items-center gap-1.5">
+          <span className="text-slate-300">My Avg:</span>
+          <strong className="text-white">{fmtMoney(row.holding_avg_cost)}</strong>
+          {row.holding_pnl_pct != null && (
+            <span className={row.holding_pnl_pct >= 0 ? "text-emerald-400 font-bold" : "text-rose-400 font-bold"}>
+              ({fmtPct(row.holding_pnl_pct, 1)})
+            </span>
+          )}
+        </div>
+      )}
       <div>
         <span className="muted-text mr-1">Bear Floor:</span>
         <strong className="text-rose-700">{fmtMoney(row.bear_floor)}</strong>
@@ -78,6 +89,14 @@ function DeepDiveMetricsStrip({ row }: { row: ClusterVerdictRow }) {
       </div>
       <div>
         <span className="muted-text mr-1">Returns:</span>
+        {row.ret_1d != null && (
+          <>
+            <span className={row.ret_1d >= 0 ? "text-emerald-700" : "text-rose-600"}>
+              1D {fmtPct(row.ret_1d, 1)}
+            </span>
+            <span className="muted-text mx-1">·</span>
+          </>
+        )}
         <span className={row.ret_1m != null && row.ret_1m >= 0 ? "text-emerald-700" : "text-rose-600"}>
           1M {fmtPct(row.ret_1m, 1)}
         </span>
@@ -156,27 +175,59 @@ function StockDetailTabs({ row }: { row: ClusterVerdictRow }) {
 
   return (
     <div className="space-y-2.5">
-      <div className="inline-flex rounded border hairline bg-[var(--color-card)] p-0.5 text-[11.5px]">
-        {(
-          [
-            { k: "moat_why", label: "Moat & Rationale" },
-            { k: "good_bad", label: "The Good / Bad" },
-            { k: "models", label: "8 Models Check" },
-          ] as const
-        ).map((t) => (
-          <button
-            key={t.k}
-            type="button"
-            onClick={() => setTab(t.k)}
-            className={`px-2.5 py-1 rounded transition-colors whitespace-nowrap ${
-              tab === t.k
-                ? "bg-slate-800 text-white font-semibold shadow-2xs"
-                : "muted-text hover:text-[var(--color-ink)]"
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="inline-flex rounded border hairline bg-[var(--color-card)] p-0.5 text-[11.5px]">
+          {(
+            [
+              { k: "moat_why", label: "Moat & Rationale" },
+              { k: "good_bad", label: "The Good / Bad" },
+              { k: "models", label: "8 Models Check" },
+            ] as const
+          ).map((t) => (
+            <button
+              key={t.k}
+              type="button"
+              onClick={() => setTab(t.k)}
+              className={`px-2.5 py-1 rounded transition-colors whitespace-nowrap ${
+                tab === t.k
+                  ? "bg-slate-800 text-white font-semibold shadow-2xs"
+                  : "muted-text hover:text-[var(--color-ink)]"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {row.in_portfolio && (
+          <div className="inline-flex items-center gap-2 text-[11.5px] px-2.5 py-1 rounded bg-slate-900 text-white font-medium shadow-xs">
+            <span className="bg-emerald-500/20 text-emerald-300 font-bold px-1.5 py-0.5 rounded text-[10px]">
+              PORTFOLIO HOLDING
+            </span>
+            <span>
+              {row.holding_qty != null ? `${row.holding_qty} shs` : "Held"}
+              {row.holding_avg_cost != null && (
+                <>
+                  {" "}@ <strong className="text-white font-semibold">{fmtMoney(row.holding_avg_cost)}</strong>
+                </>
+              )}
+            </span>
+            {row.holding_pnl_pct != null && (
+              <span
+                className={`font-semibold ${
+                  row.holding_pnl_pct >= 0 ? "text-emerald-400" : "text-rose-400"
+                }`}
+              >
+                ({fmtPct(row.holding_pnl_pct, 1)})
+              </span>
+            )}
+            {row.holding_cur_value != null && (
+              <span className="text-slate-300 border-l border-slate-700 pl-2">
+                Val: {fmtMoney(row.holding_cur_value, 0)}
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {tab === "moat_why" && (
@@ -872,8 +923,11 @@ export function ClusterVerdictsClient({
                                     <ExternalLink size={10} className="muted-text" />
                                   </Link>
                                   {r.in_portfolio && (
-                                    <span className="text-[9.5px] font-semibold px-1 py-0.2 rounded bg-slate-800 text-white">
-                                      HELD
+                                    <span
+                                      className="text-[9.5px] font-semibold px-1 py-0.2 rounded bg-slate-800 text-white"
+                                      title={r.holding_qty && r.holding_avg_cost ? `${r.holding_qty} shs @ ₹${r.holding_avg_cost.toFixed(1)}` : undefined}
+                                    >
+                                      HELD{r.holding_avg_cost ? ` @ ₹${Math.round(r.holding_avg_cost)}` : ""}
                                     </span>
                                   )}
                                 </div>
@@ -891,21 +945,34 @@ export function ClusterVerdictsClient({
                               <td className="py-2 px-2 text-right whitespace-nowrap tabular-nums">
                                 <div className="flex items-center justify-end gap-1.5">
                                   <span className="font-semibold text-[12.5px]">{fmtMoney(r.ltp)}</span>
+                                  {r.ret_1d != null && (
+                                    <span
+                                      className={`text-[10px] font-semibold px-1 py-0.2 rounded ${
+                                        r.ret_1d >= 0
+                                          ? "text-emerald-700 bg-emerald-50"
+                                          : "text-rose-700 bg-rose-50"
+                                      }`}
+                                    >
+                                      {fmtPct(r.ret_1d, 1)}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex items-center justify-end gap-1 text-[10.5px]">
+                                  <span className="muted-text">BB {fmtMoney(r.buy_below)}</span>
                                   {distPct != null && (
                                     <span
-                                      className={`text-[10px] font-semibold px-1.5 py-0.2 rounded ${
+                                      className={`text-[9.5px] font-semibold px-1 rounded ${
                                         inZone
                                           ? "bg-emerald-100 text-emerald-800"
                                           : distPct <= 8
                                             ? "bg-teal-50 text-teal-700"
-                                            : "bg-amber-50 text-amber-800"
+                                            : "bg-slate-100 text-slate-600"
                                       }`}
                                     >
                                       {inZone ? "IN ZONE" : `${distPct > 0 ? "+" : ""}${distPct.toFixed(1)}%`}
                                     </span>
                                   )}
                                 </div>
-                                <div className="text-[10.5px] muted-text">BB {fmtMoney(r.buy_below)}</div>
                               </td>
 
                               <td className="py-2 px-2 text-right whitespace-nowrap tabular-nums">
@@ -1019,7 +1086,7 @@ export function ClusterVerdictsClient({
                             </Link>
                             {r.in_portfolio && (
                               <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-slate-800 text-white">
-                                HELD
+                                HELD{r.holding_avg_cost ? ` @ ₹${Math.round(r.holding_avg_cost)}` : ""}
                               </span>
                             )}
                             <span className="text-[12px] muted-text truncate max-w-[220px]">
@@ -1037,15 +1104,26 @@ export function ClusterVerdictsClient({
                             <div>
                               <span className="muted-text mr-1">LTP:</span>
                               <strong className="text-[13px]">{fmtMoney(r.ltp)}</strong>
-                              <span className="muted-text ml-1.5">BB {fmtMoney(r.buy_below)}</span>
+                              {r.ret_1d != null && (
+                                <span
+                                  className={`ml-1 text-[10.5px] font-semibold px-1 py-0.2 rounded ${
+                                    r.ret_1d >= 0
+                                      ? "text-emerald-700 bg-emerald-50"
+                                      : "text-rose-700 bg-rose-50"
+                                  }`}
+                                >
+                                  {fmtPct(r.ret_1d, 1)}
+                                </span>
+                              )}
+                              <span className="muted-text ml-2">BB {fmtMoney(r.buy_below)}</span>
                               {distPct != null && (
                                 <span
-                                  className={`ml-1.5 text-[10.5px] font-semibold px-1.5 py-0.5 rounded ${
+                                  className={`ml-1 text-[9.5px] font-semibold px-1 py-0.2 rounded ${
                                     inZone
                                       ? "bg-emerald-100 text-emerald-800"
                                       : distPct <= 8
                                         ? "bg-teal-50 text-teal-700"
-                                        : "bg-amber-50 text-amber-800"
+                                        : "bg-slate-100 text-slate-600"
                                   }`}
                                 >
                                   {inZone ? "IN ZONE" : `${distPct > 0 ? "+" : ""}${distPct.toFixed(1)}%`}
