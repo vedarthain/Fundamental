@@ -68,7 +68,6 @@ export const ADMIN_MENU_ITEMS: Submenu[] = [
   { href: "/admin/reports",     label: "Report Extraction",  description: "Customizable Data & Metrics CSV Extractor" },
   { href: "/admin/logs",        label: "Cron Logs",          description: "Server Cron & Pipeline Execution Logs" },
   { href: "/admin/insights",    label: "Site Insights",      description: "Real-User Speed Vitals, Slow Routes & Traffic" },
-  { href: "/admin/daily-brief", label: "Daily Brief",        description: "Daily Market Brief & Editorial Preview" },
   { href: "/admin/upstox",      label: "Upstox Session",     description: "Daily Upstox API token reauth" },
   { href: "/admin/screener",    label: "Screener Session",   description: "Rotate the Screener.in session cookie" },
   { href: "/admin/users",       label: "User Accounts",      description: "Manage registered user accounts & access" },
