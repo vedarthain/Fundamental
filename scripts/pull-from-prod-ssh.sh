@@ -9,9 +9,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 
-SSH_KEY="${PROD_SSH_KEY:-$HOME/.ssh/do_finance_ed25519}"
-SSH_HOST="${PROD_SSH_HOST:-root@168.144.158.66}"
-VPC_DB_HOST="${PROD_VPC_DB_HOST:-10.122.0.3}"
+SSH_KEY="${PROD_SSH_KEY:-$HOME/.ssh/oci_equityroots_ed25519}"
+SSH_HOST="${PROD_SSH_HOST:-ubuntu@129.225.81.247}"
+VPC_DB_HOST="${PROD_VPC_DB_HOST:-127.0.0.1}"
 LOCAL_PORT="${PROD_TUNNEL_PORT:-15432}"
 
 if [[ ! -f "$SSH_KEY" ]]; then

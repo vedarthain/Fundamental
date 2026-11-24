@@ -106,11 +106,11 @@ def main() -> int:
     html_body = f"""
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 700px; margin: auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
       <h2 style="color: #e53e3e; margin-top: 0;">🚨 Cron Job Failure Detected</h2>
-      <p style="color: #4a5568; font-size: 14px;">A background scheduled job on <b>Finance Droplet</b> exited with an error.</p>
+      <p style="color: #4a5568; font-size: 14px;">A background scheduled job on <b>OCI Production VM</b> exited with an error.</p>
       
       <table style="width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 14px;">
         <tr><td style="padding: 6px 0; color: #718096; width: 140px;"><b>Timestamp:</b></td><td>{now_str}</td></tr>
-        <tr><td style="padding: 6px 0; color: #718096;"><b>Server:</b></td><td>DigitalOcean Droplet (168.144.158.66)</td></tr>
+        <tr><td style="padding: 6px 0; color: #718096;"><b>Server:</b></td><td>OCI Compute VM (129.225.81.247)</td></tr>
         {f'<tr><td style="padding: 6px 0; color: #718096;"><b>Log File:</b></td><td><code>{args.log_file}</code></td></tr>' if args.log_file else ''}
         {f'<tr><td style="padding: 6px 0; color: #718096;"><b>Error Details:</b></td><td>{args.message}</td></tr>' if args.message else ''}
       </table>

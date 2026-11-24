@@ -31,9 +31,9 @@ jobs:
         env:
           REVALIDATE_TOKEN: ${{ secrets.REVALIDATE_TOKEN }}
         with:
-          host: ${{ secrets.DO_HOST }}
-          username: root
-          key: ${{ secrets.DO_SSH_KEY }}
+          host: ${{ secrets.OCI_HOST }}
+          username: ubuntu
+          key: ${{ secrets.OCI_SSH_KEY }}
           command_timeout: 240m
           envs: REVALIDATE_TOKEN
           script: |

@@ -43,9 +43,9 @@ jobs:
       - name: Run Universe Sync & Retire on Droplet
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.DO_HOST }}
-          username: root
-          key: ${{ secrets.DO_SSH_KEY }}
+          host: ${{ secrets.OCI_HOST }}
+          username: ubuntu
+          key: ${{ secrets.OCI_SSH_KEY }}
           script: |
             set -e
             cd /var/www/Fundamental

@@ -1,5 +1,5 @@
 # Daily PostgreSQL Database Backup Workflow
-# Dumps fundamental_app and golden_db over the private DigitalOcean VPC,
+# Dumps fundamental_app and golden_db over the private OCI local Postgres,
 # compresses them with gzip, and enforces a 7-day rolling retention.
 
 name: Daily Database Backup
@@ -26,9 +26,9 @@ jobs:
       - name: Run Database Backup on Droplet
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.DO_HOST }}
-          username: root
-          key: ${{ secrets.DO_SSH_KEY }}
+          host: ${{ secrets.OCI_HOST }}
+          username: ubuntu
+          key: ${{ secrets.OCI_SSH_KEY }}
           command_timeout: 30m
           script: |
             set -e
@@ -37,7 +37,7 @@ jobs:
             # Ensure postgresql-client (pg_dump) is available
             if ! command -v pg_dump >/dev/null 2>&1; then
               echo "Installing postgresql-client..."
-              apt-get update -qq && apt-get install -y -qq postgresql-client
+              sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
             fi
 
             # Load database connection strings from droplet env files

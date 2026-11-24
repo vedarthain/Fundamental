@@ -17,9 +17,9 @@ jobs:
       - name: Run Market Taxonomy Sync on Droplet
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.DO_HOST }}
-          username: root
-          key: ${{ secrets.DO_SSH_KEY }}
+          host: ${{ secrets.OCI_HOST }}
+          username: ubuntu
+          key: ${{ secrets.OCI_SSH_KEY }}
           command_timeout: 30m
           script: |
             set -e

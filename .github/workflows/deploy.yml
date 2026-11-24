@@ -1,5 +1,5 @@
-# Cloud build & artifact deploy to DigitalOcean Web Droplet
-name: Deploy to DigitalOcean Web Droplet
+# Cloud build & artifact deploy to OCI Compute VM
+name: Deploy to OCI Compute VM
 
 on:
   push:
@@ -58,9 +58,9 @@ jobs:
       - name: Upload build archive to Droplet
         uses: appleboy/scp-action@v0.1.7
         with:
-          host: ${{ secrets.DO_HOST }}
-          username: root
-          key: ${{ secrets.DO_SSH_KEY }}
+          host: ${{ secrets.OCI_HOST }}
+          username: ubuntu
+          key: ${{ secrets.OCI_SSH_KEY }}
           source: 'next-build.tar.gz'
           target: '/tmp'
           overwrite: true
@@ -71,9 +71,9 @@ jobs:
           UPSTOX_ANALYTICS_TOKEN: ${{ secrets.UPSTOX_ANALYTICS_TOKEN }}
           REVALIDATE_TOKEN: ${{ secrets.REVALIDATE_TOKEN }}
         with:
-          host: ${{ secrets.DO_HOST }}
-          username: root
-          key: ${{ secrets.DO_SSH_KEY }}
+          host: ${{ secrets.OCI_HOST }}
+          username: ubuntu
+          key: ${{ secrets.OCI_SSH_KEY }}
           envs: UPSTOX_ANALYTICS_TOKEN,REVALIDATE_TOKEN
           script: |
             set -e

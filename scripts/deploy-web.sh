@@ -18,8 +18,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 WEB_DIR="$ROOT_DIR/web"
 
-SSH_KEY="${PROD_SSH_KEY:-$HOME/.ssh/do_finance_ed25519}"
-SSH_HOST="${PROD_SSH_HOST:-root@168.144.158.66}"
+SSH_KEY="${PROD_SSH_KEY:-$HOME/.ssh/oci_equityroots_ed25519}"
+SSH_HOST="${PROD_SSH_HOST:-ubuntu@129.225.81.247}"
 REMOTE_PATH="/var/www/Fundamental"
 REMOTE_WEB="$REMOTE_PATH/web"
 
