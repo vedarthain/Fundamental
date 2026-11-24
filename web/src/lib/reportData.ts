@@ -35,6 +35,7 @@ export type ReportStockRow = {
   verdict_date: string | null;
 
   // Calls Desk
+  is_calls_desk: boolean;
   is_call_desk: boolean;
   call_side: string | null;
   call_anchor_price: number | null;
@@ -208,6 +209,22 @@ export async function loadReportData(forceRefresh: boolean = false): Promise<Rep
     ),
     nifty500_set AS (
       SELECT symbol FROM app.index_constituent WHERE index_code = 'NIFTY500'
+    ),
+    calls_desk_set AS (
+      SELECT p.symbol
+      FROM latest_panel p
+      JOIN latest_verdict v ON v.symbol = p.symbol
+      LEFT JOIN holdings h ON h.symbol = p.symbol
+      WHERE v.target_price IS NOT NULL
+        AND (
+          p.composite_pct >= 55
+          OR h.quantity > 0
+          OR v.verdict ILIKE '%BUY%'
+          OR v.verdict ILIKE '%ACCUMULATE%'
+          OR v.verdict ILIKE '%HOLD%'
+        )
+      ORDER BY v.generated_at DESC, p.composite_pct DESC
+      LIMIT 1500
     )
     SELECT
       u.symbol,
@@ -235,7 +252,8 @@ export async function loadReportData(forceRefresh: boolean = false): Promise<Rep
       v.valuation_method,
       to_char(v.generated_at, 'YYYY-MM-DD') AS verdict_date,
 
-      -- Calls Desk Active
+      -- Calls Desk (1500) & Pinned Active Calls (24)
+      (cd.symbol IS NOT NULL) AS is_calls_desk,
       (ac.symbol IS NOT NULL) AS is_call_desk,
       ac.call_side,
       ac.call_anchor_price,
@@ -285,6 +303,7 @@ export async function loadReportData(forceRefresh: boolean = false): Promise<Rep
     FROM app.universe u
     LEFT JOIN latest_panel p ON p.symbol = u.symbol
     LEFT JOIN latest_verdict v ON v.symbol = u.symbol
+    LEFT JOIN calls_desk_set cd ON cd.symbol = u.symbol
     LEFT JOIN active_calls ac ON ac.symbol = u.symbol
     LEFT JOIN div_pivoted dp ON dp.symbol = u.symbol
     LEFT JOIN upcoming_div ud ON ud.symbol = u.symbol
@@ -380,6 +399,7 @@ export async function loadReportData(forceRefresh: boolean = false): Promise<Rep
       valuation_method: r.valuation_method ?? null,
       verdict_date: r.verdict_date ?? null,
 
+      is_calls_desk: Boolean(r.is_calls_desk),
       is_call_desk: Boolean(r.is_call_desk),
       call_side: r.call_side ?? null,
       call_anchor_price: r.call_anchor_price != null ? Math.round(Number(r.call_anchor_price) * 100) / 100 : null,
