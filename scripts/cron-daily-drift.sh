@@ -44,11 +44,11 @@ done
 export FUNDAMENTAL_ALLOW_REMOTE_DB="1"
 export PYTHONUNBUFFERED=1
 
-# Run up to 250 drifted stocks with 2 workers and 2.0s delay to stay under Gemini RPM limits
+# Run up to 120 drifted stocks with 2 workers and 2.0s delay to stay under Gemini RPM/RPD limits
 $PYTHON_BIN scripts/ollama-verdict.py \
   --drift \
   --engine gemini \
-  --limit 250 \
+  --limit 120 \
   --workers 2 \
   --delay 2.0 \
   --load
