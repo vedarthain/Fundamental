@@ -20,8 +20,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import subprocess
 import sys
+import threading
+import time
 import urllib.request
 from datetime import date, datetime
 from pathlib import Path
@@ -279,6 +282,22 @@ def get_gemini_api_key() -> Optional[str]:
     return None
 
 
+_gemini_lock = threading.Lock()
+_gemini_model_cooldown: dict[str, float] = {}
+
+
+def _parse_retry_after(err: urllib.error.HTTPError, default: float = 20.0) -> float:
+    """Extract Retry-After seconds from HTTP 429 response headers if present."""
+    try:
+        raw = err.headers.get("Retry-After") if err.headers else None
+        if raw is not None:
+            val = float(raw)
+            return max(10.0, min(val, 65.0))
+    except (TypeError, ValueError):
+        pass
+    return default
+
+
 def call_gemini(model: str, prompt: str, system_prompt: str = SYSTEM_PROMPT) -> tuple[dict, str]:
     """Send prompt to Gemini API with native JSON response formatting and fallback."""
     key = get_gemini_api_key()
@@ -322,10 +341,15 @@ def call_gemini(model: str, prompt: str, system_prompt: str = SYSTEM_PROMPT) -> 
     text = None
     last_err = None
     used_model = model
-    import time
     for attempt in range(5):
+        now = time.monotonic()
         for cand in candidates:
             model_name = cand if "/" in cand else f"models/{cand}"
+            with _gemini_lock:
+                cooldown_until = _gemini_model_cooldown.get(model_name, 0.0)
+            if now < cooldown_until:
+                continue
+
             url = f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent?key={key}"
             req = urllib.request.Request(
                 url,
@@ -341,7 +365,14 @@ def call_gemini(model: str, prompt: str, system_prompt: str = SYSTEM_PROMPT) -> 
             except urllib.error.HTTPError as e:
                 last_err = e
                 if e.code == 429:
-                    print(f"      [Quota 429 on {model_name}, trying next candidate...]", file=sys.stderr)
+                    cooldown_sec = _parse_retry_after(e, default=20.0)
+                    with _gemini_lock:
+                        _gemini_model_cooldown[model_name] = time.monotonic() + cooldown_sec
+                        print(
+                            f"      [Quota 429 on {model_name}, cooling down {cooldown_sec:.0f}s and trying next candidate...]",
+                            file=sys.stderr,
+                            flush=True,
+                        )
                     continue
                 elif e.code in (500, 502, 503, 504):
                     time.sleep(2)
@@ -353,9 +384,22 @@ def call_gemini(model: str, prompt: str, system_prompt: str = SYSTEM_PROMPT) -> 
                 continue
         if text is not None:
             break
-        # If all candidates exhausted in this attempt, back off
-        wait_sec = min(10 * (attempt + 1), 30)
-        print(f"      [All candidates rate-limited, waiting {wait_sec}s before retry {attempt+1}/5...]", file=sys.stderr)
+
+        # If all candidates exhausted or on cooldown, back off with jitter to avoid lockstep retries
+        now = time.monotonic()
+        with _gemini_lock:
+            earliest_ready = min(
+                (_gemini_model_cooldown.get(c if "/" in c else f"models/{c}", 0.0) for c in candidates),
+                default=0.0,
+            )
+        base_wait = max(min(15 * (attempt + 1), 60), earliest_ready - now)
+        wait_sec = min(base_wait + random.uniform(1.0, 5.0), 65.0)
+        with _gemini_lock:
+            print(
+                f"      [All candidates rate-limited, waiting {wait_sec:.1f}s before retry {attempt+1}/5...]",
+                file=sys.stderr,
+                flush=True,
+            )
         time.sleep(wait_sec)
 
     if text is None:

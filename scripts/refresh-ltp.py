@@ -58,6 +58,7 @@ What it does NOT do:
 """
 from __future__ import annotations
 
+import argparse
 import csv
 import io
 import os
@@ -568,14 +569,12 @@ def insert_delivery(
     return len(rows)
 
 
-def main() -> None:
-    today = date.today()
-    print(f"refresh-ltp: looking for latest bhavcopy from {today.isoformat()}")
-    result = find_latest_bhavcopy(today)
-    if not result:
-        print(f"✗ no bhavcopy found within {MAX_DAYS_BACK} days — exiting non-zero")
-        sys.exit(1)
-    trade_date, csv_text = result
+def _process_single_bhavcopy(
+    trade_date: date,
+    csv_text: str,
+    update_live_ltp: bool,
+) -> None:
+    """Parse one day's bhavcopy CSV and write LTP (if live) + golden OHLC & delivery."""
     print(f"✓ fetched bhavcopy for {trade_date.isoformat()} ({len(csv_text):,} bytes)")
     bars = parse_bhavcopy(csv_text)
     if not bars:
@@ -583,58 +582,94 @@ def main() -> None:
         sys.exit(2)
     print(f"  parsed {len(bars):,} equity rows")
 
-    # Step 1: update screener_meta.current_price (always)
-    # Same DB connection produces the `known` filter we'll reuse for OHLC.
-    # Step 1b (in the same connection): derive market_cap_cr from the fresh
-    # LTP × shares, then cascade both fields into cluster_stocks_panel_cache.
-    # Without 1b the /sectors page keeps showing stale prices + the buggy
-    # Screener-sourced market cap until the next weekly score run.
     app_url = env_url("APP_DB_URL", required=True)
     with connect_with_retry(app_url) as conn:
         known = fetch_known_symbols(conn)
-        updated, missing = update_ltps(conn, bars, known)
-        n_mcap, n_panel = recompute_market_cap_and_panel(conn)
-    print(f"✓ updated current_price for {updated:,} symbols")
-    if missing:
-        print(f"  {missing:,} bhavcopy symbols not in our universe (ignored)")
-    print(f"✓ recomputed market_cap_cr for {n_mcap:,} symbols")
-    print(f"✓ refreshed {n_panel:,} cluster_stocks_panel_cache rows (latest snapshot)")
+        if update_live_ltp:
+            updated, missing = update_ltps(conn, bars, known)
+            n_mcap, n_panel = recompute_market_cap_and_panel(conn)
+            print(f"✓ updated current_price for {updated:,} symbols")
+            if missing:
+                print(f"  {missing:,} bhavcopy symbols not in our universe (ignored)")
+            print(f"✓ recomputed market_cap_cr for {n_mcap:,} symbols")
+            print(f"✓ refreshed {n_panel:,} cluster_stocks_panel_cache rows (latest snapshot)")
+        else:
+            print(f"  historical backfill mode — skipping live screener_meta.current_price update")
 
-    # Step 2: insert today's OHLC bar into golden.price_history (if configured)
-    # The OHLC write is optional so local dev still works without a Neon golden
-    # URL configured. In CI, NEON_GOLDEN_URL is always set as a repo secret.
     golden_url = env_url("GOLDEN_DB_URL", required=False) or env_url("NEON_GOLDEN_URL", required=False)
     if not golden_url:
         print("  GOLDEN_DB_URL / NEON_GOLDEN_URL not set — skipping OHLC INSERT into golden.price_history")
         return
+
     with connect_with_retry(golden_url) as conn:
-        # Pre-step: ensure EVERY bhavcopy symbol exists in golden.stocks. This
-        # auto-registers brand-new IPOs the day they list so the price_history
-        # FK doesn't fail — and so sync-universe can onboard them. Idempotent.
         stocks_seen = upsert_golden_stocks(conn, bars, known)
         print(f"  ensured {stocks_seen:,} symbols in golden.stocks (FK parent)")
         submitted = insert_ohlc(conn, bars, known, trade_date)
         print(f"✓ submitted {submitted:,} OHLC rows to golden.price_history "
               f"(date={trade_date.isoformat()}, conflicts ignored)")
 
-        # Step 3: delivery figures from the same parsed rows.
-        #
-        # Deliberately inside its own try: the price write above is what the
-        # whole site depends on, and it has already been committed by the time
-        # we get here. A delivery failure — NSE renaming a column, a FK edge
-        # case — must leave that committed and the job green, because losing
-        # today's prices to protect a signal nobody had until this week is a
-        # bad trade. It prints loudly so the loss is visible rather than
-        # swallowed (CLAUDE.md §5: a skipped step must not render as success).
         try:
             n_deliv = insert_delivery(conn, bars, trade_date)
             print(f"✓ submitted {n_deliv:,} delivery rows to golden.delivery_data")
-        except Exception as e:  # noqa: BLE001 — see comment above
+        except Exception as e:  # noqa: BLE001
             conn.rollback()
             print(f"✗ delivery write FAILED ({type(e).__name__}: {e}) — "
                   f"prices for {trade_date.isoformat()} are safe and committed, "
                   f"but delivery data for this date is now permanently missing "
                   f"unless backfilled", file=sys.stderr)
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="Fetch NSE bhavcopy and refresh LTP / golden OHLC + delivery")
+    ap.add_argument("--date", help="Fetch bhavcopy for a specific date (YYYY-MM-DD)")
+    ap.add_argument("--days", type=int, default=None, help="Backfill last N calendar days of bhavcopy (1-60)")
+    ap.add_argument("--update-ltp", action="store_true", help="Also update live screener_meta.current_price when backfilling")
+    args = ap.parse_args()
+
+    today = date.today()
+
+    if args.date:
+        try:
+            target_date = date.fromisoformat(args.date)
+        except ValueError:
+            print(f"✗ Invalid --date '{args.date}' (expected YYYY-MM-DD)", file=sys.stderr)
+            sys.exit(1)
+        print(f"refresh-ltp: fetching bhavcopy for {target_date.isoformat()}")
+        csv_text = fetch_bhavcopy(target_date)
+        if not csv_text:
+            print(f"✗ no bhavcopy available for {target_date.isoformat()} (weekend/holiday or not yet published)")
+            sys.exit(1)
+        _process_single_bhavcopy(target_date, csv_text, update_live_ltp=(target_date >= today or args.update_ltp))
+        return
+
+    if args.days is not None:
+        days = max(1, min(args.days, 60))
+        print(f"refresh-ltp: backfilling last {days} calendar days ending {today.isoformat()}")
+        processed = 0
+        # Walk oldest -> newest so if --update-ltp is set, newest wins
+        for delta in range(days - 1, -1, -1):
+            d = today - timedelta(days=delta)
+            if d.weekday() >= 5:
+                continue
+            print(f"\n── {d.isoformat()} ──")
+            csv_text = fetch_bhavcopy(d)
+            if not csv_text:
+                print(f"  no bhavcopy for {d.isoformat()} (holiday or not yet published), skipping")
+                continue
+            _process_single_bhavcopy(d, csv_text, update_live_ltp=(d == today or args.update_ltp))
+            processed += 1
+        print(f"\n✓ historical backfill finished: {processed} trading day(s) processed")
+        if processed == 0:
+            sys.exit(1)
+        return
+
+    print(f"refresh-ltp: looking for latest bhavcopy from {today.isoformat()}")
+    result = find_latest_bhavcopy(today)
+    if not result:
+        print(f"✗ no bhavcopy found within {MAX_DAYS_BACK} days — exiting non-zero")
+        sys.exit(1)
+    trade_date, csv_text = result
+    _process_single_bhavcopy(trade_date, csv_text, update_live_ltp=True)
 
 
 if __name__ == "__main__":

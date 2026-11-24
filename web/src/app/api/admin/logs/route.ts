@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { isAdminRequest } from "@/lib/auth";
+import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
 import zlib from "zlib";
@@ -12,6 +13,15 @@ const LOG_FILES: Record<string, string> = {
   scanner: "/var/log/fundamental-momentum-scanner.log",
   backup: "/var/log/fundamental-db-backup.log",
   reload: "/var/log/fundamental-pm2-reload.log",
+};
+
+const CRON_SCRIPTS: Record<string, string> = {
+  drift: "scripts/cron-daily-drift.sh",
+  sunday: "scripts/cron-sunday-calls.sh",
+  ltp: "scripts/cron-refresh-ltp.sh",
+  compute: "scripts/cron-weekly-compute.sh",
+  scanner: "scripts/cron-momentum-scanner.sh",
+  backup: "scripts/cron-db-backup.sh",
 };
 
 type ArchiveInfo = {
@@ -136,6 +146,96 @@ export async function GET(request: Request) {
   } catch (error: any) {
     return NextResponse.json(
       { error: error?.message || "Failed to read log file" },
+      { status: 500 },
+    );
+  }
+}
+
+export async function POST(request: Request) {
+  if (!(await isAdminRequest())) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  try {
+    const body = await request.json();
+    const type = String(body?.type || "ltp");
+    const mode = String(body?.mode || "today");
+    const customDate = body?.customDate ? String(body.customDate).trim() : "";
+
+    const baseLogPath = LOG_FILES[type];
+    const cronScript = CRON_SCRIPTS[type];
+    if (!baseLogPath || !cronScript) {
+      return NextResponse.json({ error: `Unsupported job type: ${type}` }, { status: 400 });
+    }
+
+    const repoRoot = fs.existsSync("/var/www/Fundamental/scripts")
+      ? "/var/www/Fundamental"
+      : path.resolve(process.cwd(), "..");
+
+    let cmd = "bash";
+    let args = [path.join(repoRoot, cronScript)];
+    let description = `Triggered ${cronScript}`;
+
+    if (type === "ltp" && mode !== "today") {
+      const venvPython = path.join(repoRoot, ".venv", "bin", "python");
+      const etlPython = path.join(repoRoot, "etl", ".venv", "bin", "python");
+      cmd = fs.existsSync(venvPython)
+        ? venvPython
+        : fs.existsSync(etlPython)
+          ? etlPython
+          : "python3";
+
+      const scriptPath = path.join(repoRoot, "scripts", "refresh-ltp.py");
+      if (mode === "yesterday") {
+        const y = new Date(Date.now() - 86400_000).toISOString().slice(0, 10);
+        args = [scriptPath, "--date", y];
+        description = `Historical Bhavcopy backfill for ${y}`;
+      } else if (mode === "7d" || mode === "14d" || mode === "30d") {
+        const days = mode.replace("d", "");
+        args = [scriptPath, "--days", days];
+        description = `Historical Bhavcopy backfill for last ${days} days`;
+      } else if (mode === "custom") {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(customDate)) {
+          return NextResponse.json({ error: "Invalid customDate (expected YYYY-MM-DD)" }, { status: 400 });
+        }
+        args = [scriptPath, "--date", customDate];
+        description = `Historical Bhavcopy backfill for ${customDate}`;
+      } else {
+        return NextResponse.json({ error: `Unsupported mode: ${mode}` }, { status: 400 });
+      }
+    }
+
+    const logDir = path.dirname(baseLogPath);
+    if (!fs.existsSync(logDir)) {
+      fs.mkdirSync(logDir, { recursive: true });
+    }
+
+    const header = `\n[${new Date().toISOString()}] ▶ Manual trigger from /admin/logs: ${description}\n`;
+    fs.appendFileSync(baseLogPath, header);
+    const outFd = fs.openSync(baseLogPath, "a");
+
+    const child = spawn(cmd, args, {
+      cwd: repoRoot,
+      detached: true,
+      stdio: ["ignore", outFd, outFd],
+      env: {
+        ...process.env,
+        FUNDAMENTAL_ALLOW_REMOTE_DB: "1",
+        PYTHONUNBUFFERED: "1",
+      },
+    });
+    child.unref();
+    fs.closeSync(outFd);
+
+    return NextResponse.json({
+      success: true,
+      message: `${description} (PID ${child.pid ?? "started"})`,
+      type,
+      mode,
+    });
+  } catch (error: any) {
+    return NextResponse.json(
+      { error: error?.message || "Failed to start job" },
       { status: 500 },
     );
   }

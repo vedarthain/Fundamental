@@ -53,6 +53,13 @@ export function LogsViewerClient() {
   const [loading, setLoading] = useState<boolean>(true);
   const [logData, setLogData] = useState<LogResponse | null>(null);
   const [copied, setCopied] = useState<boolean>(false);
+  const [fetchMode, setFetchMode] = useState<string>("today");
+  const [customDate, setCustomDate] = useState<string>(() => {
+    const y = new Date(Date.now() - 86400_000);
+    return y.toISOString().slice(0, 10);
+  });
+  const [running, setRunning] = useState<boolean>(false);
+  const [runStatus, setRunStatus] = useState<{ ok: boolean; text: string } | null>(null);
   const terminalRef = useRef<HTMLPreElement>(null);
 
   const fetchLog = async (type: LogType = activeTab, lineCount: number = lines, file: string = selectedFile) => {
@@ -69,6 +76,36 @@ export function LogsViewerClient() {
       console.error("Failed to fetch log", err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const triggerJob = async () => {
+    if (activeTab === "reload") return;
+    setRunning(true);
+    setRunStatus(null);
+    try {
+      const res = await fetch("/api/admin/logs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: activeTab,
+          mode: activeTab === "ltp" ? fetchMode : "today",
+          customDate: activeTab === "ltp" && fetchMode === "custom" ? customDate : undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setRunStatus({ ok: false, text: data?.error || "Failed to start job" });
+      } else {
+        setRunStatus({ ok: true, text: data.message || "Job started" });
+        setSelectedFile("");
+        setAutoRefresh(true);
+        setTimeout(() => fetchLog(activeTab, lines, ""), 800);
+      }
+    } catch (err: any) {
+      setRunStatus({ ok: false, text: err?.message || "Request failed" });
+    } finally {
+      setRunning(false);
     }
   };
 
@@ -117,6 +154,7 @@ export function LogsViewerClient() {
               key={tab.id}
               onClick={() => {
                 setSelectedFile("");
+                setRunStatus(null);
                 setActiveTab(tab.id);
               }}
               className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
@@ -132,9 +170,55 @@ export function LogsViewerClient() {
 
         {/* Options */}
         <div className="flex items-center gap-2 flex-wrap">
+          {activeTab === "ltp" && (
+            <div className="flex items-center gap-1.5 bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 rounded-lg px-2 py-1">
+              <label className="text-xs text-emerald-800 dark:text-emerald-300 font-medium flex items-center gap-1.5">
+                <span>Fetch Data:</span>
+                <select
+                  value={fetchMode}
+                  onChange={(e) => setFetchMode(e.target.value)}
+                  className="bg-white dark:bg-zinc-800 border border-emerald-300 dark:border-emerald-800 text-xs rounded px-2 py-0.5 text-zinc-800 dark:text-zinc-200"
+                >
+                  <option value="today">Today (Latest)</option>
+                  <option value="yesterday">Yesterday</option>
+                  <option value="7d">Last 7 Days</option>
+                  <option value="14d">Last 14 Days</option>
+                  <option value="30d">Last 30 Days</option>
+                  <option value="custom">Specific Date</option>
+                </select>
+              </label>
+              {fetchMode === "custom" && (
+                <input
+                  type="date"
+                  value={customDate}
+                  max={new Date().toISOString().slice(0, 10)}
+                  onChange={(e) => setCustomDate(e.target.value)}
+                  className="bg-white dark:bg-zinc-800 border border-emerald-300 dark:border-emerald-800 text-xs rounded px-2 py-0.5 text-zinc-800 dark:text-zinc-200"
+                />
+              )}
+              <button
+                onClick={triggerJob}
+                disabled={running}
+                className="px-2.5 py-0.5 text-xs font-semibold rounded bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white transition-colors"
+              >
+                {running ? "Starting..." : "Fetch"}
+              </button>
+            </div>
+          )}
+
+          {activeTab !== "ltp" && activeTab !== "reload" && (
+            <button
+              onClick={triggerJob}
+              disabled={running}
+              className="px-2.5 py-1 text-xs font-semibold rounded bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white transition-colors"
+            >
+              {running ? "Starting..." : "Run Job Now"}
+            </button>
+          )}
+
           {archives.length > 0 && (
-            <label className="text-xs text-zinc-500 dark:text-zinc-400 flex items-center gap-1">
-              <span>History:</span>
+            <label className="text-xs text-zinc-500 dark:text-zinc-400 flex items-center gap-1" title="Switch between rotated log files">
+              <span>Log File:</span>
               <select
                 value={activeFileName}
                 onChange={(e) => setSelectedFile(e.target.value)}
@@ -197,6 +281,18 @@ export function LogsViewerClient() {
           </button>
         </div>
       </div>
+
+      {runStatus && (
+        <div
+          className={`px-3 py-2 rounded-lg text-xs font-medium border ${
+            runStatus.ok
+              ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800"
+              : "bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-800"
+          }`}
+        >
+          {runStatus.text}
+        </div>
+      )}
 
       {/* Meta stats */}
       {logData && (
