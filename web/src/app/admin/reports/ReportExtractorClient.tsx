@@ -199,7 +199,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
   const [collapsedCats, setCollapsedCats] = useState<Record<string, boolean>>({});
 
   // Filter toolbar
-  const [universeScope, setUniverseScope] = useState<"all" | "nifty500" | "portfolio" | "watchlist" | "verdict" | "calls" | "pinned_calls">("all");
+  const [universeScope, setUniverseScope] = useState<"all" | "nifty500" | "portfolio" | "watchlist" | "verdict" | "calls">("all");
   const [actionFilter, setActionFilter] = useState<string>("all");
   const [stockSearch, setStockSearch] = useState<string>("");
 
@@ -408,7 +408,6 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
       watchlist: data.filter((r) => r.is_watchlist).length,
       verdict: data.filter((r) => Boolean(r.verdict)).length,
       calls: data.filter((r) => r.is_calls_desk).length,
-      pinnedCalls: data.filter((r) => r.is_call_desk).length,
     };
   }, [data]);
 
@@ -421,7 +420,6 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
       if (universeScope === "watchlist" && !row.is_watchlist) return false;
       if (universeScope === "verdict" && !row.verdict) return false;
       if (universeScope === "calls" && !row.is_calls_desk) return false;
-      if (universeScope === "pinned_calls" && !row.is_call_desk) return false;
 
       // 2. Action filter
       if (actionFilter !== "all") {
@@ -934,7 +932,6 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                 >
                   <option value="all">All Active NSE Stocks ({scopeCounts.all > 0 ? scopeCounts.all.toLocaleString("en-IN") : "..."})</option>
                   <option value="calls">Calls Desk Stocks ({scopeCounts.calls.toLocaleString("en-IN")})</option>
-                  <option value="pinned_calls">Pinned Active Calls ({scopeCounts.pinnedCalls})</option>
                   <option value="verdict">Curated Verdicts ({scopeCounts.verdict.toLocaleString("en-IN")})</option>
                   <option value="portfolio">Portfolio Holdings ({scopeCounts.portfolio})</option>
                   <option value="watchlist">My Watchlist ({scopeCounts.watchlist})</option>
