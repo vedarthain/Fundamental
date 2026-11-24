@@ -104,7 +104,10 @@ jobs:
             npm install --omit=dev --no-audit --prefer-offline
 
             # Locate and extract cloud-compiled Next.js build
-            ARCHIVE=$(find /tmp -name "next-build.tar.gz" -print -quit)
+            ARCHIVE="/tmp/next-build.tar.gz"
+            if [ ! -f "$ARCHIVE" ]; then
+              ARCHIVE=$(find /tmp -maxdepth 2 -name "next-build.tar.gz" -print -quit 2>/dev/null || true)
+            fi
             if [ -n "$ARCHIVE" ] && [ -f "$ARCHIVE" ]; then
               echo "Extracting $ARCHIVE..."
               rm -rf .next
