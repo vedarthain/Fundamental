@@ -3,7 +3,40 @@
 import React, { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 
-interface LiveTelemetry {
+type SarRange = "1d" | "5d" | "30d";
+
+interface SarBucket {
+  ts: string;
+  samples: number;
+  cpuAvg: number;
+  cpuMax: number;
+  ramAvg: number;
+  heapAvg: number;
+  lagAvg: number;
+  diskMax: number | null;
+  pingAvg: number | null;
+  connMax: number;
+  cacheMin: number | null;
+}
+
+interface SarSummary {
+  total_samples: number;
+  cpu_avg: number | null;
+  cpu_max: number | null;
+  ram_avg: number | null;
+  ram_max: number | null;
+  heap_avg: number | null;
+  heap_max: number | null;
+  lag_avg: number | null;
+  lag_max: number | null;
+  disk_max: number | null;
+  ping_avg: number | null;
+  ping_max: number | null;
+  cache_min: number | null;
+  conn_max: number | null;
+}
+
+interface InfraTelemetry {
   ts: string;
   app: {
     cpuCount: number;
@@ -80,6 +113,11 @@ interface LiveTelemetry {
       }[];
     };
   };
+  sar: {
+    range: SarRange;
+    summary: SarSummary | null;
+    buckets: SarBucket[];
+  };
 }
 
 function fmtBytes(b: number | null | undefined): string {
@@ -90,164 +128,190 @@ function fmtBytes(b: number | null | undefined): string {
   return `${(b / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
-function Sparkline({ values, color = "#10b981", height = 28 }: { values: number[]; color?: string; height?: number }) {
-  if (values.length < 2) {
-    return <div className="h-[28px] flex items-center text-[10px] font-mono text-slate-400">sampling…</div>;
+function fmtBucketTime(iso: string, range: SarRange): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  if (range === "30d") {
+    return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
   }
-  const w = 120;
-  const min = Math.min(...values);
-  const max = Math.max(...values);
+  if (range === "5d") {
+    return d.toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false });
+  }
+  return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+function StaticTrendChart({
+  title,
+  unit,
+  points,
+  color,
+}: {
+  title: string;
+  unit: string;
+  points: { label: string; value: number }[];
+  color: string;
+}) {
+  if (points.length === 0) {
+    return (
+      <div className="rounded-xl border hairline bg-white dark:bg-slate-900 p-3.5 shadow-2xs">
+        <div className="text-xs font-semibold text-slate-700 dark:text-slate-300">{title}</div>
+        <div className="h-20 flex items-center justify-center text-[11px] text-slate-400">
+          Waiting for more SAR samples in this window
+        </div>
+      </div>
+    );
+  }
+
+  const ordered = [...points].reverse(); // oldest -> newest left-to-right
+  const vals = ordered.map((p) => p.value);
+  const min = Math.min(...vals);
+  const max = Math.max(...vals);
+  const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
   const span = max - min || 1;
-  const pts = values
-    .map((v, i) => {
-      const x = (i / (values.length - 1)) * w;
-      const y = height - 3 - ((v - min) / span) * (height - 6);
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
+  const w = 320;
+  const h = 64;
+
+  const coords = ordered.map((p, i) => {
+    const x = ordered.length === 1 ? w / 2 : (i / (ordered.length - 1)) * w;
+    const y = h - 6 - ((p.value - min) / span) * (h - 12);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
 
   return (
-    <svg width={w} height={height} viewBox={`0 0 ${w} ${height}`} className="overflow-visible">
-      <polyline fill="none" stroke={color} strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" points={pts} />
-    </svg>
+    <div className="rounded-xl border hairline bg-white dark:bg-slate-900 p-3.5 shadow-2xs space-y-2">
+      <div className="flex items-center justify-between text-xs">
+        <span className="font-semibold text-slate-800 dark:text-slate-200">{title}</span>
+        <span className="font-mono text-[11px] text-slate-500">
+          avg {avg.toFixed(1)}{unit} · max <strong className="text-slate-900 dark:text-white">{max.toFixed(1)}{unit}</strong>
+        </span>
+      </div>
+      <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-16 overflow-visible">
+        <line x1="0" y1={h - 6} x2={w} y2={h - 6} stroke="currentColor" className="text-slate-200 dark:text-slate-800" strokeWidth="1" />
+        {ordered.length > 1 ? (
+          <polyline fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" points={coords.join(" ")} />
+        ) : (
+          <circle cx={w / 2} cy={h / 2} r="3.5" fill={color} />
+        )}
+      </svg>
+      <div className="flex justify-between text-[10px] font-mono text-slate-400">
+        <span>{ordered[0]?.label}</span>
+        <span>{ordered[ordered.length - 1]?.label}</span>
+      </div>
+    </div>
   );
 }
 
 export function LiveInfraPanel({ showApp, showDb }: { showApp: boolean; showDb: boolean }) {
-  const [data, setData] = useState<LiveTelemetry | null>(null);
-  const [history, setHistory] = useState<LiveTelemetry[]>([]);
-  const [pollMs, setPollMs] = useState<number>(5000);
+  const [sarRange, setSarRange] = useState<SarRange>("1d");
+  const [data, setData] = useState<InfraTelemetry | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const [recording, setRecording] = useState<boolean>(false);
 
-  const fetchLive = useCallback(async () => {
+  const fetchSar = useCallback(async (range: SarRange, recordSample: boolean = false) => {
+    if (recordSample) setRecording(true);
+    else setLoading(true);
     try {
-      const res = await fetch("/api/admin/insights/live", { cache: "no-store" });
+      const qs = new URLSearchParams({ range });
+      if (recordSample) qs.set("record", "1");
+      const res = await fetch(`/api/admin/insights/live?${qs.toString()}`, { cache: "no-store" });
       if (!res.ok) return;
-      const json: LiveTelemetry = await res.json();
+      const json: InfraTelemetry = await res.json();
       setData(json);
-      setHistory((prev) => [...prev.slice(-23), json]);
     } catch {
-      // ignore transient network error
+      // ignore transient error
     } finally {
       setLoading(false);
+      setRecording(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchLive();
-  }, [fetchLive]);
+    fetchSar(sarRange, false);
+  }, [sarRange, fetchSar]);
 
-  useEffect(() => {
-    if (pollMs <= 0) return;
-    const id = setInterval(fetchLive, pollMs);
-    return () => clearInterval(id);
-  }, [pollMs, fetchLive]);
-
-  const cpuSeries = history.map((h) => h.app.loadPct);
-  const lagSeries = history.map((h) => h.app.eventLoopLagMs);
-  const heapSeries = history.map((h) => Math.round(h.app.heapUsedBytes / (1024 * 1024)));
-  const pingSeries = history.map((h) => h.db.pingMs ?? 0);
-  const activeConnSeries = history.map((h) => h.db.connections.active);
+  const sar = data?.sar;
+  const buckets = sar?.buckets ?? [];
+  const sum = sar?.summary;
 
   return (
     <div className="space-y-4">
-      {/* Live Control Strip */}
+      {/* Static SAR Control Strip (no auto-polling / no moving graphs) */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border hairline bg-slate-50/80 dark:bg-slate-900/70 px-3.5 py-2.5">
         <div className="flex items-center gap-2 text-xs">
-          <span
-            className={`w-2 h-2 rounded-full ${
-              pollMs > 0 ? "bg-emerald-500 animate-pulse" : "bg-slate-400"
-            }`}
-          />
-          <span className="font-semibold text-slate-800 dark:text-slate-200">
-            Live SRE Telemetry
+          <span className="px-2 py-0.5 rounded bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 font-mono font-bold text-[10px] uppercase">
+            SAR
           </span>
-          {data && (
+          <span className="font-semibold text-slate-800 dark:text-slate-200">
+            System Activity & DB Historical Report
+          </span>
+          {sum && (
             <span className="font-mono text-[11px] text-slate-500">
-              · {history.length} samples · updated {new Date(data.ts).toLocaleTimeString()}
+              · {sum.total_samples} sample{sum.total_samples === 1 ? "" : "s"} in window
             </span>
           )}
         </div>
 
         <div className="flex items-center gap-2 text-xs">
-          <span className="text-slate-500">Poll:</span>
-          {[
-            { label: "5s", ms: 5000 },
-            { label: "10s", ms: 10000 },
-            { label: "Off", ms: 0 },
-          ].map((opt) => (
-            <button
-              key={opt.label}
-              onClick={() => setPollMs(opt.ms)}
-              className={`px-2 py-0.5 rounded font-mono border transition-colors ${
-                pollMs === opt.ms
-                  ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900 border-transparent"
-                  : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-300 dark:border-slate-700"
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
+          <div className="flex items-center gap-1 bg-white dark:bg-slate-800 p-0.5 rounded-lg border hairline">
+            {(
+              [
+                { id: "1d", label: "1 Day" },
+                { id: "5d", label: "5 Days" },
+                { id: "30d", label: "1 Month" },
+              ] as const
+            ).map((opt) => (
+              <button
+                key={opt.id}
+                onClick={() => setSarRange(opt.id)}
+                className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
+                  sarRange === opt.id
+                    ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
+                    : "text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
           <button
-            onClick={fetchLive}
-            className="px-2.5 py-0.5 rounded font-medium bg-indigo-600 hover:bg-indigo-700 text-white transition-colors"
+            onClick={() => fetchSar(sarRange, true)}
+            disabled={recording || loading}
+            className="px-2.5 py-1 rounded-lg font-medium bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white transition-colors"
           >
-            {loading && !data ? "Loading..." : "Sample Now"}
+            {recording ? "Recording..." : "Record Sample & Refresh"}
           </button>
         </div>
       </div>
 
-      {/* Live App Server SRE Cards + Cron Freshness */}
+      {/* App Server Historical SAR + Cron Freshness */}
       {showApp && data && (
         <div className="space-y-3">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <div className="rounded-xl border hairline bg-white dark:bg-slate-900 p-3.5 shadow-2xs space-y-1">
-              <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                <span>Event Loop Lag</span>
-                <span
-                  className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${
-                    data.app.eventLoopLagMs > 50
-                      ? "bg-rose-50 text-rose-700 border border-rose-200"
-                      : data.app.eventLoopLagMs > 15
-                        ? "bg-amber-50 text-amber-700 border border-amber-200"
-                        : "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                  }`}
-                >
-                  {data.app.eventLoopLagMs > 50 ? "Slow" : "Healthy"}
-                </span>
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">CPU Load % (Avg / Peak)</div>
+              <div className="text-xl font-mono font-bold text-slate-900 dark:text-white">
+                {sum?.cpu_avg ?? data.app.loadPct}%{" "}
+                <span className="text-xs font-normal text-slate-500">/ {sum?.cpu_max ?? data.app.loadPct}%</span>
               </div>
-              <div className="flex items-end justify-between">
-                <div className="text-xl font-mono font-bold text-slate-900 dark:text-white">
-                  {data.app.eventLoopLagMs.toFixed(1)} ms
-                </div>
-                <Sparkline values={lagSeries} color="#6366f1" />
-              </div>
+              <div className="text-[11px] text-slate-400 font-mono">Now: {data.app.loadPct}% ({data.app.cpuCount} vCPU)</div>
             </div>
 
             <div className="rounded-xl border hairline bg-white dark:bg-slate-900 p-3.5 shadow-2xs space-y-1">
-              <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                <span>Live CPU Load</span>
-                <span className="font-mono text-[10px] text-slate-400">{data.app.cpuCount} vCPU</span>
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Host RAM % (Avg / Peak)</div>
+              <div className="text-xl font-mono font-bold text-slate-900 dark:text-white">
+                {sum?.ram_avg ?? data.app.ramUsedPct}%{" "}
+                <span className="text-xs font-normal text-slate-500">/ {sum?.ram_max ?? data.app.ramUsedPct}%</span>
               </div>
-              <div className="flex items-end justify-between">
-                <div className="text-xl font-mono font-bold text-slate-900 dark:text-white">
-                  {data.app.loadPct.toFixed(0)}%
-                </div>
-                <Sparkline values={cpuSeries} color={data.app.loadPct > 80 ? "#f43f5e" : "#10b981"} />
-              </div>
+              <div className="text-[11px] text-slate-400 font-mono">Now: {fmtBytes(data.app.ramUsedBytes)} / {fmtBytes(data.app.ramTotalBytes)}</div>
             </div>
 
             <div className="rounded-xl border hairline bg-white dark:bg-slate-900 p-3.5 shadow-2xs space-y-1">
-              <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                <span>Live V8 Heap</span>
-                <span className="font-mono text-[10px] text-slate-400">RSS {fmtBytes(data.app.nodeRssBytes)}</span>
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Event Loop Lag (Avg / Peak)</div>
+              <div className="text-xl font-mono font-bold text-slate-900 dark:text-white">
+                {sum?.lag_avg ?? data.app.eventLoopLagMs} ms{" "}
+                <span className="text-xs font-normal text-slate-500">/ {sum?.lag_max ?? data.app.eventLoopLagMs} ms</span>
               </div>
-              <div className="flex items-end justify-between">
-                <div className="text-xl font-mono font-bold text-slate-900 dark:text-white">
-                  {fmtBytes(data.app.heapUsedBytes)}
-                </div>
-                <Sparkline values={heapSeries} color="#8b5cf6" />
-              </div>
+              <div className="text-[11px] text-slate-400 font-mono">Heap peak: {sum?.heap_max ?? Math.round(data.app.heapUsedBytes / 1048576)} MB</div>
             </div>
 
             <div className="rounded-xl border hairline bg-white dark:bg-slate-900 p-3.5 shadow-2xs space-y-1.5">
@@ -264,17 +328,29 @@ export function LiveInfraPanel({ showApp, showDb }: { showApp: boolean; showDb: 
                 <div className="w-full h-1.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
                   <div
                     className={`h-full ${
-                      data.app.disk.usedPct > 85
-                        ? "bg-rose-500"
-                        : data.app.disk.usedPct > 70
-                          ? "bg-amber-500"
-                          : "bg-emerald-500"
+                      data.app.disk.usedPct > 85 ? "bg-rose-500" : data.app.disk.usedPct > 70 ? "bg-amber-500" : "bg-emerald-500"
                     }`}
                     style={{ width: `${Math.min(100, data.app.disk.usedPct)}%` }}
                   />
                 </div>
               )}
             </div>
+          </div>
+
+          {/* Static SAR Trend Charts for App Server */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <StaticTrendChart
+              title={`CPU Utilization % (${sarRange.toUpperCase()})`}
+              unit="%"
+              color="#10b981"
+              points={buckets.map((b) => ({ label: fmtBucketTime(b.ts, sarRange), value: b.cpuAvg }))}
+            />
+            <StaticTrendChart
+              title={`Memory Utilization % (${sarRange.toUpperCase()})`}
+              unit="%"
+              color="#6366f1"
+              points={buckets.map((b) => ({ label: fmtBucketTime(b.ts, sarRange), value: b.ramAvg }))}
+            />
           </div>
 
           {/* Cron Pipeline Health Matrix */}
@@ -290,10 +366,7 @@ export function LiveInfraPanel({ showApp, showDb }: { showApp: boolean; showDb: 
             </div>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5">
               {data.app.crons.map((c) => (
-                <div
-                  key={c.id}
-                  className="rounded-lg border hairline p-2.5 bg-slate-50/70 dark:bg-slate-800/40 space-y-1 text-xs"
-                >
+                <div key={c.id} className="rounded-lg border hairline p-2.5 bg-slate-50/70 dark:bg-slate-800/40 space-y-1 text-xs">
                   <div className="flex items-center justify-between gap-1">
                     <span className="font-semibold text-slate-800 dark:text-slate-200 truncate">{c.label}</span>
                     <span
@@ -319,72 +392,24 @@ export function LiveInfraPanel({ showApp, showDb }: { showApp: boolean; showDb: 
         </div>
       )}
 
-      {/* Live DB Deep Diagnostics */}
+      {/* DB Server Historical SAR + Deep Diagnostics */}
       {showDb && data && (
         <div className="space-y-3">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <div className="rounded-xl border hairline bg-white dark:bg-slate-900 p-3.5 shadow-2xs space-y-1">
-              <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                <span>Live DB Ping</span>
-                <span className="font-mono text-[10px] text-slate-400">SELECT 1</span>
-              </div>
-              <div className="flex items-end justify-between">
-                <div className="text-xl font-mono font-bold text-slate-900 dark:text-white">
-                  {data.db.pingMs != null ? `${data.db.pingMs} ms` : "—"}
-                </div>
-                <Sparkline values={pingSeries} color="#3b82f6" />
-              </div>
-            </div>
-
-            <div className="rounded-xl border hairline bg-white dark:bg-slate-900 p-3.5 shadow-2xs space-y-1">
-              <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                <span>Active / Waiting</span>
-                <span className="font-mono text-[10px] text-slate-400">
-                  {data.db.connections.idleInTx} idle-in-tx
-                </span>
-              </div>
-              <div className="flex items-end justify-between">
-                <div className="text-xl font-mono font-bold text-slate-900 dark:text-white">
-                  {data.db.connections.active}{" "}
-                  <span className="text-xs font-normal text-slate-500">
-                    / {data.db.connections.waiting} wait
-                  </span>
-                </div>
-                <Sparkline values={activeConnSeries} color="#0ea5e9" />
-              </div>
-            </div>
-
-            <div className="rounded-xl border hairline bg-white dark:bg-slate-900 p-3.5 shadow-2xs space-y-1">
-              <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                <span>Buffer Hit Ratio</span>
-                <span
-                  className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${
-                    data.db.cacheHitPct >= 98
-                      ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                      : "bg-amber-50 text-amber-700 border border-amber-200"
-                  }`}
-                >
-                  {data.db.cacheHitPct >= 98 ? "Optimal" : "Tune"}
-                </span>
-              </div>
-              <div className="text-xl font-mono font-bold text-slate-900 dark:text-white">
-                {data.db.cacheHitPct.toFixed(2)}%
-              </div>
-              <div className="text-[11px] text-slate-500 font-mono">
-                {data.db.deadlocks} deadlocks · {data.db.rollbacks.toLocaleString("en-IN")} rollbacks
-              </div>
-            </div>
-
-            <div className="rounded-xl border hairline bg-white dark:bg-slate-900 p-3.5 shadow-2xs space-y-1">
-              <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                <span>Temp Disk Spill</span>
-                <span className="font-mono text-[10px] text-slate-400">{data.db.tempFiles} files</span>
-              </div>
-              <div className="text-xl font-mono font-bold text-slate-900 dark:text-white">
-                {fmtBytes(data.db.tempBytes)}
-              </div>
-              <div className="text-[11px] text-slate-500">Sort/hash spills to disk</div>
-            </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <StaticTrendChart
+              title={`DB Ping Latency (${sarRange.toUpperCase()})`}
+              unit="ms"
+              color="#3b82f6"
+              points={buckets
+                .filter((b) => b.pingAvg != null)
+                .map((b) => ({ label: fmtBucketTime(b.ts, sarRange), value: b.pingAvg as number }))}
+            />
+            <StaticTrendChart
+              title={`Peak Active DB Connections (${sarRange.toUpperCase()})`}
+              unit=""
+              color="#0ea5e9"
+              points={buckets.map((b) => ({ label: fmtBucketTime(b.ts, sarRange), value: b.connMax }))}
+            />
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -433,7 +458,9 @@ export function LiveInfraPanel({ showApp, showDb }: { showApp: boolean; showDb: 
                 <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
                   Active Queries & Lock Monitor ({data.db.activeQueries.length})
                 </h3>
-                <p className="text-xs text-slate-500">Live non-idle backends from pg_stat_activity</p>
+                <p className="text-xs text-slate-500">
+                  Snapshot of non-idle backends · Temp spill: {fmtBytes(data.db.tempBytes)} ({data.db.tempFiles} files)
+                </p>
               </div>
               {data.db.activeQueries.length > 0 ? (
                 <div className="space-y-1.5">
@@ -452,8 +479,8 @@ export function LiveInfraPanel({ showApp, showDb }: { showApp: boolean; showDb: 
                   ))}
                 </div>
               ) : (
-                <div className="py-3 text-xs text-emerald-600 dark:text-emerald-400 font-medium">
-                  ✓ No active or lock-waiting queries right now
+                <div className="py-2 text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+                  ✓ No active or lock-waiting queries at sample time
                 </div>
               )}
 
@@ -482,6 +509,65 @@ export function LiveInfraPanel({ showApp, showDb }: { showApp: boolean; showDb: 
           </div>
         </div>
       )}
+
+      {/* Classic SAR Tabular Activity Log */}
+      <div className="rounded-xl border hairline bg-white dark:bg-slate-900 p-4 shadow-2xs space-y-2.5 overflow-x-auto">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
+              SAR Historical Activity Table ({sarRange === "1d" ? "15m buckets · 24h" : sarRange === "5d" ? "2h buckets · 5d" : "1d buckets · 30d"})
+            </h3>
+            <p className="text-xs text-slate-500">
+              Recorded automatically every ~5m by keep-warm and manual samples
+            </p>
+          </div>
+        </div>
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-left text-[11px] text-slate-500 border-b hairline">
+              <th className="pb-1.5 font-medium">Time</th>
+              <th className="pb-1.5 font-medium text-right">Samples</th>
+              <th className="pb-1.5 font-medium text-right">CPU % (avg/max)</th>
+              <th className="pb-1.5 font-medium text-right">RAM %</th>
+              <th className="pb-1.5 font-medium text-right">Heap MB</th>
+              <th className="pb-1.5 font-medium text-right">Lag ms</th>
+              <th className="pb-1.5 font-medium text-right">Disk %</th>
+              <th className="pb-1.5 font-medium text-right">DB Ping</th>
+              <th className="pb-1.5 font-medium text-right">Max Conn</th>
+              <th className="pb-1.5 font-medium text-right">Cache Hit</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-mono">
+            {buckets.slice(0, 32).map((b) => (
+              <tr key={b.ts} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                <td className="py-1.5 text-slate-700 dark:text-slate-300">{fmtBucketTime(b.ts, sarRange)}</td>
+                <td className="py-1.5 text-right text-slate-400">{b.samples}</td>
+                <td className={`py-1.5 text-right ${b.cpuMax > 85 ? "text-rose-600 font-semibold" : "text-slate-800 dark:text-slate-200"}`}>
+                  {b.cpuAvg.toFixed(1)}% / {b.cpuMax.toFixed(1)}%
+                </td>
+                <td className="py-1.5 text-right">{b.ramAvg.toFixed(1)}%</td>
+                <td className="py-1.5 text-right">{b.heapAvg.toFixed(0)}</td>
+                <td className={`py-1.5 text-right ${b.lagAvg > 50 ? "text-rose-600" : "text-slate-600 dark:text-slate-300"}`}>
+                  {b.lagAvg.toFixed(1)}
+                </td>
+                <td className="py-1.5 text-right">{b.diskMax != null ? `${b.diskMax.toFixed(1)}%` : "—"}</td>
+                <td className="py-1.5 text-right">{b.pingAvg != null ? `${b.pingAvg.toFixed(1)}ms` : "—"}</td>
+                <td className="py-1.5 text-right">{b.connMax}</td>
+                <td className="py-1.5 text-right text-emerald-600 dark:text-emerald-400">
+                  {b.cacheMin != null ? `${b.cacheMin.toFixed(2)}%` : "—"}
+                </td>
+              </tr>
+            ))}
+            {buckets.length === 0 && (
+              <tr>
+                <td colSpan={10} className="py-6 text-center text-slate-400 font-sans">
+                  {loading ? "Loading SAR history..." : "No SAR samples recorded in this window yet."}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

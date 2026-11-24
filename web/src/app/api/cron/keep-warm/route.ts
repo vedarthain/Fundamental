@@ -29,6 +29,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "crypto";
 import { runMorningWarmup } from "@/lib/morningWarmup";
+import { collectAndStoreInfraSample } from "@/lib/infraMetrics";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -64,6 +65,8 @@ function authOk(req: NextRequest): boolean {
 }
 
 async function warm(req: NextRequest): Promise<NextResponse> {
+  // Record SAR telemetry sample regardless of IST window so 24h/5d/30d history is continuous
+  await collectAndStoreInfraSample().catch(() => {});
   const force = req.nextUrl.searchParams.get("force") === "1";
   if (!force && !withinActiveWindowIST()) {
     return NextResponse.json({ ok: true, skipped: "outside_active_window_ist" });

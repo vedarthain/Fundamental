@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { isAdminRequest } from "@/lib/auth";
 import { sql } from "@/lib/db";
+import { collectAndStoreInfraSample, getDiskStats, getSarReport, measureEventLoopLagMs, type SarRange } from "@/lib/infraMetrics";
 import os from "node:os";
 import fs from "node:fs";
 
@@ -14,29 +15,6 @@ const CRON_LOG_SPECS = [
   { id: "compute", label: "Saturday Compute", schedule: "Sat 8:30 AM", path: "/var/log/fundamental-weekly-compute.log", staleHours: 192 },
   { id: "sunday", label: "Sunday Calls", schedule: "Sun 2:00 PM", path: "/var/log/fundamental-sunday-calls.log", staleHours: 192 },
 ];
-
-function measureEventLoopLagMs(): Promise<number> {
-  return new Promise((resolve) => {
-    const start = performance.now();
-    setTimeout(() => {
-      const elapsed = performance.now() - start;
-      resolve(Math.max(0, Math.round((elapsed - 10) * 100) / 100));
-    }, 10);
-  });
-}
-
-function getDiskStats(): { totalBytes: number; freeBytes: number; usedPct: number } | null {
-  try {
-    const stat = fs.statfsSync("/");
-    const totalBytes = Number(stat.blocks) * Number(stat.bsize);
-    const freeBytes = Number(stat.bavail) * Number(stat.bsize);
-    const usedBytes = Math.max(0, totalBytes - freeBytes);
-    const usedPct = totalBytes > 0 ? Math.round((usedBytes / totalBytes) * 1000) / 10 : 0;
-    return { totalBytes, freeBytes, usedPct };
-  } catch {
-    return null;
-  }
-}
 
 function getCronFreshness() {
   const now = Date.now();
@@ -69,13 +47,21 @@ function getCronFreshness() {
   });
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   if (!(await isAdminRequest())) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const rawRange = req.nextUrl.searchParams.get("range");
+  const range: SarRange = rawRange === "5d" || rawRange === "30d" ? rawRange : "1d";
+  const record = req.nextUrl.searchParams.get("record") === "1";
+
+  if (record) {
+    await collectAndStoreInfraSample().catch(() => {});
+  }
+
   const t0 = performance.now();
-  const [eventLoopLagMs, pingRes, dbStatsRes, connRes, activeQueriesRes, tableHealthRes, slowQueriesRes] =
+  const [eventLoopLagMs, pingRes, dbStatsRes, connRes, activeQueriesRes, tableHealthRes, slowQueriesRes, sar] =
     await Promise.all([
       measureEventLoopLagMs(),
       sql`SELECT 1 AS ok`.catch(() => null),
@@ -146,7 +132,15 @@ export async function GET() {
         ORDER BY total_exec_time DESC
         LIMIT 8
       `.then((rows) => ({ available: true, rows })).catch(() => ({ available: false, rows: [] })),
+      getSarReport(range).catch(() => ({ range, summary: null, buckets: [] })),
     ]);
+
+  // If DB has 0 samples in this range yet, seed one immediately so the SAR table isn't empty on first open
+  let finalSar = sar;
+  if (!record && (!sar.buckets || sar.buckets.length === 0)) {
+    await collectAndStoreInfraSample().catch(() => {});
+    finalSar = await getSarReport(range).catch(() => sar);
+  }
 
   const dbPingMs = pingRes ? Math.round((performance.now() - t0) * 10) / 10 : null;
   const mem = process.memoryUsage();
@@ -227,5 +221,6 @@ export async function GET() {
       }),
       slowQueries: slowQueriesRes,
     },
+    sar: finalSar,
   });
 }
