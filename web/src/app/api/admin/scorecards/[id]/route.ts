@@ -3,6 +3,7 @@
  * latest on the next scoring run.
  */
 import { NextRequest, NextResponse } from "next/server";
+import { isAdminRequest } from "@/lib/auth";
 import { sql } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -25,6 +26,9 @@ export async function POST(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ) {
+  if (!(await isAdminRequest())) {
+    return NextResponse.json({ error: "Unauthorized — admin only" }, { status: 401 });
+  }
   const { id } = await ctx.params;
   if (!id || id.length > 60) {
     return NextResponse.json({ error: "invalid cluster id" }, { status: 400 });
