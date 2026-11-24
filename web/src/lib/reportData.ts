@@ -83,7 +83,9 @@ export type ReportStockRow = {
 };
 
 let cachedReportRows: { rows: ReportStockRow[]; fetchedAt: number } | null = null;
-const CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
+let inFlightReportLoad: Promise<ReportStockRow[]> | null = null;
+const FRESH_TTL_MS = 2 * 60 * 1000; // 2 minutes fresh
+const STALE_TTL_MS = 30 * 60 * 1000; // serve stale up to 30m while revalidating in background
 
 function extractAction(verdict: string | null): "BUY" | "WATCH" | "HOLD" | "SELL" | "OTHER" | null {
   if (!verdict) return null;
@@ -101,10 +103,32 @@ function extractAction(verdict: string | null): "BUY" | "WATCH" | "HOLD" | "SELL
 
 export async function loadReportData(forceRefresh: boolean = false): Promise<ReportStockRow[]> {
   const now = Date.now();
-  if (!forceRefresh && cachedReportRows && now - cachedReportRows.fetchedAt < CACHE_TTL_MS) {
-    return cachedReportRows.rows;
+  if (!forceRefresh && cachedReportRows) {
+    const age = now - cachedReportRows.fetchedAt;
+    if (age < FRESH_TTL_MS) {
+      return cachedReportRows.rows;
+    }
+    if (age < STALE_TTL_MS) {
+      if (!inFlightReportLoad) {
+        inFlightReportLoad = _fetchReportData().finally(() => {
+          inFlightReportLoad = null;
+        });
+      }
+      return cachedReportRows.rows;
+    }
   }
 
+  if (inFlightReportLoad && !forceRefresh) {
+    return inFlightReportLoad;
+  }
+
+  inFlightReportLoad = _fetchReportData().finally(() => {
+    inFlightReportLoad = null;
+  });
+  return inFlightReportLoad;
+}
+
+async function _fetchReportData(): Promise<ReportStockRow[]> {
   const rawRows = await sql<any[]>`
     WITH latest_panel AS (
       SELECT
@@ -163,6 +187,7 @@ export async function loadReportData(forceRefresh: boolean = false): Promise<Rep
         END AS dps,
         ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY period_end DESC) as rn
       FROM app.fundamentals_annual
+      WHERE period_end >= CURRENT_DATE - INTERVAL '5 years'
     ),
     div_pivoted AS (
       SELECT

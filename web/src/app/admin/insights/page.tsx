@@ -6,6 +6,7 @@ import { isAdminRequest } from "@/lib/auth";
 import { sql } from "@/lib/db";
 import PageHeader from "@/components/PageHeader";
 import InsightsTabs, { type InsightsSection } from "./InsightsTabs";
+import { LiveInfraPanel } from "./LiveInfraPanel";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
@@ -351,6 +352,8 @@ export default async function AdminInsightsPage({
           Host: {platform} · Node {nodeVer} · {pgShortVer}
         </div>
       </div>
+
+      {(showApp || showDb) && <LiveInfraPanel showApp={showApp} showDb={showDb} />}
 
       {/* ───────────────────────────────────────────────────────────── */}
       {/* 1. OVERALL WEBSITE METRICS & TRAFFIC                          */}
