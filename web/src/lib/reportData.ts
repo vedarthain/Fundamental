@@ -34,6 +34,12 @@ export type ReportStockRow = {
   valuation_method: string | null;
   verdict_date: string | null;
 
+  // Calls Desk
+  is_call_desk: boolean;
+  call_side: string | null;
+  call_anchor_price: number | null;
+  call_anchor_date: string | null;
+
   // Moat Audit
   moat_strength: string | null;
   moat_type: string | null;
@@ -55,6 +61,15 @@ export type ReportStockRow = {
   op_margin_3y: number | null;
   sales_cagr_5y: number | null;
   profit_cagr_5y: number | null;
+
+  // Dividends & Payouts
+  dps_current: number | null;
+  dps_prev: number | null;
+  div_growth_pct: number | null;
+  div_payout_cr: number | null;
+  div_paying_years: number | null;
+  next_ex_date: string | null;
+  next_amount: number | null;
 
   // Portfolio Holdings
   is_in_portfolio: boolean;
@@ -125,6 +140,49 @@ export async function loadReportData(forceRefresh: boolean = false): Promise<Rep
       FROM app.stock_verdict
       ORDER BY symbol, generated_at DESC
     ),
+    active_calls AS (
+      SELECT
+        symbol,
+        CASE WHEN side = 'B' THEN 'BUY' WHEN side = 'S' THEN 'SELL' ELSE side END AS call_side,
+        anchor_price::float AS call_anchor_price,
+        to_char(anchor_date, 'YYYY-MM-DD') AS call_anchor_date
+      FROM app.stock_call
+      WHERE cleared_at IS NULL
+    ),
+    ranked_fa AS (
+      SELECT 
+        symbol,
+        period_end,
+        dividend_amount::float AS dividend_amount,
+        no_of_equity_shares::float AS no_of_equity_shares,
+        CASE 
+          WHEN no_of_equity_shares > 0 AND dividend_amount > 0 
+          THEN (dividend_amount * 1e7 / no_of_equity_shares)::float
+          ELSE 0
+        END AS dps,
+        ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY period_end DESC) as rn
+      FROM app.fundamentals_annual
+    ),
+    div_pivoted AS (
+      SELECT
+        symbol,
+        MAX(CASE WHEN rn = 1 THEN dps END) AS dps_current,
+        MAX(CASE WHEN rn = 2 THEN dps END) AS dps_prev,
+        MAX(CASE WHEN rn = 1 THEN dividend_amount END) AS div_payout_cr,
+        COUNT(CASE WHEN dividend_amount > 0 THEN 1 END)::int AS div_paying_years
+      FROM ranked_fa
+      WHERE rn <= 4
+      GROUP BY symbol
+    ),
+    upcoming_div AS (
+      SELECT DISTINCT ON (symbol)
+        symbol,
+        to_char(ex_date, 'YYYY-MM-DD') AS next_ex_date,
+        amount::float AS next_amount
+      FROM app.corporate_action
+      WHERE action_type = 'dividend'
+      ORDER BY symbol, ex_date DESC
+    ),
     latest_metrics AS (
       SELECT
         symbol,
@@ -177,6 +235,20 @@ export async function loadReportData(forceRefresh: boolean = false): Promise<Rep
       v.valuation_method,
       to_char(v.generated_at, 'YYYY-MM-DD') AS verdict_date,
 
+      -- Calls Desk Active
+      (ac.symbol IS NOT NULL) AS is_call_desk,
+      ac.call_side,
+      ac.call_anchor_price,
+      ac.call_anchor_date,
+
+      -- Dividends
+      dp.dps_current,
+      dp.dps_prev,
+      dp.div_payout_cr,
+      dp.div_paying_years,
+      ud.next_ex_date,
+      ud.next_amount,
+
       -- Moat
       mo.moat_strength,
       mo.moat_type,
@@ -213,6 +285,9 @@ export async function loadReportData(forceRefresh: boolean = false): Promise<Rep
     FROM app.universe u
     LEFT JOIN latest_panel p ON p.symbol = u.symbol
     LEFT JOIN latest_verdict v ON v.symbol = u.symbol
+    LEFT JOIN active_calls ac ON ac.symbol = u.symbol
+    LEFT JOIN div_pivoted dp ON dp.symbol = u.symbol
+    LEFT JOIN upcoming_div ud ON ud.symbol = u.symbol
     LEFT JOIN latest_metrics m ON m.symbol = u.symbol
     LEFT JOIN holdings h ON h.symbol = u.symbol
     LEFT JOIN app.company_moat mo ON mo.symbol = u.symbol
@@ -268,6 +343,13 @@ export async function loadReportData(forceRefresh: boolean = false): Promise<Rep
 
     const action = extractAction(r.verdict);
 
+    const dpsCur = r.dps_current != null ? Math.round(Number(r.dps_current) * 100) / 100 : null;
+    const dpsPrv = r.dps_prev != null ? Math.round(Number(r.dps_prev) * 100) / 100 : null;
+    const divGrowth =
+      dpsCur != null && dpsPrv != null && dpsPrv > 0
+        ? Math.round(((dpsCur - dpsPrv) / dpsPrv) * 1000) / 10
+        : null;
+
     return {
       symbol: r.symbol,
       company_name: r.company_name,
@@ -297,6 +379,19 @@ export async function loadReportData(forceRefresh: boolean = false): Promise<Rep
       risk_reward: rr,
       valuation_method: r.valuation_method ?? null,
       verdict_date: r.verdict_date ?? null,
+
+      is_call_desk: Boolean(r.is_call_desk),
+      call_side: r.call_side ?? null,
+      call_anchor_price: r.call_anchor_price != null ? Math.round(Number(r.call_anchor_price) * 100) / 100 : null,
+      call_anchor_date: r.call_anchor_date ?? null,
+
+      dps_current: dpsCur,
+      dps_prev: dpsPrv,
+      div_growth_pct: divGrowth,
+      div_payout_cr: r.div_payout_cr != null ? Math.round(Number(r.div_payout_cr) * 10) / 10 : null,
+      div_paying_years: r.div_paying_years != null ? Number(r.div_paying_years) : null,
+      next_ex_date: r.next_ex_date ?? null,
+      next_amount: r.next_amount != null ? Math.round(Number(r.next_amount) * 100) / 100 : null,
 
       moat_strength: r.moat_strength ? r.moat_strength.toUpperCase() : null,
       moat_type: r.moat_type ?? null,

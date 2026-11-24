@@ -1089,16 +1089,56 @@ function Chevron({ open, small = false }: { open: boolean; small?: boolean }) {
 
 function Skeleton() {
   return (
-    <div className="space-y-3">
-      {[1, 2, 3].map((i) => (
-        <div key={i} className="card p-4">
-          <div className="h-4 bg-[var(--color-paper)] rounded animate-pulse mb-3 w-1/3" />
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 animate-pulse min-h-[600px]" aria-busy="true" aria-label="Loading watchlist">
+      {/* Left rail skeleton (4 cols) */}
+      <div className="lg:col-span-4 space-y-3">
+        <div className="h-9 rounded-lg bg-[var(--color-border-default)]/60" />
+        <div className="space-y-2">
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <div key={i} className="card p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="h-4 w-28 rounded bg-[var(--color-border-default)]/70" />
+                <div className="h-3.5 w-8 rounded-full bg-[var(--color-border-default)]/50" />
+              </div>
+              <div className="space-y-1.5 pl-2">
+                <div className="h-3 w-36 rounded bg-[var(--color-border-default)]/40" />
+                <div className="h-3 w-28 rounded bg-[var(--color-border-default)]/40" />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Right detail panel skeleton (8 cols) */}
+      <div className="lg:col-span-8 card p-5 space-y-4">
+        {/* Detail Header */}
+        <div className="flex items-start justify-between border-b hairline pb-3">
           <div className="space-y-2">
-            <div className="h-3 bg-[var(--color-paper)] rounded animate-pulse w-full" />
-            <div className="h-3 bg-[var(--color-paper)] rounded animate-pulse w-2/3" />
+            <div className="h-6 w-48 rounded bg-[var(--color-border-default)]/80" />
+            <div className="h-4 w-32 rounded bg-[var(--color-border-default)]/50" />
+          </div>
+          <div className="h-8 w-24 rounded-lg bg-[var(--color-border-default)]/60" />
+        </div>
+
+        {/* Chart Skeleton Box */}
+        <div className="h-64 rounded-xl bg-[var(--color-card)]/40 border hairline flex flex-col justify-end p-4">
+          <div className="flex items-end gap-2 h-32 opacity-40">
+            {[40, 65, 55, 80, 70, 90, 85, 95, 75, 88].map((h, idx) => (
+              <div key={idx} className="flex-1 bg-[var(--color-border-default)] rounded-t" style={{ height: `${h}%` }} />
+            ))}
           </div>
         </div>
-      ))}
+
+        {/* Scorecard Grid Skeleton */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="rounded-lg border hairline p-3 space-y-2 bg-[var(--color-card)]/60">
+              <div className="h-3 w-16 rounded bg-[var(--color-border-default)]/60" />
+              <div className="h-6 w-12 rounded bg-[var(--color-border-default)]/80" />
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

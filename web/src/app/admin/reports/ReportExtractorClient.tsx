@@ -8,6 +8,7 @@ export type ParameterCategory =
   | "identity"
   | "pricing"
   | "verdict"
+  | "dividends"
   | "moat"
   | "scores"
   | "fundamentals"
@@ -47,6 +48,10 @@ export const PARAMETERS: ParameterDef[] = [
 
   // 3. Verdicts & Calls Desk (Price Targets & Audit)
   { id: "action", label: "Verdict Action", shortLabel: "Action", width: "w-28 min-w-[95px]", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "center", format: "badge_action", defaultSelected: true },
+  { id: "is_call_desk", label: "Active on Calls Desk?", shortLabel: "Calls Desk?", width: "w-24 min-w-[85px]", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "center", format: "badge_boolean", defaultSelected: false },
+  { id: "call_side", label: "Call Side", shortLabel: "Call Side", width: "w-20 min-w-[70px]", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "center", format: "badge_action", defaultSelected: false },
+  { id: "call_anchor_price", label: "Call Entry Price (₹)", shortLabel: "Call Price (₹)", width: "w-28 min-w-[95px]", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "right", format: "currency", defaultSelected: false },
+  { id: "call_anchor_date", label: "Call Entry Date", shortLabel: "Call Date", width: "w-24 min-w-[85px]", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "center", format: "date", defaultSelected: false },
   { id: "confidence", label: "Confidence", shortLabel: "Confidence", width: "w-24 min-w-[85px]", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "center", format: "text", defaultSelected: false },
   { id: "buy_below", label: "Buy Below Price (₹)", shortLabel: "Buy Below (₹)", width: "w-28 min-w-[95px]", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "right", format: "currency", defaultSelected: true },
   { id: "target_price", label: "12M Target Price (₹)", shortLabel: "12M Target (₹)", width: "w-28 min-w-[100px]", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "right", format: "currency", defaultSelected: true },
@@ -58,12 +63,22 @@ export const PARAMETERS: ParameterDef[] = [
   { id: "verdict_date", label: "Verdict Audit Date", shortLabel: "Verdict Date", width: "w-24 min-w-[85px]", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "center", format: "date", defaultSelected: false },
   { id: "verdict", label: "Full Verdict / Rationale", shortLabel: "Verdict", width: "min-w-[180px] max-w-[260px]", category: "verdict", categoryLabel: "Verdicts & Calls Desk", align: "left", format: "text", defaultSelected: false },
 
-  // 4. Moat & Business Audit
+  // 4. Dividends & Corporate Payouts
+  { id: "div_yield", label: "Dividend Yield (%)", shortLabel: "Div Yield %", width: "w-24 min-w-[75px]", category: "dividends", categoryLabel: "Dividends & Payouts", align: "right", format: "percent", defaultSelected: false },
+  { id: "dps_current", label: "Dividend Per Share (₹)", shortLabel: "DPS (₹)", width: "w-24 min-w-[80px]", category: "dividends", categoryLabel: "Dividends & Payouts", align: "right", format: "currency", defaultSelected: false },
+  { id: "dps_prev", label: "Prior Year DPS (₹)", shortLabel: "Prior DPS (₹)", width: "w-24 min-w-[80px]", category: "dividends", categoryLabel: "Dividends & Payouts", align: "right", format: "currency", defaultSelected: false },
+  { id: "div_growth_pct", label: "Dividend Growth YoY (%)", shortLabel: "Div Growth %", width: "w-24 min-w-[80px]", category: "dividends", categoryLabel: "Dividends & Payouts", align: "right", format: "percent", defaultSelected: false },
+  { id: "div_payout_cr", label: "Annual Dividend Payout (₹ Cr)", shortLabel: "Payout (₹ Cr)", width: "w-28 min-w-[90px]", category: "dividends", categoryLabel: "Dividends & Payouts", align: "right", format: "number", defaultSelected: false },
+  { id: "div_paying_years", label: "Dividend Consistency (Years)", shortLabel: "Div Years", width: "w-24 min-w-[80px]", category: "dividends", categoryLabel: "Dividends & Payouts", align: "right", format: "number", defaultSelected: false },
+  { id: "next_ex_date", label: "Upcoming / Recent Ex-Date", shortLabel: "Div Ex-Date", width: "w-24 min-w-[85px]", category: "dividends", categoryLabel: "Dividends & Payouts", align: "center", format: "date", defaultSelected: false },
+  { id: "next_amount", label: "Upcoming Dividend Payout (₹)", shortLabel: "Next Div (₹)", width: "w-24 min-w-[85px]", category: "dividends", categoryLabel: "Dividends & Payouts", align: "right", format: "currency", defaultSelected: false },
+
+  // 5. Moat & Business Audit
   { id: "moat_strength", label: "Moat Strength", shortLabel: "Moat", width: "w-24 min-w-[80px]", category: "moat", categoryLabel: "Moat & Business Audit", align: "center", format: "badge_moat", defaultSelected: true },
   { id: "moat_type", label: "Moat Type", shortLabel: "Moat Type", width: "w-28 min-w-[95px]", category: "moat", categoryLabel: "Moat & Business Audit", align: "left", format: "text", defaultSelected: false },
   { id: "moat_rationale", label: "Moat Rationale / Notes", shortLabel: "Moat Notes", width: "min-w-[160px] max-w-[240px]", category: "moat", categoryLabel: "Moat & Business Audit", align: "left", format: "text", defaultSelected: false },
 
-  // 5. Factor Scores & Ranks
+  // 6. Factor Scores & Ranks
   { id: "composite_pct", label: "Composite Score (%)", shortLabel: "Composite %", width: "w-24 min-w-[80px]", category: "scores", categoryLabel: "Factor Scores & Ranks", align: "right", format: "number", defaultSelected: false },
   { id: "quality_pct", label: "Quality Score (%)", shortLabel: "Quality %", width: "w-20 min-w-[75px]", category: "scores", categoryLabel: "Factor Scores & Ranks", align: "right", format: "number", defaultSelected: false },
   { id: "valuation_pct", label: "Valuation Score (%)", shortLabel: "Valuation %", width: "w-20 min-w-[75px]", category: "scores", categoryLabel: "Factor Scores & Ranks", align: "right", format: "number", defaultSelected: false },
@@ -71,16 +86,15 @@ export const PARAMETERS: ParameterDef[] = [
   { id: "peer_rank", label: "Peer Rank", shortLabel: "Peer Rank", width: "w-20 min-w-[70px]", category: "scores", categoryLabel: "Factor Scores & Ranks", align: "right", format: "number", defaultSelected: false },
   { id: "peer_count", label: "Peer Pool Size", shortLabel: "Peer Pool", width: "w-20 min-w-[70px]", category: "scores", categoryLabel: "Factor Scores & Ranks", align: "right", format: "number", defaultSelected: false },
 
-  // 6. Valuation & Fundamentals
+  // 7. Valuation & Fundamentals
   { id: "pe_ttm", label: "P/E Ratio (TTM)", shortLabel: "P/E", width: "w-20 min-w-[65px]", category: "fundamentals", categoryLabel: "Valuation & Fundamentals", align: "right", format: "number", defaultSelected: false },
   { id: "pb", label: "Price / Book (P/B)", shortLabel: "P/B", width: "w-20 min-w-[60px]", category: "fundamentals", categoryLabel: "Valuation & Fundamentals", align: "right", format: "number", defaultSelected: false },
-  { id: "div_yield", label: "Dividend Yield (%)", shortLabel: "Div Yield %", width: "w-24 min-w-[75px]", category: "fundamentals", categoryLabel: "Valuation & Fundamentals", align: "right", format: "percent", defaultSelected: false },
   { id: "roe_3y", label: "ROE / ROCE (3Y %)", shortLabel: "ROE (3Y %)", width: "w-24 min-w-[80px]", category: "fundamentals", categoryLabel: "Valuation & Fundamentals", align: "right", format: "percent", defaultSelected: false },
   { id: "op_margin_3y", label: "Operating Margin (%)", shortLabel: "Op. Margin %", width: "w-24 min-w-[80px]", category: "fundamentals", categoryLabel: "Valuation & Fundamentals", align: "right", format: "percent", defaultSelected: false },
   { id: "sales_cagr_5y", label: "5-Year Sales CAGR (%)", shortLabel: "Sales 5Y %", width: "w-24 min-w-[80px]", category: "fundamentals", categoryLabel: "Valuation & Fundamentals", align: "right", format: "percent", defaultSelected: false },
   { id: "profit_cagr_5y", label: "5-Year Profit CAGR (%)", shortLabel: "Profit 5Y %", width: "w-24 min-w-[80px]", category: "fundamentals", categoryLabel: "Valuation & Fundamentals", align: "right", format: "percent", defaultSelected: false },
 
-  // 7. Portfolio & Holdings
+  // 8. Portfolio & Holdings
   { id: "unrealized_pnl_pct", label: "Current Performance % (Portfolio)", shortLabel: "Port. Perf %", width: "w-24 min-w-[85px] max-w-[100px]", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "right", format: "percent", defaultSelected: true },
   { id: "is_in_portfolio", label: "In Portfolio?", shortLabel: "Portfolio", width: "w-20 min-w-[75px]", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "center", format: "badge_boolean", defaultSelected: false },
   { id: "is_watchlist", label: "In Watchlist?", shortLabel: "Watchlist", width: "w-20 min-w-[75px]", category: "portfolio", categoryLabel: "Portfolio Holdings", align: "center", format: "badge_boolean", defaultSelected: false },
@@ -95,6 +109,7 @@ const CATEGORIES: { id: ParameterCategory; label: string; icon: string }[] = [
   { id: "identity", label: "Identity & Sector", icon: "🏷️" },
   { id: "pricing", label: "Pricing & Returns", icon: "💰" },
   { id: "verdict", label: "Verdicts & Calls Desk", icon: "🎯" },
+  { id: "dividends", label: "Dividends & Payouts", icon: "🪙" },
   { id: "moat", label: "Moat & Business Audit", icon: "🛡️" },
   { id: "scores", label: "Factor Scores & Ranks", icon: "📊" },
   { id: "fundamentals", label: "Valuation & Fundamentals", icon: "📈" },
@@ -184,7 +199,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
   const [collapsedCats, setCollapsedCats] = useState<Record<string, boolean>>({});
 
   // Filter toolbar
-  const [universeScope, setUniverseScope] = useState<"all" | "nifty500" | "portfolio" | "watchlist" | "verdict">("all");
+  const [universeScope, setUniverseScope] = useState<"all" | "nifty500" | "portfolio" | "watchlist" | "verdict" | "calls">("all");
   const [actionFilter, setActionFilter] = useState<string>("all");
   const [stockSearch, setStockSearch] = useState<string>("");
 
@@ -384,9 +399,16 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
     return selected;
   }, [selectedIds]);
 
-  // Watchlist count
-  const watchlistCount = useMemo(() => {
-    return data.filter((r) => r.is_watchlist).length;
+  // Scope counts for dropdown
+  const scopeCounts = useMemo(() => {
+    return {
+      all: data.length,
+      nifty500: data.filter((r) => r.is_nifty500).length,
+      portfolio: data.filter((r) => r.is_in_portfolio).length,
+      watchlist: data.filter((r) => r.is_watchlist).length,
+      verdict: data.filter((r) => Boolean(r.verdict)).length,
+      calls: data.filter((r) => r.is_call_desk).length,
+    };
   }, [data]);
 
   // Filtered rows
@@ -397,6 +419,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
       if (universeScope === "portfolio" && !row.is_in_portfolio) return false;
       if (universeScope === "watchlist" && !row.is_watchlist) return false;
       if (universeScope === "verdict" && !row.verdict) return false;
+      if (universeScope === "calls" && !row.is_call_desk) return false;
 
       // 2. Action filter
       if (actionFilter !== "all") {
@@ -907,11 +930,12 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                   }}
                   className="text-xs px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium"
                 >
-                  <option value="all">All Active NSE Stocks ({data.length > 0 ? data.length.toLocaleString("en-IN") : "..."})</option>
-                  <option value="nifty500">NIFTY 500 Constituents</option>
-                  <option value="portfolio">Portfolio Holdings Only</option>
-                  <option value="watchlist">My Watchlist Only ({watchlistCount})</option>
-                  <option value="verdict">Curated Calls / Verdicts</option>
+                  <option value="all">All Active NSE Stocks ({scopeCounts.all > 0 ? scopeCounts.all.toLocaleString("en-IN") : "..."})</option>
+                  <option value="calls">Calls Desk Stocks ({scopeCounts.calls})</option>
+                  <option value="verdict">Curated Verdicts ({scopeCounts.verdict})</option>
+                  <option value="portfolio">Portfolio Holdings ({scopeCounts.portfolio})</option>
+                  <option value="watchlist">My Watchlist ({scopeCounts.watchlist})</option>
+                  <option value="nifty500">NIFTY 500 Constituents ({scopeCounts.nifty500})</option>
                 </select>
               </div>
 
