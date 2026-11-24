@@ -16,6 +16,7 @@
  */
 import Link from "next/link";
 import { getSession, isAdminRequest } from "@/lib/auth";
+import { loadUserWatchlistSymbols, loadWatchlistData } from "@/lib/watchlistData";
 import { WatchlistClient } from "./WatchlistClient";
 
 export const dynamic = "force-dynamic";
@@ -56,12 +57,16 @@ export default async function WatchlistPage() {
     );
   }
 
-  // Resolved here, not in the client shell: the Verdict tab and the row chips
-  // are an admin overlay, and the boolean has to come from the server so the
-  // markup for a normal session never contains them. The data behind both is
-  // separately gated in /api/admin/verdict — this flag only decides whether to
-  // ask.
-  const isAdmin = await isAdminRequest();
+  const [isAdmin, wlRes] = await Promise.all([
+    isAdminRequest(),
+    loadUserWatchlistSymbols(session.userId),
+  ]);
+  const { rows: initialRows, snapshot_date: initialSnapshotDate } = await loadWatchlistData({
+    symbols: wlRes.symbols,
+    userId: session.userId,
+    lean: true,
+    heldFromList: wlRes.heldFromList,
+  });
 
   return (
     <div className="mx-auto max-w-[1600px] px-4 md:px-6 py-3 md:py-4">
@@ -73,7 +78,12 @@ export default async function WatchlistPage() {
           Tracked NSE stocks, peer-relative scores, and live moves.
         </p>
       </header>
-      <WatchlistClient isAdmin={isAdmin} />
+      <WatchlistClient
+        isAdmin={isAdmin}
+        initialSymbols={wlRes.symbols}
+        initialRows={initialRows}
+        initialSnapshotDate={initialSnapshotDate}
+      />
     </div>
   );
 }

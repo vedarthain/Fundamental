@@ -1,172 +1,23 @@
 /**
  * /api/watchlist — read/write the watchlist.
- *
- *   GET    — two shapes, on purpose:
- *              no ?symbols (or ?list=1) → { symbols, signedIn } only. This is
- *              the bootstrap every WatchlistButton shares. It must not touch
- *              golden: a heart on /stock used to pay the full 309-name quote
- *              waterfall, then /watchlist paid it a second time for cards.
- *              ?symbols=A,B / @portfolio → card rows (lean=1 skips glance).
- *   POST   — body { symbol } — adds to the signed-in user's list.
- *   DELETE — ?symbol=X — removes from the signed-in user's list.
- *
- * Signed-out POST/DELETE return 401. The client uses localStorage when
- * signed out, so it never calls those routes anonymously.
- *
- * Card rows read app.cluster_stocks_panel_cache plus golden quotes.
- *
- * Cost (Rule #1):
- *   GET list:  watchlist + holdings + open-calls (app only).
- *              ?saved=1 with list=1 → hearted names only (no holdings/calls
- *              union). Used by /news Watchlist so the rail matches the
- *              saved list, not "everything you hold or have a call on".
- *   GET cards: quotes + panel cache for the requested symbols
- *   POST:      one tiny INSERT … ON CONFLICT DO NOTHING
- *   DELETE:    one tiny DELETE
  */
 import { NextRequest, NextResponse } from "next/server";
-import { unstable_cache } from "next/cache";
 import { sql } from "@/lib/db";
 import { getSession } from "@/lib/auth";
-import { loadPersistenceForSymbols } from "@/lib/persistence";
-import { loadPortfolioSymbols, loadHeldPositions, loadSnapshotDerivedBuys, loadCurrentLegBuyDates, type TradeMark } from "@/lib/portfolio";
-import { loadQuotes, loadCloseOnAdd, loadCloseAsOf, rescaleWindow } from "@/lib/watchlistQuote";
-import { type GlanceMetrics, type MetricKey } from "@/lib/glance";
-import { type StockVerdict } from "@/lib/explainer";
-// Shared with /api/watchlist/extras, which serves these three for the ONE
-// selected card. Same functions on both paths so they cannot drift.
-import { loadGlance, loadVerdicts, loadScorecardKeys } from "@/lib/watchlistCards";
+import { loadPortfolioSymbols } from "@/lib/portfolio";
+import { loadCloseOnAdd } from "@/lib/watchlistQuote";
+import {
+  loadUserWatchlistSymbols,
+  loadWatchlistData,
+  MAX_WATCHLIST_SYMBOLS,
+} from "@/lib/watchlistData";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MAX_SYMBOLS = 1000;
+const MAX_SYMBOLS = MAX_WATCHLIST_SYMBOLS;
 const NOTE_MAX = 500;
 const SYMBOL_RE = /^[A-Z0-9&-]+$/;
-
-type WatchRow = {
-  symbol: string;
-  company_name: string | null;
-  sector_name: string | null;
-  industry_name: string | null;
-  maturity_tier: string;
-  /** SEBI market-cap tier (Large/Mid/Small) + listing date from app.universe —
-   *  feeds CapTierBadge on the card. Both null for uncovered/illiquid names. */
-  market_cap_category: string | null;
-  listing_date: string | null;
-  market_cap_cr: number | null;
-  current_price: number | null;
-  /** Intraday pinger's last-refresh time for current_price (screener_meta),
-   *  ISO string — powers the "HH:MM IST" freshness pill. Null when never pinged. */
-  price_fetched_at: string | null;
-  composite_pct: number | null;
-  quality_pct: number | null;
-  valuation_pct: number | null;
-  momentum_pct: number | null;
-  /** Trailing-window price returns (fractions) computed LIVE off golden EOD with
-   *  the chart's exact rangePct method — so the header pills agree with the graph
-   *  tabs instead of the stale weekly panel snapshot. NULL when a young listing
-   *  has no history at that horizon. Windows mirror the chart: 1W/1M/3M/1Y/3Y/5Y/
-   *  10Y/ALL. */
-  ret_1w: number | null;
-  ret_1m: number | null;
-  ret_3m: number | null;
-  ret_1y: number | null;
-  ret_3y: number | null;
-  ret_5y: number | null;
-  ret_10y: number | null;
-  ret_all: number | null;
-  /** Multi-snapshot persistence — 4-week composite_pct trend.  All
-   *  three fields null if the symbol has <2 snapshots of history. */
-  raw_delta: number | null;
-  cluster_avg_delta: number | null;
-  cluster_adjusted: number | null;
-  snaps_improving: number;
-  /** Per-user watchlist metadata (signed-in only; null otherwise). */
-  added_at: string | null;
-  close_on_add: number | null;
-  close_on_add_date: string | null;
-  note: string | null;
-  /** Fresh daily quote from golden (split-adjusted). */
-  ltp: number | null;
-  ret_1d: number | null;
-  /** The exact close `ret_1d` is measured against, AFTER the intraday overlay:
-   *  the prior session's close normally, or yesterday's close when a live tick
-   *  has taken over `ltp`. Exposed because a rupee day-change (qty × (ltp −
-   *  prev_close)) cannot be reconstructed from ret_1d — that is rounded to one
-   *  decimal, which on a ₹9.5L book is ±₹475 of slop on an ₹8.5k number. */
-  prev_close: number | null;
-  high_52w: number | null;
-  low_52w: number | null;
-  from_high_pct: number | null;
-  from_low_pct: number | null;
-  /** Volume context from golden (daily-fresh). */
-  vol: number | null;
-  avg_vol_30d: number | null;
-  rel_vol: number | null;
-  turnover_cr: number | null;
-  delivery_pct: number | null;
-  /** LTP's trading date + whether it trails the feed's newest bar (per-symbol
-   *  staleness — a laggard from a delisting/merger/late backfill). */
-  ltp_date: string | null;
-  stale: boolean;
-  /** Live intraday tick from app.screener_meta (written by
-   *  /api/cron/intraday-equity) plus the IST trading day it was pulled on.
-   *  Raw inputs to the overlay below — consumers should read eff_ltp, not
-   *  these. */
-  intraday_px: number | null;
-  intraday_ist_date: string | null;
-  /** Aliases of ltp / ret_1d after the intraday overlay. `ltp` already carries
-   *  the effective price — these exist so the portfolio Returns tab, which
-   *  named them first, keeps compiling. Prefer ltp / ret_1d. */
-  eff_ltp: number | null;
-  eff_ret_1d: number | null;
-  /** The PRE-overlay end-of-day close and its 1D move, straight off golden's
-   *  newest bar. Read these when a number has to line up with a chart bar
-   *  rather than with a live tick. */
-  eod_ltp: number | null;
-  eod_ret_1d: number | null;
-  /** True when the overlay below replaced the EOD close with a live tick — i.e.
-   *  ltp / ret_1d / ltp_date describe today's session, not golden's newest bar.
-   *  Exposed so a consumer can LABEL the price it is showing; re-deriving it
-   *  client-side (ltp !== eod_ltp) silently reads "EOD" on any day the tick
-   *  lands exactly on the close. */
-  px_live: boolean;
-  /** Portfolio ownership — mirrors the scanner graph's tri-state "P" badge.
-   *  held = currently in the portfolio; traded = ever bought (held or exited). */
-  held: boolean;
-  traded: boolean;
-  /** Position summary for held names: shares held + avg cost + P&L % (LTP vs
-   *  avg cost). avg_cost is the raw broker average — powers the "@<cost>" in the
-   *  header P badge. */
-  held_qty: number | null;
-  avg_cost: number | null;
-  pos_pnl_pct: number | null;
-  /** Earliest recorded Buy date for this name (from app.portfolio_transaction).
-   *  Null unless signed in and the name has a buy leg — powers the "Bought
-   *  <date>" chip on held/traded cards, mirroring the scanner graph. */
-  bought_on: string | null;
-  /** Real executed trades (split-reconciled + synthetic buys), same source as
-   *  the scanner graph — pinned as B/S markers on the card's price chart.
-   *  Empty for names with no trade history / signed-out. */
-  trades: TradeMark[];
-  /** Sector-aware fundamentals for the peer-glance table (null if no data). */
-  glance: GlanceMetrics | null;
-  /** Per-stock verdict — the metrics THIS stock most stands out on, derived
-   *  from its persisted score components (null if unscored). */
-  verdict: StockVerdict | null;
-  /** Scorecard-driven fundamental rows — the metric keys this stock's cluster
-   *  quality scorecard weights most, resolved to displayable glance series.
-   *  Empty if the stock is unscored or none of its formulas map to a series. */
-  glance_keys: MetricKey[];
-};
-
-type WatchMeta = {
-  added_at: string | null;
-  close_on_add: number | null;
-  close_on_add_date: string | null;
-  note: string | null;
-};
 
 function cleanSymbol(raw: string): string | null {
   const s = raw.trim().toUpperCase();
@@ -185,171 +36,16 @@ function cleanSymbolList(raw: string): string[] {
   ).slice(0, MAX_SYMBOLS);
 }
 
-/**
- * Card rows for the requested symbols.
- *
- * Two branches, UNION'd.
- *
- * The first is the panel cache — the materialised (snapshot, cluster, symbol)
- * table /sectors reads. It is built from `app.scores`, so it only ever contains
- * symbols that were SCORED on the latest snapshot.
- *
- * The second branch exists because that is a narrower set than "symbols the
- * user asked about", and the gap was silent. The scorer gates out any symbol
- * whose newest filing is >15 months old (`score_status='stale_data'`), which is
- * correct — a confident Q/V/M composite off two-year-old fundamentals is worse
- * than no composite. But the gate propagated all the way out to *existence*:
- * such a name dropped out of the panel cache, out of this route, and therefore
- * out of the portfolio Returns tab, the Scorecard and the watchlist Portfolio
- * tab entirely. DHANUKA and JYOTHYLAB — both live, liquid NSE names I actually
- * hold — simply weren't on the page, with no row, no badge and no error; the
- * Returns totals were quietly short by their ₹15,920 of cost. Meanwhile
- * Performance, which reads holdings server-side, still counted them, so the two
- * tabs disagreed and neither said why.
- *
- * Withholding a SCORE is a judgement about data quality. Withholding the
- * INSTRUMENT is a lie about the book. So anything in app.universe that the
- * caller asked for is returned either way; the score pillars just come back
- * null and the card renders unscored. Price, returns, 52W, volume and position
- * data all come from golden/screener_meta further down and are unaffected by
- * the fundamentals gate, so these rows are fully populated apart from Q/V/M.
- *
- * Sector/industry come via app.cluster_assignment rather than the panel cache's
- * denormalised cluster_id — the assignment survives a scoring gate, so an
- * unscored name keeps its sector label.
- */
-async function loadRows(symbols: string[]): Promise<WatchRow[]> {
-  if (symbols.length === 0) return [];
-  return sql<WatchRow[]>`
-    SELECT
-      c.symbol,
-      c.company_name,
-      mc.name        AS sector_name,
-      cl.name        AS industry_name,
-      c.maturity_tier,
-      u.market_cap_category,
-      u.listing_date::text    AS listing_date,
-      c.market_cap_cr::float  AS market_cap_cr,
-      c.current_price::float  AS current_price,
-      sm.price_fetched_at::text AS price_fetched_at,
-      c.composite_pct::float  AS composite_pct,
-      c.quality_pct::float    AS quality_pct,
-      c.valuation_pct::float  AS valuation_pct,
-      c.momentum_pct::float   AS momentum_pct,
-      sm.current_price::float AS intraday_px,
-      (sm.price_fetched_at AT TIME ZONE 'Asia/Kolkata')::date::text AS intraday_ist_date
-    FROM app.cluster_stocks_panel_cache c
-    JOIN app.cluster cl ON cl.id = c.cluster_id
-    JOIN app.meta_cluster mc ON mc.id = cl.meta_cluster_id
-    LEFT JOIN app.universe u ON u.symbol = c.symbol
-    LEFT JOIN app.screener_meta sm ON sm.symbol = c.symbol
-    WHERE c.snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_stocks_panel_cache)
-      AND c.symbol = ANY(${symbols})
-
-    UNION ALL
-
-    SELECT
-      u.symbol,
-      u.company_name,
-      mc.name        AS sector_name,
-      cl.name        AS industry_name,
-      COALESCE(u.maturity_tier, 'unknown') AS maturity_tier,
-      u.market_cap_category,
-      u.listing_date::text    AS listing_date,
-      sm.market_cap_cr::float AS market_cap_cr,
-      sm.current_price::float AS current_price,
-      sm.price_fetched_at::text AS price_fetched_at,
-      NULL::float AS composite_pct,
-      NULL::float AS quality_pct,
-      NULL::float AS valuation_pct,
-      NULL::float AS momentum_pct,
-      sm.current_price::float AS intraday_px,
-      (sm.price_fetched_at AT TIME ZONE 'Asia/Kolkata')::date::text AS intraday_ist_date
-    FROM app.universe u
-    LEFT JOIN app.cluster_assignment ca ON ca.symbol = u.symbol
-    LEFT JOIN app.cluster cl ON cl.id = ca.cluster_id
-    LEFT JOIN app.meta_cluster mc ON mc.id = cl.meta_cluster_id
-    LEFT JOIN app.screener_meta sm ON sm.symbol = u.symbol
-    WHERE u.symbol = ANY(${symbols})
-      AND u.is_active
-      AND NOT EXISTS (
-        SELECT 1 FROM app.cluster_stocks_panel_cache c2
-         WHERE c2.symbol = u.symbol
-           AND c2.snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_stocks_panel_cache)
-      )
-  `;
-}
-
-/** Per-user watchlist metadata (added_at, cost-basis snapshot, note) keyed by
- *  symbol. Empty when signed out — those fields have no home in localStorage. */
-async function loadMeta(
-  userId: number,
-  symbols: string[],
-): Promise<Map<string, WatchMeta>> {
-  const out = new Map<string, WatchMeta>();
-  if (symbols.length === 0) return out;
-  const rows = await sql<
-    { symbol: string; added_at: string; close_on_add: number | null; close_on_add_date: string | null; note: string | null }[]
-  >`
-    SELECT symbol,
-           added_at::text          AS added_at,
-           close_on_add::float     AS close_on_add,
-           close_on_add_date::text AS close_on_add_date,
-           note
-      FROM app.user_watchlist
-     WHERE user_id = ${userId}
-       AND symbol = ANY(${symbols})
-  `;
-  for (const r of rows) {
-    out.set(r.symbol, {
-      added_at: r.added_at,
-      close_on_add: r.close_on_add,
-      close_on_add_date: r.close_on_add_date,
-      note: r.note,
-    });
-  }
-  return out;
-}
-
-async function loadSnapshotDate(): Promise<string | null> {
-  // Pulled separately so it returns even when the user has zero saved
-  // symbols (loadRows would otherwise short-circuit before we knew).
-  const rows = await sql<{ snapshot_date: string | null }[]>`
-    SELECT MAX(snapshot_date)::text AS snapshot_date FROM app.cluster_stocks_panel_cache
-  `;
-  return rows[0]?.snapshot_date ?? null;
-}
-
 export async function GET(req: NextRequest) {
   const param = req.nextUrl.searchParams.get("symbols");
-  // List-only: the shared useWatchlist bootstrap (and any ?list=1 caller).
-  // Must return BEFORE loadQuotes — that is the whole point of splitting GET.
   const listOnly = param === null || req.nextUrl.searchParams.get("list") === "1";
-  // `lean=1` — skip the three loaders that exist purely for the scorecard CARD
-  // UI: glance (sector-aware peer fundamentals), verdict, and glance_keys.
-  // Measured on a 92-name portfolio they are 65% of the response body
-  // (127KB + 38KB + 6KB of 261KB) and three of the eight parallel query
-  // branches, glance being the heaviest. Table consumers (the portfolio
-  // Returns tab) read none of them.
   const lean = req.nextUrl.searchParams.get("lean") === "1";
-  // Hearted names only — skip the holdings/calls union. /news Watchlist
-  // asks for this so its rail cannot outgrow the saved list.
   const savedOnly = req.nextUrl.searchParams.get("saved") === "1";
   const session = await getSession();
 
-  // If the client passed a specific symbol list, use that (signed-out
-  // clients reading their local list, or signed-in clients explicitly
-  // overriding).  Otherwise, for signed-in users, fall back to the
-  // server-side watchlist.
   let symbols: string[] = [];
-  // Reused by the ownership block below so we don't fetch held names twice.
   let heldFromList: string[] | null = null;
   if (param !== null) {
-    // `symbols=@portfolio` resolves the caller's current holdings server-side.
-    // The Returns tab previously had to GET /api/portfolio/symbols, wait, then
-    // come back here with the list — a strict waterfall, because the second
-    // request cannot even be issued until the first resolves. Since this
-    // response already carries `signedIn`, one request now answers both.
     if (param.trim() === "@portfolio") {
       symbols = session
         ? (await loadPortfolioSymbols(session.userId).catch(() => [] as string[]))
@@ -360,39 +56,9 @@ export async function GET(req: NextRequest) {
       symbols = cleanSymbolList(param);
     }
   } else if (session) {
-    const wl = await sql<{ symbol: string }[]>`
-      SELECT symbol FROM app.user_watchlist
-       WHERE user_id = ${session.userId}
-       ORDER BY added_at DESC
-       LIMIT ${MAX_SYMBOLS}
-    `;
-    const base = wl.map((r) => r.symbol);
-    if (savedOnly) {
-      symbols = base;
-    } else {
-      // One-directional inclusion: every name you currently HOLD (active
-      // portfolio) or have an OPEN Buy/Sell call on appears on the watchlist,
-      // even if you never hearted it. This is a read-time union — NOT persisted
-      // into user_watchlist — so selling out or clearing the call drops the name
-      // automatically, and hearting a watchlist name never writes back to the
-      // portfolio or calls. (Exited/traded-but-not-held names are excluded: only
-      // active positions ride along.)
-      const [held, callSyms] = await Promise.all([
-        loadPortfolioSymbols(session.userId).catch(() => [] as string[]),
-        sql<{ symbol: string }[]>`
-          SELECT DISTINCT symbol FROM app.stock_call
-           WHERE user_id = ${session.userId} AND cleared_at IS NULL
-        `.catch(() => [] as { symbol: string }[]),
-      ]);
-      heldFromList = held;
-      const extra = [
-        ...held.map((s) => s.toUpperCase()),
-        ...callSyms.map((r) => r.symbol.toUpperCase()),
-      ];
-      // Stored watchlist first (recency order), then any held/called names not
-      // already present, capped at MAX_SYMBOLS.
-      symbols = Array.from(new Set([...base, ...extra])).slice(0, MAX_SYMBOLS);
-    }
+    const res = await loadUserWatchlistSymbols(session.userId, savedOnly);
+    symbols = res.symbols;
+    heldFromList = res.heldFromList;
   }
 
   if (listOnly) {
@@ -404,323 +70,18 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  const sessionP = session
-    ? Promise.all([
-        heldFromList != null
-          ? Promise.resolve(heldFromList)
-          : loadPortfolioSymbols(session.userId).catch(() => [] as string[]),
-        sql<{ symbol: string; d: string; side: string; price: number; qty: number }[]>`
-          SELECT symbol,
-                 trade_date::text AS d,
-                 side,
-                 (SUM(price * quantity) / NULLIF(SUM(quantity), 0))::float8 AS price,
-                 SUM(quantity)::float8 AS qty
-            FROM app.portfolio_transaction
-           WHERE user_id = ${session.userId} AND symbol IS NOT NULL
-           GROUP BY symbol, trade_date, side
-           ORDER BY symbol, trade_date
-        `.catch(() => [] as { symbol: string; d: string; side: string; price: number; qty: number }[]),
-        loadHeldPositions(session.userId).catch(() => ({}) as Record<string, { qty: number; avgCost: number | null }>),
-        loadCurrentLegBuyDates(session.userId).catch(() => ({}) as Record<string, string>),
-      ])
-    : Promise.resolve(null);
+  const { rows, snapshot_date } = await loadWatchlistData({
+    symbols,
+    userId: session?.userId ?? null,
+    lean,
+    heldFromList,
+  });
 
-  const sortedKey = [...symbols].sort().join(",");
-  const cachedRows = unstable_cache(
-    async (syms: string[]) => loadRows(syms),
-    ["watchlist:rows:v1", sortedKey],
-    { revalidate: 300, tags: ["panel-cache", "watchlist-data"] },
-  );
-  const cachedSnapDate = unstable_cache(
-    () => loadSnapshotDate(),
-    ["watchlist:snapdate:v1"],
-    { revalidate: 3600, tags: ["panel-cache"] },
-  );
-  const cachedPersistence = unstable_cache(
-    async (syms: string[]) => Array.from((await loadPersistenceForSymbols(syms)).entries()),
-    ["watchlist:persistence:v1", sortedKey],
-    { revalidate: 3600, tags: ["panel-cache"] },
-  );
-  const cachedQuotes = unstable_cache(
-    async (syms: string[], isLean: boolean) => Array.from((await loadQuotes(syms, isLean)).entries()),
-    ["watchlist:quotes:v1", sortedKey, String(lean)],
-    { revalidate: 120, tags: ["market", "panel-cache"] },
-  );
-
-  const [rows, snapshotDate, persistenceEntries, quoteEntries, meta, glance, verdicts, scorecardKeys, sessionData] = await Promise.all([
-    cachedRows(symbols),
-    cachedSnapDate(),
-    // Multi-snapshot trend per symbol. Cached per symbol set + panel-cache tag.
-    cachedPersistence(symbols),
-    // Fresh daily quote (LTP, 1D move, 52W high/low) from golden — 2m cache.
-    cachedQuotes(symbols, lean),
-    // Per-user cost-basis snapshot + note. Empty when signed out.
-    session
-      ? loadMeta(session.userId, symbols)
-      : Promise.resolve(new Map<string, WatchMeta>()),
-    // Sector-aware fundamentals for the peer-glance table.
-    lean ? Promise.resolve(new Map<string, GlanceMetrics>()) : loadGlance(symbols),
-    // Per-stock verdict — the metrics each stock most stands out on.
-    lean ? Promise.resolve(new Map<string, StockVerdict>()) : loadVerdicts(symbols),
-    // Scorecard-driven fundamental rows — which metrics matter for this cluster.
-    lean ? Promise.resolve(new Map<string, MetricKey[]>()) : loadScorecardKeys(symbols),
-    sessionP,
-  ]);
-  const persistence = new Map(persistenceEntries);
-  const quotes = new Map(quoteEntries);
-
-  // Portfolio ownership for the "P" badge (signed-in only). heldSet = currently
-  // held (same reconciliation rule as the scanner graph); tradedSet = ever
-  // bought (a cheap DISTINCT over the trade log) so exited names still show a
-  // grey P. Both empty when signed out — anonymous users have no portfolio.
-  let heldSet = new Set<string>();
-  const tradedSet = new Set<string>();
-  let positions: Record<string, { qty: number; avgCost: number | null }> = {};
-  // Per-symbol B/S markers (UPPERCASE-keyed) for the card charts, plus the
-  // earliest Buy date derived from them for the "Bought <date>" chip.
-  const tradesBySym: Record<string, TradeMark[]> = {};
-  const boughtOn = new Map<string, string>();
-  if (session && sessionData) {
-    const [held, trades, pos, legBuys] = sessionData;
-    heldSet = new Set(held.map((s) => s.toUpperCase()));
-    positions = pos;
-    // From the raw trade log we take only two cheap facts: the traded set (drives
-    // the grey "P" for exited names) and the earliest recorded BUY date per
-    // symbol. We deliberately do NOT paint raw transactions as chart markers: a
-    // broker CSV records a split/bonus as a sell-old + buy-new pair (e.g.
-    // GODFRYPHLP's 1:3 on 2025-09-16), which would show a phantom "Sell" for a
-    // position that was never exited, and raw prices sit ~Nx off the split-
-    // adjusted candles. Markers are synthesized from holdings below instead.
-    for (const r of trades) tradedSet.add(r.symbol.toUpperCase());
-    // The "Bought <date>" anchor. This USED to be the earliest buy in the whole
-    // trade log, taken from the loop above. That is the wrong date for any name
-    // that was exited and re-entered, and it is wrong in the most confusing
-    // possible way: the caption pairs it with the quantity and average cost of
-    // the position you hold TODAY.
-    //
-    // KARURVYSYA is the case that surfaced it — bought 16 on 2025-06-02, sold
-    // the lot out entirely on 2026-02-05, re-bought 45 @ ₹346 on 2026-09-02.
-    // The caption read "Bought 45 @ ₹346 · 02 Jun 2025": a September-2026 lot
-    // stamped with a June-2025 date, and the chart's B marker planted at ₹168
-    // fifteen months before that purchase existed. Nothing about it looks like
-    // a bug — it looks like the chart disagreeing with your tradebook.
-    for (const [key, d] of Object.entries(legBuys)) boughtOn.set(key, d);
-    // One "B" per HELD name, sourced from app.portfolio_holding: outstanding qty
-    // + effective (already split-adjusted) avg cost, anchored to the earliest real
-    // buy date. Answers "when did I buy this and what do I hold?" — never a sell,
-    // always consistent with the position header, and no golden reconciliation.
-    // A held name with NO real buy date (broker-snapshot-only, e.g. LTFOODS) is
-    // collected instead for a synthesised entry marker below.
-    const snapNeeded: string[] = [];
-    for (const [sym, p] of Object.entries(positions)) {
-      const key = sym.toUpperCase();
-      if (p.qty <= 0 || p.avgCost == null) continue;
-      const d = boughtOn.get(key);
-      if (!d) {
-        snapNeeded.push(key);
-        continue;
-      }
-      tradesBySym[key] = [{ d, side: "B", price: p.avgCost, qty: p.qty }];
-    }
-    // Snapshot-only held names get a `derived` synthetic buy — the historical bar
-    // whose split-adjusted close is nearest the avg cost — so they show an entry
-    // point (rendered faintly, "≈") instead of a bare "P" with no marker. Scoped
-    // to the names on this watchlist so the golden read stays cheap. Names with a
-    // real trade log keep the holdings-based single "B" above (no phantom split
-    // legs). loadSnapshotDerivedBuys already excludes anything with a logged buy.
-    const watchSet = new Set(symbols.map((s) => s.toUpperCase()));
-    const snapScope = snapNeeded.filter((k) => watchSet.has(k));
-    if (snapScope.length > 0) {
-      const derived = await loadSnapshotDerivedBuys(session.userId, snapScope).catch(
-        () => ({}) as Record<string, TradeMark[]>,
-      );
-      for (const [key, marks] of Object.entries(derived)) {
-        if (!tradesBySym[key]) tradesBySym[key] = marks;
-      }
-    }
-  }
-  // Self-heal missing close_on_add. Rows added while golden lagged (e.g. a
-  // post-merger ticker like PVRINOX whose bars backfilled late) got a null
-  // close_on_add that was then frozen — the value is captured once at add-time
-  // and never retried, so "Close @ add" / "Since add" stayed blank forever.
-  // Now that golden has the bars, recover the close as of the original add date
-  // and persist it once. Signed-in only (signed-out rows have no server meta).
-  if (session) {
-    const needsHeal = [...meta.entries()]
-      .filter(([, m]) => m.close_on_add == null && m.added_at)
-      .map(([symbol, m]) => ({ symbol, date: (m.added_at as string).slice(0, 10) }));
-    if (needsHeal.length > 0) {
-      // Self-heal asynchronously in background so it never blocks the watchlist load response
-      void (async () => {
-        try {
-          const healed = await loadCloseAsOf(needsHeal);
-          const upSyms: string[] = [];
-          const upCloses: number[] = [];
-          const upDates: string[] = [];
-          for (const { symbol } of needsHeal) {
-            const h = healed.get(symbol);
-            if (!h) continue;
-            upSyms.push(symbol);
-            upCloses.push(h.close);
-            upDates.push(h.date);
-          }
-          if (upSyms.length > 0) {
-            await sql`
-              UPDATE app.user_watchlist AS w
-                 SET close_on_add = v.cl, close_on_add_date = v.dt
-                FROM unnest(${upSyms}::text[], ${upCloses}::numeric[], ${upDates}::date[])
-                     AS v(sym, cl, dt)
-               WHERE w.user_id = ${session.userId} AND w.symbol = v.sym
-                 AND w.close_on_add IS NULL
-            `.catch(() => {});
-          }
-        } catch {}
-      })();
-    }
-  }
-
-  // Splice the persistence, quote and per-user fields into each row so the
-  // client renders them in the same iteration as the rest of the data.
-  for (const row of rows) {
-    const p = persistence.get(row.symbol);
-    row.raw_delta         = p?.raw_delta         ?? null;
-    row.cluster_avg_delta = p?.cluster_avg_delta ?? null;
-    row.cluster_adjusted  = p?.cluster_adjusted  ?? null;
-    row.snaps_improving   = p?.snaps_improving   ?? 0;
-
-    const q = quotes.get(row.symbol);
-    row.ltp           = q?.ltp           ?? null;
-    row.ret_1d        = q?.ret_1d        ?? null;
-    row.prev_close    = q?.prev_close    ?? null;
-    // Period returns arrive as PERCENT from the quote; ReturnPill (and the row
-    // contract) expect FRACTIONS, so divide by 100 here — same convention the
-    // panel cache used to store.
-    const asFrac = (p: number | null | undefined) => (p == null ? null : p / 100);
-    row.ret_1w        = asFrac(q?.ret_1w);
-    row.ret_1m        = asFrac(q?.ret_1m);
-    row.ret_3m        = asFrac(q?.ret_3m);
-    row.ret_1y        = asFrac(q?.ret_1y);
-    row.ret_3y        = asFrac(q?.ret_3y);
-    row.ret_5y        = asFrac(q?.ret_5y);
-    row.ret_10y       = asFrac(q?.ret_10y);
-    row.ret_all       = asFrac(q?.ret_all);
-    row.high_52w      = q?.high_52w      ?? null;
-    row.low_52w       = q?.low_52w       ?? null;
-    row.from_high_pct = q?.from_high_pct ?? null;
-    row.from_low_pct  = q?.from_low_pct  ?? null;
-    row.vol           = q?.vol           ?? null;
-    row.avg_vol_30d   = q?.avg_vol_30d   ?? null;
-    row.rel_vol       = q?.rel_vol       ?? null;
-    row.turnover_cr   = q?.turnover_cr   ?? null;
-    row.delivery_pct  = q?.delivery_pct  ?? null;
-    row.ltp_date      = q?.ltp_date      ?? null;
-    row.stale         = q?.stale         ?? false;
-
-    // ── Intraday overlay ────────────────────────────────────────────────────
-    // `ltp` above is golden's END-OF-DAY close. app.screener_meta.current_price
-    // is a LIVE tick written by /api/cron/intraday-equity during market hours.
-    // Consumers that read `ltp ?? current_price` never reach the tick — golden
-    // has a bar for every mapped symbol, so the `??` can't fire — and therefore
-    // show yesterday's close all session. That is exactly how the portfolio
-    // Returns tab came to disagree with the Performance tab by the whole of
-    // today's move: 9,52,652 vs 9,50,323, a gap equal to the -2,330 day change,
-    // with its "1D" column reporting YESTERDAY's session next to it.
-    // loadPortfolio already solved this server-side; this puts the same rule on
-    // the watchlist path so the two cannot drift again.
-    //
-    // The tick wins only when it is strictly newer than THIS symbol's own bar,
-    // compared by IST trading day rather than a wall-clock age. Per-symbol
-    // because a name that stopped trading has an older bar, and judging its
-    // tick against some other symbol's fresher bar would wrongly reject it.
-    // Self-healing both ways: a dead pinger degrades to EOD silently, a stalled
-    // EOD loader degrades to the tick.
-    //
-    // This OVERWRITES ltp / ret_1d / ltp_date rather than sitting beside them.
-    // It was opt-in for one commit, read only by the portfolio Returns tab, but
-    // an opt-in correctness fix is just the same bug with a longer list of
-    // places still holding it: the watchlist cards, the "since add" figure and
-    // the P-badge P&L were all still quoting yesterday. A price field on a live
-    // page should mean "the best price we have", and every consumer wants that
-    // — so the effective price IS `ltp` now. The pre-overlay close survives as
-    // eod_ltp / eod_ret_1d for anything that must line up with a chart bar,
-    // and eff_* remain as aliases.
-    const tick = row.intraday_px;
-    const useTick =
-      tick != null && tick > 0 &&
-      row.intraday_ist_date != null &&
-      (row.ltp_date == null || row.intraday_ist_date > row.ltp_date);
-    row.eod_ltp = row.ltp;
-    row.eod_ret_1d = row.ret_1d;
-    if (useTick) {
-      // 1D baseline is the last close — golden's newest bar, i.e. the value of
-      // `ltp` before this block — not the bar before it. Computed from eod_ltp
-      // for that reason, and BEFORE ltp is reassigned.
-      row.ret_1d =
-        row.eod_ltp != null && row.eod_ltp !== 0
-          ? Math.round((tick / row.eod_ltp - 1) * 1000) / 10
-          : null;
-      // …and the baseline itself moves with it, so a consumer computing a
-      // rupee day-change off (ltp − prev_close) gets today's move rather than
-      // silently measuring a live tick against the close before last.
-      row.prev_close = row.eod_ltp;
-      // Trailing windows are close-to-close, so their ENDPOINT is still
-      // yesterday's bar even though ltp is now live — 1W/1M/1Y would sit frozen
-      // all session and disagree with 1D about which way the stock moved.
-      // Re-end them on the tick; the anchor is history and stays put. These are
-      // FRACTIONS on the row (asFrac above), hence scale=1.
-      row.ret_1w = rescaleWindow(row.ret_1w, row.eod_ltp, tick, 1);
-      row.ret_1m = rescaleWindow(row.ret_1m, row.eod_ltp, tick, 1);
-      row.ret_1y = rescaleWindow(row.ret_1y, row.eod_ltp, tick, 1);
-      row.ltp = tick;
-      // The "as of" date has to move with the price, or the freshness pill
-      // labels a live tick with yesterday's date. And a symbol that traded
-      // today is by definition not a stale laggard, whatever its bar history
-      // looked like.
-      row.ltp_date = row.intraday_ist_date;
-      row.stale = false;
-    }
-    row.px_live = useTick;
-    row.eff_ltp = row.ltp;
-    row.eff_ret_1d = row.ret_1d;
-
-    row.held          = heldSet.has(row.symbol);
-    row.traded        = row.held || tradedSet.has(row.symbol);
-    row.bought_on     = boughtOn.get(row.symbol) ?? null;
-    row.trades        = tradesBySym[row.symbol] ?? [];
-    const posn        = positions[row.symbol];
-    row.held_qty      = posn?.qty ?? null;
-    row.avg_cost      = posn?.avgCost ?? null;
-    const effLtp      = row.eff_ltp ?? row.current_price;
-    row.pos_pnl_pct   =
-      posn?.avgCost != null && posn.avgCost !== 0 && effLtp != null
-        ? Math.round((effLtp / posn.avgCost - 1) * 1000) / 10
-        : null;
-
-    const m = meta.get(row.symbol);
-    row.added_at          = m?.added_at          ?? null;
-    row.close_on_add      = m?.close_on_add      ?? null;
-    row.close_on_add_date = m?.close_on_add_date ?? null;
-    row.note              = m?.note              ?? null;
-
-    if (lean) {
-      // Drop the keys outright rather than emitting `null` — carrying three
-      // empty placeholders per row is pure wire cost for a consumer that never
-      // reads them.
-      const bag = row as unknown as Record<string, unknown>;
-      delete bag.glance;
-      delete bag.verdict;
-      delete bag.glance_keys;
-    } else {
-      row.glance = glance.get(row.symbol) ?? null;
-      row.verdict = verdicts.get(row.symbol) ?? null;
-      row.glance_keys = scorecardKeys.get(row.symbol) ?? [];
-    }
-  }
   return NextResponse.json({
     rows,
     symbols,
     signedIn: session !== null,
-    snapshot_date: snapshotDate,
+    snapshot_date,
   });
 }
 
@@ -737,10 +98,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
 
-  // Accept either a single { symbol } or a batch { symbols: [...] }.  The
-  // batch form is what the localStorage → server merge calls on first
-  // login (a user with 20 saved symbols shouldn't fire 20 sequential
-  // requests).
   const list: string[] = [];
   if (typeof body.symbol === "string") {
     const s = cleanSymbol(body.symbol);
@@ -758,7 +115,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "no valid symbols" }, { status: 400 });
   }
 
-  // Enforce per-user cap before inserting.  One small read.
   const cntRow = await sql<{ count: number }[]>`
     SELECT COUNT(*)::int AS count FROM app.user_watchlist WHERE user_id = ${session.userId}
   `;
@@ -770,16 +126,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "watchlist full" }, { status: 409 });
   }
 
-  // Capture the latest close per symbol as the "closing rate when added"
-  // reference point (best-effort — golden hiccup just leaves it null).
   const closeMap = await loadCloseOnAdd(toInsert);
   const closes = toInsert.map((s) => closeMap.get(s)?.close ?? null);
   const dates = toInsert.map((s) => closeMap.get(s)?.date ?? null);
 
-  // Batch insert with ON CONFLICT DO NOTHING — duplicates are silently
-  // dropped, so callers can safely re-POST the same symbol without an
-  // error path to handle. close_on_add/date are frozen at first add; a
-  // re-POST of an existing name does NOT overwrite the original snapshot.
   await sql`
     INSERT INTO app.user_watchlist (user_id, symbol, close_on_add, close_on_add_date)
     SELECT ${session.userId}, sym, cl, dt
@@ -809,10 +159,6 @@ export async function DELETE(req: NextRequest) {
   return NextResponse.json({ ok: true });
 }
 
-/**
- * PATCH — body { symbol, note } — sets the free-text note on a watched name.
- * An empty/whitespace note clears it (stored as NULL). Signed-out → 401.
- */
 export async function PATCH(req: NextRequest) {
   const session = await getSession();
   if (!session) {
@@ -834,8 +180,6 @@ export async function PATCH(req: NextRequest) {
   const raw = typeof body.note === "string" ? body.note.trim().slice(0, NOTE_MAX) : "";
   const note = raw.length === 0 ? null : raw;
 
-  // Only touches the caller's own row; a non-existent (user, symbol) is a
-  // silent no-op (0 rows updated) rather than an error.
   await sql`
     UPDATE app.user_watchlist
        SET note = ${note}
@@ -844,4 +188,3 @@ export async function PATCH(req: NextRequest) {
   `;
   return NextResponse.json({ ok: true, note });
 }
-

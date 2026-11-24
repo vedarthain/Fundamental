@@ -145,13 +145,17 @@ function istDateKey(): string {
  *  Freshness: revalidate 900s bounds staleness to 15 min; the IST date in the key
  *  guarantees a clean rollover at day boundary; and the EOD price refresh purges
  *  the "panel-cache" tag, so a fresh close lands immediately after the pipeline. */
-export async function loadQuotes(symbols: string[], lean = false): Promise<Map<string, Quote>> {
+export async function loadQuotes(
+  symbols: string[],
+  lean: boolean | "returns_only" = false,
+): Promise<Map<string, Quote>> {
   const bareSyms = Array.from(new Set(symbols.map(bare))).filter(Boolean).sort();
   if (bareSyms.length === 0) return new Map<string, Quote>();
   const dateKey = istDateKey();
+  const modeKey = lean === true ? "lean" : lean === "returns_only" ? "returns_only" : "full";
   const cached = unstable_cache(
     () => fetchQuotes(bareSyms, lean),
-    ["watchlist-quotes", dateKey, lean ? "lean" : "full", bareSyms.join(",")],
+    ["watchlist-quotes", dateKey, modeKey, bareSyms.join(",")],
     { revalidate: 900, tags: ["watchlist-quotes", "panel-cache"] },
   );
   const rec = await cached();
@@ -160,7 +164,10 @@ export async function loadQuotes(symbols: string[], lean = false): Promise<Map<s
 
 /** The uncached golden fetch. Returns a plain Record (cache-serialisable). Never
  *  throws — a golden hiccup yields {} and the UI renders "—". */
-async function fetchQuotes(bareSymsSorted: string[], lean = false): Promise<Record<string, Quote>> {
+async function fetchQuotes(
+  bareSymsSorted: string[],
+  lean: boolean | "returns_only" = false,
+): Promise<Record<string, Quote>> {
   const out = new Map<string, Quote>();
   const bareSyms = bareSymsSorted;
   if (bareSyms.length === 0) return {};
@@ -179,37 +186,42 @@ async function fetchQuotes(bareSymsSorted: string[], lean = false): Promise<Reco
       ) t WHERE rn <= 2
     `;
 
-    const hiloPromise = golden<{ symbol: string; hi: string; lo: string }[]>`
-      SELECT symbol,
-             MAX(COALESCE(adj_close, close))::text AS hi,
-             MIN(COALESCE(adj_close, close))::text AS lo
-      FROM golden.price_history_1d
-      WHERE COALESCE(adj_close, close) IS NOT NULL
-        AND symbol = ANY(${cands})
-        AND date >= CURRENT_DATE - 365
-      GROUP BY symbol
-    `;
+    const hiloPromise =
+      lean === "returns_only"
+        ? Promise.resolve([] as { symbol: string; hi: string; lo: string }[])
+        : golden<{ symbol: string; hi: string; lo: string }[]>`
+            SELECT symbol,
+                   MAX(COALESCE(adj_close, close))::text AS hi,
+                   MIN(COALESCE(adj_close, close))::text AS lo
+            FROM golden.price_history_1d
+            WHERE COALESCE(adj_close, close) IS NOT NULL
+              AND symbol = ANY(${cands})
+              AND date >= CURRENT_DATE - 365
+            GROUP BY symbol
+          `;
 
-    const volsPromise = lean
-      ? Promise.resolve([] as { symbol: string; vol: string | null; close: string | null; avgvol: string | null }[])
-      : golden<{
-          symbol: string;
-          vol: string | null;
-          close: string | null;
-          avgvol: string | null;
-        }[]>`
-          SELECT symbol,
-                 (array_agg(volume ORDER BY date DESC))[1]::text AS vol,
-                 (array_agg(close  ORDER BY date DESC))[1]::text AS close,
-                 AVG(volume)::text AS avgvol
-          FROM golden.price_history_1d
-          WHERE volume IS NOT NULL
-            AND symbol = ANY(${cands})
-            AND date >= CURRENT_DATE - 45
-          GROUP BY symbol
-        `;
+    const volsPromise =
+      lean === true || lean === "returns_only"
+        ? Promise.resolve([] as { symbol: string; vol: string | null; close: string | null; avgvol: string | null }[])
+        : golden<{
+            symbol: string;
+            vol: string | null;
+            close: string | null;
+            avgvol: string | null;
+          }[]>`
+            SELECT symbol,
+                   (array_agg(volume ORDER BY date DESC))[1]::text AS vol,
+                   (array_agg(close  ORDER BY date DESC))[1]::text AS close,
+                   AVG(volume)::text AS avgvol
+            FROM golden.price_history_1d
+            WHERE volume IS NOT NULL
+              AND symbol = ANY(${cands})
+              AND date >= CURRENT_DATE - 45
+            GROUP BY symbol
+          `;
 
-    const retsPromise = lean
+    const retsPromise =
+      lean === true
       ? Promise.resolve([] as {
           symbol: string;
           first_c: string | null;
@@ -303,33 +315,30 @@ async function fetchQuotes(bareSymsSorted: string[], lean = false): Promise<Reco
           WHERE ph.symbol = l.symbol AND ph.interval = '1d' AND COALESCE(ph.adj_close, ph.close) IS NOT NULL
       `;
 
-    const [last2, hilo, vols, rets] = await Promise.all([
+    const delPctPromise =
+      lean !== false
+        ? Promise.resolve([] as { symbol: string; delpct: string | null }[])
+        : golden<{ symbol: string; delpct: string | null }[]>`
+            SELECT symbol,
+                   (array_agg(delivery_pct ORDER BY date DESC)
+                      FILTER (WHERE delivery_pct IS NOT NULL))[1]::text AS delpct
+            FROM golden.price_history
+            WHERE interval = '1d' AND volume IS NOT NULL
+              AND symbol = ANY(${cands})
+              AND date >= CURRENT_DATE - 45
+            GROUP BY symbol
+          `.catch(() => [] as { symbol: string; delpct: string | null }[]);
+
+    const [last2, hilo, vols, rets, delRows] = await Promise.all([
       last2Promise,
       hiloPromise,
       volsPromise,
       retsPromise,
+      delPctPromise,
     ]);
 
-    // Delivery % lives in a separate, isolated query: delivery_qty/delivery_pct
-    // are a newer golden addition and may be absent on some deployments. Its own
-    // try/catch means a missing column costs only the Delivery metric, never the
-    // core quote (LTP / 1D / 52W / volume) — the bug that blanked the whole row.
     const delPct = new Map<string, number>();
-    try {
-      const del = await golden<{ symbol: string; delpct: string | null }[]>`
-        SELECT symbol,
-               (array_agg(delivery_pct ORDER BY date DESC)
-                  FILTER (WHERE delivery_pct IS NOT NULL))[1]::text AS delpct
-        FROM golden.price_history
-        WHERE interval = '1d' AND volume IS NOT NULL
-          AND symbol = ANY(${cands})
-          AND date >= CURRENT_DATE - 45
-        GROUP BY symbol
-      `;
-      for (const r of del) if (r.delpct != null) delPct.set(bare(r.symbol), Number(r.delpct));
-    } catch {
-      // delivery_pct column absent or golden hiccup — Delivery renders "—".
-    }
+    for (const r of delRows) if (r.delpct != null) delPct.set(bare(r.symbol), Number(r.delpct));
 
     const last = new Map<string, number>();
     const prev = new Map<string, number>();

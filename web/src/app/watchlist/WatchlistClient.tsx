@@ -248,12 +248,21 @@ export type WatchSource = {
 export function WatchlistClient({
   source,
   isAdmin = false,
-}: { source?: WatchSource; isAdmin?: boolean } = {}) {
+  initialSymbols,
+  initialRows,
+  initialSnapshotDate,
+}: {
+  source?: WatchSource;
+  isAdmin?: boolean;
+  initialSymbols?: string[];
+  initialRows?: Row[];
+  initialSnapshotDate?: string | null;
+} = {}) {
   const wl = useWatchlist();
-  const symbols = source ? source.symbols : wl.symbols;
-  const hydrated = source ? source.hydrated : wl.hydrated;
+  const symbols = source ? source.symbols : (wl.hydrated ? wl.symbols : (initialSymbols ?? []));
+  const hydrated = source ? source.hydrated : (wl.hydrated || Boolean(initialSymbols));
   const count = symbols.length;
-  const signedIn = source ? true : wl.signedIn;
+  const signedIn = source ? true : (wl.hydrated ? wl.signedIn : Boolean(initialSymbols));
   const remove = wl.remove;
   // Hand-written verdicts, as a per-row marker. Fetched separately from the
   // watchlist payload and only for an admin session — see VerdictSheet's
@@ -261,7 +270,7 @@ export function WatchlistClient({
   // button that has to be clicked to find out whether it was worth clicking.
   const verdictChips = useVerdictChips(symbols, isAdmin);
   const [openVerdict, setOpenVerdict] = useState<string | null>(null);
-  const [rows, setRows] = useState<Row[] | null>(null);
+  const [rows, setRows] = useState<Row[] | null>(initialRows ?? null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   // Master/detail: which stock is open in the right-hand panel. The detail
@@ -310,12 +319,24 @@ export function WatchlistClient({
   // Snapshot date from the API response so we can tell the user when the
   // prices/scores were computed.  Same value /sectors and the top ribbon
   // show — keeps the "as-of" date consistent across surfaces.
-  const [snapshotDate, setSnapshotDate] = useState<string | null>(null);
+  const [snapshotDate, setSnapshotDate] = useState<string | null>(initialSnapshotDate ?? null);
+  const skipInitialFetchRef = useRef(Boolean(initialRows));
+  const initialSymsKey = useMemo(
+    () => (initialSymbols ? [...initialSymbols].sort().join(",") : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+  const currentSymsKey = useMemo(() => [...symbols].sort().join(","), [symbols]);
 
   // Fetch whenever the symbol list changes (post-hydration only — avoid
   // a wasted fetch with empty symbols during SSR).
   useEffect(() => {
     if (!hydrated) return;
+    if (skipInitialFetchRef.current && initialSymsKey !== null && currentSymsKey === initialSymsKey) {
+      skipInitialFetchRef.current = false;
+      return;
+    }
+    skipInitialFetchRef.current = false;
     if (symbols.length === 0) {
       setRows([]);
       return;
@@ -341,7 +362,7 @@ export function WatchlistClient({
       })
       .catch((e: Error) => setError(e.message || "Failed to load"))
       .finally(() => setLoading(false));
-  }, [hydrated, symbols.join(",")]);  // join so changing order doesn't refetch unnecessarily
+  }, [hydrated, currentSymsKey]); // join so changing order doesn't refetch unnecessarily
 
   // Keep the detail panel pointed at a valid row: preserve the current
   // selection if it still exists, otherwise open the top-scored stock.

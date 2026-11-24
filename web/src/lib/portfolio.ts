@@ -1892,7 +1892,7 @@ async function computePortfolio(
     // by up to a week is not a trailing window. The panel cache stays as the
     // fallback for anything loadQuotes can't price.
     mappedSyms.length
-      ? loadQuotes(mappedSyms)
+      ? loadQuotes(mappedSyms, "returns_only")
       : Promise.resolve(new Map<string, Quote>()),
   ]);
   const cache = new Map<string, CacheRow>();
