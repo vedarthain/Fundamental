@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { isAdminRequest } from "@/lib/auth";
 import fs from "fs";
 import path from "path";
+import zlib from "zlib";
 
 const LOG_FILES: Record<string, string> = {
   drift: "/var/log/fundamental-daily-drift.log",
@@ -10,7 +11,69 @@ const LOG_FILES: Record<string, string> = {
   compute: "/var/log/fundamental-weekly-compute.log",
   scanner: "/var/log/fundamental-momentum-scanner.log",
   backup: "/var/log/fundamental-db-backup.log",
+  reload: "/var/log/fundamental-pm2-reload.log",
 };
+
+type ArchiveInfo = {
+  fileName: string;
+  label: string;
+  sizeBytes: number;
+  modifiedAt: string;
+};
+
+function discoverArchives(baseFilePath: string): ArchiveInfo[] {
+  const dir = path.dirname(baseFilePath);
+  const base = path.basename(baseFilePath);
+  if (!fs.existsSync(dir)) return [];
+
+  const entries = fs.readdirSync(dir).filter((f) => f === base || f.startsWith(`${base}.`));
+  const out: ArchiveInfo[] = [];
+
+  for (const name of entries) {
+    try {
+      const full = path.join(dir, name);
+      const stat = fs.statSync(full);
+      if (!stat.isFile()) continue;
+
+      let label = "Current";
+      if (name !== base) {
+        const suffix = name.slice(base.length + 1); // e.g. "1" or "2.gz"
+        const num = parseInt(suffix, 10);
+        if (num === 1) label = "Previous (.1)";
+        else if (!Number.isNaN(num)) label = `Archive #${num} (.${suffix})`;
+        else label = suffix;
+      }
+
+      out.push({
+        fileName: name,
+        label,
+        sizeBytes: stat.size,
+        modifiedAt: stat.mtime.toISOString(),
+      });
+    } catch {
+      // ignore unreadable entry
+    }
+  }
+
+  // Sort: current first, then numeric rotation order (.1, .2.gz, ...)
+  out.sort((a, b) => {
+    if (a.fileName === base) return -1;
+    if (b.fileName === base) return 1;
+    const na = parseInt(a.fileName.slice(base.length + 1), 10) || 999;
+    const nb = parseInt(b.fileName.slice(base.length + 1), 10) || 999;
+    return na - nb;
+  });
+
+  return out;
+}
+
+function readLogFile(fullPath: string): string {
+  if (fullPath.endsWith(".gz")) {
+    const buf = fs.readFileSync(fullPath);
+    return zlib.gunzipSync(buf).toString("utf-8");
+  }
+  return fs.readFileSync(fullPath, "utf-8");
+}
 
 export async function GET(request: Request) {
   if (!(await isAdminRequest())) {
@@ -19,44 +82,61 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const type = searchParams.get("type") || "drift";
+  const requestedFile = searchParams.get("file");
   const linesParam = parseInt(searchParams.get("lines") || "200", 10);
   const maxLines = Math.min(Math.max(isNaN(linesParam) ? 200 : linesParam, 10), 1000);
 
-  const filePath = LOG_FILES[type] || LOG_FILES.drift;
+  const baseFilePath = LOG_FILES[type] || LOG_FILES.drift;
+  const dir = path.dirname(baseFilePath);
 
   try {
-    if (!fs.existsSync(filePath)) {
+    const archives = discoverArchives(baseFilePath);
+
+    if (archives.length === 0) {
       return NextResponse.json({
         success: true,
         type,
-        filePath,
-        content: `Log file not found at ${filePath}. Logs will be created when the cron job runs on the Droplet.`,
+        filePath: path.basename(baseFilePath),
+        selectedFile: path.basename(baseFilePath),
+        archives: [],
+        content: `Log file not found at ${baseFilePath}. Logs will be created when the cron job runs on the Droplet.`,
         linesCount: 0,
+        totalLines: 0,
         modifiedAt: null,
         sizeBytes: 0,
       });
     }
 
-    const stat = fs.statSync(filePath);
-    // Read the file with a buffer window for efficiency if large
-    const fileContent = fs.readFileSync(filePath, "utf-8");
+    // Strict allowlist against discovered archives prevents path traversal
+    let chosen = requestedFile ? archives.find((a) => a.fileName === requestedFile) : undefined;
+    if (!chosen) {
+      // If current file is 0 bytes (just rotated at midnight), auto-select the newest non-empty archive
+      const current = archives[0];
+      const nonEmpty = archives.find((a) => a.sizeBytes > 0);
+      chosen = current.sizeBytes === 0 && nonEmpty ? nonEmpty : current;
+    }
+
+    const targetPath = path.join(dir, chosen.fileName);
+    const fileContent = readLogFile(targetPath);
     const allLines = fileContent.split("\n");
     const tailLines = allLines.slice(-maxLines);
 
     return NextResponse.json({
       success: true,
       type,
-      filePath: path.basename(filePath),
+      filePath: chosen.fileName,
+      selectedFile: chosen.fileName,
+      archives,
       content: tailLines.join("\n"),
       linesCount: tailLines.length,
       totalLines: allLines.length,
-      modifiedAt: stat.mtime.toISOString(),
-      sizeBytes: stat.size,
+      modifiedAt: chosen.modifiedAt,
+      sizeBytes: chosen.sizeBytes,
     });
   } catch (error: any) {
     return NextResponse.json(
       { error: error?.message || "Failed to read log file" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

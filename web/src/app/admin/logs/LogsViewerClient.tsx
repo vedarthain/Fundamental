@@ -13,12 +13,21 @@ function timeAgo(dateString: string): string {
   return `${days}d ago`;
 }
 
-type LogType = "drift" | "sunday" | "ltp" | "compute" | "scanner" | "backup";
+type LogType = "drift" | "sunday" | "ltp" | "compute" | "scanner" | "backup" | "reload";
+
+interface ArchiveInfo {
+  fileName: string;
+  label: string;
+  sizeBytes: number;
+  modifiedAt: string;
+}
 
 interface LogResponse {
   success: boolean;
   type: string;
   filePath: string;
+  selectedFile?: string;
+  archives?: ArchiveInfo[];
   content: string;
   linesCount: number;
   totalLines: number;
@@ -33,10 +42,12 @@ const TABS: { id: LogType; label: string }[] = [
   { id: "backup", label: "💾 DB Backup (7:30 AM)" },
   { id: "compute", label: "⚙️ Saturday Compute (8:30 AM)" },
   { id: "sunday", label: "☀️ Sunday Calls (2:00 PM)" },
+  { id: "reload", label: "🔄 Weekly Reload (Sun 4:00 AM)" },
 ];
 
 export function LogsViewerClient() {
   const [activeTab, setActiveTab] = useState<LogType>("drift");
+  const [selectedFile, setSelectedFile] = useState<string>("");
   const [lines, setLines] = useState<number>(200);
   const [autoRefresh, setAutoRefresh] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
@@ -44,12 +55,14 @@ export function LogsViewerClient() {
   const [copied, setCopied] = useState<boolean>(false);
   const terminalRef = useRef<HTMLPreElement>(null);
 
-  const fetchLog = async (type: LogType = activeTab, lineCount: number = lines) => {
+  const fetchLog = async (type: LogType = activeTab, lineCount: number = lines, file: string = selectedFile) => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/admin/logs?type=${type}&lines=${lineCount}`);
+      const qs = new URLSearchParams({ type, lines: String(lineCount) });
+      if (file) qs.set("file", file);
+      const res = await fetch(`/api/admin/logs?${qs.toString()}`);
       if (res.ok) {
-        const data = await res.json();
+        const data: LogResponse = await res.json();
         setLogData(data);
       }
     } catch (err) {
@@ -60,16 +73,16 @@ export function LogsViewerClient() {
   };
 
   useEffect(() => {
-    fetchLog(activeTab, lines);
-  }, [activeTab, lines]);
+    fetchLog(activeTab, lines, selectedFile);
+  }, [activeTab, lines, selectedFile]);
 
   useEffect(() => {
     if (!autoRefresh) return;
     const interval = setInterval(() => {
-      fetchLog(activeTab, lines);
+      fetchLog(activeTab, lines, selectedFile);
     }, 6000);
     return () => clearInterval(interval);
-  }, [autoRefresh, activeTab, lines]);
+  }, [autoRefresh, activeTab, lines, selectedFile]);
 
   const scrollToBottom = () => {
     if (terminalRef.current) {
@@ -90,6 +103,9 @@ export function LogsViewerClient() {
     return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
   };
 
+  const archives = logData?.archives ?? [];
+  const activeFileName = selectedFile || logData?.selectedFile || "";
+
   return (
     <div className="space-y-4">
       {/* Control Bar */}
@@ -99,7 +115,10 @@ export function LogsViewerClient() {
           {TABS.map((tab) => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => {
+                setSelectedFile("");
+                setActiveTab(tab.id);
+              }}
               className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
                 activeTab === tab.id
                   ? "bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-sm"
@@ -113,6 +132,23 @@ export function LogsViewerClient() {
 
         {/* Options */}
         <div className="flex items-center gap-2 flex-wrap">
+          {archives.length > 0 && (
+            <label className="text-xs text-zinc-500 dark:text-zinc-400 flex items-center gap-1">
+              <span>History:</span>
+              <select
+                value={activeFileName}
+                onChange={(e) => setSelectedFile(e.target.value)}
+                className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-xs rounded px-2 py-1 text-zinc-800 dark:text-zinc-200 font-mono"
+              >
+                {archives.map((a) => (
+                  <option key={a.fileName} value={a.fileName}>
+                    {a.label} ({formatFileSize(a.sizeBytes)})
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
           <label className="text-xs text-zinc-500 dark:text-zinc-400 flex items-center gap-1">
             <span>Tail:</span>
             <select
