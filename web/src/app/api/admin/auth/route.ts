@@ -17,7 +17,7 @@
  * The raw ADMIN_TOKEN never makes a round trip after this first set.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { createHash } from "crypto";
+import { createHash, timingSafeEqual } from "crypto";
 import { signSession } from "@/lib/auth";
 import { sql } from "@/lib/db";
 
@@ -28,6 +28,14 @@ const COOKIE_NAME = "er_admin";
 const SESSION_COOKIE = "er_session";            // must match lib/auth COOKIE_NAME
 const SESSION_MAX_AGE_S = 60 * 60 * 24 * 30;    // 30 days, matches lib/auth MAX_AGE_S
 
+function safeRedirectPath(raw: string | null): string {
+  if (!raw) return "/admin/ideas";
+  if (raw.startsWith("/") && !raw.startsWith("//") && !raw.includes("://")) {
+    return raw;
+  }
+  return "/admin/ideas";
+}
+
 export async function GET(req: NextRequest) {
   const token = req.nextUrl.searchParams.get("token") || "";
   const expected = process.env.ADMIN_TOKEN;
@@ -37,14 +45,15 @@ export async function GET(req: NextRequest) {
       status: 500,
     });
   }
-  const expectedHash = createHash("sha256").update(expected).digest("hex");
-  const givenHash    = createHash("sha256").update(token).digest("hex");
-  if (givenHash !== expectedHash) {
+  const expectedBuf = createHash("sha256").update(expected).digest();
+  const givenBuf = createHash("sha256").update(token).digest();
+  if (!timingSafeEqual(givenBuf, expectedBuf)) {
     return new NextResponse("Invalid token", { status: 401 });
   }
+  const expectedHash = expectedBuf.toString("hex");
 
   // Redirect to the clean URL (no ?token=) and set the cookie on the response.
-  const redirectTo = req.nextUrl.searchParams.get("redirect") || "/admin/ideas";
+  const redirectTo = safeRedirectPath(req.nextUrl.searchParams.get("redirect"));
   const res = NextResponse.redirect(new URL(redirectTo, req.url));
   res.cookies.set(COOKIE_NAME, expectedHash, {
     httpOnly: true,

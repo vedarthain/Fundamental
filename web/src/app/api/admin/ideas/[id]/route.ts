@@ -9,28 +9,17 @@
  * Cost (Rule #1): one UPDATE per admin click. Effectively free.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { createHash } from "crypto";
+import { isAdminRequest } from "@/lib/auth";
 import { sql } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const COOKIE_NAME = "er_admin";
-
-async function isAuthed(): Promise<boolean> {
-  const expected = process.env.ADMIN_TOKEN;
-  if (!expected) return false;
-  const expectedHash = createHash("sha256").update(expected).digest("hex");
-  const c = await cookies();
-  return c.get(COOKIE_NAME)?.value === expectedHash;
-}
-
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  if (!(await isAuthed())) {
+  if (!(await isAdminRequest())) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   const { id: idStr } = await params;
