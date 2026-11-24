@@ -368,6 +368,12 @@ export async function loadReportData(forceRefresh: boolean = false): Promise<Rep
       dpsCur != null && dpsPrv != null && dpsPrv > 0
         ? Math.round(((dpsCur - dpsPrv) / dpsPrv) * 1000) / 10
         : null;
+    const divYield =
+      r.div_yield != null
+        ? Math.round(Number(r.div_yield) * 100) / 100
+        : dpsCur != null && dpsCur > 0 && ltp != null && ltp > 0
+          ? Math.round((dpsCur / ltp) * 10000) / 100
+          : null;
 
     return {
       symbol: r.symbol,
@@ -426,7 +432,7 @@ export async function loadReportData(forceRefresh: boolean = false): Promise<Rep
 
       pe_ttm: r.pe_ttm != null ? Math.round(Number(r.pe_ttm) * 10) / 10 : null,
       pb: r.pb != null ? Math.round(Number(r.pb) * 10) / 10 : null,
-      div_yield: r.div_yield != null ? Math.round(Number(r.div_yield) * 100) / 100 : null,
+      div_yield: divYield,
       roe_3y: r.roe_3y != null ? Math.round(Number(r.roe_3y) * 10) / 10 : null,
       op_margin_3y: r.op_margin_3y != null ? Math.round(Number(r.op_margin_3y) * 10) / 10 : null,
       sales_cagr_5y: r.sales_cagr_5y != null ? Math.round(Number(r.sales_cagr_5y) * 10) / 10 : null,
