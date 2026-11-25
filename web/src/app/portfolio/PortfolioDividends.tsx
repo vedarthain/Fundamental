@@ -33,7 +33,7 @@ export function PortfolioDividends({ report }: { report: PortfolioDividendReport
   const [eventsFilter, setEventsFilter] = useState<"all" | "paid" | "upcoming">("all");
   const [expandedYears, setExpandedYears] = useState<Record<string, boolean>>({});
   const [expandedMonths, setExpandedMonths] = useState<Record<string, boolean>>({});
-  const [expandedDates, setExpandedDates] = useState<Record<string, boolean>>({});
+  const [selectedScope, setSelectedScope] = useState<{ year: string | "all"; month?: string; date?: string } | null>(null);
 
   const allSourceEvents = useMemo(
     () => report.allEvents ?? [...report.upcomingEvents, ...report.recentEvents],
@@ -116,29 +116,48 @@ export function PortfolioDividends({ report }: { report: PortfolioDividendReport
     return years;
   }, [filteredEvents]);
 
-  // Default-open the latest year & latest month unless user explicitly toggled
+  // Default-open the latest year & latest month (collapsed to latest year-month-date)
   const latestYear = dividendTree[0]?.year;
   const latestMonth = dividendTree[0]?.months[0]?.month;
+  const latestDate = dividendTree[0]?.months[0]?.dates[0]?.date;
   const isYearOpen = (y: string) => expandedYears[y] ?? y === latestYear;
   const isMonthOpen = (m: string) => expandedMonths[m] ?? m === latestMonth;
-  const isDateOpen = (d: string) => expandedDates[d] ?? true;
+
+  const activeScope = useMemo(() => {
+    if (selectedScope) {
+      if (selectedScope.year === "all") return selectedScope;
+      if (dividendTree.some((y) => y.year === selectedScope.year)) return selectedScope;
+    }
+    return latestYear ? { year: latestYear } : { year: "all" as const };
+  }, [selectedScope, dividendTree, latestYear]);
+
+  const activeYearBucket = useMemo(
+    () => (activeScope.year !== "all" ? dividendTree.find((y) => y.year === activeScope.year) ?? null : null),
+    [dividendTree, activeScope.year],
+  );
+
+  const tableEvents = useMemo(() => {
+    return filteredEvents
+      .filter((ev) => {
+        if (activeScope.year !== "all" && ev.exDate.slice(0, 4) !== activeScope.year) return false;
+        if (activeScope.month && ev.exDate.slice(0, 7) !== activeScope.month) return false;
+        if (activeScope.date && ev.exDate !== activeScope.date) return false;
+        return true;
+      })
+      .sort((a, b) => b.exDate.localeCompare(a.exDate));
+  }, [filteredEvents, activeScope]);
 
   const setAllTreeOpen = (open: boolean) => {
     const yNext: Record<string, boolean> = {};
     const mNext: Record<string, boolean> = {};
-    const dNext: Record<string, boolean> = {};
     for (const y of dividendTree) {
       yNext[y.year] = open;
       for (const m of y.months) {
         mNext[m.month] = open;
-        for (const d of m.dates) {
-          dNext[d.date] = open;
-        }
       }
     }
     setExpandedYears(yNext);
     setExpandedMonths(mNext);
-    setExpandedDates(dNext);
   };
 
   // Recalculated holdings considering simulated share counts
@@ -459,15 +478,15 @@ export function PortfolioDividends({ report }: { report: PortfolioDividendReport
         </div>
       </div>
 
-      {/* 4. COLLAPSIBLE YEAR / MONTH / DATE DIVIDEND CALENDAR */}
+      {/* 4. 2-COLUMN DATEWISE DIVIDEND REPORT (YEAR -> MONTH -> DATE TREE + TABULAR ROWS) */}
       <div className="rounded-xl border border-slate-200/90 bg-white p-5 shadow-2xs">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
           <div>
             <h3 className="text-[15px] font-semibold text-slate-900 flex items-center gap-2">
-              <span>📅</span> Datewise Dividend Report (Year → Month → Date)
+              <span>📅</span> Datewise Dividend Report
             </h3>
             <p className="text-[12.5px] text-slate-500 mt-0.5">
-              All historical &amp; upcoming ex-date dividends for your current holdings, collapsible by year, month, and date.
+              Select a year, month, or date on the left to filter; all matching dividend payouts appear in the table on the right.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -510,156 +529,210 @@ export function PortfolioDividends({ report }: { report: PortfolioDividendReport
           </div>
         </div>
 
-        <div className="mt-4 space-y-2">
-          {dividendTree.length === 0 ? (
-            <div className="py-8 text-center text-slate-400 text-[13px]">
-              No {eventsFilter === "all" ? "" : eventsFilter} dividend events on record for your positions.
+        {dividendTree.length === 0 ? (
+          <div className="py-8 text-center text-slate-400 text-[13px]">
+            No {eventsFilter === "all" ? "" : eventsFilter} dividend events on record for your positions.
+          </div>
+        ) : (
+          <div className="mt-4 grid grid-cols-1 lg:grid-cols-[290px_1fr] gap-4 items-start">
+            {/* LEFT COLUMN: Year -> Month -> Date collapsible tree (collapsed to latest year-month-date, no date/month sums) */}
+            <div className="rounded-lg border border-slate-200 bg-slate-50/40 overflow-hidden lg:max-h-[560px] lg:overflow-y-auto">
+              <div className="flex items-center justify-between px-3 py-2 border-b border-slate-200 bg-slate-100/70">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Year · Month · Date
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedScope({ year: "all" })}
+                  className={`text-[11px] font-medium px-2 py-0.5 rounded transition-colors ${
+                    activeScope.year === "all"
+                      ? "bg-slate-900 text-white"
+                      : "text-slate-600 hover:bg-slate-200/70"
+                  }`}
+                >
+                  All years
+                </button>
+              </div>
+              <div className="divide-y divide-slate-200/80">
+                {dividendTree.map((yr) => {
+                  const yOpen = isYearOpen(yr.year);
+                  const yActive = activeScope.year === yr.year && !activeScope.month && !activeScope.date;
+                  return (
+                    <div key={yr.year} className="bg-white">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setExpandedYears((prev) => ({ ...prev, [yr.year]: !yOpen }));
+                          setSelectedScope({ year: yr.year });
+                        }}
+                        className={`w-full flex items-center justify-between px-3 py-2 text-left transition-colors ${
+                          yActive ? "bg-emerald-50 text-emerald-900" : "hover:bg-slate-50 text-slate-900"
+                        }`}
+                      >
+                        <span className="flex items-center gap-1.5 text-[13px] font-semibold">
+                          <span className="text-[10px] text-slate-400 w-3">{yOpen ? "▾" : "▸"}</span>
+                          <span className="font-mono">{yr.year}</span>
+                        </span>
+                        <span className="text-[11px] text-slate-500 tabular-nums">
+                          {yr.eventCount}
+                        </span>
+                      </button>
+
+                      {yOpen && (
+                        <div className="border-t border-slate-100 divide-y divide-slate-100 bg-slate-50/30">
+                          {yr.months.map((mo) => {
+                            const mOpen = isMonthOpen(mo.month);
+                            const mActive = activeScope.month === mo.month && !activeScope.date;
+                            return (
+                              <div key={mo.month}>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setExpandedMonths((prev) => ({ ...prev, [mo.month]: !mOpen }));
+                                    setSelectedScope({ year: yr.year, month: mo.month });
+                                  }}
+                                  className={`w-full flex items-center justify-between pl-6 pr-3 py-1.5 text-left text-[12px] transition-colors ${
+                                    mActive
+                                      ? "bg-emerald-50/90 text-emerald-900 font-semibold"
+                                      : "hover:bg-slate-100/70 text-slate-700 font-medium"
+                                  }`}
+                                >
+                                  <span className="flex items-center gap-1.5 truncate">
+                                    <span className="text-[10px] text-slate-400 w-3">{mOpen ? "▾" : "▸"}</span>
+                                    <span className="truncate">{mo.label.replace(` ${yr.year}`, "")}</span>
+                                  </span>
+                                  <span className="text-[11px] text-slate-400 tabular-nums">{mo.eventCount}</span>
+                                </button>
+
+                                {mOpen && (
+                                  <div className="bg-white/70 divide-y divide-slate-100/80">
+                                    {mo.dates.map((dt) => {
+                                      const dActive = activeScope.date === dt.date;
+                                      const isLatest = dt.date === latestDate && activeScope.year === latestYear && !activeScope.month && !activeScope.date;
+                                      return (
+                                        <button
+                                          key={dt.date}
+                                          type="button"
+                                          onClick={() =>
+                                            setSelectedScope({ year: yr.year, month: mo.month, date: dt.date })
+                                          }
+                                          className={`w-full flex items-center justify-between pl-10 pr-3 py-1.5 text-left text-[11.5px] transition-colors ${
+                                            dActive
+                                              ? "bg-indigo-50 text-indigo-900 font-semibold"
+                                              : isLatest
+                                              ? "bg-slate-100/70 text-slate-800 font-medium"
+                                              : "hover:bg-slate-50 text-slate-600"
+                                          }`}
+                                        >
+                                          <span className="font-mono truncate">{dt.label}</span>
+                                          <span className="text-[10.5px] text-slate-400 tabular-nums">
+                                            {dt.events.length}
+                                          </span>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-          ) : (
-            dividendTree.map((yr) => {
-              const yOpen = isYearOpen(yr.year);
-              return (
-                <div key={yr.year} className="rounded-lg border border-slate-200 overflow-hidden">
-                  {/* YEAR HEADER */}
+
+            {/* RIGHT COLUMN: Highlighted Year at top + single tabular list of all matching rows */}
+            <div className="rounded-lg border border-slate-200 bg-white overflow-hidden min-w-0">
+              <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 bg-emerald-50/70 border-b border-emerald-200/70">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-emerald-700 text-white font-mono text-[12.5px] font-bold">
+                    {activeScope.year === "all" ? "All Years" : activeScope.year}
+                  </span>
+                  {activeYearBucket && (
+                    <span className="font-mono font-bold text-emerald-800 text-[13.5px]">
+                      {inr(activeYearBucket.payout, 2)}
+                    </span>
+                  )}
+                  <span className="text-[12px] text-slate-600">
+                    {activeScope.date
+                      ? `· ${activeScope.date}`
+                      : activeScope.month
+                      ? `· ${activeScope.month}`
+                      : activeYearBucket
+                      ? `· ${activeYearBucket.eventCount} payouts`
+                      : `· ${tableEvents.length} payouts`}
+                  </span>
+                </div>
+                {(activeScope.month || activeScope.date) && (
                   <button
                     type="button"
-                    onClick={() => setExpandedYears((prev) => ({ ...prev, [yr.year]: !yOpen }))}
-                    className="w-full flex items-center justify-between px-4 py-2.5 bg-slate-50 hover:bg-slate-100/80 transition-colors text-left"
+                    onClick={() => setSelectedScope({ year: activeScope.year })}
+                    className="text-[11.5px] font-medium text-emerald-800 hover:underline"
                   >
-                    <span className="flex items-center gap-2 font-semibold text-slate-900 text-[13.5px]">
-                      <span className="text-[11px] text-slate-500 w-3">{yOpen ? "▾" : "▸"}</span>
-                      <span className="font-mono">{yr.year}</span>
-                      <span className="text-[11.5px] font-normal text-slate-500">
-                        · {yr.months.length} {yr.months.length === 1 ? "month" : "months"} · {yr.eventCount} payouts
-                      </span>
-                    </span>
-                    <span className="font-mono font-bold text-emerald-700 text-[13.5px]">
-                      {inr(yr.payout, 2)}
-                    </span>
+                    Show full {activeScope.year}
                   </button>
+                )}
+              </div>
 
-                  {yOpen && (
-                    <div className="divide-y divide-slate-100 bg-white">
-                      {yr.months.map((mo) => {
-                        const mOpen = isMonthOpen(mo.month);
-                        return (
-                          <div key={mo.month}>
-                            {/* MONTH HEADER */}
-                            <button
-                              type="button"
-                              onClick={() => setExpandedMonths((prev) => ({ ...prev, [mo.month]: !mOpen }))}
-                              className="w-full flex items-center justify-between pl-8 pr-4 py-2 hover:bg-slate-50/80 transition-colors text-left"
-                            >
-                              <span className="flex items-center gap-2 text-[12.5px] font-medium text-slate-800">
-                                <span className="text-[11px] text-slate-400 w-3">{mOpen ? "▾" : "▸"}</span>
-                                <span>{mo.label}</span>
-                                <span className="text-[11px] font-normal text-slate-400">
-                                  · {mo.dates.length} {mo.dates.length === 1 ? "date" : "dates"} · {mo.eventCount} payouts
-                                </span>
-                              </span>
-                              <span className="font-mono font-semibold text-slate-800 text-[12.5px]">
-                                {inr(mo.payout, 2)}
-                              </span>
-                            </button>
-
-                            {mOpen && (
-                              <div className="bg-slate-50/40 divide-y divide-slate-100">
-                                {mo.dates.map((dt) => {
-                                  const dOpen = isDateOpen(dt.date);
-                                  return (
-                                    <div key={dt.date}>
-                                      {/* DATE HEADER */}
-                                      <button
-                                        type="button"
-                                        onClick={() => setExpandedDates((prev) => ({ ...prev, [dt.date]: !dOpen }))}
-                                        className="w-full flex items-center justify-between pl-12 pr-4 py-1.5 hover:bg-slate-100/60 transition-colors text-left"
-                                      >
-                                        <span className="flex items-center gap-2 text-[12px] text-slate-700">
-                                          <span className="text-[10px] text-slate-400 w-3">{dOpen ? "▾" : "▸"}</span>
-                                          <span className="font-mono font-medium">{dt.label}</span>
-                                          <span className="text-[11px] text-slate-400">
-                                            ({dt.events.length} {dt.events.length === 1 ? "stock" : "stocks"})
-                                          </span>
-                                          {!dOpen && (
-                                            <span className="text-[11px] text-indigo-700 font-mono truncate max-w-[260px]">
-                                              {dt.events.map((e) => e.symbol).join(", ")}
-                                            </span>
-                                          )}
-                                        </span>
-                                        <span className="font-mono font-semibold text-emerald-700 text-[12px]">
-                                          {inr(dt.payout, 2)}
-                                        </span>
-                                      </button>
-
-                                      {/* DATE ROWS */}
-                                      {dOpen && (
-                                        <div className="overflow-x-auto pl-14 pr-4 pb-2">
-                                          <table className="w-full text-left text-[12px]">
-                                            <thead>
-                                              <tr className="border-b border-slate-200/80 text-slate-400 text-[11px] font-medium">
-                                                <th className="py-1.5 pr-3">Stock</th>
-                                                <th className="py-1.5 px-3">Purpose</th>
-                                                <th className="py-1.5 px-3 text-right">Per Share</th>
-                                                <th className="py-1.5 px-3 text-right">Shares Held</th>
-                                                <th className="py-1.5 px-3 text-right">Total Payout</th>
-                                                <th className="py-1.5 pl-3 text-center">Status</th>
-                                              </tr>
-                                            </thead>
-                                            <tbody className="divide-y divide-slate-100/80">
-                                              {dt.events.map((e, idx) => (
-                                                <tr key={`${e.symbol}-${e.exDate}-${idx}`} className="hover:bg-white/80">
-                                                  <td className="py-1.5 pr-3 font-medium text-slate-900 whitespace-nowrap">
-                                                    <Link href={`/stock/${e.symbol}`} className="hover:underline text-indigo-700 font-mono">
-                                                      {e.symbol}
-                                                    </Link>
-                                                    {e.companyName && (
-                                                      <span className="text-slate-400 font-normal ml-2 text-[11px] hidden sm:inline">
-                                                        {e.companyName}
-                                                      </span>
-                                                    )}
-                                                  </td>
-                                                  <td className="py-1.5 px-3 text-slate-600">{e.purpose}</td>
-                                                  <td className="py-1.5 px-3 text-right font-mono text-slate-800">
-                                                    {inr(e.amount, 2)}
-                                                  </td>
-                                                  <td className="py-1.5 px-3 text-right font-mono text-slate-600">
-                                                    {e.heldQty} sh
-                                                  </td>
-                                                  <td className="py-1.5 px-3 text-right font-mono font-semibold text-emerald-700">
-                                                    {inr(e.payout, 2)}
-                                                  </td>
-                                                  <td className="py-1.5 pl-3 text-center">
-                                                    <span
-                                                      className={`inline-block px-2 py-0.5 rounded text-[10px] font-medium ${
-                                                        e.isUpcoming
-                                                          ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
-                                                          : "bg-slate-100 text-slate-600"
-                                                      }`}
-                                                    >
-                                                      {e.isUpcoming ? "Upcoming" : "Paid"}
-                                                    </span>
-                                                  </td>
-                                                </tr>
-                                              ))}
-                                            </tbody>
-                                          </table>
-                                        </div>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              );
-            })
-          )}
-        </div>
+              <div className="overflow-x-auto lg:max-h-[512px] lg:overflow-y-auto">
+                <table className="w-full text-left text-[12px]">
+                  <thead className="sticky top-0 bg-slate-50 border-b border-slate-200 text-slate-500 text-[11px] font-medium">
+                    <tr>
+                      <th className="py-2 px-3 whitespace-nowrap">Ex-Date</th>
+                      <th className="py-2 px-3">Stock</th>
+                      <th className="py-2 px-3">Purpose</th>
+                      <th className="py-2 px-3 text-right whitespace-nowrap">Per Share</th>
+                      <th className="py-2 px-3 text-right whitespace-nowrap">Shares Held</th>
+                      <th className="py-2 px-3 text-right whitespace-nowrap">Total Payout</th>
+                      <th className="py-2 px-3 text-center">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {tableEvents.map((e, idx) => (
+                      <tr key={`${e.symbol}-${e.exDate}-${idx}`} className="hover:bg-slate-50/80">
+                        <td className="py-2 px-3 font-mono text-slate-600 whitespace-nowrap">{e.exDate}</td>
+                        <td className="py-2 px-3 font-medium text-slate-900 whitespace-nowrap">
+                          <Link href={`/stock/${e.symbol}`} className="hover:underline text-indigo-700 font-mono">
+                            {e.symbol}
+                          </Link>
+                          {e.companyName && (
+                            <span className="text-slate-400 font-normal ml-2 text-[11px] hidden sm:inline">
+                              {e.companyName}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2 px-3 text-slate-600">{e.purpose}</td>
+                        <td className="py-2 px-3 text-right font-mono text-slate-800 whitespace-nowrap">
+                          {inr(e.amount, 2)}
+                        </td>
+                        <td className="py-2 px-3 text-right font-mono text-slate-600 whitespace-nowrap">
+                          {e.heldQty} sh
+                        </td>
+                        <td className="py-2 px-3 text-right font-mono font-semibold text-emerald-700 whitespace-nowrap">
+                          {inr(e.payout, 2)}
+                        </td>
+                        <td className="py-2 px-3 text-center">
+                          <span
+                            className={`inline-block px-2 py-0.5 rounded text-[10px] font-medium ${
+                              e.isUpcoming
+                                ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
+                                : "bg-slate-100 text-slate-600"
+                            }`}
+                          >
+                            {e.isUpcoming ? "Upcoming" : "Paid"}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 5. ALL HOLDINGS DIVIDEND BREAKDOWN & WHAT-IF SIMULATOR */}
