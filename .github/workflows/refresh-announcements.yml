@@ -4,8 +4,8 @@
 name: Refresh announcements
 
 on:
-  schedule:
-    - cron: '0 22 * * 0'   # Sun 22:00 UTC = Mon 03:30 IST
+  # Automated runs migrated to native server cron (/var/www/Fundamental/scripts/cron-refresh-announcements.sh).
+  # workflow_dispatch is preserved for manual runs on demand.
   workflow_dispatch: {}
 
 jobs:

@@ -13,7 +13,7 @@ function timeAgo(dateString: string): string {
   return `${days}d ago`;
 }
 
-type LogType = "drift" | "sunday" | "ltp" | "compute" | "scanner" | "backup" | "reload";
+type LogType = "drift" | "sunday" | "ltp" | "compute" | "scanner" | "backup" | "reload" | "monitor";
 
 interface ArchiveInfo {
   fileName: string;
@@ -43,6 +43,7 @@ const TABS: { id: LogType; label: string }[] = [
   { id: "compute", label: "⚙️ Saturday Compute (8:30 AM)" },
   { id: "sunday", label: "☀️ Sunday Calls (2:00 PM)" },
   { id: "reload", label: "🔄 Weekly Reload (Sun 4:00 AM)" },
+  { id: "monitor", label: "🩺 Cron Monitor (6h)" },
 ];
 
 export function LogsViewerClient() {

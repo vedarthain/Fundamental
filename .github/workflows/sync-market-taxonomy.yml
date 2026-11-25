@@ -4,9 +4,8 @@
 name: Sync market taxonomy (AMFI & Indices)
 
 on:
-  schedule:
-    # Semi-annual: 1st of January and 1st of July at 05:00 UTC = 10:30 IST
-    - cron: '0 5 1 1,7 *'
+  # Automated runs migrated to native server cron (/var/www/Fundamental/scripts/cron-sync-market-taxonomy.sh).
+  # workflow_dispatch is preserved for manual runs on demand.
   workflow_dispatch: {}
 
 jobs:

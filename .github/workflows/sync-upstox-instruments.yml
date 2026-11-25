@@ -4,8 +4,8 @@
 name: Sync Upstox instruments
 
 on:
-  schedule:
-    - cron: '30 1 * * 1-5'
+  # Automated runs migrated to native server cron (/var/www/Fundamental/scripts/cron-sync-upstox-instruments.sh).
+  # workflow_dispatch is preserved for manual runs on demand.
   workflow_dispatch: {}
 
 jobs:

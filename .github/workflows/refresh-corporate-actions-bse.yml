@@ -4,8 +4,8 @@
 name: Refresh Corporate Actions (Exchange Feed)
 
 on:
-  schedule:
-    - cron: '17 5 * * 2,5'   # Tue & Fri, 05:17 UTC = 10:47 IST
+  # Automated runs migrated to native server cron (/var/www/Fundamental/scripts/cron-refresh-corp-actions-bse.sh).
+  # workflow_dispatch is preserved for manual runs on demand.
   workflow_dispatch: {}
 
 jobs:

@@ -13,6 +13,7 @@ const LOG_FILES: Record<string, string> = {
   scanner: "/var/log/fundamental-momentum-scanner.log",
   backup: "/var/log/fundamental-db-backup.log",
   reload: "/var/log/fundamental-pm2-reload.log",
+  monitor: "/var/log/fundamental-monitor.log",
 };
 
 const CRON_SCRIPTS: Record<string, string> = {
@@ -22,6 +23,7 @@ const CRON_SCRIPTS: Record<string, string> = {
   compute: "scripts/cron-weekly-compute.sh",
   scanner: "scripts/cron-momentum-scanner.sh",
   backup: "scripts/cron-db-backup.sh",
+  monitor: "scripts/cron-monitor.sh",
 };
 
 type ArchiveInfo = {

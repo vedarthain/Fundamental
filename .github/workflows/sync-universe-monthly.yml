@@ -23,10 +23,8 @@
 name: Sync universe (monthly, with retire)
 
 on:
-  schedule:
-    # 1st of each month, 06:00 UTC = 11:30 IST — off-market, and clear of
-    # refresh-corporate-actions (04:30 UTC 1st) and refresh-constituents (Sun 04:00).
-    - cron: '0 6 1 * *'
+  # Automated runs migrated to native server cron (/var/www/Fundamental/scripts/cron-sync-universe-monthly.sh).
+  # workflow_dispatch is preserved for manual runs on demand.
   workflow_dispatch: {}
 
 # Never overlap with itself (a manual run + the scheduled run would both

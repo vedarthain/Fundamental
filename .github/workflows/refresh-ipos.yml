@@ -4,8 +4,8 @@
 name: Refresh IPOs
 
 on:
-  schedule:
-    - cron: '45 12 * * *'
+  # Automated runs migrated to native server cron (/var/www/Fundamental/scripts/cron-refresh-ipos.sh).
+  # workflow_dispatch is preserved for manual runs on demand.
   workflow_dispatch:
     inputs:
       listed_details:

@@ -58,9 +58,8 @@ name: Weekly Fetch (Screener)
 #   runs on its own Saturday cron behind a coverage gate, because "the fetch
 #   exited 0" was never evidence that the universe was fresh.
 on:
-  schedule:
-    - cron: '57 13 * * 1-4'   # Mon-Thu 13:57 UTC = 19:27 IST (~19:30 IST, off-minute) — capped slice
-    - cron: '57 13 * * 5'     # Fri     13:57 UTC = 19:27 IST (~19:30 IST, off-minute) — drain the rest
+  # Automated runs migrated to native server cron (/var/www/Fundamental/scripts/cron-weekly-fetch.sh).
+  # workflow_dispatch is preserved for manual runs on demand.
   workflow_dispatch:
     inputs:
       force_full_fetch:

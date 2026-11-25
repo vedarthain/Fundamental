@@ -4,8 +4,8 @@
 name: Refresh shareholding pattern
 
 on:
-  schedule:
-    - cron: '0 6 3 * *'
+  # Automated runs migrated to native server cron (/var/www/Fundamental/scripts/cron-refresh-shareholding.sh).
+  # workflow_dispatch is preserved for manual runs on demand.
   workflow_dispatch: {}
 
 jobs:
