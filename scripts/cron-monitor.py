@@ -125,10 +125,26 @@ def check_app_http(alerts: dict[str, str]) -> str:
         return f"App HTTP: DOWN ({e})"
 
 
-def check_postgres(alerts: dict[str, str]) -> str:
+def _metric_drifted(stored: object, live: object) -> bool:
+    if live is None or stored is None:
+        return False
+    if isinstance(stored, bool) or isinstance(live, bool):
+        return bool(stored) != bool(live)
+    try:
+        a = float(stored)  # type: ignore[arg-type]
+        b = float(live)  # type: ignore[arg-type]
+    except Exception:
+        return False
+    if a == 0:
+        return b != 0
+    is_rate = abs(a) <= 1.0 and abs(b) <= 1.0
+    return abs(b - a) >= 0.05 if is_rate else abs(b / a - 1.0) >= 0.1
+
+
+def check_postgres(alerts: dict[str, str]) -> tuple[str, str | None]:
     db_url = os.environ.get("APP_DB_URL", "")
     if not db_url:
-        return "DB: skipped (no APP_DB_URL)"
+        return "DB: skipped (no APP_DB_URL)", None
     t0 = time.monotonic()
     try:
         import psycopg  # type: ignore
@@ -147,10 +163,64 @@ def check_postgres(alerts: dict[str, str]) -> str:
             active, stuck = cur.fetchone()
             if stuck and stuck > 0:
                 alerts["db:stuck"] = f"Postgres has {stuck} active query(s) running > 5 minutes"
-            return f"DB: OK ({ms}ms, active={active})"
+
+            coverage_line: str | None = None
+            try:
+                cur.execute(
+                    """
+                    WITH latest_panel AS (
+                        SELECT DISTINCT ON (symbol) symbol
+                          FROM app.cluster_stocks_panel_cache
+                         WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM app.cluster_stocks_panel_cache)
+                    ),
+                    latest_v AS (
+                        SELECT DISTINCT ON (symbol) symbol
+                          FROM app.stock_verdict
+                         ORDER BY symbol, generated_at DESC
+                    )
+                    SELECT
+                        (SELECT count(*) FROM latest_panel),
+                        (SELECT count(*) FROM latest_panel p JOIN latest_v v ON v.symbol = p.symbol),
+                        (SELECT count(*) FROM latest_panel p JOIN app.company_moat m ON m.symbol = p.symbol)
+                    """
+                )
+                p_tot, p_ver, p_moat = cur.fetchone()
+                cur.execute(
+                    """
+                    WITH latest_v AS (
+                        SELECT DISTINCT ON (symbol) symbol, evidence
+                          FROM app.stock_verdict
+                         ORDER BY symbol, generated_at DESC
+                    ),
+                    latest_m AS (
+                        SELECT symbol, cluster_metrics
+                          FROM app.metrics_snapshot
+                         WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM app.metrics_snapshot)
+                    )
+                    SELECT v.evidence, m.cluster_metrics
+                      FROM latest_v v
+                      JOIN latest_m m ON m.symbol = v.symbol
+                     WHERE v.evidence IS NOT NULL AND v.evidence != '{}'::jsonb
+                    """
+                )
+                drifted = sum(
+                    1
+                    for ev, live in cur.fetchall()
+                    if ev and live and any(_metric_drifted(ev[k], live.get(k)) for k in ev if k in live)
+                )
+                v_pend = max(0, (p_tot or 0) - (p_ver or 0))
+                m_pend = max(0, (p_tot or 0) - (p_moat or 0))
+                coverage_line = (
+                    f"Coverage: Verdicts {p_ver}/{p_tot} ({v_pend} pending, {drifted} drifted) | "
+                    f"Moats {p_moat}/{p_tot} ({m_pend} pending)"
+                )
+            except Exception as ce:
+                coverage_line = f"Coverage: unavailable ({ce})"
+
+            return f"DB: OK ({ms}ms, active={active})", coverage_line
     except Exception as e:
         alerts["db:down"] = f"Postgres health check failed: {e}"
-        return f"DB: ERROR ({e})"
+        return f"DB: ERROR ({e})", None
 
 
 def check_server_and_pm2(prev_restarts: int | None) -> tuple[list[str], dict[str, str], int | None]:
@@ -207,7 +277,10 @@ def check_server_and_pm2(prev_restarts: int | None) -> tuple[list[str], dict[str
         info.append(f"PM2: skipped ({e})")
 
     info.append(check_app_http(alerts))
-    info.append(check_postgres(alerts))
+    db_info, coverage_line = check_postgres(alerts)
+    info.append(db_info)
+    if coverage_line:
+        info.append(coverage_line)
     return info, alerts, cur_restarts
 
 
