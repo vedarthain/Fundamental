@@ -319,7 +319,7 @@ def main() -> int:
     prev_issues: dict[str, str] = prev_state.get("issues", {})
     prev_restarts: int | None = prev_state.get("pm2_restarts")
 
-    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    now_str = datetime.fromtimestamp(time.time() + 5.5 * 3600, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S IST")
     results = [check_job(jid, lbl, path, max_h) for jid, lbl, path, max_h in JOBS]
     sys_info, active_issues, cur_restarts = check_server_and_pm2(prev_restarts)
 
