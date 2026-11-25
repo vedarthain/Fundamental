@@ -1519,10 +1519,10 @@ export async function loadPortfolio(userId: number): Promise<Portfolio> {
   const buyP = currentLegBuyDateRows(userId);
 
   const tickTsP = sql<{ ts: string | null }[]>`
-    SELECT COALESCE(
+    SELECT NULLIF(CONCAT_WS('|',
       (SELECT MAX(price_fetched_at)::text FROM app.screener_meta),
       (SELECT MAX(fetched_at)::text FROM app.etf_price)
-    ) AS ts
+    ), '') AS ts
   `;
 
   const holdings = await holdingsP;

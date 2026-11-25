@@ -42,16 +42,17 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const [realized, tradeLog, importLog, perf, timeline] = await Promise.all([
+  const [portfolio, realized, tradeLog, importLog, timeline] = await Promise.all([
+    loadPortfolio(session.userId),
     loadRealizedPnl(session.userId),
     loadTradeLog(session.userId),
     loadImportLog(session.userId),
-    owner ? loadPerformanceStats(session.userId) : Promise.resolve(null),
     owner ? loadRealizedTimeline(session.userId) : Promise.resolve(null),
   ]);
+  const perf = owner ? await loadPerformanceStats(session.userId, portfolio) : null;
 
   return NextResponse.json(
-    { realized, tradeLog, importLog, owner, perf, timeline },
+    { portfolio, realized, tradeLog, importLog, owner, perf, timeline },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

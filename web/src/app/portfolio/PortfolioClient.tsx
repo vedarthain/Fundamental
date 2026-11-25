@@ -210,7 +210,7 @@ export function PortfolioClient({
       const p = Object.fromEntries(parts.map((x) => [x.type, x.value]));
       if (!["Mon", "Tue", "Wed", "Thu", "Fri"].includes(p.weekday)) return false;
       const mins = (Number(p.hour) % 24) * 60 + Number(p.minute);
-      return mins >= 9 * 60 + 15 && mins <= 15 * 60 + 40;
+      return mins >= 9 * 60 + 15 && mins <= 15 * 60 + 45;
     };
 
     const refreshLive = (incomingTs?: string) => {
@@ -235,15 +235,23 @@ export function PortfolioClient({
       refreshLive(typeof ts === "string" ? ts : undefined);
     };
 
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible" && isMarketOpenIst()) {
+        refreshLive();
+      }
+    };
+
     const id = setInterval(() => {
       if (isMarketOpenIst()) refreshLive();
     }, 5 * 60_000);
 
     window.addEventListener("er:indices-fetched", onIndicesFetched);
+    document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       alive = false;
       clearInterval(id);
       window.removeEventListener("er:indices-fetched", onIndicesFetched);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [initialPortfolio.priceAsOfTs]);
   const [broker, setBroker] = useState<string>("zerodha");
