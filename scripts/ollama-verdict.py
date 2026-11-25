@@ -1340,11 +1340,15 @@ def main() -> int:
 
     print_lock = threading.Lock()
     completed_count = 0
+    consecutive_429 = 0
+    quota_exhausted = False
 
     def process_item(idx_item):
-        nonlocal completed_count
+        nonlocal completed_count, consecutive_429, quota_exhausted
         idx, item = idx_item
         sym = item.get("symbol")
+        if quota_exhausted:
+            return
         t_stock_start = time.time()
 
         try:
@@ -1471,6 +1475,7 @@ def main() -> int:
 
             with print_lock:
                 completed_count += 1
+                consecutive_429 = 0
                 results.append(verdict_obj)
                 durations.append(stock_dur)
                 avg_pace = sum(durations) / len(durations)
@@ -1494,10 +1499,22 @@ def main() -> int:
 
         except Exception as e:
             stock_dur = time.time() - t_stock_start
+            err_str = str(e)
             with print_lock:
                 completed_count += 1
-                failed_symbols.append((sym, str(e)))
-                print(f"[{completed_count}/{len(queue_symbols)}] ── {sym} ERROR after {stock_dur:.1f}s: {e}")
+                failed_symbols.append((sym, err_str))
+                print(f"[{completed_count}/{len(queue_symbols)}] ── {sym} ERROR after {stock_dur:.1f}s: {err_str}")
+                if "429" in err_str:
+                    consecutive_429 += 1
+                    if consecutive_429 >= 3 and not quota_exhausted:
+                        quota_exhausted = True
+                        print(
+                            "🛑 Daily Gemini quota exhausted (3 consecutive 429s) — "
+                            "stopping batch early so remaining stocks retry on the next run.",
+                            flush=True,
+                        )
+                else:
+                    consecutive_429 = 0
 
     items_to_process = list(enumerate(queue_symbols, 1))
     if args.workers > 1:
@@ -1543,7 +1560,16 @@ def main() -> int:
             print(f"  • {sym:<12} http://localhost:3000/stock/{sym}  [{v_head}]")
     print("=" * 80 + "\n")
 
-    return 0 if not failed_symbols else 1
+    if not failed_symbols:
+        return 0
+    if success_symbols and all("429" in err for _, err in failed_symbols):
+        print(
+            f"⚠️  Partial 429 quota limit on {len(failed_symbols)} stock(s) after "
+            f"{len(success_symbols)} succeeded; exiting 0 so cache revalidation proceeds "
+            f"and skipped stocks retry on the next run."
+        )
+        return 0
+    return 1
 
 
 if __name__ == "__main__":
