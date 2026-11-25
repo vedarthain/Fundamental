@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
-"""cron-monitor.py — Unified log & server health monitor for all EquityRoots crons.
+"""cron-monitor.py — Autonomous AppDynamics-style APM, DB, Server & Cron Watchdog.
 
-Scans all /var/log/fundamental-*.log files, checks latest run status and freshness,
-checks server CPU/RAM/disk/PM2 health, writes a clean summary to stdout (logged to
-/var/log/fundamental-monitor.log), and sends a deduplicated Resend email alert via
-scripts/send-alert.py if any job fails, goes stale, or server resources degrade.
+Monitors:
+  1. All 17 EquityRoots cron logs (/var/log/fundamental-*.log) for failures/staleness
+  2. Live Next.js app synthetic probe (http://127.0.0.1:3000/api/version) + latency
+  3. PostgreSQL connectivity, query latency, and long-running/stuck queries (>5 min)
+  4. PM2 'equityroots' process status, RSS memory, and unexpected restart spikes
+  5. System CPU load, available RAM, and root disk usage
+
+Alerting (zero-touch):
+  - Runs every 15 minutes; sends an instant, deduplicated Resend email on any new issue.
+  - Sends an "All Clear / Recovered" email as soon as active issues resolve.
+  - Supports --digest (scheduled once daily at 08:00 IST) for a daily health summary.
 """
 from __future__ import annotations
 
@@ -15,6 +22,7 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,7 +30,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 STATE_FILE = Path("/tmp/fundamental-monitor-state.json")
 
-# (id, label, log_path, max_age_hours or None if manual/infrequent)
 JOBS: list[tuple[str, str, str, float | None]] = [
     ("db-backup", "DB Backup (Daily)", "/var/log/fundamental-db-backup.log", 30),
     ("refresh-ltp", "Bhavcopy & LTP (Mon-Fri)", "/var/log/fundamental-refresh-ltp.log", 80),
@@ -100,20 +107,67 @@ def check_job(job_id: str, label: str, log_path: str, max_age_hours: float | Non
     return JobStatus(job_id, label, "OK", age_h, f"last run {age_h:.1f}h ago")
 
 
-def check_server_health() -> tuple[list[str], list[str]]:
+def check_app_http(alerts: dict[str, str]) -> str:
+    port = os.environ.get("PORT", "3000")
+    url = f"http://127.0.0.1:{port}/api/version"
+    t0 = time.monotonic()
+    try:
+        with urllib.request.urlopen(url, timeout=8) as resp:
+            ms = int((time.monotonic() - t0) * 1000)
+            if resp.status != 200:
+                alerts["app:http"] = f"App HTTP probe returned {resp.status} ({ms}ms)"
+                return f"App HTTP: {resp.status} ({ms}ms)"
+            if ms > 3000:
+                alerts["app:slow"] = f"App HTTP probe slow: {ms}ms (>3000ms)"
+            return f"App HTTP: 200 ({ms}ms)"
+    except Exception as e:
+        alerts["app:down"] = f"App HTTP probe failed: {e}"
+        return f"App HTTP: DOWN ({e})"
+
+
+def check_postgres(alerts: dict[str, str]) -> str:
+    db_url = os.environ.get("APP_DB_URL", "")
+    if not db_url:
+        return "DB: skipped (no APP_DB_URL)"
+    t0 = time.monotonic()
+    try:
+        import psycopg  # type: ignore
+
+        with psycopg.connect(db_url, connect_timeout=5) as conn, conn.cursor() as cur:
+            cur.execute("SELECT 1")
+            ms = int((time.monotonic() - t0) * 1000)
+            cur.execute(
+                """
+                SELECT count(*) FILTER (WHERE state = 'active'),
+                       count(*) FILTER (WHERE state = 'active' AND now() - query_start > interval '5 minutes' AND query NOT ILIKE '%pg_stat_activity%')
+                  FROM pg_stat_activity
+                 WHERE datname = current_database()
+                """
+            )
+            active, stuck = cur.fetchone()
+            if stuck and stuck > 0:
+                alerts["db:stuck"] = f"Postgres has {stuck} active query(s) running > 5 minutes"
+            return f"DB: OK ({ms}ms, active={active})"
+    except Exception as e:
+        alerts["db:down"] = f"Postgres health check failed: {e}"
+        return f"DB: ERROR ({e})"
+
+
+def check_server_and_pm2(prev_restarts: int | None) -> tuple[list[str], dict[str, str], int | None]:
     info: list[str] = []
-    alerts: list[str] = []
+    alerts: dict[str, str] = {}
+    cur_restarts: int | None = None
 
     load1, load5, load15 = os.getloadavg()
-    info.append(f"Load: {load1:.2f}, {load5:.2f}, {load15:.2f}")
+    info.append(f"Load: {load1:.2f}/{load5:.2f}/{load15:.2f}")
     if load5 > 3.5:
-        alerts.append(f"High 5m CPU load: {load5:.2f}")
+        alerts["sys:load"] = f"High 5m CPU load: {load5:.2f}"
 
     usage = shutil.disk_usage("/")
     disk_pct = (usage.used / usage.total) * 100.0
-    info.append(f"Disk /: {disk_pct:.1f}% used ({usage.free / (1024**3):.1f} GiB free)")
+    info.append(f"Disk: {disk_pct:.1f}% ({usage.free / (1024**3):.1f}G free)")
     if disk_pct > 85.0:
-        alerts.append(f"High disk usage on /: {disk_pct:.1f}%")
+        alerts["sys:disk"] = f"High root disk usage: {disk_pct:.1f}%"
 
     meminfo = Path("/proc/meminfo")
     if meminfo.exists():
@@ -124,9 +178,9 @@ def check_server_health() -> tuple[list[str], list[str]]:
                 break
         if avail_kb is not None:
             avail_gb = avail_kb / (1024 * 1024)
-            info.append(f"MemAvailable: {avail_gb:.2f} GiB")
+            info.append(f"MemAvail: {avail_gb:.2f}G")
             if avail_gb < 1.0:
-                alerts.append(f"Low available memory: {avail_gb:.2f} GiB")
+                alerts["sys:mem"] = f"Low available memory: {avail_gb:.2f} GiB"
 
     try:
         res = subprocess.run(["pm2", "jlist"], capture_output=True, text=True, timeout=10)
@@ -134,72 +188,116 @@ def check_server_health() -> tuple[list[str], list[str]]:
             procs = json.loads(res.stdout or "[]")
             eq = next((pr for pr in procs if pr.get("name") == "equityroots"), None)
             if eq is None:
-                alerts.append("PM2 process 'equityroots' not found")
+                alerts["pm2:missing"] = "PM2 process 'equityroots' not found"
+                info.append("PM2: MISSING")
             else:
-                st = eq.get("pm2_env", {}).get("status", "unknown")
-                info.append(f"PM2 equityroots: {st}")
+                env = eq.get("pm2_env", {})
+                st = env.get("status", "unknown")
+                restarts = int(env.get("restart_time", 0))
+                rss_mb = round(eq.get("monit", {}).get("memory", 0) / (1024 * 1024))
+                cur_restarts = restarts
+                info.append(f"PM2: {st} ({rss_mb}MB, restarts={restarts})")
                 if st != "online":
-                    alerts.append(f"PM2 process 'equityroots' status is {st}")
+                    alerts["pm2:status"] = f"PM2 'equityroots' status is {st}"
+                if rss_mb > 2500:
+                    alerts["pm2:mem"] = f"PM2 'equityroots' high memory: {rss_mb} MB"
+                if prev_restarts is not None and restarts > prev_restarts + 1:
+                    alerts["pm2:restarts"] = f"PM2 'equityroots' restarted {restarts - prev_restarts}x since last check"
     except Exception as e:
-        info.append(f"PM2 check skipped: {e}")
+        info.append(f"PM2: skipped ({e})")
 
-    return info, alerts
+    info.append(check_app_http(alerts))
+    info.append(check_postgres(alerts))
+    return info, alerts, cur_restarts
+
+
+def send_email(subject: str, message: str) -> None:
+    subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "send-alert.py"),
+            "--subject",
+            subject,
+            "--log-file",
+            "/var/log/fundamental-monitor.log",
+            "--tail",
+            "60",
+            "--message",
+            message,
+        ],
+        check=False,
+    )
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-alert", action="store_true", help="Print report without sending email")
+    ap.add_argument("--digest", action="store_true", help="Send daily summary digest email")
     args = ap.parse_args()
+
+    prev_state: dict = {}
+    if STATE_FILE.exists():
+        try:
+            prev_state = json.loads(STATE_FILE.read_text())
+        except Exception:
+            prev_state = {}
+
+    prev_issues: dict[str, str] = prev_state.get("issues", {})
+    prev_restarts: int | None = prev_state.get("pm2_restarts")
 
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     results = [check_job(jid, lbl, path, max_h) for jid, lbl, path, max_h in JOBS]
-    sys_info, sys_alerts = check_server_health()
+    sys_info, active_issues, cur_restarts = check_server_and_pm2(prev_restarts)
 
-    print("=" * 80)
-    print(f"🩺 EquityRoots Cron & Server Monitor — {now_str}")
-    print("  " + " | ".join(sys_info))
-    print("-" * 80)
-    for r in results:
-        icon = {"OK": "✅", "FAILED": "❌", "STALE": "⚠️", "PENDING": "⏳"}[r.status]
-        print(f"  {icon} {r.job_id:26s} | {r.status:7s} | {r.detail}")
-    print("=" * 80)
-
-    active_issues: dict[str, str] = {}
     for r in results:
         if r.status in ("FAILED", "STALE"):
             active_issues[f"job:{r.job_id}"] = f"{r.status}: {r.label} — {r.detail}"
-    for i, a in enumerate(sys_alerts):
-        active_issues[f"sys:{i}"] = a
 
-    prev_issues: dict[str, str] = {}
-    if STATE_FILE.exists():
-        try:
-            prev_issues = json.loads(STATE_FILE.read_text())
-        except Exception:
-            prev_issues = {}
+    print("=" * 88)
+    print(f"🩺 EquityRoots Autonomous APM & Cron Monitor — {now_str}")
+    print("  " + " | ".join(sys_info))
+    print("-" * 88)
+    for r in results:
+        icon = {"OK": "✅", "FAILED": "❌", "STALE": "⚠️", "PENDING": "⏳"}[r.status]
+        print(f"  {icon} {r.job_id:26s} | {r.status:7s} | {r.detail}")
+    print("=" * 88)
 
     new_issues = {k: v for k, v in active_issues.items() if prev_issues.get(k) != v}
-    STATE_FILE.write_text(json.dumps(active_issues, indent=2))
+    recovered = {k: v for k, v in prev_issues.items() if k not in active_issues}
 
-    if new_issues and not args.no_alert:
-        summary = "\n".join(f"- {v}" for v in active_issues.values())
-        subprocess.run(
-            [
-                sys.executable,
-                str(ROOT / "scripts" / "send-alert.py"),
-                "--subject",
-                f"🚨 [Finance-Server] Cron Monitor Alert ({len(active_issues)} issue(s))",
-                "--log-file",
-                "/var/log/fundamental-monitor.log",
-                "--tail",
-                "60",
-                "--message",
-                f"Detected {len(active_issues)} active issue(s):\n{summary}",
-            ],
-            check=False,
+    STATE_FILE.write_text(
+        json.dumps(
+            {
+                "updated_at": now_str,
+                "pm2_restarts": cur_restarts,
+                "issues": active_issues,
+            },
+            indent=2,
         )
+    )
 
-    return 1 if any(r.status == "FAILED" for r in results) else 0
+    if not args.no_alert:
+        if new_issues:
+            summary = "\n".join(f"- {v}" for v in active_issues.values())
+            send_email(
+                f"🚨 [EquityRoots APM] {len(active_issues)} Active Issue(s) Detected",
+                f"Detected {len(active_issues)} active issue(s) on Finance-Server:\n{summary}",
+            )
+        elif recovered and not active_issues:
+            rec_list = "\n".join(f"- Resolved: {v}" for v in recovered.values())
+            send_email(
+                "✅ [EquityRoots APM] All Systems Recovered",
+                f"All previously reported issues have cleared:\n{rec_list}",
+            )
+        elif args.digest:
+            ok_cnt = sum(1 for r in results if r.status == "OK")
+            pend_cnt = sum(1 for r in results if r.status == "PENDING")
+            send_email(
+                f"☀️ [EquityRoots APM] Daily Health Digest — All Clear ({ok_cnt} OK, {pend_cnt} Pending)",
+                " | ".join(sys_info),
+            )
+
+    return 1 if active_issues else 0
 
 
 if __name__ == "__main__":
