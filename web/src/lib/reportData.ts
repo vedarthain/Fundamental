@@ -87,18 +87,28 @@ let inFlightReportLoad: Promise<ReportStockRow[]> | null = null;
 const FRESH_TTL_MS = 2 * 60 * 1000; // 2 minutes fresh
 const STALE_TTL_MS = 30 * 60 * 1000; // serve stale up to 30m while revalidating in background
 
-function extractAction(verdict: string | null): "BUY" | "WATCH" | "HOLD" | "SELL" | "OTHER" | null {
+function extractAction(
+  verdict: string | null,
+  ltp?: number | null,
+  targetPrice?: number | null,
+): "BUY" | "WATCH" | "HOLD" | "SELL" | "OTHER" | null {
   if (!verdict) return null;
   const upper = verdict.toUpperCase().trim();
-  if (upper.startsWith("BUY") || upper.startsWith("ACCUMULATE")) return "BUY";
-  if (upper.startsWith("WATCH")) return "WATCH";
-  if (upper.startsWith("HOLD")) return "HOLD";
-  if (upper.startsWith("SELL") || upper.startsWith("EXIT") || upper.startsWith("TRIM")) return "SELL";
-  if (upper.includes("BUY") || upper.includes("ACCUMULATE")) return "BUY";
-  if (upper.includes("WATCH")) return "WATCH";
-  if (upper.includes("HOLD")) return "HOLD";
-  if (upper.includes("SELL") || upper.includes("EXIT") || upper.includes("TRIM")) return "SELL";
-  return "OTHER";
+  // Only inspect the headline token before "—", "-", or ":" so prose like
+  // "WATCH — ... do not buy ..." never false-matches as BUY.
+  const headline = upper.split(/[—\-:]/)[0].trim();
+
+  let action: "BUY" | "WATCH" | "HOLD" | "SELL" | "OTHER" = "OTHER";
+  if (/\b(BUY|ACCUMULATE)\b/.test(headline)) action = "BUY";
+  else if (/\bWATCH\b/.test(headline)) action = "WATCH";
+  else if (/\bHOLD\b/.test(headline)) action = "HOLD";
+  else if (/\b(SELL|EXIT|TRIM|AVOID)\b/.test(headline)) action = "SELL";
+
+  // Safety guardrail: never label as BUY if the 12M target is below current LTP
+  if (action === "BUY" && ltp != null && targetPrice != null && targetPrice < ltp) {
+    return "WATCH";
+  }
+  return action;
 }
 
 export async function loadReportData(forceRefresh: boolean = false): Promise<ReportStockRow[]> {
@@ -385,7 +395,7 @@ async function _fetchReportData(): Promise<ReportStockRow[]> {
       moatRationale = r.moat_points;
     }
 
-    const action = extractAction(r.verdict);
+    const action = extractAction(r.verdict, ltp, target);
 
     const dpsCur = r.dps_current != null ? Math.round(Number(r.dps_current) * 100) / 100 : null;
     const dpsPrv = r.dps_prev != null ? Math.round(Number(r.dps_prev) * 100) / 100 : null;
