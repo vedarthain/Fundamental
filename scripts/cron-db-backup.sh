@@ -63,7 +63,13 @@ if [ -n "${GOLDEN_DB_URL:-}" ]; then
   echo "✓ golden_db dump completed: $(du -h "$GOLDEN_BACKUP" | cut -f1)"
 fi
 
-# 3. Clean up backups older than retention days (30 days)
+# 3. Upload to Cloudflare R2 off-site storage (if configured)
+if [ -n "${R2_ENDPOINT:-}" ] && [ -n "${R2_ACCESS_KEY_ID:-}" ]; then
+  echo "=== Uploading backups to Cloudflare R2 ==="
+  "$PYTHON_BIN" scripts/r2-upload-backup.py "$APP_BACKUP" ${GOLDEN_BACKUP:+"$GOLDEN_BACKUP"}
+fi
+
+# 4. Clean up local backups older than retention days (30 days)
 echo "=== Pruning backups older than $RETENTION_DAYS days ==="
 find "$BACKUP_DIR" -type f -name "*.sql.gz" -mtime +"$RETENTION_DAYS" -exec echo "Removing stale backup: {}" \; -delete
 
