@@ -91,6 +91,7 @@ def check_job(job_id: str, label: str, log_path: str, max_age_hours: float | Non
 
     mtime = p.stat().st_mtime
     age_h = (time.time() - mtime) / 3600.0
+    ist_dt = datetime.fromtimestamp(mtime + 5.5 * 3600, tz=timezone.utc).strftime("%Y-%m-%d %H:%M IST")
     tail = read_tail(p)
     block = latest_run_block(tail)
 
@@ -99,12 +100,12 @@ def check_job(job_id: str, label: str, log_path: str, max_age_hours: float | Non
 
     if has_fail and not has_ok:
         err_line = next((ln.strip() for ln in reversed(block.splitlines()) if any(m in ln for m in FAIL_MARKERS)), "error in latest run")
-        return JobStatus(job_id, label, "FAILED", age_h, err_line[:140])
+        return JobStatus(job_id, label, "FAILED", age_h, f"{ist_dt} — {err_line[:120]}")
 
     if max_age_hours is not None and age_h > max_age_hours:
-        return JobStatus(job_id, label, "STALE", age_h, f"last run {age_h:.1f}h ago (limit {max_age_hours:.0f}h)")
+        return JobStatus(job_id, label, "STALE", age_h, f"{ist_dt} ({age_h:.1f}h ago, limit {max_age_hours:.0f}h)")
 
-    return JobStatus(job_id, label, "OK", age_h, f"last run {age_h:.1f}h ago")
+    return JobStatus(job_id, label, "OK", age_h, f"{ist_dt} ({age_h:.1f}h ago)")
 
 
 def check_app_http(alerts: dict[str, str]) -> str:
