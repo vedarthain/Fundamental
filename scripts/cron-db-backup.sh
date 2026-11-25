@@ -47,7 +47,7 @@ fi
 BACKUP_DIR="/var/backups/postgres"
 mkdir -p "$BACKUP_DIR"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-RETENTION_DAYS="30"
+RETENTION_DAYS="5"
 
 # 1. Backup fundamental_app
 APP_BACKUP="${BACKUP_DIR}/fundamental_app_${TIMESTAMP}.sql.gz"
