@@ -17,7 +17,9 @@ import { useEffect, useState } from "react";
  */
 const WEEKDAYS = new Set(["Mon", "Tue", "Wed", "Thu", "Fri"]);
 
-function istMarketState(): { dateStr: string; status: "open" | "post_close" | "closed" } {
+type MarketStatus = "open" | "pre_open" | "post_close" | "closed";
+
+function istMarketState(): { dateStr: string; status: MarketStatus } {
   const now = new Date();
   const dateStr = now.toLocaleDateString("en-GB", {
     timeZone: "Asia/Kolkata",
@@ -37,6 +39,9 @@ function istMarketState(): { dateStr: string; status: "open" | "post_close" | "c
   const mins = hour * 60 + Number(p.minute);
   if (!WEEKDAYS.has(p.weekday)) {
     return { dateStr, status: "closed" };
+  }
+  if (mins >= 9 * 60 && mins < 9 * 60 + 15) {
+    return { dateStr, status: "pre_open" };
   }
   if (mins >= 9 * 60 + 15 && mins <= 15 * 60 + 40) {
     return { dateStr, status: "open" };
@@ -61,7 +66,7 @@ function fmtIstTime(iso: string): string | null {
 }
 
 export default function TodayCell({ initial }: { initial: string }) {
-  const [state, setState] = useState<{ dateStr: string; status: "open" | "post_close" | "closed" }>({
+  const [state, setState] = useState<{ dateStr: string; status: MarketStatus }>({
     dateStr: initial,
     status: "open",
   });
@@ -86,6 +91,9 @@ export default function TodayCell({ initial }: { initial: string }) {
     };
   }, []);
 
+  if (state.status === "pre_open") {
+    return <>{state.dateStr} - Pre-Open (9:15 AM)</>;
+  }
   if (state.status === "post_close") {
     return <>{state.dateStr} - Closed (3:30 PM)</>;
   }

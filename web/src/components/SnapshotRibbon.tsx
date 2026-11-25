@@ -33,53 +33,29 @@ type SnapshotStats = {
 
 async function fetchSnapshot(): Promise<SnapshotStats> {
   // Minimal ribbon query — snapshot date, total stocks, total clusters.
-  // Wrapped so a DB hiccup degrades to an empty ribbon ("—") instead of
-  // throwing: this component is baked into the root layout, so an unhandled
-  // error here 500s *every* page. Same defensive posture as sitemap.ts.
-  try {
-    const appRows = await sql<
-      { latest: Date | null; coverage: string; clusters: string }[]
-    >`
-      WITH latest AS (SELECT MAX(snapshot_date) AS d FROM app.scores)
-      SELECT
-        (SELECT d FROM latest) AS latest,
-        -- CANONICAL COVERAGE DEFINITION. Duplicated verbatim in app/page.tsx and
-        -- app/tools/screener/page.tsx; change all three together.
-        --
-        -- "Coverage" = stocks we have actually SCORED at the latest snapshot, not
-        -- rows in app.universe. This used to count app.universe WHERE is_active
-        -- on the reasoning that the two "drift a few low (e.g. 2,157 vs 2,163)".
-        -- That premise expired: measured 2026-09-19 it was 2,122 scored against
-        -- 2,622 active, a gap of 500.
-        --
-        -- 472 of that 500 are rows the weekly NSE listing-master reconciliation
-        -- added to app.universe and nothing downstream ever picked up — no cluster
-        -- assignment, no metrics_snapshot, no score, and company_name still equal
-        -- to the symbol. Counting them as coverage advertised 18% more than the
-        -- product could show: /tools/scanner "All stocks" reads FROM the panel
-        -- cache, so a name with no score is not merely unranked there, it is
-        -- absent. The headline number promised rows that do not exist.
-        (SELECT COUNT(*) FROM app.scores WHERE snapshot_date = (SELECT d FROM latest)) AS coverage,
-        -- Populated peer groups at the latest snapshot (same definition the
-        -- /sectors page uses → consistent "46"). A raw COUNT(*) on app.cluster
-        -- over-counts: it includes 2 deprecated clusters + the empty
-        -- "unclassified" bucket that no stock is in.
-        (SELECT COUNT(*) FROM app.cluster_composite_cache
-          WHERE snapshot_date = (SELECT d FROM latest)) AS clusters
-    `;
+  // Throw on failure or zero coverage so unstable_cache NEVER caches an empty
+  // fallback for an hour; SnapshotRibbon() catches at render time instead.
+  const appRows = await sql<
+    { latest: Date | null; coverage: string; clusters: string }[]
+  >`
+    WITH latest AS (SELECT MAX(snapshot_date) AS d FROM app.scores)
+    SELECT
+      (SELECT d FROM latest) AS latest,
+      (SELECT COUNT(*) FROM app.scores WHERE snapshot_date = (SELECT d FROM latest)) AS coverage,
+      (SELECT COUNT(*) FROM app.cluster_composite_cache
+        WHERE snapshot_date = (SELECT d FROM latest)) AS clusters
+  `;
 
-    const r = appRows[0];
-    return {
-      latest: r?.latest ?? null,
-      coverage: Number(r?.coverage ?? 0),
-      clusters: Number(r?.clusters ?? 0),
-    };
-  } catch (err) {
-    console.error("SnapshotRibbon fetchSnapshot failed:", err);
-    // DB unreachable at render time — show a neutral ribbon rather than
-    // taking the whole page down.
-    return { latest: null, coverage: 0, clusters: 0 };
+  const r = appRows[0];
+  const coverage = Number(r?.coverage ?? 0);
+  if (!r?.latest || coverage === 0) {
+    throw new Error("SnapshotRibbon: empty snapshot or 0 coverage");
   }
+  return {
+    latest: r.latest,
+    coverage,
+    clusters: Number(r.clusters ?? 0),
+  };
 }
 
 // Cache for an hour — snapshot data only changes weekly, but an hour TTL
@@ -155,10 +131,15 @@ function Sep() {
 }
 
 export async function SnapshotRibbon() {
-  const s =
-    process.env.NODE_ENV === "development"
-      ? await fetchSnapshot()
-      : await getCachedSnapshot();
+  let s: SnapshotStats = { latest: null, coverage: 0, clusters: 0 };
+  try {
+    s =
+      process.env.NODE_ENV === "development"
+        ? await fetchSnapshot()
+        : await getCachedSnapshot();
+  } catch (err) {
+    console.error("SnapshotRibbon fetchSnapshot failed:", err);
+  }
 
   // Today's date in IST — seed value for SSR/static HTML. The ribbon is baked
   // into every ISR page, so this server value can freeze at revalidation time
