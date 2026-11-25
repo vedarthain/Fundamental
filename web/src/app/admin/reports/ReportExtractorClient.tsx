@@ -439,6 +439,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
         if (actionFilter === "WATCH" && row.action !== "WATCH") return false;
         if (actionFilter === "HOLD" && row.action !== "HOLD") return false;
         if (actionFilter === "SELL" && row.action !== "SELL") return false;
+        if (actionFilter === "AVOID" && row.action !== "AVOID") return false;
       }
 
       // 3. Stock text search
@@ -616,6 +617,8 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
         colorCls = "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300 border border-sky-300 dark:border-sky-700 font-medium";
       } else if (s === "SELL") {
         colorCls = "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border border-rose-300 dark:border-rose-700 font-medium";
+      } else if (s === "AVOID") {
+        colorCls = "bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300 border border-orange-300 dark:border-orange-700 font-medium";
       }
       return <span className={`inline-flex px-1.5 rounded ${isCompact ? "text-[11px] py-0.5" : "text-xs py-0.5"} whitespace-nowrap ${colorCls}`}>{String(val)}</span>;
     }
@@ -990,6 +993,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                   <option value="WATCH">WATCH Only</option>
                   <option value="HOLD">HOLD Only</option>
                   <option value="SELL">SELL / EXIT</option>
+                  <option value="AVOID">AVOID Only</option>
                 </select>
               </div>
 

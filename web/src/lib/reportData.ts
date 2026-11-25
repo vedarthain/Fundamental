@@ -22,7 +22,7 @@ export type ReportStockRow = {
   ret_1y: number | null;
 
   // Verdicts & Price Targets
-  action: "BUY" | "WATCH" | "HOLD" | "SELL" | "OTHER" | null;
+  action: "BUY" | "WATCH" | "HOLD" | "SELL" | "AVOID" | "OTHER" | null;
   verdict: string | null;
   confidence: string | null;
   buy_below: number | null;
@@ -91,18 +91,22 @@ function extractAction(
   verdict: string | null,
   ltp?: number | null,
   targetPrice?: number | null,
-): "BUY" | "WATCH" | "HOLD" | "SELL" | "OTHER" | null {
+  isInPortfolio?: boolean,
+): "BUY" | "WATCH" | "HOLD" | "SELL" | "AVOID" | "OTHER" | null {
   if (!verdict) return null;
   const upper = verdict.toUpperCase().trim();
   // Only inspect the headline token before "—", "-", or ":" so prose like
   // "WATCH — ... do not buy ..." never false-matches as BUY.
   const headline = upper.split(/[—\-:]/)[0].trim();
 
-  let action: "BUY" | "WATCH" | "HOLD" | "SELL" | "OTHER" = "OTHER";
+  let action: "BUY" | "WATCH" | "HOLD" | "SELL" | "AVOID" | "OTHER" = "OTHER";
   if (/\b(BUY|ACCUMULATE)\b/.test(headline)) action = "BUY";
   else if (/\bWATCH\b/.test(headline)) action = "WATCH";
   else if (/\bHOLD\b/.test(headline)) action = "HOLD";
-  else if (/\b(SELL|EXIT|TRIM|AVOID)\b/.test(headline)) action = "SELL";
+  else if (/\b(SELL|EXIT|TRIM|AVOID)\b/.test(headline)) {
+    // Only recommend SELL for stocks actually held in the portfolio; otherwise AVOID.
+    action = isInPortfolio ? "SELL" : "AVOID";
+  }
 
   // Safety guardrail: never label as BUY if the 12M target is below current LTP
   if (action === "BUY" && ltp != null && targetPrice != null && targetPrice < ltp) {
@@ -395,7 +399,7 @@ async function _fetchReportData(): Promise<ReportStockRow[]> {
       moatRationale = r.moat_points;
     }
 
-    const action = extractAction(r.verdict, ltp, target);
+    const action = extractAction(r.verdict, ltp, target, Boolean(r.is_in_portfolio));
 
     const dpsCur = r.dps_current != null ? Math.round(Number(r.dps_current) * 100) / 100 : null;
     const dpsPrv = r.dps_prev != null ? Math.round(Number(r.dps_prev) * 100) / 100 : null;
