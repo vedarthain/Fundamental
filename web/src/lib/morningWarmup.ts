@@ -4,6 +4,7 @@ import { sql } from "@/lib/db";
 import { loadPortfolio, loadPerformanceStats, loadPortfolioSymbols } from "@/lib/portfolio";
 import { loadPersistenceForSymbols } from "@/lib/persistence";
 import { loadQuotes } from "@/lib/watchlistQuote";
+import { loadOpportunities } from "@/lib/opportunitiesData";
 
 const MAX_SYMBOLS = 1000;
 
@@ -86,13 +87,14 @@ async function warmCallsInternal(): Promise<{ gems: number; portfolio: number }>
 
 export async function runMorningWarmup(userId = 1) {
   const t0 = Date.now();
-  const [pf, wl, calls] = await Promise.all([
+  const [pf, wl, calls, opp] = await Promise.all([
     loadPortfolio(userId).then(async (p) => {
       await loadPerformanceStats(userId, p).catch(() => null);
       return { holdings: p.instruments.length, currentValue: p.totals.currentValue };
     }),
     warmWatchlistForUser(userId).catch(() => ({ symbols: 0 })),
     warmCallsInternal().catch(() => ({ gems: 0, portfolio: 0 })),
+    loadOpportunities().then((d) => ({ rows: d.rows.length })).catch(() => ({ rows: 0 })),
   ]);
   return {
     ok: true,
@@ -100,5 +102,6 @@ export async function runMorningWarmup(userId = 1) {
     portfolio: pf,
     watchlist: wl,
     calls,
+    opportunities: opp,
   };
 }
