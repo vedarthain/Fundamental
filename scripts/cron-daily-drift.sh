@@ -44,13 +44,14 @@ done
 export FUNDAMENTAL_ALLOW_REMOTE_DB="1"
 export PYTHONUNBUFFERED=1
 
-# Run up to 120 drifted stocks with 2 workers and 2.0s delay to stay under Gemini RPM/RPD limits
+# Run up to 60 drifted stocks sequentially with 3.5s delay and --no-critic to stay within Gemini Free Tier RPM/RPD
 $PYTHON_BIN scripts/ollama-verdict.py \
   --drift \
   --engine gemini \
-  --limit 120 \
-  --workers 2 \
-  --delay 2.0 \
+  --limit 60 \
+  --workers 1 \
+  --delay 3.5 \
+  --no-critic \
   --load
 
 # Purge Next.js local cache tags
