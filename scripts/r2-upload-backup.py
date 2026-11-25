@@ -22,7 +22,7 @@ def main() -> int:
     bucket = os.environ.get("R2_BUCKET", "").strip()
     access_key = os.environ.get("R2_ACCESS_KEY_ID", "").strip()
     secret_key = os.environ.get("R2_SECRET_ACCESS_KEY", "").strip()
-    retention_days = int(os.environ.get("R2_RETENTION_DAYS", "14"))
+    retention_days = int(os.environ.get("R2_RETENTION_DAYS", "5"))
 
     if not all([endpoint, bucket, access_key, secret_key]):
         print("R2 credentials not configured; skipping R2 upload.")
