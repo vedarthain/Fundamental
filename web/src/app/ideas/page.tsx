@@ -665,12 +665,38 @@ async function loadUpcomingEvents(tier: IdxTier): Promise<UpcomingEvent[]> {
 
 const CACHE_TAGS = ["ideas", "panel-cache"];
 const SIX_HOURS = 21600;
+const IDEAS_TTL_MS = SIX_HOURS * 1000;
 
-const cachedIdeas = unstable_cache(
-  async (tier: IdxTier) => loadIdeas(tier),
-  ["ideas:data:v3"],
-  { revalidate: SIX_HOURS, tags: CACHE_TAGS },
-);
+type IdeasResult = Awaited<ReturnType<typeof loadIdeas>>;
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __er_ideas_cache: Map<IdxTier, { data: IdeasResult; expiresAt: number }> | undefined;
+  // eslint-disable-next-line no-var
+  var __er_ideas_inflight: Map<IdxTier, Promise<IdeasResult>> | undefined;
+}
+
+async function cachedIdeas(tier: IdxTier): Promise<IdeasResult> {
+  const store = (globalThis.__er_ideas_cache ??= new Map());
+  const inflight = (globalThis.__er_ideas_inflight ??= new Map());
+  const now = Date.now();
+  const hit = store.get(tier);
+  if (hit && now < hit.expiresAt) {
+    return hit.data;
+  }
+  const existing = inflight.get(tier);
+  if (existing) return existing;
+  const p = loadIdeas(tier)
+    .then((data) => {
+      store.set(tier, { data, expiresAt: Date.now() + IDEAS_TTL_MS });
+      return data;
+    })
+    .finally(() => {
+      inflight.delete(tier);
+    });
+  inflight.set(tier, p);
+  return p;
+}
 
 const cachedResultWinners = unstable_cache(
   async (tier: IdxTier) => loadResultWinners(tier),

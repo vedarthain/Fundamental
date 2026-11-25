@@ -1,5 +1,4 @@
 import "server-only";
-import { unstable_cache } from "next/cache";
 import { sql, golden } from "@/lib/db";
 
 const FILING_NOISE_RE =
@@ -405,8 +404,34 @@ async function computeOpportunities() {
   return { rows: rowsWithPrices, benchmarks };
 }
 
-export const loadOpportunities = unstable_cache(
-  computeOpportunities,
-  ["opportunities:v2"],
-  { revalidate: 3600, tags: ["panel-cache", "market"] },
-);
+type OppResult = Awaited<ReturnType<typeof computeOpportunities>>;
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __er_opp_cache: { data: OppResult; expiresAt: number } | undefined;
+  // eslint-disable-next-line no-var
+  var __er_opp_inflight: Promise<OppResult> | undefined;
+}
+
+const OPP_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+export async function loadOpportunities(): Promise<OppResult> {
+  const now = Date.now();
+  const hit = globalThis.__er_opp_cache;
+  if (hit && now < hit.expiresAt) {
+    return hit.data;
+  }
+  if (globalThis.__er_opp_inflight) {
+    return globalThis.__er_opp_inflight;
+  }
+  const p = computeOpportunities()
+    .then((data) => {
+      globalThis.__er_opp_cache = { data, expiresAt: Date.now() + OPP_TTL_MS };
+      return data;
+    })
+    .finally(() => {
+      globalThis.__er_opp_inflight = undefined;
+    });
+  globalThis.__er_opp_inflight = p;
+  return p;
+}
