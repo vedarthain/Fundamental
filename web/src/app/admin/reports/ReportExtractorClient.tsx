@@ -2,6 +2,7 @@
 
 import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
+import { PriceChart } from "@/components/PriceChart";
 import type { ReportStockRow } from "@/lib/reportData";
 
 export type ParameterCategory =
@@ -206,6 +207,17 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
   // Table sorting
   const [sortCol, setSortCol] = useState<keyof ReportStockRow>("symbol");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  // Graph popup modal
+  const [chartRow, setChartRow] = useState<ReportStockRow | null>(null);
+  useEffect(() => {
+    if (!chartRow) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setChartRow(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [chartRow]);
 
   // Pagination
   const [page, setPage] = useState<number>(1);
@@ -552,9 +564,32 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
 
     if (col.id === "company_name") {
       return (
-        <span className="block truncate max-w-[200px]" title={String(val)}>
-          {String(val)}
-        </span>
+        <div className="flex items-center gap-1.5 max-w-[220px]">
+          <Link
+            href={`/stock/${row.symbol}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="truncate text-slate-800 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 hover:underline"
+            title={String(val)}
+          >
+            {String(val)}
+          </Link>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setChartRow(row);
+            }}
+            title={`View price chart for ${row.symbol}`}
+            aria-label={`View price chart for ${row.symbol}`}
+            className="shrink-0 inline-flex items-center justify-center w-5 h-5 rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-500 hover:text-blue-600 hover:border-blue-300 dark:hover:text-blue-400 transition-colors"
+          >
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M3 3v18h18" />
+              <path d="M7 15l4-4 4 3 5-6" />
+            </svg>
+          </button>
+        </div>
       );
     }
 
@@ -1415,6 +1450,50 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
           )}
         </div>
       </div>
+
+      {chartRow && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-[1px] p-4"
+          onClick={() => setChartRow(null)}
+        >
+          <div
+            className="w-full max-w-4xl rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60">
+              <div className="flex items-center gap-2 min-w-0">
+                <Link
+                  href={`/stock/${chartRow.symbol}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-mono text-sm font-bold text-blue-600 dark:text-blue-400 hover:underline shrink-0"
+                >
+                  {chartRow.symbol}
+                </Link>
+                {chartRow.company_name && (
+                  <span className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate">
+                    {chartRow.company_name}
+                  </span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setChartRow(null)}
+                className="px-2.5 py-1 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors shrink-0"
+              >
+                Close
+              </button>
+            </div>
+            <div className="p-3">
+              <PriceChart
+                symbol={chartRow.symbol}
+                currentPrice={chartRow.ltp ?? undefined}
+                dayChangePct={chartRow.ret_1d ?? undefined}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
