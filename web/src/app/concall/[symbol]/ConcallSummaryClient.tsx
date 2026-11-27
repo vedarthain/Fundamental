@@ -109,6 +109,7 @@ export function ConcallSummaryClient({
   const [tab, setTab] = useState<SubTab>(initialTab);
   const [activeIdx, setActiveIdx] = useState(0);
   const [showQuotes, setShowQuotes] = useState(true);
+  const [segmentFilter, setSegmentFilter] = useState("all");
   const [qaQuery, setQaQuery] = useState("");
   const [activeAudio, setActiveAudio] = useState<ActiveConcallAudio | null>(null);
 
@@ -122,27 +123,51 @@ export function ConcallSummaryClient({
     [active, filings],
   );
 
-  const positives = useMemo(
-    () => (active ? active.highlights.filter((h) => h.category !== "Risk") : []),
-    [active],
-  );
-  const risks = useMemo(
-    () => (active ? active.highlights.filter((h) => h.category === "Risk") : []),
-    [active],
-  );
+  const segments = useMemo(() => {
+    if (!active) return [];
+    const seen = new Set<string>();
+    for (const n of active.numbersMentioned) if (n.segment) seen.add(n.segment);
+    for (const h of active.highlights) if (h.segment) seen.add(h.segment);
+    for (const q of active.qaHighlights) if (q.segment) seen.add(q.segment);
+    return [...seen];
+  }, [active]);
+
+  const activeNumbers = useMemo(() => {
+    if (!active) return [];
+    if (segmentFilter === "all") return active.numbersMentioned;
+    return active.numbersMentioned.filter((n) => n.segment === segmentFilter);
+  }, [active, segmentFilter]);
+
+  const positives = useMemo(() => {
+    if (!active) return [];
+    return active.highlights.filter(
+      (h) => h.category !== "Risk" && (segmentFilter === "all" || h.segment === segmentFilter),
+    );
+  }, [active, segmentFilter]);
+
+  const risks = useMemo(() => {
+    if (!active) return [];
+    return active.highlights.filter(
+      (h) => h.category === "Risk" && (segmentFilter === "all" || h.segment === segmentFilter),
+    );
+  }, [active, segmentFilter]);
 
   const filteredQa = useMemo(() => {
     if (!active) return [];
     const q = qaQuery.trim().toLowerCase();
-    if (!q) return active.qaHighlights;
-    return active.qaHighlights.filter(
-      (x) =>
+    return active.qaHighlights.filter((x) => {
+      if (segmentFilter !== "all" && x.segment !== segmentFilter) return false;
+      if (!q) return true;
+      return (
         x.topic.toLowerCase().includes(q) ||
+        (x.analyst ?? "").toLowerCase().includes(q) ||
+        (x.segment ?? "").toLowerCase().includes(q) ||
         x.question.toLowerCase().includes(q) ||
         x.answer.toLowerCase().includes(q) ||
-        x.quote.toLowerCase().includes(q),
-    );
-  }, [active, qaQuery]);
+        x.quote.toLowerCase().includes(q)
+      );
+    });
+  }, [active, qaQuery, segmentFilter]);
 
   return (
     <div className="space-y-6">
@@ -425,23 +450,64 @@ export function ConcallSummaryClient({
         </div>
       ) : null}
 
+      {/* Segment Segregation Pill Bar (when transcript spans multiple verticals) */}
+      {active && tab !== "filings" && segments.length > 1 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mr-1">
+            Segment:
+          </span>
+          <button
+            type="button"
+            onClick={() => setSegmentFilter("all")}
+            className={`px-2.5 py-1 rounded-full text-[12px] font-medium border transition-colors ${
+              segmentFilter === "all"
+                ? "bg-slate-900 text-white border-slate-900"
+                : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+            }`}
+          >
+            All Segments ({segments.length})
+          </button>
+          {segments.map((seg) => (
+            <button
+              key={seg}
+              type="button"
+              onClick={() => setSegmentFilter(seg)}
+              className={`px-2.5 py-1 rounded-full text-[12px] font-medium border transition-colors ${
+                segmentFilter === seg
+                  ? "bg-indigo-600 text-white border-indigo-600"
+                  : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+              }`}
+            >
+              {seg}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* ── SUB-TAB 1: HIGHLIGHTS (Executive Summary + Bull vs Risk Split) ── */}
       {active && tab === "highlights" && (
         <div className="space-y-5">
-          {active.numbersMentioned.length > 0 && (
+          {activeNumbers.length > 0 && (
             <div className="rounded-2xl border border-slate-200/90 bg-white p-5">
               <div className="flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-wider text-slate-500 mb-3">
                 <Target size={14} className="text-indigo-600" />
                 Key Quantitative Figures Stated on the Call
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                {active.numbersMentioned.map((n, i) => (
+                {activeNumbers.map((n, i) => (
                   <div
                     key={i}
                     className="rounded-xl border border-slate-200/80 bg-slate-50/60 p-3.5 flex flex-col justify-between"
                   >
                     <div>
-                      <div className="text-[11.5px] text-slate-500 leading-snug">{n.metric}</div>
+                      <div className="flex items-center justify-between gap-1.5">
+                        <div className="text-[11.5px] text-slate-500 leading-snug">{n.metric}</div>
+                        {n.segment && (
+                          <span className="shrink-0 px-1.5 py-0.5 rounded bg-slate-200/80 text-slate-700 text-[10px] font-semibold">
+                            {n.segment}
+                          </span>
+                        )}
+                      </div>
                       <div className="font-mono text-[16px] font-bold text-slate-900 mt-1">
                         {n.value}
                       </div>
@@ -475,13 +541,20 @@ export function ConcallSummaryClient({
                     className="rounded-xl border border-slate-200/70 bg-slate-50/30 p-3.5"
                   >
                     <div className="flex items-start gap-2.5">
-                      <span
-                        className={`shrink-0 mt-0.5 px-2 py-0.5 rounded border text-[10.5px] font-semibold ${
-                          CAT_BADGE[h.category] ?? "bg-slate-100 text-slate-700 border-slate-200"
-                        }`}
-                      >
-                        {h.category}
-                      </span>
+                      <div className="shrink-0 flex flex-col gap-1 mt-0.5">
+                        <span
+                          className={`px-2 py-0.5 rounded border text-[10.5px] font-semibold text-center ${
+                            CAT_BADGE[h.category] ?? "bg-slate-100 text-slate-700 border-slate-200"
+                          }`}
+                        >
+                          {h.category}
+                        </span>
+                        {h.segment && (
+                          <span className="px-1.5 py-0.5 rounded bg-slate-200/75 text-slate-700 text-[10px] font-semibold text-center">
+                            {h.segment}
+                          </span>
+                        )}
+                      </div>
                       <div className="space-y-1.5 min-w-0">
                         <p className="text-[13.5px] text-slate-900 leading-relaxed">{h.point}</p>
                         {showQuotes && h.quote && (
@@ -505,7 +578,12 @@ export function ConcallSummaryClient({
                 </div>
                 <div className="space-y-3">
                   {risks.map((r, i) => (
-                    <div key={i} className="rounded-xl border border-rose-200/70 bg-white p-3.5">
+                    <div key={i} className="rounded-xl border border-rose-200/70 bg-white p-3.5 space-y-1.5">
+                      {r.segment && (
+                        <span className="inline-block px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 text-[10px] font-semibold">
+                          {r.segment}
+                        </span>
+                      )}
                       <p className="text-[13px] text-slate-800 leading-relaxed">{r.point}</p>
                       {showQuotes && r.quote && (
                         <p className="mt-2 pl-2.5 border-l-2 border-rose-300 text-[11.5px] italic text-slate-500 leading-relaxed">
@@ -528,16 +606,23 @@ export function ConcallSummaryClient({
             <div className="px-5 py-3.5 border-b border-slate-100 bg-slate-50/60 font-semibold text-[13.5px] text-slate-900">
               Stated Guidance, Order Book &amp; Capex Targets
             </div>
-            {active.numbersMentioned.length === 0 ? (
+            {activeNumbers.length === 0 ? (
               <div className="p-8 text-center text-[13px] text-slate-500">
-                No explicit numerical guidance targets were stated in this transcript.
+                No explicit numerical guidance targets were stated for this filter.
               </div>
             ) : (
               <div className="divide-y divide-slate-100">
-                {active.numbersMentioned.map((n, i) => (
+                {activeNumbers.map((n, i) => (
                   <div key={i} className="p-4 space-y-1.5">
                     <div className="flex items-baseline justify-between gap-3">
-                      <span className="text-[13px] font-semibold text-slate-800">{n.metric}</span>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {n.segment && (
+                          <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 text-[10.5px] font-semibold">
+                            {n.segment}
+                          </span>
+                        )}
+                        <span className="text-[13px] font-semibold text-slate-800">{n.metric}</span>
+                      </div>
                       <span className="font-mono text-[15px] font-bold text-indigo-700 shrink-0">
                         {n.value}
                       </span>
@@ -626,9 +711,21 @@ export function ConcallSummaryClient({
                   key={i}
                   className="rounded-2xl border border-slate-200/90 bg-white p-5 space-y-2.5"
                 >
-                  <span className="inline-block px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-800 border border-indigo-200 text-[11.5px] font-semibold">
-                    {qa.topic}
-                  </span>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="inline-block px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-800 border border-indigo-200 text-[11.5px] font-semibold">
+                      {qa.topic}
+                    </span>
+                    {qa.segment && (
+                      <span className="inline-block px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[11px] font-semibold">
+                        {qa.segment}
+                      </span>
+                    )}
+                    {qa.analyst && (
+                      <span className="inline-block px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-medium">
+                        {qa.analyst}
+                      </span>
+                    )}
+                  </div>
                   {qa.question && (
                     <p className="text-[13px] text-slate-600 leading-relaxed">
                       <strong className="text-slate-900">Analyst Q:</strong> {qa.question}

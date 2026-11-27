@@ -43,10 +43,18 @@ from modal_concall import SYSTEM_PROMPT  # reuse single source-of-truth prompt
 
 MIN_PAGES = 5
 MIN_CHARS = 5000
-MAX_TRANSCRIPT_CHARS = 95000
+MAX_TRANSCRIPT_CHARS = 160000
 
 VALID_TONES = {"Optimistic", "Neutral", "Cautious"}
 VALID_CATEGORIES = {"Guidance", "Demand", "Margins", "Capex", "Order Book", "Risk"}
+CATEGORY_ORDER = {
+    "Guidance": 0,
+    "Demand": 1,
+    "Margins": 2,
+    "Capex": 3,
+    "Order Book": 4,
+    "Risk": 5,
+}
 FORBIDDEN_ADVICE_RE = re.compile(
     r"\b(we recommend|investors should buy|investors should sell|target price of|strong buy|accumulate on dips)\b",
     re.I,
@@ -137,59 +145,90 @@ def sanitize_and_verify(raw: dict[str, Any] | list[Any], pdf_text: str, strict: 
     total_claims = 0
     verified_claims = 0
 
+    def _seg_rank(seg: str, first_seen: dict[str, int]) -> tuple[int, int]:
+        s_low = seg.lower()
+        if s_low in ("consolidated", "group", "overall", "company", "standalone"):
+            return (0, first_seen.get(seg, 0))
+        return (1, first_seen.get(seg, 999))
+
+    seg_first_seen: dict[str, int] = {}
+
+    def _norm_seg(v: Any) -> str:
+        s = str(v or "Consolidated").strip()[:48] or "Consolidated"
+        if s not in seg_first_seen:
+            seg_first_seen[s] = len(seg_first_seen)
+        return s
+
     clean_numbers: list[dict[str, str]] = []
     for item in raw.get("numbers_mentioned") or []:
         if not isinstance(item, dict):
             continue
-        metric = str(item.get("metric") or "").strip()[:90]
-        value = str(item.get("value") or "").strip()[:60]
-        quote = str(item.get("quote") or "").strip()[:360]
+        seg = _norm_seg(item.get("segment"))
+        metric = str(item.get("metric") or "").strip()[:100]
+        value = str(item.get("value") or "").strip()[:80]
+        quote = str(item.get("quote") or "").strip()[:400]
         if not metric or not value or FORBIDDEN_ADVICE_RE.search(metric + " " + value):
             continue
         total_claims += 1
         ok = quote_is_verified(quote, norm_tx, tx_words)
-        if ok:
-            verified_claims += 1
-            clean_numbers.append({"metric": metric, "value": value, "quote": quote})
-        elif not strict:
-            clean_numbers.append({"metric": metric, "value": value, "quote": quote})
+        if ok or not strict:
+            if ok:
+                verified_claims += 1
+            clean_numbers.append({"segment": seg, "metric": metric, "value": value, "quote": quote})
 
     clean_highlights: list[dict[str, str]] = []
     for item in raw.get("highlights") or []:
         if not isinstance(item, dict):
             continue
+        seg = _norm_seg(item.get("segment"))
         cat = str(item.get("category") or "Demand").strip()
         if cat not in VALID_CATEGORIES:
             cat = "Demand"
-        point = str(item.get("point") or "").strip()[:320]
-        quote = str(item.get("quote") or "").strip()[:360]
+        point = str(item.get("point") or "").strip()[:360]
+        quote = str(item.get("quote") or "").strip()[:400]
         if not point or FORBIDDEN_ADVICE_RE.search(point):
             continue
         total_claims += 1
         ok = quote_is_verified(quote, norm_tx, tx_words)
-        if ok:
-            verified_claims += 1
-            clean_highlights.append({"category": cat, "point": point, "quote": quote})
-        elif not strict:
-            clean_highlights.append({"category": cat, "point": point, "quote": quote})
+        if ok or not strict:
+            if ok:
+                verified_claims += 1
+            clean_highlights.append({"segment": seg, "category": cat, "point": point, "quote": quote})
 
     clean_qa: list[dict[str, str]] = []
     for item in raw.get("qa_highlights") or []:
         if not isinstance(item, dict):
             continue
-        topic = str(item.get("topic") or "").strip()[:80]
-        question = str(item.get("question") or "").strip()[:260]
-        answer = str(item.get("answer") or "").strip()[:360]
-        quote = str(item.get("quote") or "").strip()[:360]
+        seg = _norm_seg(item.get("segment"))
+        analyst = str(item.get("analyst") or "").strip()[:80]
+        topic = str(item.get("topic") or "").strip()[:90]
+        question = str(item.get("question") or "").strip()[:300]
+        answer = str(item.get("answer") or "").strip()[:420]
+        quote = str(item.get("quote") or "").strip()[:400]
         if not topic or not answer or FORBIDDEN_ADVICE_RE.search(answer):
             continue
         total_claims += 1
         ok = quote_is_verified(quote, norm_tx, tx_words)
-        if ok:
-            verified_claims += 1
-            clean_qa.append({"topic": topic, "question": question, "answer": answer, "quote": quote})
-        elif not strict:
-            clean_qa.append({"topic": topic, "question": question, "answer": answer, "quote": quote})
+        if ok or not strict:
+            if ok:
+                verified_claims += 1
+            entry: dict[str, str] = {
+                "segment": seg,
+                "topic": topic,
+                "question": question,
+                "answer": answer,
+                "quote": quote,
+            }
+            if analyst:
+                entry["analyst"] = analyst
+            clean_qa.append(entry)
+
+    # Categorically sort: Consolidated first -> segment encounter order -> category priority
+    clean_numbers.sort(key=lambda x: _seg_rank(x["segment"], seg_first_seen))
+    clean_highlights.sort(
+        key=lambda x: (_seg_rank(x["segment"], seg_first_seen), CATEGORY_ORDER.get(x["category"], 9))
+    )
+    clean_qa.sort(key=lambda x: _seg_rank(x["segment"], seg_first_seen))
 
     ratio = (verified_claims / total_claims) if total_claims > 0 else 0.0
     return (
@@ -197,9 +236,9 @@ def sanitize_and_verify(raw: dict[str, Any] | list[Any], pdf_text: str, strict: 
             "quarter_label": q_label,
             "tone": tone,
             "tone_rationale": tone_rationale or None,
-            "numbers_mentioned": clean_numbers[:8],
-            "highlights": clean_highlights[:8],
-            "qa_highlights": clean_qa[:5],
+            "numbers_mentioned": clean_numbers[:30],
+            "highlights": clean_highlights[:30],
+            "qa_highlights": clean_qa[:15],
         },
         round(ratio, 3),
     )
@@ -255,7 +294,8 @@ def build_user_prompt(symbol: str, company_name: str, title: str, published_at: 
         f"Filing Title: {title}\n"
         f"Filing Date: {published_at}\n\n"
         f"--- BEGIN EARNINGS CALL TRANSCRIPT ---\n{text[:MAX_TRANSCRIPT_CHARS]}\n--- END TRANSCRIPT ---\n\n"
-        "Extract the structured factual JSON with verbatim quotes (4-7 highlights, 2-5 numbers_mentioned, 2-4 qa_highlights)."
+        "Extract ALL material details segregated by business segment with exact verbatim quotes: "
+        "all key numbers/KPIs/guidance (up to 25), all major commentary/drivers/capex/risks (up to 25), and all substantive analyst Q&A exchanges (up to 12)."
     )
 
 
@@ -360,6 +400,7 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=25, help="Max symbols to summarize in this run")
     ap.add_argument("--workers", type=int, default=2, help="Parallel workers (use 4-6 for Modal)")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--force", action="store_true", help="Re-extract and overwrite existing summaries")
     ap.add_argument("--no-strict-verify", action="store_true", help="Keep unverified quotes (not recommended)")
     args = ap.parse_args()
 
@@ -480,15 +521,15 @@ def main() -> int:
                        AND (a.title ~* 'transcript|earnings call|concall|conference call'
                             OR a.headline ~* 'transcript|earnings call|concall|conference call')
                        AND a.title !~* '^audio recording|intimation of schedule'
-                       AND NOT EXISTS (
+                       AND (%s OR NOT EXISTS (
                            SELECT 1 FROM app.concall_summary cs WHERE cs.announcement_id = a.id
-                       )
+                       ))
                      ORDER BY
                        CASE WHEN COALESCE(a.title, '') || ' ' || COALESCE(a.headline, '') ~* 'transcript' THEN 0 ELSE 1 END,
                        a.published_at DESC
                      LIMIT 4
                     """,
-                    (sym,),
+                    (sym, args.force),
                 )
                 cands = cur2.fetchall()
 
