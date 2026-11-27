@@ -2122,13 +2122,10 @@ async function computePortfolio(
       // time — see the intraday overlay block above.
       price = tick ?? eod ?? c?.current_price ?? null;
       currentValue = price != null ? a.qty * price : a.brokerCurValueSum;
-      // 1D move is always "current price vs the close before it". When the tick
-      // is live that baseline is today's opening reference — i.e. YESTERDAY's
-      // close, which is gLast — not gPrev. Leaving this on gLast/gPrev while
-      // pricing off the tick would have reported yesterday's move next to a
-      // live value, which is worse than reporting nothing.
-      const last = tick ?? eod;
-      const prev = tick != null ? eod : a.symbol ? gPrev.get(a.symbol) : undefined;
+      // Day change is calculated once towards EOD (latest EOD close vs previous EOD close)
+      // rather than fluctuating on intraday ticks.
+      const last = eod;
+      const prev = a.symbol ? gPrev.get(a.symbol) : undefined;
       if (last != null && prev != null && prev !== 0) {
         dayChangePct = Math.round((last / prev - 1) * 1000) / 10;
         dayChangeValue = a.qty * (last - prev);

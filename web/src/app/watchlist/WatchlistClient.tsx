@@ -33,7 +33,6 @@ import type { VerdictChip } from "@/lib/verdictTypes";
 import { useWatchlist, saveWatchlistNote, retryWatchlistLoad } from "@/lib/watchlist";
 import { band, bandColor, tierLabel } from "@/lib/score";
 import { WatchlistButton } from "@/components/WatchlistButton";
-import { CallToggle } from "@/components/CallToggle";
 import { PriceChart, type Range as ChartRange } from "@/components/PriceChart";
 import type { TradeMark } from "@/app/tools/scanner/CandleChart";
 import CapTierBadge, { type CapCategory } from "@/components/CapTierBadge";
@@ -1516,8 +1515,6 @@ function WatchRow({
                 {Math.round(row.composite_pct)}
               </span>
             )}
-            {/* Buy/Sell call toggle — self-gates on signedIn (only debs/admin fetches /api/calls). */}
-            <CallToggle symbol={row.symbol} size="sm" />
             {/* Quick remove — hidden when the list is sourced (e.g. Portfolio
                 tab), where "remove" has no meaning. */}
             {showRemove && (
@@ -1772,11 +1769,7 @@ function DetailExtras({
           300px). Trimming header chrome could never fix that; only moving
           news *beside* the chart puts it on the first screen. Below xl there
           isn't width for a third column, so it spans back underneath. */}
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_220px] xl:grid-cols-[minmax(0,1fr)_220px_minmax(240px,300px)] gap-4 items-start">
-        {/* Shared chart module — same expand / draw / price-alert features as
-            the stock page. Self-fetches candles by symbol; alert controls show
-            when signed in. The held-position summary now lives in the card
-            header (HoldChip), so the chart starts clean here. */}
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_220px] gap-4 items-start">
         <div className="min-w-0">
           <PriceChart
             symbol={symbol}
@@ -1799,28 +1792,25 @@ function DetailExtras({
           glanceKeys={glanceKeys}
           sector={sector}
         />
-
-        {/* Third column at xl; full-width row beneath the other two below it.
-            Rendered even when empty — an absent column used to read as "the
-            news failed to load", and the answer "there is none" is itself
-            information. Suppressed only while the fetch is still in flight. */}
-        {!loadingExtras && (
-          <div className="min-w-0 lg:col-span-2 xl:col-span-1">
-            {news.length > 0 ? (
-              <NewsGrid news={news} />
-            ) : (
-              <>
-                <div className="text-[9.5px] uppercase tracking-wide muted-text mb-1">
-                  Recent news
-                </div>
-                <div className="text-[11px] muted-text italic">
-                  No recent news for {symbol}.
-                </div>
-              </>
-            )}
-          </div>
-        )}
       </div>
+
+      {/* Recent news sits cleanly below the chart & fundamentals row */}
+      {!loadingExtras && (
+        <div className="min-w-0 pt-2 border-t hairline">
+          {news.length > 0 ? (
+            <NewsGrid news={news} />
+          ) : (
+            <>
+              <div className="text-[9.5px] uppercase tracking-wide muted-text mb-1">
+                Recent news
+              </div>
+              <div className="text-[11px] muted-text italic">
+                No recent news for {symbol}.
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {nothing && (
         <div className="text-[11px] muted-text italic">

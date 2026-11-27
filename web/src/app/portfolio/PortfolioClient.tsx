@@ -3011,16 +3011,16 @@ function SummaryCards({
         label="Unrealized P&L"
         value={signed(t.pnl)}
         valueColor={up(t.pnl) ? GREEN : RED}
-        sub={`${pct(t.pnlPct)} · Current − Invested`}
+        sub={`${pct(t.pnlPct)} · Current − Invested${liveLabel ? ` · ${liveLabel}` : ""}`}
         subColor={up(t.pnlPct) ? GREEN : RED}
         icon={<IconTrendUp size={15} />}
         accent={up(t.pnl) ? GREEN : RED}
       />
       <Card
-        label="Day change"
+        label="Day change (EOD)"
         value={signed(t.dayChangeValue)}
         valueColor={up(t.dayChangeValue) ? GREEN : RED}
-        sub={pct(t.dayChangePct)}
+        sub={`${pct(t.dayChangePct)} · EOD close vs prev close`}
         subColor={up(t.dayChangePct) ? GREEN : RED}
         icon={<IconPulse size={15} />}
         accent={up(t.dayChangeValue) ? GREEN : RED}

@@ -17,19 +17,21 @@ export default function PageHeader({
 }: PageHeaderProps) {
   return (
     <header
-      className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-2.5 mb-3 border-b hairline ${className}`}
+      className={`flex flex-wrap items-center justify-between gap-2 pb-1.5 mb-2.5 border-b hairline max-w-5xl ${className}`}
     >
-      <div className="min-w-0">
+      <div className="min-w-0 flex items-baseline gap-2 truncate">
         {eyebrow ? (
-          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] muted-text mb-0.5">
-            {eyebrow}
-          </div>
+          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] muted-text shrink-0">
+            {eyebrow} ·
+          </span>
         ) : null}
-        <h1 className="font-display text-[18px] md:text-[20px] font-semibold leading-tight tracking-tight truncate">
+        <h1 className="font-display text-[17px] md:text-[18px] font-semibold leading-tight tracking-tight shrink-0">
           {title}
         </h1>
         {subtitle ? (
-          <p className="text-[12px] muted-text mt-0.5 line-clamp-1">{subtitle}</p>
+          <span className="text-[12px] muted-text truncate hidden sm:inline">
+            — {subtitle}
+          </span>
         ) : null}
       </div>
       {right ? <div className="flex items-center gap-2 shrink-0 flex-wrap">{right}</div> : null}
