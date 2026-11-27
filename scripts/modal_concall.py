@@ -97,13 +97,13 @@ if modal is not None:
             self.llm = LLM(
                 model=MODEL_ID,
                 quantization="awq" if "AWQ" in MODEL_ID.upper() else None,
-                max_model_len=49152,
+                max_model_len=32768,
                 gpu_memory_utilization=0.92,
                 trust_remote_code=True,
             )
             self.sampling_params = SamplingParams(
                 temperature=0.0,
-                max_tokens=8192,
+                max_tokens=6000,
                 repetition_penalty=1.03,
             )
 
@@ -119,7 +119,7 @@ if modal is not None:
             company_name = str(payload.get("company_name", symbol)).strip()
             title = str(payload.get("title", "")).strip()
             published_at = str(payload.get("published_at", "")).strip()
-            transcript = str(payload.get("transcript_text", ""))[:160000]
+            transcript = str(payload.get("transcript_text", ""))[:95000]
 
             if len(transcript) < 2000:
                 return {"ok": False, "error": "transcript_too_short"}
