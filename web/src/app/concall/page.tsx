@@ -579,7 +579,7 @@ export default async function ConcallPage() {
   }
 
   return (
-    <div className="mx-auto max-w-[1160px] px-4 md:px-6 py-6 md:py-8">
+    <div className="mx-auto max-w-[1160px] px-4 md:px-6 py-3 md:py-4">
       <ConcallHubClient
         latestCalls={hubData.latestCalls}
         upcomingCalls={hubData.upcomingCalls}

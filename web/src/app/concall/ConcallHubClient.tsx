@@ -339,16 +339,16 @@ export function ConcallHubClient({
   }, [digests, themeQuery, minQuality, companyScope, mySet]);
 
   return (
-    <div className={`space-y-5 ${activeAudio ? "pb-36" : ""}`}>
-      {/* Clean Top Header — never collides with tabs */}
-      <header className="space-y-4">
+    <div className={`space-y-3.5 ${activeAudio ? "pb-36" : ""}`}>
+      {/* Compact Top Header — bold title + small italic description */}
+      <header className="space-y-2">
         <div>
-          <h1 className="font-display text-[24px] md:text-[28px] font-bold tracking-tight text-slate-900 flex items-center gap-2.5">
+          <h1 className="font-sans text-[20px] md:text-[22px] font-extrabold tracking-tight text-slate-900 flex items-center gap-2">
             Concall Calendar
-            <Calendar size={22} className="text-slate-700" />
+            <Calendar size={19} className="text-slate-700" />
           </h1>
-          <p className="text-[13.5px] text-slate-500 mt-0.5">
-            Datewise Earnings Calls, Inline Audio Recordings, Official BSE Transcripts &amp; Quote-Verified Guidance vs. Actuals ({totalArchiveCount.toLocaleString("en-IN")}+ filings)
+          <p className="text-[11.5px] italic text-slate-500 mt-0.5 leading-snug">
+            Datewise earnings calls, inline audio recordings, official BSE transcripts &amp; quote-verified Guidance vs. Actuals ({totalArchiveCount.toLocaleString("en-IN")}+ filings)
           </p>
         </div>
 
