@@ -59,6 +59,10 @@ if [ -n "${REVALIDATE_TOKEN:-}" ]; then
 
   echo "=== 5. Pre-warming Calls Desk Cache ==="
   curl -s "http://localhost:3000/api/admin/calls?warm=1&refresh=1&token=$REVALIDATE_TOKEN" >/dev/null 2>&1 || true
+
+  echo "=== 6. Evaluating Portfolio & Price Alerts ==="
+  curl -s -X POST "http://localhost:3000/api/cron/evaluate-alerts?token=$REVALIDATE_TOKEN" || true
+  echo ""
 fi
 
 echo "================================================================================"

@@ -25,7 +25,7 @@
 import "server-only";
 import { sql, golden } from "@/lib/db";
 import { loadPortfolio } from "@/lib/portfolio";
-import { evaluatePriceAlerts, loadPriceAlertRows } from "@/lib/price-alerts";
+import { evaluatePriceAlertsDetailed, loadPriceAlertRows } from "@/lib/price-alerts";
 
 export type Severity = "info" | "warn" | "urgent";
 export type AlertStatus = "active" | "dismissed";
@@ -160,9 +160,16 @@ async function loadCompositeWoW(
  * Idempotent: safe to run repeatedly (the partial unique index dedupes open
  * episodes; a cleared condition retires its episode so it can re-fire later).
  */
+export type NewlyTriggeredAlert = {
+  symbol: string;
+  title: string;
+  reason: string;
+  severity: Severity;
+};
+
 export async function evaluateAlerts(
   userId: number,
-): Promise<{ triggered: number; resolved: number }> {
+): Promise<{ triggered: number; resolved: number; newAlerts: NewlyTriggeredAlert[] }> {
   const pf = await loadPortfolio(userId);
 
   // Only mapped equities with both an avg cost and a live price are checkable
@@ -243,6 +250,7 @@ export async function evaluateAlerts(
   }
 
   const triggeredKeys = new Set(candidates.map((c) => `${c.ruleKey}|${c.symbol}`));
+  const newAlerts: NewlyTriggeredAlert[] = [];
   let triggered = 0;
   let resolved = 0;
 
@@ -260,7 +268,15 @@ export async function evaluateAlerts(
       DO NOTHING
       RETURNING id
     `;
-    if (ins.length > 0) triggered++;
+    if (ins.length > 0) {
+      triggered++;
+      newAlerts.push({
+        symbol: c.symbol,
+        title: c.title,
+        reason: c.reason,
+        severity: c.severity,
+      });
+    }
   }
 
   // 5. Hold-limit — ONE aggregate digest card, refreshed daily (DO UPDATE) so
@@ -292,7 +308,15 @@ export async function evaluateAlerts(
         WHERE app.alert.status = 'active'
       RETURNING (xmax = 0) AS inserted
     `;
-    if (ins.length > 0 && ins[0].inserted) triggered++;
+    if (ins.length > 0 && ins[0].inserted) {
+      triggered++;
+      newAlerts.push({
+        symbol: HOLD_LIMIT_KEY,
+        title: "Past hold limit",
+        reason,
+        severity: "info",
+      });
+    }
   }
 
   // Retire every open episode whose condition is no longer true — this covers
@@ -318,9 +342,19 @@ export async function evaluateAlerts(
   // User price alerts live in their own table (app.price_alert) but ride the
   // same evaluation cadence: flip any armed line whose EOD close has crossed.
   // Failure is non-fatal to the portfolio rules above.
-  triggered += await evaluatePriceAlerts(userId).catch(() => 0);
+  const priceRes = await evaluatePriceAlertsDetailed(userId).catch(() => ({ count: 0, events: [] }));
+  triggered += priceRes.count;
+  for (const ev of priceRes.events) {
+    const dirLabel = ev.direction === "above" ? "rose above" : "dropped below";
+    newAlerts.push({
+      symbol: ev.symbol,
+      title: `Price alert: ${ev.symbol}`,
+      reason: `${ev.symbol} ${dirLabel} ${inr(ev.price)} (close ${inr(ev.close)})`,
+      severity: "warn",
+    });
+  }
 
-  return { triggered, resolved };
+  return { triggered, resolved, newAlerts };
 }
 
 /** Tab payload: active (severity-first, capped) + dismissed (greyed) cards. */

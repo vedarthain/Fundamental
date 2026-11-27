@@ -270,12 +270,21 @@ export async function dismissPriceAlert(userId: number, id: number): Promise<boo
   return true;
 }
 
+export type TriggeredPriceAlert = {
+  symbol: string;
+  price: number;
+  direction: PriceAlertDirection;
+  close: number;
+};
+
 /**
  * Flip every armed alert whose latest EOD close has crossed its level to
- * 'triggered'. Returns how many fired. Evaluated across ALL of the user's
- * symbols (a price alert can sit on a name they don't own).
+ * 'triggered'. Returns count + event details for notifications.
  */
-export async function evaluatePriceAlerts(userId: number): Promise<number> {
+export async function evaluatePriceAlertsDetailed(userId: number): Promise<{
+  count: number;
+  events: TriggeredPriceAlert[];
+}> {
   const armed = await sql<
     { id: number; symbol: string; price: number; direction: PriceAlertDirection }[]
   >`
@@ -283,7 +292,7 @@ export async function evaluatePriceAlerts(userId: number): Promise<number> {
       FROM app.price_alert
      WHERE user_id = ${userId} AND status = 'armed'
   `.catch(() => []);
-  if (armed.length === 0) return 0;
+  if (armed.length === 0) return { count: 0, events: [] };
 
   const closes = await loadLatestClose([...new Set(armed.map((a) => a.symbol))]);
   const hit: number[] = [];
@@ -293,7 +302,7 @@ export async function evaluatePriceAlerts(userId: number): Promise<number> {
     const crossed = a.direction === "above" ? c >= a.price : c <= a.price;
     if (crossed) hit.push(a.id);
   }
-  if (hit.length === 0) return 0;
+  if (hit.length === 0) return { count: 0, events: [] };
 
   const upd = await sql<{ id: number }[]>`
     UPDATE app.price_alert
@@ -330,7 +339,20 @@ export async function evaluatePriceAlerts(userId: number): Promise<number> {
       )}
     `.catch(() => {});
   }
-  return flipped.size;
+  return {
+    count: flipped.size,
+    events: events.map((e) => ({
+      symbol: e.symbol,
+      price: e.price,
+      direction: e.direction,
+      close: e.close_at_event ?? e.price,
+    })),
+  };
+}
+
+export async function evaluatePriceAlerts(userId: number): Promise<number> {
+  const res = await evaluatePriceAlertsDetailed(userId);
+  return res.count;
 }
 
 /**
