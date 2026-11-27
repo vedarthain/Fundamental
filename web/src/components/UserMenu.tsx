@@ -34,9 +34,21 @@ function AdminBadge() {
   );
 }
 
+const TOOLS_MENU_ITEMS = [
+  { href: "/tools", label: "All Tools" },
+  { href: "/tools/screener", label: "Stock Screener" },
+  { href: "/tools/scanner", label: "Scanner" },
+  { href: "/tools/52-week-high-low", label: "52-Week High / Low" },
+  { href: "/tools/alerts", label: "Alerts" },
+  { href: "/tools/peer-comparison", label: "Peer Comparison" },
+  { href: "/tools/universe-changes", label: "Universe Changes" },
+  { href: "/feedback", label: "Feedback" },
+];
+
 export function UserMenu({ email, displayName }: Props) {
   const [open, setOpen] = useState(false);
   const [ideasOpen, setIdeasOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const router = useRouter();
@@ -189,75 +201,41 @@ export function UserMenu({ email, displayName }: Props) {
             )}
           </div>
 
-          {/* Tools Section (under User ID) */}
-          <div className="px-4 pt-2.5 pb-1 border-t hairline flex items-center justify-between">
-            <span className="text-[10.5px] font-semibold tracking-wider uppercase muted-text">
-              Tools
-            </span>
-            <Link
-              href="/tools"
-              onClick={() => setOpen(false)}
-              className="text-[11px] font-medium text-[var(--color-accent-600)] hover:underline"
+          {/* Collapsible Tools section (under User ID, matches Ideas) */}
+          <div className="border-t hairline">
+            <button
+              type="button"
+              onClick={() => setToolsOpen((v) => !v)}
+              aria-expanded={toolsOpen}
+              className="w-full px-4 py-2 flex items-center justify-between hover:bg-[var(--color-paper)] transition-colors text-[13px] font-medium"
             >
-              View all →
-            </Link>
+              <span>Tools</span>
+              <span
+                aria-hidden
+                className={`text-[10px] opacity-70 transition-transform duration-150 ${toolsOpen ? "rotate-180" : ""}`}
+              >
+                ▾
+              </span>
+            </button>
+            {toolsOpen && (
+              <div className="pb-1 bg-[var(--color-paper)]/50">
+                {TOOLS_MENU_ITEMS.map((item) => (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    role="menuitem"
+                    onClick={() => {
+                      setToolsOpen(false);
+                      setOpen(false);
+                    }}
+                    className="block pl-7 pr-4 py-1.5 hover:bg-[var(--color-paper)] transition-colors text-[12.5px]"
+                  >
+                    {item.label}
+                  </Link>
+                ))}
+              </div>
+            )}
           </div>
-          <Link
-            href="/tools/screener"
-            role="menuitem"
-            onClick={() => setOpen(false)}
-            className="block px-4 py-2 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
-          >
-            Stock Screener
-          </Link>
-          <Link
-            href="/tools/scanner"
-            role="menuitem"
-            onClick={() => setOpen(false)}
-            className="block px-4 py-2 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
-          >
-            Scanner
-          </Link>
-          <Link
-            href="/tools/52-week-high-low"
-            role="menuitem"
-            onClick={() => setOpen(false)}
-            className="block px-4 py-2 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
-          >
-            52-Week High / Low
-          </Link>
-          <Link
-            href="/tools/alerts"
-            role="menuitem"
-            onClick={() => setOpen(false)}
-            className="block px-4 py-2 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
-          >
-            Alerts
-          </Link>
-          <Link
-            href="/tools/peer-comparison"
-            role="menuitem"
-            onClick={() => setOpen(false)}
-            className="block px-4 py-2 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
-          >
-            Peer Comparison
-          </Link>
-          <Link
-            href="/tools/universe-changes"
-            role="menuitem"
-            onClick={() => setOpen(false)}
-            className="block px-4 py-2 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
-          >
-            Universe Changes
-          </Link>
-          <Link
-            href="/feedback"
-            role="menuitem"
-            onClick={() => setOpen(false)}
-            className="block px-4 py-2 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
-          >
-            Feedback
-          </Link>
 
           <button
             type="button"
