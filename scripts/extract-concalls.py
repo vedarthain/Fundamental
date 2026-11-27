@@ -299,6 +299,11 @@ def build_user_prompt(symbol: str, company_name: str, title: str, published_at: 
     )
 
 
+class _ModalRedirectHandler(urllib.request.HTTPRedirectHandler):
+    max_repeats = 20
+    max_redirections = 25
+
+
 def call_modal(payload: dict[str, Any]) -> tuple[dict[str, Any], str]:
     url = os.environ.get("MODAL_CONCALL_URL", "").strip()
     if not url:
@@ -307,12 +312,13 @@ def call_modal(payload: dict[str, Any]) -> tuple[dict[str, Any], str]:
     tok = os.environ.get("CONCALL_API_TOKEN", "").strip()
     if tok:
         headers["Authorization"] = f"Bearer {tok}"
+    opener = urllib.request.build_opener(_ModalRedirectHandler())
     req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
-    with urllib.request.urlopen(req, timeout=240) as resp:
+    with opener.open(req, timeout=240) as resp:
         body = json.loads(resp.read().decode("utf-8"))
     if not body.get("ok"):
         raise RuntimeError(f"Modal error: {body.get('error')}")
-    return body["data"], str(body.get("model", "modal-qwen2.5-32b-awq"))
+    return body["data"], str(body.get("model", "modal-qwen2.5-72b-awq"))
 
 
 def call_gemini(user_prompt: str, model_hint: str) -> tuple[dict[str, Any], str]:
