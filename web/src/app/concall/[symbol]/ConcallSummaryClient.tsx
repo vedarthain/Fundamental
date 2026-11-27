@@ -19,6 +19,10 @@ import {
 } from "lucide-react";
 import type { ConcallDigest } from "@/lib/concallTypes";
 import CapTierBadge, { type CapCategory } from "@/components/CapTierBadge";
+import {
+  ConcallAudioBar,
+  type ActiveConcallAudio,
+} from "@/components/ConcallAudioBar";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { band, bandColor } from "@/lib/score";
 
@@ -106,6 +110,7 @@ export function ConcallSummaryClient({
   const [activeIdx, setActiveIdx] = useState(0);
   const [showQuotes, setShowQuotes] = useState(true);
   const [qaQuery, setQaQuery] = useState("");
+  const [activeAudio, setActiveAudio] = useState<ActiveConcallAudio | null>(null);
 
   const active = concalls[Math.min(activeIdx, Math.max(0, concalls.length - 1))] ?? null;
   const latestAudio = useMemo(
@@ -215,16 +220,26 @@ export function ConcallSummaryClient({
               </div>
             )}
 
-            {latestAudio?.pdfUrl && (
-              <a
-                href={latestAudio.pdfUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-amber-50/60 hover:border-amber-300 text-[12.5px] font-medium text-slate-800 transition-colors"
+            {latestAudio && (
+              <button
+                type="button"
+                onClick={() =>
+                  setActiveAudio({
+                    announcementId: latestAudio.id,
+                    symbol: stock.symbol,
+                    companyName: stock.companyName,
+                    quarterLabel: active?.quarterLabel,
+                  })
+                }
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[12.5px] font-medium transition-colors ${
+                  activeAudio?.announcementId === latestAudio.id
+                    ? "border-amber-400 bg-amber-50 text-amber-900 font-semibold"
+                    : "border-slate-200 bg-white hover:bg-amber-50/60 hover:border-amber-300 text-slate-800"
+                }`}
               >
                 <Headphones size={14} className="text-amber-600" />
-                Listen
-              </a>
+                {activeAudio?.announcementId === latestAudio.id ? "Playing…" : "Listen"}
+              </button>
             )}
 
             {latestTranscript && (
@@ -668,16 +683,36 @@ export function ConcallSummaryClient({
                       </div>
                     </div>
                   </div>
-                  {f.pdfUrl && (
-                    <a
-                      href={f.pdfUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-[12px] font-medium text-slate-700 shrink-0"
-                    >
-                      Open Attachment <ExternalLink size={11} />
-                    </a>
-                  )}
+                  <div className="flex items-center gap-2 shrink-0">
+                    {f.kind === "audio" && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setActiveAudio({
+                            announcementId: f.id,
+                            symbol: stock.symbol,
+                            companyName: stock.companyName,
+                            quarterLabel: active?.quarterLabel,
+                          })
+                        }
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-amber-300 bg-amber-50/70 hover:bg-amber-100 text-[12px] font-semibold text-amber-900"
+                      >
+                        <Headphones size={12} />
+                        Listen
+                      </button>
+                    )}
+                    {f.pdfUrl && (
+                      <a
+                        href={f.pdfUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-[12px] font-medium text-slate-700"
+                      >
+                        {f.kind === "audio" ? "Filing Notice" : "Open Attachment"}{" "}
+                        <ExternalLink size={11} />
+                      </a>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -685,9 +720,11 @@ export function ConcallSummaryClient({
         </div>
       )}
 
-      <div className="text-[11.5px] text-slate-400 pt-2">
+      <div className={`text-[11.5px] text-slate-400 pt-2 ${activeAudio ? "pb-32" : ""}`}>
         Strictly factual summary extracted &amp; quote-verified from official BSE Regulation 30 filings. Not investment advice.
       </div>
+
+      <ConcallAudioBar target={activeAudio} onClose={() => setActiveAudio(null)} />
     </div>
   );
 }
