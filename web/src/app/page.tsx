@@ -3,6 +3,7 @@ import { sql } from "@/lib/db";
 import { ArrowRight, Check } from "lucide-react";
 import { RevealOnScroll } from "@/components/RevealOnScroll";
 import { Nifty50TickerStrip } from "@/components/Nifty50TickerStrip";
+import { LandingAccountCta } from "@/components/LandingAccountCta";
 import {
   SampleScorecard,
   WorkspacePreview,
@@ -93,8 +94,8 @@ export default async function Landing() {
 
   return (
     <>
-      <Hero snap={snap} />
       <Nifty50TickerStrip />
+      <Hero snap={snap} />
       <RevealOnScroll><WorkspacePreview /></RevealOnScroll>
       <RevealOnScroll><ResponsiveSectorHeatmap tiles={tiles} /></RevealOnScroll>
       <RevealOnScroll><MethodologyComparison /></RevealOnScroll>
@@ -112,7 +113,7 @@ function Hero({ snap }: { snap: Snapshot }) {
 
   return (
     <section className="grain relative overflow-hidden">
-      <div className="relative max-w-[1200px] mx-auto px-3.5 sm:px-6 pt-5 pb-8 sm:pt-8 md:pt-14 md:pb-16">
+      <div className="relative max-w-[1200px] mx-auto px-3.5 sm:px-6 pt-4 pb-8 sm:pt-6 md:pt-8 md:pb-16">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-12 items-center">
           
           {/* Left Column: Core Value Pitch */}
@@ -164,7 +165,7 @@ function Hero({ snap }: { snap: Snapshot }) {
                 icon="💼"
                 label="Portfolio Sync"
                 sub="Zerodha / Upstox import"
-                href="/signup"
+                href="/portfolio"
               />
             </div>
 
@@ -174,9 +175,7 @@ function Hero({ snap }: { snap: Snapshot }) {
                 Browse all sectors
                 <ArrowRight size={14} />
               </Link>
-              <Link href="/signup" className="btn-ghost text-[13px] sm:text-[13.5px]">
-                Create free account
-              </Link>
+              <LandingAccountCta />
             </div>
           </div>
 
@@ -322,9 +321,7 @@ function FooterCTA() {
             Open all sectors
             <ArrowRight size={14} />
           </Link>
-          <Link href="/signup" className="btn-ghost text-[13px] sm:text-[13.5px]">
-            Create free account
-          </Link>
+          <LandingAccountCta />
         </div>
       </div>
     </section>

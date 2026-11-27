@@ -22,6 +22,7 @@ import {
 import { BusinessVisual, type OverviewRow } from "@/components/BusinessVisual";
 import { AboutTabs } from "@/components/AboutTabs";
 import { MoatCard } from "@/components/MoatCard";
+import { PeerMiniStrip, type PeerMiniRow } from "@/components/PeerMiniStrip";
 import { StockPageTabs } from "@/components/StockPageTabs";
 import { StockActionsTabs } from "@/components/StockActionsTabs";
 import { TrendSection, TrendCommentary } from "@/components/TrendSection";
@@ -660,6 +661,30 @@ async function loadStock(symbol: string) {
     nextEvent = null;
   }
 
+  const topPeers =
+    stock.industry_id != null
+      ? await sql<PeerMiniRow[]>`
+          SELECT s.symbol,
+                 u.company_name,
+                 s.composite_pct::float AS composite_pct,
+                 s.quality_pct::float   AS quality_pct,
+                 s.valuation_pct::float AS valuation_pct,
+                 s.momentum_pct::float  AS momentum_pct
+          FROM app.scores s
+          JOIN app.universe u ON u.symbol = s.symbol
+          WHERE s.cluster_id = ${stock.industry_id}
+            AND s.maturity_tier = ${stock.maturity_tier}
+            AND s.snapshot_date = (
+              SELECT MAX(snapshot_date) FROM app.scores
+              WHERE cluster_id = ${stock.industry_id} AND maturity_tier = ${stock.maturity_tier}
+            )
+            AND s.symbol <> ${upper}
+            AND s.composite_pct IS NOT NULL
+          ORDER BY s.composite_pct DESC
+          LIMIT 3
+        `.catch(() => [] as PeerMiniRow[])
+      : [];
+
   return {
     stock, scorecard, annual, quarterly, priceHistory, dayChangePct, shareholding,
     overview,
@@ -669,6 +694,7 @@ async function loadStock(symbol: string) {
     peerMedianComposite: peerStats[0]?.median ?? 50,
     rankInIndustry: peerStats[0]?.rank ?? null,
     industryPeerCount: peerStats[0]?.peer_count ?? null,
+    topPeers,
   };
 }
 
@@ -690,7 +716,7 @@ export default async function StockPage({
     isAdminRequest(),
   ]);
   if (!data) return notFound();
-  const { stock, scorecard, annual, quarterly, priceHistory, dayChangePct, shareholding, overview, overviewLatestFy, corporateActions, stockNews, announcements, scoreHistory, oiAlert, nextEvent, rankInIndustry, industryPeerCount, isThinlyTraded, medTurnover, liqSessions } = data;
+  const { stock, scorecard, annual, quarterly, priceHistory, dayChangePct, shareholding, overview, overviewLatestFy, corporateActions, stockNews, announcements, scoreHistory, oiAlert, nextEvent, rankInIndustry, industryPeerCount, isThinlyTraded, medTurnover, liqSessions, topPeers } = data;
 
   // Hand-written verdict (app.stock_verdict) — ADMIN ONLY.
   //
@@ -1226,15 +1252,22 @@ export default async function StockPage({
         verdict={verdictNode}
         strengths={
           <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-8">
-            <section className="card p-6">
-              <h2 className="font-display text-[20px] mb-2">Strengths and gaps</h2>
-              <p className="text-[13px] muted-text mb-6">
-                The charts are this stock&apos;s underlying metric trends across all three
-                pillars; the bars below show where it ranks within {industryLabel(stock.industry_name)} ·{" "}
-                {tierLabel(stock.maturity_tier)} peers (the middle line is the cluster median).
-              </p>
-              <StrengthsPanel tabs={pillarTabs} strengthRows={strengthRows} />
-            </section>
+            <div className="min-w-0">
+              <section className="card p-6">
+                <h2 className="font-display text-[20px] mb-2">Strengths and gaps</h2>
+                <p className="text-[13px] muted-text mb-6">
+                  The charts are this stock&apos;s underlying metric trends across all three
+                  pillars; the bars below show where it ranks within {industryLabel(stock.industry_name)} ·{" "}
+                  {tierLabel(stock.maturity_tier)} peers (the middle line is the cluster median).
+                </p>
+                <StrengthsPanel tabs={pillarTabs} strengthRows={strengthRows} />
+              </section>
+              <PeerMiniStrip
+                symbol={stock.symbol}
+                industryName={stock.industry_name}
+                peers={topPeers}
+              />
+            </div>
 
             <aside className="space-y-6">
               <PillarBreakdown
