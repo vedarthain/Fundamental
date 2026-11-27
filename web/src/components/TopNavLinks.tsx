@@ -52,11 +52,14 @@ const LINKS: NavLink[] = [
       { href: "/ideas?view=dividends", label: "Dividend Corner", description: "Dividend-paying stocks, high yields, consistency record, and upcoming payouts" },
     ],
   },
+  { href: "/concall", label: "Concall" },
 ];
 
 export const TOOLS_MENU_ITEMS: Submenu[] = [
+  { href: "/tools",                  label: "All Tools",        description: "Overview of all research & screening tools" },
   { href: "/tools/screener",         label: "Stock Screener",   description: "Filter by criteria, see ranked matches" },
   { href: "/tools/scanner",          label: "Scanner",          description: "Igniting today, trend leaders, fallen leaders" },
+  { href: "/tools/52-week-high-low", label: "52-Week High/Low", description: "Stocks at 52-week price extremes" },
   { href: "/tools/alerts",           label: "Alerts",           description: "Holdings that need a look + your price alerts" },
   { href: "/tools/peer-comparison",  label: "Peer Comparison",  description: "Stack 2-5 stocks side by side" },
   { href: "/tools/universe-changes", label: "Universe Changes", description: "Weekly log of stocks added & removed" },
@@ -413,6 +416,7 @@ function MobileTabBar({ pathname, user, isAdmin, showWatchlist, showSignIn }: Mo
         <TabButton label="Segments" active={segmentsActive} isOpen={popup === "segments"} onClick={() => setPopup((p) => p === "segments" ? null : "segments")} />
         <TabLink  href="/news"     label="News"     active={isActive(pathname, "/news")}    onClick={() => setPopup(null)} />
         <TabButton label="Ideas"    active={ideasActive}    isOpen={popup === "ideas"}    onClick={() => setPopup((p) => p === "ideas"    ? null : "ideas"   )} />
+        <TabLink  href="/concall"  label="Concall"  active={isActive(pathname, "/concall")} onClick={() => setPopup(null)} />
         <TabButton label="Account"  active={accountActive}  isOpen={popup === "account"}  onClick={() => setPopup((p) => p === "account"  ? null : "account" )} />
         {isAdmin && (
           <TabButton label="Admin"  active={adminActive}    isOpen={popup === "admin"}    onClick={() => setPopup((p) => p === "admin"    ? null : "admin"   )} />

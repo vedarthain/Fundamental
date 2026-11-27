@@ -150,11 +150,18 @@ export function UserMenu({ email, displayName }: Props) {
             Account settings
           </Link>
 
-          {/* Tools Section */}
-          <div className="px-4 pt-2.5 pb-1 border-t hairline">
-            <div className="text-[10.5px] font-semibold tracking-wider uppercase muted-text">
+          {/* Tools Section (under User ID) */}
+          <div className="px-4 pt-2.5 pb-1 border-t hairline flex items-center justify-between">
+            <span className="text-[10.5px] font-semibold tracking-wider uppercase muted-text">
               Tools
-            </div>
+            </span>
+            <Link
+              href="/tools"
+              onClick={() => setOpen(false)}
+              className="text-[11px] font-medium text-[var(--color-accent-600)] hover:underline"
+            >
+              View all →
+            </Link>
           </div>
           <Link
             href="/tools/screener"
@@ -171,6 +178,14 @@ export function UserMenu({ email, displayName }: Props) {
             className="block px-4 py-2 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
           >
             Scanner
+          </Link>
+          <Link
+            href="/tools/52-week-high-low"
+            role="menuitem"
+            onClick={() => setOpen(false)}
+            className="block px-4 py-2 hover:bg-[var(--color-paper)] transition-colors text-[13px]"
+          >
+            52-Week High / Low
           </Link>
           <Link
             href="/tools/alerts"

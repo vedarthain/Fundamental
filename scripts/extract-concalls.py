@@ -117,8 +117,10 @@ def quote_is_verified(quote: str, norm_transcript: str, transcript_words: list[s
     return (hits / len(grams)) >= 0.75
 
 
-def sanitize_and_verify(raw: dict[str, Any], pdf_text: str, strict: bool = True) -> tuple[dict[str, Any], float]:
+def sanitize_and_verify(raw: dict[str, Any] | list[Any], pdf_text: str, strict: bool = True) -> tuple[dict[str, Any], float]:
     """Validate schema, enforce SEBI-safe factual rules, and drop unverified quotes."""
+    if isinstance(raw, list):
+        raw = raw[0] if raw and isinstance(raw[0], dict) else {}
     norm_tx = normalize_for_match(pdf_text)
     tx_words = norm_tx.split()
 
@@ -349,6 +351,8 @@ def main() -> int:
     load_env()
     ap = argparse.ArgumentParser(description="Extract quote-verified concall digests into app.concall_summary")
     ap.add_argument("--symbol", nargs="*", help="Specific NSE symbol(s) to process")
+    ap.add_argument("--audio-url", help="YouTube / MP3 / MP4 concall recording URL (uses MODAL_WHISPER_URL to transcribe, requires single --symbol)")
+    ap.add_argument("--quarter", help="Optional quarter label override for --audio-url, e.g. 'Q3 FY27'")
     ap.add_argument("--scope", choices=["priority", "all"], default="priority", help="priority = Portfolio + Watchlist + Nifty 500")
     ap.add_argument("--engine", choices=["modal", "gemini", "ollama"], default="gemini")
     ap.add_argument("--model", default="auto")
@@ -438,48 +442,76 @@ def main() -> int:
 
     def process_one(sym: str, company_name: str) -> str:
         t0 = time.monotonic()
-        with psycopg.connect(db_url) as c2, c2.cursor() as cur2:
-            cur2.execute(
-                """
-                SELECT a.id, COALESCE(a.headline, a.title) AS title, a.published_at, a.pdf_url
-                  FROM app.announcement a
-                 WHERE a.symbol = %s
-                   AND a.pdf_url IS NOT NULL
-                   AND a.published_at > now() - interval '365 days'
-                   AND (a.title ~* 'transcript|earnings call|concall|conference call'
-                        OR a.headline ~* 'transcript|earnings call|concall|conference call')
-                   AND a.title !~* '^audio recording|intimation of schedule'
-                   AND NOT EXISTS (
-                       SELECT 1 FROM app.concall_summary cs WHERE cs.announcement_id = a.id
-                   )
-                 ORDER BY
-                   CASE WHEN COALESCE(a.title, '') || ' ' || COALESCE(a.headline, '') ~* 'transcript' THEN 0 ELSE 1 END,
-                   a.published_at DESC
-                 LIMIT 4
-                """,
-                (sym,),
+        if args.audio_url:
+            whisper_url = os.environ.get("MODAL_WHISPER_URL", "").strip()
+            if not whisper_url:
+                raise RuntimeError("MODAL_WHISPER_URL env var is required for --audio-url")
+            headers = {"Content-Type": "application/json"}
+            tok = os.environ.get("CONCALL_API_TOKEN", "").strip()
+            if tok:
+                headers["Authorization"] = f"Bearer {tok}"
+            req = urllib.request.Request(
+                whisper_url,
+                data=json.dumps({"media_url": args.audio_url}).encode("utf-8"),
+                headers=headers,
+                method="POST",
             )
-            cands = cur2.fetchall()
+            with urllib.request.urlopen(req, timeout=600) as resp:
+                wbody = json.loads(resp.read().decode("utf-8"))
+            if not wbody.get("ok"):
+                return f"❌ {sym:12s} | Whisper error: {wbody.get('error')}"
+            pdf_text = str(wbody.get("transcript_text", "")).strip()
+            if len(pdf_text) < MIN_CHARS:
+                return f"⏭️  {sym:12s} | audio transcript too short ({len(pdf_text)}ch)"
+            cid = None
+            title = f"Audio/Video Earnings Call ({args.quarter or 'Latest'})"
+            pub_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            pdf_url = args.audio_url
+            note = f"audio:{wbody.get('duration_sec', 0)}s"
+        else:
+            with psycopg.connect(db_url) as c2, c2.cursor() as cur2:
+                cur2.execute(
+                    """
+                    SELECT a.id, COALESCE(a.headline, a.title) AS title, a.published_at, a.pdf_url
+                      FROM app.announcement a
+                     WHERE a.symbol = %s
+                       AND a.pdf_url IS NOT NULL
+                       AND a.published_at > now() - interval '365 days'
+                       AND (a.title ~* 'transcript|earnings call|concall|conference call'
+                            OR a.headline ~* 'transcript|earnings call|concall|conference call')
+                       AND a.title !~* '^audio recording|intimation of schedule'
+                       AND NOT EXISTS (
+                           SELECT 1 FROM app.concall_summary cs WHERE cs.announcement_id = a.id
+                       )
+                     ORDER BY
+                       CASE WHEN COALESCE(a.title, '') || ' ' || COALESCE(a.headline, '') ~* 'transcript' THEN 0 ELSE 1 END,
+                       a.published_at DESC
+                     LIMIT 4
+                    """,
+                    (sym,),
+                )
+                cands = cur2.fetchall()
 
-        if not cands:
-            return f"⏭️  {sym:12s} | no new candidate filings"
+            if not cands:
+                return f"⏭️  {sym:12s} | no new candidate filings"
 
-        chosen = None
-        pdf_text = None
-        note = ""
-        for cid, title, pub_at, pdf_url in cands:
-            txt, why = download_and_extract_pdf(pdf_url)
-            if txt is not None:
-                chosen = (cid, title, pub_at, pdf_url)
-                pdf_text = txt
+            chosen = None
+            pdf_text = None
+            note = ""
+            for cid, title, pub_at, pdf_url in cands:
+                txt, why = download_and_extract_pdf(pdf_url)
+                if txt is not None:
+                    chosen = (cid, title, pub_at, pdf_url)
+                    pdf_text = txt
+                    note = why
+                    break
                 note = why
-                break
-            note = why
 
-        if not chosen or not pdf_text:
-            return f"⏭️  {sym:12s} | skipped ({note})"
+            if not chosen or not pdf_text:
+                return f"⏭️  {sym:12s} | skipped ({note})"
 
-        cid, title, pub_at, pdf_url = chosen
+            cid, title, pub_at, pdf_url = chosen
+
         pub_iso = pub_at.isoformat() if hasattr(pub_at, "isoformat") else str(pub_at)
         sha = hashlib.sha256(pdf_text.encode("utf-8")).hexdigest()
 

@@ -144,3 +144,73 @@ if modal is not None:
                 parsed = json.loads(m.group(0))
 
             return {"ok": True, "model": MODEL_ID, "data": parsed}
+
+    whisper_image = (
+        modal.Image.debian_slim(python_version="3.11")
+        .apt_install("ffmpeg")
+        .pip_install("faster-whisper>=1.1.0", "yt-dlp", "fastapi[standard]")
+        .env({"HF_HOME": "/root/.cache/huggingface"})
+    )
+
+    @app.cls(
+        image=whisper_image,
+        gpu="L4",
+        volumes={"/root/.cache/huggingface": hf_cache},
+        scaledown_window=60,
+        timeout=900,
+        max_containers=4,
+    )
+    class ConcallAudioTranscriber:
+        @modal.enter()
+        def load_whisper(self) -> None:
+            from faster_whisper import WhisperModel
+
+            self.whisper = WhisperModel("large-v3-turbo", device="cuda", compute_type="float16")
+
+        @modal.fastapi_endpoint(method="POST")
+        def transcribe(self, payload: dict[str, Any], authorization: str | None = None) -> dict[str, Any]:
+            import shutil
+            import subprocess
+            import tempfile
+
+            expected_tok = os.environ.get("CONCALL_API_TOKEN", "").strip()
+            if expected_tok:
+                given = (authorization or "").replace("Bearer ", "").strip()
+                if given != expected_tok:
+                    return {"ok": False, "error": "unauthorized"}
+
+            media_url = str(payload.get("media_url", "")).strip()
+            if not media_url:
+                return {"ok": False, "error": "media_url_required"}
+
+            tmp = tempfile.mkdtemp(prefix="concall_audio_")
+            audio_out = os.path.join(tmp, "audio.mp3")
+            try:
+                subprocess.run(
+                    [
+                        "yt-dlp",
+                        "--no-playlist",
+                        "-x",
+                        "--audio-format",
+                        "mp3",
+                        "--audio-quality",
+                        "5",
+                        "-o",
+                        audio_out,
+                        media_url,
+                    ],
+                    check=True,
+                    timeout=300,
+                )
+                segments, info = self.whisper.transcribe(audio_out, beam_size=3, vad_filter=True)
+                text = " ".join(seg.text.strip() for seg in segments).strip()
+                return {
+                    "ok": True,
+                    "duration_sec": round(info.duration, 1),
+                    "language": info.language,
+                    "transcript_text": text,
+                }
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
