@@ -313,7 +313,7 @@ export function PortfolioClient({
           { v: "dividends", label: "Dividends" },
           { v: "performance", label: "Performance" },
           { v: "transactions", label: "Transactions" },
-          { v: "booked", label: "P&L" },
+          { v: "booked", label: "Realized P&L" },
           { v: "returns", label: "Returns" },
         ] as const)
           .filter((o) => owner || (o.v !== "performance" && o.v !== "returns"))
@@ -367,7 +367,7 @@ export function PortfolioClient({
         ) : extrasStatus === "error" ? (
           <p className="muted-text text-[13px] py-8">Could not load booked P&amp;L. Open this tab again.</p>
         ) : (
-          <BookedPnl realized={realized} instruments={portfolio.instruments} />
+          <BookedPnl realized={realized} instruments={portfolio.instruments} timeline={timeline} />
         )
       ) : tab === "holdings" ? (
         !portfolio.hasHoldings ? (
@@ -630,6 +630,37 @@ function PerformanceTab({ portfolio, realized, perf, timeline }: { portfolio: Po
         />
         <SegmentWindows seg={seg} windows={segWindows.windows} skipped={segWindows.skipped} />
       </div>
+      {/* Plain-English Profit Breakdown — makes Open vs Booked vs Lifetime crystal clear */}
+      <div className="card px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-[12.5px]">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+          <div>
+            <span className="muted-text">Unrealized (Open): </span>
+            <strong className="tabular-nums font-mono" style={{ color: up(unrealized) ? GREEN : RED }}>
+              {signed(unrealized)}
+            </strong>
+            <span className="muted-text text-[11px] ml-1">(Current − Invested)</span>
+          </div>
+          <span className="muted-text">+</span>
+          <div>
+            <span className="muted-text">Realized (Booked): </span>
+            <strong className="tabular-nums font-mono" style={{ color: up(realizedTotal) ? GREEN : RED }}>
+              {signed(realizedTotal)}
+            </strong>
+            <span className="muted-text text-[11px] ml-1">(Closed Sells)</span>
+          </div>
+          <span className="muted-text">=</span>
+          <div>
+            <span className="muted-text">Lifetime Profit: </span>
+            <strong className="tabular-nums font-mono text-[13.5px]" style={{ color: up(lifetimePnl) ? GREEN : RED }}>
+              {signed(lifetimePnl)}
+            </strong>
+          </div>
+        </div>
+        <span className="text-[11px] muted-text">
+          See the <strong>Realized P&amp;L</strong> tab for closed trades &amp; FY tax lots
+        </span>
+      </div>
+
       {/* Sits directly under the value/P&L cards on purpose: those numbers are
           only as current as the snapshots behind them. */}
       <BrokerFreshness snapshots={portfolio.brokerSnapshots} />
@@ -640,7 +671,7 @@ function PerformanceTab({ portfolio, realized, perf, timeline }: { portfolio: Po
           label="Lifetime P&L"
           value={signed(lifetimePnl)}
           valueColor={up(lifetimePnl) ? GREEN : RED}
-          sub={`${signed(unrealized)} open · ${signed(realizedTotal)} booked`}
+          sub={`${signed(unrealized)} open + ${signed(realizedTotal)} booked`}
           icon={<IconTrendUp size={15} />}
           accent={up(lifetimePnl) ? GREEN : RED}
         />
@@ -678,16 +709,12 @@ function PerformanceTab({ portfolio, realized, perf, timeline }: { portfolio: Po
         </div>
       )}
 
-      {/* Realized performance over time — the honest long-run trader view */}
-      {timeline && <RealizedTimelinePanel timeline={timeline} />}
-
       {/* Discipline desk — rule triggers with plain calls to action (owner-only) */}
       <DisciplineDesk instruments={instruments} />
 
-      {/* Zone A — attribution */}
+      {/* Zone A — attribution (Open holdings only; realized attribution lives in Realized P&L tab) */}
       <WinnersLosers instruments={instruments} />
       <SectorContribution instruments={instruments} mappedValue={mappedValue} />
-      {realized.rows.length > 0 && <RealizedLeaders realized={realized} />}
 
       {/* Zone B — quality */}
       <QualityDistribution mapped={mapped} mappedValue={mappedValue} totalValue={totals.currentValue} />
@@ -1058,7 +1085,7 @@ function DailyProfitChart({
             className="text-[10.5px] font-semibold muted-text uppercase tracking-wide"
             title="Sum of the daily close-to-close moves over the days plotted. Not lifetime gain."
           >
-            Net over window
+            Window Gain (Chart)
           </div>
           <div className="tabular-nums font-semibold text-[15px] mt-0.5" style={{ color: net >= 0 ? GREEN : RED }}>{signed(net)}</div>
           <div
@@ -1967,7 +1994,15 @@ function TermBadge({ term, lt, st }: { term: RealizedTerm; lt?: number; st?: num
   );
 }
 
-function BookedPnl({ realized, instruments }: { realized: RealizedPnl; instruments: Instrument[] }) {
+function BookedPnl({
+  realized,
+  instruments,
+  timeline,
+}: {
+  realized: RealizedPnl;
+  instruments: Instrument[];
+  timeline?: RealizedTimeline | null;
+}) {
   // Defaults to Booked P&L high→low (the server's original order).
   const [sort, setSort] = useState<{ key: RSortKey; dir: SortDir }>({ key: "realized", dir: "desc" });
   // Everything starts COLLAPSED. We track the set of EXPANDED keys (not
@@ -2273,6 +2308,16 @@ function BookedPnl({ realized, instruments }: { realized: RealizedPnl; instrumen
           Not tax advice.
         </p>
       </div>
+      {timeline && (
+        <div className="mt-6">
+          <RealizedTimelinePanel timeline={timeline} />
+        </div>
+      )}
+      {realized.rows.length > 0 && (
+        <div className="mt-6">
+          <RealizedLeaders realized={realized} />
+        </div>
+      )}
     </>
   );
 }
@@ -2963,10 +3008,10 @@ function SummaryCards({
       />
       <Card label="Invested" value={inr(t.invested)} sub={snapshot ? `scores @ ${snapshot}` : undefined} icon={<IconDeposit size={15} />} />
       <Card
-        label="Total P&L"
+        label="Unrealized P&L"
         value={signed(t.pnl)}
         valueColor={up(t.pnl) ? GREEN : RED}
-        sub={pct(t.pnlPct)}
+        sub={`${pct(t.pnlPct)} · Current − Invested`}
         subColor={up(t.pnlPct) ? GREEN : RED}
         icon={<IconTrendUp size={15} />}
         accent={up(t.pnl) ? GREEN : RED}

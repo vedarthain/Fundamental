@@ -100,11 +100,6 @@ export function TopNavLinks() {
             : <DesktopLink key={l.href} href={l.href} label={l.label} active={active} />;
         })}
 
-        {/* Dedicated Admin dropdown tab — only rendered when authenticated user is an admin */}
-        {!loading && isAdmin && (
-          <DesktopAdminDropdown active={isActive(pathname, "/admin")} />
-        )}
-
         {showWatchlist && (
           <DesktopLink href="/portfolio" label="Portfolio" active={isActive(pathname, "/portfolio")} />
         )}
@@ -118,6 +113,11 @@ export function TopNavLinks() {
         {!loading && user !== null && <ScribblePad />}
         {!loading && user !== null && (
           <UserMenu email={user.email} displayName={user.displayName} isAdmin={isAdmin} />
+        )}
+
+        {/* Dedicated Admin dropdown tab — placed after UserMenu when authenticated user is an admin */}
+        {!loading && isAdmin && (
+          <DesktopAdminDropdown active={isActive(pathname, "/admin")} />
         )}
       </nav>
 
