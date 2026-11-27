@@ -76,6 +76,6 @@ Tracked 1-by-1 checklist of website improvements and new features across all pag
 ---
 
 ## Admin (`/admin/*`)
-- [ ] **`/admin/reports`**: Fix pre-existing TS warning at line 676 (`ReportExtractorClient.tsx`) + conditional green row highlight when `LTP <= buy_below` and `action === "BUY"`.
+- [x] **`/admin/reports`**: Fix pre-existing TS warning at line 676 (`ReportExtractorClient.tsx`) + conditional green row highlight when `LTP <= buy_below` and `action === "BUY"`.
 - [ ] **`/admin/calls` & `/admin/verdicts`**: Verdict Accuracy / Hit-Rate Tracker (anchor price/date vs 3M/6M/12M forward returns by cluster & confidence).
 - [ ] **`/admin/logs` & `/admin/insights`**: Interactive APM status cards at the top of `/admin/logs` parsed from `cron-monitor.py` (17 crons, DB latency, PM2 RSS, Verdict/Moat/Drift coverage).

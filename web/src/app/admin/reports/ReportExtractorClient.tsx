@@ -676,7 +676,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
       return <span>{num.toLocaleString("en-IN")}</span>;
     }
 
-    if (col.id === "company_name") {
+    if ((col.id as string) === "company_name") {
       return <span className="max-w-[180px] sm:max-w-[220px] truncate block font-medium" title={String(val)}>{String(val)}</span>;
     }
 
@@ -1220,14 +1220,26 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800/70">
                     {paginatedRows.map((row, idx) => {
                       const absoluteIdx = (page - 1) * pageSize + idx + 1;
+                      const isBuyZone =
+                        row.action === "BUY" &&
+                        row.ltp != null &&
+                        row.buy_below != null &&
+                        row.ltp <= row.buy_below;
+                      const stickyBg = isBuyZone
+                        ? "bg-emerald-50 dark:bg-emerald-950/80"
+                        : "bg-white group-even:bg-slate-50 dark:bg-slate-900";
                       return (
                         <tr
                           key={row.symbol}
-                          className="group even:bg-slate-50/50 dark:even:bg-slate-800/30 hover:bg-blue-50/70 dark:hover:bg-slate-800/80 transition-colors"
+                          className={`group transition-colors ${
+                            isBuyZone
+                              ? "bg-emerald-50/70 dark:bg-emerald-950/30 hover:bg-emerald-100/70 dark:hover:bg-emerald-950/60"
+                              : "even:bg-slate-50/50 dark:even:bg-slate-800/30 hover:bg-blue-50/70 dark:hover:bg-slate-800/80"
+                          }`}
                         >
                           <td
                             style={{ width: 44, minWidth: 44, maxWidth: 44, left: 0 }}
-                            className={`${isCompact ? "py-1 px-1 text-[11px]" : "py-1.5 px-2 text-xs"} text-slate-400 text-center font-mono sticky left-0 z-20 bg-white group-even:bg-slate-50 dark:bg-slate-900 group-hover:bg-blue-50 dark:group-hover:bg-slate-800 border-r border-slate-200/60 dark:border-slate-800 transition-colors`}
+                            className={`${isCompact ? "py-1 px-1 text-[11px]" : "py-1.5 px-2 text-xs"} text-slate-400 text-center font-mono sticky left-0 z-20 ${stickyBg} group-hover:bg-blue-50 dark:group-hover:bg-slate-800 border-r border-slate-200/60 dark:border-slate-800 transition-colors`}
                           >
                             {absoluteIdx}
                           </td>
@@ -1239,7 +1251,7 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                                 style={isFirstCol ? { left: 44 } : undefined}
                                 className={`${isCompact ? "py-1 px-2 text-xs" : "py-2 px-2.5 text-sm"} whitespace-nowrap ${
                                   isFirstCol
-                                    ? "sticky z-20 bg-white group-even:bg-slate-50 dark:bg-slate-900 group-hover:bg-blue-50 dark:group-hover:bg-slate-800 font-semibold border-r-2 border-slate-300 dark:border-slate-700 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.12)] transition-colors"
+                                    ? `sticky z-20 ${stickyBg} group-hover:bg-blue-50 dark:group-hover:bg-slate-800 font-semibold border-r-2 border-slate-300 dark:border-slate-700 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.12)] transition-colors`
                                     : ""
                                 } ${col.width ?? ""} ${
                                   col.align === "right"
