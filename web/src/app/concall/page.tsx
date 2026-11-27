@@ -73,8 +73,11 @@ async function loadConcallHubData(): Promise<{
           pe_ttm: number | null;
           ev_ebitda_ttm: number | null;
           quarter_label: string | null;
+          announcement_id: string | null;
           published_at: string;
           pdf_url: string | null;
+          cached_media_url: string | null;
+          cached_media_kind: "audio" | "video" | "youtube" | "webcast" | null;
           tone: "Optimistic" | "Neutral" | "Cautious";
           tone_rationale: string | null;
           numbers_mentioned: unknown;
@@ -166,8 +169,11 @@ async function loadConcallHubData(): Promise<{
                ms.pe_ttm,
                ms.ev_ebitda_ttm,
                cs.quarter_label,
+               cs.announcement_id,
                cs.published_at::text AS published_at,
                cs.pdf_url,
+               ac_cs.media_url AS cached_media_url,
+               ac_cs.media_kind AS cached_media_kind,
                cs.tone,
                cs.tone_rationale,
                cs.numbers_mentioned,
@@ -181,6 +187,7 @@ async function loadConcallHubData(): Promise<{
                AND sc.snapshot_date = (SELECT MAX(snapshot_date) FROM app.scores)
           LEFT JOIN q_enriched qe ON qe.symbol = cs.symbol
           LEFT JOIN latest_ms ms ON ms.symbol = cs.symbol
+          LEFT JOIN app.concall_audio_cache ac_cs ON ac_cs.announcement_id = cs.announcement_id
          ORDER BY cs.published_at DESC, sm.market_cap_cr DESC NULLS LAST
          LIMIT 300
       `.catch(() => []),
@@ -407,9 +414,13 @@ async function loadConcallHubData(): Promise<{
       debtEquity: r.debt_equity,
       peTtm: r.pe_ttm,
       evEbitdaTtm: r.ev_ebitda_ttm,
-      audioAnnouncementId: withinWindow ? aud.id : null,
-      cachedAudioUrl: withinWindow ? aud.cachedUrl : null,
-      cachedAudioKind: withinWindow ? aud.cachedKind : null,
+      audioAnnouncementId: withinWindow
+        ? aud.id
+        : r.cached_media_url
+          ? r.announcement_id
+          : null,
+      cachedAudioUrl: withinWindow ? aud.cachedUrl : r.cached_media_url,
+      cachedAudioKind: withinWindow ? aud.cachedKind : r.cached_media_kind,
       quarterLabel: r.quarter_label,
       publishedAt: r.published_at,
       pdfUrl: r.pdf_url,
@@ -438,7 +449,7 @@ async function loadConcallHubData(): Promise<{
         Math.abs(new Date(m.publishedAt).getTime() - ts) <= 5 * 86400 * 1000,
     );
     if (existing) {
-      if (isAudio && !existing.audioAnnouncementId) {
+      if ((isAudio || r.cached_media_url) && !existing.audioAnnouncementId) {
         existing.audioAnnouncementId = r.id;
         existing.cachedAudioUrl = r.cached_media_url;
         existing.cachedAudioKind = r.cached_media_kind;
@@ -467,9 +478,12 @@ async function loadConcallHubData(): Promise<{
       peTtm: r.pe_ttm,
       publishedAt: r.published_at,
       title: r.title,
-      audioAnnouncementId: isAudio ? r.id : dig?.audioAnnouncementId ?? null,
-      cachedAudioUrl: isAudio ? r.cached_media_url : dig?.cachedAudioUrl ?? null,
-      cachedAudioKind: isAudio ? r.cached_media_kind : dig?.cachedAudioKind ?? null,
+      audioAnnouncementId:
+        isAudio || r.cached_media_url ? r.id : dig?.audioAnnouncementId ?? null,
+      cachedAudioUrl:
+        isAudio || r.cached_media_url ? r.cached_media_url : dig?.cachedAudioUrl ?? null,
+      cachedAudioKind:
+        isAudio || r.cached_media_url ? r.cached_media_kind : dig?.cachedAudioKind ?? null,
       transcriptUrl: !isAudio ? r.pdf_url : dig?.pdfUrl ?? null,
       hasSummary: Boolean(dig),
       tone: dig?.tone ?? null,

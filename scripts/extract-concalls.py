@@ -622,6 +622,38 @@ def main() -> int:
                     v_ratio,
                 ),
             )
+            # If the transcript PDF itself contains a Meeting Audio / Webcast / Video link, cache it
+            media_candidates = re.findall(r"https?://[^\s<>\"')]+", pdf_text[:6000])
+            best_media = None
+            best_kind = "webcast"
+            for raw_u in media_candidates:
+                u = raw_u.rstrip(".,;:")
+                low = u.lower()
+                if any(b in low for b in ("bseindia.com", "nseindia.com", "sebi.gov.in")) or low.endswith(".pdf"):
+                    continue
+                if re.search(r"\.(mp3|m4a|wav|aac)(\?|$)", low):
+                    best_media, best_kind = u, "audio"
+                    break
+                if re.search(r"\.(mp4|webm|m3u8)(\?|$)", low):
+                    best_media, best_kind = u, "video"
+                    break
+                if "youtube.com" in low or "youtu.be" in low:
+                    best_media, best_kind = u, "youtube"
+                    break
+                if any(k in low for k in ("webcast", "audio", "recording", "events-presentations", "earnings-call")):
+                    best_media, best_kind = u, "webcast"
+            if best_media:
+                cur3.execute(
+                    """
+                    INSERT INTO app.concall_audio_cache (announcement_id, symbol, media_url, media_kind, source_pdf_url)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (announcement_id) DO UPDATE SET
+                        media_url = EXCLUDED.media_url,
+                        media_kind = EXCLUDED.media_kind,
+                        resolved_at = now()
+                    """,
+                    (cid, sym, best_media, best_kind, pdf_url),
+                )
             c3.commit()
 
         dt = time.monotonic() - t0

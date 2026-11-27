@@ -103,18 +103,23 @@ export default async function ConcallSymbolPage({
         title: string;
         published_at: string;
         pdf_url: string | null;
+        cached_media_url: string | null;
+        cached_media_kind: "audio" | "video" | "youtube" | "webcast" | null;
       }[]
     >`
-      SELECT id,
-             COALESCE(headline, title) AS title,
-             published_at::text AS published_at,
-             pdf_url
-        FROM app.announcement
-       WHERE symbol = ${upper}
-         AND pdf_url IS NOT NULL
-         AND (title ~* 'transcript|earnings call|concall|conference call|audio|investor presentation'
-              OR headline ~* 'transcript|earnings call|concall|conference call|audio recording|investor presentation')
-       ORDER BY published_at DESC
+      SELECT a.id,
+             COALESCE(a.headline, a.title) AS title,
+             a.published_at::text AS published_at,
+             a.pdf_url,
+             ac.media_url AS cached_media_url,
+             ac.media_kind AS cached_media_kind
+        FROM app.announcement a
+        LEFT JOIN app.concall_audio_cache ac ON ac.announcement_id = a.id
+       WHERE a.symbol = ${upper}
+         AND a.pdf_url IS NOT NULL
+         AND (a.title ~* 'transcript|earnings call|concall|conference call|audio|investor presentation'
+              OR a.headline ~* 'transcript|earnings call|concall|conference call|audio recording|investor presentation')
+       ORDER BY a.published_at DESC
        LIMIT 25
     `.catch(() => []),
   ]);
@@ -172,6 +177,8 @@ export default async function ConcallSymbolPage({
     title: f.title,
     publishedAt: f.published_at,
     pdfUrl: f.pdf_url,
+    cachedMediaUrl: f.cached_media_url,
+    cachedMediaKind: f.cached_media_kind,
     kind: /audio|video|recording/i.test(f.title)
       ? "audio"
       : /presentation/i.test(f.title)

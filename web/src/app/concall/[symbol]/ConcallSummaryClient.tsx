@@ -56,6 +56,8 @@ export type ConcallArchiveFiling = {
   title: string;
   publishedAt: string;
   pdfUrl: string | null;
+  cachedMediaUrl?: string | null;
+  cachedMediaKind?: "audio" | "video" | "youtube" | "webcast" | null;
   kind: "transcript" | "audio" | "presentation";
 };
 
@@ -115,7 +117,7 @@ export function ConcallSummaryClient({
 
   const active = concalls[Math.min(activeIdx, Math.max(0, concalls.length - 1))] ?? null;
   const latestAudio = useMemo(
-    () => filings.find((f) => f.kind === "audio" && f.pdfUrl),
+    () => filings.find((f) => (f.kind === "audio" && f.pdfUrl) || f.cachedMediaUrl),
     [filings],
   );
   const latestTranscript = useMemo(
