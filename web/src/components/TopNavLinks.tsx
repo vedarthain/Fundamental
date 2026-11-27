@@ -29,6 +29,12 @@ import { QuickAddTradeButton } from "./ManualTradeSheet";
 export type Submenu = { href: string; label: string; description?: string };
 export type NavLink = { href: string; label: string; submenu?: Submenu[] };
 
+export const IDEAS_MENU_ITEMS: Submenu[] = [
+  { href: "/ideas", label: "Trends", description: "Scored weekly ideas — compounders, breakouts, and value in clusters" },
+  { href: "/ideas?view=results", label: "Results Corner", description: "Declared quarterly results for NSE stocks sorted by date" },
+  { href: "/ideas?view=dividends", label: "Dividend Corner", description: "Dividend-paying stocks, high yields, consistency record, and upcoming payouts" },
+];
+
 const LINKS: NavLink[] = [
   {
     href: "/indices",
@@ -43,15 +49,6 @@ const LINKS: NavLink[] = [
     ],
   },
   { href: "/news",    label: "News"    },
-  {
-    href: "/ideas",
-    label: "Ideas",
-    submenu: [
-      { href: "/ideas", label: "Trends", description: "Scored weekly ideas — compounders, breakouts, and value in clusters" },
-      { href: "/ideas?view=results", label: "Results Corner", description: "Declared quarterly results for NSE stocks sorted by date" },
-      { href: "/ideas?view=dividends", label: "Dividend Corner", description: "Dividend-paying stocks, high yields, consistency record, and upcoming payouts" },
-    ],
-  },
   { href: "/concall", label: "Concall" },
 ];
 

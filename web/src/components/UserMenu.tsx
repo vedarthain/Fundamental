@@ -13,6 +13,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { broadcastSessionChange } from "@/lib/session-client";
+import { IDEAS_MENU_ITEMS } from "./TopNavLinks";
 
 type Props = {
   email: string;
@@ -35,6 +36,7 @@ function AdminBadge() {
 
 export function UserMenu({ email, displayName }: Props) {
   const [open, setOpen] = useState(false);
+  const [ideasOpen, setIdeasOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const router = useRouter();
@@ -149,6 +151,43 @@ export function UserMenu({ email, displayName }: Props) {
           >
             Account settings
           </Link>
+
+          {/* Collapsible Ideas section (under User) */}
+          <div className="border-t hairline">
+            <button
+              type="button"
+              onClick={() => setIdeasOpen((v) => !v)}
+              aria-expanded={ideasOpen}
+              className="w-full px-4 py-2 flex items-center justify-between hover:bg-[var(--color-paper)] transition-colors text-[13px] font-medium"
+            >
+              <span>Ideas</span>
+              <span
+                aria-hidden
+                className={`text-[10px] opacity-70 transition-transform duration-150 ${ideasOpen ? "rotate-180" : ""}`}
+              >
+                ▾
+              </span>
+            </button>
+            {ideasOpen && (
+              <div className="pb-1 bg-[var(--color-paper)]/50">
+                {IDEAS_MENU_ITEMS.map((item) => (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    role="menuitem"
+                    onClick={() => {
+                      setIdeasOpen(false);
+                      setOpen(false);
+                    }}
+                    className="block pl-7 pr-4 py-1.5 hover:bg-[var(--color-paper)] transition-colors text-[12.5px]"
+                    title={item.description}
+                  >
+                    {item.label}
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
 
           {/* Tools Section (under User ID) */}
           <div className="px-4 pt-2.5 pb-1 border-t hairline flex items-center justify-between">
