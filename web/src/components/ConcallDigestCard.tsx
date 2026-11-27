@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { CheckCircle2, ExternalLink, MessageSquareQuote, Mic, Quote } from "lucide-react";
+import Link from "next/link";
+import { ArrowRight, CheckCircle2, ExternalLink, MessageSquareQuote, Mic, Quote } from "lucide-react";
 import type { ConcallDigest } from "@/lib/concallTypes";
 
 const TONE_STYLE: Record<
@@ -136,6 +137,13 @@ export function ConcallDigestCard({
               Transcript PDF <ExternalLink size={11} />
             </a>
           )}
+
+          <Link
+            href={`/concall/${encodeURIComponent(symbol)}`}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white text-[11.5px] font-medium transition-colors"
+          >
+            Full Concall View <ArrowRight size={11} />
+          </Link>
         </div>
       </div>
 
