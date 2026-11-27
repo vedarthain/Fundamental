@@ -62,7 +62,7 @@ export default async function DashboardPage() {
   }
 
   return (
-    <div className="mx-auto max-w-[1300px] px-3 md:px-5 py-3 md:py-4">
+    <div className="mx-auto max-w-[1600px] px-3 md:px-5 py-3 md:py-4">
       <div className="flex items-baseline gap-2 mb-2">
         <h1 className="font-display text-[18px] md:text-[20px] leading-none tracking-tight">
           Home

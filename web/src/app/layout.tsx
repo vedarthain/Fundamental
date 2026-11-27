@@ -85,7 +85,7 @@ function SiteHeader() {
         the tagline — pure decoration — is held back to xl, which is the first
         width with room to spare for it.
       */}
-      <div className="hidden lg:flex mx-auto max-w-[1300px] px-6 h-14 items-center gap-6">
+      <div className="hidden lg:flex mx-auto max-w-[1600px] px-6 h-14 items-center gap-6">
         <BrandLink className="flex items-center gap-2.5 shrink-0">
           <BanyanLogo />
           <div className="flex flex-col leading-none gap-0.5">
@@ -107,7 +107,7 @@ function SiteHeader() {
       </div>
 
       {/* ─────────────────── Mobile + tablet (<lg) — stacked rows ─────── */}
-      <div className="lg:hidden mx-auto max-w-[1300px] px-3.5 sm:px-4">
+      <div className="lg:hidden mx-auto max-w-[1600px] px-3.5 sm:px-4">
         {/* Row 1: logo on the left, optional user chip on the right.
             UserMenu lives inside TopNavLinks; we render it via a small
             mobile-only slot rather than duplicating the auth logic here. */}
@@ -171,7 +171,7 @@ function SiteFooter() {
   // platform has multiple analytical lenses on the same data.
   return (
     <footer className="mt-12 sm:mt-20 border-t hairline" style={{ backgroundColor: "var(--color-paper)" }}>
-      <div className="mx-auto max-w-[1300px] px-3.5 sm:px-6 py-8 sm:py-10">
+      <div className="mx-auto max-w-[1600px] px-3.5 sm:px-6 py-8 sm:py-10">
         <div className="grid grid-cols-2 md:grid-cols-5 gap-6 sm:gap-8">
           {/* Brand */}
           <div className="col-span-2 md:col-span-1">

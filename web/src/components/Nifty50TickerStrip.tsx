@@ -45,7 +45,7 @@ export function Nifty50TickerStrip() {
   return (
     <section
       aria-label="Nifty 50 live ticker"
-      className="max-w-[1200px] mx-auto px-3.5 sm:px-6 pt-4 sm:pt-5 pb-0"
+      className="max-w-[1600px] mx-auto px-3.5 sm:px-6 pt-4 sm:pt-5 pb-0"
     >
       <div
         className="relative flex items-center overflow-hidden rounded-xl border hairline shadow-2xs"

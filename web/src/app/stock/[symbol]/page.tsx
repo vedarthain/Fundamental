@@ -854,7 +854,7 @@ export default async function StockPage({
     : null;
 
   return (
-    <div className="mx-auto max-w-[1200px] px-6 py-10">
+    <div className="mx-auto max-w-[1600px] px-6 py-10">
       {/* Back link: returns to the sector page with the right sector +
           industry pre-selected, so the user lands on the same list of stocks
           they were just browsing. Falls back to /sectors root if either

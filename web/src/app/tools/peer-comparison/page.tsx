@@ -159,7 +159,7 @@ export default async function ComparePage({
   const hrefRaw = `/compare?${baseParams.toString()}`;
 
   return (
-    <div className="theme-amber mx-auto max-w-[1200px] px-4 sm:px-6 py-4 sm:py-5">
+    <div className="theme-amber mx-auto max-w-[1600px] px-4 sm:px-6 py-4 sm:py-5">
       <header className="pb-2.5 mb-3 border-b hairline flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
         <div>
           <div className="text-[10px] font-semibold uppercase tracking-[0.14em] muted-text flex items-center gap-1.5 mb-0.5">

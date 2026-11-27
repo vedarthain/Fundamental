@@ -190,7 +190,7 @@ export function WorkspacePreview() {
 
   return (
     <section className="border-t hairline" style={{ backgroundColor: "var(--color-paper)" }}>
-      <div className="max-w-[1200px] mx-auto px-3.5 sm:px-6 py-8 sm:py-12 md:py-16">
+      <div className="max-w-[1600px] mx-auto px-3.5 sm:px-6 py-8 sm:py-12 md:py-16">
         <div className="text-center max-w-[640px] mx-auto mb-6 sm:mb-10">
           <div className="eyebrow mb-2">Your Personal Workspace</div>
           <h2 className="font-display text-[24px] sm:text-[32px] md:text-[42px]" style={{ lineHeight: 1.05 }}>
@@ -513,7 +513,7 @@ export function ThreePillarsSegmented() {
 
   return (
     <section className="border-t hairline" style={{ backgroundColor: "var(--color-paper)" }}>
-      <div className="max-w-[1200px] mx-auto px-3.5 sm:px-6 py-8 sm:py-12 md:py-16">
+      <div className="max-w-[1600px] mx-auto px-3.5 sm:px-6 py-8 sm:py-12 md:py-16">
         <div className="text-center max-w-[640px] mx-auto mb-6 sm:mb-10">
           <div className="eyebrow mb-2">How We Evaluate</div>
           <h2 className="font-display text-[24px] sm:text-[32px] md:text-[42px]" style={{ lineHeight: 1.05 }}>
@@ -636,7 +636,7 @@ export function ResponsiveSectorHeatmap({ tiles }: { tiles: IndustryTile[] }) {
 
   return (
     <section className="relative overflow-hidden border-t hairline" style={{ backgroundColor: "var(--color-paper)" }}>
-      <div className="max-w-[1200px] mx-auto px-3.5 sm:px-6 py-8 sm:py-12 md:py-16">
+      <div className="max-w-[1600px] mx-auto px-3.5 sm:px-6 py-8 sm:py-12 md:py-16">
         {/* Mobile View: Horizontal Swipe Rail (<lg) */}
         <div className="lg:hidden">
           <div className="flex items-center justify-between mb-2.5">

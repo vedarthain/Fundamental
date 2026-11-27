@@ -564,7 +564,7 @@ export default async function ScreenerPage({
     d.toLocaleDateString("en-IN", { year: "numeric", month: "short", day: "numeric" });
 
   return (
-    <div className="theme-indigo mx-auto max-w-[1300px] px-6 py-10">
+    <div className="theme-indigo mx-auto max-w-[1600px] px-6 py-10">
       {/* Header row — title block on the left, secondary "tool" CTAs on
           the right (Peer comparison). The Peer Comparison entry point used
           to live in the top nav; it lives here now because the natural flow

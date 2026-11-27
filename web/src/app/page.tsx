@@ -113,7 +113,7 @@ function Hero({ snap }: { snap: Snapshot }) {
 
   return (
     <section className="grain relative overflow-hidden">
-      <div className="relative max-w-[1200px] mx-auto px-3.5 sm:px-6 pt-4 pb-8 sm:pt-6 md:pt-8 md:pb-16">
+      <div className="relative max-w-[1600px] mx-auto px-3.5 sm:px-6 pt-4 pb-8 sm:pt-6 md:pt-8 md:pb-16">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-12 items-center">
           
           {/* Left Column: Core Value Pitch */}
@@ -299,7 +299,7 @@ function FooterCTA() {
       className="border-t hairline"
       style={{ backgroundColor: "var(--color-accent-50)" }}
     >
-      <div className="max-w-[1200px] mx-auto px-3.5 sm:px-6 py-8 sm:py-12 md:py-16 text-center">
+      <div className="max-w-[1600px] mx-auto px-3.5 sm:px-6 py-8 sm:py-12 md:py-16 text-center">
         <h2
           className="font-display mx-auto text-[26px] sm:text-[38px] md:text-[54px]"
           style={{

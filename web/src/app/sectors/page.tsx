@@ -187,7 +187,7 @@ export default async function Home({
   const initialIndustryId = sp.industry ?? null;
 
   return (
-    <div className="theme-teal mx-auto max-w-[1200px] px-4 md:px-6 py-6 md:py-8">
+    <div className="theme-teal mx-auto max-w-[1600px] px-4 md:px-6 py-6 md:py-8">
       <SectorsClient
         data={data}
         initialSectorId={initialSectorId}

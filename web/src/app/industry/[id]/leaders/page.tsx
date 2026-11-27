@@ -77,7 +77,7 @@ export default async function LeadersPage({
 
   if (all.length === 0) {
     return (
-      <div className="mx-auto max-w-[1200px] px-4 sm:px-6 py-4 sm:py-5">
+      <div className="mx-auto max-w-[1600px] px-4 sm:px-6 py-4 sm:py-5">
         <Breadcrumb cluster={cluster} />
         <h1 className="font-display text-[18px] md:text-[20px] font-semibold mt-2 tracking-tight">{cluster.industry_name} · Leaders</h1>
         <div className="card p-12 mt-6 text-center muted-text">

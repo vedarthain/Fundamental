@@ -69,7 +69,7 @@ export async function SnapshotRibbon() {
       }}
     >
       <div
-        className="mx-auto max-w-[1300px] px-3.5 sm:px-6 h-7 flex items-center gap-2.5 sm:gap-3 overflow-x-auto"
+        className="mx-auto max-w-[1600px] px-3.5 sm:px-6 h-7 flex items-center gap-2.5 sm:gap-3 overflow-x-auto"
         style={{ scrollbarWidth: "none" }}
       >
         <Cell label="TODAY"><TodayCell initial={todayIstSeed} /></Cell>

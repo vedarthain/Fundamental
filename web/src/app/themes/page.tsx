@@ -116,7 +116,7 @@ export default async function ThemesPage({
   const [sp, data, session] = await Promise.all([searchParams, getCachedAll(), getSession()]);
   const isSignedIn = Boolean(session);
   return (
-    <div className="theme-teal mx-auto max-w-[1200px] px-4 md:px-6 py-6 md:py-8">
+    <div className="theme-teal mx-auto max-w-[1600px] px-4 md:px-6 py-6 md:py-8">
       <ThemesClient data={data} initialSlug={sp.theme ?? null} isSignedIn={isSignedIn} />
     </div>
   );

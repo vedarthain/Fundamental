@@ -94,7 +94,7 @@ export default async function IndicesPage() {
   });
   const isSignedIn = Boolean(session);
   return (
-    <div className="mx-auto max-w-[1300px] px-4 md:px-6 py-6 md:py-8">
+    <div className="mx-auto max-w-[1600px] px-4 md:px-6 py-6 md:py-8">
       <IndicesClient indices={indices} isSignedIn={isSignedIn} />
     </div>
   );

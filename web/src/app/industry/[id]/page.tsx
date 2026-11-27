@@ -137,7 +137,7 @@ export default async function ClusterPage({
   const { meta, snapshot, stocks } = data;
 
   return (
-    <div className="mx-auto max-w-[1200px] px-4 sm:px-6 py-4 sm:py-5">
+    <div className="mx-auto max-w-[1600px] px-4 sm:px-6 py-4 sm:py-5">
       <Link href="/sectors" className="text-[11.5px] muted-text hover:text-[var(--color-accent-600)]">
         ← All sectors
       </Link>
