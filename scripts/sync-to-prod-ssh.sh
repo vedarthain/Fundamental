@@ -23,6 +23,7 @@ LOCAL_APP="${LOCAL_APP_DB:-fundamental_app}"
 SYNC_MOAT=true
 SYNC_VERDICTS=true
 SYNC_PORTFOLIO=true
+SYNC_CONCALLS=true
 
 for arg in "$@"; do
   case "$arg" in
@@ -30,24 +31,34 @@ for arg in "$@"; do
       SYNC_MOAT=true
       SYNC_VERDICTS=false
       SYNC_PORTFOLIO=false
+      SYNC_CONCALLS=false
       ;;
     --verdicts)
       SYNC_MOAT=false
       SYNC_VERDICTS=true
       SYNC_PORTFOLIO=false
+      SYNC_CONCALLS=false
       ;;
     --portfolio)
       SYNC_MOAT=false
       SYNC_VERDICTS=false
       SYNC_PORTFOLIO=true
+      SYNC_CONCALLS=false
+      ;;
+    --concalls)
+      SYNC_MOAT=false
+      SYNC_VERDICTS=false
+      SYNC_PORTFOLIO=false
+      SYNC_CONCALLS=true
       ;;
     --all)
       SYNC_MOAT=true
       SYNC_VERDICTS=true
       SYNC_PORTFOLIO=true
+      SYNC_CONCALLS=true
       ;;
     -h|--help)
-      echo "Usage: $0 [--moat | --verdicts | --portfolio | --all]"
+      echo "Usage: $0 [--moat | --verdicts | --portfolio | --concalls | --all]"
       exit 0
       ;;
     *)
@@ -257,6 +268,86 @@ SQL
 fi
 
 # ------------------------------------------------------------------------------
+# 3b. SYNC CONCALL SUMMARIES (app.concall_summary)
+# ------------------------------------------------------------------------------
+if [[ "$SYNC_CONCALLS" == true ]]; then
+  echo ""
+  echo "▶ Syncing app.concall_summary..."
+
+  LOCAL_CONCALL_COUNT=$(psql "$LOCAL_APP" -tAc "SELECT count(*) FROM app.concall_summary;" 2>/dev/null || echo "0")
+  echo "  Local concall count: $LOCAL_CONCALL_COUNT rows"
+
+  if [[ "$LOCAL_CONCALL_COUNT" -eq 0 ]]; then
+    echo "  (No rows in local app.concall_summary — skipping)"
+  else
+    CONCALL_FILE="$LOCAL_TMP_DIR/concall_summary.tsv"
+    psql "$LOCAL_APP" -c "\COPY (SELECT symbol, announcement_id, quarter_label, published_at, pdf_url, tone, tone_rationale, highlights, qa_highlights, numbers_mentioned, model, source_sha256, verified_ratio, created_at FROM app.concall_summary) TO STDOUT" > "$CONCALL_FILE"
+
+    echo "  Transferring $(wc -l < "$CONCALL_FILE" | tr -d ' ') rows to production..."
+    scp -i "$SSH_KEY" -o BatchMode=yes "$CONCALL_FILE" "$SSH_HOST:$REMOTE_TMP_DIR/concall_summary.tsv"
+
+    ssh -i "$SSH_KEY" -o BatchMode=yes "$SSH_HOST" "
+      source /var/www/Fundamental/.env.local 2>/dev/null || source /var/www/Fundamental/web/.env.local 2>/dev/null || true
+      psql \"\$APP_DB_URL\" -v ON_ERROR_STOP=1 <<SQL
+CREATE TABLE IF NOT EXISTS app.concall_summary (
+    id               bigserial    PRIMARY KEY,
+    symbol           text         NOT NULL REFERENCES app.universe(symbol) ON DELETE CASCADE,
+    announcement_id  text         UNIQUE REFERENCES app.announcement(id) ON DELETE SET NULL,
+    quarter_label    text,
+    published_at     timestamptz  NOT NULL,
+    pdf_url          text,
+    tone             text         NOT NULL CHECK (tone IN ('Optimistic', 'Neutral', 'Cautious')),
+    tone_rationale   text,
+    highlights       jsonb        NOT NULL DEFAULT '[]'::jsonb,
+    qa_highlights    jsonb        NOT NULL DEFAULT '[]'::jsonb,
+    numbers_mentioned jsonb       NOT NULL DEFAULT '[]'::jsonb,
+    model            text         NOT NULL,
+    source_sha256    text         NOT NULL,
+    verified_ratio   real         NOT NULL DEFAULT 1.0,
+    created_at       timestamptz  NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS concall_summary_symbol_pub_idx ON app.concall_summary (symbol, published_at DESC);
+CREATE INDEX IF NOT EXISTS concall_summary_pub_idx ON app.concall_summary (published_at DESC);
+
+DROP TABLE IF EXISTS _temp_concall;
+CREATE TEMP TABLE _temp_concall (
+    symbol text, announcement_id text, quarter_label text, published_at timestamptz,
+    pdf_url text, tone text, tone_rationale text, highlights jsonb,
+    qa_highlights jsonb, numbers_mentioned jsonb, model text,
+    source_sha256 text, verified_ratio real, created_at timestamptz
+);
+\COPY _temp_concall FROM '$REMOTE_TMP_DIR/concall_summary.tsv';
+
+INSERT INTO app.concall_summary (
+    symbol, announcement_id, quarter_label, published_at, pdf_url, tone, tone_rationale,
+    highlights, qa_highlights, numbers_mentioned, model, source_sha256, verified_ratio, created_at
+)
+SELECT t.symbol,
+       CASE WHEN EXISTS (SELECT 1 FROM app.announcement a WHERE a.id = t.announcement_id) THEN t.announcement_id ELSE NULL END,
+       t.quarter_label, t.published_at, t.pdf_url, t.tone, t.tone_rationale,
+       t.highlights, t.qa_highlights, t.numbers_mentioned, t.model, t.source_sha256, t.verified_ratio, t.created_at
+  FROM _temp_concall t
+  JOIN app.universe u ON u.symbol = t.symbol
+ON CONFLICT (announcement_id) DO UPDATE SET
+  quarter_label = EXCLUDED.quarter_label,
+  tone = EXCLUDED.tone,
+  tone_rationale = EXCLUDED.tone_rationale,
+  highlights = EXCLUDED.highlights,
+  qa_highlights = EXCLUDED.qa_highlights,
+  numbers_mentioned = EXCLUDED.numbers_mentioned,
+  model = EXCLUDED.model,
+  source_sha256 = EXCLUDED.source_sha256,
+  verified_ratio = EXCLUDED.verified_ratio,
+  created_at = EXCLUDED.created_at;
+
+DROP TABLE IF EXISTS _temp_concall;
+SQL
+"
+    echo "  ✓ app.concall_summary sync completed successfully."
+  fi
+fi
+
+# ------------------------------------------------------------------------------
 # 4. VERIFY PRODUCTION COUNTS & PRE-WARM CACHE
 # ------------------------------------------------------------------------------
 echo ""
@@ -268,7 +359,7 @@ SELECT
   (SELECT count(*) FROM app.company_moat) AS prod_moat_count,
   (SELECT count(*) FROM app.stock_verdict) AS prod_verdict_count,
   (SELECT count(*) FROM app.portfolio_holding) AS prod_holding_count,
-  (SELECT avg_cost FROM app.portfolio_holding WHERE symbol = 'BANKBARODA' AND broker = 'derived') AS bankbaroda_cost;
+  (SELECT count(*) FROM app.concall_summary) AS prod_concall_count;
 SQL
   pm2 reload equityroots --update-env >/dev/null 2>&1 || true
   if [[ -n "${REVALIDATE_TOKEN:-}" ]]; then

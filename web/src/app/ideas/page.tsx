@@ -712,7 +712,7 @@ const cachedUpcomingEvents = unstable_cache(
 
 async function loadDeclaredResults(tier: IdxTier): Promise<DeclaredResult[]> {
   try {
-    return await sql<DeclaredResult[]>`
+    const rows = await sql<DeclaredResult[]>`
       WITH ranked_quarters AS (
         SELECT
           symbol,
@@ -814,6 +814,25 @@ async function loadDeclaredResults(tier: IdxTier): Promise<DeclaredResult[]> {
       ORDER BY declaration_date DESC, lf.published_at DESC NULLS LAST, qp.curr_period DESC
       LIMIT 800
     `;
+    const concallRows = await sql<
+      { symbol: string; tone: "Optimistic" | "Neutral" | "Cautious"; quarter_label: string | null }[]
+    >`
+      SELECT DISTINCT ON (symbol) symbol, tone, quarter_label
+        FROM app.concall_summary
+       ORDER BY symbol, published_at DESC
+    `.catch(() => []);
+    if (concallRows.length > 0) {
+      const bySym = new Map(concallRows.map((c) => [c.symbol, c]));
+      for (const r of rows) {
+        const hit = bySym.get(r.symbol);
+        if (hit) {
+          r.has_concall = true;
+          r.concall_tone = hit.tone;
+          r.concall_quarter = hit.quarter_label;
+        }
+      }
+    }
+    return rows;
   } catch (err) {
     console.error("loadDeclaredResults error:", err);
     return [];
@@ -822,7 +841,7 @@ async function loadDeclaredResults(tier: IdxTier): Promise<DeclaredResult[]> {
 
 const cachedDeclaredResults = unstable_cache(
   async (tier: IdxTier) => loadDeclaredResults(tier),
-  ["ideas:results_corner:v3"],
+  ["ideas:results_corner:v4"],
   { revalidate: 3600, tags: ["announcements", "ideas", "results"] },
 );
 

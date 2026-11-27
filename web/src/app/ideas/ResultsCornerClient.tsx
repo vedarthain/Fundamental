@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Search,
@@ -18,10 +18,13 @@ import {
   Clock,
   Briefcase,
   Layers,
+  Mic,
 } from "lucide-react";
 import CapTierBadge, { type CapCategory } from "@/components/CapTierBadge";
 import PageHeader from "@/components/PageHeader";
 import { WatchlistButton } from "@/components/WatchlistButton";
+import { ConcallDigestCard } from "@/components/ConcallDigestCard";
+import type { ConcallDigest } from "@/lib/concallTypes";
 import { band, bandColor } from "@/lib/score";
 
 // ---------------------------------------------------------------------------
@@ -79,6 +82,9 @@ export type DeclaredResult = {
   published_at: string | null;
   pdf_url: string | null;
   declaration_date: string;
+  has_concall?: boolean;
+  concall_tone?: "Optimistic" | "Neutral" | "Cautious" | null;
+  concall_quarter?: string | null;
 };
 
 type ViewSection = "calendar" | "declared";
@@ -86,7 +92,7 @@ type CalendarDateFilter = "all" | "today" | "tomorrow" | "next7" | "past7" | "pa
 type CalendarPurposeFilter = "all" | "results" | "dividends";
 type CalendarSort = "date_asc" | "date_desc" | "mcap_desc" | "score_desc" | "np_desc" | "sales_desc";
 
-type DeclaredFilter = "all" | "beats" | "double_digit" | "high_margin" | "turnarounds";
+type DeclaredFilter = "all" | "beats" | "double_digit" | "high_margin" | "turnarounds" | "has_concall";
 type DeclaredSort = "date_desc" | "np_growth_desc" | "sales_growth_desc" | "margin_desc" | "mcap_desc";
 
 // ---------------------------------------------------------------------------
@@ -209,6 +215,41 @@ export function ResultsCornerClient({
   const [declaredFilter, setDeclaredFilter] = useState<DeclaredFilter>("all");
   const [declaredSort, setDeclaredSort] = useState<DeclaredSort>("date_desc");
 
+  // Concall digest modal state
+  const [concallModal, setConcallModal] = useState<{
+    symbol: string;
+    companyName: string;
+    loading: boolean;
+    concalls: ConcallDigest[];
+  } | null>(null);
+
+  useEffect(() => {
+    if (!concallModal) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setConcallModal(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [concallModal]);
+
+  const openConcall = (symbol: string, companyName: string) => {
+    setConcallModal({ symbol, companyName, loading: true, concalls: [] });
+    fetch(`/api/concall/${encodeURIComponent(symbol)}`)
+      .then((r) => (r.ok ? r.json() : { concalls: [] }))
+      .then((data: { concalls?: ConcallDigest[] }) => {
+        setConcallModal((prev) =>
+          prev && prev.symbol === symbol
+            ? { ...prev, loading: false, concalls: data.concalls ?? [] }
+            : prev,
+        );
+      })
+      .catch(() => {
+        setConcallModal((prev) =>
+          prev && prev.symbol === symbol ? { ...prev, loading: false, concalls: [] } : prev,
+        );
+      });
+  };
+
   // -------------------------------------------------------------------------
   // Filtering & Sorting for Results Calendar
   // -------------------------------------------------------------------------
@@ -311,6 +352,8 @@ export function ResultsCornerClient({
             return r.opm_pct != null && r.opm_pct >= 25;
           case "turnarounds":
             return r.np_yoy === 999.0 || (r.yago_np != null && r.yago_np <= 0 && (r.curr_np ?? 0) > 0);
+          case "has_concall":
+            return Boolean(r.has_concall);
           default:
             return true;
         }
@@ -572,6 +615,12 @@ export function ResultsCornerClient({
               active={declaredFilter === "turnarounds"}
               onClick={() => setDeclaredFilter("turnarounds")}
             />
+            <FilterPill
+              label={`🎙️ With Concall (${declaredResults.filter((r) => r.has_concall).length})`}
+              active={declaredFilter === "has_concall"}
+              onClick={() => setDeclaredFilter("has_concall")}
+              highlight
+            />
           </div>
         )}
       </div>
@@ -588,7 +637,60 @@ export function ResultsCornerClient({
           results={filteredDeclared}
           viewMode={viewMode}
           hasSearch={Boolean(search)}
+          onOpenConcall={openConcall}
         />
+      )}
+
+      {concallModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-[1px] p-4"
+          onClick={() => setConcallModal(null)}
+        >
+          <div
+            className="w-full max-w-4xl max-h-[88vh] flex flex-col rounded-xl border hairline bg-white shadow-2xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3 px-5 py-3 border-b hairline bg-slate-50">
+              <div className="flex items-center gap-2 min-w-0">
+                <Link
+                  href={`/stock/${concallModal.symbol}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-mono text-sm font-bold text-indigo-700 hover:underline shrink-0"
+                >
+                  {concallModal.symbol}
+                </Link>
+                <span className="text-sm font-medium text-slate-700 truncate">
+                  {concallModal.companyName}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setConcallModal(null)}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-slate-300 bg-white text-xs font-medium text-slate-700 hover:bg-slate-100 transition-colors shrink-0"
+              >
+                <X size={13} /> Close
+              </button>
+            </div>
+            <div className="p-4 overflow-y-auto">
+              {concallModal.loading ? (
+                <div className="py-12 text-center text-[13px] muted-text">
+                  Loading quote-verified concall digest…
+                </div>
+              ) : concallModal.concalls.length === 0 ? (
+                <div className="py-12 text-center text-[13px] muted-text">
+                  No concall digest available for {concallModal.symbol}.
+                </div>
+              ) : (
+                <ConcallDigestCard
+                  concalls={concallModal.concalls}
+                  symbol={concallModal.symbol}
+                  compact
+                />
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -1011,10 +1113,12 @@ function DeclaredView({
   results,
   viewMode,
   hasSearch,
+  onOpenConcall,
 }: {
   results: DeclaredResult[];
   viewMode: "table" | "cards";
   hasSearch: boolean;
+  onOpenConcall: (symbol: string, companyName: string) => void;
 }) {
   if (results.length === 0) {
     return (
@@ -1047,7 +1151,7 @@ function DeclaredView({
                 <th className="py-3 px-4 text-right">OPM %</th>
                 <th className="py-3 px-4 text-right">CMP &amp; M-Cap</th>
                 <th className="py-3 px-4 text-center">Score</th>
-                <th className="py-3 px-4 text-center">Filing PDF</th>
+                <th className="py-3 px-4 text-center">Filings &amp; Concall</th>
               </tr>
             </thead>
             <tbody className="divide-y hairline">
@@ -1171,21 +1275,34 @@ function DeclaredView({
                     </td>
 
                     <td className="py-3 px-4 text-center whitespace-nowrap">
-                      {r.pdf_url ? (
-                        <a
-                          href={r.pdf_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-[var(--color-accent-50)] text-[var(--color-accent-700)] hover:bg-[var(--color-accent-100)] border border-[var(--color-accent-200)] text-[11.5px] font-medium transition-colors"
-                          title="Open official BSE financial results attachment"
-                        >
-                          <FileText size={12} />
-                          Filing
-                          <ExternalLink size={10} />
-                        </a>
-                      ) : (
-                        <span className="text-[11px] muted-text italic">Reported</span>
-                      )}
+                      <div className="inline-flex items-center justify-center gap-1.5">
+                        {r.has_concall && (
+                          <button
+                            type="button"
+                            onClick={() => onOpenConcall(r.symbol, r.company_name)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-indigo-50 text-indigo-800 hover:bg-indigo-100 border border-indigo-200 text-[11.5px] font-semibold transition-colors"
+                            title={`Open quote-verified concall digest${r.concall_quarter ? ` (${r.concall_quarter})` : ""}`}
+                          >
+                            <Mic size={12} />
+                            Concall
+                          </button>
+                        )}
+                        {r.pdf_url ? (
+                          <a
+                            href={r.pdf_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-[var(--color-accent-50)] text-[var(--color-accent-700)] hover:bg-[var(--color-accent-100)] border border-[var(--color-accent-200)] text-[11.5px] font-medium transition-colors"
+                            title="Open official BSE financial results attachment"
+                          >
+                            <FileText size={12} />
+                            Filing
+                            <ExternalLink size={10} />
+                          </a>
+                        ) : !r.has_concall ? (
+                          <span className="text-[11px] muted-text italic">Reported</span>
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -1308,18 +1425,30 @@ function DeclaredView({
                   ({fmtCr(r.market_cap_cr)})
                 </span>
               </div>
-              {r.pdf_url && (
-                <a
-                  href={r.pdf_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-[11.5px] font-medium text-[var(--color-accent-600)] hover:underline"
-                >
-                  <FileText size={12} />
-                  Filing PDF
-                  <ExternalLink size={10} />
-                </a>
-              )}
+              <div className="flex items-center gap-2">
+                {r.has_concall && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenConcall(r.symbol, r.company_name)}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-indigo-50 text-indigo-800 hover:bg-indigo-100 border border-indigo-200 text-[11px] font-semibold transition-colors"
+                  >
+                    <Mic size={11} />
+                    Concall
+                  </button>
+                )}
+                {r.pdf_url && (
+                  <a
+                    href={r.pdf_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-[11.5px] font-medium text-[var(--color-accent-600)] hover:underline"
+                  >
+                    <FileText size={12} />
+                    Filing PDF
+                    <ExternalLink size={10} />
+                  </a>
+                )}
+              </div>
             </div>
           </div>
         );

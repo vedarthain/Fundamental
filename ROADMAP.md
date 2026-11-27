@@ -13,6 +13,18 @@ Tracked 1-by-1 checklist of website improvements and new features across all pag
 
 ---
 
+## Concall Intelligence Suite (Modal GPU — Better than concall.in)
+> **Compliance boundary**: Public/user-facing concall digests, tone shifts, and Guidance-vs-Actuals stay strictly **factual/informational** (no BUY/SELL/Target Price advice). Any verdict integration remains **admin-only**.
+- [x] **Phase 1 — DB & Modal PDF Summarizer**: Create `app.concall_summary` migration + Modal **`Qwen2.5-32B-Instruct-AWQ` (L40S) / `72B-AWQ` (A100)** endpoint (`temp=0.0`) with **quote-first JSON + programmatic substring verification** against PDF text (anti-hallucination); process existing transcripts in `app.announcement` (Portfolio + Watchlist + Nifty 500 first).
+- [x] **Phase 1 — Stock Page & Results Corner UI**: Show **Latest Concall Digest** card (Tone, Guidance, Capex, Margins, Risks, Top Q&A) on `/stock/[symbol]` (`Latest result` tab) and `"Concall"` badge/drawer in `Results Corner`.
+- [ ] **Phase 2 — Quarter-over-Quarter Tone & Guidance Diff**: Compare management tone, capex timelines, and guidance across Q-2 → Q-1 → Q0.
+- [ ] **Phase 2 — Guidance vs. Actuals Credibility Check**: Cross-check past concall guidance against delivered `fundamentals_quarterly` numbers.
+- [ ] **Phase 3 — Same-Day Audio/Video via Modal Whisper**: Transcribe BSE *"Audio/Video Recording"* filings & YouTube IR links via `faster-whisper` on Modal within hours of the call (days before PDFs land).
+- [ ] **Phase 3 — Cross-Market Concall Search + Q/V/M Filter**: Search keywords across all concalls (e.g. *"order book"*, *"data center"*) combined with Quality/Valuation/Momentum filters.
+- [ ] **Admin-Only — Feed Concalls into Internal Verdicts**: Let `ollama-verdict.py` (admin-only) read `app.concall_summary` for your private research.
+
+---
+
 ## Site-Wide Improvements
 - [ ] **URL-Synced Tabs & Deep Links** — Sync active tab state to `?tab=...` in `StockPageTabs.tsx` and `PortfolioClient.tsx` so Back/Forward, refresh, and shared links preserve the tab.
 - [ ] **Global Command Palette (`⌘K` / `Ctrl+K`)** — Jump to stocks, sectors, themes, tools, admin pages, or quick actions (`Add manual trade`, `Report Extractor`).

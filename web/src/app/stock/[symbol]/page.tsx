@@ -34,6 +34,8 @@ import { EvidenceSheetPanel } from "@/components/EvidenceSheetPanel";
 import { VerdictPanel, VerdictEmpty } from "@/components/VerdictPanel";
 import { loadPriceAlertsForSymbol, type PriceAlert } from "@/lib/price-alerts";
 import { loadHoldingEntryMarks, type TradeMark } from "@/lib/portfolio";
+import { loadConcallsForSymbol } from "@/lib/concall";
+import { ConcallDigestCard } from "@/components/ConcallDigestCard";
 import { AlertTriangle } from "lucide-react";
 
 // Stock fundamentals + scores change weekly at most. 6h cache cuts Neon wakes
@@ -721,19 +723,17 @@ export default async function StockPage({
         ? <EvidenceSheetPanel data={sheetData} />
         : <VerdictEmpty symbol={symbol.toUpperCase()} />;
 
-  // Signed-in users can set price alerts on the chart; load their live lines.
-  const priceAlerts: PriceAlert[] = session
-    ? await loadPriceAlertsForSymbol(session.userId, stock.symbol).catch(() => [])
-    : [];
-
-  // Split-safe "when did I buy this?" marker for the price chart — same holdings-
-  // sourced single-B construction as the watchlist (never raw trades, so a post-
-  // buy split can't paint a phantom sell). Scoped to this one symbol.
-  const entryMarks: TradeMark[] = session
-    ? (await loadHoldingEntryMarks(session.userId, [stock.symbol]).catch(
-        () => ({}) as Record<string, TradeMark[]>,
-      ))[stock.symbol.toUpperCase()] ?? []
-    : [];
+  const [concalls, priceAlerts, entryMarks] = await Promise.all([
+    loadConcallsForSymbol(stock.symbol, 6),
+    session
+      ? loadPriceAlertsForSymbol(session.userId, stock.symbol).catch(() => [] as PriceAlert[])
+      : Promise.resolve([] as PriceAlert[]),
+    session
+      ? loadHoldingEntryMarks(session.userId, [stock.symbol])
+          .then((m) => m[stock.symbol.toUpperCase()] ?? [])
+          .catch(() => [] as TradeMark[])
+      : Promise.resolve([] as TradeMark[]),
+  ]);
 
   // Some app.universe.company_name rows are polluted with the ".NS" Yahoo
   // suffix (e.g. "INFY.NS"). Strip it once here so every downstream render —
@@ -1130,15 +1130,18 @@ export default async function StockPage({
 
       <StockPageTabs
         results={
-          <LatestResultCard
-            quarterly={quarterly}
-            annual={annual}
-            marketCapCr={stock.market_cap_cr}
-            currentPrice={stock.current_price}
-            declaration={declaration}
-            listingDate={stock.listing_date}
-            hasAnnual={annual.length > 0}
-          />
+          <>
+            <LatestResultCard
+              quarterly={quarterly}
+              annual={annual}
+              marketCapCr={stock.market_cap_cr}
+              currentPrice={stock.current_price}
+              declaration={declaration}
+              listingDate={stock.listing_date}
+              hasAnnual={annual.length > 0}
+            />
+            <ConcallDigestCard concalls={concalls} symbol={stock.symbol} />
+          </>
         }
         about={
           <>
