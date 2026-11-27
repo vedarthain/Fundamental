@@ -41,7 +41,7 @@ Tracked 1-by-1 checklist of website improvements and new features across all pag
 
 ## Stock Research (`/stock/[symbol]`)
 - [ ] **Technical + Event Overlays on `PriceChart`**: Toggle 50/200 DMA, quarterly result dates, and ex-dividend markers.
-- [ ] **Public/Member Competitive Moat Card**: Render `app.company_moat` (`moat_strength`, `moat_type`, `moat_points`) on the `About` tab.
+- [x] **Public/Member Competitive Moat Card**: Render `app.company_moat` (`moat_strength`, `moat_type`, `moat_points`) on the `About` tab.
 - [ ] **Peer Mini-Strip**: Show top 3 cluster peers on `Strengths & gaps` tab with a 1-click *"Compare in Peer Comparison →"* link.
 
 ---

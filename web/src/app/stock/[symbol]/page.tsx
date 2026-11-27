@@ -21,6 +21,7 @@ import {
 } from "@/lib/companyNarration";
 import { BusinessVisual, type OverviewRow } from "@/components/BusinessVisual";
 import { AboutTabs } from "@/components/AboutTabs";
+import { MoatCard } from "@/components/MoatCard";
 import { StockPageTabs } from "@/components/StockPageTabs";
 import { StockActionsTabs } from "@/components/StockActionsTabs";
 import { TrendSection, TrendCommentary } from "@/components/TrendSection";
@@ -1172,6 +1173,7 @@ export default async function StockPage({
                 ) : (
                   <AboutCard stock={stock} priceHistoryStart={priceHistory[0]?.d ?? null} />
                 )}
+                <MoatCard symbol={stock.symbol} />
               </div>
               {/* The left column runs long (Business overview is a 8-11 row
                   table), so this column bottoms out well above it and leaves a
