@@ -25,8 +25,8 @@ try:
 except ImportError:
     modal = None  # type: ignore[assignment]
 
-MODEL_ID = os.environ.get("MODAL_MODEL_ID", "Qwen/Qwen2.5-32B-Instruct-AWQ")
-GPU_TYPE = os.environ.get("MODAL_GPU", "L40S")
+MODEL_ID = os.environ.get("MODAL_MODEL_ID", "Qwen/Qwen2.5-72B-Instruct-AWQ")
+GPU_TYPE = os.environ.get("MODAL_GPU", "A100-80GB")
 
 SYSTEM_PROMPT = """You are a factual financial document analyst extracting comprehensive, segment-segregated management commentary from an Indian listed company's earnings conference call (concall) transcript.
 
@@ -97,7 +97,7 @@ if modal is not None:
             self.llm = LLM(
                 model=MODEL_ID,
                 quantization="awq" if "AWQ" in MODEL_ID.upper() else None,
-                max_model_len=32768,
+                max_model_len=49152,
                 gpu_memory_utilization=0.92,
                 trust_remote_code=True,
             )
