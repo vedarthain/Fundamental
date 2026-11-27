@@ -134,6 +134,30 @@ export function PortfolioClient({
   const [extrasStatus, setExtrasStatus] = useState<"loading" | "ok" | "error">("loading");
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const VALID_TABS: PortfolioTab[] = ["holdings", "dividends", "performance", "transactions", "booked", "returns"];
+    const syncFromUrl = () => {
+      const q = new URLSearchParams(window.location.search).get("tab") as PortfolioTab | null;
+      if (q && VALID_TABS.includes(q)) {
+        if (!owner && (q === "performance" || q === "returns")) return;
+        setTab(q);
+      }
+    };
+    syncFromUrl();
+    window.addEventListener("popstate", syncFromUrl);
+    return () => window.removeEventListener("popstate", syncFromUrl);
+  }, [owner]);
+
+  const selectTab = (next: PortfolioTab) => {
+    setTab(next);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("tab", next);
+      window.history.pushState({}, "", url.toString());
+    }
+  };
+
+  useEffect(() => {
     setPortfolio(initialPortfolio);
   }, [initialPortfolio]);
 
@@ -321,7 +345,7 @@ export function PortfolioClient({
           <button
             key={o.v}
             type="button"
-            onClick={() => setTab(o.v)}
+            onClick={() => selectTab(o.v)}
             className="relative px-3 py-2 text-[13px] font-medium transition-colors"
             style={{ color: tab === o.v ? "var(--color-accent-700)" : "var(--color-muted)" }}
           >

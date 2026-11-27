@@ -26,7 +26,7 @@ Tracked 1-by-1 checklist of website improvements and new features across all pag
 ---
 
 ## Site-Wide Improvements
-- [ ] **URL-Synced Tabs & Deep Links** — Sync active tab state to `?tab=...` in `StockPageTabs.tsx` and `PortfolioClient.tsx` so Back/Forward, refresh, and shared links preserve the tab.
+- [x] **URL-Synced Tabs & Deep Links** — Sync active tab state to `?tab=...` in `StockPageTabs.tsx` and `PortfolioClient.tsx` so Back/Forward, refresh, and shared links preserve the tab.
 - [ ] **Global Command Palette (`⌘K` / `Ctrl+K`)** — Jump to stocks, sectors, themes, tools, admin pages, or quick actions (`Add manual trade`, `Report Extractor`).
 - [ ] **Unified Quick-Action Icons** — Consistent 1-click Watchlist (`★`), Price Alert (`🔔`), and Chart Popup (`📈`) across `/stocks`, `/tools/screener`, `/ideas`, and `/admin/reports`.
 
@@ -70,7 +70,7 @@ Tracked 1-by-1 checklist of website improvements and new features across all pag
 ## Tools (`/tools/*`)
 - [ ] **`/tools/screener`**: Saved screens + CSV export.
 - [ ] **`/tools/scanner`**: Combined Fundamental (`Quality >= X`) + Technical (`Volume Ignition` / `Near 52W High`) scans.
-- [ ] **`/tools/alerts`**: Automated Resend email / push delivery when `app.price_alert_events` triggers.
+- [x] **`/tools/alerts`**: Automated Resend email / push delivery when `app.price_alert_events` triggers.
 - [ ] **`/tools/peer-comparison`**: Normalized 1Y/3Y/5Y indexed-to-100 multi-line price performance comparison chart.
 
 ---

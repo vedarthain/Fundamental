@@ -128,12 +128,34 @@ export function StockPageTabs({
   //   #announcements   → Corporate actions tab (Announcements sub-tab is its
   //                      default, so a filings link lands directly on the feed)
   const [active, setActive] = useState<TabKey>("about");
+
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const hash = window.location.hash;
-    if (hash === "#latest-result") setActive("results");
-    else if (hash === "#announcements") setActive("actions");
-  }, []);
+    const syncFromUrl = () => {
+      const sp = new URLSearchParams(window.location.search);
+      const qTab = sp.get("tab") as TabKey | null;
+      if (qTab && tabs.some((t) => t.key === qTab)) {
+        setActive(qTab);
+        return;
+      }
+      const hash = window.location.hash;
+      if (hash === "#latest-result") setActive("results");
+      else if (hash === "#announcements") setActive("actions");
+    };
+    syncFromUrl();
+    window.addEventListener("popstate", syncFromUrl);
+    return () => window.removeEventListener("popstate", syncFromUrl);
+  }, [verdict]);
+
+  const selectTab = (key: TabKey) => {
+    setActive(key);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("tab", key);
+      window.history.pushState({}, "", url.toString());
+    }
+  };
+
   const activeDef = tabs.find((t) => t.key === active) ?? tabs[0];
 
   return (
@@ -159,7 +181,7 @@ export function StockPageTabs({
                 role="tab"
                 aria-selected={isActive}
                 aria-controls={`panel-${t.key}`}
-                onClick={() => setActive(t.key)}
+                onClick={() => selectTab(t.key)}
                 className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[13px] font-medium transition-all"
                 style={
                   isActive

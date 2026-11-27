@@ -103,6 +103,7 @@ export default async function AdminInsightsPage({
     maxConnRows,
     topTablesRows,
     pgVerRows,
+    snapshotMetaRows,
   ] = await Promise.all([
     sql<{
       pageviews: number;
@@ -251,6 +252,15 @@ export default async function AdminInsightsPage({
     sql<{ version: string }[]>`
       SELECT version();
     `.catch(() => [{ version: "PostgreSQL" }]),
+
+    // Snapshot, Coverage & Clusters (moved from top ribbon)
+    sql<{ latest: Date | string | null; coverage: number; clusters: number }[]>`
+      WITH latest AS (SELECT MAX(snapshot_date) AS d FROM app.scores)
+      SELECT
+        (SELECT d FROM latest) AS latest,
+        (SELECT COUNT(*)::int FROM app.scores WHERE snapshot_date = (SELECT d FROM latest)) AS coverage,
+        (SELECT COUNT(*)::int FROM app.cluster_composite_cache WHERE snapshot_date = (SELECT d FROM latest)) AS clusters
+    `.catch(() => []),
   ]);
 
   // ── Process & Host System Metrics ──
@@ -352,6 +362,39 @@ export default async function AdminInsightsPage({
           Host: {platform} · Node {nodeVer} · {pgShortVer}
         </div>
       </div>
+
+      {/* Snapshot, Coverage & Clusters (moved from top ribbon) */}
+      {(() => {
+        const snap = snapshotMetaRows[0];
+        const snapDateStr = snap?.latest
+          ? new Date(snap.latest).toLocaleDateString("en-GB", {
+              weekday: "short",
+              day: "numeric",
+              month: "short",
+              year: "numeric",
+            })
+          : "—";
+        return (
+          <div className="grid grid-cols-3 gap-3">
+            <div className="rounded-xl border hairline bg-white dark:bg-slate-900 px-4 py-3 shadow-2xs flex items-center justify-between">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Latest Snapshot</span>
+              <span className="font-mono text-sm font-bold text-slate-900 dark:text-white">{snapDateStr}</span>
+            </div>
+            <div className="rounded-xl border hairline bg-white dark:bg-slate-900 px-4 py-3 shadow-2xs flex items-center justify-between">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Scored Coverage</span>
+              <span className="font-mono text-sm font-bold text-slate-900 dark:text-white">
+                {Number(snap?.coverage ?? 0).toLocaleString("en-IN")} stocks
+              </span>
+            </div>
+            <div className="rounded-xl border hairline bg-white dark:bg-slate-900 px-4 py-3 shadow-2xs flex items-center justify-between">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Active Clusters</span>
+              <span className="font-mono text-sm font-bold text-slate-900 dark:text-white">
+                {Number(snap?.clusters ?? 0)}
+              </span>
+            </div>
+          </div>
+        );
+      })()}
 
       {(showApp || showDb) && <LiveInfraPanel showApp={showApp} showDb={showDb} />}
 
