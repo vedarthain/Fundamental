@@ -2,6 +2,7 @@ import Link from "next/link";
 import { sql } from "@/lib/db";
 import { ArrowRight, Check } from "lucide-react";
 import { RevealOnScroll } from "@/components/RevealOnScroll";
+import { Nifty50TickerStrip } from "@/components/Nifty50TickerStrip";
 import {
   SampleScorecard,
   WorkspacePreview,
@@ -93,6 +94,7 @@ export default async function Landing() {
   return (
     <>
       <Hero snap={snap} />
+      <Nifty50TickerStrip />
       <RevealOnScroll><WorkspacePreview /></RevealOnScroll>
       <RevealOnScroll><ResponsiveSectorHeatmap tiles={tiles} /></RevealOnScroll>
       <RevealOnScroll><MethodologyComparison /></RevealOnScroll>
