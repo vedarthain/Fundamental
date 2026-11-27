@@ -1225,16 +1225,27 @@ export function ReportExtractorClient({ initialData }: { initialData: ReportStoc
                         row.ltp != null &&
                         row.buy_below != null &&
                         row.ltp <= row.buy_below;
+                      const isSellZone =
+                        !isBuyZone &&
+                        (row.action === "SELL" ||
+                          (row.ltp != null &&
+                            row.target_price != null &&
+                            row.target_price > 0 &&
+                            row.ltp >= row.target_price));
                       const stickyBg = isBuyZone
                         ? "bg-emerald-50 dark:bg-emerald-950/80"
-                        : "bg-white group-even:bg-slate-50 dark:bg-slate-900";
+                        : isSellZone
+                          ? "bg-rose-50 dark:bg-rose-950/80"
+                          : "bg-white group-even:bg-slate-50 dark:bg-slate-900";
                       return (
                         <tr
                           key={row.symbol}
                           className={`group transition-colors ${
                             isBuyZone
                               ? "bg-emerald-50/70 dark:bg-emerald-950/30 hover:bg-emerald-100/70 dark:hover:bg-emerald-950/60"
-                              : "even:bg-slate-50/50 dark:even:bg-slate-800/30 hover:bg-blue-50/70 dark:hover:bg-slate-800/80"
+                              : isSellZone
+                                ? "bg-rose-50/70 dark:bg-rose-950/30 hover:bg-rose-100/70 dark:hover:bg-rose-950/60"
+                                : "even:bg-slate-50/50 dark:even:bg-slate-800/30 hover:bg-blue-50/70 dark:hover:bg-slate-800/80"
                           }`}
                         >
                           <td
