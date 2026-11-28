@@ -109,11 +109,81 @@ if modal is not None:
                 enforce_eager=True,
                 trust_remote_code=True,
             )
-            self.sampling_params = SamplingParams(
-                temperature=0.0,
-                max_tokens=6000,
-                repetition_penalty=1.03,
-            )
+
+            schema = {
+                "type": "object",
+                "properties": {
+                    "quarter_label": {"type": "string"},
+                    "tone": {"type": "string", "enum": ["Optimistic", "Neutral", "Cautious"]},
+                    "tone_rationale": {"type": "string"},
+                    "numbers_mentioned": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "segment": {"type": "string"},
+                                "metric": {"type": "string"},
+                                "value": {"type": "string"},
+                                "quote": {"type": "string"},
+                            },
+                            "required": ["segment", "metric", "value", "quote"],
+                        },
+                    },
+                    "highlights": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "segment": {"type": "string"},
+                                "category": {
+                                    "type": "string",
+                                    "enum": ["Guidance", "Demand", "Margins", "Capex", "Order Book", "Risk"],
+                                },
+                                "point": {"type": "string"},
+                                "quote": {"type": "string"},
+                            },
+                            "required": ["segment", "category", "point", "quote"],
+                        },
+                    },
+                    "qa_highlights": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "segment": {"type": "string"},
+                                "analyst": {"type": "string"},
+                                "topic": {"type": "string"},
+                                "question": {"type": "string"},
+                                "answer": {"type": "string"},
+                                "quote": {"type": "string"},
+                            },
+                            "required": ["segment", "topic", "question", "answer", "quote"],
+                        },
+                    },
+                },
+                "required": [
+                    "quarter_label",
+                    "tone",
+                    "tone_rationale",
+                    "numbers_mentioned",
+                    "highlights",
+                    "qa_highlights",
+                ],
+            }
+
+            sp_kwargs: dict[str, Any] = {
+                "temperature": 0.0,
+                "max_tokens": 5500,
+                "repetition_penalty": 1.03,
+            }
+            try:
+                from vllm.sampling_params import StructuredOutputsParams
+
+                sp_kwargs["structured_outputs"] = StructuredOutputsParams(json=schema)
+            except Exception:
+                pass
+
+            self.sampling_params = SamplingParams(**sp_kwargs)
             print(f"[MODAL 2/2] Model ready in {time.monotonic() - t0:.1f}s", flush=True)
 
         @modal.fastapi_endpoint(method="POST")
@@ -142,8 +212,8 @@ if modal is not None:
                 f"Filing Title: {title}\n"
                 f"Filing Date: {published_at}\n\n"
                 f"--- BEGIN EARNINGS CALL TRANSCRIPT ---\n{transcript}\n--- END TRANSCRIPT ---\n\n"
-                "Extract ALL material details segregated by business segment with exact verbatim quotes: "
-                "all key numbers/KPIs/guidance (up to 25), all major commentary/drivers/capex/risks (up to 25), and all substantive analyst Q&A exchanges (up to 12)."
+                "Extract key details segregated by business segment with exact verbatim quotes (10-35 words each): "
+                "8-15 numbers_mentioned, 8-15 highlights (covering drivers, guidance, capex, margins, and risks), and 5-8 qa_highlights."
             )
 
             messages = [
@@ -160,7 +230,10 @@ if modal is not None:
                 m = re.search(r"\{.*\}", raw, flags=re.S)
                 if not m:
                     return {"ok": False, "error": f"invalid_json: {e}", "raw": raw[:500]}
-                parsed = json.loads(m.group(0))
+                try:
+                    parsed = json.loads(m.group(0))
+                except Exception as e2:
+                    return {"ok": False, "error": f"invalid_json_body: {e2}", "raw": raw[:500]}
 
             print(f"[MODAL] Done {symbol} in {time.monotonic() - t0:.1f}s", flush=True)
             return {"ok": True, "model": MODEL_ID, "data": parsed}
