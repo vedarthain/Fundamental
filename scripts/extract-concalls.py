@@ -485,7 +485,11 @@ def main() -> int:
         print("✓ No pending concall transcripts found for the selected scope.")
         return 0
 
-    print(f"🎙️ Processing {len(targets)} symbol(s) with engine={args.engine} (workers={args.workers})...")
+    print(f"🎙️ Processing {len(targets)} symbol(s) with engine={args.engine} (workers={args.workers})...", flush=True)
+
+    def log_step(sym: str, msg: str) -> None:
+        ts = time.strftime("%H:%M:%S")
+        print(f"[{ts}] [{sym:10s}] {msg}", flush=True)
 
     def process_one(sym: str, company_name: str) -> str:
         t0 = time.monotonic()
@@ -516,6 +520,7 @@ def main() -> int:
             pdf_url = args.audio_url
             note = f"audio:{wbody.get('duration_sec', 0)}s"
         else:
+            log_step(sym, "Step 1/4: Querying BSE transcript filings...")
             with psycopg.connect(db_url) as c2, c2.cursor() as cur2:
                 cur2.execute(
                     """
@@ -545,6 +550,7 @@ def main() -> int:
             chosen = None
             pdf_text = None
             note = ""
+            log_step(sym, f"Step 2/4: Downloading & extracting PDF ({len(cands)} candidate(s))...")
             for cid, title, pub_at, pdf_url in cands:
                 txt, why = download_and_extract_pdf(pdf_url)
                 if txt is not None:
@@ -562,6 +568,7 @@ def main() -> int:
         pub_iso = pub_at.isoformat() if hasattr(pub_at, "isoformat") else str(pub_at)
         sha = hashlib.sha256(pdf_text.encode("utf-8")).hexdigest()
 
+        log_step(sym, f"Step 3/4: Calling {args.engine.upper()} LLM ({note}, {len(pdf_text):,} chars)...")
         if args.engine == "modal":
             raw_json, used_model = call_modal(
                 {
@@ -584,6 +591,7 @@ def main() -> int:
                 args.ollama_url,
             )
 
+        log_step(sym, "Step 4/4: Quote-verifying claims & saving to Postgres...")
         cleaned, v_ratio = sanitize_and_verify(raw_json, pdf_text, strict=not args.no_strict_verify)
         if not cleaned["highlights"] and not cleaned["numbers_mentioned"]:
             return f"⚠️  {sym:12s} | 0 quotes verified ({v_ratio:.0%}) — rejected to prevent hallucination"
@@ -669,14 +677,24 @@ def main() -> int:
             f"verified={v_ratio:.0%} ({note}, {dt:.1f}s)"
         )
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
-        futs = {pool.submit(process_one, s, n): s for s, n in targets}
-        for fut in concurrent.futures.as_completed(futs):
-            sym = futs[fut]
-            try:
-                print(fut.result(), flush=True)
-            except Exception as e:
-                print(f"❌ {sym:12s} | error: {e}", flush=True)
+    remaining = list(targets)
+    if args.engine == "modal" and args.workers > 1 and len(remaining) > 1:
+        first_sym, first_name = remaining.pop(0)
+        print(f"🔥 Warming 1 Modal GPU container with {first_sym} before parallel workers...", flush=True)
+        try:
+            print(process_one(first_sym, first_name), flush=True)
+        except Exception as e:
+            print(f"❌ {first_sym:12s} | error: {e}", flush=True)
+
+    if remaining:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
+            futs = {pool.submit(process_one, s, n): s for s, n in remaining}
+            for fut in concurrent.futures.as_completed(futs):
+                sym = futs[fut]
+                try:
+                    print(fut.result(), flush=True)
+                except Exception as e:
+                    print(f"❌ {sym:12s} | error: {e}", flush=True)
 
     return 0
 

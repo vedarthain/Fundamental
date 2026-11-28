@@ -25,8 +25,8 @@ try:
 except ImportError:
     modal = None  # type: ignore[assignment]
 
-MODEL_ID = os.environ.get("MODAL_MODEL_ID", "Qwen/Qwen2.5-72B-Instruct-AWQ")
-GPU_TYPE = os.environ.get("MODAL_GPU", "A100-80GB")
+MODEL_ID = os.environ.get("MODAL_MODEL_ID", "Qwen/Qwen2.5-32B-Instruct-AWQ")
+GPU_TYPE = os.environ.get("MODAL_GPU", "L40S")
 
 SYSTEM_PROMPT = """You are a factual financial document analyst extracting comprehensive, segment-segregated management commentary from an Indian listed company's earnings conference call (concall) transcript.
 
@@ -87,18 +87,22 @@ if modal is not None:
         volumes={"/root/.cache/huggingface": hf_cache},
         scaledown_window=60,
         timeout=600,
-        max_containers=6,
+        max_containers=2,
     )
     class ConcallSummarizer:
         @modal.enter()
         def load_model(self) -> None:
+            import time
             from vllm import LLM, SamplingParams
 
+            t0 = time.monotonic()
+            print(f"[MODAL 1/2] Loading {MODEL_ID} onto {GPU_TYPE} (enforce_eager=True)...", flush=True)
             self.llm = LLM(
                 model=MODEL_ID,
                 quantization="awq" if "AWQ" in MODEL_ID.upper() else None,
                 max_model_len=32768,
                 gpu_memory_utilization=0.92,
+                enforce_eager=True,
                 trust_remote_code=True,
             )
             self.sampling_params = SamplingParams(
@@ -106,9 +110,12 @@ if modal is not None:
                 max_tokens=6000,
                 repetition_penalty=1.03,
             )
+            print(f"[MODAL 2/2] Model ready in {time.monotonic() - t0:.1f}s", flush=True)
 
         @modal.fastapi_endpoint(method="POST")
         def summarize(self, payload: dict[str, Any], authorization: str | None = None) -> dict[str, Any]:
+            import time
+
             expected_tok = os.environ.get("CONCALL_API_TOKEN", "").strip()
             if expected_tok:
                 given = (authorization or "").replace("Bearer ", "").strip()
@@ -124,6 +131,8 @@ if modal is not None:
             if len(transcript) < 2000:
                 return {"ok": False, "error": "transcript_too_short"}
 
+            t0 = time.monotonic()
+            print(f"[MODAL] Summarizing {symbol} ({len(transcript)} chars)...", flush=True)
             user_prompt = (
                 f"Company: {company_name} ({symbol})\n"
                 f"Filing Title: {title}\n"
@@ -149,6 +158,7 @@ if modal is not None:
                     return {"ok": False, "error": f"invalid_json: {e}", "raw": raw[:500]}
                 parsed = json.loads(m.group(0))
 
+            print(f"[MODAL] Done {symbol} in {time.monotonic() - t0:.1f}s", flush=True)
             return {"ok": True, "model": MODEL_ID, "data": parsed}
 
     whisper_image = (
