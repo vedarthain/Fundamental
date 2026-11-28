@@ -93,26 +93,22 @@ if modal is not None:
         timeout=600,
         max_containers=1,
     )
-    @modal.concurrent(max_inputs=4)
     class ConcallSummarizer:
         @modal.enter()
-        async def load_model(self) -> None:
+        def load_model(self) -> None:
             import time
-            from transformers import AutoTokenizer
-            from vllm import AsyncEngineArgs, AsyncLLMEngine, SamplingParams
+            from vllm import LLM, SamplingParams
 
             t0 = time.monotonic()
-            print(f"[MODAL 1/2] Loading {MODEL_ID} onto {GPU_TYPE} (1-GPU AsyncLLMEngine, max_inputs=4)...", flush=True)
-            self.tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, trust_remote_code=True)
-            engine_args = AsyncEngineArgs(
+            print(f"[MODAL 1/2] Loading {MODEL_ID} onto {GPU_TYPE} (1-GPU enforce_eager=True)...", flush=True)
+            self.llm = LLM(
                 model=MODEL_ID,
                 quantization="awq" if "AWQ" in MODEL_ID.upper() else None,
                 max_model_len=32768,
                 gpu_memory_utilization=0.92,
-                enforce_eager=False,
+                enforce_eager=True,
                 trust_remote_code=True,
             )
-            self.engine = AsyncLLMEngine.from_engine_args(engine_args)
 
             schema = {
                 "type": "object",
@@ -177,7 +173,7 @@ if modal is not None:
 
             sp_kwargs: dict[str, Any] = {
                 "temperature": 0.0,
-                "max_tokens": 4500,
+                "max_tokens": 5500,
                 "repetition_penalty": 1.03,
             }
             try:
@@ -191,9 +187,8 @@ if modal is not None:
             print(f"[MODAL 2/2] Model ready in {time.monotonic() - t0:.1f}s", flush=True)
 
         @modal.fastapi_endpoint(method="POST")
-        async def summarize(self, payload: dict[str, Any], authorization: str | None = None) -> dict[str, Any]:
+        def summarize(self, payload: dict[str, Any], authorization: str | None = None) -> dict[str, Any]:
             import time
-            import uuid
 
             expected_tok = os.environ.get("CONCALL_API_TOKEN", "").strip()
             if expected_tok:
@@ -226,15 +221,8 @@ if modal is not None:
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ]
-            prompt_text = self.tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
-            )
-            req_id = f"{symbol}-{uuid.uuid4().hex[:8]}"
-            final_output = None
-            async for out in self.engine.generate(prompt_text, self.sampling_params, req_id):
-                final_output = out
-
-            raw = (final_output.outputs[0].text if final_output else "").strip()
+            outputs = self.llm.chat(messages=[messages], sampling_params=self.sampling_params)
+            raw = outputs[0].outputs[0].text.strip()
             raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.S).strip()
 
             try:
