@@ -294,8 +294,9 @@ def build_user_prompt(symbol: str, company_name: str, title: str, published_at: 
         f"Filing Title: {title}\n"
         f"Filing Date: {published_at}\n\n"
         f"--- BEGIN EARNINGS CALL TRANSCRIPT ---\n{text[:MAX_TRANSCRIPT_CHARS]}\n--- END TRANSCRIPT ---\n\n"
-        "Extract ALL material details segregated by business segment with exact verbatim quotes: "
-        "all key numbers/KPIs/guidance (up to 25), all major commentary/drivers/capex/risks (up to 25), and all substantive analyst Q&A exchanges (up to 12)."
+        "Extract key details segregated by business segment with exact verbatim quotes (10-35 words each): "
+        "8-15 numbers_mentioned, 8-15 highlights (covering drivers, guidance, capex, margins, and risks), "
+        "and ALL substantive analyst Q&A exchanges from the Q&A session (do NOT stop at 5; include every distinct analyst question/topic, up to 20)."
     )
 
 
@@ -318,7 +319,7 @@ def call_modal(payload: dict[str, Any]) -> tuple[dict[str, Any], str]:
         body = json.loads(resp.read().decode("utf-8"))
     if not body.get("ok"):
         raise RuntimeError(f"Modal error: {body.get('error')}")
-    return body["data"], str(body.get("model", "modal-qwen2.5-72b-awq"))
+    return body["data"], str(body.get("model", "modal-qwen2.5-32b-awq"))
 
 
 def call_gemini(user_prompt: str, model_hint: str) -> tuple[dict[str, Any], str]:
@@ -340,7 +341,11 @@ def call_gemini(user_prompt: str, model_hint: str) -> tuple[dict[str, Any], str]
     payload = {
         "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
         "contents": [{"parts": [{"text": user_prompt}]}],
-        "generationConfig": {"temperature": 0.0, "response_mime_type": "application/json"},
+        "generationConfig": {
+            "temperature": 0.0,
+            "response_mime_type": "application/json",
+            "thinkingConfig": {"thinkingBudget": 0},
+        },
     }
 
     last_err: Exception | None = None
