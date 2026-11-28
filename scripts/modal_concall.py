@@ -77,7 +77,11 @@ if modal is not None:
     vllm_image = (
         modal.Image.debian_slim(python_version="3.11")
         .pip_install("vllm>=0.6.4", "fastapi[standard]", "huggingface_hub[hf_transfer]")
-        .env({"HF_HUB_ENABLE_HF_TRANSFER": "1", "HF_HOME": "/root/.cache/huggingface"})
+        .env({
+            "HF_HUB_ENABLE_HF_TRANSFER": "1",
+            "HF_HOME": "/root/.cache/huggingface",
+            "VLLM_USE_FLASHINFER_SAMPLER": "0",
+        })
     )
 
     app = modal.App("equityroots-concall", image=vllm_image)

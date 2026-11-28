@@ -488,7 +488,10 @@ def main() -> int:
     print(f"🎙️ Processing {len(targets)} symbol(s) with engine={args.engine} (workers={args.workers})...", flush=True)
 
     def log_step(sym: str, msg: str) -> None:
-        ts = time.strftime("%H:%M:%S")
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        ts = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%H:%M:%S IST")
         print(f"[{ts}] [{sym:10s}] {msg}", flush=True)
 
     def process_one(sym: str, company_name: str) -> str:
