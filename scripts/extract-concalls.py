@@ -31,6 +31,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -332,10 +333,9 @@ def call_gemini(user_prompt: str, model_hint: str) -> tuple[dict[str, Any], str]
         [model_hint]
         if model_hint != "auto"
         else [
-            "models/gemini-2.5-flash",
-            "models/gemini-3-flash-preview",
             "models/gemini-flash-latest",
-            "models/gemini-2.0-flash",
+            "models/gemini-3.8-flash",
+            "models/gemini-3-flash-preview",
         ]
     )
     payload = {
@@ -352,26 +352,33 @@ def call_gemini(user_prompt: str, model_hint: str) -> tuple[dict[str, Any], str]
     for cand in candidates:
         m_path = cand if cand.startswith("models/") else f"models/{cand}"
         url = f"https://generativelanguage.googleapis.com/v1beta/{m_path}:generateContent?key={api_key}"
-        with _gemini_lock:
-            wait = 1.5 - (time.monotonic() - _last_gemini_ts)
-            if wait > 0:
-                time.sleep(wait)
-            _last_gemini_ts = time.monotonic()
-        try:
-            req = urllib.request.Request(
-                url,
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-            txt = data["candidates"][0]["content"]["parts"][0]["text"]
-            txt = re.sub(r"^```(?:json)?\s*|\s*```$", "", txt.strip(), flags=re.S)
-            return json.loads(txt), m_path.replace("models/", "")
-        except Exception as e:
-            last_err = e
-            continue
+        for attempt in range(2):
+            with _gemini_lock:
+                wait = 3.0 - (time.monotonic() - _last_gemini_ts)
+                if wait > 0:
+                    time.sleep(wait)
+                _last_gemini_ts = time.monotonic()
+            try:
+                req = urllib.request.Request(
+                    url,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=120) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                txt = data["candidates"][0]["content"]["parts"][0]["text"]
+                txt = re.sub(r"^```(?:json)?\s*|\s*```$", "", txt.strip(), flags=re.S)
+                return json.loads(txt), m_path.replace("models/", "")
+            except urllib.error.HTTPError as e:
+                last_err = e
+                if e.code == 429 and attempt == 0:
+                    time.sleep(12)
+                    continue
+                break
+            except Exception as e:
+                last_err = e
+                break
     raise RuntimeError(f"Gemini failed across models: {last_err}")
 
 
