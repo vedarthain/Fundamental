@@ -173,7 +173,7 @@ if modal is not None:
 
             sp_kwargs: dict[str, Any] = {
                 "temperature": 0.0,
-                "max_tokens": 5500,
+                "max_tokens": 8192,
                 "repetition_penalty": 1.03,
             }
             try:
@@ -213,7 +213,8 @@ if modal is not None:
                 f"Filing Date: {published_at}\n\n"
                 f"--- BEGIN EARNINGS CALL TRANSCRIPT ---\n{transcript}\n--- END TRANSCRIPT ---\n\n"
                 "Extract key details segregated by business segment with exact verbatim quotes (10-35 words each): "
-                "8-15 numbers_mentioned, 8-15 highlights (covering drivers, guidance, capex, margins, and risks), and 5-8 qa_highlights."
+                "8-15 numbers_mentioned, 8-15 highlights (covering drivers, guidance, capex, margins, and risks), "
+                "and ALL substantive analyst Q&A exchanges from the Q&A session (do NOT stop at 5; include every distinct analyst question/topic, up to 20)."
             )
 
             messages = [

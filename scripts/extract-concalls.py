@@ -238,7 +238,7 @@ def sanitize_and_verify(raw: dict[str, Any] | list[Any], pdf_text: str, strict: 
             "tone_rationale": tone_rationale or None,
             "numbers_mentioned": clean_numbers[:30],
             "highlights": clean_highlights[:30],
-            "qa_highlights": clean_qa[:15],
+            "qa_highlights": clean_qa[:25],
         },
         round(ratio, 3),
     )
