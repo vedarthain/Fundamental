@@ -404,7 +404,7 @@ def main() -> int:
     ap.add_argument("--symbol", nargs="*", help="Specific NSE symbol(s) to process")
     ap.add_argument("--audio-url", help="YouTube / MP3 / MP4 concall recording URL (uses MODAL_WHISPER_URL to transcribe, requires single --symbol)")
     ap.add_argument("--quarter", help="Optional quarter label override for --audio-url, e.g. 'Q3 FY27'")
-    ap.add_argument("--scope", choices=["priority", "all"], default="priority", help="priority = Portfolio + Watchlist + Nifty 500")
+    ap.add_argument("--scope", choices=["nifty50", "priority", "all"], default="priority", help="nifty50 | priority (Portfolio+Watchlist+Nifty500) | all")
     ap.add_argument("--engine", choices=["modal", "gemini", "ollama"], default="gemini")
     ap.add_argument("--model", default="auto")
     ap.add_argument("--ollama-url", default="http://127.0.0.1:11434")
@@ -428,16 +428,25 @@ def main() -> int:
                 """,
                 (syms,),
             )
-        elif args.scope == "priority":
-            cur.execute(
+        elif args.scope in ("nifty50", "priority"):
+            if args.scope == "nifty50":
+                prio_cte = """
+                    WITH prio AS (
+                        SELECT DISTINCT symbol FROM app.index_constituent WHERE index_code = 'NIFTY50'
+                    )
                 """
-                WITH prio AS (
-                    SELECT DISTINCT symbol FROM app.portfolio_holding WHERE symbol IS NOT NULL AND quantity > 0
-                    UNION
-                    SELECT DISTINCT symbol FROM app.user_watchlist
-                    UNION
-                    SELECT DISTINCT symbol FROM app.index_constituent WHERE index_code = 'NIFTY500'
-                )
+            else:
+                prio_cte = """
+                    WITH prio AS (
+                        SELECT DISTINCT symbol FROM app.portfolio_holding WHERE symbol IS NOT NULL AND quantity > 0
+                        UNION
+                        SELECT DISTINCT symbol FROM app.user_watchlist
+                        UNION
+                        SELECT DISTINCT symbol FROM app.index_constituent WHERE index_code = 'NIFTY500'
+                    )
+                """
+            cur.execute(
+                prio_cte + """
                 SELECT u.symbol, COALESCE(u.company_name, u.symbol) AS company_name
                   FROM app.universe u
                   JOIN prio p ON p.symbol = u.symbol
