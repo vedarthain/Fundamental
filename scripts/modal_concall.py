@@ -91,7 +91,7 @@ if modal is not None:
         volumes={"/root/.cache/huggingface": hf_cache},
         scaledown_window=60,
         timeout=600,
-        max_containers=2,
+        max_containers=1,
     )
     class ConcallSummarizer:
         @modal.enter()
@@ -100,13 +100,13 @@ if modal is not None:
             from vllm import LLM, SamplingParams
 
             t0 = time.monotonic()
-            print(f"[MODAL 1/2] Loading {MODEL_ID} onto {GPU_TYPE} (enforce_eager=True)...", flush=True)
+            print(f"[MODAL 1/2] Loading {MODEL_ID} onto {GPU_TYPE} (1-GPU + CUDA graphs)...", flush=True)
             self.llm = LLM(
                 model=MODEL_ID,
                 quantization="awq" if "AWQ" in MODEL_ID.upper() else None,
                 max_model_len=32768,
                 gpu_memory_utilization=0.92,
-                enforce_eager=True,
+                enforce_eager=False,
                 trust_remote_code=True,
             )
 
@@ -173,7 +173,7 @@ if modal is not None:
 
             sp_kwargs: dict[str, Any] = {
                 "temperature": 0.0,
-                "max_tokens": 8192,
+                "max_tokens": 4500,
                 "repetition_penalty": 1.03,
             }
             try:
